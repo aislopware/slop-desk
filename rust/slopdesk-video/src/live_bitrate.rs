@@ -25,6 +25,14 @@ pub const DEFAULT_BITS_PER_PIXEL_PER_FRAME: f64 = 0.25;
 /// The absolute lower bound, so a tiny window never starves the encoder.
 pub const MINIMUM_BITRATE: i64 = 1_000_000;
 
+/// The density knob's environment key.
+///
+/// A lone key rather than a table, and named here anyway: the RULE was already Rust's, but the
+/// SPELLING was still only in Swift, which is one spelling too many — a caller that resolved
+/// `SLOPDESK_BPP_PER_FRAME` and handed the text to [`bits_per_pixel_from_env`] would get the tuned
+/// default forever and no error anywhere.
+pub const BITS_PER_PIXEL_KEY: &str = "SLOPDESK_BPP";
+
 /// Parses the density knob, which must be positive and no greater than one.
 ///
 /// Anything else falls back to the default rather than being clamped, because a density outside

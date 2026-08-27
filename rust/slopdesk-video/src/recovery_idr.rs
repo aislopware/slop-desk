@@ -70,6 +70,60 @@ impl Default for RecoveryIdrConfig {
     }
 }
 
+/// The environment keys, in the order [`RecoveryIdrConfig::from_env`] reads their values.
+///
+/// Three of the seven fields are reachable. `grace_fraction`, `grant_pending_timeout` and
+/// `keyframe_ring_capacity` never had a key and do not get one here — each is a derived shape
+/// rather than an operating point, and adding a knob is a design change, not a transcription.
+pub const KEYS: [&str; 3] = [
+    "SLOPDESK_IDR_TOKENS",
+    "SLOPDESK_IDR_REFILL_MS",
+    "SLOPDESK_IDR_GRACE_MS",
+];
+
+impl RecoveryIdrConfig {
+    /// The operating point resolved from the texts of [`KEYS`], in that order.
+    ///
+    /// A third idiom, and it is neither of the other two: each key CLAMPS when it parses to a
+    /// finite number and is otherwise IGNORED, leaving that field at its default. So the family
+    /// is per-field rather than all-or-nothing — an unparseable `SLOPDESK_IDR_TOKENS` costs the
+    /// token knob and nothing else.
+    ///
+    /// Two of the three are not the field they name.
+    ///
+    /// * `SLOPDESK_IDR_REFILL_MS` is a SPACING in milliseconds and the field is a RATE, so the knob
+    ///   is inverted: `1000 / spacing`. The clamp is applied to the spacing, before the inversion —
+    ///   which is what makes 100…5000 ms a band and not an accident of division.
+    /// * `SLOPDESK_IDR_GRACE_MS` pins BOTH the floor and the ceiling to one value, collapsing the
+    ///   grace band to a constant. That is the point: it is the knob an operator reaches for to
+    ///   take the round-trip term out of the law entirely while bisecting a freeze.
+    #[must_use]
+    pub fn from_env(values: &[Option<&str>; KEYS.len()]) -> Self {
+        let mut config = Self::default();
+        // BY NAME, not by position — the shape `host_gates` settled: a positional read agrees with
+        // a table that has drifted.
+        let finite = |key: &str| {
+            KEYS.iter()
+                .position(|name| *name == key)
+                .and_then(|index| values.get(index).copied().flatten())
+                .and_then(|text| text.parse::<f64>().ok())
+                .filter(|parsed| parsed.is_finite())
+        };
+        if let Some(tokens) = finite("SLOPDESK_IDR_TOKENS") {
+            config.bucket_capacity = tokens.clamp(1.0, 4.0);
+        }
+        if let Some(spacing_millis) = finite("SLOPDESK_IDR_REFILL_MS") {
+            config.refill_tokens_per_second = 1000.0 / spacing_millis.clamp(100.0, 5000.0);
+        }
+        if let Some(grace_millis) = finite("SLOPDESK_IDR_GRACE_MS") {
+            let pinned = grace_millis.clamp(0.0, 1000.0) / 1000.0;
+            config.grace_floor_seconds = pinned;
+            config.grace_ceil_seconds = pinned;
+        }
+        config
+    }
+}
+
 /// One sent keyframe.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SentKeyframe {
@@ -245,7 +299,88 @@ mod tests {
                   spent — which is the property under test"
     )]
 
-    use super::{IdrVerdict, RecoveryIdrConfig, RecoveryIdrPolicy};
+    use super::{IdrVerdict, KEYS, RecoveryIdrConfig, RecoveryIdrPolicy};
+
+    /// The values array, keyed by NAME rather than by index — a positional fixture would agree with
+    /// a [`KEYS`] table that had drifted.
+    fn env(pairs: &[(&str, &'static str)]) -> [Option<&'static str>; KEYS.len()] {
+        for (key, _) in pairs {
+            assert!(KEYS.contains(key), "{key} is not a recovery-IDR gate");
+        }
+        KEYS.map(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| *value)
+        })
+    }
+
+    #[test]
+    fn the_unset_recovery_operating_point_is_the_tuned_one() {
+        assert_eq!(
+            RecoveryIdrConfig::from_env(&env(&[])),
+            RecoveryIdrConfig::default()
+        );
+    }
+
+    #[test]
+    fn the_refill_key_is_a_spacing_and_the_field_is_a_rate() {
+        let config = RecoveryIdrConfig::from_env(&env(&[("SLOPDESK_IDR_REFILL_MS", "250")]));
+        assert_eq!(
+            config.refill_tokens_per_second, 4.0,
+            "1000 ms / 250 ms is four tokens a second"
+        );
+        assert_eq!(
+            RecoveryIdrConfig::from_env(&env(&[("SLOPDESK_IDR_REFILL_MS", "10")])).refill_tokens_per_second,
+            10.0,
+            "the clamp lands on the SPACING, before the inversion: 1000 / 100"
+        );
+    }
+
+    #[test]
+    fn the_grace_key_pins_both_ends_of_the_band() {
+        let config = RecoveryIdrConfig::from_env(&env(&[("SLOPDESK_IDR_GRACE_MS", "120")]));
+        assert_eq!(config.grace_floor_seconds, 0.120);
+        assert_eq!(
+            config.grace_ceil_seconds, 0.120,
+            "one value collapses the band to a constant, taking the round trip out of the law"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_key_costs_its_own_field_and_no_other() {
+        let defaults = RecoveryIdrConfig::default();
+        let config = RecoveryIdrConfig::from_env(&env(&[
+            ("SLOPDESK_IDR_TOKENS", "many"),
+            ("SLOPDESK_IDR_GRACE_MS", "80"),
+        ]));
+        assert_eq!(config.bucket_capacity, defaults.bucket_capacity);
+        assert_eq!(config.grace_floor_seconds, 0.080, "per-field, not all-or-nothing");
+    }
+
+    #[test]
+    fn an_out_of_band_token_count_clamps_into_the_burst_allowance() {
+        assert_eq!(
+            RecoveryIdrConfig::from_env(&env(&[("SLOPDESK_IDR_TOKENS", "99")])).bucket_capacity,
+            4.0
+        );
+        assert_eq!(
+            RecoveryIdrConfig::from_env(&env(&[("SLOPDESK_IDR_TOKENS", "0")])).bucket_capacity,
+            1.0
+        );
+    }
+
+    #[test]
+    fn a_non_finite_value_is_ignored_before_it_can_reach_a_clamp() {
+        let defaults = RecoveryIdrConfig::default();
+        for spelling in ["nan", "inf", "-inf"] {
+            let config = RecoveryIdrConfig::from_env(&env(&[("SLOPDESK_IDR_TOKENS", spelling)]));
+            assert_eq!(
+                config.bucket_capacity, defaults.bucket_capacity,
+                "{spelling} must not reach the clamp — NaN would survive it"
+            );
+        }
+    }
 
     #[test]
     fn a_request_that_proves_delivery_is_granted() {

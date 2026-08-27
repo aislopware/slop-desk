@@ -72,6 +72,81 @@ impl Default for FpsGovernorConfig {
     }
 }
 
+/// The environment keys, in the order [`FpsGovernorConfig::from_env`] reads their values.
+///
+/// The caller resolves these names — environment, then the settings overlay (`docs/58`) — and hands
+/// the texts back positionally, the same split [`crate::host_gates::KEYS`] documents at length: a
+/// lookup is a precedence rule and belongs to whoever owns the overlay, a default is a tuning rule
+/// and belongs here.
+///
+/// `bytes_alpha` has no key and never had one. It is the EWMA weight the loss estimator uses, held
+/// to the same value on purpose, so it stays a constant in [`FpsGovernorConfig::default`].
+pub const KEYS: [&str; 6] = [
+    "SLOPDESK_FPS_GOV_HEADROOM",
+    "SLOPDESK_FPS_GOV_DOWN_N",
+    "SLOPDESK_FPS_GOV_DOWN_HOLD",
+    "SLOPDESK_FPS_GOV_UP_N",
+    "SLOPDESK_FPS_GOV_WARMUP",
+    "SLOPDESK_FPS_GOV_MIN",
+];
+
+impl FpsGovernorConfig {
+    /// The operating point resolved from the texts of [`KEYS`], in that order.
+    ///
+    /// Every knob REJECTS an out-of-band value back to its tuned default rather than clamping it —
+    /// the bitrate controller's rule ([`crate::congestion::validated_int_from_env`]), and the right
+    /// one here for the same reason: `SLOPDESK_FPS_GOV_DOWN_N=0` is not a request for "step down on
+    /// the very first congested report", it is a typo, and answering the nearest legal value would
+    /// invent a cadence law nobody chose. That is the opposite of the quantiser family
+    /// ([`crate::qp_control::QpConfig::from_env`]), which CLAMPS — a QP is an ordinal on a fixed
+    /// 1…51 scale, so its nearest legal value means something.
+    #[must_use]
+    pub fn from_env(values: &[Option<&str>; KEYS.len()]) -> Self {
+        let defaults = Self::default();
+        // BY NAME, for the reason `host_gates` and the bitrate table give: a positional read
+        // agrees with a table that has drifted, and a knob read into the wrong slot is an inversion
+        // nothing catches.
+        let at = |key: &str| -> Option<&str> {
+            KEYS.iter()
+                .position(|name| *name == key)
+                .and_then(|index| values.get(index).copied().flatten())
+        };
+        let int = |key: &str, default: u32, lo: u32, hi: u32| {
+            u32::try_from(crate::congestion::validated_int_from_env(
+                at(key),
+                i64::from(default),
+                i64::from(lo),
+                i64::from(hi),
+            ))
+            .unwrap_or(default)
+        };
+        Self {
+            headroom_factor: crate::congestion::validated_double_from_env(
+                at("SLOPDESK_FPS_GOV_HEADROOM"),
+                defaults.headroom_factor,
+                1.0,
+                3.0,
+            ),
+            step_down_ticks: int("SLOPDESK_FPS_GOV_DOWN_N", defaults.step_down_ticks, 1, 1_000),
+            step_down_hold_ticks: int(
+                "SLOPDESK_FPS_GOV_DOWN_HOLD",
+                defaults.step_down_hold_ticks,
+                0,
+                100_000,
+            ),
+            step_up_ticks: int("SLOPDESK_FPS_GOV_UP_N", defaults.step_up_ticks, 1, 100_000),
+            warmup_ticks: int("SLOPDESK_FPS_GOV_WARMUP", defaults.warmup_ticks, 0, 100_000),
+            min_fps: crate::congestion::validated_int_from_env(
+                at("SLOPDESK_FPS_GOV_MIN"),
+                defaults.min_fps,
+                5,
+                240,
+            ),
+            bytes_alpha: defaults.bytes_alpha,
+        }
+    }
+}
+
 /// The clean-divisor ladder: the base and its halves, thirds and quarters, floored, deduplicated,
 /// DESCENDING.
 ///
@@ -732,10 +807,76 @@ mod tests {
     )]
 
     use super::{
-        EncodeCadenceGate, EncodeLoadPacer, EncodeLoadPacerConfig, FpsGovernor, FpsGovernorConfig,
+        EncodeCadenceGate, EncodeLoadPacer, EncodeLoadPacerConfig, FpsGovernor, FpsGovernorConfig, KEYS,
         budget_millis, congestion_evidence, ladder, self_heal_effective_every,
     };
     use crate::congestion::CongestionConfig;
+
+    /// The values array, keyed by NAME rather than by index. A positional fixture would agree with
+    /// a [`KEYS`] table that had drifted, which is the one failure the table exists to prevent.
+    fn env(pairs: &[(&str, &'static str)]) -> [Option<&'static str>; KEYS.len()] {
+        for (key, _) in pairs {
+            assert!(KEYS.contains(key), "{key} is not a cadence gate");
+        }
+        KEYS.map(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| *value)
+        })
+    }
+
+    #[test]
+    fn the_unset_cadence_operating_point_is_the_tuned_one() {
+        assert_eq!(
+            FpsGovernorConfig::from_env(&env(&[])),
+            FpsGovernorConfig::default()
+        );
+    }
+
+    #[test]
+    fn every_cadence_knob_is_reachable_under_its_own_name() {
+        let config = FpsGovernorConfig::from_env(&env(&[
+            ("SLOPDESK_FPS_GOV_HEADROOM", "1.5"),
+            ("SLOPDESK_FPS_GOV_DOWN_N", "7"),
+            ("SLOPDESK_FPS_GOV_DOWN_HOLD", "0"),
+            ("SLOPDESK_FPS_GOV_UP_N", "90"),
+            ("SLOPDESK_FPS_GOV_WARMUP", "0"),
+            ("SLOPDESK_FPS_GOV_MIN", "24"),
+        ]));
+        assert_eq!(config.headroom_factor, 1.5);
+        assert_eq!(config.step_down_ticks, 7);
+        assert_eq!(config.step_down_hold_ticks, 0);
+        assert_eq!(config.step_up_ticks, 90);
+        assert_eq!(config.warmup_ticks, 0);
+        assert_eq!(config.min_fps, 24);
+    }
+
+    #[test]
+    fn an_out_of_band_cadence_knob_falls_to_its_default_rather_than_clamping() {
+        let defaults = FpsGovernorConfig::default();
+        let config = FpsGovernorConfig::from_env(&env(&[
+            ("SLOPDESK_FPS_GOV_MIN", "1"),
+            ("SLOPDESK_FPS_GOV_DOWN_N", "0"),
+            ("SLOPDESK_FPS_GOV_HEADROOM", "9"),
+        ]));
+        assert_eq!(
+            config.min_fps, defaults.min_fps,
+            "a floor below the band is a typo, not a request for 5 fps"
+        );
+        assert_eq!(config.step_down_ticks, defaults.step_down_ticks);
+        assert_eq!(config.headroom_factor, defaults.headroom_factor);
+    }
+
+    #[test]
+    fn the_bytes_weight_has_no_key_and_never_moves() {
+        let config = FpsGovernorConfig::from_env(&env(&[("SLOPDESK_FPS_GOV_MIN", "30")]));
+        assert_eq!(config.bytes_alpha, FpsGovernorConfig::default().bytes_alpha);
+        assert!(
+            !KEYS.iter().any(|key| key.contains("ALPHA")),
+            "the EWMA weight is held to the loss estimator's, so it is not a knob"
+        );
+    }
 
     /// A governor warmed past the cold-start guard with a known per-frame size.
     fn warmed(base_fps: i64, bytes: i64) -> FpsGovernor {

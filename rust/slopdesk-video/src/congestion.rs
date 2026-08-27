@@ -177,6 +177,179 @@ impl Default for CongestionConfig {
     }
 }
 
+/// The environment keys [`CongestionConfig::from_env`] reads, in the order it expects their values.
+///
+/// One list, positional, for [`crate::host_gates::KEYS`]'s reason: a key resolved under one
+/// spelling and read under another is a knob that silently stops working, and a table cannot drift
+/// from itself the way twenty-eight separate lookups can.
+pub const ABR_KEYS: [&str; 28] = [
+    "SLOPDESK_ABR_WARMUP",
+    "SLOPDESK_ABR_LOSS",
+    "SLOPDESK_ABR_SEVERE",
+    "SLOPDESK_ABR_LOSS_NEEDS_RTT",
+    "SLOPDESK_ABR_CATASTROPHIC",
+    "SLOPDESK_ABR_DEC",
+    "SLOPDESK_ABR_SEVERE_DEC",
+    "SLOPDESK_ABR_INC_DIV",
+    "SLOPDESK_ABR_RAMP_UTIL",
+    "SLOPDESK_ABR_DECAY_UTIL",
+    "SLOPDESK_ABR_DECAY_HEADROOM",
+    "SLOPDESK_ABR_DECAY_STEP",
+    "SLOPDESK_ABR_HOLD",
+    "SLOPDESK_ABR_RTT",
+    "SLOPDESK_ABR_SLACK",
+    "SLOPDESK_ABR_SLACK_FRAC",
+    "SLOPDESK_ABR_RTT_N",
+    "SLOPDESK_ABR_CUT_HOLD",
+    "SLOPDESK_ABR_RTT_DEC_MIN",
+    "SLOPDESK_ABR_RTT_DEC_MAX",
+    "SLOPDESK_ABR_KNEE_DIV",
+    "SLOPDESK_ABR_KNEE_TTL",
+    "SLOPDESK_ABR_MINFRAC",
+    "SLOPDESK_ABR_SEED_FRAC",
+    "SLOPDESK_ABR_MATERIAL",
+    "SLOPDESK_ABR_MATERIAL_FLOOR",
+    "SLOPDESK_ABR_GRAD_DEC",
+    "SLOPDESK_ABR_GRAD",
+];
+
+impl CongestionConfig {
+    /// The operating point, resolved from the raw environment texts in [`ABR_KEYS`]' order.
+    ///
+    /// The caller resolves the NAMES — through the env → settings-overlay precedence (`docs/58`),
+    /// not `std::env::var` — and hands the texts back positionally, exactly as
+    /// [`crate::host_gates::HostGates::from_env`] is called. That keeps the overlay's ownership
+    /// where it is while the RULES — every default, every bound, and the two boolean polarities —
+    /// live here beside the law that reads them.
+    ///
+    /// **Out of range REJECTS to the default, it does not clamp**, per
+    /// [`validated_int_from_env`]'s reasoning: a rate, a fraction or a report count has no "nearest
+    /// legal value that is plainly what was meant", so answering a bound would invent an operating
+    /// point nobody chose.
+    ///
+    /// The seed fraction is the one bound that is not a literal: its floor is the RESOLVED minimum
+    /// fraction, so a seed under the floor the controller will clamp it to anyway is rejected
+    /// rather than accepted and silently lifted. It therefore has to be read after `min_fraction`,
+    /// which is why this is one constructor and not twenty-eight independent lookups.
+    #[must_use]
+    pub fn from_env(values: &[Option<&str>; ABR_KEYS.len()]) -> Self {
+        let defaults = Self::default();
+        // BY NAME, not by position. The array is positional at the boundary because that is the
+        // cheapest thing to hand across one, but a rule that reads `values[23]` agrees with a table
+        // that has drifted — and a knob resolved under one key and read into another is an
+        // inversion no compiler and no test would see. `host_gates` settled this shape first.
+        let at = |key: &str| -> Option<&str> {
+            ABR_KEYS
+                .iter()
+                .position(|name| *name == key)
+                .and_then(|index| values.get(index).copied().flatten())
+        };
+        let int =
+            |key: &str, default: i64, lo: i64, hi: i64| validated_int_from_env(at(key), default, lo, hi);
+        let float =
+            |key: &str, default: f64, lo: f64, hi: f64| validated_double_from_env(at(key), default, lo, hi);
+        // Report counts are `u32` here and `Int` on the near side; every bound below is inside
+        // both, so the conversion cannot be the thing that changes an answer.
+        let ticks = |key: &str, default: u32, lo: i64, hi: i64| {
+            u32::try_from(int(key, i64::from(default), lo, hi)).unwrap_or(default)
+        };
+
+        let min_fraction = float("SLOPDESK_ABR_MINFRAC", defaults.min_fraction, 0.01, 1.0);
+        Self {
+            warmup_ticks: ticks("SLOPDESK_ABR_WARMUP", defaults.warmup_ticks, 0, 100_000),
+            loss_threshold: float("SLOPDESK_ABR_LOSS", defaults.loss_threshold, 0.0, 1.0),
+            severe_loss_threshold: float("SLOPDESK_ABR_SEVERE", defaults.severe_loss_threshold, 0.0, 1.0),
+            // DEFAULT ON: any value but `0` — including unset — keeps it on.
+            loss_needs_rtt_corroboration: at("SLOPDESK_ABR_LOSS_NEEDS_RTT") != Some("0"),
+            catastrophic_loss_threshold: float(
+                "SLOPDESK_ABR_CATASTROPHIC",
+                defaults.catastrophic_loss_threshold,
+                0.0,
+                1.0,
+            ),
+            decrease_factor: float("SLOPDESK_ABR_DEC", defaults.decrease_factor, 0.05, 0.999),
+            severe_decrease_factor: float(
+                "SLOPDESK_ABR_SEVERE_DEC",
+                defaults.severe_decrease_factor,
+                0.05,
+                0.999,
+            ),
+            increase_divisor: int("SLOPDESK_ABR_INC_DIV", defaults.increase_divisor, 1, 100_000),
+            ramp_utilization_fraction: float(
+                "SLOPDESK_ABR_RAMP_UTIL",
+                defaults.ramp_utilization_fraction,
+                0.0,
+                1.0,
+            ),
+            decay_utilization_fraction: float(
+                "SLOPDESK_ABR_DECAY_UTIL",
+                defaults.decay_utilization_fraction,
+                0.0,
+                1.0,
+            ),
+            decay_headroom: float("SLOPDESK_ABR_DECAY_HEADROOM", defaults.decay_headroom, 1.0, 100.0),
+            decay_step_fraction: float("SLOPDESK_ABR_DECAY_STEP", defaults.decay_step_fraction, 0.0, 1.0),
+            hold_ticks: ticks("SLOPDESK_ABR_HOLD", defaults.hold_ticks, 0, 100_000),
+            rtt_inflate_factor: float("SLOPDESK_ABR_RTT", defaults.rtt_inflate_factor, 1.0, 100.0),
+            rtt_slack_millis: float("SLOPDESK_ABR_SLACK", defaults.rtt_slack_millis, 0.0, 10_000.0),
+            rtt_slack_fraction: float("SLOPDESK_ABR_SLACK_FRAC", defaults.rtt_slack_fraction, 0.0, 10.0),
+            rtt_streak_ticks: ticks("SLOPDESK_ABR_RTT_N", defaults.rtt_streak_ticks, 1, 100_000),
+            cut_hold_ticks: ticks("SLOPDESK_ABR_CUT_HOLD", defaults.cut_hold_ticks, 0, 100_000),
+            rtt_decrease_floor_factor: float(
+                "SLOPDESK_ABR_RTT_DEC_MIN",
+                defaults.rtt_decrease_floor_factor,
+                0.05,
+                0.999,
+            ),
+            rtt_decrease_cap_factor: float(
+                "SLOPDESK_ABR_RTT_DEC_MAX",
+                defaults.rtt_decrease_cap_factor,
+                0.05,
+                0.999,
+            ),
+            knee_caution_divisor: int("SLOPDESK_ABR_KNEE_DIV", defaults.knee_caution_divisor, 1, 100_000),
+            knee_ttl_ticks: ticks("SLOPDESK_ABR_KNEE_TTL", defaults.knee_ttl_ticks, 1, 1_000_000),
+            min_fraction,
+            seed_fraction: float(
+                "SLOPDESK_ABR_SEED_FRAC",
+                defaults.seed_fraction,
+                min_fraction,
+                1.0,
+            ),
+            material_fraction: float("SLOPDESK_ABR_MATERIAL", defaults.material_fraction, 0.0, 1.0),
+            material_floor_bps: int(
+                "SLOPDESK_ABR_MATERIAL_FLOOR",
+                defaults.material_floor_bps,
+                0,
+                1_000_000_000,
+            ),
+            gradient_decrease_factor: float(
+                "SLOPDESK_ABR_GRAD_DEC",
+                defaults.gradient_decrease_factor,
+                0.05,
+                0.999,
+            ),
+        }
+    }
+}
+
+/// Whether the delay-gradient early cut is armed, from `SLOPDESK_ABR_GRAD` — the LAST slot in
+/// [`ABR_KEYS`].
+///
+/// It is not a [`CongestionConfig`] field because it is not one: the gradient arming is a
+/// CONSTRUCTOR argument to [`LiveCongestionController::new`], separate from the config so a caller
+/// can arm one controller and not another. It is read here so the whole `SLOPDESK_ABR_*` family
+/// resolves from one table.
+///
+/// **DEFAULT OFF**, and the polarity is the opposite of
+/// [`CongestionConfig::from_env`]'s corroboration gate: only the literal `1` arms it. That is the
+/// project's default-off idiom, carried verbatim — the path stays dark until hardware measurement
+/// says otherwise, so anything but an explicit opt-in leaves it off.
+#[must_use]
+pub fn gradient_cut_enabled_from_env(raw: Option<&str>) -> bool {
+    raw == Some("1")
+}
+
 /// Why the controller moved, or held, this report.
 ///
 /// Observability only, with zero behavioural weight — but without it the gradient path's efficacy
@@ -838,18 +1011,154 @@ pub fn validated_double_from_env(raw: Option<&str>, default: f64, lo: f64, hi: f
 mod tests {
     #![expect(
         clippy::expect_used,
+        clippy::float_cmp,
         clippy::integer_division,
         clippy::cast_precision_loss,
-        reason = "a panic in a test is the failure report, not a runtime fault, and the arithmetic here is \
-                  on literal bitrates chosen to divide exactly"
+        reason = "a panic in a test is the failure report, not a runtime fault, the arithmetic here is on \
+                  literal bitrates chosen to divide exactly, and the gate assertions are on knob values the \
+                  parser adopts VERBATIM — an exact comparison is the property under test"
     )]
 
     use super::{
-        CongestionConfig, CutReason, LiveCongestionController, NetworkEstimate, is_material_change,
-        validated_double_from_env, validated_int_from_env,
+        ABR_KEYS, CongestionConfig, CutReason, LiveCongestionController, NetworkEstimate,
+        gradient_cut_enabled_from_env, is_material_change, validated_double_from_env, validated_int_from_env,
     };
 
+    /// An otherwise-unset environment with the named keys set.
+    ///
+    /// Positional by NAME rather than by index, so a test says which knob it is setting and a
+    /// re-ordering of [`ABR_KEYS`] cannot silently move a fixture onto a different one.
+    fn env<'a>(pairs: &[(&str, &'a str)]) -> [Option<&'a str>; ABR_KEYS.len()] {
+        for (key, _) in pairs {
+            assert!(ABR_KEYS.contains(key), "{key} is not a bitrate gate");
+        }
+        ABR_KEYS.map(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| *value)
+        })
+    }
+
     const CEILING: i64 = 32_000_000;
+
+    /// The whole table resolves to the tuned defaults when nothing is set, which is the reading
+    /// every other test in this module assumes.
+    #[test]
+    fn an_unset_environment_is_the_default_operating_point() {
+        assert_eq!(CongestionConfig::from_env(&env(&[])), CongestionConfig::default());
+    }
+
+    /// A value inside its band is taken verbatim — the knobs do work.
+    #[test]
+    fn a_value_inside_its_band_is_taken() {
+        let config = CongestionConfig::from_env(&env(&[
+            ("SLOPDESK_ABR_LOSS", "0.05"),
+            ("SLOPDESK_ABR_WARMUP", "42"),
+            ("SLOPDESK_ABR_DEC", "0.5"),
+        ]));
+        assert_eq!(config.loss_threshold, 0.05);
+        assert_eq!(config.warmup_ticks, 42);
+        assert_eq!(config.decrease_factor, 0.5);
+    }
+
+    /// Out of range REJECTS to the default rather than clamping to the bound. `SLOPDESK_ABR_LOSS=5`
+    /// is a typo or a unit confusion, not a request for five-hundred-percent loss, and answering
+    /// the ceiling would invent an operating point nobody chose.
+    #[test]
+    fn an_out_of_range_value_falls_back_rather_than_clamping() {
+        let config = CongestionConfig::from_env(&env(&[
+            ("SLOPDESK_ABR_LOSS", "5"),
+            ("SLOPDESK_ABR_DEC", "0.001"),
+            ("SLOPDESK_ABR_RTT", "0.5"),
+        ]));
+        let defaults = CongestionConfig::default();
+        assert_eq!(config.loss_threshold, defaults.loss_threshold, "above the band");
+        assert_eq!(config.decrease_factor, defaults.decrease_factor, "below the band");
+        assert_eq!(
+            config.rtt_inflate_factor, defaults.rtt_inflate_factor,
+            "under the 1.0 floor"
+        );
+    }
+
+    /// Unparseable text is the same rejection as out of range.
+    #[test]
+    fn unparseable_text_falls_back() {
+        let config = CongestionConfig::from_env(&env(&[
+            ("SLOPDESK_ABR_WARMUP", "soon"),
+            ("SLOPDESK_ABR_LOSS", ""),
+        ]));
+        let defaults = CongestionConfig::default();
+        assert_eq!(config.warmup_ticks, defaults.warmup_ticks);
+        assert_eq!(config.loss_threshold, defaults.loss_threshold);
+    }
+
+    /// The seed fraction's FLOOR is the resolved minimum fraction, not a literal — so it has to be
+    /// read after it. A seed under the floor the controller would clamp it to anyway is rejected
+    /// rather than accepted and silently lifted.
+    #[test]
+    fn the_seed_fraction_is_bounded_by_the_resolved_minimum_fraction() {
+        let raised = CongestionConfig::from_env(&env(&[
+            ("SLOPDESK_ABR_MINFRAC", "0.5"),
+            ("SLOPDESK_ABR_SEED_FRAC", "0.3"),
+        ]));
+        assert_eq!(raised.min_fraction, 0.5);
+        assert_eq!(
+            raised.seed_fraction,
+            CongestionConfig::default().seed_fraction,
+            "0.3 is under the RESOLVED floor of 0.5, so it is rejected"
+        );
+
+        // The same 0.3 is legal once the floor is left at its default.
+        let accepted = CongestionConfig::from_env(&env(&[("SLOPDESK_ABR_SEED_FRAC", "0.3")]));
+        assert_eq!(accepted.seed_fraction, 0.3);
+    }
+
+    /// The corroboration gate is DEFAULT ON: any value but `0` — including unset — keeps it on.
+    #[test]
+    fn the_corroboration_gate_is_default_on() {
+        assert!(CongestionConfig::from_env(&env(&[])).loss_needs_rtt_corroboration);
+        assert!(
+            CongestionConfig::from_env(&env(&[("SLOPDESK_ABR_LOSS_NEEDS_RTT", "1")]))
+                .loss_needs_rtt_corroboration
+        );
+        assert!(
+            CongestionConfig::from_env(&env(&[("SLOPDESK_ABR_LOSS_NEEDS_RTT", "yes")]))
+                .loss_needs_rtt_corroboration,
+            "anything but the literal 0 keeps a default-ON gate on"
+        );
+        assert!(
+            !CongestionConfig::from_env(&env(&[("SLOPDESK_ABR_LOSS_NEEDS_RTT", "0")]))
+                .loss_needs_rtt_corroboration
+        );
+    }
+
+    /// The gradient cut is DEFAULT OFF — the OPPOSITE polarity, and only the literal `1` arms it.
+    /// Reading it with the default-on idiom would arm a dark path on every host that sets nothing.
+    #[test]
+    fn the_gradient_cut_is_default_off() {
+        assert!(!gradient_cut_enabled_from_env(None));
+        assert!(!gradient_cut_enabled_from_env(Some("0")));
+        assert!(
+            !gradient_cut_enabled_from_env(Some("true")),
+            "a default-OFF gate needs the literal 1, not any truthy text"
+        );
+        assert!(gradient_cut_enabled_from_env(Some("1")));
+    }
+
+    /// Every key is distinct: a duplicate would make one slot permanently unreadable, which is the
+    /// failure mode a positional table has.
+    #[test]
+    fn the_key_table_has_no_duplicates() {
+        let mut seen = ABR_KEYS.to_vec();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), ABR_KEYS.len(), "a duplicated key shadows a slot");
+        assert!(
+            ABR_KEYS.iter().all(|key| key.starts_with("SLOPDESK_ABR")),
+            "every key in this table belongs to the ABR family"
+        );
+    }
 
     /// An estimate with a clean, short-baseline link.
     fn clean() -> NetworkEstimate {

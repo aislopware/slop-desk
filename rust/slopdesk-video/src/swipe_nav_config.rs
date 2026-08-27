@@ -47,6 +47,21 @@ impl Default for SwipeNavHostConfig {
     }
 }
 
+/// The environment keys, in the order [`SwipeNavHostConfig::from_env`] takes its arguments.
+///
+/// The rules were already here; only the NAMES were still spelled at the call site, which is one
+/// spelling too many — a key resolved as `SLOPDESK_SWIPE_NAV_SLOW` and read into the `history` slot
+/// is a silent inversion no test would catch. The tracing switch is deliberately absent: it belongs
+/// to the injector's table ([`crate::injector_gates::KEYS`]) because it is OR-ed with that family's
+/// own input trace, not to this operating point.
+pub const KEYS: [&str; 5] = [
+    "SLOPDESK_SWIPE_NAV",
+    "SLOPDESK_SWIPE_NAV_APPS",
+    "SLOPDESK_SWIPE_NAV_TRAVEL",
+    "SLOPDESK_SWIPE_NAV_SLOW",
+    "SLOPDESK_SWIPE_NAV_HISTORY",
+];
+
 /// A switch that is ON unless the environment explicitly says zero.
 fn bool_default_on(raw: Option<&str>) -> bool {
     raw != Some("0")
@@ -146,7 +161,22 @@ impl SwipeNavHostConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{NavHistoryFlags, SwipeNavHostConfig};
+    use super::{KEYS, NavHistoryFlags, SwipeNavHostConfig};
+
+    #[test]
+    fn the_key_order_matches_the_argument_order() {
+        assert_eq!(KEYS[0], "SLOPDESK_SWIPE_NAV", "the master switch is first");
+        assert_eq!(KEYS[1], "SLOPDESK_SWIPE_NAV_APPS");
+        assert_eq!(KEYS[2], "SLOPDESK_SWIPE_NAV_TRAVEL");
+        assert_eq!(KEYS[3], "SLOPDESK_SWIPE_NAV_SLOW");
+        assert_eq!(KEYS[4], "SLOPDESK_SWIPE_NAV_HISTORY");
+        let unique: std::collections::BTreeSet<&str> = KEYS.iter().copied().collect();
+        assert_eq!(unique.len(), KEYS.len(), "a key is spelled twice");
+        assert!(
+            !KEYS.contains(&"SLOPDESK_SWIPE_NAV_TRACE"),
+            "the trace switch belongs to the injector's table — it is OR-ed with the input trace"
+        );
+    }
 
     const BOTH: NavHistoryFlags = NavHistoryFlags {
         can_go_back: true,

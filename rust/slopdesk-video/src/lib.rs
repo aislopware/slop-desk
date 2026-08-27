@@ -208,6 +208,7 @@ pub mod gf256;
 pub mod hevc_parameter_sets;
 pub mod host_gates;
 pub mod idle_reap;
+pub mod injector_gates;
 pub mod input_event;
 pub mod input_routing;
 pub mod interleaver;

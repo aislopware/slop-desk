@@ -160,6 +160,13 @@ pub enum CaptureMode {
     DisplayIncluding,
 }
 
+/// The capture-mode request's environment key.
+///
+/// Named here for the reason [`crate::live_bitrate::BITS_PER_PIXEL_KEY`] gives: the rule below was
+/// already Rust's, but the spelling was still Swift's alone, and a key resolved under the wrong
+/// name reaches [`resolve_capture_mode`] as `None` — which is not an error, it is the default.
+pub const CAPTURE_MODE_KEY: &str = "SLOPDESK_DISPLAY_CAPTURE";
+
 /// Which filter to build.
 ///
 /// An explicit request wins; otherwise the display-anchored pair is taken when the daemon parked
@@ -276,14 +283,65 @@ impl CaptureSpec {
     }
 }
 
+/// The key that lowers the capture scale below the display's own.
+pub const CAPTURE_SCALE_KEY: &str = "SLOPDESK_CAPTURE_SCALE";
+
+/// The capture scale, given the environment text and the virtual display's own scale.
+///
+/// The knob can only LOWER it. A request below `1` is rejected outright rather than clamped — a
+/// sub-unity scale is a unit confusion, not a request to capture at a fraction of a point — and a
+/// request above the display's scale is taken as the display's, because there are no pixels above
+/// it to capture. So the answer is always in `1..=display_scale`, and the display's scale is both
+/// the default and the ceiling.
+///
+/// This is a LAUNCH gate rather than a per-session one, which is why it takes a non-environment
+/// argument the way [`resolve_capture_hz`] takes the encode rate: the composition IS the rule, and
+/// a function that read only the text would be answering half the question.
+#[must_use]
+pub fn capture_scale_from_env(raw: Option<&str>, display_scale: f64) -> f64 {
+    raw.and_then(|text| text.parse::<f64>().ok())
+        .filter(|parsed| *parsed >= 1.0)
+        .map_or(display_scale, |parsed| display_scale.min(parsed))
+}
+
+/// The key that pins the whole-screen path's frame rate.
+pub const DISPLAY_FPS_KEY: &str = "SLOPDESK_DISPLAY_FPS";
+
+/// The lowest whole-screen frame rate an operator may ask for, in Hz.
+pub const DISPLAY_FPS_FLOOR: i64 = 15;
+
+/// The highest whole-screen frame rate an operator may ask for, in Hz.
+pub const DISPLAY_FPS_CEILING: i64 = 120;
+
+/// The floor the DERIVED whole-screen rate takes, in Hz, however slowly a window was redrawing.
+pub const DISPLAY_FPS_DERIVED_FLOOR: i64 = 60;
+
+/// The display-capture frame rate, given the environment text and the window path's measured rate.
+///
+/// An explicit value is CLAMPED into 15…120 rather than rejected: a frame rate is an ordinal on a
+/// scale the hardware fixes, so its nearest legal value means what the operator reached for —
+/// [`crate::qp_control::QpConfig::from_env`] argues the same distinction for the quantiser. Note
+/// that a value that does not PARSE still falls through to the derived fallback; only an
+/// out-of-range number is clamped.
+///
+/// The fallback is a floor, not a copy: display capture is the whole-screen path, and its floor is
+/// sixty however slowly a single window happened to be redrawing.
+#[must_use]
+pub fn display_fps_from_env(raw: Option<&str>, window_fps: i64) -> i64 {
+    raw.and_then(|text| text.parse::<i64>().ok()).map_or_else(
+        || window_fps.max(DISPLAY_FPS_DERIVED_FLOOR),
+        |parsed| parsed.clamp(DISPLAY_FPS_FLOOR, DISPLAY_FPS_CEILING),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         CAPTURE_HZ_CEILING, CAPTURE_HZ_FLOOR, CaptureMode, CaptureSpec, HEARTBEAT_DEFAULT, IDR_TICK_DEFAULT,
         QUEUE_DEPTH_DEFAULT, QUIET_WINDOW_DEFAULT, QUIET_WINDOW_FLOOR, can_resize_in_place,
-        display_local_origin, mode_for_region, origin_moved, pinned_source_rect, resolve_capture_hz,
-        resolve_capture_mode, resolve_heartbeat, resolve_idr_poll_tick, resolve_queue_depth,
-        resolve_quiet_window,
+        capture_scale_from_env, display_fps_from_env, display_local_origin, mode_for_region, origin_moved,
+        pinned_source_rect, resolve_capture_hz, resolve_capture_mode, resolve_heartbeat,
+        resolve_idr_poll_tick, resolve_queue_depth, resolve_quiet_window,
     };
     use crate::geometry::VideoPoint;
 
@@ -463,6 +521,47 @@ mod tests {
                 ..base
             }
             .captures_audio()
+        );
+    }
+
+    #[test]
+    fn the_capture_scale_can_only_lower_the_display_scale() {
+        assert!((capture_scale_from_env(Some("1"), 2.0) - 1.0).abs() < f64::EPSILON);
+        assert!(
+            (capture_scale_from_env(Some("4"), 2.0) - 2.0).abs() < f64::EPSILON,
+            "there are no pixels above the display's own scale"
+        );
+    }
+
+    #[test]
+    fn a_sub_unity_capture_scale_is_rejected_not_clamped() {
+        assert!(
+            (capture_scale_from_env(Some("0.5"), 2.0) - 2.0).abs() < f64::EPSILON,
+            "below 1 is a unit confusion, so the display's scale stands"
+        );
+        assert!((capture_scale_from_env(Some("wide"), 2.0) - 2.0).abs() < f64::EPSILON);
+        assert!((capture_scale_from_env(None, 3.0) - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn the_display_rate_clamps_a_number_but_falls_through_a_word() {
+        assert_eq!(display_fps_from_env(Some("240"), 30), 120);
+        assert_eq!(display_fps_from_env(Some("1"), 30), 15);
+        assert_eq!(display_fps_from_env(Some("90"), 30), 90);
+        assert_eq!(
+            display_fps_from_env(Some("fast"), 30),
+            60,
+            "unparseable takes the derived fallback, not the clamp"
+        );
+    }
+
+    #[test]
+    fn the_derived_display_rate_floors_at_sixty() {
+        assert_eq!(display_fps_from_env(None, 24), 60);
+        assert_eq!(
+            display_fps_from_env(None, 144),
+            144,
+            "the derived rate is a FLOOR, so a fast window keeps its own"
         );
     }
 }

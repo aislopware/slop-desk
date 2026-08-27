@@ -1479,6 +1479,79 @@ replay is what surfaced it. Two more in the same three lines: rounding is ties-A
 the floor compares the ROUNDED integer, not the float. **A vector nothing reads does not stay
 true** — and a rule ported without its vectors does not stay right.
 
+The increment after it moved the OPERATING POINT, which is the half a file census does not see: the
+video cluster reads sixty-one `SLOPDESK_*` keys and only two were rules Rust owned. A port that
+lands the law without them lands it at whatever default the Rust struct happened to carry, silently,
+with every test green — nothing compares a resolved knob against the one the host was actually
+running. So the gate families move FIRST, each as a `KEYS` list plus a `from_env` beside the law it
+tunes, in the shape `host_gates` and `capture_gates` already had.
+
+The census closed on the HOST cluster — `SlopDeskVideoHost` plus the daemon's own `main` — and it is
+worth saying which cluster, because six keys the wider `Sources/SlopDeskVideo*` sweep finds are still
+unspelled in Rust and none of them reopens this increment. `SLOPDESK_FEC_M`, `_FEC_K` and
+`_ADAPTIVE_FEC_M` are `AdaptiveFECPolicy`'s and are read on BOTH ends — two of them are the
+`symmetricKeys` set, so they move with the protocol, not with the host. `SLOPDESK_PLAYOUT_MS` is the
+client's jitter buffer and `SLOPDESK_ESCALATION_FLOOR_MS` its recovery signalling. `SLOPDESK_SHARPEN`
+looks like a host key because it appears in `slopdesk-videohostd/main.swift`, but that is a COMMENT
+explaining why capturing at 1× is acceptable — the read is `MetalVideoRenderer`'s. All six are stage
+G's, and naming them here is what keeps "closed" from reading as "closed everywhere".
+
+Transcribing them turned up **four parse idioms, not the project's usual two**, and the differences
+are load-bearing rather than historical accident:
+
+| idiom | family | why |
+| --- | --- | --- |
+| REJECT to the default | bitrate, cadence | a rate or a report count has no "nearest legal value" |
+| CLAMP to the bound | quantiser, display rate | an ordinal on a scale the hardware fixes does |
+| clamp-or-IGNORE, per field | recovery IDR | an unparseable key costs its own field and no other |
+| three-way | `SLOPDESK_SCROLL_RESAMPLE_HZ` | UNSET is 250 Hz; an explicit value that will not parse is OFF — falling back to the default would resume resampling under a knob set to stop it |
+
+Two keys are not the field they name (`_REFILL_MS` is a spacing and the field is a rate, so the knob
+inverts; `_GRACE_MS` pins both ends of a band to one value), one key means the OPPOSITE of its
+sibling three lines away (`SLOPDESK_ABR_GRADIENT_CUT` is default-OFF `== "1"` where the corroboration
+gate beside it is default-ON `!= "0"`), and one accepts a case-insensitive `false` that appears
+nowhere else in the surface. Each carries a test, and the two that invert on a one-character edit were
+SEEDED to prove the test is the one that catches it: `_REFILL_MS` clamped AFTER the division instead of
+before, and the resampler's unparseable arm returning the default instead of OFF. Each seed failed
+exactly one test — `the_refill_key_is_a_spacing_and_the_field_is_a_rate` and
+`an_explicit_zero_disables_the_resampler_rather_than_restoring_the_default` — and nothing else in the
+1115. A test that fires on a defect nobody planted is a test that has not been shown to fire.
+
+Every table reads its values BY NAME, never by position, and that is not a style preference. The
+array is positional at the boundary because a flat list is the cheapest thing to hand across one —
+but a rule written as `values[23]` agrees with a `KEYS` list that has drifted, and a knob resolved
+under one key and read into another's slot is an inversion no compiler and no test sees. `sharp` and
+`coarse` are the two ends of one range; the corroboration gate and the gradient cut are opposite
+polarities three lines apart. The `at(key)` closure `host_gates` already used is the fix, and it is
+now the shape in all six tables. The test fixtures are keyed by name for the same reason: a
+positional fixture would move onto a different knob along with the drift and stay green.
+
+The daemon's three launch gates stayed separate from the session tables for a reason worth stating:
+each composes with something that is not an environment variable — an explicit `--virtual-display`
+flag, the display's own scale, the window's measured rate — and each LOSES to it in a different
+direction. That composition is the rule, so a function taking only the text answers half the
+question.
+
+One consequence for the stage that follows. `rust/slopdesk-hostd`'s `Overlay` is the Rust-native
+`EnvConfig.string`, and it deliberately skips the sidecar's `video` section because that is the video
+daemon's operating point. **The Rust video daemon therefore needs the sibling fold**, and that is
+where every `from_env` above gets called. Without it the port ships a complete set of resolvers with
+no caller: green tests, dead code, and the whole operating point quietly back at its defaults.
+
+And that fold must not be a SECOND `Overlay`. The two daemons differ in exactly one thing — which
+sections of `video-prefs.json` they are entitled to — and share everything that is actually hard:
+validate-then-drop at four steps, `rawOverrides` folding LAST, and the environment beating a persisted
+setting so an operator's `SLOPDESK_X=…` is never silently overridden. Duplicating that is the
+one-implementation violation this campaign exists to remove, and the drift it invites is a precedence
+inversion nobody would see. So `Overlay` moves DOWN into `slopdesk-video` — the crate `slopdesk-hostd`
+already depends on for `host_gates` — parameterised by the sections it reads, and `slopdesk-hostd`'s
+`env` shrinks to the `agent`-plus-`rawOverrides` choice. The `video` half is the eleven keys
+`EnvBridge.toEnv(_: VideoPreferences)` writes, and the write rule is the one worth carrying verbatim:
+a present field pins the exact `"1"`/`"0"` the READ site resolves, whatever that site's polarity is,
+which is what makes one writer safe for a default-ON and a default-OFF key alike. Note `SLOPDESK_VD`
+and `SLOPDESK_QP_DECOUPLE` are both default-ON reads whose sidecar writer emits `"1"` for true — so
+the writer never relies on absence to mean ON, and the round trip survives a polarity it cannot see.
+
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving
 those behind `CSlopDeskFFI` is a linked-library port under `CLAUDE.md`'s lifetime rule, not a socket

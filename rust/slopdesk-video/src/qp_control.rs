@@ -62,7 +62,64 @@ impl QpConfig {
             },
         }
     }
+
+    /// The operating point resolved from the texts of [`KEYS`], in that order.
+    ///
+    /// Every knob CLAMPS an out-of-band value to the nearest legal one, through
+    /// [`clamped_int_from_env`], rather than rejecting it back to the default. That is deliberate
+    /// and it is the opposite of the bitrate and cadence families
+    /// ([`crate::fps_governor::FpsGovernorConfig::from_env`]): a quantiser is an ordinal on the
+    /// encoder's fixed 1…51 scale, so `SLOPDESK_QP_SHARP=0` HAS a nearest legal value and it means
+    /// what the operator was reaching for. A rate or a report count does not.
+    ///
+    /// The result is still fed through [`Self::sanitized`] by [`QpController::new`], because a
+    /// per-knob clamp cannot see the pair rule — `sharp=40, coarse=10` is two legal values and one
+    /// inverted range.
+    #[must_use]
+    pub fn from_env(values: &[Option<&str>; KEYS.len()]) -> Self {
+        let defaults = Self::default();
+        // BY NAME, not by position — the shape `crate::host_gates` settled: a positional read
+        // agrees with a table that has drifted, and `sharp` and `coarse` are the two ends of one
+        // range, so reading either into the other's slot inverts it silently.
+        let at = |key: &str| -> Option<&str> {
+            KEYS.iter()
+                .position(|name| *name == key)
+                .and_then(|index| values.get(index).copied().flatten())
+        };
+        Self {
+            sharp: clamped_int_from_env(
+                at("SLOPDESK_QP_SHARP"),
+                defaults.sharp,
+                Self::MIN_QP,
+                Self::MAX_QP,
+            ),
+            coarse: clamped_int_from_env(
+                at("SLOPDESK_QP_COARSE"),
+                defaults.coarse,
+                Self::MIN_QP,
+                Self::MAX_QP,
+            ),
+            up_step: clamped_int_from_env(at("SLOPDESK_QP_UP_STEP"), defaults.up_step, 1, 50),
+            down_interval: clamped_int_from_env(
+                at("SLOPDESK_QP_DOWN_INTERVAL"),
+                defaults.down_interval,
+                1,
+                10_000,
+            ),
+        }
+    }
 }
+
+/// The environment keys, in the order [`QpConfig::from_env`] reads their values.
+///
+/// The caller resolves these names through the environment and then the settings overlay, and hands
+/// the texts back positionally — the split [`crate::host_gates::KEYS`] argues in full.
+pub const KEYS: [&str; 4] = [
+    "SLOPDESK_QP_SHARP",
+    "SLOPDESK_QP_COARSE",
+    "SLOPDESK_QP_UP_STEP",
+    "SLOPDESK_QP_DOWN_INTERVAL",
+];
 
 /// The controller: a sanitised config plus the current quantiser and the clean streak behind it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +212,71 @@ pub fn clamped_int_from_env(raw: Option<&str>, default: i32, lo: i32, hi: i32) -
 
 #[cfg(test)]
 mod tests {
-    use super::{QpConfig, QpController, clamped_int_from_env};
+    use super::{KEYS, QpConfig, QpController, clamped_int_from_env};
+
+    /// The values array, keyed by NAME rather than by index — a positional fixture would agree with
+    /// a [`KEYS`] table that had drifted.
+    fn env(pairs: &[(&str, &'static str)]) -> [Option<&'static str>; KEYS.len()] {
+        for (key, _) in pairs {
+            assert!(KEYS.contains(key), "{key} is not a quantiser gate");
+        }
+        KEYS.map(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| *value)
+        })
+    }
+
+    #[test]
+    fn the_unset_quantiser_operating_point_is_the_tuned_one() {
+        assert_eq!(QpConfig::from_env(&env(&[])), QpConfig::default());
+    }
+
+    #[test]
+    fn every_quantiser_knob_is_reachable_under_its_own_name() {
+        let config = QpConfig::from_env(&env(&[
+            ("SLOPDESK_QP_SHARP", "20"),
+            ("SLOPDESK_QP_COARSE", "44"),
+            ("SLOPDESK_QP_UP_STEP", "5"),
+            ("SLOPDESK_QP_DOWN_INTERVAL", "9"),
+        ]));
+        assert_eq!(config, QpConfig {
+            sharp: 20,
+            coarse: 44,
+            up_step: 5,
+            down_interval: 9,
+        });
+    }
+
+    #[test]
+    fn an_out_of_band_quantiser_knob_clamps_rather_than_falling_to_its_default() {
+        let config = QpConfig::from_env(&env(&[
+            ("SLOPDESK_QP_SHARP", "0"),
+            ("SLOPDESK_QP_COARSE", "900"),
+            ("SLOPDESK_QP_UP_STEP", "0"),
+        ]));
+        assert_eq!(config.sharp, QpConfig::MIN_QP, "a QP has a nearest legal value");
+        assert_eq!(config.coarse, QpConfig::MAX_QP);
+        assert_eq!(config.up_step, 1);
+        assert_eq!(
+            QpConfig::from_env(&env(&[("SLOPDESK_QP_SHARP", "sharp")])).sharp,
+            QpConfig::default().sharp,
+            "an unparseable value is still the default, not the floor"
+        );
+    }
+
+    #[test]
+    fn a_pair_the_per_knob_clamp_cannot_see_is_still_caught_by_sanitizing() {
+        let inverted = QpConfig::from_env(&env(&[("SLOPDESK_QP_SHARP", "40"), ("SLOPDESK_QP_COARSE", "10")]));
+        assert_eq!(inverted.sharp, 40, "each value is legal on its own");
+        assert_eq!(inverted.coarse, 10);
+        let sane = inverted.sanitized();
+        assert!(
+            sane.coarse >= sane.sharp,
+            "the pair rule lives in `sanitized`, which is why `from_env` does not have to know it"
+        );
+    }
 
     #[test]
     fn congestion_coarsens_fast_and_clean_sharpens_slowly() {

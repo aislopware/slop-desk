@@ -221,12 +221,47 @@ pub fn refresh_rates(fps: i32) -> Vec<f64> {
     rates
 }
 
+/// The key that asks the daemon for a virtual display, when the command line has not.
+pub const VIRTUAL_DISPLAY_KEY: &str = "SLOPDESK_VD";
+
+/// Whether the daemon opens a virtual display, given the environment text and whether the flag was
+/// passed explicitly.
+///
+/// Default-ON in its own right (`0` is the only off value), but the flag wins outright: `explicit`
+/// means the command line already answered, and an environment variable must not quietly reverse a
+/// decision the operator typed. Answers [`None`] in exactly that case — and equally when the
+/// variable is unset — so the caller keeps what it had rather than being handed a value to ignore.
+#[must_use]
+pub fn virtual_display_from_env(raw: Option<&str>, explicit: bool) -> Option<bool> {
+    if explicit {
+        return None;
+    }
+    raw.map(|text| text != "0")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         DEFAULT_TARGET_PPI, Geometry, MAX_ADVERTISED_HZ, chip_pixel_limit, origin_to_right, refresh_rates,
+        virtual_display_from_env,
     };
     use crate::geometry::VideoRect;
+
+    #[test]
+    fn an_explicit_flag_beats_the_virtual_display_variable() {
+        assert_eq!(
+            virtual_display_from_env(Some("0"), true),
+            None,
+            "the command line already answered"
+        );
+        assert_eq!(virtual_display_from_env(Some("0"), false), Some(false));
+        assert_eq!(virtual_display_from_env(Some("1"), false), Some(true));
+        assert_eq!(
+            virtual_display_from_env(None, false),
+            None,
+            "unset is not OFF — the caller keeps its own default"
+        );
+    }
 
     #[test]
     fn a_retina_geometry_backs_its_point_grid_at_scale() {
