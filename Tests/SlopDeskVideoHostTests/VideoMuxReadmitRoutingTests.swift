@@ -194,6 +194,53 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
         XCTAssertNil(h.channelMediaConn[81], "a stray displayList leaves no flow entry")
     }
 
+    // MARK: - The keepalive peek, which the reaper reads and nothing else re-decides
+
+    /// The peek the idle reaper's STICKY `sawKeepalive` is fed from, exercised as the LIVE predicate
+    /// for the reason the two peeks above are: a hand-mirrored copy passes while the shipped one
+    /// rejects, and here the mirror would be a byte offset rather than a grammar.
+    ///
+    /// The collision case is the whole point. This used to be `rest[rest.startIndex + 1] == 6` one
+    /// token away from a `channel == .control` test, and `VideoChannel.audio.rawValue` is ALSO 6 —
+    /// so a transposition read a channel tag as a message type, and the only symptom was a lane that
+    /// could never be reaped.
+    func testKeepalivePeekReadsTheGrammarAndNotAByteOffset() {
+        let keepalive = VideoControlMessage.keepalive.encode()
+        XCTAssertTrue(
+            NWVideoMuxDatagramTransport.payloadIsKeepalive(channel: .control, payload: keepalive),
+            "a real keepalive on the control channel is what the reaper's sticky bit is fed from",
+        )
+        XCTAssertFalse(
+            NWVideoMuxDatagramTransport.payloadIsKeepalive(
+                channel: .control,
+                payload: VideoControlMessage.bye.encode(),
+            ),
+            "another control message is not a keepalive",
+        )
+        XCTAssertFalse(
+            NWVideoMuxDatagramTransport.payloadIsKeepalive(channel: .audio, payload: keepalive),
+            "the channel is read as a channel: audio's raw value is 6 too, and the peek must not confuse them",
+        )
+        XCTAssertFalse(
+            NWVideoMuxDatagramTransport.payloadIsKeepalive(channel: .control, payload: Data()),
+            "a truncated/adversarial empty payload is bounds-safe and is not a keepalive",
+        )
+    }
+
+    /// Behaviour-preserving, and pinned as such: the control grammar's keepalive arm consumes its
+    /// type byte without refusing a trailing remainder, exactly as the byte test it replaced did not
+    /// look past the byte. Whether a zero-body control message SHOULD refuse a remainder is the
+    /// grammar's decision — changing it there must move this and the bye rule together, which is why
+    /// the tolerance is asserted rather than assumed.
+    func testATrailingRemainderStillReadsAsAKeepalive() {
+        var withJunk = VideoControlMessage.keepalive.encode()
+        withJunk.append(0xFF)
+        XCTAssertTrue(
+            NWVideoMuxDatagramTransport.payloadIsKeepalive(channel: .control, payload: withJunk),
+            "the port is behaviour-preserving on a trailing remainder, the way the byte test was",
+        )
+    }
+
     func testEmptyControlPayloadIsBoundsSafeAndDrops() {
         // Bounds-safety regression lock (review): a 0-byte control payload (truncated / adversarial)
         // must NOT crash the hello-peek — VideoControlMessage.decode under `try?` throws on underflow
