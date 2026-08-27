@@ -14,7 +14,7 @@
 //! it went, and a gate that could not tell a declaration from a sentence about one would teach
 //! people to delete the explanation.
 
-use crate::claim::{Claim, Corpus, Extract, RUST, SWIFT, View, check_all};
+use crate::claim::{ByteMap, Claim, Corpus, Extract, RUST, SWIFT, View, check_all};
 use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::text;
@@ -33,10 +33,17 @@ const DROP_PROTOCOL: &str = "rust/slopdesk-dropd/src/protocol.rs";
 /// dropd's listener, which prints the announce line.
 const DROP_SERVER: &str = "rust/slopdesk-dropd/src/server.rs";
 
-/// The Android panel's target — three connection types, each writing its own ops.
+/// The Android panel's target — three connection types, each holding one socket.
 const ANDROID_DIR: &str = "Sources/SlopDeskDevicePanels/Android";
+/// The face over the bridge's doors: the socket, and the ack/stream split, and nothing else.
+const ANDROID_FACE: &str = "Sources/SlopDeskDevicePanels/Android/AndroidBridgeSocket.swift";
 /// The panel's device row, which decodes the daemon's field names.
 const ANDROID_DEVICE: &str = "Sources/SlopDeskDevicePanels/Android/AndroidDevice.swift";
+/// The PANEL's half of the bridge grammar since `a9fd1833` — the op vocabulary, the request line
+/// and the reply's refusal, all of which used to be Swift.
+const ANDROID_BRIDGE: &str = "rust/slopdesk-devicepanel/src/android_bridge.rs";
+/// The hand-written header the face's op names come from.
+const ANDROID_HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
 /// androidd's request switch and announce line.
 const ANDROID_SERVER: &str = "rust/slopdesk-androidd/src/server.rs";
 /// androidd's reply encoder, where the field names are written.
@@ -227,47 +234,191 @@ pub fn the_drop_type_bytes_are_one_alphabet(tree: &Tree) -> Report {
 /// field the panel silently renders as absent. Both read as "the Android tab is broken" with
 /// nothing in either language's tests to say why.
 ///
-/// The senders are a DIRECTORY. Three connection types each write their own ops, and pinning the
-/// subject to whichever file holds most of them would make an ordinary split of a connection look
-/// like a new verb appearing. The floor is what notices one of the three going stale — a union
-/// stays non-empty while a sender falls silent.
+/// The panel's half of that grammar is RUST now, and the rule follows it. `a9fd1833` moved the op
+/// vocabulary, the request line and the reply's refusal into `slopdesk_devicepanel::android_bridge`
+/// and deleted the Swift originals in the same change. What the Swift files kept is the SOCKET:
+/// `NWConnection`, and the ack/stream split that has to happen inside a receive handler because the
+/// reply line and the first bytes of the stream arrive in the same chunk. So the old comparison —
+/// Swift `"op": "…"` literals against androidd's arms — did not go stale, it lost one side; and it
+/// went on PASSING, because a corpus that reads nothing is a subset of everything.
 ///
-/// `AndroidDevice` is deliberately absent from the ban below: the CLIENT's row type is the far end
-/// of the protocol, which is exactly what the one-implementation rule allows.
+/// Three links now carry an op from a Swift call site to an `adb` invocation, and the compiler
+/// checks exactly one of them:
 ///
-/// BREAK-TEST: renamed the panel's `"op": "logcat"` to `"tail"` ⇒ FAIL "no arm serving it".
-/// Separately renamed `"density"` in the daemon's encoder ⇒ FAIL "never encodes it". Separately
-/// restored `final class AndroidToolchain` under Sources/ ⇒ FAIL "a Swift Android bridge is back".
-/// All three restored from /tmp; PASS.
+/// * the face's `SLOPDESK_ANDROID_BRIDGE_OP_*` names against the header. A build error, so the
+///   subset direction proves nothing — it is read here for its FLOOR. Seven names is what says the
+///   face is still a face, and a face that hand-rolled a request line again would read nought,
+///   which is the exact state this rule was found in.
+/// * the header's bytes against `BridgeOp`'s discriminants. The header is HAND-WRITTEN, so a
+///   reordered enum has the near side sending the byte for `screenshot` and the door building a
+///   `console` — with every test on both sides green, because each side is self-consistent.
+/// * `BridgeOp::verb` against androidd's `match op`. Two crates, one line-JSON wire, and nothing
+///   between them that fails to compile.
+///
+/// The verbs are PINNED as a set as well, which is the staleness guard a one-file subject can no
+/// longer get from a directory's count: a `verb` arm that stopped matching would compare an empty
+/// set against seven live arms and report agreement.
+///
+/// The `"op": "` literal that used to be this rule's SUBJECT is now its ban. It is the precise
+/// shape of the regression — one connection type that stops asking the door and writes its own
+/// line — and it costs nothing to forbid, because no Swift under the panel builds a bridge request
+/// any more.
+///
+/// `AndroidBridgeRequest` LEFT the name ban in the same reading, and that is the one loosening
+/// here. It is no longer a grammar: it is seven one-line calls to `slopdesk_android_bridge_request`
+/// with the op byte as their only argument, which is the same far-end shape that has always kept
+/// `AndroidDevice` — the CLIENT's row type — out of the ban. What replaces it is stricter than a
+/// name: the door calls are required, the JSON encoder is forbidden in the face, and the op literal
+/// is forbidden across the directory. Put the grammar back and all three fire.
+///
+/// `JSONSerialization` is banned in the FACE and not under the directory, because
+/// `AndroidDevice.decodeList` legitimately parses the reply payload — the socket hands it the raw
+/// ack bytes precisely so that one decoder reads them instead of a second copy of its field rules.
+///
+/// BREAK-TEST: nine fixture cases, one per drift.
+/// `an_op_no_arm_serves_is_red` renames `verb`'s `"logcat"` to `"tail"` ⇒ FAIL "no arm serving
+/// it". `a_verb_arm_that_stopped_matching_is_red` drops the `Self::Open` arm ⇒ FAIL on the pinned
+/// set rather than passing on a short one. `a_face_that_stopped_naming_the_ops_is_red` empties
+/// the face ⇒ FAIL "floor 7", which is the state the live tree was in.
+/// `a_header_byte_that_disagrees_with_the_enum_is_red` renumbers `_SCREENSHOT` in the header ⇒ FAIL
+/// "the two languages disagree about which byte a case crosses as".
+/// `a_hand_written_op_line_in_the_panel_is_red` writes `"op": "tail"` back into a connection ⇒
+/// FAIL "builds a bridge request by hand". `a_face_that_stopped_calling_a_door_is_red` drops
+/// `slopdesk_android_log_lines_push` ⇒ FAIL "stopped calling".
+/// `a_json_encoder_back_in_the_face_is_red` restores `JSONSerialization` ⇒ FAIL "respells the
+/// bridge grammar". `a_device_field_the_daemon_stopped_encoding_is_red` renames `model` in the
+/// daemon's encoder ⇒ FAIL "never encodes it". And `a_swift_bridge_restored_under_sources_is_red`
+/// restores `final class AndroidToolchain` ⇒ FAIL "a Swift Android bridge is back", with the face's
+/// own `AndroidBridgeRequest` clean beside it.
 #[must_use]
 pub fn the_android_bridge_agrees_both_ways(tree: &Tree) -> Report {
-    check_all(tree, &[
+    let mut claims = the_op_crosses_its_three_links();
+    claims.push(Claim::Subset {
+        label: "bridge device field",
+        subject: Extract::code(ANDROID_DEVICE, r#"^ *[a-zA-Z]*: entry\["([a-zA-Z]+)"\]"#),
+        universe: Extract::code(ANDROID_PROTOCOL, r#""([a-zA-Z]+)""#),
+        message: "the panel decodes device field '{orphans}' but rust/slopdesk-androidd/src/protocol.rs \
+                  never encodes it — the panel renders what it finds, which is what makes a quietly emptied \
+                  column silent (docs/48)",
+    });
+    claims.extend(the_panel_holds_no_bridge_grammar());
+    check_all(tree, &claims)
+}
+
+/// The verbs the panel crate writes into `op`, read from the one `match` that spells them.
+const VERBS: Extract = Extract::code(ANDROID_BRIDGE, r#"^ *Self::[A-Za-z]+ => "([a-z]+)",$"#);
+
+/// The op's three hops: the face's names against the header, the header's bytes against the enum's
+/// discriminants, and the enum's verbs against androidd's arms — with the verbs pinned as a set so
+/// a `match` that stopped matching cannot read as agreement.
+fn the_op_crosses_its_three_links() -> Vec<Claim> {
+    vec![
         Claim::SubsetUnder {
             label: "bridge ops",
             subject: Corpus {
                 root: ANDROID_DIR,
                 extensions: SWIFT,
-                pattern: r#""op": "([a-z]+)""#,
+                pattern: r"SLOPDESK_ANDROID_BRIDGE_OP_([A-Z]+)\b",
                 view: View::Code,
             },
+            universe: Extract::code(ANDROID_HEADER, r"^#define SLOPDESK_ANDROID_BRIDGE_OP_([A-Z]+) "),
+            floor: 7,
+            message: "the panel names op '{orphans}', which slopdesk_ffi.h does not define — the header is \
+                      hand-written and it is the only thing that makes a door reachable from Swift \
+                      (docs/48, docs/55)",
+        },
+        Claim::SameByteMap {
+            label: "BridgeOp",
+            swift: ByteMap {
+                path: ANDROID_HEADER,
+                marker: r"#define SLOPDESK_ANDROID_BRIDGE_OP_LIST ",
+                end: r"#define SLOPDESK_ANDROID_BRIDGE_OP_OPEN ",
+                pattern: r"#define SLOPDESK_ANDROID_BRIDGE_OP_([A-Z]+) ([0-9]+)u",
+                view: View::Code,
+            },
+            rust: ByteMap {
+                path: ANDROID_BRIDGE,
+                marker: r"pub enum BridgeOp \{",
+                end: r"^\}$",
+                pattern: r"^ *([A-Z][a-zA-Z]*) = ([0-9]+),",
+                view: View::Code,
+            },
+        },
+        Claim::PinnedSet {
+            label: "bridge op verbs",
+            from: VERBS,
+            expect: &[
+                "list",
+                "boot",
+                "shutdown",
+                "console",
+                "screenshot",
+                "logcat",
+                "open",
+            ],
+        },
+        Claim::Subset {
+            label: "bridge ops",
+            subject: VERBS,
             universe: Extract::code(ANDROID_SERVER, r#"^ *"([a-z]+)" =>"#),
-            floor: 5,
             message: "the panel sends op '{orphans}' but rust/slopdesk-androidd/src/server.rs has no arm \
                       serving it — the daemon answers `bad request` and the tab just reads as broken \
                       (docs/48)",
         },
-        Claim::Subset {
-            label: "bridge device field",
-            subject: Extract::code(ANDROID_DEVICE, r#"^ *[a-zA-Z]*: entry\["([a-zA-Z]+)"\]"#),
-            universe: Extract::code(ANDROID_PROTOCOL, r#""([a-zA-Z]+)""#),
-            message: "the panel decodes device field '{orphans}' but rust/slopdesk-androidd/src/protocol.rs \
-                      never encodes it — the panel renders what it finds, which is what makes a quietly \
-                      emptied column silent (docs/48)",
+    ]
+}
+
+/// What is left in Swift is the socket. These four say so from both ends: the doors are called, the
+/// JSON encoder is gone from the face, no file under the panel writes a request line by hand, and
+/// no host-side bridge has grown back anywhere in `Sources/`.
+fn the_panel_holds_no_bridge_grammar() -> Vec<Claim> {
+    /// Every door the panel reaches the bridge through. All eight have a Swift caller under
+    /// [`ANDROID_DIR`] — the request/reply pair in the face, the console and screenshot readers in
+    /// the client, and the log splitter's four in the log connection — so this list has no
+    /// Rust-side-only entry to hold apart the way the inspector's does.
+    const DOORS: &[&str] = &[
+        "slopdesk_android_bridge_request",
+        "slopdesk_android_bridge_reply_failure",
+        "slopdesk_android_bridge_console_output",
+        "slopdesk_android_bridge_screenshot_bytes",
+        "slopdesk_android_log_lines_new",
+        "slopdesk_android_log_lines_free",
+        "slopdesk_android_log_lines_push",
+        "slopdesk_android_log_lines_answer",
+    ];
+    vec![
+        Claim::MentionsUnder {
+            root: ANDROID_DIR,
+            names: DOORS,
+            message: "Sources/SlopDeskDevicePanels/Android stopped calling {entry} — the request grammar, \
+                      the refusal and the logcat splitter are the panel crate's (docs/48, docs/55)",
+        },
+        Claim::Lacks {
+            path: ANDROID_FACE,
+            pattern: r"JSONSerialization|isValidJSONObject",
+            view: View::Code,
+            message: "AndroidBridgeSocket.swift respells the bridge grammar — the line is \
+                      slopdesk_android_bridge_request's and the refusal is \
+                      slopdesk_android_bridge_reply_failure's, because an encoder that raises rather than \
+                      throws took the app down on a typo the last time this was Swift (docs/48)",
+        },
+        Claim::NoneUnder {
+            roots: &[ANDROID_DIR],
+            extensions: SWIFT,
+            pattern: r#""op": *""#,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift file under the Android panel builds a bridge request by hand — the op \
+                      vocabulary is slopdesk_devicepanel::android_bridge's, and a connection that writes \
+                      its own line is the skew this rule used to be able to see and now forbids outright \
+                      (docs/48): {files}",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
             extensions: SWIFT,
-            pattern: r"(enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b",
+            pattern: r"(enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener)\b",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -275,7 +426,7 @@ pub fn the_android_bridge_agrees_both_ways(tree: &Tree) -> Report {
             message: "a Swift Android bridge is back in Sources/ — androidd owns adb and the pump \
                       (docs/48): {files}",
         },
-    ])
+    ]
 }
 
 /// The inspector's frame has one spelling, and Swift reaches it
@@ -627,13 +778,19 @@ mod tests {
                 super::DROP_PROTOCOL_FACE,
                 "enum Wire { static let kind = slopdesk_drop_constant(0) }\n",
             ),
+            (super::ANDROID_HEADER, ANDROID_HEADER_BODY),
+            (super::ANDROID_BRIDGE, ANDROID_BRIDGE_BODY),
+            (super::ANDROID_FACE, ANDROID_FACE_BODY),
             (
-                "Sources/SlopDeskDevicePanels/Android/AndroidStreamConnection.swift",
-                "let a = [\"op\": \"boot\", \"serial\": s]\nlet b = [\"op\": \"console\"]\n",
+                "Sources/SlopDeskDevicePanels/Android/AndroidBridgeClient.swift",
+                "let a = slopdesk_android_bridge_console_output(b, n)\nlet c = \
+                 slopdesk_android_bridge_screenshot_bytes(b, n)\n",
             ),
             (
                 "Sources/SlopDeskDevicePanels/Android/AndroidLogConnection.swift",
-                "let c = [\"op\": \"logcat\"]\nlet d = [\"op\": \"list\"]\nlet e = [\"op\": \"open\"]\n",
+                "let h = slopdesk_android_log_lines_new()\nslopdesk_android_log_lines_free(h)\nlet n = \
+                 slopdesk_android_log_lines_push(h, b, n)\nlet m = slopdesk_android_log_lines_answer(h, o, \
+                 c)\n",
             ),
             (
                 super::ANDROID_DEVICE,
@@ -691,6 +848,33 @@ mod tests {
 
     const ANDROID_PROTOCOL_BODY: &str =
         "pub fn encode(d: &Device) -> String {\n    json!({\"serial\": d.serial, \"model\": d.model})\n}\n";
+
+    /// The hand-written header's op block: seven names, seven bytes.
+    const ANDROID_HEADER_BODY: &str =
+        "#define SLOPDESK_ANDROID_BRIDGE_OP_LIST 0u\n#define SLOPDESK_ANDROID_BRIDGE_OP_BOOT 1u\n#define \
+         SLOPDESK_ANDROID_BRIDGE_OP_SHUTDOWN 2u\n#define SLOPDESK_ANDROID_BRIDGE_OP_CONSOLE 3u\n#define \
+         SLOPDESK_ANDROID_BRIDGE_OP_SCREENSHOT 4u\n#define SLOPDESK_ANDROID_BRIDGE_OP_LOGCAT 5u\n#define \
+         SLOPDESK_ANDROID_BRIDGE_OP_OPEN 6u\n";
+
+    /// The panel crate's half: the enum the header numbers, and the verbs the daemon matches.
+    const ANDROID_BRIDGE_BODY: &str =
+        "#[repr(u8)]\npub enum BridgeOp {\n    List = 0,\n    Boot = 1,\n    Shutdown = 2,\n    Console = \
+         3,\n    Screenshot = 4,\n    Logcat = 5,\n    Open = 6,\n}\nimpl BridgeOp {\n    pub const fn \
+         verb(self) -> &'static str {\n        match self {\n            Self::List => \"list\",\n           \
+         Self::Boot => \"boot\",\n            Self::Shutdown => \"shutdown\",\n            Self::Console => \
+         \"console\",\n            Self::Screenshot => \"screenshot\",\n            Self::Logcat => \
+         \"logcat\",\n            Self::Open => \"open\",\n        }\n    }\n}\n";
+
+    /// The face: the seven op names, and the two doors it calls.
+    const ANDROID_FACE_BODY: &str =
+        "let a = slopdesk_android_bridge_request(SLOPDESK_ANDROID_BRIDGE_OP_LIST)\nlet b = \
+         slopdesk_android_bridge_request(SLOPDESK_ANDROID_BRIDGE_OP_BOOT)\nlet c = \
+         slopdesk_android_bridge_request(SLOPDESK_ANDROID_BRIDGE_OP_SHUTDOWN)\nlet d = \
+         slopdesk_android_bridge_request(SLOPDESK_ANDROID_BRIDGE_OP_CONSOLE)\nlet e = \
+         slopdesk_android_bridge_request(SLOPDESK_ANDROID_BRIDGE_OP_SCREENSHOT)\nlet f = \
+         slopdesk_android_bridge_request(SLOPDESK_ANDROID_BRIDGE_OP_LOGCAT)\nlet g = \
+         slopdesk_android_bridge_request(SLOPDESK_ANDROID_BRIDGE_OP_OPEN)\nlet h = \
+         slopdesk_android_bridge_reply_failure(line, n)\n";
 
     const INSPECTOR_SHIM: &str =
         "pub extern \"C\" fn slopdesk_inspector_encode_subscribe() {}\npub extern \"C\" fn \
@@ -820,20 +1004,152 @@ mod tests {
         );
     }
 
-    /// The senders are three files, so the op has to be found wherever it is written.
+    /// The sender is the panel CRATE now: a verb it writes that no arm serves.
     #[test]
-    fn an_op_no_arm_serves_is_red_from_any_sender() {
+    fn an_op_no_arm_serves_is_red() {
         let fixture = Fixture::new("android-ops");
         wires(&fixture);
         assert!(super::the_android_bridge_agrees_both_ways(&fixture.tree()).is_clean());
 
         fixture.write(
-            "Sources/SlopDeskDevicePanels/Android/AndroidLogConnection.swift",
-            "let c = [\"op\": \"tail\"]\nlet d = [\"op\": \"list\"]\nlet e = [\"op\": \"open\"]\n",
+            super::ANDROID_BRIDGE,
+            &ANDROID_BRIDGE_BODY.replace("Self::Logcat => \"logcat\"", "Self::Logcat => \"tail\""),
         );
         let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("op 'tail'")),
+            "{report:?}"
+        );
+    }
+
+    /// The staleness guard the one-file subject needs: an arm that stopped matching reads as a
+    /// SHORTER set, which a subset alone would accept.
+    #[test]
+    fn a_verb_arm_that_stopped_matching_is_red() {
+        let fixture = Fixture::new("android-verbs");
+        wires(&fixture);
+        fixture.write(
+            super::ANDROID_BRIDGE,
+            &ANDROID_BRIDGE_BODY.replace("            Self::Open => \"open\",\n", ""),
+        );
+        let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("bridge op verbs")),
+            "{report:?}"
+        );
+    }
+
+    /// The state the live tree was found in: the face stops naming the ops and the corpus reads
+    /// nought, which a subset reports as agreement.
+    #[test]
+    fn a_face_that_stopped_naming_the_ops_is_red() {
+        let fixture = Fixture::new("android-face-ops");
+        wires(&fixture);
+        fixture.write(
+            super::ANDROID_FACE,
+            "let a = slopdesk_android_bridge_request(op)\nlet h = \
+             slopdesk_android_bridge_reply_failure(line, n)\n",
+        );
+        let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("floor 7")),
+            "{report:?}"
+        );
+    }
+
+    /// The header is hand-written, so its bytes are a second spelling of the enum's discriminants.
+    #[test]
+    fn a_header_byte_that_disagrees_with_the_enum_is_red() {
+        let fixture = Fixture::new("android-bytes");
+        wires(&fixture);
+        fixture.write(
+            super::ANDROID_HEADER,
+            &ANDROID_HEADER_BODY.replace("SCREENSHOT 4u", "SCREENSHOT 7u"),
+        );
+        let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("BridgeOp")),
+            "{report:?}"
+        );
+    }
+
+    /// The old comparison's subject is the new ban: a connection that writes its own request line.
+    #[test]
+    fn a_hand_written_op_line_in_the_panel_is_red() {
+        let fixture = Fixture::new("android-op-literal");
+        wires(&fixture);
+        fixture.write(
+            "Sources/SlopDeskDevicePanels/Android/AndroidStreamConnection.swift",
+            "let a = [\"op\": \"tail\", \"serial\": s]\n",
+        );
+        let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("builds a bridge request by hand")),
+            "{report:?}"
+        );
+    }
+
+    /// The splitter's four doors live in the log connection, not the face — the root is the target.
+    #[test]
+    fn a_face_that_stopped_calling_a_door_is_red() {
+        let fixture = Fixture::new("android-doors");
+        wires(&fixture);
+        fixture.write(
+            "Sources/SlopDeskDevicePanels/Android/AndroidLogConnection.swift",
+            "let h = slopdesk_android_log_lines_new()\nslopdesk_android_log_lines_free(h)\nlet m = \
+             slopdesk_android_log_lines_answer(h, o, c)\n",
+        );
+        let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk_android_log_lines_push")),
+            "{report:?}"
+        );
+    }
+
+    /// The encoder that raised rather than threw, growing back in the one file that must not hold
+    /// it — while `AndroidDevice`, the far end, goes on parsing the payload it is handed.
+    #[test]
+    fn a_json_encoder_back_in_the_face_is_red() {
+        let fixture = Fixture::new("android-json");
+        wires(&fixture);
+        fixture.append(
+            super::ANDROID_FACE,
+            "let line = try? JSONSerialization.data(withJSONObject: request)\n",
+        );
+        let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("respells the bridge grammar")),
+            "{report:?}"
+        );
+    }
+
+    /// The name ban still fires — and `AndroidBridgeRequest`, which left it, is clean beside it.
+    #[test]
+    fn a_swift_bridge_restored_under_sources_is_red() {
+        let fixture = Fixture::new("android-ban");
+        wires(&fixture);
+        fixture.append(super::ANDROID_FACE, "package enum AndroidBridgeRequest {}\n");
+        assert!(super::the_android_bridge_agrees_both_ways(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskDevicePanels/Android/AndroidToolchain.swift",
+            "final class AndroidToolchain {}\n",
+        );
+        let report = super::the_android_bridge_agrees_both_ways(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("a Swift Android bridge is back")),
             "{report:?}"
         );
     }
