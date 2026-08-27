@@ -45,7 +45,7 @@ use slopdesk_muxsession::fanout::SubscriberId;
 use slopdesk_muxsession::lifecycle::RebindVerdict;
 use slopdesk_muxsession::resize_fold::{Attachment, Grid, PRIMARY_SUBSCRIBER};
 use slopdesk_superwire::protocol::BlocksReply;
-use slopdesk_wire::message::WireMessage;
+use slopdesk_wire::message::{ProjectGitStatus, WireMessage};
 use slopdesk_wire::mux::flow::MuxFlowControl;
 use slopdesk_wire::replay::ReplayBuffer;
 
@@ -1224,6 +1224,21 @@ impl PaneSession {
     /// Tells everyone holding this pane one control fact.
     pub fn broadcast(&self, messages: &[WireMessage]) {
         self.shared.broadcast_control(messages);
+    }
+
+    /// One repo's git summary, delivered iff this pane is sectioned under that repo.
+    ///
+    /// The host's type-35 fan-in calls this on every live pane and lets the latch decide. The
+    /// compare and the send are one statement here for the reason [`Self::is_under_project`] gives:
+    /// a caller that fetched the key to compare it itself would be comparing a value that may have
+    /// moved. A detached pane is not special-cased — its members' senders are the wiped control-out
+    /// the reconnect pull catches up, so the push costs nothing and the rule stays one rule.
+    pub fn push_project_git_status(&self, status: &ProjectGitStatus) {
+        if !self.is_under_project(&status.repo_root) {
+            return;
+        }
+        self.shared
+            .broadcast_control(&[WireMessage::ProjectGitStatus(status.clone())]);
     }
 
     /// Re-sends the pane's block backfill to every member — the reattach half of the block feed.

@@ -14,6 +14,72 @@ pub enum NotificationKind {
     Other,
 }
 
+/// The wire byte for a notification class, as the class it names.
+///
+/// Total, and `Other` is the fall-through: a class this build has no case for is informational
+/// rather than blocking, which is the reading that cannot invent a block nobody is waiting on.
+#[must_use]
+pub const fn notification_of(byte: u8) -> NotificationKind {
+    match byte {
+        0 => NotificationKind::Permission,
+        1 => NotificationKind::WaitingForInput,
+        _ => NotificationKind::Other,
+    }
+}
+
+/// The flat hook discriminants, as the event they name.
+///
+/// Total over `hook`, defaulting to the session-start case, which changes no status a later signal
+/// cannot correct. ONE spelling on purpose: the same mapping serves the FFI detector's hook door
+/// and hostd's own hook listener, and two copies of it would be two answers to "is discriminant 7
+/// an interrupt".
+///
+/// It lives HERE rather than beside either caller because this crate owns the vocabulary it maps
+/// INTO, and is the only crate both callers already depend on. It takes the flat fields rather than
+/// a `slopdesk_hookevent::HookEvent` deliberately — that would make the reader a dependency of the
+/// state machine, and the machine is meant to be drivable by anything that can name an edge.
+#[must_use]
+pub fn hook_event_of(
+    hook: u8,
+    notification: u8,
+    session_id: Option<String>,
+    tool: Option<String>,
+    tool_use_id: Option<String>,
+    label: Option<String>,
+) -> ClaudeHookEvent {
+    match hook {
+        1 => ClaudeHookEvent::UserPromptSubmit { session_id },
+        2 => {
+            ClaudeHookEvent::PreToolUse {
+                session_id,
+                tool,
+                tool_use_id,
+            }
+        },
+        3 => {
+            ClaudeHookEvent::PostToolUse {
+                session_id,
+                tool,
+                tool_use_id,
+            }
+        },
+        4 => {
+            ClaudeHookEvent::Notification {
+                kind: notification_of(notification),
+                label,
+                tool_use_id,
+                session_id,
+            }
+        },
+        5 => ClaudeHookEvent::Stop { session_id, label },
+        6 => ClaudeHookEvent::SubagentStop { agent_id: session_id },
+        7 => ClaudeHookEvent::Interrupted { session_id },
+        8 => ClaudeHookEvent::SessionEnd { session_id },
+        9 => ClaudeHookEvent::PreCompact { session_id },
+        _ => ClaudeHookEvent::SessionStart { session_id },
+    }
+}
+
 /// A semantic Claude Code hook event, decoupled from any transport.
 ///
 /// Each variant carries ONLY the fields the state machine needs — not the full hook JSON. The
@@ -247,7 +313,94 @@ pub enum ClaudeSignal {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClaudeHookEvent, NotificationKind};
+    use super::{ClaudeHookEvent, NotificationKind, hook_event_of, notification_of};
+
+    /// The nine named discriminants, each landing on the variant it names.
+    ///
+    /// One assertion per row rather than a loop, because the FAILURE this guards against is a
+    /// neighbour — "is 7 an interrupt" — and a loop that compared two tables would be wrong in the
+    /// same way at both ends.
+    #[test]
+    fn every_discriminant_names_the_event_it_is_documented_as() {
+        let id = || Some("s1".to_owned());
+        assert!(matches!(
+            hook_event_of(1, 0, id(), None, None, None),
+            ClaudeHookEvent::UserPromptSubmit { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(2, 0, id(), None, None, None),
+            ClaudeHookEvent::PreToolUse { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(3, 0, id(), None, None, None),
+            ClaudeHookEvent::PostToolUse { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(4, 0, id(), None, None, None),
+            ClaudeHookEvent::Notification { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(5, 0, id(), None, None, None),
+            ClaudeHookEvent::Stop { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(6, 0, id(), None, None, None),
+            ClaudeHookEvent::SubagentStop { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(7, 0, id(), None, None, None),
+            ClaudeHookEvent::Interrupted { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(8, 0, id(), None, None, None),
+            ClaudeHookEvent::SessionEnd { .. }
+        ));
+        assert!(matches!(
+            hook_event_of(9, 0, id(), None, None, None),
+            ClaudeHookEvent::PreCompact { .. }
+        ));
+    }
+
+    /// An unknown discriminant is a session start, which changes no status a later signal cannot
+    /// correct. `0` is the documented one; everything past the table lands there too.
+    #[test]
+    fn an_unknown_discriminant_is_the_harmless_one() {
+        for byte in [0_u8, 10, 200, 255] {
+            assert!(
+                matches!(
+                    hook_event_of(byte, 0, None, None, None, None),
+                    ClaudeHookEvent::SessionStart { .. }
+                ),
+                "discriminant {byte} did not fall through"
+            );
+        }
+    }
+
+    /// A `SubagentStop` takes the envelope's id as the SUBAGENT's, and reports no session.
+    ///
+    /// The one row where the mapping is not a rename: a subagent's stop must not resolve the parent
+    /// pane's turn, and `session_id() == None` is what keeps the ledger from doing so.
+    #[test]
+    fn a_subagent_stop_carries_an_agent_id_and_no_session() {
+        let event = hook_event_of(6, 0, Some("sub-1".to_owned()), None, None, None);
+        assert_eq!(event.session_id(), None);
+        assert!(
+            matches!(event, ClaudeHookEvent::SubagentStop { agent_id } if agent_id.as_deref() == Some("sub-1"))
+        );
+    }
+
+    /// The notification class, with `Other` as the fall-through.
+    ///
+    /// Informational rather than blocking, because a class this build has no case for must not
+    /// invent a block nobody is waiting on.
+    #[test]
+    fn an_unknown_notification_class_is_informational() {
+        assert_eq!(notification_of(0), NotificationKind::Permission);
+        assert_eq!(notification_of(1), NotificationKind::WaitingForInput);
+        for byte in [2_u8, 3, 99] {
+            assert_eq!(notification_of(byte), NotificationKind::Other);
+        }
+    }
 
     #[test]
     fn attribution_fills_only_the_empty_slots() {

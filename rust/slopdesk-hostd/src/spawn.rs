@@ -33,7 +33,8 @@ use slopdesk_hostpane::PtyProcess;
 use slopdesk_hostserver::control::SpawnRefused;
 use slopdesk_hostserver::{Adopted, Fresh, LivePane, Pane, Restored, Spawner, Standalone};
 use slopdesk_hostsession::{
-    DetectConfig, Eviction, PaneSession, ScreenOracle, SessionConfig, SessionLog, SnapshotPolicy,
+    DetectConfig, Eviction, MetadataPerformer, PaneSession, ScreenOracle, SessionConfig, SessionLog,
+    SnapshotPolicy,
 };
 use slopdesk_muxsession::registry::Uuid;
 use slopdesk_superclient::client::SupervisorClient;
@@ -47,7 +48,7 @@ use crate::transcripts::DiskTranscripts;
 
 /// Everything a pane is assembled from that is the PROCESS's rather than the request's.
 ///
-/// Sixteen fields and a public constructor would be a positional call nobody could read, so it is
+/// Seventeen fields and a public constructor would be a positional call nobody could read, so it is
 /// filled field-by-field by the assembly — the same shape, and the same reason, as `HostParts`.
 #[derive(Debug)]
 pub struct Recipe {
@@ -83,6 +84,12 @@ pub struct Recipe {
     pub size_settle: Duration,
     /// The block-segmenter parameters, sent with a spawn whose request asked for blocks.
     pub blocks: BlocksRequest,
+    /// Who runs a metadata verb once the admission table has routed it.
+    ///
+    /// ONE performer for every pane, not one each: it is stateless besides a vitals sampler whose
+    /// whole point is that it spans calls, and a copy per pane would answer nothing for ever on a
+    /// host whose panes are short-lived. The pane it is acting for arrives with each request.
+    pub metadata: Arc<dyn MetadataPerformer>,
 }
 
 impl Recipe {
@@ -152,6 +159,7 @@ impl Recipe {
         config.size_settle = self.size_settle;
         config.evict = self.eviction(session);
         config.blocks_enabled = blocks_enabled;
+        config.metadata = Arc::clone(&self.metadata);
         config.resolve = Arc::new(SerialResolve::new(&pane_key));
         config.detect = DetectConfig {
             // No gate: agent detection is the pane's primary presence signal and the clock that

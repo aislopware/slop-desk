@@ -29,7 +29,13 @@ resolver = "3"
 
 [package]
 name = "slopdesk-hostd"
-version = "0.1.0"
+# The product version, and the ONE place this daemon reads it from — `env!("CARGO_PKG_VERSION")`
+# in `main.rs`, which is what rides `TERM_PROGRAM_VERSION` into every pane and the launch record.
+# NOT yet a release site: `make release` still rewrites `HostEnvironment.buildVersion`, because the
+# Swift hostd is what `make build` produces until the stage-F cutover. At that cutover the site
+# MOVES here — `slopdesk-devtools`' `release/sites.rs` swaps the Swift entry for this one, and the
+# count of six stays six. See `docs/49` and `docs/60` §F.
+version = "0.4.0"
 edition = "2024"
 publish = false
 description = "the SlopDesk host daemon: the listener, the panes behind it, and the process around both"
@@ -40,11 +46,10 @@ repository = "https://github.com/aislopware/slop-desk"
 name = "slopdesk_hostd"
 path = "src/lib.rs"
 
-# No `[[bin]]` yet, and its absence is the stage boundary rather than an omission. F.1 is the
-# DOORS — the seven trait implementations and the accept loop, each gateable on its own. The daemon
-# shell that assembles them (argv, the rlimit, the signal thread, `HostParts`' fourteen fields) is
-# F.2, and landing it in the same change would have made one commit out of two things with
-# different failure modes.
+# The daemon itself: an ORDER over the library above, and nothing else.
+[[bin]]
+name = "slopdesk-hostd"
+path = "src/main.rs"
 
 [dependencies]
 # The composition every event resolves against. This crate holds the process; that one holds the
@@ -98,14 +103,22 @@ slopdesk-agent = { path = "../slopdesk-agent" }
 # screend's wire vocabulary, for the half of that conversion that came off the socket.
 slopdesk-screenwire = { path = "../slopdesk-screenwire" }
 
+# The terminfo probe behind the `TERM` this host advertises: `xterm-ghostty` when the machine can
+# resolve it, `xterm-256color` when it cannot. The RESOLUTION is that crate's; the two names are
+# `slopdesk-hostserver`'s `gates`, and both are passed in.
+slopdesk-probe = { path = "../slopdesk-probe" }
+
+# What one hook body SAYS, in the detection vocabulary. The listener owns the PARSE — the session's
+# fold door takes a decoded event on purpose, so that the bytes→event match exists exactly once.
+slopdesk-hookevent = { path = "../slopdesk-hookevent" }
+
+# The settings sidecar this daemon folds at launch. `serde` reads it; nothing here writes one.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 # The pane id a session is filed under, as canonical UUID text, which is the form superd's `spawn`
 # and `adopt` verbs take.
 slopdesk-ids = { path = "../slopdesk-ids" }
-
-# The soft descriptor limit this daemon raises before it opens anything. A `getrlimit`/`setrlimit`
-# pair has no safe wrapper worth the dependency, and one of the three crates that may hand-write
-# `unsafe` already carries it.
-slopdesk-posix = { path = "../slopdesk-posix" }
 
 # The Claude Code hooks this host installs on every launch. A LIBRARY call, not a fork of the
 # sibling binary: the Swift forwarded to `slopdesk-agenthooks` because it had no other way to reach
@@ -115,12 +128,18 @@ slopdesk-hook = { path = "../slopdesk-hook" }
 # The signal set the daemon parks on, and `sigwait` for the thread that parks. `DispatchSourceSignal`
 # was the Swift's answer to the same question; a dedicated thread is this one's, and it is the shape
 # `slopdesk-superd` already uses.
-nix = { version = "0.31", features = ["signal"] }
+# `hostname` is the third feature, and it is the workspace LABEL: a client shows the name the host
+# calls itself, and the POSIX hostname is what this daemon can answer without a SystemConfiguration
+# binding. See `src/workspacestore.rs` for the parity note.
+nix = { version = "0.31", features = ["signal", "resource", "hostname"] }
 
-# The IOKit sleep assertion held while any agent works. Target-gated: the crate wraps a macOS
-# framework and offers no non-macOS shape, so the OBSERVER below is unconditional and only the
-# assertion behind it is macOS-only.
-[target.'cfg(target_os = "macos")'.dependencies]
+# The arrangement a workspace IS, and the repair that turns an empty one into a first-run default.
+# Named here because the disk store mints that default and nothing else in the graph can.
+slopdesk-tree = { path = "../slopdesk-tree" }
+
+# The IOKit sleep assertion held while any agent works. NOT target-gated, unlike its siblings' usual
+# shape: this daemon already cannot build off macOS — the repo watch it composes is `FSEvents` — so a
+# `cfg` here would advertise a portability the binary does not have.
 slopdesk-apple-power = { path = "../slopdesk-apple-power" }
 
 # The daemon's own profile — every byte a client sees crosses this process.

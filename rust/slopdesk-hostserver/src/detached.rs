@@ -172,6 +172,16 @@ impl DetachedStore {
         Self::with(None, Arc::new(DetachedTeardown), Arc::new(IgnoreEvictions))
     }
 
+    /// A store with the OPT-IN cap and the production seams.
+    ///
+    /// `None` is UNBOUNDED, which is tmux's semantics and this daemon's default: the TTL and the fd
+    /// headroom are the real bounds. A positive `SLOPDESK_DETACH_MAX_SESSIONS` opts into
+    /// oldest-evicted capping, and a non-positive one is not a cap of zero — it is no cap.
+    #[must_use]
+    pub fn capped(cap: Option<usize>) -> Self {
+        Self::with(cap, Arc::new(DetachedTeardown), Arc::new(IgnoreEvictions))
+    }
+
     /// A store with every seam given.
     #[must_use]
     pub fn with(

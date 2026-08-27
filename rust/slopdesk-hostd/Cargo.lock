@@ -414,13 +414,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-hostd"
+name = "slopdesk-hookevent"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "slopdesk-hostd"
+version = "0.4.0"
+dependencies = [
  "nix",
+ "serde",
+ "serde_json",
  "slopdesk-agent",
  "slopdesk-apple-power",
  "slopdesk-hook",
+ "slopdesk-hookevent",
  "slopdesk-hostlaunch",
  "slopdesk-hostnet",
  "slopdesk-hostpane",
@@ -428,12 +438,13 @@ dependencies = [
  "slopdesk-hostsession",
  "slopdesk-ids",
  "slopdesk-muxsession",
- "slopdesk-posix",
+ "slopdesk-probe",
  "slopdesk-sanitize",
  "slopdesk-screenclient",
  "slopdesk-screenwire",
  "slopdesk-superclient",
  "slopdesk-superwire",
+ "slopdesk-tree",
  "slopdesk-wire",
 ]
 

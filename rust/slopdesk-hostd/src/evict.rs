@@ -46,7 +46,7 @@ impl LateHost {
     }
 
     /// The composition, if it has landed and is still alive.
-    fn resolve(&self) -> Option<Arc<Host>> {
+    pub(crate) fn resolve(&self) -> Option<Arc<Host>> {
         self.host.get().and_then(Weak::upgrade)
     }
 }

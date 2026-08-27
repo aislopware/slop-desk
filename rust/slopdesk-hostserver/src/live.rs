@@ -17,8 +17,8 @@
 
 use std::sync::Arc;
 
-use slopdesk_agent::ClaudeStatus;
 use slopdesk_agent::supervision::SupervisionState;
+use slopdesk_agent::{ClaudeHookEvent, ClaudeStatus};
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostsession::{
     BlockTap, CloseTap, OutputTap, PaneLatches, PaneSession, SessionObserver, TapToken,
@@ -27,6 +27,7 @@ use slopdesk_muxsession::registry::{self, Slot, Subscriber, Uuid};
 use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
+use slopdesk_wire::message::ProjectGitStatus;
 
 use crate::pane::{Pane, Wires};
 
@@ -153,6 +154,14 @@ impl Pane for LivePane {
 
     fn report_agent_status(&self, state: &str, message: Option<&str>) {
         self.session.report_agent_status(state, message);
+    }
+
+    fn fold_hook(&self, event: ClaudeHookEvent, kind_byte: u8, prompt: Option<&str>) {
+        self.session.fold_hook(event, kind_byte, prompt);
+    }
+
+    fn push_git_status(&self, status: &ProjectGitStatus) {
+        self.session.push_project_git_status(status);
     }
 
     fn scrollback_text(&self, ansi_strip: bool) -> String {

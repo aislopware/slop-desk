@@ -30,20 +30,36 @@
 //! and handed down as a value — which is why [`spawn::Recipe`] is a struct of facts rather than a
 //! set of lookups.
 
+pub mod env;
 pub mod evict;
+pub mod hooks;
 pub mod keys;
+pub mod observer;
 pub mod peer;
+pub mod repowatch;
 pub mod resolve;
 pub mod screen;
 pub mod serve;
+pub mod sleep;
 pub mod spawn;
+pub mod supervisor;
+pub mod survivors;
 pub mod transcripts;
+pub mod workspacestore;
 
+pub use env::Overlay;
 pub use evict::{HostEviction, LateHost};
+pub use hooks::HookTable;
 pub use keys::{ProjectKeySink, WatchKeys};
+pub use observer::Stderr;
 pub use peer::ConnectionPeer;
+pub use repowatch::{Fanout, HostRepoWatcher, Keys};
 pub use resolve::SerialResolve;
 pub use screen::{ScreendOracle, ScreendSnapshot};
 pub use serve::Listening;
+pub use sleep::KeepAwake;
 pub use spawn::{PaneSpawner, Recipe};
+pub use supervisor::DaemonObserver;
+pub use survivors::Supervised;
 pub use transcripts::DiskTranscripts;
+pub use workspacestore::DiskWorkspace;

@@ -1190,17 +1190,78 @@ Three things F.1 settled that were open questions before it:
   before `start()`, which is the same ordering guarantee with the window closed by construction
   rather than by a comment.
 
-**What F.1 leaves owed, named rather than defaulted.** `MetadataPerformer` is still
-`UnservedMetadata` on every pane: `HostMetadata::new(query, delegate)` exists and is exercised by
-`hostserver`'s suite, but `HostQuerying` has no production implementation, so the twelve crossing
-verbs are F.2's assembly work and not a door this crate can close on its own. Until it lands, a pane
-answers `UnsupportedVerb` rather than a stale or invented result.
+**A correction to the sentence above.** F.1's own notes said `HostQuerying` had no production
+implementation and that the metadata performer was therefore F.2's assembly work. That was wrong on
+the first half: `HostQueries::from_environment()` exists, and `HostMetadata::unaccompanied(query)`
+carries the doc comment *"the honest shape for a host built without the Swift half, and what stage F
+leaves behind once there is no Swift half to build."* The performer was a wiring line, not a port,
+and F.2 wires it. What IS owed is the other twelve verbs' Rust performers — see the ledger below.
 
-**F.2 — the daemon shell.** `main.rs`: argv through `slopdesk-hostlaunch`, the rlimit, the signal
-thread, the hook install, the `HostParts` assembly (fourteen fields, of which `WorkspaceChannels`,
-`HookRoutes`, `HostObserver`, `Survivors` and `Offload` still have only inert defaults in the tree),
-`LateHost::publish`, and the four unwired stage-E pieces — `pathaction`, `clipsync`, `repowatch`,
-`gates`. The crate ships no `[[bin]]` until it exists, which is why F.1 is a library-only commit.
+**F.2 — the daemon shell. ✅ LANDED.** `src/main.rs`, and the crate ships a `[[bin]]` again.
+
+| Step | Why it is where it is |
+| --- | --- |
+| `pthread_sigmask` | FIRST. Threads inherit the mask; a SIGTERM landing on superd's reader thread before this takes the default disposition and kills the process mid-drain. |
+| `setrlimit` | Before any file opens. Every live and detached pane holds a PTY master and a journal fd. |
+| the sidecar overlay | Before any gate is read. `docs/58`: no GUI, no live reload — a toggle applies at the next launch, and this is that launch. |
+| `integration install\|uninstall` | Before the arg parse, so it never reaches the listener. |
+| the hook install | Idempotent, every launch, never fatal. |
+| `SupervisorClient::connect` | The one fatal step before the bind: nothing else in this process can fork a shell. |
+| `Host::assemble` → `LateHost::publish` → `serve_control` | The spawner is built before the host and the host holds the spawner. Both late-bound handles land the moment the cycle closes. |
+| `listen` → `adopt_survivors` → `Listening::start` | Adopt BEFORE accepting, or a client that connects first is offered a fresh shell for a pane that is still running. |
+| `sigwait` | The one blocking call in the process. No one-shot latch: a second SIGTERM during the drain is simply still blocked. |
+
+Four things settled while writing it, each of which had been assumed the other way:
+
+- **The settings overlay had to move with the daemon.** `slopdesk_video::host_gates` takes RESOLVED
+  TEXTS precisely because the lookup was Swift's `EnvConfig.string` — env → `video-prefs.json` →
+  default. A Rust hostd reading `std::env::var` would silently stop honouring every persisted
+  setting. `src/env.rs` is that lookup. It reads the sidecar's `agent` table and `rawOverrides` and
+  deliberately NOT `video`: those eleven keys are `slopdesk-videohostd`'s operating point, that
+  daemon folds the same file itself, and mapping them here would be a second copy of
+  `EnvBridge.toEnv(_: VideoPreferences)`. One behaviour difference, stated rather than hidden — Swift
+  resolved six of the seven gates through the overlay and `SLOPDESK_AGENT_CONTROL` through
+  `ProcessInfo` alone; here all seven go through the same door, because a raw override IS the
+  documented way to reach a host-only knob and the one key it could not reach was the one the box
+  exists for.
+- **`Pane` had to grow `fold_hook`.** The hook table is keyed by the env-baked pane id and holds
+  `Arc<dyn Pane>`; only `PaneSession` had the verb. Two implementors, so the widening cost two
+  sites — `LivePane` forwards, `Ghost` records. The alternative was a second table beside the first,
+  keyed the same way, holding the sessions.
+- **The bytes→event match moved to `slopdesk_agent::signal::hook_event_of`.** It was private to
+  `slopdesk-ffi`, under a comment saying it existed once *on purpose*. The moment hostd grew a hook
+  listener that claim stopped being true of where it lived — so it moved to the crate that owns the
+  vocabulary it maps INTO, and is now the one spelling both callers reach.
+- **The version site did NOT move yet.** `make release` still rewrites `HostEnvironment.buildVersion`,
+  because the Swift hostd is what `make build` produces until the cutover. `main.rs` reads
+  `env!("CARGO_PKG_VERSION")` and the manifest carries `0.4.0`; at the cutover `release/sites.rs`
+  swaps the Swift entry for this one and the count of six stays six.
+
+**F.3 — the wiring cluster. ✅ LANDED.** Seven of the ten rows below were one batch, because they
+share one shape: each is a door stage D declared and stage E left without a production
+implementation, and each needs the composition to exist before it can be filled.
+
+| Wired | What it took |
+| --- | --- |
+| the repo-watch sink | `Recipe.keys` now carries `hostd::repowatch::Keys`, which erases `RepoWatcher`'s four type parameters once, where the concrete doors are already named. The watcher is built BEFORE the spawner and AFTER the document, which is the only order that works. |
+| `Announces` | `hostd::repowatch::Fanout`. One reading has TWO destinations and they are not the same fact: type 35 on every live pane (the edge, delivered now) and `project/gitSummary` in the document (the retained value, keyed by PROJECT). The document's copy is the type-35 BODY verbatim, so it costs no new codec on either end. |
+| `Pane::push_git_status` | The fan-in offers the status to every live pane and lets each one's LATCH refuse — a fan-in that filtered by reading the latch itself would compare against a value that may have moved. `PaneSession::push_project_git_status` is the compare and the send as one statement. |
+| `WorkspaceStore`'s disk half | `hostd::workspacestore::DiskWorkspace`: `SLOPDESK_WORKSPACE_STATE_DIR` or the container, a depth-1 coalescing 600 ms debounce, write-to-temp-then-rename by hand (`std::fs` has no `.atomic`), and a corrupt-or-topology-less file moved ASIDE rather than overwritten. |
+| the default document | `TreeWorkspace::new(vec![], None).normalized(&mut Minting::over(ids))` — an EMPTY tree normalises into one session, one tab, one pane, so the first-run shape is stated in `slopdesk-tree`'s own repair rather than a second time in the store. `Minting` went public for exactly this. |
+| prevent-sleep | `hostd::sleep::KeepAwake`, and it is NOT the Swift's shape. `SleepAssertion` holds a `CFString` and is therefore neither `Send` nor `Sync`, and a `slopdesk-apple-*` crate may not `unsafe impl` its way out of that — an `unsafe impl Send` is a claim about RUST, not about a framework. So the fold and the assertion are CONFINED to one owner thread fed by a FIFO channel: the update and the apply are not merely adjacent, they are unreachable from anywhere the order could be broken. |
+| `SLOPDESK_DETACH_MAX_SESSIONS` | `DetachedStore::capped`. A non-positive or unparsable value is NOT a cap of zero — it is the absence of one, which is what keeps a typo from silently killing every parked pane but the newest. |
+
+**What F.3 leaves owed — the parity ledger the cutover is still gated on.** Nothing on this list drops
+off silently; each is a real behaviour the Swift hostd has and the Rust one does not yet.
+
+| Owed | Where it goes |
+| --- | --- |
+| the twelve delegated metadata verbs | Finder, `~/.claude/settings.json`, the pasteboard, the workbench child, the simulator server, the Android bridge. `HostMetadata` already ROUTES all twelve; each needs a named performer. `metadata.rs`' own header argues why serving three of them from the reducer would be worse than waiting. |
+| inspectord / dropd assembly | `AnnouncedPortService` and `ProbedPortService` are done; `main.rs` does not stand either up, so `--inspector` and the drop port are inert. Deliberately batched WITH the metadata verbs rather than before them: the served port is read by a metadata answer, so standing the daemons up first would light two sidecars nothing can ask about. |
+| code-server prewarm | `code::CodeServer::prewarm` exists but is reached through verb 18, which is one of the twelve delegated. |
+| the sidecar version audit | `SidecarVersionAuditor.swift` + `SidecarVersionAudit.swift`. The policy is already `slopdesk-sidecars`'. |
+| the host DISPLAY NAME | The workspace label. Swift read `Host.current().localizedName` — the name a Mac calls itself in Sharing preferences — and fell back to the POSIX hostname; `DiskWorkspace` reads the POSIX hostname only. The computed name is `SCDynamicStoreCopyComputedName`, a SystemConfiguration call, and so wants a `slopdesk-apple-*` crate that does not exist yet. It is the Swift's OWN fallback rather than an invention, and it is a label — which is why it is a row here and not a blocker. |
+| the two unwired stage-E pieces | `pathaction` and `clipsync`. `repowatch` and `gates` are wired as of F.3. |
 
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving

@@ -165,16 +165,26 @@ impl Panes for NoPanes {
     fn resolve_size_passivity(&self, _connection: RawUuid, _passive: bool) {}
 }
 
-/// [`IdSource`] over the crate's ONE entropy seam.
+/// [`IdSource`] over the host's ONE entropy seam.
 ///
 /// `slopdesk-ids` refuses to mint for the reason [`SessionIds`] exists, and the intent applier
 /// needs four kinds of fresh id. A mint that fails answers all-zero rather than trapping: an intent
 /// that would have created an object under a zero id is refused downstream by the applier's own
 /// duplicate-id check, which is a refusal a client can act on, and a dead daemon is not.
+///
+/// Public because the DEFAULT document is minted outside this crate — a [`WorkspaceStore`] that has
+/// nothing to restore has to seed a session, a tab and a pane, and it must do so through the same
+/// door every other id in the process comes from rather than a second one of its own.
 #[derive(Debug)]
-struct Minting<'a>(&'a dyn SessionIds);
+pub struct Minting<'a>(&'a dyn SessionIds);
 
-impl Minting<'_> {
+impl<'a> Minting<'a> {
+    /// The four-kind id source over `ids`.
+    #[must_use]
+    pub const fn over(ids: &'a dyn SessionIds) -> Self {
+        Self(ids)
+    }
+
     fn raw(&self) -> RawUuid {
         self.0.mint().unwrap_or_default()
     }
@@ -451,7 +461,7 @@ impl WorkspaceDocument {
             op,
             args,
             &current,
-            &mut Minting(self.ids.as_ref()),
+            &mut Minting::over(self.ids.as_ref()),
             inner.pristine,
             &|pane| inner.state.project_key_for_pane(pane),
         );

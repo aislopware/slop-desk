@@ -31,6 +31,7 @@ use core::fmt;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
+use slopdesk_agent::ClaudeHookEvent;
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneLatches, SessionObserver, TapToken};
 use slopdesk_muxsession::registry::{Slot, Subscriber, Uuid};
@@ -38,6 +39,7 @@ use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
 use slopdesk_wire::WireMessage;
+use slopdesk_wire::message::ProjectGitStatus;
 
 /// One client's two sub-channels, and the two queues its frames arrive on.
 ///
@@ -176,6 +178,24 @@ pub trait Pane: Send + Sync + fmt::Debug {
 
     /// An agent self-declares its state. Authoritative — it beats the foreground-process floor.
     fn report_agent_status(&self, state: &str, message: Option<&str>);
+
+    /// One hook event, already read off the record — the MOST authoritative of the four feeds.
+    ///
+    /// Here rather than on the session for D.5's reason and one more: the hook listener is keyed by
+    /// the pane's env-baked id and holds `Arc<dyn Pane>`, so a route that had to recover a
+    /// `PaneSession` would either downcast or keep a second table beside the first.
+    ///
+    /// The DECODE is the caller's — see `PaneSession::fold_hook`. The bytes→event mapping is
+    /// `slopdesk_agent::signal::hook_event_of`, and it exists once.
+    fn fold_hook(&self, event: ClaudeHookEvent, kind_byte: u8, prompt: Option<&str>);
+
+    /// One repo's git summary, offered to this pane — delivered iff its latch names that repo.
+    ///
+    /// The fan-in offers the same value to every live pane rather than looking up which panes sit
+    /// under the repo: the latch is the pane's, moves on the pane's own thread, and a caller that
+    /// read it to filter would be filtering on a value that may already have changed. Panes that do
+    /// not match return without sending, which is the cheap half of a compare.
+    fn push_git_status(&self, status: &ProjectGitStatus);
 
     /// The scrollback as text, optionally ANSI-stripped.
     fn scrollback_text(&self, ansi_strip: bool) -> String;

@@ -30,9 +30,8 @@
 use core::ffi::c_uchar;
 
 use slopdesk_agent::{
-    AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeStatus,
-    ClaudeStatusMachine, Emission, NotificationKind, Outcome, PaneDetector, PaneScan, ScanInput, Verdict,
-    attention, badge,
+    AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeStatus, ClaudeStatusMachine, Emission,
+    Outcome, PaneDetector, PaneScan, ScanInput, Verdict, attention, badge,
 };
 
 use crate::{borrow, deliver, push_text, records_of, saturating_u32};
@@ -74,14 +73,9 @@ const fn screen_state_from(byte: u8) -> AgentScreenState {
     }
 }
 
-/// `ClaudeHookEvent::NotificationKind` — `other` is informational, so it is the safe fallback.
-const fn notification_from(byte: u8) -> NotificationKind {
-    match byte {
-        0 => NotificationKind::Permission,
-        1 => NotificationKind::WaitingForInput,
-        _ => NotificationKind::Other,
-    }
-}
+// `ClaudeHookEvent::NotificationKind` is NOT mapped here. `slopdesk_agent::signal::notification_of`
+// is the one spelling, because hostd's own hook listener reads the same byte and a second copy
+// would be a second answer to "is class 1 a block".
 
 // MARK: The C-visible shapes
 
@@ -116,52 +110,10 @@ impl Detection {
     }
 }
 
-/// The flat hook discriminants, as the event they name.
-///
-/// Total over `hook`, defaulting to the session-start case, which changes no status a later signal
-/// cannot correct. ONE spelling on purpose: the same mapping serves the detector's hook door and a
-/// body `slopdesk-hookevent` just read off the socket, and two copies of it would be two
-/// answers to "is discriminant 7 an interrupt".
-fn hook_event_of(
-    hook: u8,
-    notification: u8,
-    session_id: Option<String>,
-    tool: Option<String>,
-    tool_use_id: Option<String>,
-    label: Option<String>,
-) -> ClaudeHookEvent {
-    match hook {
-        1 => ClaudeHookEvent::UserPromptSubmit { session_id },
-        2 => {
-            ClaudeHookEvent::PreToolUse {
-                session_id,
-                tool,
-                tool_use_id,
-            }
-        },
-        3 => {
-            ClaudeHookEvent::PostToolUse {
-                session_id,
-                tool,
-                tool_use_id,
-            }
-        },
-        4 => {
-            ClaudeHookEvent::Notification {
-                kind: notification_from(notification),
-                label,
-                tool_use_id,
-                session_id,
-            }
-        },
-        5 => ClaudeHookEvent::Stop { session_id, label },
-        6 => ClaudeHookEvent::SubagentStop { agent_id: session_id },
-        7 => ClaudeHookEvent::Interrupted { session_id },
-        8 => ClaudeHookEvent::SessionEnd { session_id },
-        9 => ClaudeHookEvent::PreCompact { session_id },
-        _ => ClaudeHookEvent::SessionStart { session_id },
-    }
-}
+// The flat hook discriminants are mapped by `slopdesk_agent::signal::hook_event_of`, which this
+// door calls rather than restates. It moved there when hostd grew a hook listener of its own: the
+// mapping serves two callers now, and the crate that owns the vocabulary it maps INTO is the only
+// place both can reach.
 
 /// Borrows a caller's detection struct, answering the default verdict for null.
 ///
@@ -1318,7 +1270,7 @@ pub unsafe extern "C" fn slopdesk_agent_detector_hook(
         let Some(parsed) = slopdesk_hookevent::parse(borrow(body, len)) else {
             return 0;
         };
-        let event = hook_event_of(
+        let event = slopdesk_agent::signal::hook_event_of(
             parsed.hook,
             parsed.notification,
             parsed.session_id,

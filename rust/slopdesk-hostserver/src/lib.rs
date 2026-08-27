@@ -133,5 +133,5 @@ pub use pane::{Pane, Wires, same_pane};
 pub use serviceproc::{ServiceProcess, pane_id_for};
 pub use sessions::{Held, Sessions};
 pub use subscriber::{EventSink, WorkspaceSubscriber};
-pub use workspace::{NoPanes, NoStore, Panes, WorkspaceDocument, WorkspaceStore, topology_pane_ids};
+pub use workspace::{Minting, NoPanes, NoStore, Panes, WorkspaceDocument, WorkspaceStore, topology_pane_ids};
 pub use wsserve::WorkspaceService;

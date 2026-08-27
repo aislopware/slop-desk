@@ -106,6 +106,8 @@ pub struct Ghost {
     written: Mutex<Vec<u8>>,
     resized: Mutex<Vec<(u16, u16)>>,
     reported: Mutex<Vec<(String, Option<String>)>>,
+    folded: Mutex<Vec<(slopdesk_agent::ClaudeHookEvent, u8, Option<String>)>>,
+    offered: Mutex<Vec<slopdesk_wire::message::ProjectGitStatus>>,
     window: Mutex<Option<(u16, u16)>>,
     foreground: Mutex<String>,
     status: Mutex<(String, Option<String>)>,
@@ -181,6 +183,8 @@ impl Ghost {
             written: Mutex::new(Vec::new()),
             resized: Mutex::new(Vec::new()),
             reported: Mutex::new(Vec::new()),
+            folded: Mutex::new(Vec::new()),
+            offered: Mutex::new(Vec::new()),
             window: Mutex::new(Some((30, 100))),
             foreground: Mutex::new(String::from("zsh")),
             status: Mutex::new((String::from("idle"), None)),
@@ -294,6 +298,22 @@ impl Ghost {
     /// Every self-report folded into this pane, in order.
     pub fn reported(&self) -> Vec<(String, Option<String>)> {
         self.reported
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Every hook event routed to this pane, in arrival order — the hook table's assertion.
+    pub fn folded_hooks(&self) -> Vec<(slopdesk_agent::ClaudeHookEvent, u8, Option<String>)> {
+        self.folded.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Every git summary OFFERED to this pane, in order.
+    ///
+    /// Offered rather than delivered: a real pane decides by its own latch, and a fake that
+    /// reimplemented that decision would be asserting the fake's rule rather than the fan-in's.
+    pub fn offered_git(&self) -> Vec<slopdesk_wire::message::ProjectGitStatus> {
+        self.offered
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -618,6 +638,21 @@ impl Pane for Ghost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push((state.to_owned(), message.map(str::to_owned)));
+    }
+
+    fn fold_hook(&self, event: slopdesk_agent::ClaudeHookEvent, kind_byte: u8, prompt: Option<&str>) {
+        self.folded.lock().unwrap_or_else(PoisonError::into_inner).push((
+            event,
+            kind_byte,
+            prompt.map(str::to_owned),
+        ));
+    }
+
+    fn push_git_status(&self, status: &slopdesk_wire::message::ProjectGitStatus) {
+        self.offered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(status.clone());
     }
 
     fn scrollback_text(&self, ansi_strip: bool) -> String {
