@@ -75,6 +75,29 @@ where
     Some(text.trim_end_matches('\n').to_owned())
 }
 
+/// Run a program and take its STDERR, with stdout swallowed and failure reported as `None`.
+///
+/// The one caller is the reachability gate, and the stream is not a taste: `make -n` printed its
+/// plan on STDOUT, `just --dry-run` prints it on STDERR. A gate that kept reading stdout would see
+/// an empty plan for every recipe and — depending on which way its guard pointed — either fail
+/// always or accept everything.
+pub fn ask_err<S>(program: &str, args: &[S], cwd: &Path) -> Option<String>
+where
+    S: AsRef<OsStr>,
+{
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stderr).ok()?;
+    Some(text.trim_end_matches('\n').to_owned())
+}
+
 /// True when a program is on `PATH`.
 ///
 /// A preflight that names the missing tool costs a `which`; learning it from `xcodebuild`'s

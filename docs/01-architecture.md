@@ -65,7 +65,7 @@
 slopdesk/
 ├── Package.swift
 ├── Sources/
-│   ├── CSlopDeskFFI/           # the static archive `make ffi` builds, + its header
+│   ├── CSlopDeskFFI/           # the static archive `just ffi` builds, + its header
 │   ├── SlopDeskVideoProtocol/  # thin Swift face over the Rust codec/controllers
 │   ├── SlopDeskVideoHost/      # macOS — capture, HW encode, send
 │   └── SlopDeskVideoClient/    # client — receive, HW decode, Metal render

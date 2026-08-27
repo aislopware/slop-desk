@@ -124,7 +124,7 @@ pub fn one_cheat_sheet_two_layouts(tree: &Tree) -> Report {
 ///
 /// The third claim is the fusion bug `TabBadgeResolver` had, pinned before it can happen twice: a
 /// half that re-derives the phrase from the pair keys on flavour alone sooner or later, and
-/// announces a finished `make` as an agent turn.
+/// announces a finished `just` as an agent turn.
 #[must_use]
 pub fn one_notification_card_two_corners(tree: &Tree) -> Report {
     let claims = [

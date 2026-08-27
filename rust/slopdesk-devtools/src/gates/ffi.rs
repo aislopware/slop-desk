@@ -18,8 +18,8 @@
 //! ## Why it is cheap to run anyway
 //! [`current_stamp`] hashes every input — the Rust sources of the shim and the crates it wraps, the
 //! header, and this module. A second run with nothing changed exits in milliseconds, so wiring it
-//! in front of `make build`/`test`/`check` costs nothing on a warm tree. [`Mode::Force`] skips the
-//! check; [`Mode::Check`] reports staleness without building, which is what `make lint` uses.
+//! in front of `just build`/`test`/`check` costs nothing on a warm tree. [`Mode::Force`] skips the
+//! check; [`Mode::Check`] reports staleness without building, which is what `just lint` uses.
 //!
 //! SLICES: arm64 only, matching the rest of the project (`docs/49` "arm64 only — a constraint, not
 //! a default"): macos-arm64, ios-arm64, ios-arm64-simulator.
@@ -83,7 +83,7 @@ const SELF_FILES: [&str; 2] = [
 pub enum Mode {
     /// Build when the stamp disagrees, and say so when it does not.
     Build,
-    /// Report staleness and build nothing. What `make lint` runs.
+    /// Report staleness and build nothing. What `just lint` runs.
     Check,
     /// Build whatever the stamp says.
     Force,
@@ -253,12 +253,12 @@ pub fn path_dependencies(manifest: &str) -> Vec<String> {
 /// name is cargo's, not ours. Unpruned, the stamp counted 12 such files across the shim's closure —
 /// and since `cargo build --target aarch64-apple-ios` MINTS a fresh one for a triple it has not
 /// built before, it changed AFTER the wanted stamp was read and BEFORE it was written. A clean
-/// build therefore recorded a value the very next check disagreed with, so `make lint` announced
+/// build therefore recorded a value the very next check disagreed with, so `just lint` announced
 /// the artifact stale seconds after building it: an input-hash gate made to fire on its own output.
 /// Sources only.
 ///
 /// Until 2026-08-25 the pruning was a `retain` over the RESULTS, so the walk still read all 592 000
-/// names under `rust/slopdesk-ffi/target` before throwing them away — 50 s on every `make ffi`,
+/// names under `rust/slopdesk-ffi/target` before throwing them away — 50 s on every `just ffi`,
 /// `build`, `test` and `quick`, warm or cold, for an answer the stamp already had.
 ///
 /// # Errors
@@ -320,12 +320,12 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     if mode == Mode::Check {
         if !xcframework.is_dir() {
             return Err(
-                "build-ffi: FAIL — SlopDeskFFI.xcframework has never been built — run 'make ffi'".to_owned(),
+                "build-ffi: FAIL — SlopDeskFFI.xcframework has never been built — run 'just ffi'".to_owned(),
             );
         }
         return Err(
             "build-ffi: FAIL — SlopDeskFFI.xcframework is STALE: the Rust sources changed since it was \
-             built. Run 'make ffi'. A stale artifact is the one failure mode a linked port has that a \
+             built. Run 'just ffi'. A stale artifact is the one failure mode a linked port has that a \
              socket does not — the Swift side would keep calling last week's logic with every test green."
                 .to_owned(),
         );
@@ -392,7 +392,7 @@ fn preflight(root: &Path) -> Result<(), String> {
 /// Neither app built, on either platform, from the moment this xcframework joined the graph.
 /// Nothing caught it: `swift build` and `swift test` never process an xcframework this way, and the
 /// two gates that DO build the apps (`slopdesk-guigate macos`, `slopdesk-gate ios`) are reachable
-/// from no `make` target and no hook.
+/// from no `just` target and no hook.
 ///
 /// Nesting under `CSlopDeskFFI/` gives the copy a unique destination. `SwiftPM` still resolves the
 /// module — it walks the whole Headers tree for a `module.modulemap` rather than only its root —

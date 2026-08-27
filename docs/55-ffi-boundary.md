@@ -34,8 +34,8 @@ after `-dead_strip`.
 **It IS in the SwiftPM graph** — and this is where it differs from `libghostty`, which is
 Xcode-only. The one-implementation rule requires `swift test` to exercise the Rust, because a Rust
 implementation the Swift tests cannot reach would leave the Swift version alive as the thing
-actually under test. The cost, stated plainly: a clean checkout must run `make ffi` once before
-SwiftPM resolves. `make build`, `make test` and `make check` all depend on `ffi`, and a warm tree
+actually under test. The cost, stated plainly: a clean checkout must run `just ffi` once before
+SwiftPM resolves. `just build`, `just test` and `just check` all depend on `ffi`, and a warm tree
 short-circuits in milliseconds on the stamp, so in practice this is invisible.
 
 cargo still never runs inside `swift build`.
@@ -56,8 +56,8 @@ moves it too. Each crate's own `target/` is pruned: build scripts write `.rs` un
 mints a fresh one *during* the build being stamped, so an unpruned walk made the gate fire on its
 own output.
 
-`make lint-reach` runs `slopdesk-gate ffi --check`, which reports staleness without
-building. That gate is in `make lint`.
+`just lint-reach` runs `slopdesk-gate ffi --check`, which reports staleness without
+building. That gate is in `just lint`.
 
 **SwiftPM does not watch the artifact.** A rebuilt `.a` alone does not make `swift test` relink —
 it will happily re-run the previous test binary against the previous library, so a fixed rule can
@@ -997,7 +997,7 @@ The metadata crosses whole (`n + 2` from `3n + 1`); the payloads stay per-messag
 Worth recording plainly, because the sweep was a *crossing* audit and its three biggest findings were
 not crossings at all. All three are the same shape — **a value that reads like a field and is in fact
 a projection** — and all three sat behind a `var` or a computed property, so nothing in the type
-system, the tests or `make lint` could see them.
+system, the tests or `just lint` could see them.
 
 1. **The replica's `topology`, read once per sidebar ROW.** It copies the entire entry map and
    re-runs `WorkspaceTopology.init(entries:)` over every cell. Measured in a scratch `swiftc -O`
@@ -1178,14 +1178,14 @@ now one function with the Swift test's own case pinned to it.
    it through the raw pointers the way Swift does.
 3. Declare it in `include/slopdesk_ffi.h`. Nothing else to list: `slopdesk-gate ffi` reads
    `REQUIRED_SYMBOLS` out of the header and checks every slice carries them, so a header that
-   drifts from the library fails at `make ffi` rather than at app link.
+   drifts from the library fails at `just ffi` rather than at app link.
 4. If the domain crate is new to the shim, give it a `path = "../…"` edge — that is what puts it in
    the stamp's closure (§3).
 5. Write the Swift wrapper, **delete the Swift implementation it replaces**, and leave that
    module's existing tests pointing at the same public signature.
 6. **If step 5 could not delete it, pin it** — see §8. A port that lands beside its original with no
    pin is the single most reliable way this repo has produced bugs.
-7. `make ffi && make lint && make test`.
+7. `just ffi && just lint && just test`.
 
 ## 8. The drift class, and why the ratchet has never caught one
 

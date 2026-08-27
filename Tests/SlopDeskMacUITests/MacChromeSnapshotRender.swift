@@ -14,7 +14,7 @@
 // therefore drives the real chain — agent status, completion badge, foreground process — and what
 // comes out is what the resolver says.
 //
-// Opt-in and INERT under `swift test` / `make check`: every probe skips unless
+// Opt-in and INERT under `swift test` / `just check`: every probe skips unless
 // `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set. Run on demand:
 //   SLOPDESK_TABROW_SNAPSHOT_DIR="$PWD/.build/shots" swift test --filter MacChromeSnapshotRender
 // It is NOT a pixel-diff CI gate — it is the recipe for judging a design claim arithmetic cannot

@@ -232,7 +232,7 @@ diff before concluding a signal is missing.
 ## 5b. Session ownership — whose hooks are these?
 
 The relay routes by `SLOPDESK_PANE_ID`, an **environment variable**, so every descendant of the
-pane's shell inherits it. A `claude -p …` from a script, a Makefile, or the pane agent's own Bash
+pane's shell inherits it. A `claude -p …` from a script, a justfile, or the pane agent's own Bash
 tool is a separate claude with its own session id posting the **full hook set** to the pane that
 spawned it. Ungated, its `SessionStart` cleared the pane agent's block, its `Stop` minted a
 finished turn, its `SessionEnd` blanked the pane and armed the post-exit lockout, and its prompt

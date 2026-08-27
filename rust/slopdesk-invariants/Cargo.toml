@@ -17,7 +17,7 @@
 #
 # ## Its own workspace, for the reason every big crate here has one
 # Profiles are workspace-global and this one wants `opt-level = 3` in release: it is on the inner
-# loop through `make quick`, and a debug build of a regex-heavy tree walk is not a gate anybody
+# loop through `just quick`, and a debug build of a regex-heavy tree walk is not a gate anybody
 # leaves in front of their edits.
 [workspace]
 resolver = "3"

@@ -1,12 +1,13 @@
 # Strict formatter / linter / static-analysis entrypoints for the whole repo.
 # Configs: .swiftformat .swiftlint.yml .shellcheckrc rust/rustfmt.toml rust/Cargo.toml
 #
-#   make fmt    — auto-format everything (writes)
-#   make fix    — fmt + apply every safe lint autofix (writes)
-#   make lint   — run every linter strictly, no writes (what CI gates on)
-#   make check  — lint + build + test + Miri + golden pin + the iOS triple (the full local gate)
+#   just fmt    — auto-format everything (writes)
+#   just fix    — fmt + apply every safe lint autofix (writes)
+#   just lint   — run every linter strictly, no writes (what CI gates on)
+#   just check  — lint + build + test + Miri + golden pin + the iOS triple (the full local gate)
 #
-# Tools are pinned/installed via `make install-tools`.
+# Tools are pinned/installed via `just install-tools`; `just` itself is the one bootstrap
+# (`brew install just`), because nothing in this file can install the runner reading it.
 # Swift + Rust: two short-lived programs in
 # the root workspace (rust/slopdesk-hook, the Claude Code hook relay + its installer — stage 23;
 # rust/slopdesk-probe, the host metadata RPC's git/directory/session half + the TERM
@@ -38,15 +39,20 @@
 # in CLAUDE.md — "a port ships over a socket, or as a linked library, pick by lifetime": the
 # in-process, lifetime-coupled ports are linked, as `CSlopDeskFFI` from
 # `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework` (docs/55). cargo still never runs inside
-# `swift build`; `make ffi` (`slopdesk-gate ffi`) assembles that artifact beforehand.
+# `swift build`; `just ffi` (`slopdesk-gate ffi`) assembles that artifact beforehand.
 # `swift build` therefore needs the xcframework to EXIST before it can resolve the package graph, so
-# a clean checkout runs `make ffi` — or any of `make build`/`test`/`check`, which depend on it —
-# once. `make build` additionally stages the relay and the CLI beside the host binary.
+# a clean checkout runs `just ffi` — or any of `just build`/`test`/`check`, which depend on it —
+# once. `just build` additionally stages the relay and the CLI beside the host binary.
 
-SWIFT_PATHS  := Sources Tests Apps
+# `sh -c`, not just's default `sh -cu`. Every recipe below was written against make's shell, which
+# does not set `-u`, and an unset-variable expansion that used to be the empty string must not
+# become a fatal error inside a gate.
+set shell := ["sh", "-c"]
+
+SWIFT_PATHS := "Sources Tests Apps"
 # Format (SwiftFormat) also covers the package manifest; the SwiftLint scope stays
 # Sources/Tests/Apps (Package.swift is config, not linted).
-SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
+SWIFTFMT_PATHS := "Package.swift " + SWIFT_PATHS
 # ZERO files, and the count is the point: every gate, every operator harness, every step of the
 # release AND the panel's provisioner is Rust now, so `scripts/` holds pins, fixtures and two Swift
 # probes — no program at all. The last one to go was the panel's provisioner, and the "bootstrap"
@@ -58,18 +64,19 @@ SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
 # silently unlinted — and `scripting-is-rust` in `rust/slopdesk-invariants` fails the moment one
 # does. `ThirdParty/ghostty/` is the one tree exempt from that rule: it is the vendored libghostty
 # build recipe, carried close to upstream's own shape, and is not ours to rewrite.
-# `strip`ped at the DEFINITION, not at each use. Both globs match nothing today, and two globs that
-# each expand to nothing still leave the SPACE between them — so an unstripped `SHELL_FILES` is the
-# one-character string " ", `[ -n "$(SHELL_FILES)" ]` is TRUE, and `shfmt -w` with no operands reads
-# standard input and dies with "-w cannot be used on standard input". `make fmt` failed that way from
-# the day the last script became Rust. Stripping here makes the emptiness the same emptiness at all
-# four use sites instead of at the two that happened to remember.
-SHELL_FILES  := $(strip $(wildcard scripts/*.sh) $(wildcard ThirdParty/tools/*.sh))
-SHFMT_FLAGS  := -i 2 -ci -sr
+# `xargs echo` is the `$(strip …)` this used to carry, at the DEFINITION rather than at each use.
+# Both globs match nothing today, and two globs that each expand to nothing still leave the SPACE
+# between them — so an unstripped `SHELL_FILES` is the one-character string " ",
+# `[ -n "{{SHELL_FILES}}" ]` is TRUE, and `shfmt -w` with no operands reads standard input and dies
+# with "-w cannot be used on standard input". `fmt` failed that way from the day the last script
+# became Rust. Stripping here makes the emptiness the same emptiness at all four use sites instead
+# of at the two that happened to remember.
+SHELL_FILES := `ls scripts/*.sh ThirdParty/tools/*.sh 2>/dev/null | xargs echo`
+SHFMT_FLAGS := "-i 2 -ci -sr"
 # There is no PY_FILES, and no ruff. Every Python script this repo had is now Rust — the four
 # lint gates are rules in `rust/slopdesk-invariants`, the operator tools (the release pipeline, the
 # herdr harness, the Swift access raiser, the input synclient) are binaries in
-# `rust/slopdesk-devtools`. A `$(wildcard scripts/*.py)` left behind would be a lint scope that
+# `rust/slopdesk-devtools`. A `scripts/*.py` glob left behind would be a lint scope that
 # silently un-empties the day someone drops a script in, which is the shape of gate this file
 # already warns about twice below.
 
@@ -78,29 +85,37 @@ SHFMT_FLAGS  := -i 2 -ci -sr
 # shell list above is: the seventeen were spelled out by hand three times over (once in `fmt-rust`,
 # twice in `lint-rust`), so adding a crate meant remembering three places and forgetting one left it
 # silently unlinted — the failure `docs/46` warns about in the row about this very target.
-RUST_WORKSPACES := rust $(patsubst %/Cargo.toml,%,$(shell grep -l '^\[workspace\]' rust/*/Cargo.toml))
+#
+# A BACKTICK rather than `shell(…)`, and the difference is load-bearing: `just --dry-run` prints an
+# unevaluated `shell(…)` as its own source text, and `slopdesk-gate reach` reads a dry run to learn
+# which directories a recipe would enter. A backtick prints RAW, so the gate can run the very
+# command substitution just would have run. See `gates::reach`.
+RUST_WORKSPACES := "rust " + `grep -l '^\[workspace\]' rust/*/Cargo.toml | sed 's|/Cargo.toml$||' | xargs echo`
 
-.DEFAULT_GOAL := help
+# The linters `lint` fans out over, in the order their logs are replayed.
+LINTERS := "lint-swift lint-shell lint-rust lint-reach lint-invariants"
 
 # ---------------------------------------------------------------------------- #
-.PHONY: help
-help: ## Show this help
-	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) \
-		| sort | awk -F':.*## ' '{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+# The FIRST recipe is what a bare `just` runs, which is this file's `.DEFAULT_GOAL`.
+
+# Show this help
+help:
+    @{{just_executable()}} --list
 
 # ---------------------------------------------------------------------------- #
 # Formatting (writes)
-.PHONY: fmt fmt-swift fmt-shell fmt-rust
-fmt: fmt-swift fmt-shell fmt-rust ## Auto-format all languages
+
+# Auto-format all languages
+fmt: fmt-swift fmt-shell fmt-rust
 
 # `.swiftformat` states the division of labour: SwiftFormat owns formatting, SwiftLint owns lint.
 # The division does not survive contact with `leading_whitespace`. SwiftFormat cannot remove a blank
 # line at the START of a file — `consecutiveBlankLines` collapses three to two and stops, and no
 # other rule reaches file position 0 (checked against every rule's `--ruleinfo`). SwiftLint enforces
-# it, so `make fmt-swift` could not produce a tree `make lint-swift` accepts: the one thing a format
+# it, so `just fmt-swift` could not produce a tree `just lint-swift` accepts: the one thing a format
 # target exists to guarantee.
 #
-# So the WRITE half of SwiftLint lives here, in the target that writes, and `lint-swift` stays
+# So the WRITE half of SwiftLint lives here, in the recipe that writes, and `lint-swift` stays
 # strictly read-only (`--lint`, and `swiftlint` with no `--fix`). It is a no-op on a clean tree —
 # verified: zero output, byte-identical `git status` and diffstat — so it costs a pass over the tree
 # and changes nothing until something is genuinely unformatted.
@@ -108,67 +123,75 @@ fmt: fmt-swift fmt-shell fmt-rust ## Auto-format all languages
 # `--fix` only, never `analyze --fix`. The analyzer half (`unused_import`, `unused_declaration`)
 # judges by a compiler log from ONE configuration, so it deletes imports that only an `#if os(iOS)`
 # branch uses; it belongs to a deliberate, verified sweep, not to a formatter people run on reflex.
-fmt-swift: ## Format Swift (SwiftFormat, then SwiftLint's correctable rules)
-	swiftformat $(SWIFTFMT_PATHS)
-	swiftlint --fix --quiet
 
-fmt-shell: ## Format shell (shfmt)
-	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -w $(SHELL_FILES); fi
+# Format Swift (SwiftFormat, then SwiftLint's correctable rules)
+fmt-swift:
+    swiftformat {{SWIFTFMT_PATHS}}
+    swiftlint --fix --quiet
+
+# Format shell (shfmt)
+fmt-shell:
+    @if [ -n "{{SHELL_FILES}}" ]; then shfmt {{SHFMT_FLAGS}} -w {{SHELL_FILES}}; fi
 
 # rustfmt.toml turns on nightly-only options (wrap_comments, group_imports, format_strings …).
 # Only the FORMATTER needs nightly; the crate itself builds and tests on stable.
 # EVERY workspace, matching `lint-rust` — the daemons each have their own (see the note there), and a
-# formatter that skips what the linter checks means `make fmt && make lint` fails on its own output.
-fmt-rust: ## Format Rust (nightly rustfmt — rust/rustfmt.toml uses unstable options)
-	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo +nightly fmt --all) || exit 1; done
+# formatter that skips what the linter checks means `just fmt && just lint` fails on its own output.
+
+# Format Rust (nightly rustfmt — rust/rustfmt.toml uses unstable options)
+fmt-rust:
+    @for ws in {{RUST_WORKSPACES}}; do (cd $ws && cargo +nightly fmt --all) || exit 1; done
 
 # ---------------------------------------------------------------------------- #
 # Autofix (writes) — formatting + every safe lint autocorrect
-.PHONY: fix
-fix: fmt ## Format + apply all safe lint autofixes
-	-swiftlint --fix --quiet
-	@# Every workspace, for the reason `fmt-rust` and `lint-rust` are: `cd rust && … --workspace`
-	@# autofixes the root's four members and leaves the other sixteen crates for `make lint` to fail on.
-	-@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged) || true; done
-	-[ -n "$(SHELL_FILES)" ] && shellcheck -f diff $(SHELL_FILES) | git apply --allow-empty 2>/dev/null
+#
+# The clippy sweep is over every workspace, for the reason `fmt-rust` and `lint-rust` are:
+# `cd rust && … --workspace` autofixes the root's four members and leaves the other sixteen crates
+# for `just lint` to fail on.
+
+# Format + apply all safe lint autofixes
+fix: fmt
+    -swiftlint --fix --quiet
+    -@for ws in {{RUST_WORKSPACES}}; do (cd $ws && cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged) || true; done
+    -[ -n "{{SHELL_FILES}}" ] && shellcheck -f diff {{SHELL_FILES}} | git apply --allow-empty 2>/dev/null
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-rust lint-rust-clippy test-rust lint-reach lint-invariants
-LINTERS := lint-swift lint-shell lint-rust lint-reach lint-invariants
-
+#
 # The five linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
 # and serially they were the inner loop's largest fixed cost: 55 s, of which the cross-language
 # ratchets alone were 35 s. Overlapping the other four with them is free wall clock — measured
 # 55 s → 36 s. The ratchets are `lint-invariants` now and cost about half a second; what is left in
-# `lint-reach` is four `make -n` expansions and one content stamp.
+# `lint-reach` is four dry-run expansions and one content stamp.
 #
-# Not a plain prerequisite list under `make -j`: the top-level `make` is not invoked with one, and a
-# prerequisite list only runs in parallel if the make expanding it was told to. And not `-j` here
-# either, because this repo's make is 3.81 (Apple's), which has no `--output-sync` — five linters
-# interleaving diagnostics line by line is a gate whose failures cannot be read. So each runs into
-# its OWN log, and the logs are replayed IN THE DECLARED ORDER once every one has finished. The
-# output is byte-identical to the serial gate's; only the waiting changed.
+# Not a plain dependency list and not just's `[parallel]` attribute: five linters interleaving
+# diagnostics line by line is a gate whose failures cannot be read. So each runs into its OWN log,
+# and the logs are replayed IN THE DECLARED ORDER once every one has finished. The output is
+# byte-identical to the serial gate's; only the waiting changed.
 #
 # `wait` on a KNOWN pid, for the reason `gates::ffi` says: a bare `wait`
 # yields zero however the jobs died, and a lint gate that passes on a dead linter is worse than a
 # slow one. Every linter is waited on before the exit status is returned, so one failure does not
 # leave four tools running against a tree the next command is about to edit.
-lint: ## Run every linter strictly
-	@dir=$$(mktemp -d -t slopdesk-lint); trap 'rm -rf "$$dir"' EXIT; \
-	for t in $(LINTERS); do \
-	  $(MAKE) --no-print-directory $$t > "$$dir/$$t.log" 2>&1 & echo $$! > "$$dir/$$t.pid"; \
-	done; \
-	rc=0; \
-	for t in $(LINTERS); do \
-	  wait $$(cat "$$dir/$$t.pid") || rc=1; \
-	  if [ -s "$$dir/$$t.log" ]; then printf '── %s ──\n' "$$t"; cat "$$dir/$$t.log"; fi; \
-	done; \
-	exit $$rc
 
-lint-swift: ## SwiftFormat --lint + SwiftLint --strict
-	swiftformat $(SWIFTFMT_PATHS) --lint
-	swiftlint --strict --quiet
+# Run every linter strictly
+lint:
+    #!/bin/sh
+    dir=$(mktemp -d -t slopdesk-lint); trap 'rm -rf "$dir"' EXIT
+    for t in {{LINTERS}}; do
+      {{just_executable()}} $t > "$dir/$t.log" 2>&1 & echo $! > "$dir/$t.pid"
+    done
+    rc=0
+    for t in {{LINTERS}}; do
+      wait $(cat "$dir/$t.pid") || rc=1
+      if [ -s "$dir/$t.log" ]; then printf '── %s ──\n' "$t"; cat "$dir/$t.log"; fi
+    done
+    exit $rc
+
+# SwiftFormat --lint + SwiftLint --strict
+lint-swift:
+    swiftformat {{SWIFTFMT_PATHS}} --lint
+    swiftlint --strict --quiet
 
 # PORTED — the design-token leak ratchet and the menu-bar shortcut-less ratchet were two shell
 # scripts and are two rules in `rust/slopdesk-invariants` (`design_ratchets`: `design-token-leaks`,
@@ -179,40 +202,47 @@ lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 # PORTED — the dead-FFI-door ratchet, the one-walk ban filter's superset check and the
 # transcribed-constant ratchet were three Python scripts and are seven rules in
 # `rust/slopdesk-invariants` (`gate_health`, `shared_constants`). `lint-invariants` runs them with
-# the rest of the registry over ONE tree walk, so there is nothing left for a separate target to do.
+# the rest of the registry over ONE tree walk, so there is nothing left for a separate recipe to do.
 
-# The four questions only `make -n` can answer, plus the stale-artifact gate.
+# The four questions only a dry run can answer, plus the stale-artifact gate.
 #
 # `check-supervisor.sh` is GONE — every constant it compared is a rule in `rust/slopdesk-invariants`
 # (`lint-invariants`), which reads the tree once and carries a break-test per rule. What could not
-# move there is what is here: three of these ask what a `make` target would RUN, which means
-# expanding a recipe, and the fourth asks whether the linked artifact is older than its Rust sources.
+# move there is what is here: three of these ask what a `just` recipe would RUN, which means
+# expanding it, and the fourth asks whether the linked artifact is older than its Rust sources.
 # Neither is decidable by reading text.
 #
-# `make supervisor-tests` is the other half — the five sidecar suites and the Swift tests that drive
-# a real daemon. Behind its own target for the reason it was behind a `--tests` flag: the rules above
+# `just supervisor-tests` is the other half — the five sidecar suites and the Swift tests that drive
+# a real daemon. Behind its own recipe for the reason it was behind a `--tests` flag: the rules above
 # are what is worth running on every commit.
-lint-reach: ## every workspace crate is reached by a make target, and the FFI artifact is fresh
-	@cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- reach
-	@cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi --check
 
-supervisor-tests: ## the hostd/superd suites that need a live daemon (slow; not in `check`)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- supervisor-tests
+# every workspace crate is reached by a just recipe, and the FFI artifact is fresh
+lint-reach:
+    @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- reach
+    @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi --check
+
+# the hostd/superd suites that need a live daemon (slow; not in `check`)
+supervisor-tests:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- supervisor-tests
 
 # The same ratchets, as a program. Sections migrate here one at a time and the shell section is
 # DELETED in the commit that ports it, so there is never a period where both enforce the same rule.
 # It reads the tree once instead of spawning a grep per question — half a second against the shell's
 # two and a half minutes — and every rule carries a unit test that seeds the breakage and asserts
 # the rule fires, which is the one thing a shell section could not have.
-lint-invariants: ## the ported cross-language ratchets, in Rust
-	@cd rust/slopdesk-invariants && cargo run --release --quiet -- --root ../..
+
+# the ported cross-language ratchets, in Rust
+lint-invariants:
+    @cd rust/slopdesk-invariants && cargo run --release --quiet -- --root ../..
 
 # The break-tests, which are the reason the port is worth doing: each seeds the drift its rule
 # exists to catch and asserts the rule fires. `the_live_tree_satisfies_every_rule` is in there too,
-# so this target is also the gate — which is what lets `cargo test` here stand in for the whole
+# so this recipe is also the gate — which is what lets `cargo test` here stand in for the whole
 # script during development.
-invariants-test: ## cargo test for the ratchets and their break-tests
-	cd rust/slopdesk-invariants && cargo test
+
+# cargo test for the ratchets and their break-tests
+invariants-test:
+    cd rust/slopdesk-invariants && cargo test
 
 # The `if` form is load-bearing. A `[ -n … ] && cmd` chain exits nonzero on an EMPTY file
 # list, and the `|| true` that silences THAT silences every real diagnostic with it: the tool
@@ -220,13 +250,14 @@ invariants-test: ## cargo test for the ratchets and their break-tests
 # tool's own exit status otherwise. Same tools, flags and file set as the CI `shell` job, so local
 # green implies CI green rather than the reverse.
 #
-#
 # The emptiness guard is load-bearing for the same reason, one layer down — a linter handed no files
-# reads standard input rather than doing nothing. `SHELL_FILES` is `strip`ped where it is DEFINED so
+# reads standard input rather than doing nothing. `SHELL_FILES` is stripped where it is DEFINED so
 # that this reads as the plain test it looks like; the note there says what the space cost.
-lint-shell: ## shellcheck + shfmt --diff
-	@if [ -n "$(SHELL_FILES)" ]; then shellcheck $(SHELL_FILES); fi
-	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES); fi
+
+# shellcheck + shfmt --diff
+lint-shell:
+    @if [ -n "{{SHELL_FILES}}" ]; then shellcheck {{SHELL_FILES}}; fi
+    @if [ -n "{{SHELL_FILES}}" ]; then shfmt {{SHFMT_FLAGS}} -d {{SHELL_FILES}}; fi
 
 # Rust: clippy at all/pedantic/nursery/cargo + a curated restriction slice, every group DENY
 # (rust/Cargo.toml `[workspace.lints]`), so `-D warnings` is the belt to those braces. `--all-targets`
@@ -242,24 +273,30 @@ lint-shell: ## shellcheck + shfmt --diff
 # workspaces is the whole point), so there is no build lock to contend on. Each invocation's output
 # is BUFFERED and printed only if it failed, so a red sweep reads as one crate's report instead of
 # nineteen interleaved ones; xargs exits non-zero when any of them did.
-lint-rust: lint-rust-clippy ## clippy -D warnings (all targets) + rustfmt --check, all 17 Rust workspaces
-	@printf '%s\n' $(RUST_WORKSPACES) | xargs -P 8 -I{} sh -c \
-	  'cd {} || exit 1; out=$$(cargo +nightly fmt --all -- --check 2>&1) || { printf "── {} ──\n%s\n" "$$out" >&2; exit 1; }'
+
+# clippy -D warnings (all targets) + rustfmt --check, all 17 Rust workspaces
+lint-rust: lint-rust-clippy
+    @printf '%s\n' {{RUST_WORKSPACES}} | xargs -P 8 -I{} sh -c \
+      'cd {} || exit 1; out=$(cargo +nightly fmt --all -- --check 2>&1) || { printf "── {} ──\n%s\n" "$out" >&2; exit 1; }'
 
 # Split out because the pre-commit hook wants clippy WITHOUT the `fmt --check`: prek runs hooks in
 # parallel, and the `rustfmt (apply)` hook is rewriting the very files a `--check` would be reading.
-lint-rust-clippy: ## clippy -D warnings across every Rust workspace (no fmt check)
-	@printf '%s\n' $(RUST_WORKSPACES) | xargs -P 8 -I{} sh -c \
-	  'cd {} || exit 1; out=$$(cargo clippy --workspace --all-targets --all-features --quiet -- -D warnings 2>&1) || { printf "── {} ──\n%s\n" "$$out" >&2; exit 1; }'
+
+# clippy -D warnings across every Rust workspace (no fmt check)
+lint-rust-clippy:
+    @printf '%s\n' {{RUST_WORKSPACES}} | xargs -P 8 -I{} sh -c \
+      'cd {} || exit 1; out=$(cargo clippy --workspace --all-targets --all-features --quiet -- -D warnings 2>&1) || { printf "── {} ──\n%s\n" "$out" >&2; exit 1; }'
 
 # The pre-commit hook's Rust test sweep, and the same `--workspace`-does-not-reach-them story: the
 # hook used to run `cd rust && cargo test --workspace` while firing on ANY `rust/**.{rs,toml}` change,
 # so a commit to fifteen of the seventeen crates ran the OTHER two crates' tests and reported green.
 # ~21 s warm for the lot, which is what makes it a commit-time gate rather than a push-time one. The
-# named per-crate targets below stay: they are how you run ONE crate, and `make test` composes them.
-test-rust: ## cargo test across every Rust workspace (~21 s warm, 55 s if run one at a time)
-	@printf '%s\n' $(RUST_WORKSPACES) | xargs -P 8 -I{} sh -c \
-	  'cd {} || exit 1; out=$$(cargo test --workspace --quiet 2>&1) || { printf "── {} ──\n%s\n" "$$out" >&2; exit 1; }'
+# named per-crate recipes below stay: they are how you run ONE crate, and `just test` composes them.
+
+# cargo test across every Rust workspace (~21 s warm, 55 s if run one at a time)
+test-rust:
+    @printf '%s\n' {{RUST_WORKSPACES}} | xargs -P 8 -I{} sh -c \
+      'cd {} || exit 1; out=$(cargo test --workspace --quiet 2>&1) || { printf "── {} ──\n%s\n" "$out" >&2; exit 1; }'
 
 # SwiftLint analyzer rules need the compiler INVOCATIONS, which only a verbose build prints. Minutes,
 # not seconds — ~750 files, each re-parsed by a real frontend — so this stays out of `lint` and runs
@@ -269,35 +306,37 @@ test-rust: ## cargo test across every Rust workspace (~21 s warm, 55 s if run on
 # It fed `.build/debug.yaml`, which is llbuild's build MANIFEST and not a compiler log. SwiftLint
 # accepted the path, collected nothing out of it, and printed "Found 0 violations, 0 serious in 0
 # files" — a clean exit over an empty file set. The `|| echo <note>` that was meant to catch exactly
-# that could not fire, because nothing had failed: the target had never once run an analyzer rule and
+# that could not fire, because nothing had failed: the recipe had never once run an analyzer rule and
 # had reported success for it every time. Same shape as the `|| true` warned about above `lint-shell`,
 # reached by a different road.
 #
 # So: a real `-v` log, no `|| echo`, and the file count asserted. Analysing zero files is the failure
-# it always was, and the exit status of the analyzer itself is what the target exits with — never
+# it always was, and the exit status of the analyzer itself is what the recipe exits with — never
 # `tee`'s, which is why the log is written first and printed second.
 #
 # The clean is load-bearing, not caution. `-v` prints the commands SwiftPM RUNS, so a warm tree
 # prints none, the log carries no `swift-frontend` line, and the count assertion below fails on a
-# tree with nothing wrong with it. The price is a full rebuild every time this target is asked for,
+# tree with nothing wrong with it. The price is a full rebuild every time this recipe is asked for,
 # and the reason it is out of `lint`.
-.PHONY: lint-swift-analyze
-lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes, not seconds)
-	swift package clean
-	swift build --build-tests -v > .build/swiftlint-compiler.log 2>&1 || \
-		{ tail -40 .build/swiftlint-compiler.log; exit 1; }
-	@swiftlint analyze --strict --compiler-log-path .build/swiftlint-compiler.log \
-		> .build/swiftlint-analyze.log 2>&1; \
-	status=$$?; \
-	cat .build/swiftlint-analyze.log; \
-	grep -qE 'in [1-9][0-9]* files' .build/swiftlint-analyze.log || \
-		{ echo "lint-swift-analyze: analysed 0 files — the compiler log carries no swiftc invocation"; exit 1; }; \
-	exit $$status
+
+# SwiftLint analyzer rules (full rebuild + analyze; minutes, not seconds)
+lint-swift-analyze:
+    swift package clean
+    swift build --build-tests -v > .build/swiftlint-compiler.log 2>&1 || \
+        { tail -40 .build/swiftlint-compiler.log; exit 1; }
+    @swiftlint analyze --strict --compiler-log-path .build/swiftlint-compiler.log \
+        > .build/swiftlint-analyze.log 2>&1; \
+    status=$?; \
+    cat .build/swiftlint-analyze.log; \
+    grep -qE 'in [1-9][0-9]* files' .build/swiftlint-analyze.log || \
+        { echo "lint-swift-analyze: analysed 0 files — the compiler log carries no swiftc invocation"; exit 1; }; \
+    exit $status
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-macos-apps check-ios-tests gui-macos gui-video gui-multiclient gui-launch-restore build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test muxsession-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test config-schema codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test hostlaunch-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
-check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
+
+# lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
+check: lint build test miri golden check-ios check-macos-apps
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
 #
@@ -315,7 +354,7 @@ check: lint build test miri golden check-ios check-macos-apps ## lint + build + 
 #                         that reason — the `#if os(iOS)` surface breaks on a Swift edit like any
 #                         other, and now noticing costs nothing on the edits that cannot break it.
 #   miri omitted          ~47 s to re-audit `rust/slopdesk-gfsimd`, which only a change to that crate
-#                         can affect. `make miri` by hand when touching it; `check` runs it anyway.
+#                         can affect. `just miri` by hand when touching it; `check` runs it anyway.
 #
 # `build` is not omitted so much as implied: `test-touched` builds incrementally before selecting.
 #
@@ -330,34 +369,38 @@ check: lint build test miri golden check-ios check-macos-apps ## lint + build + 
 # SwiftPM lock (which only makes `golden` wait, and `golden` is three seconds), and serially the
 # inner loop paid their sum. Measured on one Swift edit: 5:46 serial, and the iOS half of that was
 # two schemes where one does the work.
-QUICK_SLOW := test-touched golden check-ios check-macos-apps
+QUICK_SLOW := "test-touched golden check-ios check-macos-apps"
 
-quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + golden + the (stamped) iOS triple
-	@dir=$$(mktemp -d -t slopdesk-quick); trap 'rm -rf "$$dir"' EXIT; \
-	for t in $(QUICK_SLOW); do \
-	  $(MAKE) --no-print-directory $$t > "$$dir/$$t.log" 2>&1 & echo $$! > "$$dir/$$t.pid"; \
-	done; \
-	rc=0; \
-	for t in $(QUICK_SLOW); do \
-	  wait $$(cat "$$dir/$$t.pid") || rc=1; \
-	  if [ -s "$$dir/$$t.log" ]; then printf '── %s ──\n' "$$t"; cat "$$dir/$$t.log"; fi; \
-	done; \
-	if [ $$rc -eq 0 ]; then \
-	  printf 'quick: green — run `make check` before pushing (adds the full suite + miri)\n'; \
-	fi; \
-	exit $$rc
+# The INNER LOOP: lint + only the tests the change reaches + golden + the (stamped) iOS triple
+quick: ffi lint
+    #!/bin/sh
+    dir=$(mktemp -d -t slopdesk-quick); trap 'rm -rf "$dir"' EXIT
+    for t in {{QUICK_SLOW}}; do
+      {{just_executable()}} $t > "$dir/$t.log" 2>&1 & echo $! > "$dir/$t.pid"
+    done
+    rc=0
+    for t in {{QUICK_SLOW}}; do
+      wait $(cat "$dir/$t.pid") || rc=1
+      if [ -s "$dir/$t.log" ]; then printf '── %s ──\n' "$t"; cat "$dir/$t.log"; fi
+    done
+    if [ $rc -eq 0 ]; then
+      printf 'quick: green — run `just check` before pushing (adds the full suite + miri)\n'
+    fi
+    exit $rc
 
 # `swift build` compiles the macOS slice ONLY — it never type-checks a `#if os(iOS)` source, so the
 # UIKit input host and the iOS components in Sources/SlopDeskPhoneUI/iOS/ compiled only in someone's
-# head. This gate has existed for exactly that and was reachable from no target, no
+# head. This gate has existed for exactly that and was reachable from no recipe, no
 # hook and no workflow. It was also RED: two xcframeworks each shipped `Headers/module.modulemap`,
 # Xcode copies both to `$BUILT_PRODUCTS_DIR/include/`, and neither app had built on either platform
 # since (fixed in `gates::ffi`, which now nests its headers and asserts the nesting).
 #
 # `slopdesk-guigate macos` is the sibling and is deliberately NOT here: it drives a real window and
 # needs a logged-in GUI session, so it cannot run from a headless gate.
-check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios
+
+# iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
+check-ios: ffi
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios
 
 # The OTHER half of the same hole. `check-ios` compiles `Apps/ClientApp-iOS`; `swift build` compiles
 # `Sources/` and `Tests/`. Nothing compiled the two macOS app shells, because they are Xcode targets
@@ -367,55 +410,67 @@ check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` 
 # Distinct from `slopdesk-guigate macos`, which BUILDS AND RUNS the app against a real window and
 # therefore needs a logged-in GUI session. This one only type-checks, so it is headless and belongs
 # here.
-check-macos-apps: ffi ## macOS app-shell typecheck (the `Apps/` code no other gate compiles)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- macos-apps
+
+# macOS app-shell typecheck (the `Apps/` code no other gate compiles)
+check-macos-apps: ffi
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- macos-apps
 
 # The half `check-ios` does not do: it type-checks and runs ZERO tests. `swift test` compiles the
 # MACOS branch of every `#if os(iOS)` fork, so an iOS default asserted there is asserted about the
 # wrong branch — a macOS build of `platformDefaultFollowSessionFocus` reads the opposite value.
 # `slopdesk-gate ios-tests` is the only thing in the repo that executes an assertion on the iOS
-# triple, and it too was reachable from no target: `docs/46` calls it the ONLY executor of iOS tests
+# triple, and it too was reachable from no recipe: `docs/46` calls it the ONLY executor of iOS tests
 # and then nothing ran it.
 #
 # NOT in `check`: it boots a simulator, which a headless gate cannot assume — same reason
 # `slopdesk-guigate` stays out. Run it after touching anything inside an `#if os(iOS)`.
-check-ios-tests: ffi ## RUN the iOS tests on a booted simulator (the only assertions on that triple)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios-tests
+
+# RUN the iOS tests on a booted simulator (the only assertions on that triple)
+check-ios-tests: ffi
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios-tests
 
 # The four gates that DRIVE THE SHIPPING APP. None is in `check` and none can be: each launches the
 # real bundle against a real window server, so all four need an unlocked Aqua login session —
 # `video` additionally needs Screen Recording TCC and `multiclient` needs Accessibility TCC.
-# They are here so `make help` names them, which is the only way anyone finds them now that the
+# They are here so `just help` names them, which is the only way anyone finds them now that the
 # shell scripts that used to carry them are gone. Minutes each; run one at a time (each binds its
 # own port from `gui::port`, but they all fight over the same window server and the same TCC grant).
-gui-macos: ## GUI gate: launch, connect, type, quit (needs an unlocked Aqua session)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- macos
 
-gui-video: ## GUI gate: the video pane end to end (also needs Screen Recording TCC)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- video
+# GUI gate: launch, connect, type, quit (needs an unlocked Aqua session)
+gui-macos:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- macos
 
-gui-multiclient: ## GUI gate: two clients on one host (also needs Accessibility TCC)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- multiclient
+# GUI gate: the video pane end to end (also needs Screen Recording TCC)
+gui-video:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- video
 
-gui-launch-restore: ## GUI gate: restore `workspace.json` and re-dial the saved host, as a user does
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- launch-restore
+# GUI gate: two clients on one host (also needs Accessibility TCC)
+gui-multiclient:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- multiclient
+
+# GUI gate: restore `workspace.json` and re-dial the saved host, as a user does
+gui-launch-restore:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- launch-restore
 
 # The three arm64 static slices the Swift clients link, from `rust/slopdesk-ffi`. FIRST, and not
 # optional: `Package.swift` declares a `binaryTarget` at that path, so SwiftPM cannot even resolve
 # the graph without it. The gate stamps its inputs and exits in milliseconds when nothing changed,
 # which is what makes it safe to put in front of every build.
 #
-# This target's own line is what `linked-artifacts-are-built` reads to learn who produces the
+# This recipe's own doc line is what `linked-artifacts-are-built` reads to learn who produces the
 # artifact, so the path in the help text is load-bearing rather than decorative.
-ffi: ## Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (macos + ios + ios-sim arm64)
-	@cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi
 
-build: ffi hook ctl codeseed probe ## swift build (Swift + the linked Rust FFI slices) + the Rust hook relay, agent CLI, profile seeder and metadata probe
-	swift build
-	@cp rust/target/release/slopdesk-hook "$$(swift build --show-bin-path)/slopdesk-hook"
-	@cp rust/target/release/slopdesk-agenthooks "$$(swift build --show-bin-path)/slopdesk-agenthooks"
-	@cp rust/target/release/slopdesk-ctl "$$(swift build --show-bin-path)/slopdesk-ctl"
-	@cp rust/target/release/slopdesk-probe "$$(swift build --show-bin-path)/slopdesk-probe"
+# Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (macos + ios + ios-sim arm64)
+ffi:
+    @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi
+
+# swift build (Swift + the linked Rust FFI slices) + the Rust hook relay, agent CLI, profile seeder and metadata probe
+build: ffi hook ctl codeseed probe
+    swift build
+    @cp rust/target/release/slopdesk-hook "$(swift build --show-bin-path)/slopdesk-hook"
+    @cp rust/target/release/slopdesk-agenthooks "$(swift build --show-bin-path)/slopdesk-agenthooks"
+    @cp rust/target/release/slopdesk-ctl "$(swift build --show-bin-path)/slopdesk-ctl"
+    @cp rust/target/release/slopdesk-probe "$(swift build --show-bin-path)/slopdesk-probe"
 
 # The Claude Code hook relay. Compiled, not a shell script: Claude Code runs hooks SYNCHRONOUSLY
 # on PreToolUse/PostToolUse — twice per tool call — and the sh+cat+nc script it replaces spent
@@ -427,23 +482,29 @@ build: ffi hook ctl codeseed probe ## swift build (Swift + the linked Rust FFI s
 # `serde_json` and the relay's cost IS its startup. The split is measured, not assumed: the relay's
 # release binary is byte-for-byte the same size either way, because nothing links what it cannot
 # reach.
-hook: ## Build the Rust hook relay + its installer (rust/slopdesk-hook)
-	cd rust && cargo build --release -p slopdesk-hook
 
-hook-test: ## cargo test for the hook relay
-	cd rust && cargo test -p slopdesk-hook
+# Build the Rust hook relay + its installer (rust/slopdesk-hook)
+hook:
+    cd rust && cargo build --release -p slopdesk-hook
+
+# cargo test for the hook relay
+hook-test:
+    cd rust && cargo test -p slopdesk-hook
 
 # The agent-control CLI. Was Swift; ported for the same reason as the hook and measured the same
 # way — an agent forks it once per `read`/`wait`/`write`/`run`, so its cost IS process startup.
 # Above the fork/exec floor the Swift build spent 3.47 ms getting useful work done, this one spends
 # 0.73 ms. Same root workspace as the hook because it wants the same startup-tuned profile; staged
-# next to hostd by `build:`, which is where `rust/slopdesk-hostd` looks for the sibling it exports
+# next to hostd by `build`, which is where `rust/slopdesk-hostd` looks for the sibling it exports
 # as `SLOPDESK_CTL_BIN`.
-ctl: ## Build the Rust agent-control CLI (rust/slopdesk-ctl)
-	cd rust && cargo build --release -p slopdesk-ctl
 
-ctl-test: ## cargo test for the agent-control CLI
-	cd rust && cargo test -p slopdesk-ctl
+# Build the Rust agent-control CLI (rust/slopdesk-ctl)
+ctl:
+    cd rust && cargo build --release -p slopdesk-ctl
+
+# cargo test for the agent-control CLI
+ctl-test:
+    cd rust && cargo test -p slopdesk-ctl
 
 # The host metadata RPC's git, directory and session half. hostd forks it per request, which for
 # `gitStatus` — the verb the project-scoped watcher polls on a cadence — is FEWER spawns than before:
@@ -451,101 +512,131 @@ ctl-test: ## cargo test for the agent-control CLI
 # program hostd spawns once. The rest of the shim (the pane's cwd, its processes, its ports) needs
 # the PTY master fd and stays in Swift. It also answers the TERM question — whether this host can
 # resolve `xterm-ghostty` — which is the same shape of question about the same machine. Same root
-# workspace as the hook for the same startup-tuned profile; staged next to hostd by `build:`, which
+# workspace as the hook for the same startup-tuned profile; staged next to hostd by `build`, which
 # is where `HostProbe.locate` looks.
-probe: ## Build the Rust host probe (rust/slopdesk-probe)
-	cd rust && cargo build --release -p slopdesk-probe
 
-probe-test: ## cargo test for the metadata probe
-	cd rust && cargo test -p slopdesk-probe
+# Build the Rust host probe (rust/slopdesk-probe)
+probe:
+    cd rust && cargo build --release -p slopdesk-probe
+
+# cargo test for the metadata probe
+probe-test:
+    cd rust && cargo test -p slopdesk-probe
 
 # The process custodian (docs/51). Builds like the hook but is NOT staged next to the host binary:
 # it is a launchd agent installed out of the build tree, because launchd re-execs its path and a
 # `cargo clean` must not be able to leave the agent pointing at nothing.
-superd: ## Build slopdesk-superd (rust/slopdesk-superd)
-	cd rust/slopdesk-superd && cargo build --release
 
-superd-test: ## cargo test for the process custodian
-	cd rust/slopdesk-superd && cargo test
+# Build slopdesk-superd (rust/slopdesk-superd)
+superd:
+    cd rust/slopdesk-superd && cargo build --release
+
+# cargo test for the process custodian
+superd-test:
+    cd rust/slopdesk-superd && cargo test
 
 # The whole of the tree's `unsafe`, and therefore the whole of what a reviewer has to check by hand.
 # `--all-features` is not optional here: `winsize-set` gates the one function superd may not call in
 # production, and a test run that skipped it would leave that code uncompiled and unlinted.
-posix-test: ## cargo test for the isolated unsafe surface (rust/slopdesk-posix)
-	cd rust/slopdesk-posix && cargo test --all-features
+
+# cargo test for the isolated unsafe surface (rust/slopdesk-posix)
+posix-test:
+    cd rust/slopdesk-posix && cargo test --all-features
 
 # The C ABI, tested through the exported symbols rather than through the Rust functions behind
 # them — an entry point that marshals its arguments wrongly passes every test of the crate it wraps.
-ffi-test: ## cargo test for the C ABI Swift calls (rust/slopdesk-ffi)
-	cd rust/slopdesk-ffi && cargo test
+
+# cargo test for the C ABI Swift calls (rust/slopdesk-ffi)
+ffi-test:
+    cd rust/slopdesk-ffi && cargo test
 
 # The git engine. Its suite builds REAL repositories under the temp directory and compares every
 # answer with the `git` binary's own — the parity that let the four subprocesses be deleted. It is a
 # separate workspace because it vendors libgit2, which the fork-per-event root workspace must not
 # link (see the crate's manifest).
-git-test: ## cargo test for the in-process git status (rust/slopdesk-git)
-	cd rust/slopdesk-git && cargo test
 
-superd-install: ## Build + (re)install the com.slopdesk.superd LaunchAgent — RESTARTS superd
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- install superd
+# cargo test for the in-process git status (rust/slopdesk-git)
+git-test:
+    cd rust/slopdesk-git && cargo test
+
+# Build + (re)install the com.slopdesk.superd LaunchAgent — RESTARTS superd
+superd-install:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- install superd
 
 # The VT screen engine (docs/52): the terminal parser, the snapshot renderer and the overprint
 # collapser, which used to be the hottest Swift in the tree (17.9 MiB/s against 186 in Rust). Its
 # own workspace for the same reason superd is: profiles are workspace-global and this one wants
 # `opt-level = 3` where the hook wants `"z"`.
-screend: ## Build slopdesk-screend (rust/slopdesk-screend)
-	cd rust/slopdesk-screend && cargo build --release
 
-screend-test: ## cargo test for the screen engine
-	cd rust/slopdesk-sanitize && cargo test
-	cd rust/slopdesk-screenwire && cargo test
-	cd rust/slopdesk-screend && cargo test
+# Build slopdesk-screend (rust/slopdesk-screend)
+screend:
+    cd rust/slopdesk-screend && cargo build --release
 
-screend-install: ## Build + (re)install the com.slopdesk.screend LaunchAgent
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- install screend
+# cargo test for the screen engine
+screend-test:
+    cd rust/slopdesk-sanitize && cargo test
+    cd rust/slopdesk-screenwire && cargo test
+    cd rust/slopdesk-screend && cargo test
+
+# Build + (re)install the com.slopdesk.screend LaunchAgent
+screend-install:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- install screend
 
 # The operator tools (rust/slopdesk-devtools): the release pipeline, the build gates, the operator
 # harnesses (`slopdesk-ops`), the herdr sync + parity harness, the Swift access raiser, the input
-# synclient. Not part of `build` — nothing ships them, so they are built when a target asks for
-# them (`make host-restart`, `make superd-install`, every `make release*` target, every gate that
+# synclient. Not part of `build` — nothing ships them, so they are built when a recipe asks for
+# them (`just host-restart`, `just superd-install`, every `just release*` recipe, every gate that
 # is a `slopdesk-gate` verb) and not on the inner loop. Their tests DO run in `test-rust`, via the
 # workspace glob.
-devtools: ## Build the operator tools (rust/slopdesk-devtools)
-	cd rust/slopdesk-devtools && cargo build --release
 
-devtools-test: ## cargo test for the operator tools
-	cd rust/slopdesk-devtools && cargo test
+# Build the operator tools (rust/slopdesk-devtools)
+devtools:
+    cd rust/slopdesk-devtools && cargo build --release
+
+# cargo test for the operator tools
+devtools-test:
+    cd rust/slopdesk-devtools && cargo test
 
 # PATH 4's daemon (docs/53): the file-drop endpoint clients dial DIRECTLY on `terminalPort + 2`.
 # hostd no longer binds that port or sees a body byte — superd spawns dropd and keeps it, so an
 # upload in flight survives a host restart. Its own workspace for the same profile reason as above.
-dropd: ## Build slopdesk-dropd (rust/slopdesk-dropd)
-	cd rust/slopdesk-dropd && cargo build --release
 
-dropd-test: ## cargo test for the file-drop service
-	cd rust/slopdesk-dropd && cargo test
+# Build slopdesk-dropd (rust/slopdesk-dropd)
+dropd:
+    cd rust/slopdesk-dropd && cargo build --release
+
+# cargo test for the file-drop service
+dropd-test:
+    cd rust/slopdesk-dropd && cargo test
 
 # The Android panel's bridge (docs/48): `adb` orchestration and the scrcpy byte pump, which clients
 # dial DIRECTLY. It used to be a listener inside hostd, so an H.264 mirror was pumped by the daemon
-# that owns every keystroke and `make host-restart` took every mirror down with it. Same
+# that owns every keystroke and `just host-restart` took every mirror down with it. Same
 # own-workspace reason as the three above.
-androidd: ## Build slopdesk-androidd (rust/slopdesk-androidd)
-	cd rust/slopdesk-androidd && cargo build --release
+
+# Build slopdesk-androidd (rust/slopdesk-androidd)
+androidd:
+    cd rust/slopdesk-androidd && cargo build --release
 
 # The SOCKET cases here need a booted device and are gated on SLOPDESK_ANDROID_HW=1
 # (`slopdesk-gate android`); without it they print why they proved nothing and pass.
-androidd-test: ## cargo test for the Android bridge
-	cd rust/slopdesk-androidd && cargo test
+
+# cargo test for the Android bridge
+androidd-test:
+    cd rust/slopdesk-androidd && cargo test
 
 # PATH 3's daemon (docs/54): the read-only inspector clients dial DIRECTLY on `terminalPort + 1`.
 # hostd never relayed a byte of it — what it did contribute was the process, so a transcript tail
-# and a session's whole replay window died with every `make host-restart`. Same own-workspace
+# and a session's whole replay window died with every `just host-restart`. Same own-workspace
 # reason as the four above.
-inspectord: ## Build slopdesk-inspectord (rust/slopdesk-inspectord)
-	cd rust/slopdesk-inspectord && cargo build --release
 
-inspectord-test: ## cargo test for the inspector service (unit + the transcript corpus)
-	cd rust/slopdesk-inspectord && cargo test
+# Build slopdesk-inspectord (rust/slopdesk-inspectord)
+inspectord:
+    cd rust/slopdesk-inspectord && cargo build --release
+
+# cargo test for the inspector service (unit + the transcript corpus)
+inspectord-test:
+    cd rust/slopdesk-inspectord && cargo test
 
 # Stage 1 of moving hostd off Swift (docs/DECISIONS.md): the PATH-1 terminal wire codec. A LIBRARY,
 # not a daemon — nothing links it yet, so `wire-test` is the only thing standing between it and a
@@ -558,11 +649,14 @@ inspectord-test: ## cargo test for the inspector service (unit + the transcript 
 # `WireMessage` and `MuxFlowControl` — the seq budget and the window/2 payload cap are wire facts,
 # not transport ones. The alt-screen cut scanner it repairs evictions with LEFT in stage 27, for
 # `rust/slopdesk-altscreen`, so superd could share it without depending on the protocol.
-wire: ## Build slopdesk-wire (rust/slopdesk-wire)
-	cd rust/slopdesk-wire && cargo build --release
 
-wire-test: ## cargo test for the wire codec + replay buffer (unit + golden-vector parity vs Swift)
-	cd rust/slopdesk-wire && cargo test
+# Build slopdesk-wire (rust/slopdesk-wire)
+wire:
+    cd rust/slopdesk-wire && cargo build --release
+
+# cargo test for the wire codec + replay buffer (unit + golden-vector parity vs Swift)
+wire-test:
+    cd rust/slopdesk-wire && cargo test
 
 # The alt-screen cut scanner, lifted OUT of `wire` in stage 27 so superd could share it: three
 # scrollback retainers front-truncate a stream and all three need the same answer before they may
@@ -570,15 +664,19 @@ wire-test: ## cargo test for the wire codec + replay buffer (unit + golden-vecto
 # (`wire`'s `replay`) is one; superd's journal is compaction and restore. superd cannot depend on
 # `wire`, which is the PROTOCOL and the one thing it must not know, so the scanner is its own
 # dependency-free crate rather than a second copy in Rust.
-altscreen-test: ## cargo test for the alt-screen cut scanner (rust/slopdesk-altscreen)
-	cd rust/slopdesk-altscreen && cargo test
+
+# cargo test for the alt-screen cut scanner (rust/slopdesk-altscreen)
+altscreen-test:
+    cd rust/slopdesk-altscreen && cargo test
 
 # The policy half of one hostd pane session: who votes on the pane's grid and what that folds to
 # (docs/45 §8.3). Its own crate because `MuxChannelSession` is an IO shell — Tasks, a PTY
 # descriptor, four relays — wrapped around arithmetic that needed none of them, and arithmetic
 # inside an actor is arithmetic nothing can test without a PTY. The `TIOCSWINSZ` stayed in Swift.
-muxsession-test: ## cargo test for one pane session's decisions (rust/slopdesk-muxsession)
-	cd rust/slopdesk-muxsession && cargo test
+
+# cargo test for one pane session's decisions (rust/slopdesk-muxsession)
+muxsession-test:
+    cd rust/slopdesk-muxsession && cargo test
 
 # hostd's PATH-1 socket: the accept loop, the 17-byte association preamble and the map that pairs
 # a CONTROL and a DATA connection into one shared mux link (docs/60 stage A). Its own crate because
@@ -586,32 +684,40 @@ muxsession-test: ## cargo test for one pane session's decisions (rust/slopdesk-m
 # the `.xcframework` has no business carrying. The pairing VERDICTS are still `slopdesk-muxsession`'s
 # above; this crate owns the fds and obeys. The loopback suite dials real sockets, which is exactly
 # what the Swift original could not test.
-hostnet-test: ## cargo test for hostd's PATH-1 listener and socket pairing (rust/slopdesk-hostnet)
-	cd rust/slopdesk-hostnet && cargo test
+
+# cargo test for hostd's PATH-1 listener and socket pairing (rust/slopdesk-hostnet)
+hostnet-test:
+    cd rust/slopdesk-hostnet && cargo test
 
 # hostd's end of the superd control socket (docs/60 stage C.0): the framing a descriptor rides on,
 # the reply-waiter table, the reader thread and the writer behind it. Its own crate because it
 # carries `nix` for `recvmsg`/`SCM_RIGHTS`, which is exactly what `slopdesk-superwire`'s manifest
 # keeps OUT of the `.xcframework` — the two crates split at the syscall, not at the layout. The
 # suite drives a fake superd over a real AF_UNIX socket, descriptors and all.
-superclient-test: ## cargo test for hostd's superd client (rust/slopdesk-superclient)
-	cd rust/slopdesk-superclient && cargo test
+
+# cargo test for hostd's superd client (rust/slopdesk-superclient)
+superclient-test:
+    cd rust/slopdesk-superclient && cargo test
 
 # hostd's end of the screend socket (docs/60 stage C.2): the connection, the fd pool keyed on the
 # address, the autostart with its backoff, and the ten verbs. Its own crate because it carries `nix`
 # for `access(2)` and spawns a daemon — neither belongs in `slopdesk-screenwire`, which the
 # `.xcframework` links for the framing alone. The suite drives a FAKE screend over a real AF_UNIX
 # socket, which is the only way to ask for a hang-up mid-exchange or a reply that does not decode.
-screenclient-test: ## cargo test for hostd's screend client (rust/slopdesk-screenclient)
-	cd rust/slopdesk-screenclient && cargo test
+
+# cargo test for hostd's screend client (rust/slopdesk-screenclient)
+screenclient-test:
+    cd rust/slopdesk-screenclient && cargo test
 
 # hostd's half of ONE pane (docs/60 stage C.1): the master descriptor superd handed over, the verbs
 # that steer the child, and the subscription that carries its output back. Its own crate because it
 # is the one non-dev enabler of `slopdesk-posix`'s `winsize-set` — `TIOCSWINSZ` has exactly one
 # writer and this is it (`docs/51` §6.9). The suite runs a fake superd over a real AF_UNIX socket
 # with a real `openpty` behind it, so the ioctls are checked against a terminal rather than a mock.
-hostpane-test: ## cargo test for hostd's half of one pane (rust/slopdesk-hostpane)
-	cd rust/slopdesk-hostpane && cargo test
+
+# cargo test for hostd's half of one pane (rust/slopdesk-hostpane)
+hostpane-test:
+    cd rust/slopdesk-hostpane && cargo test
 
 # One pane's SESSION (docs/60 stage C.2): the shell that joins the pane below, the mux channel above
 # and `muxsession`'s verdicts beside it — the drain thread, the two relays and two senders per
@@ -620,8 +726,10 @@ hostpane-test: ## cargo test for hostd's half of one pane (rust/slopdesk-hostpan
 # The suite runs the whole path — a fake superd on a real socket, a real PTY, and real sub-channels
 # whose framed bytes are decoded back out of the link — so what it asserts is what a client would
 # have received.
-hostsession-test: ## cargo test for one pane's session (rust/slopdesk-hostsession)
-	cd rust/slopdesk-hostsession && cargo test
+
+# cargo test for one pane's session (rust/slopdesk-hostsession)
+hostsession-test:
+    cd rust/slopdesk-hostsession && cargo test
 
 # hostd's COMPOSITION (docs/60 stage D): the session table over `muxsession`'s registry, and the
 # parked-pane store over its retention rules. Its own crate because composition cannot live inside
@@ -629,76 +737,97 @@ hostsession-test: ## cargo test for one pane's session (rust/slopdesk-hostsessio
 # knows nothing of the table it sits in. The suite drives both through a six-method pane trait
 # rather than a real session, which is what lets a retention test be a retention test instead of a
 # PTY, a superd and six threads per entry.
-hostserver-test: ## cargo test for hostd's composition (rust/slopdesk-hostserver)
-	cd rust/slopdesk-hostserver && cargo test
+
+# cargo test for hostd's composition (rust/slopdesk-hostserver)
+hostserver-test:
+    cd rust/slopdesk-hostserver && cargo test
 
 # The decision half of one pane's CLIENT session — the same carve as `muxsession` above, from the
 # other end of the wire: which output seq is new, what the resume presented, whether an ack is owed,
 # whether a campaign may run, and how long the next retry waits. `SlopDeskClient` keeps its actor,
 # its transport and its four pumps; what came out is the table of cases underneath them, whose every
 # failure was silent rather than visible.
-clientsession-test: ## cargo test for one client session's decisions (rust/slopdesk-clientsession)
-	cd rust/slopdesk-clientsession && cargo test
+
+# cargo test for one client session's decisions (rust/slopdesk-clientsession)
+clientsession-test:
+    cd rust/slopdesk-clientsession && cargo test
 
 # fzf's `FuzzyMatchV2` — the ranking behind every search field (command palette, Open-Quickly,
 # command navigator, Jump-To). Its own crate for the same reason `altscreen` is: it is a pure
 # algorithm with no protocol knowledge, and it wants `opt-level = 3` where the daemons want `"z"`.
-fuzzy-test: ## cargo test for the fuzzy matcher (rust/slopdesk-fuzzy)
-	cd rust/slopdesk-fuzzy && cargo test
+
+# cargo test for the fuzzy matcher (rust/slopdesk-fuzzy)
+fuzzy-test:
+    cd rust/slopdesk-fuzzy && cargo test
 
 # The two device consoles' line grammars — `logcat -v time` and `log stream --style compact`, which
 # were the same parser written twice in Swift over text a device wrote, on the socket read path. Its
 # own crate for `slopdesk-fuzzy`'s reason: a pure function with no protocol knowledge, wanting
 # `opt-level = 3` where the daemons want `"z"`, and only half of it is Android's.
-devicelog-test: ## cargo test for the device console grammars (rust/slopdesk-devicelog)
-	cd rust/slopdesk-devicelog && cargo test
+
+# cargo test for the device console grammars (rust/slopdesk-devicelog)
+devicelog-test:
+    cd rust/slopdesk-devicelog && cargo test
 
 # The two device panels' shared decisions — what one ensure round means, how soon to ask again, and
 # what to do about a selection with no video yet. The Android and simulator models each held a
 # byte-identical copy; its own crate because it reads `slopdesk-wire`'s `ServiceState`. It sat here
 # originally because `slopdesk-wire` already depended on `slopdesk-workspace`; that edge is gone —
 # the wire now reaches only `slopdesk-ids` and `slopdesk-tree` — so the crate stands on its own.
-devicepanel-test: ## cargo test for the device panel decisions (rust/slopdesk-devicepanel)
-	cd rust/slopdesk-devicepanel && cargo test
+
+# cargo test for the device panel decisions (rust/slopdesk-devicepanel)
+devicepanel-test:
+    cd rust/slopdesk-devicepanel && cargo test
 
 # The client control socket's vocabulary — its method names, its three token sets and its NDJSON
 # framing. Its own crate because TWO programs speak that socket: `slopdesk` writes the requests and
 # the app's `ClientControlDispatcher` reads them, and the app reaches it through `slopdesk-ffi`,
 # which cannot link a module of the CLI's own library. It held the golden that pins the request
-# bytes, which is why this target is not folded into `cli-test`.
-clientctl-test: ## cargo test for the client control vocabulary (rust/slopdesk-clientctl)
-	cd rust/slopdesk-clientctl && cargo test
+# bytes, which is why this recipe is not folded into `cli-test`.
+
+# cargo test for the client control vocabulary (rust/slopdesk-clientctl)
+clientctl-test:
+    cd rust/slopdesk-clientctl && cargo test
 
 # The superd control socket's framing — tags, lengths and the two packed bodies. Its own crate for
 # `slopdesk-screenwire`'s reason: superd writes these frames and hostd reads them, and the layout
 # was spelled in superd's `frame.rs` AND in `SupervisorFrame.swift`, each calling the other a
 # mirror. The app links the framing without linking `nix` and a PTY supervisor with it.
-superwire-test: ## cargo test for the superd control framing (rust/slopdesk-superwire)
-	cd rust/slopdesk-superwire && cargo test
+
+# cargo test for the superd control framing (rust/slopdesk-superwire)
+superwire-test:
+    cd rust/slopdesk-superwire && cargo test
 
 # What one Claude Code hook body SAYS, in the detection vocabulary — the mapping that used to be a
 # typed payload enum plus an adapter a module away, which is how the two drifted. Its own crate
 # because it takes `serde_json`, which `slopdesk-agent` (zero-dependency, every input untrusted)
 # will not, and because it wants `opt-level = 3` where the relay wants `"z"`.
-hookevent-test: ## cargo test for the hook body reader (rust/slopdesk-hookevent)
-	cd rust/slopdesk-hookevent && cargo test
+
+# cargo test for the hook body reader (rust/slopdesk-hookevent)
+hookevent-test:
+    cd rust/slopdesk-hookevent && cargo test
 
 # The two row scans a regex engine drives: Hint Mode's targets and find-in-terminal's matches.
 # Their own crate because it takes `regex` — the linear-time engine that lets a pattern a human typed
 # meet a row a remote program wrote without a backtracking hang — which `slopdesk-terminal`
 # (dependency-free, on the PTY hot path) will not.
-rowscan-test: ## cargo test for the regex row scans (rust/slopdesk-rowscan)
-	cd rust/slopdesk-rowscan && cargo test
+
+# cargo test for the regex row scans (rust/slopdesk-rowscan)
+rowscan-test:
+    cd rust/slopdesk-rowscan && cargo test
 
 # Stage 5 of the same port: the PATH-2 video protocol, opening at the FEC math (GF(2^8),
 # Reed-Solomon, the erasure codec). A LIBRARY like `wire` — nothing links it yet, so `video-test` is
 # the only thing between it and a silent drift away from `Sources/SlopDeskVideoProtocol`. It replays
 # the committed `fecParity` / `fecRecover` corpus, so it is the parity gate, not a smoke test.
-video: ## Build slopdesk-video (rust/slopdesk-video)
-	cd rust/slopdesk-video && cargo build --release
 
-video-test: ## cargo test for the FEC codec (unit + golden-vector parity against the Swift codec)
-	cd rust/slopdesk-video && cargo test
+# Build slopdesk-video (rust/slopdesk-video)
+video:
+    cd rust/slopdesk-video && cargo build --release
+
+# cargo test for the FEC codec (unit + golden-vector parity against the Swift codec)
+video-test:
+    cd rust/slopdesk-video && cargo test
 
 # The headless closed-loop harness over the same protocol: a synthetic frame through the REAL
 # hardware encoder, the real packetizer at a chosen FEC tier, index-chosen fragment loss, the real
@@ -707,24 +836,30 @@ video-test: ## cargo test for the FEC codec (unit + golden-vector parity against
 # randomness, so a verdict that moved is a behaviour that moved. Nothing here is a unit test: the
 # reassembler, the recovery policies and the pacer have no golden vector, and this is what stands in
 # for one. Run `--smoke` after any wire or FEC change; the bare run before believing a controller.
-loopback-validate: ## Build + smoke the closed-loop video harness (rust/slopdesk-loopback-validate)
-	cd rust/slopdesk-loopback-validate && cargo build --release
-	rust/slopdesk-loopback-validate/target/release/slopdesk-loopback-validate --smoke
+
+# Build + smoke the closed-loop video harness (rust/slopdesk-loopback-validate)
+loopback-validate:
+    cd rust/slopdesk-loopback-validate && cargo build --release
+    rust/slopdesk-loopback-validate/target/release/slopdesk-loopback-validate --smoke
 
 # The one crate `slopdesk-video` links, and the third in the tree allowed to write `unsafe`: the
 # GF(2^8) byte-region kernels, in NEON. Read its `Cargo.toml` header for why the isolation is drawn
 # where it is. Its tests are a differential against the scalar twin, which is the only thing that
 # says the shuffle and the field agree.
-gfsimd-test: ## cargo test for the SIMD kernels (vector path vs scalar oracle, guarded arenas)
-	cd rust/slopdesk-gfsimd && cargo test
+
+# cargo test for the SIMD kernels (vector path vs scalar oracle, guarded arenas)
+gfsimd-test:
+    cd rust/slopdesk-gfsimd && cargo test
 
 # The first crate of the `slopdesk-apple-*` family (`docs/57`): CoreGraphics event synthesis, called
 # through `objc2`. macOS-only by construction, and linked into the FFI archive's macOS slice only.
 # Its suite does NOT post an event — a test that moved the developer's cursor would be a test nobody
 # could run — so what it proves is the modifier table, the thread-local source, and the LEAK check
 # `docs/57` §3 asks of every crate in the family, read off the objects' own retain counts.
-apple-cgevent-test: ## cargo test for the CoreGraphics injection wrapper (flags table, source reuse, leak check)
-	cd rust/slopdesk-apple-cgevent && cargo test
+
+# cargo test for the CoreGraphics injection wrapper (flags table, source reuse, leak check)
+apple-cgevent-test:
+    cd rust/slopdesk-apple-cgevent && cargo test
 
 # The `WindowServer`'s read side, split into its two framework areas: the window list and the
 # display list. Neither suite needs a window server to be worth running — the window one builds real
@@ -732,35 +867,44 @@ apple-cgevent-test: ## cargo test for the CoreGraphics injection wrapper (flags 
 # dropped field shows, and it carries §3's leak check as a retain count across ten thousand decodes.
 # The display one is honest about being partly vacuous on a headless runner and pins the shape of a
 # real answer rather than the existence of one.
-apple-cgwindow-test: ## cargo test for the window-list decode (key constants, drop-on-missing, leak check)
-	cd rust/slopdesk-apple-cgwindow && cargo test
 
-apple-cgdisplay-test: ## cargo test for the display-list reads (space agreement, handle-leak check)
-	cd rust/slopdesk-apple-cgdisplay && cargo test
+# cargo test for the window-list decode (key constants, drop-on-missing, leak check)
+apple-cgwindow-test:
+    cd rust/slopdesk-apple-cgwindow && cargo test
+
+# cargo test for the display-list reads (space agreement, handle-leak check)
+apple-cgdisplay-test:
+    cd rust/slopdesk-apple-cgdisplay && cargo test
 
 # `IOPMAssertion` — the one resource in this family that does not self-heal. A leaked assertion keeps
 # the Mac, or its screen, awake until the process dies, and no test anywhere else turns red for it.
 # So the suite is mostly balance: ten thousand asserted/released edges and ten thousand held-then-
 # dropped assertions, each ending by asking whether the process can still assert at all, which a
 # kernel-side table that grew without bound would eventually refuse.
-apple-power-test: ## cargo test for the sleep assertions (create/release balance, drop balance, leak check)
-	cd rust/slopdesk-apple-power && cargo test
+
+# cargo test for the sleep assertions (create/release balance, drop balance, leak check)
+apple-power-test:
+    cd rust/slopdesk-apple-power && cargo test
 
 # `NSRunningApplication` — a pid in, a bundle id / hidden flag / activation out. The one crate in the
 # family that writes NO `unsafe` at all: `objc2-app-kit` generates every call it makes as safe, which
 # is the bar `docs/57` §3 sets per crate rather than as a budget. Its suite asks about pids that name
 # nothing, because that is the whole failure mode — every caller reads the answer as "not eligible"
 # and must fail CLOSED rather than on a stale or defaulted value.
-apple-app-test: ## cargo test for the running-application reads (nothing-pid answers, no-snapshot property)
-	cd rust/slopdesk-apple-app && cargo test
+
+# cargo test for the running-application reads (nothing-pid answers, no-snapshot property)
+apple-app-test:
+    cd rust/slopdesk-apple-app && cargo test
 
 # The cursor shape the person is actually looking at. `NSCursor.currentSystemCursor` crosses the
 # window-server boundary, so it needs a main thread — which a `cargo test` thread is not, and that
 # is the arm the suite covers: an off-main read must answer NOTHING rather than trap, because the
 # sampler's hot path is deliberately off-main and a trap there would take the daemon with it. The
 # leak check runs that read a thousand times and asks whether anything accumulated.
-apple-cursor-test: ## cargo test for the NSCursor read + PNG render (off-main answers nothing, leak check)
-	cd rust/slopdesk-apple-cursor && cargo test
+
+# cargo test for the NSCursor read + PNG render (off-main answers nothing, leak check)
+apple-cursor-test:
+    cd rust/slopdesk-apple-cursor && cargo test
 
 # One app's accessibility tree: its windows, their frames, the four effects on one of them (move,
 # resize, un-minimize, raise), and one bounded walk for the searches that do not know which element
@@ -770,8 +914,10 @@ apple-cursor-test: ## cargo test for the NSCursor read + PNG render (off-main an
 # The DECISIONS those readers used to make in the same breath live in `slopdesk-video`'s `ax_probe`
 # and `nav_history` instead, under `forbid(unsafe_code)`, where they are ordinary tests. The leak
 # check creates and releases ten thousand elements and asks whether anything accumulated.
-apple-ax-test: ## cargo test for the accessibility tree (refusals without a grant, walk bounds, leak check)
-	cd rust/slopdesk-apple-ax && cargo test
+
+# cargo test for the accessibility tree (refusals without a grant, walk bounds, leak check)
+apple-ax-test:
+    cd rust/slopdesk-apple-ax && cargo test
 
 # The one Core Text question slopdesk asks: what family name is inside a font FILE. `slopdesk font
 # import` copies a face into `~/Library/Fonts` and then has to tell the user what to paste under
@@ -779,11 +925,14 @@ apple-ax-test: ## cargo test for the accessibility tree (refusals without a gran
 # refusal half exhaustively — a non-font, a missing file, an empty path all read as NO NAME, which
 # is what lets the CLI say one sentence about every way it can fail — plus the happy path against a
 # system face, which doubles as this crate's leak test: a thousand reads, three CF references each.
-apple-text-test: ## cargo test for the Core Text family-name read (refusals, real face, leak check)
-	cd rust/slopdesk-apple-text && cargo test
 
-apple-vt-test: ## cargo test for the VideoToolbox session (option dictionaries, timestamps, leak check)
-	cd rust/slopdesk-apple-vt && cargo test
+# cargo test for the Core Text family-name read (refusals, real face, leak check)
+apple-text-test:
+    cd rust/slopdesk-apple-text && cargo test
+
+# cargo test for the VideoToolbox session (option dictionaries, timestamps, leak check)
+apple-vt-test:
+    cd rust/slopdesk-apple-vt && cargo test
 
 # The AudioToolbox row. The ONE crate in the `slopdesk-apple-*` family exempt from §2's raw-pointer
 # ban, because Core Audio hands out SAMPLE MEMORY rather than objects — `AudioBufferList` is a C
@@ -793,15 +942,19 @@ apple-vt-test: ## cargo test for the VideoToolbox session (option dictionaries, 
 # Unlike apple-sck and apple-vt, this suite runs the real framework end to end: the round-trip test
 # builds an AAC-ELD encoder AND decoder and asserts the wire cadence, which needs no window server
 # and no grant. That test is what `slopdesk-loopback-validate --audio` used to be.
-apple-audio-test: ## cargo test for the AudioToolbox codecs (real AAC-ELD round trip, leak checks)
-	cd rust/slopdesk-apple-audio && cargo test
+
+# cargo test for the AudioToolbox codecs (real AAC-ELD round trip, leak checks)
+apple-audio-test:
+    cd rust/slopdesk-apple-audio && cargo test
 
 # The client's speakers: the jitter stage's hand-off, the producer-side resampler and the cpal
 # stream. `forbid(unsafe_code)` — picking cpal over another AudioToolbox wrapper is what keeps the
 # one real-time deadline in the client free of hand-written unsafe. Headless-safe: a machine with no
 # output device answers a player that works and stays mute, which every test asserts against.
-audio-out-test: ## cargo test for client audio output (hand-off, resampler, cpal device lifecycle)
-	cd rust/slopdesk-audio-out && cargo test
+
+# cargo test for client audio output (hand-off, resampler, cpal device lifecycle)
+audio-out-test:
+    cd rust/slopdesk-audio-out && cargo test
 
 # The capture stream. Every reading needs a window server AND the Screen-Recording grant, which is
 # why the Swift this replaced carried a standing "compiled and code-reviewed, its start() is NEVER
@@ -809,8 +962,10 @@ audio-out-test: ## cargo test for client audio output (hand-off, resampler, cpal
 # request a spec turns into, the shape of a filter's inputs, what a refusal answers, and the
 # handoff's ceiling. Every RULE those calls are made under is `slopdesk-video`'s `capture_config`,
 # tested under `video-test`. The leak check builds and drops the configuration many times over.
-apple-sck-test: ## cargo test for the ScreenCaptureKit stream (spec to request, refusals, leak check)
-	cd rust/slopdesk-apple-sck && cargo test
+
+# cargo test for the ScreenCaptureKit stream (spec to request, refusals, leak check)
+apple-sck-test:
+    cd rust/slopdesk-apple-sck && cargo test
 
 # `NSPasteboard`, plus the `NSBitmapImageRep` transcode that is the family's one `unsafe` block. Every
 # reading here needs no window server — a pasteboard is a pasteboard-server object and
@@ -819,8 +974,10 @@ apple-sck-test: ## cargo test for the ScreenCaptureKit stream (spec to request, 
 # picks when several flavours are declared, and what bytes that are not an image do. The leak check
 # is the transcode loop: 2,000 reps built from hostile bytes and dropped, with the last board still
 # writable.
-apple-pasteboard-test: ## cargo test for the pasteboard (flavours, the TIFF transcode, leak check)
-	cd rust/slopdesk-apple-pasteboard && cargo test
+
+# cargo test for the pasteboard (flavours, the TIFF transcode, leak check)
+apple-pasteboard-test:
+    cd rust/slopdesk-apple-pasteboard && cargo test
 
 # `FSEvents`. The crate passes a NULL context and keys its callback off the stream ADDRESS, so what
 # the suite asks is the balance that design buys: a dropped watch lets go of its listener (the
@@ -828,8 +985,10 @@ apple-pasteboard-test: ## cargo test for the pasteboard (flavours, the TIFF tran
 # the framework will never report on. One test is end-to-end — a real write under a temp directory,
 # waited for on a condition variable rather than a sleep — because a callback that never fires is
 # the failure mode a registry test cannot see.
-apple-fsevents-test: ## cargo test for the FSEvents watch (registry balance, a real change, leak check)
-	cd rust/slopdesk-apple-fsevents && cargo test
+
+# cargo test for the FSEvents watch (registry balance, a real change, leak check)
+apple-fsevents-test:
+    cd rust/slopdesk-apple-fsevents && cargo test
 
 # The workspace LABEL, and the smallest crate in the family: one `NSHost` read, no `unsafe` at all.
 # The suite cannot assert the name — it is whatever the machine running it is called — so it asserts
@@ -837,8 +996,10 @@ apple-fsevents-test: ## cargo test for the FSEvents watch (registry balance, a r
 # hostd's fallback ladder cannot see past one and would caption a workspace with a blank. And a
 # thousand asks agree and hold nothing, which is both the leak check and the proof this is not the
 # frozen per-process snapshot `NSWorkspace.frontmostApplication` turned out to be.
-apple-machine-test: ## cargo test for the host's own name (empty is absent, repeat asks agree, leak check)
-	cd rust/slopdesk-apple-machine && cargo test
+
+# cargo test for the host's own name (empty is absent, repeat asks agree, leak check)
+apple-machine-test:
+    cd rust/slopdesk-apple-machine && cargo test
 
 # The pane census — which processes belong to one PTY, and what they are listening on. Everything
 # here used to be Swift that no test could reach: `HostMetadataProbe` carried a standing note that
@@ -848,91 +1009,116 @@ apple-machine-test: ## cargo test for the host's own name (empty is absent, repe
 # suite is the one that could never be written: malformed `lsof` lines, an address with no port, a
 # clock that moved backwards, and a descriptor that is not a PTY censusing NOTHING rather than the
 # machine's whole process table.
-panecensus-test: ## cargo test for one pane's process and port census (lsof parse, caps, empty-pane answers)
-	cd rust/slopdesk-panecensus && cargo test
+
+# cargo test for one pane's process and port census (lsof parse, caps, empty-pane answers)
+panecensus-test:
+    cd rust/slopdesk-panecensus && cargo test
 
 # The memory half of that: what actually reads the loads and stores for a pointer that left its
 # allocation or its provenance. `CLAUDE.md` says the third `unsafe` crate was bought with "a
 # differential suite that runs under Miri" — and until this line, NOTHING ran it. Not `check`, not
-# `test`, not the prek hooks, not the disabled CI. An obligation no target reaches is a sentence in
+# `test`, not the prek hooks, not the disabled CI. An obligation no recipe reaches is a sentence in
 # a document.
 #
 # It is in `check` because it turns out to be cheap: the `#[cfg(miri)]` seed reduction inside
 # `tests/differential.rs` brings the sweep to 47 s wall clock, compile included, against the
-# "minutes" this comment used to claim. Still out of `make test`, which the pre-push hook runs on
+# "minutes" this comment used to claim. Still out of `just test`, which the pre-push hook runs on
 # every push — that path is measured in the seconds it saves.
-miri: ## Run rust/slopdesk-gfsimd's differential suite under Miri (~47 s; the unsafe memory audit)
-	rustup component add miri --toolchain nightly
-	cd rust/slopdesk-gfsimd && cargo +nightly miri test
+
+# Run rust/slopdesk-gfsimd's differential suite under Miri (~47 s; the unsafe memory audit)
+miri:
+    rustup component add miri --toolchain nightly
+    cd rust/slopdesk-gfsimd && cargo +nightly miri test
 
 # Stage 12: the workspace document's DOMAIN rules — the layout math the wire's intents drive. Also a
 # LIBRARY nothing links yet, so `workspace-test` is what stands between it and a silent drift away
 # from `Sources/SlopDeskWorkspaceModel`.
-workspace: ## Build slopdesk-workspace (rust/slopdesk-workspace)
-	cd rust/slopdesk-workspace && cargo build --release
 
-workspace-test: ## cargo test for the workspace domain rules
-	cd rust/slopdesk-workspace && cargo test
+# Build slopdesk-workspace (rust/slopdesk-workspace)
+workspace:
+    cd rust/slopdesk-workspace && cargo build --release
+
+# cargo test for the workspace domain rules
+workspace-test:
+    cd rust/slopdesk-workspace && cargo test
 
 # The three crates carved OUT of slopdesk-workspace when it reached 25k lines and `slopdesk-wire`
 # — which holds the golden-pinned protocol — was found to depend on all of it. Each gets its own
-# target for the same reason `workspace-test` has one: `test-rust` sweeps every workspace, but a
-# named target is what someone reaches for when they change one crate, and a crate with no name
+# recipe for the same reason `workspace-test` has one: `test-rust` sweeps every workspace, but a
+# named recipe is what someone reaches for when they change one crate, and a crate with no name
 # here is a crate nobody runs deliberately.
-ids: ## Build slopdesk-ids (rust/slopdesk-ids)
-	cd rust/slopdesk-ids && cargo build --release
 
-ids-test: ## cargo test for pane/tab identity, the JSON writer and shell quoting
-	cd rust/slopdesk-ids && cargo test
+# Build slopdesk-ids (rust/slopdesk-ids)
+ids:
+    cd rust/slopdesk-ids && cargo build --release
 
-tree: ## Build slopdesk-tree (rust/slopdesk-tree)
-	cd rust/slopdesk-tree && cargo build --release
+# cargo test for pane/tab identity, the JSON writer and shell quoting
+ids-test:
+    cd rust/slopdesk-ids && cargo test
 
-tree-test: ## cargo test for the workspace DOCUMENT — geometry, splits, sessions, focus, tree ops
-	cd rust/slopdesk-tree && cargo test
+# Build slopdesk-tree (rust/slopdesk-tree)
+tree:
+    cd rust/slopdesk-tree && cargo build --release
 
-settings: ## Build slopdesk-settings (rust/slopdesk-settings)
-	cd rust/slopdesk-settings && cargo build --release
+# cargo test for the workspace DOCUMENT — geometry, splits, sessions, focus, tree ops
+tree-test:
+    cd rust/slopdesk-tree && cargo test
 
-settings-test: ## cargo test for the key table, the file resolver, the schema and its checked-in copy
-	cd rust/slopdesk-settings && cargo test
+# Build slopdesk-settings (rust/slopdesk-settings)
+settings:
+    cd rust/slopdesk-settings && cargo build --release
+
+# cargo test for the key table, the file resolver, the schema and its checked-in copy
+settings-test:
+    cd rust/slopdesk-settings && cargo test
 
 # The JSON Schema `config.toml` is described by, written out of the SAME key table the app resolves
 # against. Generated, never edited: a hand-maintained schema is a second declaration of every key
 # and would drift the day somebody added one. `settings-test` fails when the checked-in copy is
-# stale, so this target is what that failure asks for.
-config-schema: ## Regenerate docs/config.schema.json from the key table
-	cd rust/slopdesk-settings && cargo run --release --quiet --bin write-config-schema
+# stale, so this recipe is what that failure asks for.
+
+# Regenerate docs/config.schema.json from the key table
+config-schema:
+    cd rust/slopdesk-settings && cargo run --release --quiet --bin write-config-schema
 
 # The code panel's injected dressing: the stylesheet, the four user scripts and the recommendation
 # catalogue the workbench's own server never forwards. A LEAF library the FFI artifact links, so
 # `codepanel-test` is what stands between it and a page dressed with a string nobody read.
-codepanel: ## Build slopdesk-codepanel (rust/slopdesk-codepanel)
-	cd rust/slopdesk-codepanel && cargo build --release
 
-codepanel-test: ## cargo test for the code panel's injected sheet, scripts and tips catalogue
-	cd rust/slopdesk-codepanel && cargo test
+# Build slopdesk-codepanel (rust/slopdesk-codepanel)
+codepanel:
+    cd rust/slopdesk-codepanel && cargo build --release
+
+# cargo test for the code panel's injected sheet, scripts and tips catalogue
+codepanel-test:
+    cd rust/slopdesk-codepanel && cargo test
 
 # Stage 13: the half of agent detection that reads the CLOCK — the status state machine, the block
 # ledger, the dissent watchdog, the confirmation holds and the input classifier. screend (docs/52)
 # keeps the half that reads the BYTES. A LIBRARY nothing links yet, so `agent-test` is what stands
 # between it and a silent drift away from `Sources/SlopDeskAgentDetect`.
-agent: ## Build slopdesk-agent (rust/slopdesk-agent)
-	cd rust/slopdesk-agent && cargo build --release
 
-agent-test: ## cargo test for the agent-detection state machine
-	cd rust/slopdesk-agent && cargo test
+# Build slopdesk-agent (rust/slopdesk-agent)
+agent:
+    cd rust/slopdesk-agent && cargo build --release
+
+# cargo test for the agent-detection state machine
+agent-test:
+    cd rust/slopdesk-agent && cargo test
 
 # Stage 15: the CLIENT side of the byte stream — which screen the host is presenting (DECSET 1049,
 # OSC 133) and which output bytes are only the PTY echoing the compose box back. screend reads the
 # HOST's bytes for detection, slopdesk-wire reads them as FRAMES; this reads them for the INPUT
 # SURFACE. A LIBRARY nothing links yet, so `terminal-test` is what stands between it and a silent
 # drift away from `Sources/SlopDeskClaudeCode`.
-terminal: ## Build slopdesk-terminal (rust/slopdesk-terminal)
-	cd rust/slopdesk-terminal && cargo build --release
 
-terminal-test: ## cargo test for the terminal mode tracker + input echo dedup
-	cd rust/slopdesk-terminal && cargo test
+# Build slopdesk-terminal (rust/slopdesk-terminal)
+terminal:
+    cd rust/slopdesk-terminal && cargo build --release
+
+# cargo test for the terminal mode tracker + input echo dedup
+terminal-test:
+    cd rust/slopdesk-terminal && cargo test
 
 # Stage 16: the WHOLE user-facing `slopdesk` CLI — argv in, one dispatch, an exit code out. It is
 # the process now, not a core behind a Swift face: the `[[bin]]` here IS the `slopdesk` the tarball
@@ -943,11 +1129,14 @@ terminal-test: ## cargo test for the terminal mode tracker + input echo dedup
 # ITS Cargo.toml IS A RELEASE SITE. `slopdesk version` prints `CARGO_PKG_VERSION`, so the number
 # there is one of the six the product carries — `slopdesk-release bump-product` owns it, never a
 # hand edit. See docs/49 §"The six version sites" and docs/DECISIONS.md, stage 16.
-cli: ## Build the slopdesk CLI (rust/slopdesk-cli)
-	cd rust && cargo build --release -p slopdesk-cli
 
-cli-test: ## cargo test for the `slopdesk` CLI
-	cd rust && cargo test -p slopdesk-cli
+# Build the slopdesk CLI (rust/slopdesk-cli)
+cli:
+    cd rust && cargo build --release -p slopdesk-cli
+
+# cargo test for the `slopdesk` CLI
+cli-test:
+    cd rust && cargo test -p slopdesk-cli
 
 # hostd's argv grammar and the launch record it publishes for itself — one crate because `--port 0`
 # is accepted by the first and only answerable by the second. A member of the root workspace for the
@@ -955,15 +1144,19 @@ cli-test: ## cargo test for the `slopdesk` CLI
 # `slopdesk-ops restart-hostd`. The suite is mostly the reader's contract — which four fields a
 # restart cannot proceed without, which four are report-only, and the key ORDER on disk, which is a
 # property a person greps and which `serde`'s declaration order is the only thing holding.
-hostlaunch-test: ## cargo test for hostd's argv grammar and launch record (round-trip, key order, the stamp)
-	cd rust && cargo test -p slopdesk-hostlaunch
+
+# cargo test for hostd's argv grammar and launch record (round-trip, key order, the stamp)
+hostlaunch-test:
+    cd rust && cargo test -p slopdesk-hostlaunch
 
 # docs/49: is the sidecar RUNNING the sidecar that is INSTALLED — the verdict, the restart policy,
 # and the MANIFEST.json diff. A member of the root workspace for the reason the two above are: both
 # its callers are fork-and-exit programs (`slopdesk sidecars`) or link it through the xcframework
 # (hostd's startup audit), and it holds no state that wants a daemon's profile.
-sidecars-test: ## cargo test for the per-sidecar version policy + manifest diff
-	cd rust && cargo test -p slopdesk-sidecars
+
+# cargo test for the per-sidecar version policy + manifest diff
+sidecars-test:
+    cd rust && cargo test -p slopdesk-sidecars
 
 # Stage 22: the code panel's workbench PROFILE — the settings seed and its whole retired corpus, the
 # theme + bridge extensions, the profile registry, the child's argv and environment. hostd keeps the
@@ -972,39 +1165,49 @@ sidecars-test: ## cargo test for the per-sidecar version policy + manifest diff
 # reason the daemons record. NOT staged next to hostd: `RustServicePaths` finds it by walking up
 # to `rust/slopdesk-codeseed/target/`, the same way it finds every other daemon in this tree, so a
 # `cargo clean` can never leave a copy behind that lies about which profile the panel seeds.
-codeseed: ## Build slopdesk-codeseed (rust/slopdesk-codeseed)
-	cd rust/slopdesk-codeseed && cargo build --release
 
-codeseed-test: ## cargo test for the code-server profile seeder
-	cd rust/slopdesk-codeseed && cargo test
+# Build slopdesk-codeseed (rust/slopdesk-codeseed)
+codeseed:
+    cd rust/slopdesk-codeseed && cargo build --release
+
+# cargo test for the code-server profile seeder
+codeseed-test:
+    cd rust/slopdesk-codeseed && cargo test
 
 # The DAEMON — the composition `hostserver` is composed BY. Its own workspace for the profile
 # reason every daemon in this tree has one, so `cargo test` from `rust/` cannot reach it and this
-# target is the only thing that runs its suite. What it covers is what only the binary can decide:
+# recipe is the only thing that runs its suite. What it covers is what only the binary can decide:
 # which doors `compose` builds, in which order the stop reaches them, and whether a workspace store
 # that finds nothing on disk still hands a client a session, a tab and a pane.
-hostd-test: ## cargo test for the daemon's own composition (rust/slopdesk-hostd)
-	cd rust/slopdesk-hostd && cargo test
+
+# cargo test for the daemon's own composition (rust/slopdesk-hostd)
+hostd-test:
+    cd rust/slopdesk-hostd && cargo test
 
 # The inner loop for host work. hostd is a cargo binary as of docs/60 stage F, and its crate is its
 # OWN cargo workspace, so this is a `cd` and not a `-p` — `rust/Cargo.toml` cannot reach it.
 #
 # RELEASE, where the Swift `--product` build was debug. Two reasons, and neither is taste: the
 # recorded launch this machine replays names `release` (`slopdesk-hostlaunch::record`), so a debug
-# build here would leave `host-restart` starting a binary this target never touched; and an
+# build here would leave `host-restart` starting a binary this recipe never touched; and an
 # unoptimised Rust daemon is not the daemon — the pane fan-out and the row scan were measured at
 # `opt-level = 3`, and reading a debug one's latency would be reading a different program.
-host: ## Build ONLY slopdesk-hostd (release, the configuration the launch record replays)
-	cd rust/slopdesk-hostd && cargo build --release
+
+# Build ONLY slopdesk-hostd (release, the configuration the launch record replays)
+host:
+    cd rust/slopdesk-hostd && cargo build --release
 
 # The whole edit loop in one command, and the reason docs/51 exists: superd keeps every pane, both
 # child-facing sockets and the panel backends, so this costs a client reconnect rather than the
 # afternoon's work. It prints the observed downtime and superd's child count on either side.
-host-restart: ## Rebuild hostd and restart the running one, identically (docs/51 §9)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- restart-hostd
 
-host-status: ## Report the running hostd (pid, port, flags) and superd's child count; change nothing
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- restart-hostd --status
+# Rebuild hostd and restart the running one, identically (docs/51 §9)
+host-restart:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- restart-hostd
+
+# Report the running hostd (pid, port, flags) and superd's child count; change nothing
+host-status:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- restart-hostd --status
 
 # `hook-test` runs FIRST and unconditionally. `swift build`/`swift test` never compile the Rust
 # crate, so a Swift-only gate is blind to it; and the pre-push green-tree cache keys on the
@@ -1015,42 +1218,59 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools) + swift test with the green-tree cache
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
-# `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the
+# cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools) + swift test with the green-tree cache
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
+
+# `superd` for the same load-bearing reason as `test` above, and it matters MORE here: this is the
 # gate CLAUDE.md tells you to run after a Swift edit, and the code most of those edits touch is the
 # supervised pty path. Without the binary `SuperdFixture` throws `XCTSkip` from its initialiser, so
 # SupervisedPaneSurvivalTests, HostRestartSurvivalTests, PaneOutputStreamTests and PTYProcessTests
 # all report green having run nothing — a fast gate that cannot see the regressions it exists for.
-test-touched: ctl superd screend dropd androidd inspectord ## Fast inner loop: incremental build + only the test targets the change set reaches
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- test-touched
+
+# Fast inner loop: incremental build + only the test targets the change set reaches
+test-touched: ctl superd screend dropd androidd inspectord
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- test-touched
 
 # Golden regression pin: regenerate the wire corpus from the live native-Swift codecs and assert
 # byte-identity to golden/golden_vectors.json (replaces the old cross-language Rust golden_parity).
-golden: ## Verify the wire codecs still reproduce golden/golden_vectors.json
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- golden
+
+# Verify the wire codecs still reproduce golden/golden_vectors.json
+golden:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- golden
 
 # ---------------------------------------------------------------------------- #
-.PHONY: changelog release release-preview
 # The release metadata, generated from the commit log rather than hand-maintained. The commit TYPE
 # decides both the CHANGELOG.md section a change lands in and whether the version moves a minor or
 # a patch, which is why the `commit-msg` hook (`slopdesk-release commit-msg`) gates the subject at
 # commit time. The whole pipeline is ONE binary — `rust/slopdesk-devtools/src/release/` — where it
 # used to be eight shell scripts sharing a tool table by `source`-ing each other.
-changelog: ## Regenerate CHANGELOG.md from the commit log (git-cliff)
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- changelog render
 
-release-preview: ## Print the version and release notes the next cut would produce; write nothing
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- cut --dry-run
+# Regenerate CHANGELOG.md from the commit log (git-cliff)
+changelog:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- changelog render
+
+# Print the version and release notes the next cut would produce; write nothing
+release-preview:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- cut --dry-run
+
+# The version a cut is FORCED to, when it is not computed from the commit log. A variable AND the
+# recipe's default, so both spellings land in the same place: `just release 0.3.0` passes it
+# positionally and `just VERSION=0.3.0 release` overrides the variable. `just release VERSION=0.3.0`
+# is the one spelling that does NOT work — just would read that whole string as the positional — so
+# the recipe refuses an argument carrying `=` rather than cutting a release called "VERSION=0.3.0".
+VERSION := ""
 
 # Commits and tags LOCALLY; pushing the tag is the separate keystroke that starts the signing
-# pipeline. `make release VERSION=0.3.0` forces a version instead of computing it.
-release: ## Cut a release: version + CHANGELOG.md + the six version sites + commit + tag
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- cut $(VERSION)
+# pipeline. `just release 0.3.0` forces a version instead of computing it.
+
+# Cut a release: version + CHANGELOG.md + the six version sites + commit + tag
+release version=VERSION:
+    @case '{{version}}' in *=*) echo "release: '{{version}}' is not a version — say 'just release 0.3.0'"; exit 1 ;; esac
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- cut {{version}}
 
 # ---------------------------------------------------------------------------- #
-.PHONY: tool-versions
 # Which SIDECARS the next release would move, and which it would leave alone.
 #
 # The product version moves on every cut; a sidecar's moves only when its own sources did. That is
@@ -1065,37 +1285,47 @@ release: ## Cut a release: version + CHANGELOG.md + the six version sites + comm
 # `rust/slopdesk-invariants` — every shipped sidecar
 # must have a pin entry — and the one that refuses to ship a lie is `slopdesk-release package`,
 # which asks each built binary its version and compares it with the pin.
-tool-versions: ## Show which sidecars changed since the last release, and the bump each would take
-	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- bump-tools --dry-run
+
+# Show which sidecars changed since the last release, and the bump each would take
+tool-versions:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- bump-tools --dry-run
 
 # ---------------------------------------------------------------------------- #
-.PHONY: provision provision-check provision-test
 # The panel's RUNTIME deps (code-server, baguette, adb, scrcpy-server), pinned by URL + SHA-256 in
 # ThirdParty/tools/tools.lock. Not part of `build` or `test`: the whole Swift package builds and
 # tests headless without any of them, and provisioning downloads ~250 MB.
-# `--release` on purpose: the whole cost of this target is a 250 MB transfer and a gzip/deflate
+# `--release` on purpose: the whole cost of this recipe is a 250 MB transfer and a gzip/deflate
 # pass over it, and a debug `flate2` turns the extract from seconds into minutes.
-provision: ## Fetch + verify the pinned host-side runtime deps into ThirdParty/tools/.prefix
-	cd rust/slopdesk-provision && cargo run --release --quiet
 
-provision-check: ## Report which pinned deps are present; download nothing
-	cd rust/slopdesk-provision && cargo run --release --quiet -- --check
+# Fetch + verify the pinned host-side runtime deps into ThirdParty/tools/.prefix
+provision:
+    cd rust/slopdesk-provision && cargo run --release --quiet
+
+# Report which pinned deps are present; download nothing
+provision-check:
+    cd rust/slopdesk-provision && cargo run --release --quiet -- --check
 
 # The crate's OWN suite: the lock parser, the archive readers and the digest walk. It is in `test`
 # even though `provision` is not in `build`, and the two facts do not conflict — running the tests
-# opens no socket and downloads nothing, while the target above is the one that transfers 250 MB.
-# `check-reach` is what insists on the distinction: a crate that carries tests and has no target
+# opens no socket and downloads nothing, while the recipe above is the one that transfers 250 MB.
+# `lint-reach` is what insists on the distinction: a crate that carries tests and has no recipe
 # reports green about code nobody ran.
-provision-test: ## cargo test for the pinned-dependency provisioner
-	cd rust/slopdesk-provision && cargo test
+
+# cargo test for the pinned-dependency provisioner
+provision-test:
+    cd rust/slopdesk-provision && cargo test
 
 # ---------------------------------------------------------------------------- #
-.PHONY: install-tools hooks
 # DEV tooling only (linters + hooks) — deliberately still brew. These shape the gates, not the
 # product: a formula drifting a minor version changes a lint message, it does not put the panel on
 # a workbench three releases old. The deps that DO decide product behaviour are in `provision`.
-install-tools: hooks ## Install all required tools (brew) and the git hooks
-	brew install swiftlint swiftformat shellcheck shfmt prek git-cliff xcodegen
+# `just` is on the list even though you already have it: a machine that got it from cargo rather
+# than brew still wants brew's copy pinned beside the linters it runs.
 
-hooks: ## Install the prek git hooks (pre-commit + pre-push)
-	prek install
+# Install all required tools (brew) and the git hooks
+install-tools: hooks
+    brew install just swiftlint swiftformat shellcheck shfmt prek git-cliff xcodegen
+
+# Install the prek git hooks (pre-commit + pre-push)
+hooks:
+    prek install

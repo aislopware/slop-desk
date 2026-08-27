@@ -40,7 +40,7 @@ public final class AgentHookEnforcer {
         /// This pass installed them, and the follow-up probe found the listener bound.
         case installed
         /// The hooks are on disk but the host's hook LISTENER is not bound, so every hook exits
-        /// silently. `make host-restart` binds it; nothing this side can do, and reporting it as
+        /// silently. `just host-restart` binds it; nothing this side can do, and reporting it as
         /// success would be the same lie the old green check told.
         case inactive
         /// The install RPC was refused, or the probe after it still says not-installed.

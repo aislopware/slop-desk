@@ -274,13 +274,13 @@ impl Tree {
         }
         // The top-level files rules ask about by name. They are outside ROOTS because they are not
         // directories, and naming them is cheaper than a whole extra walk of the repo root.
-        for name in ["Makefile", "Package.swift", "CLAUDE.md", "DESIGN.md", "README.md"] {
+        for name in ["justfile", "Package.swift", "CLAUDE.md", "DESIGN.md", "README.md"] {
             let path = root.join(name);
             if let Ok(text) = fs::read_to_string(&path) {
                 let relative = PathBuf::from(name);
-                // The Makefile has no extension and `#` is its comment, so it is named rather than
+                // The justfile has no extension and `#` is its comment, so it is named rather than
                 // derived — the one file in the tree whose style a suffix cannot answer.
-                let style = if name == "Makefile" {
+                let style = if name == "justfile" {
                     CommentStyle::Hash
                 } else {
                     CommentStyle::of(&relative)

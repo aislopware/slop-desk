@@ -1,7 +1,7 @@
 //! Two text-only ratchets over the client UI: raw design literals, and a menu that owns no chord.
 //!
 //! Ported from the `check-ds-leaks.sh` and `check-menu-shortcutless.sh` that used to sit in
-//! `scripts/`, the last two standalone `grep` gates in `make lint`. Both were the same three lines:
+//! `scripts/`, the last two standalone `grep` gates in `just lint`. Both were the same three lines:
 //! one `grep -rnE` for the banned shape, one `grep -vE` dropping comment-only lines so the prose
 //! explaining the ban did not fire it, and one `[[ -d ]]` / `[[ -f ]]` guard so a renamed target
 //! failed loudly instead of reporting "intact" over nothing.

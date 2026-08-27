@@ -28,9 +28,10 @@
 //! Three more arrived with the last of the shell. [`ffi`] is `slopdesk-gate ffi`: the producer of
 //! the linked port, whose decidable halves — the header's declared symbols, the transitive crate
 //! closure, the two-direction bijection — were `grep -oE`, a recursive `grep | sed`, and a `comm`
-//! that could not be run without building three slices. [`reach`] is the four questions only `make
-//! -n` can answer, and [`supervisor`] is the hostd↔superd contract's toolchain half. With them the
-//! `scripts/` directory holds no code at all: two Swift probes, a set of pins and a fixture tree.
+//! that could not be run without building three slices. [`reach`] is the four questions only a
+//! `just --dry-run` can answer, and [`supervisor`] is the hostd↔superd contract's toolchain half.
+//! With them the `scripts/` directory holds no code at all: two Swift probes, a set of pins and a
+//! fixture tree.
 //!
 //! ## The one thing that changed on the way over
 //! Both stampers now hash repo-RELATIVE paths, for the reason [`super::release::stamps`] does. The

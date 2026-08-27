@@ -96,35 +96,60 @@ pub fn linked_artifacts(tree: &Tree) -> BTreeSet<String> {
     found
 }
 
+/// The recipe a justfile line declares, or `None` for anything else in the file.
+///
+/// A name at column zero, then `:` or a parameter list before one. The `:=` test is what keeps a
+/// VARIABLE — `VERSION := ""`, `set shell := […]` — from reading as a recipe called `VERSION`.
+fn recipe_name(line: &str) -> Option<&str> {
+    if line.starts_with(char::is_whitespace) || line.starts_with('#') || line.contains(":=") {
+        return None;
+    }
+    let end = line.find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))?;
+    let rest = line.get(end..)?;
+    if end == 0 || !rest.contains(':') || !(rest.starts_with(':') || rest.starts_with(' ')) {
+        return None;
+    }
+    line.get(..end)
+}
+
 /// Every producer this repo declares, as the command the workflow would have to run.
 ///
 /// Two shapes, because the two artifacts are built two ways and neither is a list anyone maintains:
 ///
-/// * a `make` TARGET whose own line names the artifact — `ffi: ## Build
-///   ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (…)`. The help text is the declaration a
-///   reader already uses, so it is the one this reads.
+/// * a `just` RECIPE whose DOC names the artifact — the `# Build
+///   ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (…)` line directly above `ffi:`. That doc is
+///   what `just --list` prints, so it is the declaration a reader already uses, and it is the one
+///   this reads. A recipe header that names the artifact on its own line counts too.
 /// * a shell script under `ThirdParty/` that names it outside a comment. The vendored dependency
 ///   builds itself, and that half did not move into Rust because it is not ours.
 ///
 /// Comment lines are stripped on the script side: `slopdesk-gate ffi` discussed libghostty's
-/// gitignore in prose, which is how it came to be nominated as libghostty's builder.
+/// gitignore in prose, which is how it came to be nominated as libghostty's builder. The justfile
+/// side cannot do the same, because the doc IS a comment — so the association is what stands in for
+/// it: only a comment whose block runs uninterrupted into a recipe header is that recipe's
+/// declaration, exactly as just itself decides.
 #[must_use]
 pub fn producers(tree: &Tree, artifact: &str) -> BTreeSet<String> {
     let basename = artifact.rsplit('/').next().unwrap_or(artifact);
     let mut found: BTreeSet<String> = BTreeSet::new();
 
-    if let Some(makefile) = tree.get("Makefile") {
-        for line in makefile.text.lines() {
+    if let Some(justfile) = tree.get("justfile") {
+        let lines: Vec<&str> = justfile.text.lines().collect();
+        for (index, line) in lines.iter().enumerate() {
             if !line.contains(basename) {
                 continue;
             }
-            if let Some(target) = line.split(':').next()
-                && !target.is_empty()
-                && target
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            {
-                found.insert(format!("make {target}"));
+            let named = recipe_name(line).or_else(|| {
+                if !line.starts_with('#') {
+                    return None;
+                }
+                lines[index + 1..]
+                    .iter()
+                    .find(|below| !below.starts_with('#'))
+                    .and_then(|below| recipe_name(below))
+            });
+            if let Some(name) = named {
+                found.insert(format!("just {name}"));
             }
         }
     }
@@ -201,7 +226,7 @@ pub fn every_linked_artifact_is_built_by_the_release(tree: &Tree) -> Report {
         if found.is_empty() {
             unbuilt.insert(
                 artifact.clone(),
-                "no make target or script in the repo writes it".to_owned(),
+                "no just recipe or script in the repo writes it".to_owned(),
             );
             continue;
         }
@@ -254,16 +279,43 @@ mod tests {
         assert!(every_source_directory_is_a_target(&clean.tree()).is_clean());
     }
 
-    /// The Makefile target is a producer BY ITS OWN LINE, which is the declaration a reader uses.
+    /// The DOC line directly above a recipe is that recipe's declaration, which is what
+    /// `just --list` prints and what a reader takes the producer off.
     #[test]
-    fn a_make_target_that_names_the_artifact_is_a_producer() {
-        let fixture = Fixture::new("producer-make");
+    fn a_just_recipe_whose_doc_names_the_artifact_is_a_producer() {
+        let fixture = Fixture::new("producer-just");
         fixture.write(
-            "Makefile",
-            "ffi: ## Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (three slices)\n\tcargo run\n",
+            "justfile",
+            "# Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (three slices)\nffi:\n    cargo run\n",
         );
         let found = producers(&fixture.tree(), "ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework");
-        assert!(found.contains("make ffi"), "{found:?}");
+        assert!(found.contains("just ffi"), "{found:?}");
+    }
+
+    /// A blank line ENDS the doc block — just stops reading there and so does this. Prose that
+    /// merely mentions the artifact somewhere above a recipe does not nominate it.
+    #[test]
+    fn a_comment_that_is_not_a_recipes_doc_nominates_nobody() {
+        let fixture = Fixture::new("producer-detached");
+        fixture.write(
+            "justfile",
+            "# ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework is linked by the clients\n\n# Run the \
+             tests\ntest:\n    cargo test\n",
+        );
+        let found = producers(&fixture.tree(), "ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework");
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// A VARIABLE is not a recipe, whatever it names.
+    #[test]
+    fn a_variable_that_names_the_artifact_is_not_a_producer() {
+        let fixture = Fixture::new("producer-variable");
+        fixture.write(
+            "justfile",
+            "ARTIFACT := \"ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework\"\nffi:\n    cargo run\n",
+        );
+        let found = producers(&fixture.tree(), "ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework");
+        assert!(found.is_empty(), "{found:?}");
     }
 
     /// A gate a COMMENT can satisfy is a gate about prose — on both sides of the question.
@@ -275,12 +327,12 @@ mod tests {
             ".binaryTarget(name: \"X\", path: \"ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework\")\n",
         );
         fixture.write(
-            "Makefile",
-            "ffi: ## Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework\n\tcargo run\n",
+            "justfile",
+            "# Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework\nffi:\n    cargo run\n",
         );
         fixture.write(
             ".github/workflows/release.yml",
-            "jobs:\n  # make ffi builds SlopDeskFFI.xcframework here\n  build:\n    run: swift build\n",
+            "jobs:\n  # just ffi builds SlopDeskFFI.xcframework here\n  build:\n    run: swift build\n",
         );
         assert!(!every_linked_artifact_is_built_by_the_release(&fixture.tree()).is_clean());
 
@@ -290,12 +342,12 @@ mod tests {
             ".binaryTarget(name: \"X\", path: \"ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework\")\n",
         );
         built.write(
-            "Makefile",
-            "ffi: ## Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework\n\tcargo run\n",
+            "justfile",
+            "# Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework\nffi:\n    cargo run\n",
         );
         built.write(
             ".github/workflows/release.yml",
-            "jobs:\n  build:\n    steps:\n      - run: make ffi\n      - run: swift build\n",
+            "jobs:\n  build:\n    steps:\n      - run: just ffi\n      - run: swift build\n",
         );
         assert!(every_linked_artifact_is_built_by_the_release(&built.tree()).is_clean());
     }
@@ -308,7 +360,7 @@ mod tests {
             "Package.swift",
             ".binaryTarget(name: \"X\", path: \"ThirdParty/nobody/Orphan.xcframework\")\n",
         );
-        fixture.write("Makefile", "build:\n\tswift build\n");
+        fixture.write("justfile", "build:\n    swift build\n");
         fixture.write(
             ".github/workflows/release.yml",
             "jobs:\n  build:\n    run: swift build\n",

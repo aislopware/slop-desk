@@ -42,7 +42,7 @@ import XCTest
 /// row's widths in one call, not a table.
 ///
 /// It prints a µs/op table and asserts a loose ceiling against ``BenchClock``, which measures THREAD
-/// CPU time — so a slice lost to another target under `make quick` is not read as a regression.
+/// CPU time — so a slice lost to another target under `just quick` is not read as a regression.
 /// Run on this Mac Studio: `swift test --filter TerminalLinkScanBenchTests`.
 final class TerminalLinkScanBenchTests: XCTestCase {
     /// Sink to stop the optimizer eliding the work being measured.

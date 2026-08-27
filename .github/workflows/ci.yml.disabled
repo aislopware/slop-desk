@@ -1,5 +1,5 @@
 # CI — DORMANT. The `.disabled` suffix keeps GitHub from parsing this file at all; the gate that
-# actually runs is `make check` locally, plus the prek hooks (`.pre-commit-config.yaml`).
+# actually runs is `just check` locally, plus the prek hooks (`.pre-commit-config.yaml`).
 #
 # Kept, and kept CORRECT, because a dormant workflow rots silently: the previous version described a
 # tree that no longer exists. It said "no staticlib to pre-build … the in-tree `CSlopDeskSIMD` C
@@ -12,8 +12,8 @@
 # It also ran no Rust at all: seventeen workspaces of clippy and cargo test, and the Miri audit that
 # pays for the `unsafe` in `slopdesk-gfsimd`, were invisible to it.
 #
-# Every job below shells out to a `make` target rather than restating its commands. That is the
-# point: the Makefile derives its lists (`RUST_WORKSPACES`, `make -n` plans), and a workflow that
+# Every job below shells out to a `just` target rather than restating its commands. That is the
+# point: the justfile derives its lists (`RUST_WORKSPACES`, `just --dry-run` plans), and a workflow that
 # copies them is a second list to forget.
 
 name: CI
@@ -44,11 +44,11 @@ jobs:
           sudo apt-get update && sudo apt-get install -y shellcheck
           curl -sSL -o /tmp/shfmt https://github.com/mvdan/sh/releases/latest/download/shfmt_v3.13.1_linux_amd64
           chmod +x /tmp/shfmt && sudo mv /tmp/shfmt /usr/local/bin/shfmt
-      - run: make lint-shell
+      - run: just lint-shell
 
   # Rust: every workspace, on macOS because several crates speak to macOS APIs and the FFI slices
-  # target Apple triples. `make lint-rust` is clippy + rustfmt across all seventeen roots; `make
-  # test-rust` is their suites; `make miri` is the memory half that pays for the `unsafe` crate.
+  # target Apple triples. `just lint-rust` is clippy + rustfmt across all seventeen roots; `just
+  # test-rust` is their suites; `just miri` is the memory half that pays for the `unsafe` crate.
   rust:
     name: Rust (clippy · rustfmt · tests · Miri)
     runs-on: macos-latest
@@ -59,12 +59,12 @@ jobs:
           set -euo pipefail
           rustup toolchain install nightly --component rustfmt miri
           rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
-      - run: make lint-rust
+      - run: just lint-rust
       # The cross-language ratchets, including the design-token and menu-shortcut ones that used to
       # be shell scripts in the `swift-lint` job. They read text and need no Swift toolchain.
-      - run: make lint-invariants
-      - run: make test-rust
-      - run: make miri
+      - run: just lint-invariants
+      - run: just test-rust
+      - run: just miri
 
   # Swift lint needs no compile, so it does not wait on the FFI artifact or on Xcode selection.
   swift-lint:
@@ -75,12 +75,12 @@ jobs:
       - run: brew install swiftlint swiftformat
       # The design-token and menu-shortcut ratchets used to run here as two shell scripts; they are
       # `slopdesk-invariants` rules now and run in the `rust` job, which needs no Swift toolchain.
-      - run: make lint-swift
+      - run: just lint-swift
 
-  # The compiling half. `make ffi` FIRST and not optionally: SwiftPM cannot resolve a graph whose
+  # The compiling half. `just ffi` FIRST and not optionally: SwiftPM cannot resolve a graph whose
   # `binaryTarget` path is absent, so this is the step that makes `swift build` possible at all.
-  # `make lint-supervisor` lives here rather than in `swift-lint` because `check-supervisor.sh`
-  # runs `build-ffi.sh --check`, which needs the artifact it is judging.
+  # `just lint-reach` lives here rather than in `swift-lint` because its FFI staleness half judges
+  # the artifact the step above assembles.
   swift-build-test:
     name: Swift build + test + golden (needs Xcode 26.5+)
     runs-on: macos-latest
@@ -90,12 +90,12 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.5.app || echo "Xcode 26.5 not on this image — the package targets .v26"
       - name: Rust targets for the linked FFI slices
         run: rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
-      - run: make ffi
-      - run: make lint-supervisor
-      - run: make build
-      # `make test`, not `swift test`. Eighteen suites boot a real sidecar and `XCTSkip` by name
+      - run: just ffi
+      - run: just lint-reach
+      - run: just build
+      # `just test`, not `swift test`. Eighteen suites boot a real sidecar and `XCTSkip` by name
       # when its binary is absent — and `swift build` never sees cargo, so a bare `swift test` on a
       # fresh runner would skip the entire supervised, screen and file-drop surface and report
-      # green. `make test` builds the sidecars first.
-      - run: make test
-      - run: make golden
+      # green. `just test` builds the sidecars first.
+      - run: just test
+      - run: just golden

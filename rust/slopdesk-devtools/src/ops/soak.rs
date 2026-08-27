@@ -20,7 +20,7 @@
 //!
 //! One precondition it cannot supply for itself: an installed `slopdesk-superd`. hostd does not
 //! fork shells — superd does, so that a pane can outlive the host serving it — so without one every
-//! pane this harness opens is refused and no property can even be attempted. `make superd-install`.
+//! pane this harness opens is refused and no property can even be attempted. `just superd-install`.
 //!
 //! ## What the port changed, and the one thing it could not
 //! The FIFO-plus-`sleep 100000` dance is gone: a client's stdin is a pipe this process holds open
@@ -180,7 +180,7 @@ impl Member {
     /// the client nor the reason. So the failure carries the client's OWN stderr: the precondition
     /// this harness cannot supply is an installed `slopdesk-superd`, and without one every client
     /// exits during the handshake with `mux: channel refused by host` — which is the line that says
-    /// "run `make superd-install`", where a broken pipe says nothing at all.
+    /// "run `just superd-install`", where a broken pipe says nothing at all.
     fn feed(&mut self, text: &str) -> Result<(), String> {
         self.stdin
             .write_all(text.as_bytes())
@@ -330,7 +330,7 @@ pub fn run(root: &Path, threshold: u64) -> Result<u32, String> {
     // is now the right advice for exactly one of them — and a soak that told the developer to run
     // the wrong command would cost them the run twice.
     //
-    // RELEASE for the daemon, where the SwiftPM one was debug. `make host` is what produces it, and
+    // RELEASE for the daemon, where the SwiftPM one was debug. `just host` is what produces it, and
     // the four properties this asserts — retention, eviction, head-of-line, backpressure — are
     // TIMING. An unoptimised daemon does not fail them differently, it fails them for a reason that
     // is not the code under test.
@@ -338,7 +338,7 @@ pub fn run(root: &Path, threshold: u64) -> Result<u32, String> {
     let client_bin = root.join(".build/debug/slopdesk-client");
     if !hostd_bin.is_file() {
         return Err(format!(
-            "the host daemon is not built: {} is missing — run 'make host' first",
+            "the host daemon is not built: {} is missing — run 'just host' first",
             hostd_bin.display()
         ));
     }

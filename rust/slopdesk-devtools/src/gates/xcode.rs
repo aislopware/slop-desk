@@ -10,7 +10,7 @@
 //!   whole fork through the compiler.
 //! * the two macOS app SHELLS. They are Xcode targets, not `SwiftPM` ones. The video carve renamed
 //!   `VideoSurfaceHost` to `MacVideoSurfaceHost`, updated the `@retroactive` conformance 98 lines
-//!   below the call site, and missed the call site itself — `swift build`, `swift test`, `make
+//!   below the call site, and missed the call site itself — `swift build`, `swift test`, `just
 //!   lint`, the ratchet and the iOS triple were ALL green over a client shell that could not
 //!   compile. [`macos_apps_typecheck`] is the only thing that compiles them.
 //! * the iOS triple's ASSERTIONS. `swift test` compiles the MACOS branch of every `#if os(iOS)`
@@ -29,7 +29,7 @@
 //!
 //! ## `-derivedDataPath` under `.build/`
 //! Rather than the shared `~/Library/Developer/Xcode/DerivedData`: each gate's cache is then wiped
-//! by `make clean` with the rest of the derived state, and Xcode.app working on the same project
+//! with the rest of `.build/`'s derived state, and Xcode.app working on the same project
 //! cannot evict it out from under the stamp.
 
 use std::fs;

@@ -230,7 +230,7 @@ Two corrections to how this section pointed elsewhere:
 
 ## ~~Headless ImageRenderer odiff harness~~ — the odiff half is gone; the rigs are not
 
-**There is no odiff anywhere in the tree.** `grep -rn odiff` over `*.sh` / `Makefile` / `*.swift`
+**There is no odiff anywhere in the tree.** `grep -rn odiff` over `*.sh` / `justfile` / `*.swift`
 returns four hits, all of them comments in `Sources/SlopDeskMacUI/SlopDeskMacApp*.swift` naming a
 "odiff reference geometry" a window restore avoids — no invocation, no `/opt/homebrew/bin/odiff`
 dependency, no `warp-shots` directory (0 files), no `FullWindowSnapshotOdiffTests` (0 files). The
@@ -238,12 +238,12 @@ dependency, no `warp-shots` directory (0 files), no `FullWindowSnapshotOdiffTest
 a live-Warp screenshot, and there has been no Warp reference to diff against since `657a8f44`.
 
 What replaced it is **two opt-in visual-verification rigs, and neither is a pixel-diff gate.** Both are
-INERT under `swift test` / `make check` unless their env var is set, and both write PNGs a human or an
+INERT under `swift test` / `just check` unless their env var is set, and both write PNGs a human or an
 agent then READS:
 
 - **Phone** — `Apps/ClientApp-iOS/Tests/SlateSnapshotRender.swift:1-8`. `ImageRenderer` over a
   hand-built mock of the real chrome from the same token layer. Gated on `SLOPDESK_SNAPSHOT_OUT`;
-  run via `SIMCTL_CHILD_SLOPDESK_SNAPSHOT_OUT=… make check-ios-tests`.
+  run via `SIMCTL_CHILD_SLOPDESK_SNAPSHOT_OUT=… just check-ios-tests`.
 - **Mac** — `Tests/SlopDeskMacUITests/MacChromeSnapshotRender.swift:1-22` and
   `MacRailStatusRollupRender.swift`. These mount the **real `NSView`s** (`MacSidebarRowView`,
   `MacNavigatorColumn`, `MacConnectionIsland`, `MacTitlebarBand`) and seed every state through the

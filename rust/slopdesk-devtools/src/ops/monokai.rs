@@ -320,7 +320,7 @@ pub fn run(root: &Path, latest: bool) -> Result<(), String> {
     }
     say(
         "monokai-sync",
-        "done — review the diff, run make test-touched, commit",
+        "done — review the diff, run just test-touched, commit",
     );
     Ok(())
 }

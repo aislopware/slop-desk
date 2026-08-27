@@ -74,7 +74,7 @@ const RUST_PROTOCOL: &str = "rust/slopdesk-superwire/src/protocol.rs";
 ///
 /// **The command-block tap.** Same argument, plus one only it has: hostd used to HOLD every
 /// finished command's captured output, and that ring died on every rebuild — a client reattaching
-/// after a `make host-restart` found an empty Commands panel for a shell that had never stopped.
+/// after a `just host-restart` found an empty Commands panel for a shell that had never stopped.
 /// superd's pump segments and retains (`rust/slopdesk-superd/src/blocks.rs`, `docs/51` §6.14).
 ///
 /// **The auto-progress list.** The bridge crosses UNPARSED and must keep doing so: superd owns both

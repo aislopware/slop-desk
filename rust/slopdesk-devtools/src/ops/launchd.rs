@@ -99,7 +99,7 @@ pub const SCREEND: Agent = Agent {
 /// — another host is already serving the port — and a bare `KeepAlive` would respawn the loser for
 /// ever. A clean SIGTERM at logout is also an exit 0.
 ///
-/// That exit-0 is what makes `make host-restart` converge under this agent rather than loop.
+/// That exit-0 is what makes `just host-restart` converge under this agent rather than loop.
 /// Signal death is not a successful exit, so launchd relaunches the hostd that `restart-hostd`
 /// just `SIGTERM`ed, and that relaunch RACES the replayed one for the port. One of the two loses
 /// the bind — and because losing is an exit 0, launchd lets it stay dead instead of feeding it back
@@ -120,7 +120,7 @@ pub const SCREEND: Agent = Agent {
 /// the daemon that was just built.
 ///
 /// `EveryLivePane` even though hostd holds no PTY: superd does, and every one of them is wired to
-/// this process's fan-out. A restart costs the developer exactly what `make host-restart` costs,
+/// this process's fan-out. A restart costs the developer exactly what `just host-restart` costs,
 /// so it asks first for exactly the same reason.
 pub const HOSTD: Agent = Agent {
     label: "com.slopdesk.hostd",

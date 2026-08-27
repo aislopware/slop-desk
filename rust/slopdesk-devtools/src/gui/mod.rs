@@ -1,8 +1,8 @@
 //! The four RUNTIME gates that drive a real macOS window, and the substrate all four share.
 //!
 //! ## Where the line with [`crate::gates`] and [`crate::ops`] falls
-//! [`crate::gates`] answers a yes/no about the TREE by spawning a toolchain, and `make check` runs
-//! every one of them. Nothing here is in `make check` and nothing here can be: each needs an
+//! [`crate::gates`] answers a yes/no about the TREE by spawning a toolchain, and `just check` runs
+//! every one of them. Nothing here is in `just check` and nothing here can be: each needs an
 //! unlocked Aqua login session, some need Screen-Recording or Accessibility TCC, and every one
 //! opens windows on the developer's own display for a minute or more. They are gates by output —
 //! the exit status IS the verdict, and each assertion is machine-checked rather than eyeballed —

@@ -53,7 +53,7 @@ class Slopdesk < Formula
   # superd exits 0 ON PURPOSE when another instance already holds its lock file, rather than
   # stealing a live socket and stranding the panes behind it. A bare `KeepAlive` restarts on any
   # exit, so the loser respawns every ten seconds forever. With this form a machine carrying both
-  # agents — this one and a checkout's `com.slopdesk.superd` from `make superd-install` —
+  # agents — this one and a checkout's `com.slopdesk.superd` from `just superd-install` —
   # settles, with whichever booted first keeping the panes.
   service do
     run [opt_bin/"slopdesk-superd"]
@@ -86,7 +86,7 @@ class Slopdesk < Formula
       mesh, never over an address the public internet can route to.
 
       superd owns every PTY master. Start it with `brew services start slopdesk`; a checkout's
-      `make superd-install` agent and this one coexist, and whichever booted first keeps
+      `just superd-install` agent and this one coexist, and whichever booted first keeps
       the panes.
 
       `slopdesk sidecars` says what the last upgrade changed, binary by binary, and what each

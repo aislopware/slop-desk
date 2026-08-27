@@ -14,7 +14,7 @@ Not throughput on a microbenchmark — **blast radius**. The Swift `FileTransfer
 hostd, so a 4 GiB drop was a 4 GiB stream through the process that also owns every keystroke, every
 pane's flow control and the workspace document. Two consequences, both observed:
 
-- **A host restart took the upload with it.** `make host-restart` is ~0.2 s of downtime and superd's
+- **A host restart took the upload with it.** `just host-restart` is ~0.2 s of downtime and superd's
   children never notice it — but an upload lived in hostd's own address space, so it died there.
   Nothing resumes; the user re-drags the file.
 - **The receiving path competed with the terminal.** Every chunk arrived on hostd's `NWConnection`
@@ -162,13 +162,13 @@ what the tests use.
 
 | command | what it covers |
 | --- | --- |
-| `make dropd` | build (release) |
-| `make dropd-test` | 28 Rust tests: 3 name, 8 protocol, 8 receive, 5 sink, 4 framing |
-| `make lint-rust` | clippy `-D warnings` + `rustfmt --check`, fourth workspace |
+| `just dropd` | build (release) |
+| `just dropd-test` | 28 Rust tests: 3 name, 8 protocol, 8 receive, 5 sink, 4 framing |
+| `just lint-rust` | clippy `-D warnings` + `rustfmt --check`, fourth workspace |
 | `rust/slopdesk-invariants` | §10 — type bytes both ways, version, both caps, the announce line, no Swift receiver |
 | `swift test --filter SlopDeskFileTransferTests` | 13 codec + 5 decoder + 5 end-to-end |
 | `swift test --filter FileDropServiceManagerTests` | 7 — argv, the announce parse, a missing binary, a survivor on the wrong port, a child that never announces, relinquish vs shutdown |
-| `make test` / `make test-touched` | all of it, and they BUILD dropd first |
+| `just test` / `just test-touched` | all of it, and they BUILD dropd first |
 
 `DropdE2ETests` spawns the **real** daemon on `--port 0`, uploads through the real
 `FileTransferClient`, and asserts the bytes on disk, the monotonic progress, two files down one

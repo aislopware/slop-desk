@@ -848,7 +848,7 @@ final class SubprocessE2ETests: XCTestCase {
         // a private daemon on a private directory, torn down with the test.
         // The key is set EITHER WAY. Omitting it would let `SupervisorPaths.controlSocket()` fall
         // back to its default path — the developer's live custodian — which is the one outcome the
-        // paragraph above rules out: `swift test` and `make test-touched` do not build superd, so
+        // paragraph above rules out: `swift test` and `just test-touched` do not build superd, so
         // the nil branch is the ordinary case on a working machine, not a corner.
         env[superdSocketEnvKey] = try startPrivateSuperd()
             ?? container.appendingPathComponent("superd-absent.sock").path
@@ -929,7 +929,7 @@ final class SubprocessE2ETests: XCTestCase {
         }
     }
 
-    /// `rust/slopdesk-superd/target/{release,debug}/slopdesk-superd`. `make test` builds it; a bare
+    /// `rust/slopdesk-superd/target/{release,debug}/slopdesk-superd`. `just test` builds it; a bare
     /// `swift test` may not have, and then the pane assertions fail by name rather than quietly
     /// borrowing the developer's daemon.
     private func superdBinaryURL() -> URL? {

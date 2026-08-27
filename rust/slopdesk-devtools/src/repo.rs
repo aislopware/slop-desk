@@ -17,10 +17,10 @@ pub fn default_herdr_dir() -> PathBuf {
 
 /// The files that together mean "this is the slopdesk tree" and not some parent of it.
 ///
-/// Two markers rather than one: a lone `Makefile` is the most common file in any ancestor
-/// directory a developer might be sitting in, and `rust/slopdesk-screend` is not.
+/// Two markers rather than one: a lone `justfile` is a file any ancestor directory a developer
+/// might be sitting in could carry, and `rust/slopdesk-screend` is not.
 fn is_root(candidate: &Path) -> bool {
-    candidate.join("Makefile").is_file() && candidate.join("rust/slopdesk-screend").is_dir()
+    candidate.join("justfile").is_file() && candidate.join("rust/slopdesk-screend").is_dir()
 }
 
 /// The repository root, or an explanation of everywhere it was looked for.

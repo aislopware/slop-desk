@@ -13,7 +13,7 @@ import XCTest
 /// Both sides were timed at `swiftc -O -swift-version 6` on this Mac Studio, standing alone against
 /// the same 64-block ring and the same iteration counts — the deleted model taken from `HEAD` before
 /// the port, this one taken from the file it became, each with `handle(_:)` stripped so it links
-/// without the client. (This suite builds DEBUG, like the rest of `make test`, so the table it
+/// without the client. (This suite builds DEBUG, like the rest of `just test`, so the table it
 /// prints reads higher than the numbers below; the comparison is release against release.)
 ///
 /// | operation | old Swift | this port |
@@ -41,7 +41,7 @@ import XCTest
 /// non-zero code" in Swift, which is exactly the drift the port exists to remove.
 ///
 /// It prints a µs/op table and asserts loose ceilings against ``BenchClock``, which measures THREAD
-/// CPU time — so a slice lost to another target under `make quick` is not read as a regression.
+/// CPU time — so a slice lost to another target under `just quick` is not read as a regression.
 /// Run on this Mac Studio: `swift test --filter TerminalBlockStoreBenchTests`.
 @MainActor
 final class TerminalBlockStoreBenchTests: XCTestCase {

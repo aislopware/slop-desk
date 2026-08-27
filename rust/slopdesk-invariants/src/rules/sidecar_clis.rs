@@ -128,7 +128,7 @@ pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
         },
         Claim::Absent {
             path: "Sources/slopdesk-ctl",
-            message: "the agent CLI is rust/slopdesk-ctl, built by `make ctl` (docs/DECISIONS.md, the ctl \
+            message: "the agent CLI is rust/slopdesk-ctl, built by `just ctl` (docs/DECISIONS.md, the ctl \
                       port)",
         },
         Claim::Absent {

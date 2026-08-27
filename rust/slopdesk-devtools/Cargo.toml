@@ -7,7 +7,7 @@
 # where code lives here — they are short-lived operator tools that ship in nothing. None is a
 # gate (`slopdesk-invariants` is where a gate goes), none is linked into the app, none is
 # `execve`d by a daemon. Splitting them into three workspaces would triple the clippy and
-# `cargo fmt` passes `make lint` walks to buy a boundary nobody crosses.
+# `cargo fmt` passes `just lint` walks to buy a boundary nobody crosses.
 #
 # ## Its own workspace, for the usual reason
 # Profiles are workspace-global. The differential harness forks two release binaries some tens of

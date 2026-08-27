@@ -8,7 +8,7 @@
 //! ## Why the retained output lives HERE and not in hostd
 //!
 //! hostd held this ring until stage 21, and lost it on every rebuild. A client that reattached
-//! after `make host-restart` — 0.2 s — got an empty Commands panel for a session whose shell had
+//! after `just host-restart` — 0.2 s — got an empty Commands panel for a session whose shell had
 //! never stopped running, because the blocks, their exit codes and their captured output had all
 //! been in the address space that was replaced. superd is the process that survives that, and it is
 //! already the one holding the bytes, so keeping them here costs nothing that was not already being

@@ -29,7 +29,7 @@
 //! ## What is NOT here, on purpose
 //!
 //! The build version. `HostEnvironment.buildVersion` is passed INTO `spawn_env` rather than minted
-//! behind it because `make release` rewrites every site the marketing version is typed, and a copy
+//! behind it because `just release` rewrites every site the marketing version is typed, and a copy
 //! inside a crate the release tool does not scan is a version that silently stops being bumped.
 //! That argument does not change by moving language, so it stays an argument here too.
 

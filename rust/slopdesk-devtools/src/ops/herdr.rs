@@ -214,7 +214,7 @@ pub fn run(root: &Path, herdr_dir: &Path, target: &str, update_pin: bool) -> Res
     }
     say(
         "herdr-sync",
-        "done — the re-sync may have touched rust/slopdesk-screend/manifests; run make check before \
+        "done — the re-sync may have touched rust/slopdesk-screend/manifests; run just check before \
          committing",
     );
     Ok(())

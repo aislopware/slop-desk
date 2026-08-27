@@ -1,10 +1,10 @@
 //! The operator harnesses: the things a developer runs BY HAND, on their own machine, on purpose.
 //!
 //! ## Where the line with [`crate::gates`] falls
-//! A gate answers a yes/no about the tree and a `make` target runs it. Nothing here does. These
+//! A gate answers a yes/no about the tree and a `just` target runs it. Nothing here does. These
 //! install a `LaunchAgent`, restart a live daemon, rewrite a generated `project.yml`, re-sync a
 //! vendor's theme resources, or drive an eighty-second soak — every one of them CHANGES the
-//! machine or the working tree, which is exactly why none of them is in `make check` and why each
+//! machine or the working tree, which is exactly why none of them is in `just check` and why each
 //! prints what it is about to do before it does it.
 //!
 //! ## What was here before

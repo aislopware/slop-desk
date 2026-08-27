@@ -21,7 +21,7 @@
 //!
 //! [`ops`] is the third family and the only one that is not a gate at all: the harnesses a
 //! developer runs BY HAND, which install a `LaunchAgent`, restart a live daemon or drive an
-//! eighty-second soak. None is in `make check`, because every one of them changes the machine.
+//! eighty-second soak. None is in `just check`, because every one of them changes the machine.
 //!
 //! The binaries in `src/bin/` are argument parsing, process spawning and printing, and nothing
 //! else.

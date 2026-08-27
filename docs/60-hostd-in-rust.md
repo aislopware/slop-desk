@@ -120,7 +120,7 @@ biting before it was born:
 - **The listener binds dual-stack and `stop` really unbinds.** `NWListener` answers both families;
   an IPv4-only `TcpListener` would silently refuse a v6 mesh dial, which only shows up on somebody
   else's network. And `accept()` has no cancel lever, so `stop` sets a flag and then dials its own
-  loopback port to wake the thread — otherwise `make host-restart` re-binds seconds later and gets
+  loopback port to wake the thread — otherwise `just host-restart` re-binds seconds later and gets
   `EADDRINUSE`. `stop_releases_the_port_it_was_listening_on` is the test that pins it.
 
 **Stage B — the mux connection.** `MuxNWConnection`'s HOST role (of 847) + `MuxSubChannel` (426) +
@@ -517,7 +517,7 @@ is paused.
   `-hostpane` and `-hostnet` do: `rust/Cargo.toml`'s members are the FORK-PER-EVENT programs and
   nothing else, and a daemon's half wants a daemon's profile. The cost is the one every host crate
   already pays — `cargo -p` from the root cannot reach it, so its gate is `cd rust/<crate>`, and
-  `make lint-reach` is what proves some target still runs it.
+  `just lint-reach` is what proves some target still runs it.
 
   **D.1 — the registry and the detached store.** ✅ `rust/slopdesk-hostserver`, five modules and
   thirty-six tests. `HostSessionRegistry` (400) collapsed onto the `Registry` it already wraps and
@@ -1134,7 +1134,7 @@ set it. As a table the polarity is one declared field per row, and one test prin
 answer.
 
 Three things stayed put, each for a reason that does not change by moving language. The build
-version is passed INTO `spawn_env` rather than minted behind it, because `make release` rewrites
+version is passed INTO `spawn_env` rather than minted behind it, because `just release` rewrites
 every site the marketing version is typed and a copy inside an unscanned crate is a version that
 silently stops being bumped. The five keys hostd EXPORTS into a spawned pane were already
 `slopdesk_muxsession::spawn_env`'s constants, so the Swift ones are duplicates stage F deletes rather
@@ -1151,7 +1151,7 @@ ratchet.
 With that, stage E has no open half left. What remains before the cutover is stage F's own work.
 
 **Stage F — the cutover.** `Sources/slopdesk-hostd/main.swift` (382) becomes
-`rust/slopdesk-hostd`; `make host-restart` and `slopdesk-hostlaunch` retarget; `Sources/SlopDeskHost`
+`rust/slopdesk-hostd`; `just host-restart` and `slopdesk-hostlaunch` retarget; `Sources/SlopDeskHost`
 and the host half of `Sources/SlopDeskTransport` are DELETED, with their tests ported to the crates
 that now hold the behaviour.
 
@@ -1232,8 +1232,8 @@ Four things settled while writing it, each of which had been assumed the other w
   `slopdesk-ffi`, under a comment saying it existed once *on purpose*. The moment hostd grew a hook
   listener that claim stopped being true of where it lived — so it moved to the crate that owns the
   vocabulary it maps INTO, and is now the one spelling both callers reach.
-- **The version site did NOT move yet.** `make release` still rewrites `HostEnvironment.buildVersion`,
-  because the Swift hostd is what `make build` produces until the cutover. `main.rs` reads
+- **The version site did NOT move yet.** `just release` still rewrites `HostEnvironment.buildVersion`,
+  because the Swift hostd is what `just build` produces until the cutover. `main.rs` reads
   `env!("CARGO_PKG_VERSION")` and the manifest carries `0.4.0`; at the cutover `release/sites.rs`
   swaps the Swift entry for this one and the count of six stays six.
 
@@ -1314,8 +1314,8 @@ still there to go back to, which is the one verification no gate performs. F.9 d
 | Wired | What it took |
 | --- | --- |
 | ONE answer to "where is hostd" | `slopdesk-devtools`' new `hostbin` module. Six places spelled the path or the build by hand — four `swift_build(root, "slopdesk-hostd")` calls in the GUI probes, a `.build/debug/…` beside them, one more in the soak runner. Six spellings of a path that just moved is six chances to leave one behind, and the one left behind does not fail: it runs last week's binary, green. |
-| `make host` | `cargo build --release` in the crate, where it was `swift build --product` in debug. Release for two reasons that are not taste: the launch record this machine replays names `release`, so a debug build would leave `host-restart` starting a binary the target never touched; and the fan-out and row-scan numbers were measured at `opt-level = 3`, so an unoptimised daemon is a different program. |
-| `make host-restart` | The build step only. The ritual around it — read the record up front, build before the stop, SIGTERM never SIGKILL, wait for a real listener — never knew what compiled the binary, so none of it moved. `configuration_of` did not change either: `.build/release` and `target/release` both spell the configuration as a path component. |
+| `just host` | `cargo build --release` in the crate, where it was `swift build --product` in debug. Release for two reasons that are not taste: the launch record this machine replays names `release`, so a debug build would leave `host-restart` starting a binary the target never touched; and the fan-out and row-scan numbers were measured at `opt-level = 3`, so an unoptimised daemon is a different program. |
+| `just host-restart` | The build step only. The ritual around it — read the record up front, build before the stop, SIGTERM never SIGKILL, wait for a real listener — never knew what compiled the binary, so none of it moved. `configuration_of` did not change either: `.build/release` and `target/release` both spell the configuration as a path component. |
 | the ONE launch that is REFUSED | A record naming a `.build/` artifact — a daemon started before this batch, still running, whose launch cannot be reproduced by building anything that exists now. Building the cargo binary and then replaying that record would report a fresh build and start the OLD process: exactly the "running last week's code with this week's version on the box" failure `audit.rs` exists to catch. It refuses in words, the way an absent record does, and names the binary to start by hand once. `is_swiftpm_artifact` is pinned against BOTH paths, because `.build` and `target` each hold a `release` component and a one-sided test would pass against a rule that refused every record there is. |
 | the release version site | Moved from `Sources/SlopDeskHost/HostEnvironment.swift`'s `buildVersion` to `rust/slopdesk-hostd/Cargo.toml`, which is what the Rust daemon reports (`env!("CARGO_PKG_VERSION")`). MOVED, not added — the count of sites did not change here, and a Swift constant left beside the Rust manifest would have been the third place to forget. (F.9 later took it from six to four, when the host app's `project.yml` and `Info.plist` went with the app; `the_four_sites_are_four` is that count's test.) |
 | the soak runner | Now takes the RELEASE daemon and says which of the two binaries is missing. Its four properties — retention, eviction, head-of-line, backpressure — are TIMING, and a debug daemon does not fail them differently, it fails them for a reason that is not the code under test. Its client half is still `swift build`'s, so "run `swift build` first" became the right advice for exactly one of the two. |
@@ -1355,7 +1355,7 @@ the supervisor links.
 **What F.8.5 would have accepted** (recorded because the trade-off is real for any future
 supervisor, not because this one exists): quitting by any path that reaches `deinit` stops the
 child, a `SIGKILL` of the app does not, and no parent-death watchdog was designed for it. That
-orphan would have been the same daemon `make host-restart` replays, with its launch record still
+orphan would have been the same daemon `just host-restart` replays, with its launch record still
 true and `slopdesk-ops` still able to stop it — strictly better than the in-process version, where
 the same `SIGKILL` took the host down mid-session with every pane on it. F.9 gets that property for
 free: there is no parent.
@@ -1372,14 +1372,14 @@ bans, wearing a Rust hat.
 
 | Wired | What it took |
 | --- | --- |
-| the gate as the WORK LIST | `make lint-invariants` fails loudly on a missing path rather than passing vacuously, so deleting the Swift turned it red and its output WAS the list: 101 violations, then 78, 64, 31, 25, 20, 8, 0. Nineteen rule modules were re-keyed to Rust paths, each with its break-test rewritten Rust-shaped. |
+| the gate as the WORK LIST | `just lint-invariants` fails loudly on a missing path rather than passing vacuously, so deleting the Swift turned it red and its output WAS the list: 101 violations, then 78, 64, 31, 25, 20, 8, 0. Nineteen rule modules were re-keyed to Rust paths, each with its break-test rewritten Rust-shaped. |
 | the discriminator every re-key used | Not "does this contract span two languages" but **"can the compiler see it?"** hostd LINKS the crate ⇒ the import IS the equality, so the `SameValue`/`SameSet` is DELETED and what stays is a `Matches` that hostd still asks it, plus a ban on reacquiring the literal. Two binaries, or two constants that never meet in an expression (the ctl verbs; the opaque cap's INEQUALITY) ⇒ re-key the paths, KEEP the comparison. The client's Swift is still Swift ⇒ leave the rule alone. |
 | the doors that had no caller left | 268 dead FFI entry points, and `slopdesk_supervisor_encode_listen` — orphaned by this batch's own Swift deletion, and caught by `ffi-doors-are-opened` rather than by reading. `rust/slopdesk-ffi` dropped its `slopdesk-probe` edge with it: the `path_confine` door died with hostd. |
 | the listener half of `SlopDeskSupervisor` | `onConnection`, `listen(kinds:)`, `deliverConnection`, `SupervisorDoors.listen`, `connectionKind`, `ListenerKind`. Claiming the child-facing listeners is hostd's, and hostd is Rust. `.connection` stays a NAMED event on purpose: an event that stops decoding takes a path that never closes `frame.descriptor`, so deleting the case — the obvious cleanup — would have leaked one fd per frame. The handler is now an unconditional close. |
 | the START, which the menu bar had been holding | The gap F.8.5 opened and nobody named: `restart-hostd` replays a launch RECORD, which by construction cannot produce the FIRST one, and the button that used to is gone. `slopdesk-ops install hostd` is that rung — a third `launchd::Agent` beside superd and screend. |
-| hostd exiting 0 when it loses the port | Forced by the plist: `SuccessfulExit: false` restarts a job that exits non-zero, so a hostd that met `AddrInUse` with `exit(1)` would be respawned every ten seconds for ever — superd's shipped bug, reintroduced through a different daemon. It is load-bearing twice, because `make host-restart` SIGTERMs a job launchd relaunches, and that relaunch races the replayed one for the port. `keepalive-guarded-exit` pins it: the plist string and the exit branch sit in crates with no edge between them, so no compiler compares them and every test passes either way. |
+| hostd exiting 0 when it loses the port | Forced by the plist: `SuccessfulExit: false` restarts a job that exits non-zero, so a hostd that met `AddrInUse` with `exit(1)` would be respawned every ten seconds for ever — superd's shipped bug, reintroduced through a different daemon. It is load-bearing twice, because `just host-restart` SIGTERMs a job launchd relaunches, and that relaunch races the replayed one for the port. `keepalive-guarded-exit` pins it: the plist string and the exit branch sit in crates with no edge between them, so no compiler compares them and every test passes either way. |
 | the doc citations that could not be repointed | `PATH_TOMBSTONES` went 1 → 13. Twelve are `docs/59`, whose entire subject is which Swift file each Rust handle was cut out of — repointing those names would make the record lie about the thing it records. |
-| the SECOND wave of dead doors, which only the iOS triple could see | Deleting the doors left ten `#[cfg(target_os = "macos")]` attributes ORPHANED in `rust/slopdesk-ffi/src/lib.rs` — each had sat above a `pub mod` line that went, so each then gated the NEXT module. Nine ungated doors became macOS-only, every Rust test still passed, and `make ffi` reported success from its content STAMP. `make ffi --always-make` on the `aarch64-apple-ios` triple is what caught it. The stamp is only as good as the last run that actually compiled; `--force` it whenever the stamp itself is in doubt. |
+| the SECOND wave of dead doors, which only the iOS triple could see | Deleting the doors left ten `#[cfg(target_os = "macos")]` attributes ORPHANED in `rust/slopdesk-ffi/src/lib.rs` — each had sat above a `pub mod` line that went, so each then gated the NEXT module. Nine ungated doors became macOS-only, every Rust test still passed, and `just ffi` reported success from its content STAMP. `just ffi --always-make` on the `aarch64-apple-ios` triple is what caught it. The stamp is only as good as the last run that actually compiled; `--force` it whenever the stamp itself is in doubt. |
 | the vocabulary that had no view left | `AgentScreenDetection.swift` and `AgentDetectionHold.swift`, with `slopdesk_agent_hold_constant`, the whole pane-scan/detector shape family, `SlopDeskPreventSleep` and the pausable-gate marshalling. The test is not "does Swift still compile without it" — it did — but WHO READS IT: a view `switch`es on an agent's KIND and its STATUS, never on a screen verdict, a tuning interval, a working-pane set or a backpressure gate. Those four were the HOST's, and their doors existed only because the host was Swift. `agent_detection`'s FACES list went 3 → 2 and gained two `Claim::Absent`s, on `AgentJobIdentifier.swift`'s precedent. |
 
 **What F.9 accepted, and what Batch B did with it.** `SlopDeskSupervisor` and `SlopDeskScreen` were
@@ -1439,16 +1439,23 @@ second side left, so what it became is `the_verb_enum_moving_out_from_under_the_
 gate reading an empty haystack and passing forever is now the failure it proves. That is the shape to
 expect for every later batch, and it is the reason a deletion is never just a deletion here.
 
-It also accepts ONE lost pin, named rather than quietly dropped.
+It also cost ONE pin its language, and that pin was rebuilt rather than dropped.
 `LoopbackWorkspaceDocumentTests.testTheLoopbackAndTheHostDocumentAgreeByteForByte` ran a fixed intent
 script through the loopback document and the host document and compared the encoded snapshots — the
 decision function is shared (`WorkspaceIntentApplier`) but the versioning around it was written
 twice, and drift there is invisible to a suite that runs only one of the two. The second document is
-`rust/slopdesk-hostserver`'s `workspace.rs` now, which no Swift test can reach, so the pin became a
-CROSS-LANGUAGE one. The tree already has the mechanism: that script and its snapshot belong in
-`golden/golden_vectors.json`, minted by `Sources/slopdesk-corevectors` and checked by the golden
-gate, like every other two-ended wire fact. Until that group exists the loopback's versioning is
-pinned only by its own tests, and this paragraph is the record of what that costs.
+`rust/slopdesk-hostserver`'s `workspace.rs` now, which no Swift test can reach, so the pin is a
+CROSS-LANGUAGE one and lives where the tree already keeps those: the
+`workspaceDocumentVersioning` group in `golden/golden_vectors.json`, minted by
+`Sources/slopdesk-corevectors` through the real `LoopbackWorkspaceDocument` and replayed by
+`rust/slopdesk-hostserver/tests/workspace.rs` through the real `WorkspaceDocument`. What it pins is
+the LADDER and the state bytes — per step, the op and its args, the verdict, `stateNum`, `pristine`,
+whether the step published at all, and the diff the two consecutive documents produce — never the
+frames, which go out through `subscriber.rs`'s per-subscriber coalescer and have no loopback
+counterpart. Both halves reach the same numbers by opposite routes (this document opens at 1 and
+`install` does not bump; the loopback opens at 0 and `install` bumps to 1), so the shared ladder
+starts AT the install, and the script may name no op that mints host-side — the Swift side hands the
+crate a pool of `UUID()`s and would not reproduce.
 
 **Batch C opens on the corpus, not on the deletion, and that ordering was not obvious.**
 `Sources/SlopDeskVideoHost` is 44 files, and 22 of them import nothing but `CSlopDeskFFI` and
@@ -1669,7 +1676,7 @@ correct move is to delete the unlanded crates, not to keep two hosts.
 
 ## 7. The invariant rules that move with the stages
 
-`make lint-invariants` ratchets two rules onto files this campaign deletes. Each moves in the stage
+`just lint-invariants` ratchets two rules onto files this campaign deletes. Each moves in the stage
 that empties its file, with its break test, and neither is a reason to keep the Swift:
 
 - **`one-frame-one-doorman`** (`rules/hot_paths.rs:709`) — `Claim::Exists` + `Claim::Doors` on

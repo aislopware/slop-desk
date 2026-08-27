@@ -1,7 +1,7 @@
 //! Build, Developer-ID sign, notarize and package a `SlopDesk` release.
 //!
 //! ## Why this exists
-//! `make check` proves the tree is green; nothing else in the repo turns that tree into something
+//! `just check` proves the tree is green; nothing else in the repo turns that tree into something
 //! a stranger can install. This is the ONE place that knows how to go from a clean checkout to the
 //! three shippable artifacts, so CI (`.github/workflows/release.yml`) and a human cutting a release
 //! by hand run identical steps.

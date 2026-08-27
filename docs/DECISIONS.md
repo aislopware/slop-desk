@@ -17160,3 +17160,55 @@ invariant never gets to teach it. `multiple_crate_versions` fires on a resolved 
 has no line anyone wrote.
 
 `scoped-opt-outs` ratchets both halves.
+
+## The build entrypoint is a justfile, and one gate had to change to keep asking its question (2026-08-27)
+
+`make` → `just`, 127 targets to 127 recipes with the same names, the same dependency order and the
+same behaviour. Proved rather than asserted: every recipe's `just --dry-run` plan was diffed against
+the same target's `make -n` plan before the `Makefile` was deleted, and the only differences left
+were the four intended ones — `help` is `just --list`, `install-tools` also installs `just`,
+`release` refuses an argument carrying `=`, and the command substitutions print unexpanded, which is
+the subject of the rest of this entry.
+
+**What make expressed that just does not, and what replaced each:**
+
+- `$(MAKE)` recursion inside a recipe → `{{just_executable()}}`. `lint` and `quick` still fan five
+  and four gates into per-gate logs and replay them in the declared order; they are shebang recipes
+  now, which is how a body that carries shell state across lines is spelled.
+- `.PHONY` → nothing. Every target here was phony; just has no file targets to disambiguate from.
+- `$$` → `$`. just does not expand `$` in a recipe body at all, so the doubling is not merely
+  unnecessary, it would be wrong.
+- `$(shell …)`, `$(wildcard …)`, `$(patsubst …)` → one backtick each. The two derived lists —
+  `RUST_WORKSPACES` and `SHELL_FILES` — still derive themselves from the filesystem, which is the
+  whole reason they are not spelled by hand.
+
+**The gate that had to change is `lint-reach`, and it is the only interesting part.** It asks what a
+recipe would RUN, which is a question only an expansion can answer, and two things about
+`just --dry-run` are not `make -n`:
+
+1. It prints the plan on **stderr**, where make printed it on stdout. A gate left reading stdout
+   would have seen an empty plan for every recipe. `proc::ask_err` is the other stream.
+2. It does **not run a command substitution** — it prints the expression verbatim. So the plan comes
+   back with `` `grep -l '^[workspace]' rust/*/Cargo.toml …` `` exactly where the sixty crate paths
+   used to be, and a gate asking "does this plan enter `rust/slopdesk-superd`" would have answered
+   no about every crate in the tree.
+
+`gates::reach::expand_backticks` runs each substitution itself, which is what the shell would have
+done a moment later, and the reachability question is then asked of the same text make used to hand
+over. **That is why the justfile uses a BACKTICK and not `shell(…)`**: a dry run prints `shell(…)`
+as its own source text, escapes and all, which nothing downstream could honestly re-run. The
+distinction is written at the variable and again in the gate, because it is the one place where the
+runner's behaviour, not the recipe's, decides whether a gate is real.
+
+**`linked-artifacts-are-built` moved from the target line to the doc comment.** A make target
+declared its artifact in a `## ` help string ON the recipe line; `ffi: ## Build …xcframework` is a
+parse error in just, where the doc is the comment directly above. So `producers()` walks forward
+from the comment that names the artifact to the recipe it belongs to — and a blank line ends the
+block, exactly as just itself decides, so prose that merely mentions the artifact nominates nobody.
+
+**Rejected.** *A hand-written workspace list* — it would have made `--dry-run` print the paths with
+no backtick expansion needed, and it is the three-places-to-forget failure the derivation was
+introduced to end. *`just --shell /bin/echo`* as a plan printer — `--shell` overrides backtick
+evaluation too, so the variable comes back holding its own command text. *just's `[parallel]`
+attribute* for `lint` and `quick` — it does not order the output, which is the whole reason those
+two fan into logs rather than into a terminal.

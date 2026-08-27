@@ -5,7 +5,7 @@
 //! ```
 //!
 //! Exit 0 when every rule passes, 1 when any fails, 2 when the tree could not be read — the same
-//! three outcomes the shell had, so the Makefile target does not learn anything new.
+//! three outcomes the shell had, so the justfile target does not learn anything new.
 //!
 //! ## `--compare-shell`, and why it is in the binary rather than in a test
 //! Each section is deleted from the shell in the commit that ports it, which is the only way a
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
     }
 
     let root = root.unwrap_or_else(|| {
-        // Two levels above this crate is the repository, which is where `make` runs it from anyway.
+        // Two levels above this crate is the repository, which is where `just` runs it from anyway.
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     });
     let tree = match Tree::load(&root) {

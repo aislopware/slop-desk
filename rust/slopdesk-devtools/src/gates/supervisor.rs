@@ -47,7 +47,7 @@ const SWIFT_SUITES: [&str; 12] = [
 ];
 
 /// The sidecar binaries the Swift suites launch, built before the suites ask for them.
-const SIDECAR_TARGETS: [&str; 5] = ["superd", "screend", "dropd", "androidd", "inspectord"];
+const SIDECAR_RECIPES: [&str; 5] = ["superd", "screend", "dropd", "androidd", "inspectord"];
 
 /// Run every suite that needs a toolchain.
 ///
@@ -62,8 +62,8 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
 
     proc::step("the sidecar binaries the Swift suites launch");
-    proc::run("make", &SIDECAR_TARGETS, root)
-        .map_err(|why| format!("supervisor-tests: FAIL — make sidecars: {why}"))?;
+    proc::run("just", &SIDECAR_RECIPES, root)
+        .map_err(|why| format!("supervisor-tests: FAIL — just sidecars: {why}"))?;
 
     proc::step("the Swift suites that drive a real daemon");
     let filter = SWIFT_SUITES.join("|");

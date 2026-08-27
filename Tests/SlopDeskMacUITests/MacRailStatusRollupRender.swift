@@ -18,7 +18,7 @@
 // ON THE WINDOW'S OWN CONTENT VIEW here, not left to the window backing — that omission is what made
 // the old hosted path grey the cream, and it was a property of the harness rather than of hosting.
 //
-// Opt-in and INERT under `swift test` / `make check` — it skips unless `SLOPDESK_TABROW_SNAPSHOT_DIR`
+// Opt-in and INERT under `swift test` / `just check` — it skips unless `SLOPDESK_TABROW_SNAPSHOT_DIR`
 // is set, the same env var the Mac chrome rig reads. Run on demand:
 //   SLOPDESK_TABROW_SNAPSHOT_DIR="$PWD/.build/shots" swift test --filter MacRailStatusRollupRender
 

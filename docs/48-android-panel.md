@@ -19,7 +19,7 @@ Read this before touching anything under `Sources/SlopDeskPhoneUI/Panel/Android`
 > `AndroidDeviceCatalog`, `AndroidEmulatorConsole`, `AndroidSocketIO`, `AndroidBridgeManager`) was
 > DELETED in the same change — there is no fallback and no mirror. **Nothing about the wire changed**:
 > the client already dialled the bridge port directly, so the panel, the reassembler and the control
-> encoder are untouched. What changed is which process pumps the H.264, and what a `make host-restart`
+> encoder are untouched. What changed is which process pumps the H.264, and what a `just host-restart`
 > costs. Sections below that still read "inside hostd" have been rewritten; the measurements are the
 > same ones, taken against the same dialect.
 
@@ -59,7 +59,7 @@ service moved (`docs/53`):
 
 - **hostd owns every keystroke.** A mirror is a few megabits a second pumped on threads competing
   with the terminal wire, for a surface most sessions never open.
-- **A host restart took every mirror with it.** `make host-restart` is a ~0.2 s hiccup for panes,
+- **A host restart took every mirror with it.** `just host-restart` is a ~0.2 s hiccup for panes,
   which superd holds. The bridge, being in-process, died with the daemon and each mirror had to
   re-push the jar, re-forward, re-handshake and re-key. It is a superd pane now (`service:androidd`),
   so a rebuild costs the mirror nothing.
@@ -386,7 +386,7 @@ crash`) are exactly what someone reading a crash is looking for.
 
 ## Gates
 
-`make test-touched` covers the whole panel, on both sides of the socket: the client half in Swift
+`just test-touched` covers the whole panel, on both sides of the socket: the client half in Swift
 (reassembler, control encoder, layout, scroll machine, logcat parser, device decode) and the bridge
 half as `rust/slopdesk-androidd`'s unit tests (catalogue, toolchain locator, console, argument
 vectors, refusals, request decode). Every runtime seam is injectable, so no test opens a device socket

@@ -243,7 +243,7 @@ pub fn record(marker: &Path, value: &str) -> Result<(), String> {
 /// Directories no stamp ever descends: build OUTPUT, and git's own object store.
 ///
 /// PRUNED at the directory rather than filtered out of the results, which is the difference between
-/// a warm `make ffi` costing 50 s and costing 0.4 s. `rust/slopdesk-ffi/target` alone holds 48 GB
+/// a warm `just ffi` costing 50 s and costing 0.4 s. `rust/slopdesk-ffi/target` alone holds 48 GB
 /// across 592 000 files — three iOS/macOS slices of every dependency — and the walk that fed the
 /// FFI stamp read every one of their names before discarding them by path component. Nothing under
 /// any of these is an input to anything: a stamp asks what the SOURCES say, and an output that

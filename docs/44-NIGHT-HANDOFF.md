@@ -30,6 +30,6 @@ The host already ran ONE `ClaudePaneDetector` per pane ([DECISIONS §C3](DECISIO
 
 ## Verified
 
-Per commit bodies: `swift build` / `swift test` / `make lint` / `golden-check` / `check-ios` green on each commit (golden corpus intact — client-UI + control-socket changes, no hot-path wire encoding shifted). Each feature **HW-verified** on macOS (focus ring across a split, agent dots lit via `ctl report`, ⌘⇧U jumping to a blocked background pane, two floats over the tiled layout, ⌘⇧C badge + `g` scroll-to-top with the key not leaking to the shell).
+Per commit bodies: `swift build` / `swift test` / `just lint` / `golden-check` / `check-ios` green on each commit (golden corpus intact — client-UI + control-socket changes, no hot-path wire encoding shifted). Each feature **HW-verified** on macOS (focus ring across a split, agent dots lit via `ctl report`, ⌘⇧U jumping to a blocked background pane, two floats over the tiled layout, ⌘⇧C badge + `g` scroll-to-top with the key not leaking to the shell).
 
 > A P4 "peek-and-reply" overlay (answer a blocked agent without leaving the current pane) is in progress separately and is **not** part of this round — not committed, not documented yet.

@@ -180,7 +180,7 @@ final class DropdE2ETests: XCTestCase {
             let candidate = root.appendingPathComponent("\(profile)/slopdesk-dropd").path
             if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
         }
-        throw XCTSkip("slopdesk-dropd is not built — run `make dropd` (or `make test`)")
+        throw XCTSkip("slopdesk-dropd is not built — run `just dropd` (or `just test`)")
     }
 }
 

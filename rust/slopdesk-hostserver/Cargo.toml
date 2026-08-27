@@ -13,7 +13,7 @@
 # `rust/Cargo.toml`'s members are the FORK-PER-EVENT programs and nothing else, and they share a
 # startup-tuned `opt-level = "z"`. A daemon's half wants a daemon's profile. The cost is the one
 # every host crate already pays: `cargo -p` from the root cannot reach it, its gate is
-# `cd rust/slopdesk-hostserver && cargo test` behind `make hostserver-test`, and `make lint-reach` is
+# `cd rust/slopdesk-hostserver && cargo test` behind `just hostserver-test`, and `just lint-reach` is
 # what proves some target still runs it.
 
 [workspace]

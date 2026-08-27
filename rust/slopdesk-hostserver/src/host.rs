@@ -157,7 +157,7 @@ pub struct HostEnv {
     pub parent: BTreeMap<String, String>,
     /// The `TERM` the probe resolved: the ghostty entry, or the `xterm-256color` fallback.
     pub term: String,
-    /// The marketing version, which is `make release`'s to write and never this crate's to mint.
+    /// The marketing version, which is `just release`'s to write and never this crate's to mint.
     pub version: String,
     /// The login shell a `cmd`-less spawn execs.
     pub shell: String,

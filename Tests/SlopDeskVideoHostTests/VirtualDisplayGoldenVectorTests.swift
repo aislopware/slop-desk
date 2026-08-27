@@ -139,7 +139,7 @@ final class VirtualDisplayGoldenVectorTests: XCTestCase {
     /// regenerating over this file, and this suite exists precisely because values that drift
     /// unwatched are how a corpus stops meaning anything.
     ///
-    /// This USED to say "skipped, loudly, until that call is made". It was not loud. `make test`
+    /// This USED to say "skipped, loudly, until that call is made". It was not loud. `just test`
     /// runs `swift test --parallel`, which prints one progress line per test and no skip reason at
     /// all — and `--xunit-output` records a skipped case as a plain passing `<testcase>`, so the
     /// machine-readable half loses it too. Measured: the reason string appears zero times in a full

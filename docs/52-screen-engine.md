@@ -62,7 +62,7 @@ applied to what each half actually is: the screen model is stateful and keyed by
 dial it, and it must outlive any one caller — a daemon. The replay passes are a pure function of
 their bytes, so they are a linked crate, `rust/slopdesk-sanitize`, which screend and the app both
 read (see §3a). Neither half means cargo runs inside `swift build`: the daemon is a binary, and the
-library reaches Swift through the `make ffi` artifact like every other linked port (`docs/55`).
+library reaches Swift through the `just ffi` artifact like every other linked port (`docs/55`).
 
 screend keeps its OWN cargo workspace for the reason superd does: profiles are workspace-global and
 this one wants `opt-level = 3` where the hook wants `"z"`. `slopdesk-sanitize` keeps one too — it is
@@ -134,7 +134,7 @@ if either enum allocates it again.
 `slopdesk-screend 1` — is the PROTOCOL identity, a ratcheted constant `slopdesk-invariants` compares
 against `ScreenWire.helloBanner`; it is matched as a **prefix**, never for equality. The third field
 is the version of the screend process that answered. screend is a LaunchAgent
-(`make screend-install`) and so outlives hostd's build: after an upgrade the binary on disk
+(`just screend-install`) and so outlives hostd's build: after an upgrade the binary on disk
 and the process on the socket are routinely different code, and this field is what tells them apart
 (`docs/49`). Nothing is done about a mismatch — screend exits after `SLOPDESK_SCREEND_IDLE_EXIT`
 (2 minutes) of quiet and `ScreenClient` starts the installed one on the next verb, so the stale
@@ -273,7 +273,7 @@ durable** — its per-pane grids are a cache the next repaint refills. So:
 
 - `ScreenClient` STARTS one if nothing is listening (rate-limited to one attempt per 2 s across
   every caller, waits 3 s for the bind), which superd's client deliberately does not do.
-- `make screend-install` installs a `KeepAlive` LaunchAgent anyway, so the first cold
+- `just screend-install` installs a `KeepAlive` LaunchAgent anyway, so the first cold
   reattach of the day does not pay the spawn — but it asks no confirmation, because restarting it
   costs nothing.
 - A request that fails is retried ONCE on a fresh connection: the overwhelmingly likely cause is a
@@ -295,7 +295,7 @@ No pid in the socket name — the rule `rust/slopdesk-invariants` ratchets for e
 connection, not a recent request: a live hostd keeps pooled sockets open and is therefore never
 mistaken for an idle engine, while a dead client's sockets are closed by the kernel however it died.
 `swift test --parallel` gives every worker process its own private engine, so without this a single
-`make test` would leave a dozen daemons alive for the rest of the machine's uptime. Losing a
+`just test` would leave a dozen daemons alive for the rest of the machine's uptime. Losing a
 resident pane grid to the exit is the same non-event as losing one to eviction — the next `feed`
 rebuilds from a blank screen (`registry.rs`). The LaunchAgent sets `0`, because launchd owns that
 copy's lifetime and `KeepAlive` would otherwise turn every idle period into a respawn.
@@ -304,11 +304,11 @@ copy's lifetime and `KeepAlive` would otherwise turn every idle period into a re
 
 | command | what it covers |
 | --- | --- |
-| `make screend` | build (release) |
-| `make screend-test` | 364 Rust tests: 180 unit (the parser, the passes, and the ladder / regions / trackers / manifests), 42 model, 53 replay passes, 34 render, 44 overprint, 8 cross-region gate, 3 idle-exit (which run the real binary) |
-| `make lint-rust` | clippy `-D warnings` + `rustfmt --check`, third workspace |
+| `just screend` | build (release) |
+| `just screend-test` | 364 Rust tests: 180 unit (the parser, the passes, and the ladder / regions / trackers / manifests), 42 model, 53 replay passes, 34 render, 44 overprint, 8 cross-region gate, 3 idle-exit (which run the real binary) |
+| `just lint-rust` | clippy `-D warnings` + `rustfmt --check`, third workspace |
 | `swift test --filter SlopDeskScreenTests` | hostd's wire end, the paths, the unavailable path |
-| `make test` / `make test-touched` | both, and they BUILD screend first |
+| `just test` / `just test-touched` | both, and they BUILD screend first |
 
 The Swift tests that drive the engine (`MuxChannelSessionSnapshotReplayTests`, the three
 `PaneScreenScanner` suites, `LineOverprintCollapserTests`) go through `ScreendFixture`, which skips

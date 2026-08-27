@@ -55,7 +55,7 @@ default, in one place, and it is the source of three separate things:
   maps is absent because the table declared it so, never because Swift forgot to look.
   `declaredPaths` is what tells "no such key" apart from "declared but unset".
 - **The schema.** `config::schema::json_schema()` writes `docs/config.schema.json`. It is an
-  ARTIFACT with a producer (`cargo run --bin write-config-schema`, i.e. `make config-schema`) and a
+  ARTIFACT with a producer (`cargo run --bin write-config-schema`, i.e. `just config-schema`) and a
   staleness gate (`rust/slopdesk-settings/tests/checked_in_schema.rs`), never a document with an
   author. A stale schema is worse than none — it tells the reader a key exists that this build
   ignores, in the editor where they are most likely to believe it.
@@ -127,8 +127,8 @@ grow its own TOML parser, its own path resolution, or its own comment handling b
 
 | Gate | Holds |
 | --- | --- |
-| `make config-schema` | regenerates the artifact — the ONLY writer |
-| `make settings-test` | the key table, the file resolver, the schema, and the checked-in copy |
+| `just config-schema` | regenerates the artifact — the ONLY writer |
+| `just settings-test` | the key table, the file resolver, the schema, and the checked-in copy |
 | `settings-is-a-file` (invariants) | the GUI directories stay empty, the GUI types stay deleted, no first-launch gate returns, the schema exists, and every `SettingsKey` path is declared |
 | `cli-config` (invariants) | one reader for the file |
 | `checked_in_schema.rs` | the checked-in schema is byte-identical to what this build writes |

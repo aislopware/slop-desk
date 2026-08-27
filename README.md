@@ -42,12 +42,21 @@ The app bundles carry no copy of the CLI. Signed artifacts also live on the
 
 ## Build & run
 
+Every gate, build and test in this repo is a `just` recipe — `just --list` names all 127 of them.
+`just` is the one thing to install before anything else can run; `just install-tools` brings the
+rest (and `just` itself, so a machine that got it from cargo ends up on the pinned copy).
+
+```sh
+brew install just
+just install-tools
+```
+
 Headless core needs no GUI, libghostty, or signing:
 
 ```sh
 swift build
 swift test
-make check-ios   # iOS slice (#if os(iOS)); needs Xcode
+just check-ios   # iOS slice (#if os(iOS)); needs Xcode
 ```
 
 **Host (terminal):**

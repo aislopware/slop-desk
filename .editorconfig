@@ -19,7 +19,7 @@ indent_size = 4
 [*.{yml,yaml,json,jsonl}]
 indent_size = 2
 
-# Shell — 2-space indent (matches shfmt -i 2 in the Makefile).
+# Shell — 2-space indent (matches shfmt -i 2 in the justfile).
 [*.{sh,bash}]
 indent_size = 2
 
@@ -27,9 +27,12 @@ indent_size = 2
 [*.py]
 indent_size = 4
 
-# Makefiles require real tabs.
-[{Makefile,*.mk}]
-indent_style = tab
+# The justfile indents with spaces, and consistently: just reads the FIRST indented line of a recipe
+# as that recipe's indentation and rejects the body if a later line disagrees, so a stray tab is a
+# parse error rather than cosmetic drift.
+[justfile]
+indent_style = space
+indent_size = 4
 
 # Markdown: trailing whitespace can be a hard line break — don't strip it.
 [*.md]

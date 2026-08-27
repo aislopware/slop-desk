@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 SlopDesk — low-latency remote coding: a macOS host (`slopdesk-hostd`), macOS/iOS clients, and six
-Rust sidecar daemons. `make help` lists every build, lint and test target; read it rather than
-guessing one.
+Rust sidecar daemons. `just help` (or `just --list`) lists every build, lint and test recipe; read
+it rather than guessing one. The one bootstrap this tree needs is `brew install just`.
 
 ## Read before you touch
 
@@ -24,7 +24,7 @@ guessing one.
 
 ## Rules
 
-- **`make quick` after every edit; `make check` once before pushing.** `quick` is `check` with the
+- **`just quick` after every edit; `just check` once before pushing.** `quick` is `check` with the
   full suite swapped for `test-touched` (the test targets whose closure contains the change, and the
   full suite whenever a path cannot be attributed) and Miri omitted. Both are cheap on a warm tree
   because the two expensive gates are CONTENT-STAMPED, not re-run: `slopdesk-gate ffi` against the Rust
@@ -38,9 +38,9 @@ guessing one.
   outlive its caller, be `execve`d, or be dialled by two processes is a binary on a socket; one that
   is in-process by necessity and lifetime-coupled to its caller is an `.xcframework`, the way
   `libghostty` and `CSlopDeskFFI` already are. **cargo never runs inside `swift build`** — the
-  artifact is built by `make ffi` (`slopdesk-gate ffi`) beforehand, never by a build plugin that
+  artifact is built by `just ffi` (`slopdesk-gate ffi`) beforehand, never by a build plugin that
   shells out. A linked port has one failure mode a socket port does not: an artifact older than its
-  sources, green tests and all. `slopdesk-gate ffi --check` is in `make lint` for exactly that, and it
+  sources, green tests and all. `slopdesk-gate ffi --check` is in `just lint` for exactly that, and it
   derives its own inputs — a wrapped crate is covered by its `path = "../…"` edge to the shim, not
   by a list anyone maintains. See `docs/55-ffi-boundary.md`.
 - **One implementation, never two languages.** Porting means deleting the original in the same
@@ -68,7 +68,7 @@ guessing one.
   the goal is Swift-as-UI-only: every effect on the system — capture, encode, injection, IOKit, the
   accessibility tree — is Rust's. See `docs/57-apple-frameworks-in-rust.md`. Every crate outside these
   two families is `forbid(unsafe_code)`, which no downstream `allow` can lift.
-- **Never `pkill` the host** — `make host-restart` replays hostd's recorded launch exactly. There is
+- **Never `pkill` the host** — `just host-restart` replays hostd's recorded launch exactly. There is
   no live config reload; the restart is the reload.
 - **superd owns `read` on every PTY master.** A second reader anywhere steals bytes rather than
   observing them. Tests read through `PaneOutput`.
@@ -78,11 +78,11 @@ guessing one.
   `Double.maximum`/`.minimum`, not `<`/`>` ternaries.
 - **Commit subjects are release input** — imperative, ≤72 chars, conventional-commit type. The type
   picks the version bump; the subject lands verbatim in the changelog. Never hand-edit
-  `CHANGELOG.md` or bump a version by hand; `make release` owns every version site.
+  `CHANGELOG.md` or bump a version by hand; `just release` owns every version site.
 
-`make lint-invariants` (`rust/slopdesk-invariants`) ratchets the cross-language contracts — which
+`just lint-invariants` (`rust/slopdesk-invariants`) ratchets the cross-language contracts — which
 Swift files must stay deleted, socket paths, relinquish-vs-terminate, every constant typed in both
 languages. Each rule carries a break-test that seeds the drift and asserts the rule fires, and each
-failure message names the doc section, so those rules are not restated here. `make lint-reach` is the
-half no rule can decide by reading: what a `make` target would RUN, and whether the linked artifact
+failure message names the doc section, so those rules are not restated here. `just lint-reach` is the
+half no rule can decide by reading: what a `just` recipe would RUN, and whether the linked artifact
 is older than its sources.

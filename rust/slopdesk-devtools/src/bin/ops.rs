@@ -6,7 +6,7 @@
 //!
 //! These are NOT gates. Every verb changes the machine or the working tree — it installs a
 //! `LaunchAgent`, restarts a live daemon, rewrites a generated `project.yml`, re-downloads a
-//! vendor's themes, or drives an eighty-second soak — which is why none of them is in `make check`.
+//! vendor's themes, or drives an eighty-second soak — which is why none of them is in `just check`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

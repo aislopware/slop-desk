@@ -2,7 +2,7 @@
 //!
 //! ## Why a cache
 //! `swift test` costs ~60-90 s per push, and most pushes happen on a tree that was ALREADY tested
-//! green — a `make check`, a manual run, a previous push attempt minutes earlier. So the gate keys
+//! green — a `just check`, a manual run, a previous push attempt minutes earlier. So the gate keys
 //! on the exact content under test and skips the run when that key matches the last green.
 //! Invalidation is automatic: any new commit changes the tree hash.
 //!
@@ -10,7 +10,7 @@
 //! The Swift suite links `SlopDeskFFI.xcframework`, and the git tree cannot see it change: `rust/`
 //! is untracked, so `HEAD^{tree}` is byte-identical before and after a Rust edit. On a clean tree
 //! that made the cache answer "already tested green" for a suite that had never run against the
-//! artifact `make ffi` had rebuilt a minute earlier — the linked port's stale-artifact failure
+//! artifact `just ffi` had rebuilt a minute earlier — the linked port's stale-artifact failure
 //! mode, one level above the `--check` gate that exists for it. `sources.sha256` is the right
 //! witness and already exists.
 //!
@@ -28,7 +28,7 @@
 //! Eighteen suites start a real daemon — superd, screend, dropd — and every one `XCTSkip`s by name
 //! when its binary is missing. That is right inside a test and wrong for a GATE: `swift build`
 //! never sees cargo, so nothing in the Swift graph builds those binaries, and a push on a tree that
-//! has not had `make test` against it reports green over the whole supervised, screen and file-drop
+//! has not had `just test` against it reports green over the whole supervised, screen and file-drop
 //! surface. The list is DERIVED from the fixtures rather than written here, so a nineteenth suite
 //! booting a new daemon is covered the day it lands.
 
@@ -154,9 +154,9 @@ pub fn run(root: &Path) -> Result<(), String> {
     let missing = missing_daemons(root)?;
     if !missing.is_empty() {
         let names = missing.join(" ");
-        // The make target drops the `slopdesk-` prefix: the binary is `slopdesk-superd`, the target
+        // The just recipe drops the `slopdesk-` prefix: the binary is `slopdesk-superd`, the recipe
         // is `superd`. Both spellings appear in the fixtures' own skip messages.
-        let targets = missing
+        let recipes = missing
             .iter()
             .map(|daemon| daemon.trim_start_matches("slopdesk-"))
             .collect::<Vec<_>>()
@@ -165,7 +165,7 @@ pub fn run(root: &Path) -> Result<(), String> {
             "pre-push: these sidecars are not built, so the suites that boot them would XCTSkip and this"
         );
         eprintln!("          gate would pass without running them: {names}");
-        eprintln!("          run: make {targets}  (or 'make test', which does it and then runs this)");
+        eprintln!("          run: just {recipes}  (or 'just test', which does it and then runs this)");
         eprintln!("          A fixture may still be pointed elsewhere with its SLOPDESK_*_BIN override.");
         return Err("pre-push: unbuilt sidecars".to_owned());
     }

@@ -121,7 +121,7 @@ pub fn the_settings_gui_stays_deleted(tree: &Tree) -> Report {
         Claim::Exists {
             path: "docs/config.schema.json",
             message: "the config schema is the only thing that makes a file-only settings system \
-                      completable in an editor — regenerate it with `make config-schema`",
+                      completable in an editor — regenerate it with `just config-schema`",
         },
     ];
     check_all(tree, &claims)
@@ -288,7 +288,7 @@ mod tests {
             found
                 .violations()
                 .iter()
-                .any(|line| line.contains("make config-schema"))
+                .any(|line| line.contains("just config-schema"))
         );
     }
 }

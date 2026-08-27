@@ -264,7 +264,7 @@ impl Registry {
         // real child, and the second insert silently overwrites the first pane — whose master fd,
         // pump and pid leave the map with no `abandon`, leaving superd holding a running Node it
         // can no longer list, kill or reap. The only thing that stood in the way was a
-        // `debug_assert!`, which is compiled out of the `--release` build `make superd` produces.
+        // `debug_assert!`, which is compiled out of the `--release` build `just superd` produces.
         let _reservation = self.reserve(&request.pane_id)?;
 
         let cwd = resolve_cwd(request.cwd.as_deref(), request.environment.get("HOME"));
@@ -1513,7 +1513,7 @@ mod tests {
     /// was advisory: both callers passed `contains_key`, both forked a real shell, and the second
     /// insert overwrote the first pane — dropping its master, pump and pid out of the map with no
     /// `abandon`, which is a running child superd can no longer list, kill or reap. The only thing
-    /// standing there was a `debug_assert!`, absent from the `--release` build `make superd`
+    /// standing there was a `debug_assert!`, absent from the `--release` build `just superd`
     /// produces. Both threads race the same id; whichever loses must be told `DuplicatePane`.
     #[test]
     fn two_spawns_of_one_pane_id_produce_exactly_one_pane() {

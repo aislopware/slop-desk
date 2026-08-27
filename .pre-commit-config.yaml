@@ -6,7 +6,7 @@
 #     unit tests run on `pre-push` (once per push, not per commit).
 #   • Every language hook is `language: system` → NO hook environment to provision,
 #     so there's nothing to build/cache-miss; it just shells out to the already-
-#     installed tool (same ones `make lint`/`make test` use).
+#     installed tool (same ones `just lint`/`just test` use).
 #   • Each hook is gated by a tight `files:` regex, so a commit touching only .sh
 #     (say) runs ONLY the shell hooks — prek skips every other hook entirely.
 #   • prek runs independent hooks in PARALLEL and starts ~instantly (Rust, no venv).
@@ -64,7 +64,7 @@ repos:
         name: swiftformat (apply)
         entry: swiftformat
         language: system
-        # product trees + the package manifest — matches `make fmt-swift`. The standalone
+        # product trees + the package manifest — matches `just fmt-swift`. The standalone
         # probe/spike .swift scripts under scripts/ & docs/ stay out of scope.
         files: '^(Package\.swift|(Sources|Tests|Apps)/.*\.swift)$'
 
@@ -73,11 +73,11 @@ repos:
         # NIGHTLY: rust/rustfmt.toml enables unstable options (wrap_comments, group_imports,
         # format_strings). Only the formatter needs it — the crate builds/tests on stable.
         #
-        # Through the Makefile target, not `cd rust` directly: `rust/` holds SEVENTEEN workspaces and
+        # Through the justfile target, not `cd rust` directly: `rust/` holds SEVENTEEN workspaces and
         # `--all` means "every member of THIS one", so the bare form formatted the four root members
-        # and left the other sixteen crates alone — while `make lint`'s per-workspace `--check` still
+        # and left the other sixteen crates alone — while `just lint`'s per-workspace `--check` still
         # judged them. A hook that fixes less than the gate checks sends you to `--no-verify`.
-        entry: make fmt-rust
+        entry: just fmt-rust
         language: system
         files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
@@ -92,7 +92,7 @@ repos:
       # ============================== LINT (check) ===========================
       - id: swiftlint
         name: swiftlint --strict
-        # `--force-exclude` is REQUIRED here, unlike in `make lint`. SwiftLint honours the config's
+        # `--force-exclude` is REQUIRED here, unlike in `just lint`. SwiftLint honours the config's
         # `excluded:` only when it discovers files itself; a path passed explicitly on the command line
         # overrides it. This hook passes the staged paths, so without the flag it strict-lints the
         # dev-exec harnesses that `.swiftlint.yml` deliberately excludes — a false failure that forces
@@ -114,7 +114,7 @@ repos:
         # failure `docs/46` names. `lint-rust-clippy` is the clippy half of `lint-rust` WITHOUT its
         # `fmt --check`, because prek runs hooks in parallel and the rustfmt hook above is rewriting
         # the very files a `--check` would be reading. ~8 s warm across all seventeen.
-        entry: make lint-rust-clippy
+        entry: just lint-rust-clippy
         language: system
         files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
@@ -126,11 +126,11 @@ repos:
         # four suites run here. The full sixty-workspace sweep was measured at 50 s per commit — 46 s
         # of it `slopdesk-ffi`, whose tests block on real Apple frameworks (a single trivial door test
         # in that crate reproduces at 15 s, consistent with per-framework TCC/WindowServer round-trips
-        # paid by the ~40 crates it links). `make test` on pre-push already lists EVERY per-crate cargo
+        # paid by the ~40 crates it links). `just test` on pre-push already lists EVERY per-crate cargo
         # target — `ffi-test` included — so that sweep was duplicated work on the commit path, not
-        # coverage this hook was buying. `make test-rust` stays a target; `lint-reach` still requires
+        # coverage this hook was buying. `just test-rust` stays a target; `lint-reach` still requires
         # each crate be reachable from one. ~3 s warm.
-        entry: make hook-test wire-test superwire-test hookevent-test
+        entry: just hook-test wire-test superwire-test hookevent-test
         language: system
         files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
@@ -159,7 +159,7 @@ repos:
       # ===================== UNIT TESTS (pre-push only) ======================
       # Slow → kept off the per-commit path. The script adds two speedups on top of the
       # incremental build cache: a GREEN-TREE CACHE (a push of a HEAD^{tree} already tested
-      # green — by `make test`/`make check` or a previous push — skips the run entirely) and
+      # green — by `just test`/`just check` or a previous push — skips the run entirely) and
       # `--parallel` (per-class xctest workers, ~92s → ~60s; safe since `SettingsKey.store`
       # isolates each worker's UserDefaults).
       #
@@ -174,17 +174,17 @@ repos:
       # `slopdesk-gate test-touched` already attributes a scripts change to those targets, so leaving it out here
       # meant the fast inner loop knew about an input the push gate did not.
       #
-      # `make test`, NOT `slopdesk-gate pre-push` directly. Eighteen suites boot a real
+      # `just test`, NOT `slopdesk-gate pre-push` directly. Eighteen suites boot a real
       # sidecar — superd, screend, dropd — and every one of them `XCTSkip`s by name when its binary
       # is absent, deliberately, so a missing daemon reads as "not run" rather than as a pass. But
       # `swift build` never sees cargo, so nothing in the Swift graph builds those binaries: calling
-      # the script straight meant a push whose tree had never had `make test` run against it
-      # skipped the whole supervised, screen and file-drop surface and reported green. `make test`
+      # the script straight meant a push whose tree had never had `just test` run against it
+      # skipped the whole supervised, screen and file-drop surface and reported green. `just test`
       # lists the sidecar builds as prerequisites and then runs this same script, so the green-tree
       # cache still makes a repeat push instant.
       - id: swift-test
         name: swift test (sidecars first, then the green-tree cache + --parallel)
-        entry: make test
+        entry: just test
         language: system
         files: '^((Sources|Tests|Apps)/.*\.swift|rust/.*\.(rs|toml)|ThirdParty/slopdesk-ffi/.*|golden/.*|scripts/.*|Package\.(swift|resolved))$'
         pass_filenames: false
@@ -193,7 +193,7 @@ repos:
       # The cross-language ratchet: which Swift files must stay deleted, socket paths,
       # relinquish-vs-terminate and the FFI staleness gate.
       #
-      # It reached the tree only through `make lint` / `make check`, both of which are typed by
+      # It reached the tree only through `just lint` / `just check`, both of which are typed by
       # hand — the same "a gate nobody runs" shape as the Miri audit that paid for the third
       # `unsafe` crate and had never once executed. Here it runs on every push.
       #
@@ -203,8 +203,8 @@ repos:
       # that violates it stages as a change to some unrelated file, or to none. It costs ~39 s and
       # prek runs it beside `swift-test`, so on a push that also touches Swift it is free.
       - id: supervisor
-        name: make-target reachability + the FFI stale gate (slopdesk-gate)
-        entry: make lint-reach
+        name: just-recipe reachability + the FFI stale gate (slopdesk-gate)
+        entry: just lint-reach
         language: system
         always_run: true
         pass_filenames: false

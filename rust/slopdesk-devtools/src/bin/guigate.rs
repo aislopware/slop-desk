@@ -4,7 +4,7 @@
 //! `scripts/`. Nothing here decides anything: it parses arguments, resolves the repo root the way
 //! every other tool in this crate does, and prints the failure it is handed.
 //!
-//! None of these is in `make check` and none can be. Each opens windows on the developer's own
+//! None of these is in `just check` and none can be. Each opens windows on the developer's own
 //! display for a minute or more, each needs an unlocked Aqua login session, and two need
 //! Screen-Recording or Accessibility TCC. They are gates by OUTPUT — the exit status is the verdict
 //! and every assertion is machine-checked — and operator harnesses by cost. Run them by hand, after

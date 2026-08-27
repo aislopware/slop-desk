@@ -447,7 +447,7 @@ pub fn run(options: &Options, progress: &(dyn Fn(String) + Sync)) -> Result<Repo
     }
     if !options.port_bin.exists() {
         return Err(format!(
-            "missing {} — run `make screend` first",
+            "missing {} — run `just screend` first",
             options.port_bin.display()
         ));
     }

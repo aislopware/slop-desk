@@ -222,7 +222,7 @@ hooks. It is a RESOURCE, and its lifetime is exactly one child's.
 That is why it moved. Held in hostd it needed three cleanup sites — spawn failure, session
 teardown, orphan sweep — each of which had to re-derive the relinquish-versus-terminate distinction
 of §5.5 on its own, and none of which ran when hostd was killed rather than stopped. So the common
-case, a `make host-restart`, leaked one directory and four files per open pane, permanently. superd
+case, a `just host-restart`, leaked one directory and four files per open pane, permanently. superd
 already knows that distinction, because it IS the distinction, and it is the process still standing
 afterwards.
 
@@ -576,7 +576,7 @@ hold the pane lock across a fork, so the id is taken out of circulation before t
 by a guard on every path out. Without it the duplicate check was advisory — two clients spawning
 `service:code-server` at once both passed `contains_key`, both forked, and the second insert
 overwrote the first pane's master, pump and pid with no `abandon`: a running Node superd could no
-longer list, kill or reap. What stood there instead was a `debug_assert!`, which `make superd`
+longer list, kill or reap. What stood there instead was a `debug_assert!`, which `just superd`
 (`--release`) compiles out. Pinned by
 `registry::tests::two_spawns_of_one_pane_id_produce_exactly_one_pane`.
 
@@ -696,7 +696,7 @@ Half of the reason it moved is §6.13's, unchanged: superd's pump is the first r
 so a Swift segmenter was a second pass over the same stream in a second language. The other half is
 its own, and it is not about throughput either.
 
-**The ring outlived the wrong process.** It lived in hostd, so it died on every `make host-restart`
+**The ring outlived the wrong process.** It lived in hostd, so it died on every `just host-restart`
 — 0.2 s during which nothing else about the pane changed: the shell kept running, the PTY kept its
 master, superd kept the pane. A client that reattached afterwards found an empty Commands panel for
 a shell that had never stopped, and the only way to refill it was to run another command. In superd
@@ -878,7 +878,7 @@ The pid is *content*, re-read every time and never baked into a name a child rem
 distinction §1 turns on. Its absence is meaningful too: no file means no hostd, a file whose pid is
 gone means one died badly.
 
-### `make host-restart`
+### `just host-restart`
 `slopdesk-ops restart-hostd` — build (`--product slopdesk-hostd`, so not the client app, the video
 host or iOS), then SIGTERM, then wait for both the process **and** the port, then relaunch with the
 recorded binary/argv/cwd/env, then wait for a real listener. It builds *before* it stops, so a

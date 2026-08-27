@@ -151,14 +151,19 @@ jobs:
       # is exactly the window in which to notice. Same shape as the libghostty job above, minus the
       # cache: the gate stamps its own inputs and a runner is cold every time regardless.
       #
-      # `make ffi` rather than a script path, and `linked-artifacts-are-built` in
+      # `just ffi` rather than a script path, and `linked-artifacts-are-built` in
       # `rust/slopdesk-invariants` is what keeps this step honest: it derives the producer from the
-      # Makefile target that NAMES the artifact and fails if this workflow stops running it.
+      # justfile recipe whose DOC names the artifact, and fails if this workflow stops running it.
+      #
+      # `just` is installed here rather than assumed. The runner image ships `make` and does not ship
+      # `just`, which is the one thing the move off make costs a cold machine — and a recipe runner
+      # that is missing fails this step with "command not found" minutes before anything is signed.
       - name: Build SlopDeskFFI.xcframework
         run: |
           set -euo pipefail
+          brew install just
           rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
-          make ffi
+          just ffi
 
       - name: Install XcodeGen
         run: |

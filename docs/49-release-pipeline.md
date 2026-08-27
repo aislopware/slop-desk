@@ -160,8 +160,8 @@ you own the leak.
 ## Cutting a release
 
 ```
-make release-preview     # the version and the notes the next cut would produce; writes nothing
-make release             # version + CHANGELOG.md + all six version sites + commit + tag
+just release-preview     # the version and the notes the next cut would produce; writes nothing
+just release             # version + CHANGELOG.md + all six version sites + commit + tag
 git push origin main && git push origin vx.y.z
 ```
 
@@ -172,7 +172,7 @@ dirty tree, then:
 1. **Decides the version** with `git cliff --bumped-version`, which reads the conventional-commit
    types since the last tag: a `feat` moves the minor, a `fix`/`perf`/`refactor` moves the patch,
    a `!` or a `BREAKING CHANGE:` trailer moves the major (below 1.0, the minor). Pass a version
-   argument — `make release VERSION=0.3.0` — to override it.
+   argument — `just release VERSION=0.3.0` — to override it.
 2. **Renders `CHANGELOG.md`** from the same commit log (`cliff.toml`), with the pending commits
    filed under the version about to be tagged rather than left under *Unreleased*.
 3. **Writes the version into all six sites** via `slopdesk-release bump-product`, which reads every
@@ -181,7 +181,7 @@ dirty tree, then:
    release commit never appears in the next release's notes.
 
 It does **not** push. The tag push is what starts the signing pipeline, so it stays a separate
-keystroke. Then run `make check` and dry-run the workflow (Actions → Release →
+keystroke. Then run `just check` and dry-run the workflow (Actions → Release →
 `workflow_dispatch`, version `x.y.z`, **dry-run checked**) if the change touched packaging;
 finally verify the published artifact:
 
@@ -258,7 +258,7 @@ decided the version was allowed to move; the comparison an upgrade makes is on `
 Two gates keep the number honest, and they are deliberately in different places:
 
 * `every-sidecar-is-pinned` (`rust/slopdesk-invariants`) — every shipped cargo tool has a pin entry, and every pin entry names a
-  shipped tool. Runs in `make check`.
+  shipped tool. Runs in `just check`.
 * `slopdesk-release package` — asks every **built** binary `--version` and refuses to package on a
   disagreement with the pin. The same question the CLI gate has always asked, now asked of all twelve,
   and asked of the binary rather than the source, so a stale artifact staged by `locate_tool` is
@@ -266,7 +266,7 @@ Two gates keep the number honest, and they are deliberately in different places:
 
 There is deliberately **no** gate that fails when a sidecar's sources have changed since the last
 release: that is the ordinary state of `main`, so it would be red almost always and mean nothing
-when it was. `make tool-versions` prints the same information as a report.
+when it was. `just tool-versions` prints the same information as a report.
 
 Every cargo tool answers `--version` with the version in the **second whitespace-separated field of
 the first line** — the shape `slopdesk version` has always had and the packager has always
@@ -528,7 +528,7 @@ under `homebrew.mxcl.slopdesk`. It is `keep_alive successful_exit: false`, never
 that detail is load-bearing: superd exits **0 on purpose** when another instance already holds its
 lock file, rather than stealing a live socket and stranding the panes behind it. A bare `KeepAlive`
 restarts on any exit, so the loser respawned every ten seconds forever. A machine with both agents —
-this one and a checkout's `com.slopdesk.superd` from `make superd-install` — now settles, with
+this one and a checkout's `com.slopdesk.superd` from `just superd-install` — now settles, with
 whichever booted first keeping the panes. The installer was fixed to the same form.
 
 The **cask depends on the formula** (`packaging/homebrew/Casks/slopdesk.rb`). `SlopDeskHost.app` does not shell out to `slopdesk-hostd`; it

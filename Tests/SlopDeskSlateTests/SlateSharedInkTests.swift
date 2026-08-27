@@ -1,5 +1,5 @@
 // SlateSharedInkTests — three name → ink/weight tables that moved down here in docs/56 batch 3, off a
-// SwiftUI target whose test suite was about to stop running in `make check`.
+// SwiftUI target whose test suite was about to stop running in `just check`.
 //
 // Each was a PURE answer sitting on a `View`'s own `static func` — reached only by hanging a `static`
 // member off a view type, never by building the view — which is exactly the shape that suite could no

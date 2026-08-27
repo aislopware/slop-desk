@@ -284,7 +284,7 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
     let claims = [
         Claim::Exists {
             path: GHOSTTY_SEAM,
-            message: "it is the only registrar of the terminal seam and no compiler in `make check` opens \
+            message: "it is the only registrar of the terminal seam and no compiler in `just check` opens \
                       it (docs/56 stage F, P4)",
         },
         Claim::Matches {

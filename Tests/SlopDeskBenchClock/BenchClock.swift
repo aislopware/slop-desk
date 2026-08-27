@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Every bench in the tree asserts the same kind of thing — "this has not regressed by an order of
 /// magnitude" — and every one of them used to measure it with `DispatchTime`, which is WALL CLOCK.
-/// `make quick` runs thousands of tests across every core at once, so a timed loop that loses its
+/// `just quick` runs thousands of tests across every core at once, so a timed loop that loses its
 /// slice to another target reads as a tenfold regression, fails, and costs a full re-run of the
 /// suite to disprove. That happened four times in one sitting.
 ///

@@ -141,7 +141,7 @@ pub fn no_swiftpm_build_plugin(tree: &Tree) -> Report {
     );
     sites(
         &mut report,
-        "Package.swift declares a build plugin — the FFI artifact is built by 'make ffi'",
+        "Package.swift declares a build plugin — the FFI artifact is built by 'just ffi'",
         &found,
     );
     report
@@ -173,7 +173,7 @@ pub fn no_fused_multiply_add(tree: &Tree) -> Report {
     report
 }
 
-/// `CLAUDE.md`: "Never `pkill` the host — `make host-restart` replays hostd's recorded launch."
+/// `CLAUDE.md`: "Never `pkill` the host — `just host-restart` replays hostd's recorded launch."
 ///
 /// The harnesses under `scripts/` DO kill hosts, and must: each spawns its own on a private port
 /// and reaps it. What is banned is the UNQUALIFIED form, which reaches the developer's running
@@ -183,8 +183,8 @@ pub fn no_fused_multiply_add(tree: &Tree) -> Report {
 pub fn pkill_never_reaches_the_developers_host(tree: &Tree) -> Report {
     let mut report = Report::new();
     let mut shells = collect(tree, &["scripts"], &["sh"]);
-    if let Some(makefile) = report.source(tree, "Makefile", "every gate is invoked from it") {
-        shells.push((Path::new("Makefile"), makefile));
+    if let Some(justfile) = report.source(tree, "justfile", "every gate is invoked from it") {
+        shells.push((Path::new("justfile"), justfile));
     }
     let found: Vec<String> = hits(&shells, r"pkill\s+-f")
         .into_iter()
@@ -639,7 +639,7 @@ pub fn every_injected_sink_has_someone_who_binds_it(tree: &Tree) -> Report {
 const LIVE_DOCS: [&str; 16] = [
     "CLAUDE.md",
     "README.md",
-    "Makefile",
+    "justfile",
     "docs/00-overview.md",
     "docs/20-wire-protocol.md",
     "docs/45-multi-client-state-sync.md",
@@ -1036,7 +1036,7 @@ pub fn a_guarded_keepalive_supervises_a_daemon_that_exits_zero(tree: &Tree) -> R
 
 /// The replay boots the launchd job out BEFORE it signals anything
 ///
-/// `make host-restart` promises to replay the recorded launch EXACTLY. On a machine with
+/// `just host-restart` promises to replay the recorded launch EXACTLY. On a machine with
 /// `slopdesk-ops install hostd` run once, the promise is breakable in a way nothing reports: the
 /// agent's `KeepAlive` relaunches the daemon the signal just killed, from
 /// `~/Library/Application Support/SlopDesk/bin/` — a copy taken whenever `install` last ran — and
@@ -1063,7 +1063,7 @@ pub fn the_replay_boots_the_agent_out_first(tree: &Tree) -> Report {
         view: View::Code,
         message: "rust/slopdesk-devtools/src/ops/hostd.rs signals the recorded pid before it boots \
                   com.slopdesk.hostd out of launchd — the agent relaunches the installed binary into a race \
-                  with the replay, and the loser exits 0, so `make host-restart` reports success over \
+                  with the replay, and the loser exits 0, so `just host-restart` reports success over \
                   whichever hostd won",
     }])
 }
@@ -1285,7 +1285,7 @@ mod tests {
     #[test]
     fn an_unqualified_pkill_is_red_and_a_scoped_one_is_not() {
         let fixture = Fixture::new("pkill");
-        fixture.write("Makefile", "all:\n\techo hi\n");
+        fixture.write("justfile", "all:\n    echo hi\n");
         fixture.write("scripts/soak.sh", "pkill -f slopdesk-hostd --port 9999\n");
         assert!(pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean());
         fixture.write("scripts/reap.sh", "pkill -f slopdesk-hostd\n");

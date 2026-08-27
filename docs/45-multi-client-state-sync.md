@@ -1380,7 +1380,7 @@ that variant.
   list. Imports only.
 - Move the existing tree tests to `Tests/SlopDeskWorkspaceModelTests/` **unchanged**.
 
-**Gate:** `make check` green, every existing tree test passes unmodified, **and
+**Gate:** `just check` green, every existing tree test passes unmodified, **and
 `slopdesk-gate golden` shows a zero-key diff** (regenerated with no `SLOPDESK_*` env). The
 phase moves `Session.swift` and `SplitNode+Codable.swift` — the hand-written deterministic `Codable`
 this design cites as its ordering precedent — *and* adds a dependency to the vector generator in the
@@ -1394,7 +1394,7 @@ same commit. "Existing tests pass" does not prove the encoded bytes are unchange
   `applying(_:)`, deterministic ascending emission.
 - `SlopDeskWorkspaceModel/Codec/WorkspaceStateCodec.swift` — key/entry/snapshot/diff/`layoutStructure`
   encode + decode, validate-then-drop throughout, depth cap = `SplitNode.maxDepth` (12).
-- Golden: two new emitted keys, `make check`, hand-merge into the 48 → 50 corpus.
+- Golden: two new emitted keys, `just check`, hand-merge into the 48 → 50 corpus.
 
 **Tests — the gate for the whole architecture**
 

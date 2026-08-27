@@ -48,7 +48,7 @@ pub fn resolve(root: &Path, override_: Option<&Path>) -> Result<PathBuf, String>
     proc::ask("/usr/bin/which", &["code-server"], root)
         .map(PathBuf::from)
         .filter(|path| is_executable(path))
-        .ok_or_else(|| "no code-server binary (run 'make provision')".to_owned())
+        .ok_or_else(|| "no code-server binary (run 'just provision')".to_owned())
 }
 
 /// True for a file with an execute bit — `[[ -x ]]`, without the shell.
@@ -201,7 +201,7 @@ mod tests {
     /// An explicit override wins over the vendored prefix and over `PATH`, unexamined.
     ///
     /// Unexamined on purpose: the host does not stat it either, so a typo'd override has to fail
-    /// as a spawn error naming the path, not as "no code-server binary (run 'make provision')".
+    /// as a spawn error naming the path, not as "no code-server binary (run 'just provision')".
     #[test]
     fn an_override_wins_and_is_taken_as_written() {
         let root = PathBuf::from("/nonexistent-repo-root");

@@ -24,7 +24,7 @@ Research: `docs/41-redesign-research.md`. Plan: `docs/42-implementation-plan.md`
 ## Verified headless (what I could prove without a GUI)
 
 - `swift build` clean; **full suite green** (≈2687 tests, from a 2322 baseline — ~365 new).
-- `make lint` (SwiftFormat + SwiftLint `--strict`, the CI gate) clean on every commit.
+- `just lint` (SwiftFormat + SwiftLint `--strict`, the CI gate) clean on every commit.
 - `golden-check.sh` PASS — all 13 frozen wire keys intact; wire types **26/27** (Claude status) added additively and golden-pinned; no existing encoding shifted.
 - `scripts/check-ios.sh` → **BUILD SUCCEEDED** (also fixed a pre-existing iOS rot in `VideoWindowView` unrelated to this branch).
 - `loopback-validate --smoke` green after every wire/host change.
@@ -56,7 +56,7 @@ Run on the real MacBook (unlocked Aqua + Screen-Recording TCC):
 
 ## Final gate (all green)
 
-- **`make check`** (lint + build + test + golden) → **PASS**. Full XCTest suite **2707 tests, 0 failures** (from 2322 baseline — ~385 new). `make lint` clean.
+- **`just check`** (lint + build + test + golden) → **PASS**. Full XCTest suite **2707 tests, 0 failures** (from 2322 baseline — ~385 new). `just lint` clean.
 - **`golden-check.sh`** → **PASS, byte-identical**; all 13 frozen wire keys intact. Wire types 26/27 added additively + golden-pinned.
 - **`scripts/check-ios.sh`** → **BUILD SUCCEEDED** (both `ClientApp-iOS` + `SlopDeskClientUI` schemes).
 - **`slopdesk-loopback-validate --frames 120`** (real-VT encode→FEC→reassemble→decode) → **exit 0** across clean / 2% / 10% loss, FEC tiers, interleave, RS m=2/3, LTR.
@@ -71,12 +71,12 @@ Follow-on requested in conversation; spiked → built → reviewed → fast-forw
 
 - **Host segments the PTY stream into per-command blocks from the OSC 133 marks it already sniffs** (`CommandBlockSegmenter` + `CommandBlockTracker`, bounded ring). New wire types **28 `commandBlock`** / **15 `requestBlockOutput`** / **29 `blockOutput`** (additive, golden-pinned `blocksWireMessages`, 13 frozen keys intact). Gated `SLOPDESK_BLOCKS` (default-ON; off ⇒ byte-pipeline byte-identical, proven).
 - **Client UI**: Command Navigator (⌃⌘O), sticky command header, chrome status chip, jump prev/next (⌃⌘[ / ⌃⌘]), "Copy Command Output" in the right-click menu. **No inline row-aligned gutter** — libghostty 1.3.1 exposes no prompt-mark positions (verified in `ghostty.h` + `PageList.zig`), so jump uses `scroll_to_bottom` re-anchor + `jump_to_prompt`; the navigator/header/chip are the row-alignment-free surfaces.
-- Review caught + fixed: viewport-relative jump math, CSI-leak into commandText (colorized shells), copy timeout race, copy-while-running. Full suite **2799**, `make check` + `check-ios` + loopback all green.
+- Review caught + fixed: viewport-relative jump math, CSI-leak into commandText (colorized shells), copy timeout race, copy-while-running. Full suite **2799**, `just check` + `check-ios` + loopback all green.
 - **Needs eyes-on** (`check-macos`): navigator/header/chip render + live jump/copy over a real libghostty surface. Needs a shell with **OSC 133 shell-integration** (`ShellIntegration.swift`) for blocks to appear.
 
 ## Addendum — three more follow-on features (same overnight session, per the user's request to keep going with more good ideas)
 
-Each orchestrated as **implement → 5-dimension adversarial review → verify → fix**, committed only after re-running `make check` (lint + build + full suite + golden). **All four are client-only: no wire/host/FFI/golden/schema change; golden byte-identical every time.** Branch now **33 commits vs main, unpushed.**
+Each orchestrated as **implement → 5-dimension adversarial review → verify → fix**, committed only after re-running `just check` (lint + build + full suite + golden). **All four are client-only: no wire/host/FFI/golden/schema change; golden byte-identical every time.** Branch now **33 commits vs main, unpushed.**
 
 1. **Blocks++** (`87c7223`) — Warp block superpowers on top of Blocks:
    - **Re-run command** (`⌃⌘R` last-command + per-row button): `BlockReRunEncoder` re-injects the captured `commandText` as **verbatim literal UTF-8 + one `\n`** through the existing input path — never via `SendKeysParser`, so a command literally containing `<Enter>`/`<cr>` re-runs unchanged (correctness + injection safety).

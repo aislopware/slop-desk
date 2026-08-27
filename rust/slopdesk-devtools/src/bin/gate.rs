@@ -23,7 +23,7 @@ usage: slopdesk-gate [--repo-root DIR] <verb> [options]
                                         RUN the iOS tests on a simulator
   android                               the Android hardware gate (needs a device)
   ffi [--check|--force]                 assemble SlopDeskFFI.xcframework (stamped)
-  reach                                 every workspace crate is reached by a make target
+  reach                                 every workspace crate is reached by a just recipe
   supervisor-tests                      the hostd/superd suites that need a live daemon
   help                                  this text
 ";

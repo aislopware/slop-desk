@@ -1,6 +1,6 @@
 //! The Android panel's hardware gate: the two claims only a real device can settle.
 //!
-//! `make test` covers everything about this panel that is PURE — the scrcpy stream reassembler, the
+//! `just test` covers everything about this panel that is PURE — the scrcpy stream reassembler, the
 //! control-message encoder, the layout, the scroll machine, the logcat parser, the device decode,
 //! the bridge's ack/stream split, and the whole catalogue, argument-vector and refusal surface as
 //! `rust/slopdesk-androidd` unit tests. None of that opens a socket (hang-safety), which is exactly
@@ -22,7 +22,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The vendored toolchain prefix `make provision` fills.
+/// The vendored toolchain prefix `just provision` fills.
 const VENDORED_ADB: &str = "ThirdParty/tools/.prefix/bin/adb";
 
 /// Where a `scrcpy-server` jar may be, in the order production looks.
@@ -45,7 +45,7 @@ pub fn locate_adb(root: &Path) -> Result<PathBuf, String> {
         return Ok(vendored);
     }
     which("adb").ok_or_else(|| {
-        "no adb found (provision it: make provision), or set SLOPDESK_ADB_BIN to one".to_owned()
+        "no adb found (provision it: just provision), or set SLOPDESK_ADB_BIN to one".to_owned()
     })
 }
 

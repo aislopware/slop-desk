@@ -12,7 +12,7 @@
 # this daemon exists to remove. That is not a preference, so the two cannot share a profile, so
 # they cannot share a workspace.
 #
-# The knock-on cost is real and paid in the Makefile: `lint-rust`, `hook`, and `hook-test` all need
+# The knock-on cost is real and paid in the justfile: `lint-rust`, `hook`, and `hook-test` all need
 # a sibling invocation here, because `cd rust && cargo clippy --workspace` does not reach an
 # excluded directory.
 [workspace]

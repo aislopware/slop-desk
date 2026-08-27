@@ -318,7 +318,7 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
         // replaying that record after a `cargo build` would start the OLD one while reporting a
         // fresh build, which is the "running last week's code" failure the version audit exists to
         // catch. Refused in words, the way a missing record is, rather than silently substituting a
-        // path: `make host-restart` replays the recorded launch EXACTLY, and swapping the binary
+        // path: `just host-restart` replays the recorded launch EXACTLY, and swapping the binary
         // under it would make that sentence false.
         if let Some(found) = record.as_ref().filter(|found| is_swiftpm_artifact(&found.binary)) {
             return Err(format!(
@@ -329,7 +329,7 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
             ));
         }
         // `release` with no record, where the `SwiftPM` build defaulted to `debug`. A first launch on
-        // this machine is the release binary `make host` produces, and a debug daemon is a
+        // this machine is the release binary `just host` produces, and a debug daemon is a
         // different program at the operating point the fan-out was measured at.
         let configuration = record
             .as_ref()

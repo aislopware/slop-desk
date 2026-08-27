@@ -7,7 +7,7 @@
 // one), and a rule in two places is the defect `CLAUDE.md` names. Both halves build one of these and
 // hand it to the same `VideoWindowPipeline.activate`.
 //
-// ONE IMPORT, DELIBERATELY. This target holds no views since the carve and `make lint` asserts it —
+// ONE IMPORT, DELIBERATELY. This target holds no views since the carve and `just lint` asserts it —
 // the header this came from imported SwiftUI, CoreImage and QuartzCore for the view types that left.
 
 import SlopDeskVideoProtocol

@@ -56,7 +56,7 @@ final class FrameDecoderCursorTests: XCTestCase {
         let large = try drainTime { smallWireFrames(32000).bytes } // 4× the frames
         // Linear ≈ 4×; the old O(n²) front-removal ≈ 16×. 12 (not a tight 8) because under the full
         // suite's `--parallel` worker contention the LONGER run absorbs more descheduling, inflating
-        // an honestly-linear ratio past 8 (observed 8.16 under `make check` while standalone runs sit
+        // an honestly-linear ratio past 8 (observed 8.16 under `just check` while standalone runs sit
         // near 4) — a quadratic regression still lands at ≥16 and stays caught.
         XCTAssertLessThan(
             large / max(small, 1e-9),

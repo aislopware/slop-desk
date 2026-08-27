@@ -71,6 +71,7 @@ pub const EMITTED_KEYS: &[&str] = &[
     "udpRearm",
     "videoControl",
     "windowGeometry",
+    "workspaceDocumentVersioning",
     "workspaceIntentArgs",
     "workspaceIntentOps",
     "workspaceStateCodec",

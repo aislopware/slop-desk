@@ -145,7 +145,7 @@ secondary windows, a 40-row rail under a mouse — are macOS-shaped problems.
 - **Layout diverges; capability does not.** A feature landing on one platform is owed to the other,
   laid out for it. What is NOT owed is the same arrangement.
 
-Three of these four are RATCHETED, in `rust/slopdesk-invariants` (`make lint`): every file in a UI
+Three of these four are RATCHETED, in `rust/slopdesk-invariants` (`just lint`): every file in a UI
 target must name a view framework, `SlopDeskMacUI` may not carry a platform gate (and `SlopDeskPhoneUI`
 may carry only its own), and neither half may import the other or the draining floor import upward.
 Each of the three fails silently rather than loudly if it slips — a frameworkless file compiles, a dead
@@ -508,7 +508,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   one of the forty-one files in `SlopDeskDevicePanels` was wrapped whole in `#if os(macOS)`. None of
   them needed to be: the module imports Foundation, CoreGraphics, CoreMedia and Network, and the phone
   has all four. The gates were inherited from the days the panels were a Mac-only surface, and they
-  were invisible because a build of forty-one EMPTY files is a green build — `make check-ios` was
+  were invisible because a build of forty-one EMPTY files is a green build — `just check-ios` was
   compiling nothing and reporting success. Removing them is the whole change; the module built for the
   iOS triple on the first try, which is the measurement that says the gap was never technical.
 
@@ -1323,7 +1323,7 @@ gate is the target.
 
 **Its caller is not under `Sources/`.** `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`
 is the libghostty embedder, added to the two Xcode app targets by `slopdesk-ops enable-renderer macos` /
-`… ios` and compiled by neither `swift build` nor `make quick`'s macOS half. It is
+`… ios` and compiled by neither `swift build` nor `just quick`'s macOS half. It is
 where `PasteSafetyAnalyzer`, `PastePrecheck`, `ClipboardWritePolicy`, `RightClickPasteInterceptPolicy`
 and `PasteTransform` are all reached from — so a grep over `Sources/` reports that whole cluster as
 dead, and it is not. Anything moved or renamed here is verified by hand:
@@ -2581,7 +2581,7 @@ before an exception, since the pair-ratchet's blind spot is structural and will 
 
 ### Increment 59 — the lint's own hang, and why the fold was scheduled to trigger it
 
-**`make lint` could not fail; it could only stop returning.** `slopdesk-invariants`'s `spells` helper
+**`just lint` could not fail; it could only stop returning.** `slopdesk-invariants`'s `spells` helper
 takes a pattern and a file list, and forty bans build that list from a
 `$(repo_files 'Sources/SomeTarget/**/*.swift')` splat. A splat matching nothing expands to nothing, at
 which point the inner `grep -lE` has no file operands, falls back to stdin, and blocks forever. Three of
@@ -2767,7 +2767,7 @@ this increment took the last step the drain implied. `Tests/SlopDeskPhoneUITests
 SwiftPM target at all. On the macOS triple `SlopDeskPhoneUI` now compiles to nothing, so `@testable
 import`ing it yields an EMPTY module — a suite over it can only be files that fail to compile or,
 guarded to match, assert nothing, and neither is a test. Six files moved to
-`Apps/ClientApp-iOS/Tests/`, where `make check-ios-tests` runs them on a booted simulator; three
+`Apps/ClientApp-iOS/Tests/`, where `just check-ios-tests` runs them on a booted simulator; three
 `ImageRenderer` visual rigs moved with them, ported AppKit → UIKit with every `SLOPDESK_*` env name,
 `XCTSkip` message and `print` line byte-identical, because those strings are the interface the
 pixel-verify recipes drive. Two were deleted: the `L0Placeholder` whose entire purpose was keeping an
@@ -4308,10 +4308,10 @@ anything that would compile without a view framework belongs in the shared logic
 no directive in this target is therefore a question, not a leftover.
 
 **The consequence the plan did not price: normalising bucket A to `#if os(iOS)` takes the phone's
-tests out of `make check`.** Fifty-six files compile on the macOS triple today, because
+tests out of `just check`.** Fifty-six files compile on the macOS triple today, because
 `canImport(SwiftUI)` is TRUE there — which is what lets `Tests/SlopDeskClientUITests` run under `swift
 test`. Make them `os(iOS)` and that suite can only run on a booted simulator
-(`slopdesk-gate ios-tests`, deliberately NOT in `make check` because a headless gate cannot assume
+(`slopdesk-gate ios-tests`, deliberately NOT in `just check` because a headless gate cannot assume
 one). Thirty-two test files would leave the default gate silently, and a suite that still exists but
 no longer runs is worse than a deleted one.
 

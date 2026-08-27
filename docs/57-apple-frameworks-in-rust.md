@@ -438,7 +438,7 @@ resolve through the Objective-C runtime; CoreVideo for the three `kCVImageBuffer
 colour tags, which are `extern` constants. Until this row they were implicit — `VideoEncoder.swift`
 imported VideoToolbox itself, and the import was the link. **Every future row that calls a C function
 or reads an `extern` constant will hit this, and it presents as a wall of undefined symbols at the
-final link, long after the crate and `make ffi` are both green.**
+final link, long after the crate and `just ffi` are both green.**
 
 **The decoder closes the row, and it is where the family first reached iOS.** Every other crate in
 this family is macOS-gated in `slopdesk-ffi`'s manifest, most because the API does not exist on a
@@ -519,7 +519,7 @@ static-IDR timer IS the discipline that lets both touch one cached frame with no
 `extern` constant is a symbol the linker must resolve — unlike a class, which `objc2` looks up
 through the runtime. It was implicit until this row, because `WindowCapturer.swift` used to
 `import ScreenCaptureKit` itself. The failure it prevents is one undefined symbol at the final link
-of every macOS product, long after both the crate and `make ffi` are green.
+of every macOS product, long after both the crate and `just ffi` are green.
 
 **The ban this row earned had to be NARROWER than the two before it.** Nothing else in Swift touches
 VideoToolbox, so `hevc-encode-is-rusts` could sweep the whole framework. Here the window feed and

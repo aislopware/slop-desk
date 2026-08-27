@@ -20,7 +20,7 @@ directly (`LivePaneSession.subscribeInspector`). What hostd contributed was the 
 that is what was wrong with it:
 
 - **A host restart erased the session.** The transcript tail, the fold state and the whole replay
-  window lived in hostd's address space. `make host-restart` is ~0.2 s and superd's children never
+  window lived in hostd's address space. `just host-restart` is ~0.2 s and superd's children never
   notice it — but the inspector did, completely: after a rebuild a client reconnecting and asking
   for `subscribe(fromSeq: 0)` got an empty history for a session that was still running. The pane
   survived the restart; its inspector did not.
@@ -191,14 +191,14 @@ that watches the directory.
 
 | command | what it covers |
 | --- | --- |
-| `make inspectord` | build (release) |
-| `make inspectord-test` | 98 unit tests + the 2 corpus tests below |
-| `make lint-rust` | clippy `-D warnings` + `rustfmt --check`, sixth workspace |
+| `just inspectord` | build (release) |
+| `just inspectord-test` | 98 unit tests + the 2 corpus tests below |
+| `just lint-rust` | clippy `-D warnings` + `rustfmt --check`, sixth workspace |
 | `rust/slopdesk-invariants` | §12 — the three tags, the 16 MiB cap, the announce line, no Swift producer |
 | `swift test --filter InspectorTransportTests` | the client end against hand-built wire bytes |
 | `swift test --filter InspectorServiceManagerTests` | 8 — argv with and without a transcript, the announce parse, a missing binary, a survivor on the wrong port, a child that never announces, relinquish vs shutdown |
 | `swift test --filter InspectorGlueTests` | the view-model fold and `LivePaneSession` glue over the loopback |
-| `make test` / `make test-touched` | all of it, and they BUILD inspectord first |
+| `just test` / `just test-touched` | all of it, and they BUILD inspectord first |
 
 The unit tests split 18 builder, 13 replay, 12 parser, 11 wire, 10 accumulator, 8 server, 7 json, 7
 tailer, 6 subagents, 4 engine, 2 event.

@@ -445,7 +445,7 @@ fn cut(root: &Path, arguments: &[String]) -> Result<(), String> {
     // The crate manifests and lock files the bumper rewrote. `-u` rather than a path list, because
     // which crates moved is exactly what this cannot know in advance — and leaving one out would
     // strand a bumped `Cargo.toml` in the working tree, where the release ships a binary whose
-    // version was never committed and the next `make check` finds a dirty tree.
+    // version was never committed and the next `just check` finds a dirty tree.
     //
     // `-u` over a whole directory is safe here for ONE reason, checked far above: this refuses to
     // run on a dirty tree. So the only modifications under `rust/` at this point are the ones the

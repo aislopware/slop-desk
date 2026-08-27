@@ -1,6 +1,6 @@
 // Visual-verification harness — renders a chrome showcase to a PNG via ImageRenderer so the
 // palette + component kit can be eyeballed headlessly (no GUI/TCC). Opt-in: INERT unless the env var
-// `SLOPDESK_SNAPSHOT_OUT=<path.png>` is set, so the suite / `make check` never write a file. Run on demand:
+// `SLOPDESK_SNAPSHOT_OUT=<path.png>` is set, so the suite / `just check` never write a file. Run on demand:
 //   SIMCTL_CHILD_SLOPDESK_SNAPSHOT_OUT="$PWD/.build/showcase.png" slopdesk-gate ios-tests
 // It renders a hand-built mock of the real chrome from the SAME token layer + component kit, so a palette /
 // component regression shows up visually. It is NOT a pixel-diff CI gate.
@@ -38,7 +38,7 @@ import XCTest
 final class SlateSnapshotRender: XCTestCase {
     @MainActor
     func testRenderSlateShowcase() throws {
-        // Opt-in only: inert under `make check-ios-tests` / `make check` unless an output path is requested.
+        // Opt-in only: inert under `just check-ios-tests` / `just check` unless an output path is requested.
         guard let out = ProcessInfo.processInfo.environment["SLOPDESK_SNAPSHOT_OUT"] else {
             throw XCTSkip("set SLOPDESK_SNAPSHOT_OUT=<path.png> to render the showcase")
         }
