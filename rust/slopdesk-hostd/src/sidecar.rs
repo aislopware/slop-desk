@@ -21,7 +21,7 @@
 //! `bound + 2` directly and nothing about either touches the terminal mux. What hostd used to
 //! contribute was the PROCESS: a per-turn JSON fold and a growing replay window (`docs/54`), and a
 //! multi-GiB upload streaming through the daemon that owns every keystroke (`docs/53`). Both are
-//! superd's children now, so `make host-restart` takes neither with it.
+//! superd's children now, so `just host-restart` takes neither with it.
 //!
 //! ## Spawn-or-adopt, and why the port is VERIFIED after an adopt
 //! The pane id is `service:<name>` — stable, not derived from this hostd (`docs/51` §1) — so a

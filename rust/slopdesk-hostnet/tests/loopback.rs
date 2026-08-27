@@ -233,7 +233,7 @@ fn stop_closes_what_the_map_was_still_holding() {
 ///
 /// This is the one behaviour the wake-dial in `stop` exists for: `accept()` blocks with no cancel
 /// lever, so a stopping flag alone leaves the thread parked on a live listening socket and the port
-/// still taken. `make host-restart` re-binds the same port seconds later, so a listener that
+/// still taken. `just host-restart` re-binds the same port seconds later, so a listener that
 /// lingers is a restart that fails with EADDRINUSE rather than a leak nobody notices.
 #[test]
 fn stop_releases_the_port_it_was_listening_on() {

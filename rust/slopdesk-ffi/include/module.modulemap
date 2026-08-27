@@ -6,7 +6,7 @@
 // thing actually under test — two implementations wearing one name.
 //
 // The cost, stated plainly: `swift build` now needs `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework`
-// to exist, so a clean checkout runs `make ffi` (or any `make build`/`test`/`check`, which depend
+// to exist, so a clean checkout runs `just ffi` (or any `just build`/`test`/`check`, which depend
 // on it) once before SwiftPM will resolve. cargo still never runs INSIDE `swift build`.
 module CSlopDeskFFI {
     header "slopdesk_ffi.h"

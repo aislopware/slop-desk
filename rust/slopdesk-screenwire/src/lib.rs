@@ -103,7 +103,7 @@ pub const HELLO_BANNER: &[u8] = b"slopdesk-screend 1";
 /// hostd reads the second to decide whether the screend ANSWERING is the screend on disk. It can
 /// afford to act on the answer here where it cannot for superd: screend holds no children and no
 /// durable state, its per-pane grids are a cache the next repaint refills, and hostd starts one
-/// itself if none is listening (`make screend-install` says the same in its report). A
+/// itself if none is listening (`just screend-install` says the same in its report). A
 /// restart costs a repaint. superd's costs every pane.
 ///
 /// Space-separated and appended, never prefixed: `HELLO_BANNER` stays a prefix of this, so a
@@ -131,7 +131,7 @@ pub fn hello_payload(build_version: &str) -> Vec<u8> {
 /// and only the parse was not.
 ///
 /// `None` from a screend that predates the third field, and `None` when the banner does not lead —
-/// "unknown", never "current". screend is installed as a `LaunchAgent` by `make screend-install`
+/// "unknown", never "current". screend is installed as a `LaunchAgent` by `just screend-install`
 /// and so outlives hostd's build, which is why the answer is worth asking for: after an upgrade the
 /// binary on disk and the process on the socket are routinely different code.
 #[must_use]

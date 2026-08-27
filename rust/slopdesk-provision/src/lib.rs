@@ -10,7 +10,7 @@
 //! `hostd` never downloads anything. It only ever LOOKS in `.prefix/bin`, and reports the surface
 //! unavailable when a dependency is not there. That split is the point: a coding host must not
 //! reach the network because someone opened a panel. This crate is the only thing in the tree that
-//! opens a socket to the internet, and it runs from `make provision` and nowhere else.
+//! opens a socket to the internet, and it runs from `just provision` and nowhere else.
 //!
 //! ## The shape
 //!

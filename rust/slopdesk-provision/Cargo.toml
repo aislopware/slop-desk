@@ -3,9 +3,9 @@
 # ## Why this is its own workspace and not a `slopdesk-devtools` binary
 #
 # It is the only program in the tree that opens a socket to the internet, and that costs a TLS
-# stack. `slopdesk-devtools` holds `slopdesk-gate`, which every `make quick` builds — putting rustls
+# stack. `slopdesk-devtools` holds `slopdesk-gate`, which every `just quick` builds — putting rustls
 # behind that gate would make the inner loop pay for a download nobody in it performs. Its own root
-# keeps the cost where the cost belongs: this crate is built by `make provision` and by nothing else.
+# keeps the cost where the cost belongs: this crate is built by `just provision` and by nothing else.
 #
 # ## Why it is not a script any more
 #

@@ -14,7 +14,7 @@
 # the only property that decides where code lives, which is that they are short-lived operator tools
 # shipping in nothing. None is a gate (`slopdesk-invariants` is where a gate goes), none is linked
 # into the app, none is `execve`d by a daemon. Three workspaces would triple the `cargo fmt` and
-# clippy passes `make lint` walks to buy a boundary nobody crosses.
+# clippy passes `just lint` walks to buy a boundary nobody crosses.
 #
 # `slopdesk-fuzzybench` is a bin HERE rather than an example in `slopdesk-fuzzy` for one mechanical
 # reason: `examples/` is auto-discovered, so it would silently join that crate's own build and lint

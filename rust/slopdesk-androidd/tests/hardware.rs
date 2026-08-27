@@ -1,6 +1,6 @@
 //! The Android path's dedicated gate (`slopdesk-gate android`).
 //!
-//! These do NOT run under `make test` or `cargo test` on a clean checkout: they need a booted
+//! These do NOT run under `just test` or `cargo test` on a clean checkout: they need a booted
 //! Android device or emulator, an `adb`, and a `scrcpy-server` jar. `docs/46-gates-env-paths.md` is
 //! where each path's gate is recorded; this one is `SLOPDESK_ANDROID_HW=1`. Without it every test
 //! here returns early after saying so, so a machine that has never seen the Android SDK stays

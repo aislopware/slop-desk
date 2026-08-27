@@ -33,9 +33,9 @@
 # ## The memory testing that pays for it
 # Not optional here, because this crate's whole job is indexing past what the type system checks.
 # `tests/differential.rs` runs 256 table pairs across a length sweep that straddles the 16-byte
-# chunk boundary, at four alignments, inside a guarded arena — and `make miri` runs that same suite
+# chunk boundary, at four alignments, inside a guarded arena — and `just miri` runs that same suite
 # under Miri, whose out-of-bounds and provenance checks are what actually read the `unsafe`. It is
-# a separate target rather than part of `make test` because Miri interprets every instruction; the
+# a separate target rather than part of `just test` because Miri interprets every instruction; the
 # sweep narrows itself under `cfg(miri)` and still takes minutes. Both are also the reason the
 # scalar twin stays public rather than being folded into the tail: it is the oracle.
 [workspace]

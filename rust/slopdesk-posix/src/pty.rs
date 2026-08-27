@@ -681,7 +681,7 @@ mod tests {
     /// The loop must not be ended by the child's exit, which is what it used to lean on: when the
     /// last slave closes, macOS FLUSHES the tty's output queue and the master answers `EIO`, so a
     /// child that finished before the parent's first read took its own output with it and this
-    /// returned `""`. That is a scheduling race — it fired during a `make check` whose Swift half
+    /// returned `""`. That is a scheduling race — it fired during a `just check` whose Swift half
     /// was compiling — dressed as a broken contract. Every caller therefore hands the child a
     /// trailing `sleep` and kills it afterwards, the same shape the two terminal-fact tests below
     /// already use, so the slave stays open and only the needle ends the loop.
@@ -724,7 +724,7 @@ mod tests {
     }
 
     /// Both terminal facts below become true only once the CHILD reaches `setsid` + `TIOCSCTTY`,
-    /// and that is a different process on a machine which — during `make quick`, or the commit
+    /// and that is a different process on a machine which — during `just quick`, or the commit
     /// hook that runs every workspace's suite — is busy compiling. The fixed 200 × 10 ms budget
     /// these polls used to carry read that scheduling delay as a broken contract and failed the
     /// suite for it. Poll against a WALL-CLOCK deadline instead, generous enough that only a real

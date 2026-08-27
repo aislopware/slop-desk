@@ -1,4 +1,4 @@
-//! Writes `docs/config.schema.json` from the key table — what `make config-schema` runs.
+//! Writes `docs/config.schema.json` from the key table — what `just config-schema` runs.
 //!
 //! The schema is generated, never edited: it is a second declaration of every key, and a
 //! hand-maintained one would drift the day somebody added a row. This binary is the only writer,

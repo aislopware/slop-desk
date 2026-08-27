@@ -892,7 +892,7 @@ final class MacCommandNavigatorRowView: NSView {
         title.lineBreakMode = .byTruncatingMiddle
         title.maximumNumberOfLines = 1
         title.isSelectable = false
-        // A command's TAIL is as load-bearing as its head — `make check` and `make check-ios` differ
+        // A command's TAIL is as load-bearing as its head — `just check` and `just check-ios` differ
         // at the end — so the squeeze comes out of the middle.
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 

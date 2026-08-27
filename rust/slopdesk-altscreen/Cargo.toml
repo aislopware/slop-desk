@@ -13,7 +13,7 @@
 # whose whole invariant is that the state lives IN the bytes.
 #
 # So the scanner is its own crate: one implementation, two workspaces, no protocol in sight. It is
-# small enough that its own workspace costs nothing but two Makefile lines.
+# small enough that its own workspace costs nothing but two justfile lines.
 [workspace]
 resolver = "3"
 

@@ -6,7 +6,7 @@
 //! slopdesk-provision --check         # verify what is installed; download nothing
 //! ```
 //!
-//! Exit codes are the shell's, verbatim, because `make provision-check` reads them: `0` all
+//! Exit codes are the shell's, verbatim, because `just provision-check` reads them: `0` all
 //! present, `1` something is missing or a digest did not match, `2` the arguments were wrong.
 
 use std::path::PathBuf;
@@ -86,7 +86,7 @@ fn tools_dir() -> PathBuf {
         return PathBuf::from(override_path);
     }
     // `CARGO_MANIFEST_DIR` is `rust/slopdesk-provision`; the tools tree is two levels up and across.
-    // Resolved at COMPILE time on purpose: this binary is run by `make provision` out of the tree it
+    // Resolved at COMPILE time on purpose: this binary is run by `just provision` out of the tree it
     // was built in, and a runtime walk from `current_exe()` would have to guess past `target/`.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../ThirdParty/tools")

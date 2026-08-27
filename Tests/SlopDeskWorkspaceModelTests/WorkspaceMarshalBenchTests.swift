@@ -19,7 +19,7 @@ import XCTest
 /// walk, which is bounded by one tab rather than by the whole document.
 ///
 /// It prints a µs/op table and asserts a loose ceiling against ``BenchClock``, which measures THREAD
-/// CPU time — so a slice lost to another target under `make quick` is not read as a regression.
+/// CPU time — so a slice lost to another target under `just quick` is not read as a regression.
 /// Run on this Mac Studio: `swift test --filter WorkspaceMarshalBenchTests`.
 final class WorkspaceMarshalBenchTests: XCTestCase {
     /// Sink to stop the optimizer eliding the work being measured.

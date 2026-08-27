@@ -23,7 +23,7 @@
 //! server with special flags before the panel works at all.
 //!
 //! What DID change is which process holds it: the relay used to be a listener inside hostd, so an
-//! H.264 stream was pumped by the daemon that owns every keystroke and a `make host-restart` took
+//! H.264 stream was pumped by the daemon that owns every keystroke and a `just host-restart` took
 //! every mirror with it. Now the client dials this binary directly and hostd is not in the byte
 //! path at all.
 

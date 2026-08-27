@@ -659,7 +659,7 @@ fn after_bind(standing: &Standing<'_>) -> Sidecars {
     standing.panels.code.prewarm();
     // PATHS 3 and 4. Neither is bound HERE — both are superd's children the client dials directly,
     // which is what makes the inspector's replay window and an upload in flight survive
-    // `make host-restart` (`docs/53`, `docs/54`).
+    // `just host-restart` (`docs/53`, `docs/54`).
     let sidecars = start_sidecars(standing.parsed, standing.bound, standing.supervisor, standing.log);
     // Last, with every sidecar either up or accounted for: ask each what version it is RUNNING and
     // compare it against the binary this host would spawn. See `audit` for why nothing above this
@@ -830,7 +830,7 @@ fn integration_oneshot(argv: &[String], program: &str) -> Option<i32> {
             let hook = slopdesk_hook::install::hook_path(&environment, &home);
             let Some(relay) = services::staged_relay() else {
                 log.say(&format!(
-                    "no {} beside {program} — run `make build`",
+                    "no {} beside {program} — run `just build`",
                     slopdesk_hook::install::RELAY_NAME
                 ));
                 return Some(2);

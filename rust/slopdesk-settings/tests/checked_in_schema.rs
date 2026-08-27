@@ -6,8 +6,8 @@
 //! exists that this build ignores, or refuses one this build honours, and it does so in the editor
 //! where a reader is most likely to believe it.
 //!
-//! Nothing but a `make config-schema` away from green:
-//! `cargo run --bin write-config-schema` (or `make config-schema`) rewrites it.
+//! Nothing but a `just config-schema` away from green:
+//! `cargo run --bin write-config-schema` (or `just config-schema`) rewrites it.
 //!
 //! This lives here rather than in `slopdesk-invariants` because it is not a pattern over the tree —
 //! it is the generator's own output compared to the artifact, and only this crate can produce it.
@@ -23,7 +23,7 @@ fn checked_in() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../docs/config.schema.json")
         .canonicalize()
-        .expect("docs/config.schema.json is checked in — run `make config-schema`");
+        .expect("docs/config.schema.json is checked in — run `just config-schema`");
     std::fs::read_to_string(path).expect("docs/config.schema.json is readable")
 }
 
@@ -33,7 +33,7 @@ fn the_checked_in_schema_is_the_one_this_build_writes() {
     let stored = checked_in();
     assert!(
         stored == generated,
-        "docs/config.schema.json is stale — run `make config-schema`.\nchecked in {} bytes, this build \
+        "docs/config.schema.json is stale — run `just config-schema`.\nchecked in {} bytes, this build \
          writes {} bytes; first difference at byte {}",
         stored.len(),
         generated.len(),

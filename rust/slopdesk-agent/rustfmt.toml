@@ -3,7 +3,7 @@
 # lint/bug/consistency. Width tracks the repo convention (SwiftFormat 120 on code, ruff 100).
 #
 # ⚠️ The options below marked NIGHTLY require `cargo +nightly fmt`; `unstable_features` unlocks
-# them. `make fmt-rust` / the prek hook pin the nightly toolchain for exactly this reason. The
+# them. `just fmt-rust` / the prek hook pin the nightly toolchain for exactly this reason. The
 # BUILD stays on stable — only the formatter needs nightly.
 edition = "2024"
 style_edition = "2024"

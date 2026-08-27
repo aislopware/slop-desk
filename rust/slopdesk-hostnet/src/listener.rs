@@ -181,7 +181,7 @@ impl ListenerHandle {
     /// so the port would stay bound until some stranger happened to connect. One loopback dial
     /// unblocks `accept`, which sees the flag, returns, and drops the `TcpListener`. That is what
     /// makes stop mean "the port is free" rather than "the port will be free eventually", which
-    /// matters because `make host-restart` rebinds it immediately.
+    /// matters because `just host-restart` rebinds it immediately.
     pub fn stop(&self) {
         self.stopping.store(true, Ordering::SeqCst);
         with_pending(&self.pending, PendingLinks::stop);

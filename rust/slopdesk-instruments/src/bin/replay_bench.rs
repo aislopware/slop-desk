@@ -20,7 +20,7 @@
 //! path. Sizes are clamped to what actually fits and the byte count sent is printed.
 //!
 //! Deterministic: a seeded LCG, no clock and no randomness in the stream, so two runs are
-//! comparable. It needs a screend — `make screend` builds one and hostd starts one at connect.
+//! comparable. It needs a screend — `just screend` builds one and hostd starts one at connect.
 //!
 //! ```text
 //! slopdesk-replay-bench [mib…]     # default sizes 4, 16, 64
@@ -203,7 +203,7 @@ fn main() -> ExitCode {
 
     let Ok(mut stream) = UnixStream::connect(&path) else {
         eprintln!(
-            "no screend listening at {} — `make screend` builds it, and hostd starts one. Without it there \
+            "no screend listening at {} — `just screend` builds it, and hostd starts one. Without it there \
              is no compose to time.",
             path.display()
         );

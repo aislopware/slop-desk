@@ -13,7 +13,7 @@
 //! Every case is run at four different starting offsets into an over-long buffer, so the loads are
 //! unaligned as often as not, and every destination is written inside a longer arena whose bytes
 //! either side are checked afterwards. Under `cargo test` those catch a wrong LENGTH; under
-//! `cargo +nightly miri test`, which `make miri` runs, they also catch a pointer that left its
+//! `cargo +nightly miri test`, which `just miri` runs, they also catch a pointer that left its
 //! provenance — the failure mode `chunks_exact` is being trusted to prevent.
 #![expect(
     clippy::indexing_slicing,

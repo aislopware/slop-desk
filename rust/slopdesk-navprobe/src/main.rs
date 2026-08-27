@@ -28,8 +28,8 @@
 //! This crate is `forbid(unsafe_code)` and may not go that way. The change it waits on is two
 //! functions in `rust/slopdesk-ffi/src/nav_history.rs`, `reader()` and a `pub` `read`, which is the
 //! same "Rust-native face alongside the C door" `slopdesk-loopback-validate` already relies on for
-//! the encoder and the decoder. Nothing builds this crate — it is its own workspace, in no `make`
-//! target — so it waits harmlessly until that lands.
+//! the encoder and the decoder. Nothing builds this crate — it is its own workspace, in no `just`
+//! recipe — so it waits harmlessly until that lands.
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};

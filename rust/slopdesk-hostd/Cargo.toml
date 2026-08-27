@@ -31,7 +31,7 @@ resolver = "3"
 name = "slopdesk-hostd"
 # The product version, and the ONE place this daemon reads it from — `env!("CARGO_PKG_VERSION")`
 # in `main.rs`, which is what rides `TERM_PROGRAM_VERSION` into every pane and the launch record.
-# A RELEASE SITE as of the stage-F cutover: `make release` rewrites the line below, where it used to
+# A RELEASE SITE as of the stage-F cutover: `just release` rewrites the line below, where it used to
 # rewrite `HostEnvironment.buildVersion`. The site MOVED rather than multiplied and the count of six
 # is still six. The rewrite anchors on the first `version = ` in this file, so `[package]` must stay
 # above `[dependencies]` — never reorder the tables. See `docs/49` and `docs/60` §F.

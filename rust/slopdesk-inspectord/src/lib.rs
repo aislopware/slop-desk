@@ -9,7 +9,7 @@
 //! ## Why it is a daemon and not a library hostd links
 //! The same reason `slopdesk-dropd` is (`docs/53`): the client already dials this port DIRECTLY, so
 //! nothing was ever relayed through hostd — the only thing hostd contributed was the process. A
-//! transcript tail that keeps running across `make host-restart` is strictly better than one that
+//! transcript tail that keeps running across `just host-restart` is strictly better than one that
 //! dies with it, and a per-turn JSON fold does not belong on the process that owns every keystroke.
 //!
 //! ## The one-implementation rule

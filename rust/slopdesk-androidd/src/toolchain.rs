@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn adb_prefers_the_vendored_prefix_over_an_sdk_root() {
-        // The pinned copy is the one `make provision` put there and the one the gates measure
+        // The pinned copy is the one `just provision` put there and the one the gates measure
         // against; a host that also has an SDK install must not silently run that one instead.
         let tree = Tree::new("adb-prefers-vendored");
         let vendored = tree.executable("prefix/bin/adb");

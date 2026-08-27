@@ -19,7 +19,7 @@
 //! ## Every service is superd's child, not this daemon's
 //! [`ServiceProcess::spawn_or_adopt`] under a stable `service:<name>` pane id. A restart ADOPTS
 //! what it finds, so a workbench, a simulator panel and a live device mirror all survive
-//! `make host-restart`, and the port is re-learned by replaying the child's own announce line from
+//! `just host-restart`, and the port is re-learned by replaying the child's own announce line from
 //! offset 0 of superd's ring. No state file, nothing to go stale.
 
 use std::collections::BTreeMap;
@@ -426,7 +426,7 @@ impl ClaudeHooks {
     }
 }
 
-/// The relay binary beside this one, or `None` on a host built without `make hook`.
+/// The relay binary beside this one, or `None` on a host built without `just hook`.
 ///
 /// Beside THIS executable rather than on `PATH`: the two ship together, and a relay found somewhere
 /// else is a different build's.

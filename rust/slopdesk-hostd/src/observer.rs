@@ -18,7 +18,7 @@
 //!
 //! ## Three lines a reader looks for, spelled once
 //! The count, the bound port and the refusal are the three facts anyone asks this daemon about, and
-//! they are the three a person greps for after `make host`. They are constants rather than inline
+//! they are the three a person greps for after `just host`. They are constants rather than inline
 //! literals because two of the three are formatted in `main`, next to the listener, and a fact
 //! worded in two files is a fact that ends up worded two ways.
 //!

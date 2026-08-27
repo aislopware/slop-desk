@@ -27,7 +27,7 @@ package enum DevicePanelPhase: Equatable {
     /// The host is still bringing the service up — spinner, keep polling.
     case starting
     /// The tool the service needs is not installed on the host — render the install hint. Still
-    /// polled, slowly: a `make provision` run (or an SDK install) mid-session is
+    /// polled, slowly: a `just provision` run (or an SDK install) mid-session is
     /// picked up without a restart.
     case unavailable
     /// The service is reachable at this address. Everything else the panel does hangs off it.

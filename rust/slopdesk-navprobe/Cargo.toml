@@ -11,7 +11,7 @@
 # `slopdesk-loopback-validate`'s argument, unchanged: `slopdesk-gate ffi` stamps the linked artifact
 # against the source closure it walks from the shim down its `path = "../…"` edges. A bin inside
 # that workspace would put every probe tweak inside that closure, so an argument rename here would
-# re-stale the `.xcframework` and re-run `make ffi` for a change no Swift file can see. The edge
+# re-stale the `.xcframework` and re-run `just ffi` for a change no Swift file can see. The edge
 # points one way: this crate depends on the shim, the shim knows nothing about it.
 #
 # ## Why it may not write `unsafe`

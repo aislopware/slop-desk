@@ -49,7 +49,7 @@ impl EmptyState {
 /// version pinned in the tools lock, and the Homebrew formula froze below the Code floor this panel
 /// needs before being deprecated outright. Sending someone to `brew` here hands them the broken
 /// one.
-pub const PROVISION_COMMAND: &str = "make provision";
+pub const PROVISION_COMMAND: &str = "just provision";
 
 /// The announced-but-empty fourth surface.
 ///

@@ -11,7 +11,7 @@
 //!
 //! The relay itself is not new; where it RUNS is. It used to be a listener inside hostd, which
 //! meant an H.264 stream at a few megabits was pumped by the same process that owns every
-//! keystroke, on threads competing with the terminal wire — and `make host-restart` took every live
+//! keystroke, on threads competing with the terminal wire — and `just host-restart` took every live
 //! mirror down with it. The client already dialled the bridge port directly (it learns it from
 //! metadata verb 22), so nothing about the WIRE had to change: only the process behind the port
 //! did. hostd now spawns it under superd as `service:androidd` and re-learns the port from the

@@ -22,7 +22,7 @@
 //!
 //! ## The relay it installs is its SIBLING
 //! `install` copies the `slopdesk-hook` sitting beside this binary. They are built from one crate
-//! by one `make hook` and staged into one directory, so "beside me" is the only resolution that
+//! by one `just hook` and staged into one directory, so "beside me" is the only resolution that
 //! cannot name a relay from a different build than the marker it was compiled against.
 
 use std::path::PathBuf;

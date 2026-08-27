@@ -391,7 +391,7 @@ impl ScreenClient {
     /// One request, one reply.
     ///
     /// Retries ONCE on a transport failure with a fresh connection, because the overwhelmingly
-    /// likely cause is a pooled socket whose screend was restarted between calls — `make screend`
+    /// likely cause is a pooled socket whose screend was restarted between calls — `just screend`
     /// during a dev loop, or launchd replacing a crashed one. A second failure is reported.
     ///
     /// An `Unavailable` is NOT retried and does not even reach the loop's second turn: nothing was
@@ -561,7 +561,7 @@ impl ScreenClient {
 ///
 /// ## Where the `SO_NOSIGPIPE` went
 /// The Swift original set it by hand on every descriptor, and had to: the default disposition of
-/// `SIGPIPE` is to KILL THE PROCESS, and this client writes to a peer that a `make screend` during
+/// `SIGPIPE` is to KILL THE PROCESS, and this client writes to a peer that a `just screend` during
 /// a dev loop makes vanish. `SupervisorConnection.swift` carries the same seven lines one lane
 /// over.
 ///

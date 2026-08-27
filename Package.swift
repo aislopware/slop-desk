@@ -48,7 +48,7 @@ import PackageDescription
 // so `slopdesk-apple-vt` ships on the iOS slices too, and `VTDecompressionSessionCreate` is as much
 // a bare C function there as its compression twin is here. The failure this prevents is the one
 // `docs/57` §5 warns about, and it is not subtle: four undefined symbols at the FINAL link of the
-// iOS app, long after both the crate and `make ffi` are green, because `import VideoToolbox` used
+// iOS app, long after both the crate and `just ffi` are green, because `import VideoToolbox` used
 // to be what put the framework on that link line and `VideoDecoder.swift` no longer imports it.
 let ffiCLibraries: [LinkerSetting] = [
     .linkedLibrary("iconv", .when(platforms: [.macOS])),
@@ -77,7 +77,7 @@ let ffiCLibraries: [LinkerSetting] = [
     // `AudioUnit` is NOT listed, and the omission is load-bearing rather than an oversight: macOS
     // ships a standalone `AudioUnit.framework` and iOS does not — it is a header group inside
     // AudioToolbox there — so naming it links on the Mac and fails the iOS app's FINAL link with
-    // `ld: framework 'AudioUnit' not found`, long after `make ffi` and every test are green. This is
+    // `ld: framework 'AudioUnit' not found`, long after `just ffi` and every test are green. This is
     // the `docs/57` §5 failure mode again, in its other direction.
     .linkedFramework("AudioToolbox"),
     .linkedFramework("CoreAudio"),
@@ -131,9 +131,9 @@ let package = Package(
         // NO executable product at all any more, and that is the whole shape of `docs/60` F.9.
         // `slopdesk-hostd` was the last one — a product rather than just a target because the
         // release tarball needs `swift build --product`, which only exists for a declared one — and
-        // the daemon is now `rust/slopdesk-hostd`, built by `make hostd` out of
+        // the daemon is now `rust/slopdesk-hostd`, built by `just hostd` out of
         // `rust/target/release`. `slopdesk` and `slopdesk-ctl` went the same way earlier
-        // (`rust/slopdesk-cli`, `rust/slopdesk-ctl`, built by `make cli`/`make ctl`). What is left
+        // (`rust/slopdesk-cli`, `rust/slopdesk-ctl`, built by `just cli`/`just ctl`). What is left
         // below is executableTargets only, every one a dev or bench tool: `swift build` builds them
         // and nothing ships them.
     ],
@@ -198,7 +198,7 @@ let package = Package(
 
         // The Rust logic the Swift clients call in-process, as three arm64 static slices.
         //
-        // Built by `scripts/build-ffi.sh` (any `make build`/`test`/`check` runs it first) and
+        // Built by `just ffi` — `slopdesk-gate ffi`, which any `just build`/`test`/`check` runs first — and
         // GITIGNORED: 17 MB of archive rewritten by every Rust edit is not a source. cargo still
         // never runs inside `swift build` — the artifact is an input to it, the way
         // `libghostty.xcframework` is to the Xcode targets.
@@ -240,7 +240,7 @@ let package = Package(
         // lets the HOST own the workspace document (docs/45) without dragging the client graph into
         // the daemon. Keep it that way: anything needing a Swift package dep belongs one level up.
         //
-        // `CSlopDeskFFI` is not a step back from that. It is the static archive `make ffi` builds
+        // `CSlopDeskFFI` is not a step back from that. It is the static archive `just ffi` builds
         // (docs/55), the same one hostd and both clients already link, and it carries the SOLVERS this
         // module used to hold a second copy of — focus, send-keys, the sidebar's ordering. The leaf is
         // still a leaf: it names no other target here, and hostd links the archive regardless.
@@ -869,7 +869,7 @@ let package = Package(
         // The clock every ceiling bench measures with. A TEST-ONLY library — it lives under
         // `Tests/`, no product depends on it, and only bench targets do. It exists because four
         // copies of "time this loop" drifted into four ceilings that meant four different things,
-        // and because the wall clock they all used made a bench under `make quick`'s parallel load
+        // and because the wall clock they all used made a bench under `just quick`'s parallel load
         // fail for reasons that had nothing to do with the code under it.
         .target(name: "SlopDeskBenchClock", path: "Tests/SlopDeskBenchClock"),
 
@@ -982,7 +982,7 @@ let package = Package(
         // simulator — and that is the ONLY place a phone view is exercised.
         //
         // This is the same trap increment 62 found the first time: normalising the guard silently
-        // removes files from `make check` while every gate stays green, because a test that does not
+        // removes files from `just check` while every gate stays green, because a test that does not
         // COMPILE INTO the run is indistinguishable from a test that ran and passed. The suite was
         // drained deliberately rather than guarded in place, so that nothing is left claiming coverage
         // it does not have.
