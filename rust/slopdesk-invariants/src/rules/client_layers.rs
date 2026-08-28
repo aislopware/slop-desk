@@ -345,6 +345,19 @@ mod tests {
             "the exemption list is not being honoured — check the paths in it",
         );
 
+        // The TENTH seam, proved the same way and for the same reason: it was added from a live
+        // gate run, and a path admitted that way is spelled right only on the day it is added. This
+        // one is UIKit because `PlatformView` is the alias that replaced a `SwiftUI` seam, so the
+        // half that would actually regress is the phone's.
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/UI/PlatformView.swift",
+            "#if canImport(UIKit)\nimport UIKit\ntypealias PlatformView = UIView\n#endif\n",
+        );
+        assert!(
+            super::domain_layers_hold_only_named_view_seams(&fixture.tree()).is_clean(),
+            "PlatformView is in the seam list but its path is not being honoured",
+        );
+
         // AN ELEVENTH one is the whole point of the rule.
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceRail.swift",
