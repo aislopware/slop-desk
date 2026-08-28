@@ -1,8 +1,8 @@
 // SlateComponents — the reusable chrome component kit on the token layer.
 //
 // Small, composable pieces factored out of the chrome so every surface stays consistent and new views are
-// quick to assemble: the terminal-dialect `StatusGlyph` instrument, a key/value row, a
-// pill/badge, and an `.slateCard()` surface modifier.
+// quick to assemble: the terminal-dialect `StatusGlyph` instrument, the zero-state line, and the
+// chrome field plate.
 // All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls (`SlatePlateButton`), SlateRow
 // (`SlateListRow` / `SlateSectionHeader`).
 
@@ -88,22 +88,10 @@ struct SlateNoResultsLine: View {
     }
 }
 
-/// A "card" surface: element background, hairline border, rounded corners. The floating-card idiom
-/// for inset content (command output, detail boxes). Use `.slateCard()` on any view.
-private struct SlateCardModifier: ViewModifier {
-    var radius: CGFloat
-    var fill: Color
-
-    func body(content: Content) -> some View {
-        content
-            .background(fill)
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Slate.Line.subtle, lineWidth: 1),
-            )
-    }
-}
+// `SlateCardModifier` / `.slateCard(radius:fill:)` lived here and had ZERO call sites repo-wide: the
+// "floating card" idiom it was factored out for became ``SlatePaperCard`` and the overlay family's
+// own surfaces, and nothing ever adopted the modifier. Deleted rather than ported to UIKit (docs/62
+// stage C) — a spelling with no reader is not a floor the port owes a second spelling of.
 
 extension View {
     /// The CHROME panel's text-input plate: the hover fill every panel search field already stood
@@ -124,14 +112,6 @@ extension View {
         let shape = RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
         return background(Slate.State.hover, in: shape)
             .overlay { shape.strokeBorder(Slate.Line.field, lineWidth: Slate.Metric.hairline) }
-    }
-
-    /// Wraps the view in a card surface (element fill + hairline border + rounded corners).
-    func slateCard(
-        radius: CGFloat = Slate.Metric.radiusControl,
-        fill: Color = Slate.Surface.raised,
-    ) -> some View {
-        modifier(SlateCardModifier(radius: radius, fill: fill))
     }
 }
 #endif
