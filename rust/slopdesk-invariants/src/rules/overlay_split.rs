@@ -18,17 +18,17 @@ use crate::report::Report;
 use crate::tree::Tree;
 
 const PHONE_HOST: &str = "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift";
-const PHONE_SWITCHER: &str = "Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift";
+const PHONE_SWITCHER: &str = "Sources/SlopDeskPhoneUI/Overlays/PhonePaneSwitcherView.swift";
 const MAC_SWITCHER: &str = "Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift";
 const MAC_PEEK: &str = "Sources/SlopDeskMacUI/Overlays/MacPeekReply.swift";
-const PHONE_PEEK: &str = "Sources/SlopDeskPhoneUI/Overlays/PeekReplyOverlay.swift";
+const PHONE_PEEK: &str = "Sources/SlopDeskPhoneUI/Overlays/PhonePeekReplyCardView.swift";
 const MAC_SEARCH: &str = "Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift";
-const PHONE_SEARCH: &str = "Sources/SlopDeskPhoneUI/Overlays/GlobalSearchView.swift";
+const PHONE_SEARCH: &str = "Sources/SlopDeskPhoneUI/Overlays/PhoneGlobalSearchCardView.swift";
 const MAC_PICKER: &str = "Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift";
-const PHONE_PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift";
+const PHONE_PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/PhoneOpenQuicklyCardView.swift";
 const JUMP_TO: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/JumpToModel.swift";
 const MAC_PALETTE: &str = "Sources/SlopDeskMacUI/Overlays/MacPalette.swift";
-const PHONE_PALETTE: &str = "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift";
+const PHONE_PALETTE: &str = "Sources/SlopDeskPhoneUI/Overlays/PhonePaletteCardView.swift";
 /// RE-AIMED 2026-08-28. This read `App/MacWorkspaceRootView.swift` until the Mac shell finished
 /// crossing to `AppKit` and the window root became `App/MacWorkspaceWindowController.swift`. The
 /// inventory of the demolition claimed "all six Mac sides survive"; this is one of the two places
@@ -416,7 +416,7 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
                       be silent",
         },
         Claim::Mentions {
-            path: "Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCard.swift",
+            path: "Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCardView.swift",
             names: &["ClipboardConfirmPresentation"],
             message: "ClipboardConfirmCard.swift stopped reading {entry} — two guards, and the drift would \
                       be silent",
@@ -424,7 +424,7 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
         Claim::NoneOf {
             paths: &[
                 "Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift",
-                "Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCard.swift",
+                "Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCardView.swift",
             ],
             pattern: r#""Clipboard preview|"•"#,
             view: View::Code,
@@ -598,7 +598,7 @@ mod tests {
                     "ClipboardConfirmPresentation\n",
                 )
                 .write(
-                    "Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCard.swift",
+                    "Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCardView.swift",
                     "ClipboardConfirmPresentation\n",
                 );
         };

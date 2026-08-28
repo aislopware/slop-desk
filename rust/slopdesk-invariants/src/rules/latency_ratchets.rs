@@ -128,15 +128,22 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
         "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
     ];
     /// The picker, whose `sections` ranks five sources per read.
-    const PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift";
+    const PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/PhoneOpenQuicklyCardView.swift";
 
     let mut claims = vec![
         Claim::Matches {
             path: PICKER,
-            pattern: r"^ *let built = sections$",
+            // RE-AIMED 2026-08-28, and this one COULD be — unlike the six below. `sections` was a
+            // computed property on the SwiftUI view, so binding it once meant `let built = sections`
+            // and the ratchet could pin that line. The UIKit card calls the shared
+            // `OpenQuicklySources.sections(…)` and holds the result in the same `built`, so the
+            // guarantee is spelled by WHERE the call happens, not by an assignment from a property:
+            // one call inside `refresh()`, with both `rows` and `lines` derived from `built`. Pinning
+            // the binding still works; pinning the old right-hand side would not.
+            pattern: r"^ *let built = OpenQuicklySources\.sections\($",
             view: View::Code,
-            message: "OpenQuicklyView: resultsList stopped binding `sections` once — every reader re-ranks \
-                      all five sources (~145 µs a keystroke)",
+            message: "the picker stopped binding one sections() build — every reader re-ranks all five \
+                      sources (~145 µs a keystroke)",
         },
         Claim::Lacks {
             path: PICKER,
@@ -450,8 +457,8 @@ mod tests {
                 "    private func list(_ shown: [AndroidDevice]) -> some View {\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift",
-                "        let built = sections\n",
+                "Sources/SlopDeskPhoneUI/Overlays/PhoneOpenQuicklyCardView.swift",
+                "        let built = OpenQuicklySources.sections(\n",
             );
     }
 
@@ -472,8 +479,8 @@ mod tests {
         // And `displayEntries` back as a second whole derivation of `sections`.
         projections(&fixture);
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift",
-            "        let built = sections\n    private var displayEntries: [Row] { \
+            "Sources/SlopDeskPhoneUI/Overlays/PhoneOpenQuicklyCardView.swift",
+            "        let built = OpenQuicklySources.sections(\n    private var displayEntries: [Row] { \
              sections.flatMap(\\.rows) }\n",
         );
         assert!(!super::three_projections_read_once_per_pass(&fixture.tree()).is_clean());

@@ -161,7 +161,7 @@ pub fn one_notification_card_two_corners(tree: &Tree) -> Report {
             message: "MacToastStack.swift stopped reading {entry} — a notification says two different things",
         },
         Claim::Mentions {
-            path: "Sources/SlopDeskPhoneUI/Overlays/ToastStackView.swift",
+            path: "Sources/SlopDeskPhoneUI/Overlays/PhoneToastStackView.swift",
             names: &["ToastPresentation"],
             message: "ToastStackView.swift stopped reading {entry} — a notification says two different \
                       things",
@@ -169,7 +169,7 @@ pub fn one_notification_card_two_corners(tree: &Tree) -> Report {
         Claim::NoneOf {
             paths: &[
                 "Sources/SlopDeskMacUI/Overlays/MacToastStack.swift",
-                "Sources/SlopDeskPhoneUI/Overlays/ToastStackView.swift",
+                "Sources/SlopDeskPhoneUI/Overlays/PhoneToastStackView.swift",
             ],
             pattern: "toast.source, toast.flavor",
             view: View::Code,
@@ -220,7 +220,7 @@ pub fn one_palette_two_frameworks(tree: &Tree) -> Report {
                       section header",
         },
         Claim::Mentions {
-            path: "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift",
+            path: "Sources/SlopDeskPhoneUI/Overlays/PhonePaletteCardView.swift",
             names: &["PalettePresentation"],
             message: "PaletteView.swift stopped reading {entry} — the two palettes would drift on the first \
                       section header",
@@ -228,7 +228,7 @@ pub fn one_palette_two_frameworks(tree: &Tree) -> Report {
         Claim::NoneOf {
             paths: &[
                 "Sources/SlopDeskMacUI/Overlays/MacPalette.swift",
-                "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift",
+                "Sources/SlopDeskPhoneUI/Overlays/PhonePaletteCardView.swift",
             ],
             pattern: r"isSeparator \? nil",
             view: View::Code,
@@ -382,7 +382,7 @@ mod tests {
                 "ToastPresentation\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Overlays/ToastStackView.swift",
+                "Sources/SlopDeskPhoneUI/Overlays/PhoneToastStackView.swift",
                 "ToastPresentation\n",
             )
             .write(
@@ -404,7 +404,7 @@ mod tests {
         // The fusion bug: a half re-deriving the phrase from the pair keys.
         toast(&fixture);
         fixture.append(
-            "Sources/SlopDeskPhoneUI/Overlays/ToastStackView.swift",
+            "Sources/SlopDeskPhoneUI/Overlays/PhoneToastStackView.swift",
             "switch (toast.source, toast.flavor) {\n",
         );
         assert!(!super::one_notification_card_two_corners(&fixture.tree()).is_clean());
@@ -429,7 +429,7 @@ mod tests {
                 "PalettePresentation\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift",
+                "Sources/SlopDeskPhoneUI/Overlays/PhonePaletteCardView.swift",
                 "PalettePresentation\n",
             );
     }
@@ -447,7 +447,7 @@ mod tests {
         // The off-by-one every half gets by hand: a separator takes a line but not a selection.
         palette(&fixture);
         fixture.append(
-            "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift",
+            "Sources/SlopDeskPhoneUI/Overlays/PhonePaletteCardView.swift",
             "let index = row.isSeparator ? nil : counter\n",
         );
         assert!(!super::one_palette_two_frameworks(&fixture.tree()).is_clean());
