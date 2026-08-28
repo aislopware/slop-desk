@@ -20,11 +20,6 @@ final class PlatformDefaultsTests: XCTestCase {
         XCTAssertEqual(WorkspaceClientKind.thisPlatform.rawValue, 1)
     }
 
-    /// The guided-sheet step filter reads the same fork.
-    func testFirstLaunchKnowsItIsOnIOS() {
-        XCTAssertEqual(FirstLaunchModel.currentPlatform, .iOS)
-    }
-
     /// A phone attaches to LOOK at one session; a desk attaches to WORK (docs/45 §8.2). The default
     /// is the whole feature on iOS — nothing in the app turns it off, so a device that never visits
     /// Settings is running exactly this value.

@@ -447,14 +447,27 @@ final class SlateSnapshotRender: XCTestCase {
                 Text(String(ch))
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Slate.Text.primary)
-                    .frame(
-                        width: 8 * CGFloat(max(1, TerminalLinkDetector.displayCellWidth(of: ch))),
-                        height: 17,
-                    )
+                    .frame(width: 8 * CGFloat(Self.stagedCellWidth(ch)), height: 17)
             }
             Spacer(minLength: 0)
         }
         .frame(height: 17)
+    }
+
+    /// The cell width this MOCK stages for one glyph — 2 for the CJK block the fixture row carries,
+    /// 1 for everything else.
+    ///
+    /// Staged, not computed, exactly like ``ViSnapshotSurface``'s 8×17pt metrics and its
+    /// no-wrap `lineRange`. It used to call `TerminalLinkDetector.displayCellWidth(of:)`, which is
+    /// gone: all three production callers of the east-asian-width table moved into
+    /// `slopdesk_terminal`, and the overloads and both doors behind them went with them rather than
+    /// stay as a face nobody dials. Re-opening a door so a snapshot rig can ask is the wrong trade —
+    /// the rig owns its fixture, and the ONE row it renders wide (`"xin chào 世界 — wide glyphs"`) is
+    /// what the `wide` cursor at col 9 is aimed at.
+    private static func stagedCellWidth(_ character: Character) -> Int {
+        guard let scalar = character.unicodeScalars.first else { return 1 }
+        // CJK Unified Ideographs, the one wide range the fixture rows use.
+        return (0x4E00...0x9FFF).contains(scalar.value) ? 2 : 1
     }
 
     /// Rasterize `content` and write a PNG into `dir`. Fails (not skips) if the renderer yields nothing —
@@ -668,12 +681,20 @@ private struct IslandChipMock: View {
                         ),
                         onExpire: {},
                     )
+                    // The label is a STORED field now, folded by `slopdesk_workspace::connection`
+                    // along with the count and the worst severity. A gallery tile stages it the way
+                    // it stages every other value here — what this render answers is whether the
+                    // chip's ink survives the glass, not how the fold words itself.
                     ConnectionAlertChip(
-                        alert: WorkspaceConnectionAlert(count: 1, worst: .reconnecting, worstPane: PaneID()),
+                        alert: WorkspaceConnectionAlert(
+                            count: 1, worst: .reconnecting, worstPane: PaneID(), label: "1 reconnecting",
+                        ),
                         onTap: {},
                     )
                     ConnectionAlertChip(
-                        alert: WorkspaceConnectionAlert(count: 2, worst: .unreachable, worstPane: PaneID()),
+                        alert: WorkspaceConnectionAlert(
+                            count: 2, worst: .unreachable, worstPane: PaneID(), label: "2 unreachable",
+                        ),
                         onTap: {},
                     )
                 }

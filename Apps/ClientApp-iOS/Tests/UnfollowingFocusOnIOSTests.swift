@@ -57,7 +57,7 @@ final class UnfollowingFocusOnIOSTests: XCTestCase {
 
     /// The tab HOST TRUTH calls active — `entries`, never the optimistic layer, never the projection.
     private func hostTruthActiveTab(_ store: WorkspaceStore) -> TabID? {
-        WorkspaceTopology(entries: store.workspaceMirror.mirror.entries)?
+        WorkspaceTopology(entries: store.workspaceMirror.hostTruth)?
             .tree.activeSession?.activeTab?.id
     }
 
