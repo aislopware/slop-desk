@@ -330,26 +330,25 @@ final class MacTerminalFindBar: NSView, NSTextFieldDelegate {
     /// One tracked read of everything the bar draws. The model is `@Observable`, and every mutation it
     /// makes — a keystroke's recount, a toggle, a ⌘G step, the re-open bump — lands in one of these.
     private func follow() {
-        var query = ""
-        var label: String?
-        var lit: [FindModePill: Bool] = [:]
-        var token = 0
-        withObservationTracking {
-            let controller = model.controller
-            query = controller.query
-            label = FindBarPresentation.counterText(
-                position: controller.positionLabel, query: controller.query,
+        ObservationFollow.arm(self) { bar in
+            let controller = bar.model.controller
+            return (
+                query: controller.query,
+                label: FindBarPresentation.counterText(
+                    position: controller.positionLabel, query: controller.query,
+                ),
+                // `isOn` reads three observable flags, so it belongs to the DEPENDENCY set and not to
+                // the work — hence the dictionary is built here rather than in `apply`.
+                lit: Dictionary(
+                    uniqueKeysWithValues: FindModePill.inPaneFindBar.map { ($0, bar.isOn($0)) },
+                ),
+                token: bar.model.focusToken,
             )
-            lit = Dictionary(
-                uniqueKeysWithValues: FindModePill.inPaneFindBar.map { ($0, isOn($0)) },
+        } apply: { bar, reading in
+            bar.apply(
+                query: reading.query, label: reading.label, lit: reading.lit, token: reading.token,
             )
-            token = model.focusToken
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
         }
-        apply(query: query, label: label, lit: lit, token: token)
     }
 
     private func apply(query: String, label: String?, lit: [FindModePill: Bool], token: Int) {

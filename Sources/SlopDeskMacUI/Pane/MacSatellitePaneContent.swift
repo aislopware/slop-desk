@@ -32,7 +32,9 @@ final class MacSatellitePaneRootView: NSView {
 
     private let pane: MacPaneContainer
     private var strip: MacSatelliteDragStrip?
-    private var generation = 0
+    /// Kept because ``teardown()`` must END the following while this controller lives on — the case
+    /// ``ObservationFollow/stop()`` exists for.
+    private var focusFollow: ObservationFollow?
 
     init(
         store: WorkspaceStore,
@@ -102,25 +104,16 @@ final class MacSatellitePaneRootView: NSView {
     /// The window's key state IS this pane's focus. Tracked rather than pushed because the window sets
     /// it on its own notifications, and this view has no other reason to hear from the window.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        var isKey = false
-        withObservationTracking {
-            isKey = keyState.isKey
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        focusFollow = ObservationFollow.arm(self) { content in
+            content.keyState.isKey
+        } apply: { content, isKey in
+            content.pane.setFocused(isKey)
         }
-        pane.setFocused(isKey)
     }
 
     /// The window is closing for good.
     func teardown() {
-        generation &+= 1
+        focusFollow?.stop()
         pane.teardown()
     }
 }

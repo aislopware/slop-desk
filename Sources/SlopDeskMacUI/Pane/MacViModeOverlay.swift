@@ -10,8 +10,8 @@
 // (``TerminalViewModel/viVisualMode`` / ``viPendingCount``), never the `@ObservationIgnored`
 // `isCopyMode` flag the renderer's `keyDown` path reads — that separation is what keeps the mode
 // chrome off the keyDown intercept's AttributeGraph hazard, and it survives the port because
-// `withObservationTracking` registers on exactly the properties its closure touches. One read, one
-// callback, re-armed after every apply.
+// ``ObservationFollow`` registers on exactly the properties its `read` block touches — so the
+// separation is a dependency set, not a convention.
 //
 // THE CARD'S REFLOW IS ARITHMETIC, AND ON THIS SIDE THAT IS THE ONLY REASON IT WORKS AT ALL. The
 // SwiftUI half is a `Layout` HANDED a `ProposedViewSize`; AppKit hands a view its own bounds, which
@@ -167,19 +167,13 @@ final class MacViModePill: NSView {
 
     // MARK: The live read
 
-    /// Re-read the two observable mirrors and repaint, re-arming for the next change.
+    /// Re-read the two observable mirrors and repaint.
     private func follow() {
-        var mode: TerminalViewModel.VisualMode = .none
-        var pending: Int?
-        withObservationTracking {
-            mode = model.viVisualMode
-            pending = model.viPendingCount
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { pill in
+            (mode: pill.model.viVisualMode, pending: pill.model.viPendingCount)
+        } apply: { pill, reading in
+            pill.apply(mode: reading.mode, pending: reading.pending)
         }
-        apply(mode: mode, pending: pending)
     }
 
     /// The count appearing and the ring going loud are ONE transaction. Both are

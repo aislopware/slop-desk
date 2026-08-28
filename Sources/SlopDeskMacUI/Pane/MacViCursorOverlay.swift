@@ -107,18 +107,19 @@ final class MacViCursorOverlay: NSView {
 
     // MARK: The live read
 
-    /// ONE-SHOT observation, re-armed by its own `onChange` — reading the two gates here is what makes
-    /// the block move the instant a motion lands. The geometry read stays out of the tracked closure:
-    /// `cellMetrics()` is a libghostty readback, not observable state, so tracking it would register
-    /// nothing and cost a call per arm.
+    /// Reading the two gates here is what makes the block move the instant a motion lands. The
+    /// geometry read stays out of `read`: `cellMetrics()` is a libghostty readback, not observable
+    /// state, so tracking it would register nothing and cost a call per arm.
+    ///
+    /// `apply` discards the reading and asks ``refresh()`` for the values again, because `layout()`
+    /// needs that same recompute with no reading in hand — the tracked pair is the DEPENDENCY, not
+    /// the input.
     private func follow() {
-        withObservationTracking {
-            _ = model.copyModeBadgeActive
-            _ = model.viCursorCell
-        } onChange: { [weak self] in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow() } }
+        ObservationFollow.arm(self) { view in
+            (active: view.model.copyModeBadgeActive, cell: view.model.viCursorCell)
+        } apply: { view, _ in
+            view.refresh()
         }
-        refresh()
     }
 
     private func refresh() {

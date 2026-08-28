@@ -22,6 +22,7 @@
 
 import AppKit
 import SFSafeSymbols
+import SlopDeskClientCore // ObservationFollow — the one spelling of the model follow
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 
@@ -41,10 +42,6 @@ final class MacBuildStatusPlaceholderView: NSView {
     /// change after construction — everything else in this panel is a constant string.
     private let dot = NSView()
     private let caption = NSTextField(labelWithString: "")
-
-    /// Guards the observation re-arm against a stale `onChange` firing after this view is gone. Every
-    /// AppKit surface in this target carries one; see the idiom in ``MacTerminalLeafView``.
-    private var generation = 0
 
     init(model: TerminalViewModel) {
         self.model = model
@@ -133,27 +130,16 @@ final class MacBuildStatusPlaceholderView: NSView {
 
     // MARK: - Following the model
 
-    /// Re-reads the two fields that can change and re-arms. `connectionStatus` and `bytesReceived` are
-    /// the ONLY things this panel observes — deliberately, since a headless process has nothing else to
-    /// say, and observing the byte stream itself would make the fallback more expensive than the
-    /// renderer it stands in for.
+    /// Re-reads the two fields that can change. `connectionStatus` and `bytesReceived` are the ONLY
+    /// things this panel observes — deliberately, since a headless process has nothing else to say,
+    /// and observing the byte stream itself would make the fallback more expensive than the renderer
+    /// it stands in for.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        var status: TerminalViewModel.ConnectionStatus?
-        var bytes = 0
-        withObservationTracking {
-            status = model.connectionStatus
-            bytes = model.bytesReceived
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { view in
+            (status: view.model.connectionStatus, bytes: view.model.bytesReceived)
+        } apply: { view, reading in
+            view.apply(status: reading.status, bytes: reading.bytes)
         }
-        apply(status: status, bytes: bytes)
     }
 
     private func apply(status: TerminalViewModel.ConnectionStatus?, bytes: Int) {

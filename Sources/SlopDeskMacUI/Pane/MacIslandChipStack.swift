@@ -47,7 +47,9 @@ final class MacIslandChipStack: NSStackView {
     private var noticeChip: MacNoticeCapsuleView?
     private var alertChip: MacConnectionAlertChip?
 
-    private var generation = 0
+    /// Kept because ``teardown()`` must END the following while this stack lives on — the case
+    /// ``ObservationFollow/stop()`` exists for.
+    private var chipFollow: ObservationFollow?
 
     init(store: WorkspaceStore, coordinator: OverlayCoordinator?, chrome: WorkspaceChromeState?) {
         self.store = store
@@ -83,29 +85,17 @@ final class MacIslandChipStack: NSStackView {
     /// is the later, more deliberate act — a pane-less copy is an explicit menu/palette command, while
     /// a pane receipt may be seconds-stale ⌘C.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var receipt: CopyReceipt?
-        var notice: ChipNotice?
-        var alert: WorkspaceConnectionAlert?
-
-        withObservationTracking {
-            receipt = coordinator?.copyReceipt ?? store.activePaneCopyReceipt()
-            notice = coordinator?.notice
-            // The durable indicator shows ONLY with the tabs panel collapsed — an open sidebar is the
-            // user's normal per-pane surface, and the chip would be saying it twice.
-            alert = chrome?.sidebarCollapsed == true ? store.connectionAlert() : nil
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        chipFollow = ObservationFollow.arm(self) { stack in
+            (
+                receipt: stack.coordinator?.copyReceipt ?? stack.store.activePaneCopyReceipt(),
+                notice: stack.coordinator?.notice,
+                // The durable indicator shows ONLY with the tabs panel collapsed — an open sidebar is
+                // the user's normal per-pane surface, and the chip would be saying it twice.
+                alert: stack.chrome?.sidebarCollapsed == true ? stack.store.connectionAlert() : nil,
+            )
+        } apply: { stack, reading in
+            stack.apply(receipt: reading.receipt, notice: reading.notice, alert: reading.alert)
         }
-
-        apply(receipt: receipt, notice: notice, alert: alert)
     }
 
     private func apply(
@@ -191,7 +181,7 @@ final class MacIslandChipStack: NSStackView {
     /// Every dwell stopped and every chip dropped. Called when the canvas around it comes down, so no
     /// timer outlives the window holding it.
     func teardown() {
-        generation &+= 1
+        chipFollow?.stop()
         for chip in [receiptChip, noticeChip] { chip?.stopDwell() }
         for chip in arrangedSubviews {
             removeArrangedSubview(chip)

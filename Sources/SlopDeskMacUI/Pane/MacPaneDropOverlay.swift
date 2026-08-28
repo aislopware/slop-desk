@@ -115,20 +115,15 @@ final class MacPaneDropOverlay: NSView {
     /// them separately would arm three observers over the same stored `content` and repaint the
     /// overlay three times for one cursor move.
     private func follow() {
-        var active: DropZone?
-        var allowed: Set<DropZone> = []
-        var shown = false
-        withObservationTracking {
-            active = model.activeZone
-            allowed = model.allowedZones
-            shown = model.isActive
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { view in
+            (active: view.model.activeZone, allowed: view.model.allowedZones, shown: view.model.isActive)
+        } apply: { view, reading in
+            view.apply(
+                active: reading.active, allowed: reading.allowed, shown: reading.shown,
+                animated: view.settled,
+            )
+            view.settled = true
         }
-        apply(active: active, allowed: allowed, shown: shown, animated: settled)
-        settled = true
     }
 
     /// Fade the whole overlay to the drag's presence and re-ink every blob to the hovered zone.

@@ -8,7 +8,7 @@
 // It lived in the draining floor until it had no reason to: an `NSAlert` is macOS's, it names no
 // view from that target, and the whole-file `#if os(macOS)` it wore was the tell. Here the gate is
 // the TARGET, so the file has none — docs/56 §3. The phone asks the same three questions through
-// `SlopDeskPhoneUI/Overlays/ClipboardConfirmCard.swift`; it used to auto-approve two of them and
+// `SlopDeskPhoneUI/Overlays/ClipboardConfirmCardView.swift`; it used to auto-approve two of them and
 // drop the third, which is what increment 65 closed.
 //
 // NOTHING HERE IS A DECISION, AND NOTHING HERE IS A SENTENCE. The four dangers, the skip rules, the

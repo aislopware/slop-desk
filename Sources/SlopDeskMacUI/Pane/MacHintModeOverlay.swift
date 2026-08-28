@@ -117,24 +117,18 @@ final class MacHintModeOverlay: NSView {
 
     // MARK: The live read
 
-    /// Re-read the two observable properties and redraw, re-arming for the next change.
+    /// Re-read the two observable properties and redraw.
     ///
     /// The geometry read sits in `apply`, OUTSIDE the tracking closure, for the reason the SwiftUI
     /// half puts it inside the active branch: `surface` is `@ObservationIgnored` and a weak reference
     /// to a live renderer, so making it part of the dependency would register nothing and cost a
     /// retain cycle's worth of confusion for it.
     private func follow() {
-        var intent: HintIntent?
-        var typed = ""
-        withObservationTracking {
-            intent = model.hintMode
-            typed = model.hintTyped
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { view in
+            (intent: view.model.hintMode, typed: view.model.hintTyped)
+        } apply: { view, reading in
+            view.apply(intent: reading.intent, typed: reading.typed)
         }
-        apply(intent: intent, typed: typed)
     }
 
     private func apply(intent: HintIntent?, typed: String) {

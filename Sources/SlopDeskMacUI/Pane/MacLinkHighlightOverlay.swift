@@ -101,8 +101,6 @@ final class MacLinkHighlightOverlay: NSView {
 
     // MARK: The live read
 
-    /// ONE-SHOT observation, re-armed by its own `onChange`.
-    ///
     /// ⚠️ THE DEPENDENCY IS CONDITIONAL AND THAT IS THE POINT. The three arm signals are read on every
     /// arm, so the underlines reveal / clear the instant ⌘ is pressed or released. The two
     /// viewport-change signals are read ONLY inside the armed branch, so an idle pane does not
@@ -114,23 +112,22 @@ final class MacLinkHighlightOverlay: NSView {
     /// new wire byte. Observing only the first leaves the underlines stranded at their pre-scroll
     /// screen rows, over unrelated text.
     private func follow() {
-        withObservationTracking {
+        ObservationFollow.arm(self) { view in
             // `alternateScreenActive`, the OBSERVABLE twin — not `isAlternateScreen`, which reads through
-            // an `@ObservationIgnored` tracker and would register no dependency at all here. The tracked
-            // closure is the one place the distinction bites: without the twin, a flip to a full-screen
+            // an `@ObservationIgnored` tracker and would register no dependency at all here. The `read`
+            // block is the one place the distinction bites: without the twin, a flip to a full-screen
             // TUI under a held ⌘ only clears the underlines if MORE output happens to arrive.
             if LinkUnderlineGeometry.isArmed(
-                highlightActive: model.linkHighlightActive,
+                highlightActive: view.model.linkHighlightActive,
                 detectionEnabled: SettingsKey.linkDetectionEnabled,
-                isAlternateScreen: model.alternateScreenActive,
+                isAlternateScreen: view.model.alternateScreenActive,
             ) {
-                _ = model.bytesReceived
-                _ = model.viewportRevision
+                _ = view.model.bytesReceived
+                _ = view.model.viewportRevision
             }
-        } onChange: { [weak self] in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow() } }
+        } apply: { view, _ in
+            view.refresh()
         }
-        refresh()
     }
 
     /// Re-detect, and ask for pixels only if the answer moved. Streaming output bumps `bytesReceived`

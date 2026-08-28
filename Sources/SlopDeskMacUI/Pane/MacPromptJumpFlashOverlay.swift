@@ -84,17 +84,15 @@ final class MacPromptJumpFlashOverlay: NSView {
 
     // MARK: The live read
 
-    /// ONE-SHOT observation, re-armed by its own `onChange`. Only the epoch is tracked: the viewport
-    /// snapshot and the alt-screen gate are read non-reactively at flash time, exactly as the SwiftUI
-    /// half reads them inside its `.task` (which tracks nothing either).
+    /// Only the epoch is tracked: the viewport snapshot and the alt-screen gate are read
+    /// non-reactively at flash time, exactly as the SwiftUI half reads them inside its `.task` (which
+    /// tracks nothing either).
     private func follow() {
-        var epoch = 0
-        withObservationTracking {
-            epoch = model.promptJumpFlashEpoch
-        } onChange: { [weak self] in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow() } }
+        ObservationFollow.arm(self) { view in
+            view.model.promptJumpFlashEpoch
+        } apply: { view, epoch in
+            view.flash(epoch: epoch)
         }
-        flash(epoch: epoch)
     }
 
     /// One settled jump: paint at peak instantly, decay, then unmount the rects.

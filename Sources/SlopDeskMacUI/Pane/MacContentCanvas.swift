@@ -41,7 +41,9 @@ final class MacContentCanvas: NSView {
     private let empty = MacSlateEmptyState(frame: .zero)
     private let chips: MacIslandChipStack
 
-    private var generation = 0
+    /// Kept because ``teardown()`` must END the following while this controller lives on — the case
+    /// ``ObservationFollow/stop()`` exists for.
+    private var canvasFollow: ObservationFollow?
 
     init(
         store: WorkspaceStore,
@@ -112,30 +114,19 @@ final class MacContentCanvas: NSView {
     /// ONE tracked pass over the two questions this level answers: is there a tab to draw, and — when
     /// there is not — WHY. Everything inside the canvas is that subtree's own tracked read.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var hasActiveTab = false
-        var cause: PaneEmptyCause = .neverConnected
-
-        withObservationTracking {
-            hasActiveTab = store.tree.activeSession?.activeTab != nil
-            // Read UNCONDITIONALLY, not inside the `if`: a tracked read that only happens on one branch
-            // stops observing the connection the moment a tab exists, so the empty state would come
-            // back later still saying whatever it said the last time it was on screen.
-            cause = PaneEmptyCause.resolve(
-                status: connection.status, host: connection.target.host,
+        canvasFollow = ObservationFollow.arm(self) { view in
+            (
+                hasActiveTab: view.store.tree.activeSession?.activeTab != nil,
+                // Read UNCONDITIONALLY, never inside a branch: a tracked read that only happens on one
+                // branch stops observing the connection the moment a tab exists, so the empty state
+                // would come back later still saying whatever it said the last time it was on screen.
+                cause: PaneEmptyCause.resolve(
+                    status: view.connection.status, host: view.connection.target.host,
+                ),
             )
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        } apply: { view, reading in
+            view.apply(hasActiveTab: reading.hasActiveTab, cause: reading.cause)
         }
-
-        apply(hasActiveTab: hasActiveTab, cause: cause)
     }
 
     private func apply(hasActiveTab: Bool, cause: PaneEmptyCause) {
@@ -149,7 +140,7 @@ final class MacContentCanvas: NSView {
     /// The whole interior is closing. Forwarded so every leaf's renderer comes down and no chip's dwell
     /// outlives the window holding it.
     func teardown() {
-        generation &+= 1
+        canvasFollow?.stop()
         chips.teardown()
         canvas.teardown()
     }
