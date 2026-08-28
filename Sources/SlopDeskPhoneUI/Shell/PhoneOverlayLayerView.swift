@@ -53,6 +53,10 @@ final class PhoneOverlayLayerView: UIView {
     /// The four SUMMONED cards, on their own dismiss floor. Bottom of the stack: a notification arriving
     /// over a palette must be readable, and a clipboard question must cover both.
     private let cards: PhoneOverlayCardHostView
+    /// The ⌃⇥ walk. It is NOT one of the coordinator's flags — it is the store's live gesture — and it
+    /// carries a floor of its own whose tap CANCELS rather than closes, which is exactly why it cannot
+    /// share the summoned host's.
+    private let switcher: PhonePaneSwitcherView
     /// The notification corner. Deaf everywhere a card is not.
     private let toasts: PhoneToastStackView
     /// The remote program's question. Full-bleed, TOPMOST, and deaf until a question exists.
@@ -63,11 +67,13 @@ final class PhoneOverlayLayerView: UIView {
         self.connection = connection
         self.overlay = overlay
         cards = PhoneOverlayCardHostView(store: store, overlay: overlay)
+        switcher = PhonePaneSwitcherView(store: store)
         toasts = PhoneToastStackView(overlay: overlay)
         super.init(frame: .zero)
         backgroundColor = .clear
         isOpaque = false
         mount(cards)
+        mount(switcher)
         mount(toasts)
         mount(clipboard)
         // The card took the keyboard while it was up (its footer holds the Esc/↩ chords), so the pane
