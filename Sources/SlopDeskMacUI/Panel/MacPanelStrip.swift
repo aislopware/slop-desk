@@ -120,13 +120,11 @@ final class MacPanelStrip: NSView {
             case .desktop: false
             }
         reload.isHidden = !shown
-        reload.toolTip =
-            switch chrome.panelSurface {
-            case .code: "Reload the workbench"
-            case .simulators: "Reload the simulator list"
-            case .android: "Reload the device list"
-            case .desktop: nil
-            }
+        // ⚠️ FROM THE FLOOR, not typed here. The phone's bar carries the same four answers as its
+        // trailing plate's accessibility label, and a sentence spelled once per shell is a translation
+        // bug that has already happened — the day one half is reworded the two platforms ship different
+        // copy for the same control (docs/56 §3, `shared-vocabulary-ceiling`).
+        reload.toolTip = PanelChromeCopy.reloadHelp(for: chrome.panelSurface)
     }
 
     // MARK: The width ladder

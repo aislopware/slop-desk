@@ -304,7 +304,10 @@ final class PhonePanelSurfacesViewController: UIViewController {
     /// The workbench veil's caption. Not a ``CodePanelPresentation`` word, and deliberately so: it is
     /// what the MOUNT says while WebKit paints, which is a state the phase machine does not have — the
     /// poll has already reached `.ready`, so there is no phase to ask about it.
-    private static let workbenchVeilLabel = "Opening workbench…"
+    ///
+    /// It is still not this view's to SPELL: the Mac's workbench boots behind the same veil saying the
+    /// same thing, so the sentence lives on the floor both shells read (docs/56 §3).
+    private static var workbenchVeilLabel: String { PanelChromeCopy.workbenchVeilLabel }
 
     /// The device surface for the tab that is up, as a CHILD controller rather than a bare view.
     ///

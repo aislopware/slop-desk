@@ -156,13 +156,11 @@ final class PhonePanelBar: UIView {
             case .desktop: false
             }
         reload.isHidden = !shown
-        reload.accessibilityLabel =
-            switch chrome.panelSurface {
-            case .code: "Reload the workbench"
-            case .simulators: "Reload the simulator list"
-            case .android: "Reload the device list"
-            case .desktop: nil
-            }
+        // ⚠️ FROM THE FLOOR, not typed here. The Mac's strip carries the same four answers as its
+        // trailing plate's tooltip, and a sentence spelled once per shell is a translation bug that
+        // has already happened — the day one half is reworded the two platforms ship different copy
+        // for the same control (docs/56 §3, `shared-vocabulary-ceiling`).
+        reload.accessibilityLabel = PanelChromeCopy.reloadHelp(for: chrome.panelSurface)
         // Re-rung on the way through, because a plate arriving or leaving changes the width the ladder
         // is measured against — see ``applyLadder()``.
         setNeedsLayout()

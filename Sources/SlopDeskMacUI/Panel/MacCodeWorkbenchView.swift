@@ -40,7 +40,11 @@ final class MacCodeWorkbenchView: NSView {
 
     /// The dark waiting surface that stays on top from load-start until the main-frame navigation
     /// settles. Without it the boot reads as black → WebKit's white canvas → workbench.
-    private let veil = MacPanelWaitingView("Opening workbench…")
+    ///
+    /// The caption comes FROM THE FLOOR: the phone's workbench boots behind the same veil saying the
+    /// same thing, and a sentence spelled once per shell is a translation bug that has already
+    /// happened (docs/56 §3, `shared-vocabulary-ceiling`).
+    private let veil = MacPanelWaitingView(PanelChromeCopy.workbenchVeilLabel)
     private var veilObservation: Task<Void, Never>?
 
     init(projectRoot: String, url: URL) {
