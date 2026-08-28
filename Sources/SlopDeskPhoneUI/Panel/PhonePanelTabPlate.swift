@@ -40,7 +40,6 @@ final class PhonePanelTabPlate: UIControl {
 
     private let mark: UIView & PhonePanelMark
     private let label = UILabel()
-    private var selected = false
     private var showsLabel = true
 
     init(tab: PanelTabReading) {
@@ -86,9 +85,15 @@ final class PhonePanelTabPlate: UIControl {
 
     // MARK: The two states
 
+    // SELECTION IS `UIControl.isSelected`, not a second stored flag beside it. A `private var
+    // selected` does not compile here at all — it reads as an override of the inherited property,
+    // and a private one cannot override an open one — but the reason to delete it rather than rename
+    // around it is that the control already HAS this state: two flags means a plate whose
+    // `accessibilityTraits` and whose UIKit state can disagree. The Mac twin stores its own because
+    // `NSView` has nothing to inherit.
     func apply(selected: Bool, showsLabel: Bool) {
-        guard self.selected != selected || self.showsLabel != showsLabel else { return }
-        self.selected = selected
+        guard isSelected != selected || showsLabel != self.showsLabel else { return }
+        isSelected = selected
         self.showsLabel = showsLabel
         invalidateIntrinsicContentSize()
         setNeedsLayout()
@@ -164,7 +169,7 @@ final class PhonePanelTabPlate: UIControl {
     /// leaf's, and only while nothing is selected here: a press tint under the plate is invisible and
     /// would only pay for a repaint.
     private func repaint(animated: Bool = true) {
-        let fill: UIColor = isHighlighted && !selected ? Slate.Native.State.hover : .clear
+        let fill: UIColor = isHighlighted && !isSelected ? Slate.Native.State.hover : .clear
         CATransaction.begin()
         if animated, window != nil {
             CATransaction.setAnimationDuration(Slate.Motion.smallFade.duration)
@@ -175,15 +180,15 @@ final class PhonePanelTabPlate: UIControl {
         layer.backgroundColor = fill.resolvedColor(with: traitCollection).cgColor
         CATransaction.commit()
 
-        let ink = selected ? Slate.Native.Text.primary : Slate.Native.Text.icon
+        let ink = isSelected ? Slate.Native.Text.primary : Slate.Native.Text.icon
         // MEDIUM when selected, REGULAR when not — weight and ink carrying the state together, the same
         // pair every other latched control in this chrome uses.
         label.font = .systemFont(
-            ofSize: Slate.Typeface.footnote, weight: selected ? .medium : .regular,
+            ofSize: Slate.Typeface.footnote, weight: isSelected ? .medium : .regular,
         )
         label.textColor = ink
         mark.paint(ink, traits: traitCollection)
-        accessibilityTraits = selected ? [.button, .selected] : .button
+        accessibilityTraits = isSelected ? [.button, .selected] : .button
     }
 
     @objc

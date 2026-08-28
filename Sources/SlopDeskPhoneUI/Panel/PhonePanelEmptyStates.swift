@@ -218,8 +218,11 @@ final class PhonePanelCentredStack: UIStackView {
         for view in views { addArrangedSubview(view) }
     }
 
+    // NON-FAILABLE, unlike almost every other `init(coder:)` in this target: `UIStackView`
+    // REDECLARES the inherited `UIView.init?(coder:)` as non-failable, so the `?` spelling reads as
+    // an override widening the result and does not compile. `SlatePlateTray` is the precedent.
     @available(*, unavailable)
-    required init?(coder _: NSCoder) { fatalError("not from a nib") }
+    required init(coder _: NSCoder) { fatalError("not from a nib") }
 
     /// Centre inside `host` with the panel's own margin, and never wider than it.
     ///
@@ -309,7 +312,8 @@ final class PhonePanelPlateButton: UIControl {
     @objc
     private func hovered(_ recogniser: UIHoverGestureRecognizer) {
         switch recogniser.state {
-        case .began, .changed: hovering = true
+        case .began,
+             .changed: hovering = true
         default: hovering = false
         }
     }
