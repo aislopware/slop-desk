@@ -3,7 +3,8 @@
 //
 // WHY A MONITOR AND NOT THE CANCEL KEY EVERY OTHER SURFACE USES. The pane-move drag is a plain
 // `DragGesture`; it never takes keyboard focus (the terminal the grab started over still holds it), so
-// `.onKeyPress(.escape)` — ``View/slateCancelKey(perform:)``, this client's one spelling of Esc — can never
+// `.onKeyPress(.escape)` — the SwiftUI `slateCancelKey(perform:)` this client spelled Esc with, and now
+// AppKit's `cancelOperation(_:)` beside ``UIKeyCommand/slateCancel(action:)`` — can never
 // be delivered it. A local `NSEvent` monitor reads the key regardless of first-responder
 // state, which is the same reason `MacKeybindingsEditor`'s chord recorder is one. The phone cannot use this
 // mechanism at all (UIKit has no local monitor) and takes first responder instead — `PaneMoveEscapeResponder`,
@@ -102,8 +103,9 @@ package final class PaneMoveEscapeMonitorController {
     /// controller can never cancel through a stale drag's captured state.
     ///
     /// A refused install (AppKit returns `nil`) leaves the controller disarmed rather than half-armed, and the
-    /// next call simply tries again. That is ``PaneMoveEscapeResponder``'s rule on the other platform too: a
-    /// half-taken grab is what strands a keyboard.
+    /// next call simply tries again. That was `PaneMoveEscapeResponder`'s rule on the other platform too, and
+    /// it survives that type: docs/62 stage E.2 dissolves it into ``UIKeyCommand/slateCancel(action:)``, which
+    /// a responder either publishes or does not. A half-taken grab is what strands a keyboard.
     package func arm(onCancel: @escaping () -> Void) {
         self.onCancel = onCancel
         guard monitor == nil else { return }

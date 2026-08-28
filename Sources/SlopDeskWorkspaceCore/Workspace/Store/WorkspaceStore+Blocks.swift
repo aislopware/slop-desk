@@ -208,7 +208,8 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Whether the pane `id` is currently in copy-mode — drives the vi / copy-mode pill (``ViModePill``). Reads
+    /// Whether the pane `id` is currently in copy-mode — drives the vi / copy-mode pill
+    /// (``SlopDeskMacUI/MacViModePill`` / ``SlopDeskPhoneUI/ViModePillView``). Reads
     /// the OBSERVABLE ``TerminalViewModel/copyModeBadgeActive`` twin (NOT the keyDown-read `@ObservationIgnored`
     /// `isCopyMode`) so the badge re-renders reactively. Resolves the LIVE terminal model so pane A's copy-mode
     /// never lights pane B's badge (mirrors ``agentStatus(for:)``). `false` for a non-terminal / no-live-model

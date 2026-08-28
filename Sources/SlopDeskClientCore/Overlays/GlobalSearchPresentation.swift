@@ -1,7 +1,8 @@
 // GlobalSearchPresentation — the near-side FACE of `slopdesk_workspace::global_search`.
 //
 // The sixth surface off the shared SwiftUI floor (docs/56 stage D): the Mac draws it as an `NSPanel`
-// (``SlopDeskMacUI/MacGlobalSearchView``), the phone as a full-height card inside ``OverlayHostView``.
+// (``SlopDeskMacUI/MacGlobalSearchView``), the phone as a full-height ``SlopDeskPhoneUI/PhoneGlobalSearchCardView``
+// inside ``SlopDeskPhoneUI/PhoneOverlayCardHostView``.
 // The match MATH was already shared before this file existed — `GlobalSearchController` runs it and
 // `WorkspaceStore.runGlobalSearch` owns the query — so what crossed is the reading of a result: how
 // the matched run is cut out of its line, the two zero-state lines, and the card's measurements.
@@ -28,9 +29,10 @@ import SlopDeskWorkspaceModel
 /// One `Aa` / `ab` / `.*` mode pill, as a VALUE.
 ///
 /// ⚠️ The find bar and the global-search query bar render these pills IDENTICALLY — that is a locked
-/// invariant (see ``FindTogglePillTray``'s own note), and the labels and help strings live on the far
-/// side so the two surfaces read them rather than agree on them. Three surfaces do now, in fact: the
-/// Mac's results panel is AppKit and cannot see a SwiftUI view's call site at all.
+/// invariant (see ``FindTogglePillAppearance``'s own note — the SwiftUI `FindTogglePillTray` that used to
+/// carry it dissolved into a stack view), and the labels and help strings live on the far
+/// side so the two surfaces read them rather than agree on them. Three surfaces do now, in fact, across
+/// two imperative frameworks: no call site can see another's.
 public enum FindModePill: String, CaseIterable, Sendable {
     case caseSensitive
     case wholeWord

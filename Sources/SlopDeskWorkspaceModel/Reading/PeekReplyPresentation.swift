@@ -2,8 +2,9 @@
 // `slopdesk_workspace::peek_reply`.
 //
 // The peek card is the fifth surface off the shared design floor (docs/56 stage D): the Mac draws it
-// as an `NSPanel` (``SlopDeskMacUI/MacPeekReplyView``), the phone as a paper card inside
-// ``OverlayHostView``. Every string a reader of the card actually reads is decided on the far side —
+// as an `NSPanel` (``SlopDeskMacUI/MacPeekReplyView``), the phone as a paper card
+// (``SlopDeskPhoneUI/PhonePeekReplyCardView``) inside ``SlopDeskPhoneUI/PhoneOverlayCardHostView``.
+// Every string a reader of the card actually reads is decided on the far side —
 // the header's caption, the queue counter, the note that stands in for a missing question — because a
 // half that spelled one of them itself would drift the moment the copy changed on the other.
 //

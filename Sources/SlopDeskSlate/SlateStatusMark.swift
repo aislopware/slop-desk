@@ -19,7 +19,8 @@
 //     (``OttyIcon/hand``). A question is waiting on a person.
 //
 // Plus one mark that is OURS, because otty has no need for it: an agent that is merely PRESENT
-// takes a muted ring of DOTS (``DottedRing``, lucide `circle-dashed` recut). otty draws nothing
+// takes a muted ring of DOTS (lucide `circle-dashed` recut, laid out by ``StatusDot/ringDotFrame(_:in:)``
+// and drawn by ``SlopDeskMacUI/MacStatusMark`` / ``SlopDeskPhoneUI/StatusDotView``). otty draws nothing
 // there; our rail needs it, because `claude` sitting at its prompt is otherwise indistinguishable
 // from a shell that has been busy for an hour.
 //
@@ -114,7 +115,8 @@ package enum StatusDot {
     package static let finishSymbolSize: CGFloat = 13
     /// The size otty gives its other badge symbols — a point smaller than the finish, because a
     /// filled straight-edged glyph out-weighs a circle at equal point size. The privilege shield
-    /// (``TabBadgeView``) is the one left that uses it.
+    /// (a ``TabBadgeStyle``, drawn by ``SlopDeskMacUI/MacSidebarRow`` / ``SlopDeskPhoneUI/NavigatorRowCell``)
+    /// is the one left that uses it.
     package static let badgeSymbolSize: CGFloat = 11
     /// The close `×`'s HIT target — otty's 18, kept after the plate shrank to the mark's column box.
     /// The extra reach over ``footprint`` is spent leading and vertically, never trailing: growing it
@@ -307,7 +309,8 @@ package enum StatusDot {
 package enum StatusMark: Equatable {
     /// The agent is generating RIGHT NOW — otty's spinner. The only thing on this rail that moves.
     case working
-    /// The agent is present in this pane but idle — a muted ring of dots (``DottedRing``).
+    /// The agent is present in this pane but idle — a muted ring of dots
+    /// (``StatusDot/ringDotFrame(_:in:)``, drawn by both rails).
     case agentRing
     /// A person's turn: the agent is blocked on input — lucide `hand`, otty's own awaiting badge.
     case awaiting
@@ -402,9 +405,9 @@ package struct StatusDotStyle: Equatable {
 ///  * **It is drawn, not delegated** — ``lit(_:hole:)``/``rate(at:seed:)``/``phase(at:seed:)`` are
 ///    pure static functions over a `Date`, so a snapshot test rasterizes them directly at any given
 ///    instant without animating anything or hosting a live window. The platform indicator it replaced
-///    could not be rendered at all (``SlateSnapshotRender`` had to host an offscreen window to
-///    photograph the mark sheet), which meant the one mark that moved was also the one mark no test
-///    could look at.
+///    could not be rendered at all (the old `SlateSnapshotRender` harness had to host an offscreen
+///    window to photograph the mark sheet; its probes moved on to ``MacChromeSnapshotRender``), which
+///    meant the one mark that moved was also the one mark no test could look at.
 ///  * **Reduce Motion freezes it** — the platform used to own that call; drawing it makes it ours. A
 ///    frozen cell is still a distinct silhouette (a lit block with one corner missing, which no other
 ///    mark in this column resembles), so the state is never lost, only the movement.

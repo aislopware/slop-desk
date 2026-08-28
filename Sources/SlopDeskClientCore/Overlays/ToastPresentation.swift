@@ -192,7 +192,8 @@ public extension WorkspaceStore {
     /// and a notification about somewhere else that cannot take you there is a dead end.
     ///
     /// Routed through `jumpToPaneTree` rather than `focusPaneTree` for the reason
-    /// ``ConnectionAlertChip`` is — an undirected landing that CROSSES a tab swaps the whole viewport,
+    /// ``MacConnectionAlertChip`` / ``ConnectionAlertChipView`` are — an undirected landing that CROSSES a
+    /// tab swaps the whole viewport,
     /// and that seam is what fires the "JUMPED · session ▸ tab" orientation breadcrumb.
     ///
     /// It lives here, below both shells, because the Mac's corner is an `NSPanel` and the phone's is a

@@ -24,7 +24,8 @@ import XCTest
 
 @MainActor
 final class SlateSharedInkTests: XCTestCase {
-    // MARK: - The connection alarm (``ConnectionPill`` / ``MacConnectionIsland``)
+    // MARK: - The connection alarm (``MacConnectionIsland``; the phone's `ConnectionPill` has no UIKit
+    // successor yet)
 
     /// The island spends BRIGHTNESS and WEIGHT, never hue: `quiet` is the metadata grey every healthy
     /// reading rests in, `raised` steps up to the body-secondary ink at semibold, `loud` to the primary
@@ -92,7 +93,7 @@ final class SlateSharedInkTests: XCTestCase {
         XCTAssertNotEqual(Slate.Native.paneStatusPillFill(.security), Slate.Native.paneStatusPillFill(.sync))
     }
 
-    // MARK: - The toast mark's ink (``ToastStackView`` / ``MacToastStack``)
+    // MARK: - The toast mark's ink (``MacToastStack`` / ``PhoneToastStackView``)
 
     /// The four rungs must resolve to four DISTINCT inks — the exact failure the old
     /// `.attention → accent` mapping had, where every seed's `info == accent` drew needs-input and a

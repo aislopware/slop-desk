@@ -12,7 +12,8 @@ import XCTest
 /// responder offers a press through, on the macOS runner, which is the whole point of both being
 /// un-gated: an adapter only the iOS triple compiles is an adapter nothing here can reach.
 ///
-/// The switcher half below is the SAME defect one rung up, found the same way. ``PaneSwitcherOverlay``
+/// The switcher half below is the SAME defect one rung up, found the same way. The deleted SwiftUI
+/// `PaneSwitcherOverlay` (now ``SlopDeskPhoneUI/PhonePaneSwitcherView``)
 /// asserted in its own header that a hardware ⌃⇥ "already works" on an iPad; it resolved to no chord (the
 /// registry row is `chord: nil` on purpose), fell to the encoder and typed `0x09`, while the card's Esc,
 /// Return and arrows walked past it into the PTY. ``PhoneKey/paneSwitcherKey(_:isOpen:)`` is the rule the

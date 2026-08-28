@@ -1,8 +1,9 @@
 // OpenQuicklyPresentation — the near-side FACE of `slopdesk_workspace::open_quickly`.
 //
 // The seventh surface off the shared SwiftUI floor (docs/56 stage D) and the LAST modal one: the Mac
-// draws it as an `NSPanel` (``SlopDeskMacUI/MacOpenQuicklyView``), the phone as a card inside
-// ``OverlayHostView``. It is also the one with the most decision per pixel, because it is six
+// draws it as an `NSPanel` (``SlopDeskMacUI/MacOpenQuicklyView``), the phone as a
+// ``SlopDeskPhoneUI/PhoneOpenQuicklyCardView`` inside ``SlopDeskPhoneUI/PhoneOverlayCardHostView``.
+// It is also the one with the most decision per pixel, because it is six
 // sources, a ranked and sectioned list over them, a per-row verb, and a searchable ⌘K action table
 // under every row — and every one of those is an answer rather than an arrangement.
 //

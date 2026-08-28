@@ -119,7 +119,7 @@ package struct PaneSwitcherWalk: Equatable {
 
 /// The phone's WORDS for this surface. The Mac's readout has none — a card that lives for 200ms under a
 /// held ⌃ is titled by the hand holding it up — and the phone's cannot borrow that silence: it stays up
-/// with nothing held, in a family where every card names itself (``SlateCardTitle``).
+/// with nothing held, in a family where every card names itself (``SlateCardTitleView``).
 package enum PaneSwitcherCopy {
     /// The card's title — the SAME words the palette row that opens it wears (`pane.switcher` in
     /// ``WorkspaceBindingRegistry``, and the phone's only touch entry point into the gesture). A surface
@@ -324,7 +324,8 @@ package enum PaneSwitcherRowsBuilder {
     }
 
     /// The row's LINE before the place line has had its say — the pane's live identity chain, the same
-    /// one ``NavigatorColumn`` hands its rows, so the switcher and the sidebar can never call one pane
+    /// one ``SlopDeskMacUI/MacNavigatorColumn`` and ``SlopDeskPhoneUI/NavigatorColumnViewController`` hand
+    /// their rows, so the switcher and the sidebar can never call one pane
     /// two things.
     ///
     /// `projectKey` IS passed to the structural rung on purpose: at the project root that yields the

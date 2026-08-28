@@ -66,7 +66,7 @@ public final class OverlayCoordinator {
     public private(set) var connectVisible = false
 
     /// Monotonic Connect-sheet PRESENTATION generation — bumped by every ``openConnect()`` AND
-    /// ``closeConnect()``. ``ConnectHostView``'s async connect Task captures it at start
+    /// ``closeConnect()``. ``SlopDeskPhoneUI/ConnectHostViewController``'s async connect Task captures it at start
     /// and finishes through ``closeConnect(ifCurrent:)``, so a SLOW connect that resolves after the sheet
     /// was cancelled and REOPENED can no longer dismiss the fresh sheet mid-edit.
     public private(set) var connectGeneration = 0
@@ -81,17 +81,19 @@ public final class OverlayCoordinator {
 
     /// Whether the cross-tab Global Search surface (⇧⌘F) is presented. UNLIKE the four modal panels this is
     /// deliberately a NON-modal surface, so it must NOT swallow clicks over the workspace and is
-    /// deliberately EXCLUDED from ``anyModalVisible``; ``OverlayHostView`` mounts it WITHOUT the modal
-    /// hit-catching backdrop and
-    /// gates hit-testing on this flag directly. Reopening RESTORES the store's last in-memory results
+    /// deliberately EXCLUDED from ``anyModalVisible``, which buys it exactly one thing: the canvas
+    /// underneath stays enabled while it is up. It still gets a dismiss floor like every sibling —
+    /// ``SlopDeskPhoneUI/PhoneOverlayCardHostView`` mounts it on the same non-dimming, hit-catching floor,
+    /// and the Mac's rides a `MacOverlayPanelController` whose content view IS one. Reopening RESTORES the
+    /// store's last in-memory results
     /// (``WorkspaceStore/globalSearch``) until the query is re-run.
     public private(set) var globalSearchVisible = false
 
     // MARK: Open-Quickly state
 
     /// Whether the Open-Quickly picker (⌘⇧O All / ⌘J Current) is presented. A floating, centered MODAL
-    /// quick-switcher card, so it is in ``anyModalVisible`` and mounted on ``OverlayHostView``'s
-    /// hit-catching (non-dimming) backdrop. The picker reads its own sources (open panes / recents / folders / agents / the focused
+    /// quick-switcher card, so it is in ``anyModalVisible`` and mounted on
+    /// ``SlopDeskPhoneUI/PhoneOverlayCardHostView``'s hit-catching (non-dimming) floor. The picker reads its own sources (open panes / recents / folders / agents / the focused
     /// pane's links + OSC-133 command index) — like Global Search, the coordinator owns only the flag + pill.
     public private(set) var openQuicklyVisible = false
 
@@ -228,7 +230,8 @@ public final class OverlayCoordinator {
     /// YIELDS modeled chords to the focused card instead of resolving them behind it. Without this, a modeled
     /// ⌘W / ⌘1–9 / ⌘T leaking past a scrimmed card would DESTRUCTIVELY close / switch / mutate the BACKGROUND
     /// tree the user can't see. Mirrors ``anyModalVisible`` exactly PLUS the
-    /// non-scrimmed Global Search surface, whose focused query field (``GlobalSearchView``) must likewise
+    /// non-scrimmed Global Search surface, whose focused query field (``SlopDeskMacUI/MacGlobalSearchView`` /
+    /// ``SlopDeskPhoneUI/PhoneGlobalSearchCardView``) must likewise
     /// keep ⌘W from the workspace. SINGLE source of truth for that gate, so adding an overlay to
     /// ``anyModalVisible`` keeps the dispatcher honest without duplicating it.
     public var capturesKeyboardWhileVisible: Bool {
@@ -621,7 +624,8 @@ public final class OverlayCoordinator {
     }
 
     /// Close the Connect sheet ONLY if `generation` is still the current presentation — the completion guard
-    /// for ``ConnectHostView``'s async connect Task. A stale generation (the sheet was cancelled and/or
+    /// for ``SlopDeskPhoneUI/ConnectHostViewController``'s async connect Task. A stale generation (the sheet
+    /// was cancelled and/or
     /// reopened since the Task started) is a no-op, so a slow connect never dismisses a fresh sheet.
     public func closeConnect(ifCurrent generation: Int) {
         guard generation == connectGeneration else { return }

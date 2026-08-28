@@ -65,7 +65,8 @@ package enum AndroidInk: Equatable, Sendable {
     /// down the leading edge.
     case tertiary
     /// A silhouette. The same value as ``secondary`` on both halves today, and named apart because it
-    /// answers a different question — see ``AndroidFamilyMark``'s note about a column of marks.
+    /// answers a different question — see ``macAndroidFamilyMark(_:)`` / ``phoneAndroidFamilyMark(_:)``
+    /// and their note about a column of marks.
     case icon
     /// The one hue this panel spends, and only on a fault.
     case err
@@ -384,7 +385,8 @@ package enum AndroidPresentation {
         case .home: model.press(.home)
         case .recents: model.press(.appSwitch)
         case .rotate: model.rotate()
-        // The capture is 250 ms and 300 KB (``AndroidDeviceList``'s header has the measurement), which
+        // The capture is 250 ms and 300 KB (``SlopDeskMacUI/MacAndroidDeviceList`` and
+        // ``SlopDeskPhoneUI/PhoneAndroidDeviceList`` carry the measurement in their headers), which
         // is why it is a press rather than a poll. Asked for once, it is worth every millisecond.
         case .capture: Task { await model.copyScreenshot() }
         case .pasteClipboard:

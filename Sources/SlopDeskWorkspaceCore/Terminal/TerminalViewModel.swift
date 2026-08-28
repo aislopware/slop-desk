@@ -138,7 +138,8 @@ public final class TerminalViewModel {
     /// pane resize-scrim waits on. Replaces a fixed settle TIMER, which on a slow link clears the scrim BEFORE
     /// the ~1 RTT reflow arrives and briefly reveals the stretched / stale frame. The FIRST grid delivery after
     /// a (re)connect does NOT arm it (the surface paints from scratch — no stale frame to bridge); a disconnect
-    /// / exit / reconnect and a safety timeout all clear it so it can never stick. Observed by ``PaneContainer``
+    /// / exit / reconnect and a safety timeout all clear it so it can never stick. Observed by the pane
+    /// container (``SlopDeskMacUI/MacPaneContainer`` / ``SlopDeskPhoneUI/PaneContainerView``)
     /// (OR-ed with its geometry resize signal: geometry STARTS the scrim, this HOLDS it until fresh pixels land).
     public private(set) var awaitingResizeReflow = false
 
@@ -491,7 +492,8 @@ public final class TerminalViewModel {
     // MARK: Vi/copy-mode repeat-count + visual-mode (pure, NSEvent-free)
 
     /// The three vi visual-selection modes plus `.none` (plain scrollback navigation). Drives
-    /// the ``ViModeOverlay`` pill label AND switches the line-motion handler from scroll (`scroll_page_lines`)
+    /// the vi-mode pill label (``SlopDeskMacUI/MacViModePill`` / ``SlopDeskPhoneUI/ViModePillView``) AND
+    /// switches the line-motion handler from scroll (`scroll_page_lines`)
     /// to selection-EXTEND (`adjust_selection:<dir>`). Public so the GUI overlay reads ``viVisualMode``.
     public enum VisualMode: Equatable, Sendable {
         case none
@@ -1609,7 +1611,8 @@ public final class TerminalViewModel {
     // MARK: Hint Mode
 
     /// The armed Hint Mode intent (open / copy / reveal), or `nil` when not in hint mode. OBSERVABLE so the
-    /// ``HintModeOverlay`` reveals / clears reactively, and the renderer's `keyDown` reads it to ROUTE keys to
+    /// hint overlay (``SlopDeskMacUI/MacHintModeOverlay`` / ``SlopDeskPhoneUI/HintModeOverlayView``)
+    /// reveals / clears reactively, and the renderer's `keyDown` reads it to ROUTE keys to
     /// ``handleHintKey(_:)`` instead of the PTY while it is non-nil. Always `nil` until ``beginHint(_:)`` arms it.
     public var hintMode: HintIntent?
 

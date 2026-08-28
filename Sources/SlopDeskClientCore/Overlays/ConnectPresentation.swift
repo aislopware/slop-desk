@@ -1,7 +1,8 @@
 // ConnectPresentation — the near-side FACE of `slopdesk_workspace::connect_form`.
 //
 // The form is a FORM on both platforms, so it takes the platform's own modal on both: an AppKit sheet on
-// the Mac (``SlopDeskMacUI/MacConnectFormController``), a SwiftUI `.sheet` on the phone (``ConnectHostView``).
+// the Mac (``SlopDeskMacUI/MacConnectFormController``), a presented
+// ``SlopDeskPhoneUI/ConnectHostViewController`` on the phone.
 // Neither owns a connection model — ``AppConnection`` already holds the editable fields, the parse and
 // the `connect()` lifecycle — so what crossed is the words, and one question asked when a connect
 // completes: does this dismiss the card?
@@ -35,7 +36,7 @@ public enum ConnectForm {
     public static var mediaPortLabel: String { words[5] }
     public static var cursorPortLabel: String { words[6] }
     /// The confirming action. Cancel is the platform's own word on both halves (a `keyEquivalent` on the
-    /// Mac, ``SlateCardFooter``'s role on the phone), so it is NOT respelled — on either side.
+    /// Mac, ``SlateCardFooterView``'s cancel role on the phone), so it is NOT respelled — on either side.
     public static var connectAction: String { words[7] }
 
     /// The three port prompts, quoted from ``ConnectionTarget/default`` rather than typed. A prompt is

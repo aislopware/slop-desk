@@ -3,7 +3,8 @@ import Foundation
 
 // MARK: - Identity
 
-/// Stable identity for a single pane (an item in the ``Canvas``, a leaf in the ``SplitNode`` tree).
+/// Stable identity for a single pane — a leaf in the ``SplitNode`` tree, and an item on the canvas each
+/// shell tiles that tree across (``SlopDeskMacUI/MacSplitCanvasView`` / ``SlopDeskPhoneUI/SplitCanvasView``).
 ///
 /// A `PaneID` is the join key between the two halves of the workspace architecture
 /// (docs/22 §1.1): the **tree of intent** (this pure value tree) and the **table of liveness**

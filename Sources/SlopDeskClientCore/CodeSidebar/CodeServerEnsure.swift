@@ -1,7 +1,8 @@
 // CodeServerEnsure — ONE ensure round for the code panel, and the font-push dedupe that rides it.
 //
-// It was written twice, byte for byte, in ``SlopDeskMacUI/MacCodePanelSurfaces`` and
-// ``SlopDeskPhoneUI/CodePanelSurfaces``: the same guard, the same two RPCs in the same order, the
+// It was written twice, byte for byte, in ``SlopDeskMacUI/MacCodePanelSurfaces`` and in the phone's
+// then-SwiftUI `CodePanelSurfaces` (now ``SlopDeskPhoneUI/PhonePanelSurfacesViewController``): the
+// same guard, the same two RPCs in the same order, the
 // same static `lastPushedFontSpec`, and the same two-paragraph justification comment. Nothing in it
 // names a view type — it is `(String, WorkspaceStore, PreferencesStore?) async -> ServiceEndpoint?`
 // — so by docs/56 §3 it never belonged in a UI target at all. Both halves now pass it to

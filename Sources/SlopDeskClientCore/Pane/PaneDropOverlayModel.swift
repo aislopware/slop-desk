@@ -14,7 +14,8 @@ import SlopDeskWorkspaceModel
 /// The per-pane drag state the overlay renders from and the receiver mutates: the classified payload of the
 /// in-flight drag (`nil` when nothing supported is hovering) + the zone the cursor is currently over.
 /// `@MainActor @Observable` so the overlay re-renders as the cursor moves between
-/// zones; held as `@State` by ``PaneContainer`` (per-pane, `.id(PaneID)`-keyed).
+/// zones; held per-pane by the pane container each shell mounts (``SlopDeskMacUI/MacPaneContainer`` /
+/// ``SlopDeskPhoneUI/PaneContainerView``), keyed by `PaneID`.
 @MainActor
 @Observable
 package final class PaneDropOverlayModel {

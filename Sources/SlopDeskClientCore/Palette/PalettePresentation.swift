@@ -1,11 +1,12 @@
 // PalettePresentation — what the command palette IS, for both of the halves that draw it.
 //
 // The palette is the fourth surface off the shared SwiftUI floor (docs/56 stage D) and the first
-// MODAL one: the Mac draws it as an `NSPanel` (``SlopDeskMacUI/MacPaletteView``), the phone as a
-// paper card inside ``OverlayHostView``. Neither may re-derive what is written here, because every
+// MODAL one: the Mac draws it as an `NSPanel` (``SlopDeskMacUI/MacPaletteView``), the phone as a paper
+// card (``SlopDeskPhoneUI/PhonePaletteCardView``) inside ``SlopDeskPhoneUI/PhoneOverlayCardHostView``. Neither
+// may re-derive what is written here, because every
 // value below is a DECISION rather than a layout — the card's measurements, how the ranked rows pair
 // with the keyboard's index, which row a jump scrolls to, and what the WORKING DIRECTORY badge
-// reads. What each half keeps for itself is the arrangement: a `LazyVStack` on the phone, an
+// reads. What each half keeps for itself is the arrangement: a `UITableView` on the phone, an
 // `NSStackView` in a scroll view on the Mac.
 //
 // The ranking, the filtering and the running of a row are NOT here — they are ``OverlayCoordinator``

@@ -20,13 +20,15 @@ import SlopDeskWorkspaceModel
 /// text hard-cuts and the dwell restarts, never a re-entrance animation).
 ///
 /// ⚠️ Sentence case is load-bearing, not a preference: this chip joined the floating family's paper
-/// surface (``SlatePaperCapsule``) and that family's voice is the system's neutral semantics in sentence
+/// surface (``MacNoticeCapsuleView`` / ``SlatePaperCapsuleView``) and that family's voice is the system's
+/// neutral semantics in sentence
 /// case — the caps register belongs to the GLASS, which this no longer stands on. A caps label here would
 /// be the instrument voice on paper, which is the pairing the form cards already rejected.
 public struct ChipNotice: Equatable, Sendable {
     public let label: String
     /// The chord this notice is offering, if any — "⇧⌘T", "⌘K". Drawn as a KEYCAP, not as text (see
-    /// ``NoticeKeycap``), so the notice reads `Tab closed ⇧⌘T reopens`: a sentence with a pressable object
+    /// ``MacNoticeKeycap`` / ``SlateKeycapView``), so the notice reads `Tab closed ⇧⌘T reopens`: a sentence
+    /// with a pressable object
     /// in it. `nil` for a notice that offers nothing to press, which is most of them — and ABSENT rather
     /// than empty, which is what stops the separator being left hanging.
     public let keycap: String?

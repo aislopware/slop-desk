@@ -237,7 +237,8 @@ public final class WorkspaceStore {
     /// (`false`). The pane resize-scrim reads it so the overlay stays up across a PAUSED drag (mouse held,
     /// cursor still): otherwise the per-frame geometry-settle timer clears the scrim mid-drag and it flashes
     /// back on release (the host grid-send is DEFERRED to release, so nothing else holds the scrim during the
-    /// pause). ``PaneContainer`` gates it on THIS pane actually changing size, so only resized panes scrim.
+    /// pause). ``SlopDeskMacUI/MacPaneContainer`` / ``SlopDeskPhoneUI/PaneContainerView`` gate it on THIS
+    /// pane actually changing size, so only resized panes scrim.
     public private(set) var isInteractiveResizeActive = false
 
     /// The injection seam (docs/22 §0). Takes a ``PaneMaterialization`` — id, spec and spawn cwd —

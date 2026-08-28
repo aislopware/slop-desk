@@ -13,7 +13,7 @@
 // `Surface.field` and draws ``Slate/Text/primary`` on it, exactly as the Mac's navigator does, and
 // on iOS that rung is `UIColor.label`: WHITE under an OS in dark mode, on a cream that does not
 // move, at ~1.1 : 1. The whole floating family inherits the same fault one level up —
-// ``SlatePaperCard`` states in its own header that "the card stands on the CHROME's polarity … so
+// ``SlatePaperCardSurface`` states in its file's header that "the card stands on the CHROME's polarity … so
 // every one of those inks resolves dark on the cream without a single call site changing", which is
 // a sentence that is only true while something is holding that polarity. The iOS arm below is not a
 // courtesy port of a Mac feature; it is the half of one pin that the ground has always required.
@@ -48,7 +48,8 @@
 //
 // The POLARITY ITSELF IS SPELLED ONCE — ``Slate/chromeColorScheme`` — and each arm derives its
 // platform's value from that rung rather than restating `.aqua` / `.light`. That is already the rung
-// a subtree climbing back OUT of the glass reads (``SlatePaperCapsule``); a pin holding its own copy
+// a subtree climbing back OUT of the glass reads (``MacNoticeCapsuleView`` /
+// ``SlatePaperCapsuleView``); a pin holding its own copy
 // would be the one place in the app that did not follow if it ever moved.
 
 import Foundation

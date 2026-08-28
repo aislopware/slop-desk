@@ -10,7 +10,7 @@ import Foundation
 /// driver over this; libghostty's own `start_search` action is wired compile-only as an enhancement
 /// (it owns the in-surface highlight), but the count/nav UX is computed HERE so it is fully unit-testable
 /// against an in-memory buffer (libghostty's search-result callbacks are not plumbed through the C
-/// `action_cb` yet — see ``TerminalFindBar``).
+/// `action_cb` yet — see ``SlopDeskMacUI/MacTerminalFindBar`` / ``SlopDeskPhoneUI/TerminalFindBarView``).
 ///
 /// ### Matching
 /// - **Literal** (default): a case-insensitive (or case-sensitive) substring scan, finding EVERY

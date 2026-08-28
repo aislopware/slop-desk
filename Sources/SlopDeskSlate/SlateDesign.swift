@@ -28,7 +28,8 @@
 //      sinks does not compete with the one thing that is meant to read as lifted, which is exactly
 //      what the many-islands pass got wrong.
 //   2. INSIDE THE ISLAND, SEPARATION IS A LINE. Panes tile the island edge-to-edge and are parted by
-//      the ``PaneDivider`` hairline. A channel of ground between panes would restate at pane level
+//      the pane-divider hairline (``SlopDeskMacUI/MacPaneDivider`` /
+//      ``SlopDeskPhoneUI/PaneDividerView``). A channel of ground between panes would restate at pane level
 //      the distinction the island already draws at window level — one lift, one vocabulary.
 //   3. CONCENTRIC GEOMETRY. Window 16 (the macOS Tahoe titlebar-only window radius), moat 8, island
 //      8: Apple's own concentricity rule (inner radius = outer radius − inset). The same 8 falls out
@@ -185,7 +186,7 @@ package struct SlateTheme: Equatable, Sendable {
 
     /// The per-channel MIDPOINT of two 24-bit RGB literals — integer arithmetic, so the derived
     /// tone is exact and reproducible (no float rounding to argue about). The one derivation the
-    /// profile does: ``terminalRim`` is the plate lifted halfway toward the on-glass comment ink.
+    /// profile does: ``terminalRimHex`` is the plate lifted halfway toward the on-glass comment ink.
     package static func mix(_ a: UInt32, _ b: UInt32) -> UInt32 {
         func channel(_ shift: UInt32) -> UInt32 {
             (((a >> shift) & 0xFF) + ((b >> shift) & 0xFF)) / 2
@@ -455,7 +456,7 @@ package enum Slate {
             #endif
             package static let card = divider
             package static let subtle = divider.slateScalingAlpha(Opacity.muted)
-            /// The INPUT plate's boundary — see ``slateFieldPlate()``. Its own token, and NOT
+            /// The INPUT plate's boundary — see ``SlateFieldPlateSurface``. Its own token, and NOT
             /// ``divider``: measured on the cream ground the separator lands at 1.25:1, which is a
             /// rule between two visible things, not an edge that can say where a field starts.
             package static let field = SlateNativeColor.slateDynamic(
@@ -912,7 +913,8 @@ package enum Slate {
     // earn its own named token rather than pick a system hue out of a drawer (2026-08-10).
 
     /// The per-project IDENTITY hue — a launch-stable colour per project, spent as the GROUND its
-    /// group stands on and nowhere else (``ProjectTint/wash(for:)``, ``SlateProjectIsland``).
+    /// group stands on and nowhere else (``ProjectTint/wash(for:)``, dealt onto the beds
+    /// ``SlopDeskMacUI/MacNavigatorColumn`` and ``SlateProjectIslandView`` stand their groups on).
     ///
     /// The earlier reading of this idea — the hue on the folder GLYPH — was rejected as ornament,
     /// and that verdict still holds: the folder in the group header stays monochrome. What was
@@ -1180,7 +1182,8 @@ package enum Slate {
         /// x-height so it reads as punctuation, not as a badge.
         package static let dot: CGFloat = 6
 
-        /// How far the island's transient chip stack (``IslandChipStack`` — copy receipt, notice,
+        /// How far the island's transient chip stack (``SlopDeskMacUI/MacIslandChipStack`` /
+        /// ``SlopDeskPhoneUI/IslandChipStackView`` — copy receipt, notice,
         /// connection indicator) stands off the island's FOOT. Two rungs of the scale, not one,
         /// because a chip is a floating cue over live text: at the window's old 16pt inset it sat on
         /// the island's bottom edge and covered the prompt line the user was typing on

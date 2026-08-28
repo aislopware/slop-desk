@@ -2,7 +2,8 @@ import SlopDeskWorkspaceModel
 
 // MARK: - Terminal-rooted external-drop ingress
 
-/// The `WorkspaceStore` entry point the external-drag actuator (the ``PaneDropReceiver``) calls to
+/// The `WorkspaceStore` entry point the external-drag actuator (``SlopDeskMacUI/MacPaneDropReceiver`` /
+/// ``SlopDeskPhoneUI/PaneDropReceiverView``) calls to
 /// land a dropped folder/file in a FRESH terminal — a new tab (the New-Tab zone) or a side split
 /// (Split-Left / Split-Right) — and then point that terminal at the dropped path.
 ///

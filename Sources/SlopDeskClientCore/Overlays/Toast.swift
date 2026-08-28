@@ -33,7 +33,7 @@ public struct Toast: Identifiable, Sendable, Equatable {
     /// host-path action that failed, the dropped-folder cwd advisory), which render as plain cards.
     public let paneKey: String?
     /// The HEADLINE override: the sentence-case event phrase that leads the card. `nil` ⇒ derived from
-    /// ``source`` + ``flavor`` + ``title`` by ``ToastStackView/headline(for:)`` ("Claude needs input",
+    /// ``source`` + ``flavor`` + ``title`` by ``ToastPresentation/headline(for:)`` ("Claude needs input",
     /// "make check failed"); a factory sets it explicitly when it knows a truer phrase than the derivation
     /// can reach (a reconnect verdict is "Session reattached", which no flavour+title suffix encodes).
     public let headline: String?

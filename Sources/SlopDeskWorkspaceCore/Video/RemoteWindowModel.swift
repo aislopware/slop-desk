@@ -645,12 +645,14 @@ public final class RemoteWindowModel {
 
     /// TRUE from the instant this pane is resized until the host re-captures at the new size and the first
     /// SHARP frame renders — the video analogue of ``TerminalViewModel/awaitingResizeReflow``. The pane
-    /// resize-scrim (``PaneContainer``) waits on it so the overlay BRIDGES the gap during which the Metal
+    /// resize-scrim (``SlopDeskMacUI/MacPaneContainer`` / ``SlopDeskPhoneUI/PaneContainerView``) waits on it
+    /// so the overlay BRIDGES the gap during which the Metal
     /// view shows the last frame STRETCHED/upscaled (blurry) before re-captured pixels arrive — instead of
     /// clearing on a fixed settle timer that uncovers the blur early. The live video pane drives it:
     /// ``noteResized()`` on a layout-size change (prompts the 1:1 host re-capture), ``noteRendered()`` on the
     /// first frame at the new native size. A safety timeout + ``close()`` clear it so it can never stick.
-    /// (The live-video pane mount is deferred — see ``PaneContainer`` — so this seam is test-exercised today.)
+    /// (The live-video pane mount is deferred — see the pane containers above — so this seam is
+    /// test-exercised today.)
     public private(set) var awaitingResizeReflow = false
 
     /// Belt-and-braces ceiling on ``awaitingResizeReflow`` (mirrors the terminal model): clears the scrim

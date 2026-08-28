@@ -212,7 +212,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     }
 
     /// GENERIC resize-scrim signal: TRUE while this pane's content has been resized but the fresh
-    /// (reflowed / re-captured) pixels have not yet rendered — so ``PaneContainer`` holds its resize
+    /// (reflowed / re-captured) pixels have not yet rendered — so the pane container
+    /// (``SlopDeskMacUI/MacPaneContainer`` / ``SlopDeskPhoneUI/PaneContainerView``) holds its resize
     /// overlay instead of clearing on a geometry settle timer. Kind-agnostic: a terminal pane reports its
     /// host-reflow wait (``TerminalViewModel/awaitingResizeReflow``), a remote-GUI pane its host-re-capture
     /// wait (``RemoteWindowModel/awaitingResizeReflow``); `false` when neither model is live. Observed, so
