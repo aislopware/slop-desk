@@ -41,26 +41,6 @@ final class HostedRasterTests: XCTestCase {
         assertChannels(pixel, r: 0x11, g: 0xAA, b: 0x33, what: "a bare UIView's fill")
     }
 
-    /// SwiftUI still rasterises through the same road — the carve-out means both spellings are live at
-    /// once, and a sheet must not care which side of it a tile came from.
-    func testHostedSwiftUIReachesTheBitmap() throws {
-        let image = HostedRaster.image(Color(slateHex: 0x2255CC), size: CGSize(width: 40, height: 40))
-        let pixel = try XCTUnwrap(image.slatePixel(atX: 20, y: 20), "the capture has a readable centre")
-        assertChannels(pixel, r: 0x22, g: 0x55, b: 0xCC, what: "a hosted SwiftUI fill")
-    }
-
-    /// ⚠️ THE ONE THAT MATTERS. `ImageRenderer` drew an unavailable placeholder here and reported
-    /// success; if this ever comes back as the ground tone instead of the tile's, the rig has silently
-    /// stopped photographing UIKit and every sheet in the bundle is lying.
-    func testRepresentableIsPhotographedNotPlaceheld() throws {
-        let image = HostedRaster.image(
-            SwatchRepresentable(color: UIColor(slateHex: 0xCC3311)),
-            size: CGSize(width: 40, height: 40),
-        )
-        let pixel = try XCTUnwrap(image.slatePixel(atX: 20, y: 20), "the capture has a readable centre")
-        assertChannels(pixel, r: 0xCC, g: 0x33, b: 0x11, what: "a UIViewRepresentable's fill")
-    }
-
     /// The ground is the authored cream, not the semantic system backdrop — the fixture-ground rule
     /// `SlateSnapshotRender`'s header states, checked rather than restated.
     func testTheGroundIsTheAuthoredCream() throws {
@@ -107,17 +87,4 @@ final class HostedRasterTests: XCTestCase {
         XCTAssertEqual(Int(pixel.b), Int(b), accuracy: 2, "\(what): blue", file: file, line: line)
         XCTAssertEqual(Int(pixel.a), 255, "\(what): opaque", file: file, line: line)
     }
-}
-
-/// A UIKit swatch reached through the bridge — the exact shape the old rasteriser refused to draw.
-private struct SwatchRepresentable: UIViewRepresentable {
-    let color: UIColor
-
-    func makeUIView(context _: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = color
-        return view
-    }
-
-    func updateUIView(_ view: UIView, context _: Context) { view.backgroundColor = color }
 }

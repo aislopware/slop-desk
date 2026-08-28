@@ -48,7 +48,6 @@
 //    divergent. Caps Lock stays out of it on both halves: it is a toggle, and re-forwarding it on
 //    every focus change would flip the remote's once per focus change.
 #if os(iOS)
-import CSlopDeskFFI
 import GameController
 import QuartzCore
 import SlopDeskVideoClient
@@ -69,9 +68,11 @@ import UIKit
 /// frame is still a drag), and cancelled touches LIFTED rather than forgotten.
 ///
 /// Deliberately NO `UIGestureRecognizer`s FOR TOUCH, which is a change from the local-only zoom/pan
-/// this surface used to have: recognizers arbitrate against each other and against the SwiftUI canvas
-/// above, and a recognizer that "fails" 300 ms after the finger lands is 300 ms of a click the user
-/// already made. Raw `touchesBegan`/`Moved`/`Ended`/`Cancelled`, exactly like the two sibling surfaces.
+/// this surface used to have: recognizers arbitrate against each other and against whatever the canvas
+/// above installs, and a recognizer that "fails" 300 ms after the finger lands is 300 ms of a click the
+/// user already made. Raw `touchesBegan`/`Moved`/`Ended`/`Cancelled`, exactly like the two sibling
+/// surfaces. The UIKit rebuild did not soften this: the canvas is now a `UIView` that hangs its own
+/// recognizers, so the arbitration this avoids is the same arbitration, minus one framework.
 ///
 /// The two recognizers that ARE installed are the exception that proves it: hover and trackpad scroll
 /// have no `UIView` callback at all — `UIHoverGestureRecognizer` and a pan with `allowedScrollTypesMask`
@@ -157,13 +158,14 @@ final class MetalLayerBackedView: UIView {
     /// the representable on every render.
     var inputEnabled: Bool = true
 
-    /// Make this pane the active pane — called on the first contact (the Mac's click-to-activate). The
-    /// phone's `PaneContainer` also carries an `onTapGesture` for this, but a UIKit surface that claims
-    /// the touch is exactly what stops that SwiftUI gesture from ever firing.
+    /// Make this pane the active pane — called on the first contact (the Mac's click-to-activate).
+    /// `PaneContainerView` also carries a tap recogniser for this, but a UIKit surface that claims the
+    /// touch is exactly what stops that recogniser from ever firing, so this call is the only one that
+    /// actually lands for a video pane.
     var onActivate: () -> Void = {}
 
-    /// Bridge to the SwiftUI control overlay (fit/fill toggle + zoom reset). Set by the
-    /// representable before `activate`.
+    /// Bridge to the control overlay (fit/fill toggle + zoom reset). Set by ``VideoSurfaceHost``
+    /// before `activate`.
     weak var controls: VideoPaneControls?
     /// 1:1 PANE SNAP (see the macOS sibling): ask the canvas pane to resize its video content from
     /// `current` to `target` points. Set by the representable BEFORE ``activate(connection:)``.
@@ -473,7 +475,7 @@ final class MetalLayerBackedView: UIView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         // ACTIVATE UNCONDITIONALLY: a read-only pane still takes workspace focus from a tap, exactly as
         // a click on a locked Mac pane does. It has to happen here — a UIKit surface that claims the
-        // touch is what stops the container's SwiftUI tap gesture from ever firing.
+        // touch is what stops the container's own tap recogniser from ever firing.
         onActivate()
         if !isActive, inputEnabled { pipeline.focusWindow() }
         claimKeyboardFocus()
@@ -1137,9 +1139,9 @@ final class MetalLayerBackedView: UIView {
     ///
     /// SCANCODE MODE, the rule the Mac's `keyDown` states: the layout-level keycode is what travels, so
     /// the HOST's layout and input method compose it — a pre-baked Unicode string is invisible to a
-    /// keycode-driven IME, and Vietnamese Telex would never form. UIKit dispatches `UIKeyCommand` and
-    /// SwiftUI `.keyboardShortcut` BEFORE `pressesBegan`, which reproduces the Mac's local-monitor
-    /// precedence for free: the workspace's own chords are taken first and never reach the desktop.
+    /// keycode-driven IME, and Vietnamese Telex would never form. UIKit dispatches `UIKeyCommand`
+    /// BEFORE `pressesBegan`, which reproduces the Mac's local-monitor precedence for free: the
+    /// workspace's own chords are taken first and never reach the desktop.
     private func forwardKeys(_ presses: Set<UIPress>, down: Bool) -> Bool {
         guard inputEnabled else { return false }
         var consumed = false
@@ -1231,9 +1233,9 @@ extension MetalLayerBackedView: UIGestureRecognizerDelegate {
     /// Both installed recognizers run ALONGSIDE everything else rather than arbitrating against it.
     ///
     /// Neither can take a contact away — a hover has none and the scroll pan is capped at zero of
-    /// them — so the only thing exclusivity could achieve here is cancelling the SwiftUI gestures the
-    /// canvas above puts on the pane, which is the failure this surface avoided by using raw touches
-    /// in the first place.
+    /// them — so the only thing exclusivity could achieve here is cancelling the recognizers the canvas
+    /// above puts on the pane, which is the failure this surface avoided by using raw touches in the
+    /// first place.
     func gestureRecognizer(
         _: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer,
     ) -> Bool {
