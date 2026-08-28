@@ -2924,7 +2924,7 @@ public final class WorkspaceStore {
         }
     }
 
-    /// Writes the live tree synchronously NOW (the scenePhase-background path — docs/22 §6), cancelling
+    /// Writes the live tree synchronously NOW (the app-backgrounding path — docs/22 §6), cancelling
     /// any in-flight debounced save first so the two never race. Best-effort: a thrown error is
     /// swallowed (the previous good file is kept). A no-op when no `persistence` is configured.
     public func saveImmediately() {
@@ -2965,7 +2965,7 @@ public final class WorkspaceStore {
         }
     }
 
-    /// Writes the cache synchronously NOW — the scenePhase-background path, and what
+    /// Writes the cache synchronously NOW — the app-backgrounding path, and what
     /// ``saveImmediately()`` folds in so quitting never loses the last `cd`.
     func saveDocumentCacheNow() {
         guard let documentCache else { return }

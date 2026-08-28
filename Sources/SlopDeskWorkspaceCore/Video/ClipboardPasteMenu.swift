@@ -21,7 +21,7 @@ public enum ClipboardPasteMenu {
     /// One row of the "Clipboard Ring" submenu — the full `text` to type (NEVER shown) plus a masked /
     /// truncated `label` for display. `index` is the ring position (0 = most recent), also the stable id.
     public struct Row: Equatable, Sendable, Identifiable {
-        /// Ring position (0 = most recent) — also the SwiftUI list identity.
+        /// Ring position (0 = most recent) — also the row's identity, which is what the ``id`` below returns.
         public let index: Int
         /// The full clip to replay as keystrokes. Never rendered — only handed to `pasteAsKeystrokes`.
         public let text: String
@@ -51,8 +51,8 @@ public enum ClipboardPasteMenu {
     /// The submenu rows for `ring` (most-recent-first, capped at `limit`) — each carries the full clip
     /// plus a display-safe preview. Empty `ring` ⇒ no rows (the view shows a disabled "No recent clips").
     ///
-    /// ONE crossing for the whole submenu: a door per row was the shape a SwiftUI `body` rebuild would
-    /// have paid for `limit` times.
+    /// ONE crossing for the whole submenu, not one per row. The submenu is rebuilt whole every time it is
+    /// about to open, so a door per row would charge `limit` crossings for a menu the user may not read.
     public static func rows(_ ring: [String], limit: Int = defaultRowLimit) -> [Row] {
         // The prefix is a marshalling economy — there is no point lending clips the door is about to
         // cut — not a second cap: `limit` is the SAME value the door applies, so the two cannot

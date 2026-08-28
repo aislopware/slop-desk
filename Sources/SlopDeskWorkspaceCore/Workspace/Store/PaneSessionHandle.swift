@@ -31,8 +31,8 @@ public struct PaneMaterialization: Sendable {
 ///
 /// This is the **test seam** the whole WF3 story turns on. It is deliberately *not* a protocol over
 /// the concrete `SlopDeskClient` `actor` (which has no seam — docs/22 §0): it is a tiny protocol the
-/// **store** depends on, so the store's session-lifecycle logic (materialize / teardown / scenePhase
-/// fan-out / video cap) can be exercised with a `FakePaneSession` that never opens a socket. The
+/// **store** depends on, so the store's session-lifecycle logic (materialize / teardown /
+/// app-lifecycle fan-out / video cap) can be exercised with a `FakePaneSession` that never opens a socket. The
 /// production conformer ``LivePaneSession`` wraps the proven per-session objects verbatim
 /// (one `ConnectionViewModel` + `TerminalViewModel` + `InputBarModel`, plus a latent inspector for a
 /// `.terminal` — opened dynamically when a `claude` is detected, W11 — or a `RemoteWindowModel` for

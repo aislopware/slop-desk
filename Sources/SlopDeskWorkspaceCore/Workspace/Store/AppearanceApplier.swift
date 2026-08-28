@@ -12,7 +12,7 @@
 @preconcurrency
 @MainActor
 public enum AppearanceApplier {
-    /// Registered by `SlopDeskClientUI`: returns the app's terminal-cell palette — the libghostty
+    /// Registered by the app target at launch: returns the app's terminal-cell palette — the libghostty
     /// `background`/`foreground` (6-hex, no `#`) plus the 16-entry ANSI `palette` and
     /// `selection-background`. ``PreferencesStore`` consults this when rebuilding the terminal config so
     /// the terminal CELLS adopt the same flat palette as the chrome (a flat, gradient-free design).

@@ -1093,8 +1093,8 @@ public enum WorkspaceBindingRegistry {
     private nonisolated static let glyphCapacity = 32
 
     /// The display glyph for `action`'s default binding, or `nil` when it has none. `public` so the
-    /// rebuilt ClientUI palette derives its row hints from the SAME registry the keyboard bank registers
-    /// (no drift).
+    /// rebuilt palette in each shell derives its row hints from the SAME registry the keyboard bank
+    /// registers (no drift).
     public nonisolated static func glyph(for action: WorkspaceAction) -> String? {
         guard let binding = binding(for: action) else { return nil }
         return binding.chord.map(glyph)
@@ -1109,7 +1109,7 @@ public enum WorkspaceBindingRegistry {
     /// its own "Select Pane" submenu and the palette catalog omits the digits, so this synthesized row is
     /// the only place the family surfaces in the cheat sheet. The SINGLE source the cheat sheet renders and
     /// the palette catalog iterates — so they cannot drift.
-    /// `public` so the rebuilt ClientUI cheat-sheet overlay generates its rows from this one table.
+    /// `public` so each shell's rebuilt cheat-sheet overlay generates its rows from this one table.
     public static var groupedForDisplay: [(category: WorkspaceAction.Category, bindings: [WorkspaceBinding])] {
         WorkspaceAction.Category.allCases.compactMap { category in
             var rows = bindings.filter { $0.category == category }

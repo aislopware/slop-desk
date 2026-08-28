@@ -98,7 +98,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// closes the socket it just built — defusing the "T builds a client after teardown" window. The
     /// detachment is load-bearing: `subscribeInspector()` ends in `await model.consume(...)`, which returns
     /// only when the stream closes, so it can NEVER be awaited inline by `resume()` (that would hang the
-    /// scenePhase foreground fan-out). Tracked + cancellable, not awaited.
+    /// app-foreground fan-out). Tracked + cancellable, not awaited.
     private var inspectorTask: Task<Void, Never>?
 
     /// The video model for a `.desktop` pane. `nil` for a terminal.
@@ -603,7 +603,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// iOS foreground. Fans to BOTH halves:
     /// - **connection**: `ConnectionViewModel.resume()` (byte-exact resume).
     /// - **inspector**: RE-OPENS a fresh client and re-subscribes from seq 0 (full re-tail). The
-    ///   re-subscribe runs detached so `resume()` returns promptly for the scenePhase fan-out; the
+    ///   re-subscribe runs detached so `resume()` returns promptly for the app-foreground fan-out; the
     ///   fold then proceeds in the background `subscribeInspector()` loop.
     public func resume() async {
         await connection?.resume()

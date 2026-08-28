@@ -1,6 +1,7 @@
 // L0: extracted from the deleted SwiftUI `PaneLeafView.swift`. `RemoteGUIDisplay` is the PURE
-// (SwiftUI- and store-free) display decision for a remote-GUI pane — live vs entry-form vs
-// cap-gated — unit-tested directly (LiveVideoCapTests). The rebuilt pane leaf (L6) reads it.
+// (view-framework- and store-free) display decision for a remote-GUI pane — live vs entry-form vs
+// cap-gated — unit-tested directly (LiveVideoCapTests). Both GUI leaves read it from inside their
+// tracked arm and then mount or unmount the surface off the answer.
 public enum RemoteGUIDisplay: Equatable {
     /// The live `RemoteWindowPanel` (admitted to a cap slot — its decode stack may run).
     case live
@@ -14,7 +15,7 @@ public enum RemoteGUIDisplay: Equatable {
     /// the unconfigured / free-slot `.entryForm`).
     case gated
 
-    /// The PURE display decision (BUG-A + F1) — free of any SwiftUI / store state so it is unit-tested
+    /// The PURE display decision (BUG-A + F1) — free of any view or store state so it is unit-tested
     /// directly:
     /// - `admitted` ⇒ `.live`;
     /// - else NOT configured ⇒ `.entryForm` (let the user dial in — never gate an unconfigured pane);

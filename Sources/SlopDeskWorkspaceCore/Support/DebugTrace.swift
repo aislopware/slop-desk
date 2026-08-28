@@ -15,7 +15,7 @@ import Foundation
 /// (an `OSLog` `.debug` line is not persisted, and reaching it means Console.app and a filter).
 ///
 /// It lives here rather than a level lower because its two homes are the workspace store and the
-/// client's views, and ClientUI already depends on this target. The VIDEO host's `SLOPDESK_AUDIO_DEBUG`
+/// client's views, and both UI shells already depend on this target. The VIDEO host's `SLOPDESK_AUDIO_DEBUG`
 /// / `SLOPDESK_VIDEO_DEBUG` tracers are deliberately NOT folded in: they are a separate PROCESS's now
 /// (`rust/slopdesk-videohostd`, docs/61), which shares no Swift target with this one at all, so there
 /// is nothing a shared leaf could carry them down to.

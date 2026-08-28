@@ -12,7 +12,7 @@ import SlopDeskClaudeCode
 ///   the box writes bytes to the PTY on submit (DelayedEnter) and the ring suppresses the
 ///   PTY's echo of those bytes.
 ///
-/// This shell adds only: SwiftUI-observable mirrors of the model state (`affordance`,
+/// This shell adds only: `@Observable` mirrors of the model state (`affordance`,
 /// `commandRunning`, `lastExitCode`), the bound `compose` text field, and the wiring to
 /// `SlopDeskClient.sendInput` (recording sent bytes into the dedup ring in B1). The byte-level
 /// dedup + mode tracking stay in `SlopDeskClaudeCode` — this never re-implements them.
@@ -23,7 +23,7 @@ public final class InputBarModel {
     /// The underlying logic model (not `@Observable` itself; we mirror its state here).
     private let box: InputBoxModel
 
-    /// The current affordance, mirrored for SwiftUI tracking.
+    /// The current affordance, mirrored so a tracked arm can register on it (``box`` is not `@Observable`).
     public private(set) var affordance: InputAffordance
     /// Whether a shell command appears to be running (A-mode block model).
     public private(set) var commandRunning: Bool = false

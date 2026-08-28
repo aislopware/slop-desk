@@ -3,7 +3,7 @@ import SlopDeskWorkspaceModel
 
 // Per-pane `@MainActor @Observable` LOGIC for one PATH-2 video stream (a whole display for a
 // `.desktop` pane; one host window on the automation seam): open/close, the latched pane modes,
-// and paste-as-keystrokes. No SwiftUI usage (a rebuilt view binds to it).
+// and paste-as-keystrokes. It names no view framework at all — each shell's GUI leaf binds to it.
 //
 // ── "THE LIVE VIDEO PANE" IS DELIBERATELY NOT A DOC LINK BELOW (docs/56 §3, the video carve) ──────
 // Eighteen doc comments in this file describe a sink that "the live video pane publishes". They used
@@ -724,13 +724,13 @@ public final class RemoteWindowModel {
         statsDecodeMs = nil
         windowPointSize = nil
         windowMaxPointSize = nil
-        // Drop every published sink HERE — the model's own lifecycle, not the view's dismantle. The old
-        // view's `deactivate()` deliberately publishes NOTHING (both halves — see the `deactivate()` on
-        // `MacVideoWindowView` and on the phone's `VideoWindowView`, which agree here): during a
-        // pane detach/reattach the SAME model is re-bound by a view in ANOTHER hosting root, and SwiftUI may
-        // dismantle the old view AFTER the new one published fresh sinks — an unconditional nil-publish
-        // there would silently kill the new surface's input. close() always precedes the re-open in store
-        // order, so clearing here is race-free.
+        // Drop every published sink HERE — the model's own lifecycle, not the view's teardown. The
+        // outgoing view's `deactivate()` deliberately publishes NOTHING (both halves — see the
+        // `deactivate()` on `MacMetalLayerBackedView` and on the phone's `MetalLayerBackedView`, which
+        // agree here, and both say so in their own comments): during a pane detach/reattach the SAME model
+        // is re-bound by a REPLACEMENT view, and the old view can be torn down AFTER the new one published
+        // fresh sinks — an unconditional nil-publish there would silently kill the new surface's input.
+        // close() always precedes the re-open in store order, so clearing here is race-free.
         keyInjector = nil
         resizeInjector = nil
         viewportInjector = nil

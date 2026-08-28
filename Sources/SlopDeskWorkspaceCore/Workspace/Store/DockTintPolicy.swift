@@ -4,7 +4,7 @@ import CSlopDeskFFI
 
 /// Whether the macOS Dock tile shows the red error tint. A tiny pure value (`Equatable`/`Sendable`) so the
 /// whole tint decision crosses the headless → AppKit boundary without an `NSDockTile` — the actuation lives
-/// in the macOS-only `DockProgressController` (`SlopDeskClientUI`), this is the decision it reads.
+/// in the macOS-only `DockProgressController` (`SlopDeskMacUI`), this is the decision it reads.
 public enum DockTint: Equatable, Sendable {
     /// No tint — the default Dock icon.
     case none

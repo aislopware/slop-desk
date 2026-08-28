@@ -15,12 +15,16 @@ import CoreGraphics
 /// without a window-server + TCC session in a test context. Instead the GUI app target registers a
 /// factory at launch and the canvas calls it, mounting nothing when none was registered.
 ///
-/// The view it registers is `SlopDeskVideoClientMac.MacVideoWindowView` or
-/// `SlopDeskVideoClientPhone.VideoWindowView` — there are TWO, one per shell. This comment named
-/// `SlopDeskVideoClient.VideoWindowView` until 2026-08-22, which was wrong in both halves: no view
-/// lives in `SlopDeskVideoClient` at all (it is the engine, views-free by a ratcheted rule), and the
-/// bare name belongs to the phone. The seam is unchanged by the split — that is the point of it
-/// being a seam.
+/// What it registers is `SlopDeskVideoClientMac.MacVideoSurfaceHost` or
+/// `SlopDeskVideoClientPhone.VideoSurfaceHost` — there are TWO, one per shell, and each is a mount
+/// over an `NS`/`UIView` that already owns the whole client pipeline. The seam is unchanged by that
+/// split, which is the point of it being a seam.
+///
+/// ⚠️ THIS NAMING HAS BEEN WRONG TWICE, so check it against the modules before trusting it. It said
+/// `SlopDeskVideoClient.VideoWindowView` until 2026-08-22 — wrong in both halves, since no view lives
+/// in `SlopDeskVideoClient` at all (it is the engine, views-free by a ratcheted rule). It then said
+/// `MacVideoWindowView` / `VideoWindowView`, which were the SwiftUI views the surface hosts above
+/// replaced; both are deleted.
 ///
 /// **Gated**: the GUI video path is secondary to the terminal path. A remote GUI window appears only
 /// when (a) the app injects a factory AND (b) the host is actively capturing a window.
@@ -408,7 +412,7 @@ public protocol RemoteSurfaceHosting: AnyObject {
 }
 
 /// One host-side window the Remote-Window PICKER lists (docs/31). The cross-platform mirror of the
-/// video protocol's `WindowSummary`, kept here so `SlopDeskClientUI` needn't depend on `SlopDeskVideoProtocol`.
+/// video protocol's `WindowSummary`, kept here so neither UI shell need depend on `SlopDeskVideoProtocol`.
 /// `Identifiable` (by `windowID`) so a diffable data source can key rows on it without the picker
 /// inventing a second identity. The conformance is stdlib, not SwiftUI — it outlived the `ForEach`
 /// it was originally added for.
@@ -457,7 +461,7 @@ public final class RemoteWindowDiscovery {
 }
 
 /// One host-side DISPLAY the desktop pane's display-switcher lists. The cross-platform mirror of the
-/// video protocol's `DisplaySummary` (kept here so `SlopDeskClientUI` needn't depend on
+/// video protocol's `DisplaySummary` (kept here so neither UI shell need depend on
 /// `SlopDeskVideoProtocol`). `Identifiable` (by `displayID`) so a diffable data source can key on it.
 public struct RemoteDisplaySummary: Sendable, Equatable, Identifiable {
     public var displayID: UInt32
@@ -495,7 +499,7 @@ public final class RemoteDisplayDiscovery {
         -> [RemoteDisplaySummary])?
 }
 
-// SEAM SPLIT: the headless `SlopDeskWorkspaceCore` carries no SwiftUI `RemoteWindowPlaceholderView` body —
+// SEAM SPLIT: the headless `SlopDeskWorkspaceCore` carries no placeholder view of its own —
 // each UI shell provides its own real placeholder body; the app target injects the production video view
 // (`MacVideoWindowView` on the Mac, `VideoWindowView` on the phone) via `VideoWindowFactory`.
 #endif

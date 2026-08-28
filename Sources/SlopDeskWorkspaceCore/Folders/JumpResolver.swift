@@ -5,7 +5,7 @@ import SlopDeskArena
 // `slopdesk jump` path resolution — the Swift face of `rust/slopdesk-workspace`'s `jump`.
 //
 // The headless core of the `jump [query]` / `--no-cd` command (see `docs/ui-shell/spec/reference__cli.md`):
-// resolve a target directory over the client's frecency database. No I/O, no store, no socket, no SwiftUI —
+// resolve a target directory over the client's frecency database. No I/O, no store, no socket, no view —
 // the running app's `WorkspaceControlBackend` feeds it the frecency entries + the focused pane's cached
 // OSC-7 cwd + the `$HOME` path + the persisted last-jump-source, then applies the result (sends
 // `cd <path>` VERBATIM unless `--no-cd`). Unit-tested in isolation (`JumpResolverTests`).

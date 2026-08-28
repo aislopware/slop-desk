@@ -2,7 +2,7 @@ import Foundation
 import SlopDeskWorkspaceModel
 
 // The HOST-WINDOWS rail's cross-platform data layer (docs/45): the mirror record + seam (the
-// `RemoteWindowSummary`/`RemoteWindowDiscovery` pattern — SlopDeskClientUI never imports the gated
+// `RemoteWindowSummary`/`RemoteWindowDiscovery` pattern — neither UI shell imports the gated
 // video module) and the ONE `@Observable` feed store + renewal loop.
 //
 // PUBLICATION DISCIPLINE (docs/45 §7, the leafIdentity 3-part rule's data side): the STRUCTURAL
@@ -11,7 +11,7 @@ import SlopDeskWorkspaceModel
 // An unchanged snapshot publishes nothing, so a feed tick can never invalidate a video pane.
 
 /// One host window as the rail/pickers see it — the cross-platform mirror of the wire
-/// `HostWindowRecord` (kept here so `SlopDeskClientUI` needn't depend on `SlopDeskVideoProtocol`).
+/// `HostWindowRecord` (kept here so neither UI shell need depend on `SlopDeskVideoProtocol`).
 public struct HostWindowInfo: Equatable, Sendable, Identifiable {
     public var windowID: UInt32
     public var bundleID: String
@@ -142,8 +142,8 @@ public struct HostWindowState: Equatable, Sendable {
 
 /// The ONE host-windows feed store + renewal loop (docs/45 §6–7): `@Observable` for the rail +
 /// Open Quickly, lifecycle-gated by injected closures (the `ClipboardMonitor` shape — the OWNER
-/// spawns/cancels the `run()` task; gating is explicit, never `.task`-based, because SwiftUI
-/// teardown across an AppKit collapse is not a contract).
+/// spawns/cancels the `run()` task; gating is EXPLICIT and never tied to a view's lifetime, because a
+/// rail that collapses is not the same event as a feed that should stop renewing).
 @preconcurrency
 @MainActor
 @Observable

@@ -281,9 +281,11 @@ public final class ConnectionViewModel {
         let port = t.port
 
         // Flip to `.connecting` SYNCHRONOUSLY — before the first `await` (teardown) — so a re-entrant
-        // caller (the lazy connect-on-appear `.task` SwiftUI cancels + restarts during the initial canvas
-        // layout settle) observes `.connecting` and does NOT double-dial a second client onto this pane
-        // while it is still standing up its mux channel.
+        // caller observes `.connecting` and does NOT double-dial a second client onto this pane while it
+        // is still standing up its mux channel. The re-entrant caller is real: the leaf's dial is a
+        // cancel-and-restart `Task` keyed by `TerminalLeafPolicy.dialTaskKey`, and the leaf's own
+        // detach/attach (a split re-parent) plus a key move can both restart it while the first dial is
+        // still in flight.
         status = .connecting
         // Tear down any prior session first (re-connect to a new target).
         await teardown()
@@ -406,17 +408,21 @@ public final class ConnectionViewModel {
         let supervisor = manager.start(host: host, port: port)
         supervisorTask = supervisor
         do {
-            // CANCELLATION SHIELD (canvas auto-connect bug): the lazy connect-on-appear runs inside
-            // SwiftUI's `.task`, which SwiftUI CANCELS + restarts when the leaf view churns during the
-            // initial canvas layout settle. `SlopDeskClient.connect()` re-checks `Task.isCancelled` AFTER
-            // acquiring its mux channel and, if set, tears that channel back down — closing the shared
-            // connection mid-handshake while we still flip to `.connected` below (a live-looking but DEAD
-            // socket: the host attaches a shell, the link drops, no `.disconnected` is observed, so no
-            // reconnect fires). The connection lives in the store registry, not the view, so it must
-            // outlive a view-`.task` cancellation. Establish it in an unstructured `Task` (which does NOT
-            // inherit the caller's cancellation); awaiting `.value` still propagates a real connect
-            // error/timeout, but `Task.isCancelled` inside is now always false. Our own generation +
-            // `self.client === client` guards below remain the authority on supersession.
+            // CANCELLATION SHIELD (canvas auto-connect bug): the lazy connect-on-remount runs inside a
+            // Task the LEAF owns, which it CANCELS and restarts whenever its dial key moves or it leaves
+            // the view tree — a split re-parent during the initial layout settle does exactly that.
+            // `SlopDeskClient.connect()` re-checks `Task.isCancelled` AFTER acquiring its mux channel and,
+            // if set, tears that channel back down — closing the shared connection mid-handshake while we
+            // still flip to `.connected` below (a live-looking but DEAD socket: the host attaches a shell,
+            // the link drops, no `.disconnected` is observed, so no reconnect fires). The connection lives
+            // in the store registry, not the leaf, so it must outlive the leaf's cancellation. Establish it
+            // in an unstructured `Task` (which does NOT inherit the caller's cancellation); awaiting
+            // `.value` still propagates a real connect error/timeout, but `Task.isCancelled` inside is now
+            // always false.
+            //
+            // ⚠️ THE APPKIT/UIKIT REBUILD DID NOT RETIRE THIS. The cancellation used to be SwiftUI's — a
+            // `.task(id:)` torn down with the body that declared it — and it is now the leaf's own
+            // `dialTask?.cancel()`. Same edge, same hazard, one fewer framework in the story.
             try await Task { @MainActor in
                 await client.setInitialCwd(initialCwd)
                 try await client.connect(host: host, port: port)
@@ -455,24 +461,24 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// The LAZY connect-on-appear entry point — a pane's SwiftUI `.task(id:)` action, which SwiftUI
-    /// RE-FIRES on every view MOUNT, including a mere pane REMOUNT: switching TABS unmounts the inactive
-    /// tab's pane subtree and remounts it on return, so `.task` restarts even though the live session never
-    /// changed. Unlike ``connect()`` — which deliberately TEARS DOWN the session and wipes the terminal
+    /// The LAZY connect-on-remount entry point — the body of the leaf's dial `Task`, which the leaf
+    /// cancels and restarts whenever `TerminalLeafPolicy.dialTaskKey` moves or the leaf leaves and rejoins
+    /// the view tree. That happens on a split re-parent and on a pane whose session was swapped, with the
+    /// live session unchanged. Unlike ``connect()`` — which deliberately TEARS DOWN the session and wipes the terminal
     /// replay ring to dial a (possibly new) target — this MUST be IDEMPOTENT: a healthy or in-flight
     /// channel is left untouched, so the retained ``TerminalViewModel/ring`` survives the remount and
     /// ``TerminalViewModel/attachSurface(_:)`` can repaint the prior screen. Only a genuinely idle/dead
     /// channel dials. `.reconnecting` is owned by the supervisor (its backoff campaign is mid-flight), so
     /// it is left alone too — a remount must not short-circuit it.
     ///
-    /// Regression guard: calling ``connect()`` unconditionally from the leaf's `.task` on every remount
-    /// would tear down a healthy session on every tab switch — `terminal.reset()` empties the ring, so the
+    /// Regression guard: calling ``connect()`` unconditionally from the leaf's dial task on every restart
+    /// would tear down a healthy session — `terminal.reset()` empties the ring, so the
     /// pane comes back blank and re-dials a fresh host shell, losing all scrollback history. The explicit
     /// reconnect paths ("Reconnect Pane", the connect-gate) still call ``connect()`` directly, so their
     /// force-redial semantics are unaffected.
     public func connectIfNeeded() async {
         // A pane the HOST REAPED is not an idle channel waiting to be woken. Both AUTOMATIC dial
-        // paths land here — the leaf's connect-on-remount `.task` and
+        // paths land here — the leaf's dial task and
         // ``WorkspaceStore/redialDisconnectedPanes()`` — and the status they would act on is
         // `.disconnected`, which is exactly the arm that dials. Gating on the reason, not on the
         // status, is what keeps a re-dial from slipping in behind the document diff.

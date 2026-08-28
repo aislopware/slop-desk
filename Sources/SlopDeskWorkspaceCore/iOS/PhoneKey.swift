@@ -10,7 +10,7 @@ import UIKit
 // 0x03, not the letter c — and some are the visible half of a composition that has not finished yet.
 // So every press is asked one question first, proxy or encoder, and the ones that answer "encoder"
 // are turned into bytes and written straight to the pane; the rest are passed on down the responder
-// chain for UIKit's own text input to compose. `SlopDeskClientUI.TerminalInputHost` is the caller.
+// chain for UIKit's own text input to compose. `SlopDeskPhoneUI.TerminalInputHostView` is the caller.
 //
 // The rules are `slopdesk_workspace::phone_key`. What is here is the vocabulary the responder builds
 // a press in, and the marshalling. Nothing about BYTES decides anything: which keys are special at
