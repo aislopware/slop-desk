@@ -1069,6 +1069,14 @@ touched the pill, so it now lives in `Tests/SlopDeskWorkspaceCoreTests/RemoteWin
 where `swift test` runs it on every gate instead of only this one. Every later stage in this document
 runs this gate for the same reason stage A did.
 
+One of those six was only PART photograph. `SidebarAutoHideWiringTests` also pinned the auto-hide
+seam, whose subject is not a view and did not go with them: the arbitration is
+`slopdesk_settings::chrome`, tested in Rust, and the Swift half — the marshalling into
+`CSidebarState` and the guarded write-back — is pinned by
+`Tests/SlopDeskClientCoreTests/ChromeAutoHideTests.swift`, written when the suite was deleted. Neither
+re-asserts the other's half; a Swift copy of Rust's arbitration would be the cross-language mirror the
+one-implementation rule bars.
+
 **Un-landable if:** the scene configuration cannot be supplied without an
 `Info.plist`/`project.yml` change that XcodeGen regenerates away. `project.yml` is the SSOT (`:2-4`),
 so the key goes there.

@@ -1,16 +1,19 @@
-// MacVideoLayerRepresentable — the `NSViewRepresentable` that mounts the Metal surface into SwiftUI,
-// plus the env-gated view-layer probe (docs/56 §3, the video carve).
+// MacVideoLayerView — the builder/binder for the Metal surface's AppKit mount, plus the
+// env-gated view-layer probe (docs/56 §3, the video carve).
 //
-// `build()` and `apply(to:)` are deliberately callable WITHOUT a SwiftUI `Context`, because
-// `MacVideoSurfaceHost` mounts the same view into an AppKit canvas and drives it through exactly these
-// two methods. Mount-time wiring and per-render wiring are each written once; the alternative is an
-// AppKit half that re-derives which sinks are published before `activate` and which after, and is
-// right by luck until someone adds the next sink.
+// It used to be `NSViewRepresentable`, and `build()`/`apply(to:)` were its `makeNSView`/`updateNSView`
+// bodies, factored out so they were callable WITHOUT a SwiftUI `Context` — `MacVideoSurfaceHost` mounted
+// the same view into an AppKit canvas and drove it through exactly those two methods, so mount-time
+// wiring and per-render wiring were each written once rather than twice. The `NSViewRepresentable`
+// conformance is gone (SwiftUI removal), and the reason for factoring `build()`/`apply(to:)` out of a
+// lifecycle protocol survives unchanged: `MacVideoSurfaceHost` is still the ONLY caller of either, and
+// still needs the mount-time pass and the per-render pass kept as two named calls rather than inlined
+// into one — the alternative is an AppKit half that re-derives which sinks are published before
+// `activate` and which after, and is right by luck until someone adds the next sink.
 
 import AppKit
 import Foundation
 import SlopDeskVideoClient
-import SwiftUI
 
 /// Env-gated (`SLOPDESK_VIDEO_DEBUG`) stderr diagnostics for the remote-GUI VIEW layer (scroll routing +
 /// isActive delivery) — the BUG-2 ground-truth probe: logging both distinguishes a stale/sticky
@@ -25,8 +28,18 @@ func videoViewDbg(_ message: @autoclosure () -> String) {
     FileHandle.standardError.write(Data("SlopDesk[video.client.view]: \(message())\n".utf8))
 }
 
-/// `NSViewRepresentable` host backing the `CAMetalLayer` + cursor overlay on macOS.
-struct MacVideoLayerView: NSViewRepresentable {
+/// The builder/binder for the `CAMetalLayer` + cursor overlay view on macOS. Not a view itself — see
+/// ``build()``/``apply(to:)``, its only two members that do anything; everything else is the value this
+/// pane is described by.
+///
+/// `@MainActor` is WRITTEN here because it used to be INHERITED. `NSViewRepresentable` is a
+/// main-actor protocol, so `makeNSView`/`updateNSView` were isolated by conformance and the two
+/// bodies could touch `NSView` freely; dropping the conformance dropped the isolation with it and
+/// left 130 warnings for the same one mistake — a nonisolated struct assigning main-actor properties
+/// on a view. The annotation is not a silencer: every member below either builds an `NSView` or
+/// writes to one, so main-actor is the only isolation this type can correctly have.
+@MainActor
+struct MacVideoLayerView {
     let connection: VideoWindowConnection?
     var controls: MacVideoPaneControls?
     /// The bound remote app's display name (empty = desktop pane / unknown) — the smart-zoom
@@ -57,19 +70,9 @@ struct MacVideoLayerView: NSViewRepresentable {
     var onStreamStallChanged: ((Bool) -> Void)?
     var onSessionRejected: (() -> Void)?
 
-    func makeNSView(context _: Context) -> MacMetalLayerBackedView { build() }
-
-    func updateNSView(_ nsView: MacMetalLayerBackedView, context _: Context) { apply(to: nsView) }
-
-    static func dismantleNSView(_ nsView: MacMetalLayerBackedView, coordinator _: ()) {
-        nsView.deactivate()
-    }
-
-    /// The `makeNSView` body, callable WITHOUT a SwiftUI `Context` (neither this nor ``apply(to:)`` ever
-    /// read one). ``MacVideoSurfaceHost`` mounts the same view into an AppKit canvas and drives it through
-    /// these two methods, so the mount-time wiring and the per-render wiring are each written once — the
-    /// alternative is an AppKit half that re-derives which sinks are published before `activate` and which
-    /// after, and is right by luck until someone adds the next sink.
+    /// Builds and mounts a fresh `MacMetalLayerBackedView` — the AppKit spelling of a `makeNSView` body.
+    /// See the file header for why it stays a named, standalone call rather than being inlined into
+    /// ``MacVideoSurfaceHost/init(_:)``.
     func build() -> MacMetalLayerBackedView {
         let view = MacMetalLayerBackedView()
         view.controls = controls
@@ -128,17 +131,20 @@ struct MacVideoLayerView: NSViewRepresentable {
         // `pipeline.key` no-ops until the session is up). Host input — seam binds nil while read-only.
         view.onSystemKeyInjectorReady = onSystemKeyInjectorReady
         view.publishSystemKeyInjector()
-        // BUG-2 probe: a recreate (makeNSView) on focus change — vs an in-place updateNSView — would reset
-        // isActive to its `true` default mid-stream; logging it distinguishes "stale Bool" from "recreate".
-        videoViewDbg("makeNSView (CREATED) isActive=\(isActive)")
+        // BUG-2 probe: a recreate (``build()``) on focus change — vs an in-place ``apply(to:)`` — would
+        // reset isActive to its `true` default mid-stream; logging it distinguishes "stale Bool" from
+        // "recreate".
+        videoViewDbg("build (CREATED) isActive=\(isActive)")
         return view
     }
 
-    /// The `updateNSView` body, callable without a `Context` — see ``build()``.
+    /// Re-binds an already-mounted `MacMetalLayerBackedView` to this call's values — the AppKit
+    /// spelling of an `updateNSView` body. ``MacVideoSurfaceHost/setPaneGates(isActive:inputEnabled:backgroundPointer:)``
+    /// is its only caller now that there is no SwiftUI render pass to invoke it automatically.
     func apply(to nsView: MacMetalLayerBackedView) {
         nsView.controls = controls
         nsView.targetAppName = targetAppName
-        if nsView.isActive != isActive { videoViewDbg("updateNSView isActive \(nsView.isActive)→\(isActive)") }
+        if nsView.isActive != isActive { videoViewDbg("apply isActive \(nsView.isActive)→\(isActive)") }
         nsView.isActive = isActive
         // READ-ONLY INPUT GATE: apply the current gate every render. On a FLIP, re-publish the
         // paste-as-keystrokes sink so the seam's `onKeyInjectorReady` (which binds a nil sink while read-only)

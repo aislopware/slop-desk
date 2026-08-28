@@ -1,62 +1,87 @@
-// MacVideoPaneView — the SwiftUI entry point of the Mac's remote-GUI pane, and the control bridge
-// + swipe-peel chip that ride with it (docs/56 §3, the video carve).
+// MacVideoPaneView — the AppKit spec bag for one remote-GUI pane, and the control bridge + swipe-peel
+// chip that ride with it (docs/56 §3, the video carve).
 //
 // THIS FILE IS ONE HALF OF A DELIBERATE DUPLICATION. Its phone twin is
 // `SlopDeskVideoClientPhone/VideoPaneView.swift`, and the two are not meant to converge: the
 // user's standing directive is two separate implementations, and docs/56 §3 draws the line this
 // obeys — LAYOUT diverges, CAPABILITY does not. What is duplicated here is arrangement (a closure
-// list, an ObservableObject's fields, a chip's geometry). What is NOT duplicated, and must never be,
+// list, a controls object's fields, a chip's geometry). What is NOT duplicated, and must never be,
 // is a RULE: `SwipePeelPlanner`, `ViewportZoom`, `ViewportPan`, `PinchZeroPolicy` and every other
 // decision live once in `SlopDeskVideoClient`, most of them already in Rust behind the FFI.
 //
 // The seam contract — which sinks this half accepts — is ratcheted against the phone's in
 // `rust/slopdesk-invariants`, so a sink wired here and forgotten there fails `just lint` rather
 // than shipping as a feature that works on one platform.
+//
+// SwiftUI removal (this campaign): `MacVideoWindowView` — a SwiftUI `View` whose `body` built exactly
+// one thing (``MacVideoLayerView`` filling the pane + the swipe-peel `.overlay`) — is gone.
+// `MacVideoSurfaceHost.init` never read that `body`; it read `pane.connection`, `pane.title`,
+// `pane.isActive` and the ~20 `on…Ready` callbacks off the value itself. ``MacVideoPaneSpec`` below is
+// what is left once the `View` conformance is subtracted: the same stored properties, no `body`, no
+// `@StateObject`. The swipe-peel chip (`MacSwipePeelOverlay`/`MacSwipePeelChipView`, SwiftUI `View`s
+// hosted over the Metal surface through an `NSHostingView`) is gone too, replaced by the plain
+// `NSView`s at the bottom of this file — their headers explain how the hit-test-transparency bugfix
+// that used to live on the HOSTING view now lives on the content view instead, since there is only one
+// view left to get it right on.
 
-import CSlopDeskFFI
+import AppKit
 import QuartzCore
 import SlopDeskVideoClient
 import SlopDeskVideoProtocol
-import SwiftUI
 
-/// Bridges the SwiftUI overlay to the backing view's pipeline. Deliberately a SwiftUI overlay — NOT
-/// AppKit/UIKit subviews of the Metal view: subviews + gesture recognizers on the layer-backed Metal
-/// view perturbed its geometry and swallowed the `mouseUp` of a trackpad three-finger-drag (→ a stuck
-/// remote button).
+/// Bridges the AppKit chrome to the backing view's pipeline — the control bridge `MacVideoSurfaceHost`
+/// owns for the pane's lifetime and the Metal view publishes into.
+///
+/// It used to be a SwiftUI `ObservableObject`. It is a plain class now because `ObservableObject` /
+/// `@Published` exist to trigger a SwiftUI re-render, and this pane has had no SwiftUI observer to
+/// trigger since the swipe-peel chip became an `NSView` (below) — `MacVideoSurfaceHost` is the only
+/// mount left, and it is AppKit start to finish. `swipePeel` keeps a `didSet` push instead: the AppKit
+/// spelling of the same "something downstream needs to react to this" fact, aimed at exactly the one
+/// observer (``MacSwipePeelOverlayView``) that has one. `mode` and `zoomed` stay plain stored
+/// properties — nothing outside this module ever read them even in the SwiftUI shape (grepped clean),
+/// so there is no observer to wire a push to.
 ///
 /// It used to advertise a "fit/fill toggle", and there was never anything on the other end: the
 /// closure was declared on both halves, assigned on one, and INVOKED by nothing. Fit is reachable —
 /// through the `ViewportCommand` byte, like every other footer verb — and fill is reachable from
 /// neither platform. The dead closure is gone; adding fill for real means a new command case and an
 /// arm in each `handleViewportCommand`, which is a feature rather than a repair.
-@preconcurrency
 @MainActor
-public final class MacVideoPaneControls: ObservableObject {
-    @Published public var mode: VideoContentMode = .fit
-    @Published public var zoomed: Bool = false
-    /// SWIPE-PEEL chip (doc 05 §8): the live swipe-nav feedback state the SwiftUI overlay
-    /// renders (`nil` = hidden). Published by the macOS backing view's ``SwipePeelPlanner``
-    /// mirror, already quantized so the 120 Hz gesture stream re-renders the chip at most a
-    /// few dozen times per gesture. Never set on iOS (no trackpad scroll phases).
-    @Published public var swipePeel: SwipePeelChipState?
+public final class MacVideoPaneControls {
+    public var mode: VideoContentMode = .fit
+    public var zoomed: Bool = false
+    /// SWIPE-PEEL chip (doc 05 §8): the live swipe-nav feedback state (`nil` = hidden). Set by the
+    /// macOS backing view's ``SwipePeelPlanner`` mirror, already quantized so the 120 Hz gesture stream
+    /// pushes at most a few dozen times per gesture. Never set on iOS (no trackpad scroll phases).
+    public var swipePeel: SwipePeelChipState? {
+        didSet {
+            guard swipePeel != oldValue else { return }
+            onSwipePeelChanged?(swipePeel)
+        }
+    }
+
+    /// Fired on every ``swipePeel`` change — the AppKit twin of what a `@Published` property's
+    /// projected publisher gave a SwiftUI `.overlay` for free. Wired by whichever view is currently
+    /// showing the chip (``MacVideoSurfaceHost``, the only mount left); `nil` before that wiring runs
+    /// and after teardown.
+    public var onSwipePeelChanged: ((SwipePeelChipState?) -> Void)?
     var onResetZoom: () -> Void = {}
     public init() {}
 }
 
-/// A SwiftUI view that hosts the `CAMetalLayer` + cursor overlay for one remote GUI
-/// window (doc 17 §3 PATH 2). It owns the Metal layer/view, builds the
-/// ``MetalVideoRenderer`` + ``ClientCursorCompositor`` + ``SlopDeskVideoClientSession``,
-/// starts the orchestrator on appear and stops it on disappear, drives the decoded-
-/// frame → renderer path through the ``FramePacer`` display link, and forwards input.
+/// A plain value describing one remote-GUI pane (doc 17 §3 PATH 2) — everything ``MacVideoSurfaceHost``
+/// needs to build the `CAMetalLayer` + cursor overlay mount, and nothing else.
 ///
-/// Each layout pass it computes `videoScale = layerSize / decodedFrameSize` and feeds
+/// Each layout pass the mount computes `videoScale = layerSize / decodedFrameSize` and feeds
 /// it to ``ClientCursorCompositor`` (via the session) so the composited cursor lands
 /// on the right pixel.
 ///
-/// ⚠️ **GUI-ONLY:** instantiating the renderer / decoder / display link / sockets
-/// needs a real device + screen + TCC. COMPILED + reviewed; not driven from tests.
-/// This is the wiring point `SlopDeskClientUI` injects via `VideoWindowFactory`.
-public struct MacVideoWindowView: View {
+/// ⚠️ **GUI-ONLY:** the properties below feed a live decode pipeline (Metal/VideoToolbox/sockets) once
+/// handed to ``MacVideoSurfaceHost``. This type itself is inert data — building one commits to nothing
+/// until it is passed to that initializer. `MacVideoSurfaceHost` is COMPILED + reviewed; not driven
+/// from tests (instantiating the renderer / decoder / display link / sockets needs a real device +
+/// screen + TCC). This is the wiring point `SlopDeskClientUI` injects via `VideoWindowFactory`.
+public struct MacVideoPaneSpec {
     /// The remote window's title, shown for accessibility.
     public let title: String
     /// The remote window's APP display name ("Xcode"/"Google Chrome" — the picker's
@@ -164,7 +189,7 @@ public struct MacVideoWindowView: View {
     /// canvas wired it (the pane just stays down).
     let onSessionRejected: (() -> Void)?
 
-    /// The existing seam signature (title-only): renders the Metal-backed view chrome
+    /// The existing seam signature (title-only): describes the Metal-backed view chrome
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
     public init(title: String) {
         self.title = title
@@ -192,7 +217,7 @@ public struct MacVideoWindowView: View {
         onSessionRejected = nil
     }
 
-    /// Live remote-window view: brings up the orchestrator against `connection`. `isActive` /
+    /// Live remote-window spec: brings up the orchestrator against `connection`. `isActive` /
     /// `onActivate` / `onCanvasScroll` carry the canvas pane behaviour (active-only pointer + click-to-
     /// activate + ⌥-scroll-to-pan); they default to the standalone (always-active) values.
     public init(
@@ -249,121 +274,184 @@ public struct MacVideoWindowView: View {
         self.onStreamStallChanged = onStreamStallChanged
         self.onSessionRejected = onSessionRejected
     }
-
-    /// Owns the control bridge for this view's lifetime; the backing view wires its closures.
-    @StateObject private var controls = MacVideoPaneControls()
-
-    public var body: some View {
-        // FILL THE PANE. Without this frame the bare representable claims no space → it shrinks to a small
-        // island and clicks across the rest of the pane miss it. Mirrors the terminal seam. No control
-        // overlay: the ACTUAL-SIZE viewport auto-anchors to the window top-left and edge-pan navigates.
-        MacVideoLayerView(
-            connection: connection,
-            controls: controls,
-            targetAppName: targetAppName,
-            isActive: isActive,
-            inputEnabled: inputEnabled,
-            backgroundPointer: backgroundPointer,
-            onActivate: onActivate,
-            onCanvasScroll: onCanvasScroll,
-            onStreamNativeSize: onStreamNativeSize,
-            onKeyInjectorReady: onKeyInjectorReady,
-            onResizeInjectorReady: onResizeInjectorReady,
-            onViewportInjectorReady: onViewportInjectorReady,
-            onInputReleaseReady: onInputReleaseReady,
-            onWindowGeometryReady: onWindowGeometryReady,
-            onStreamCadenceReady: onStreamCadenceReady,
-            onStreamBitrateReady: onStreamBitrateReady,
-            onNetworkStatsReady: onNetworkStatsReady,
-            onStreamSettingsInjectorReady: onStreamSettingsInjectorReady,
-            onAudioInjectorReady: onAudioInjectorReady,
-            onPrivacyInjectorReady: onPrivacyInjectorReady,
-            onSystemKeyInjectorReady: onSystemKeyInjectorReady,
-            onStreamStallChanged: onStreamStallChanged,
-            onSessionRejected: onSessionRejected,
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay { MacSwipePeelOverlay(controls: controls) }
-        .accessibilityLabel(Text("Remote GUI window: \(title)"))
-    }
 }
 
-/// SWIPE-PEEL feedback chip (doc 05 §8) — a SwiftUI overlay, NEVER an NSView subview of the Metal view
-/// (the rule at ``MacVideoPaneControls``: subviews + gesture recognizers on the layer-backed Metal view
+/// SWIPE-PEEL feedback chip (doc 05 §8) — an `NSView`, NEVER a subview of the Metal view itself (the
+/// rule at ``MacVideoPaneControls``: subviews + gesture recognizers on the layer-backed Metal view
 /// perturbed its geometry and swallowed the `mouseUp` of a trackpad three-finger-drag → a stuck remote
 /// button). Flat fills only — no material/blur over the `CAMetalLayer`.
 ///
-/// Its own view because the pane has TWO mounts now: ``MacVideoWindowView`` (SwiftUI, and iOS's only shape)
-/// and ``MacVideoSurfaceHost`` (AppKit, over a hit-transparent hosting view). The chip's placement rule is
-/// small enough to be tempting to re-type on the second mount, and re-typing it is how the two panes stop
-/// agreeing about which EDGE a forward peel lives on.
-struct MacSwipePeelOverlay: View {
-    @ObservedObject var controls: MacVideoPaneControls
+/// It used to be `MacSwipePeelOverlay`, a SwiftUI `View` mounted through an `NSHostingView`
+/// (`PeelOverlayHostingView`) — TWO objects, because SwiftUI content cannot itself answer AppKit's
+/// `hitTest`, only its own `.allowsHitTesting`, which is invisible to the responder chain that actually
+/// walks the hosting view. Now there is one object, and it answers `hitTest` itself: see below.
+final class MacSwipePeelOverlayView: NSView {
+    private let chip = MacSwipePeelChipView()
+    /// Matches the SwiftUI chip's `.padding(.horizontal, 14)` from its aligned edge.
+    private static let edgeInset: CGFloat = 14
+    private static let chipSize: CGFloat = 36
+    /// Matches the SwiftUI overlay's `.animation(.timingCurve(0, 0, 0.58, 1, duration: 0.15), value:)`
+    /// — the one curve every property change (appear/disappear, scale, offset, opacity) rode.
+    private static let transitionDuration: CFTimeInterval = 0.15
+    private static let transitionCurve = CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1)
 
-    var body: some View {
-        // The edge alignment lives INSIDE the conditional content so the removal transition keeps the chip
-        // on ITS edge — an outer `alignment:` recomputed from nil would yank a fading forward-chip across
-        // to the leading edge.
-        ZStack {
-            if let peel = controls.swipePeel {
-                MacSwipePeelChipView(state: peel)
-                    .padding(.horizontal, 14)
-                    .frame(
-                        maxWidth: .infinity, maxHeight: .infinity,
-                        alignment: peel.direction == .forward ? .trailing : .leading,
-                    )
-                    .transition(.opacity)
-                    // Feedback only — never eats pane input (the house convention for overlays
-                    // atop the Metal surface, see `GuiStatsReadout`): a click at the pane edge
-                    // during the ~520 ms confirm hold must reach the remote window.
-                    .allowsHitTesting(false)
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        chip.alphaValue = 0
+        addSubview(chip)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    /// Feedback only — never eats pane input (the house convention for overlays atop the Metal
+    /// surface): a click at the pane edge during the ~520 ms confirm hold must reach the remote
+    /// window. Returning `nil` unconditionally — not delegating to `super`, which would test the chip
+    /// subview and its bounds — is what makes that true regardless of where the chip currently sits.
+    override func hitTest(_: NSPoint) -> NSView? { nil }
+
+    /// Applies a new swipe-peel state. `nil` hides the chip; a value shows/updates it. The chip's own
+    /// fill/ring/glyph redraw immediately (cheap, and already rate-limited by the planner's 1/32
+    /// progress quantization — see ``MacVideoPaneControls/swipePeel``); the SIZE/POSITION/OPACITY that
+    /// used to ride SwiftUI's implicit `.animation` glide under one `NSAnimationContext` pass instead.
+    func apply(_ state: SwipePeelChipState?) {
+        // The edge alignment is resolved INSIDE this call, from the state's OWN direction, so a
+        // fading-out chip keeps its last known edge — the SwiftUI overlay's comment on the same
+        // problem: an outer alignment recomputed from `nil` would yank a fading forward-chip across to
+        // the leading edge mid-transition.
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        chip.state = state
+        if let state, chip.alphaValue == 0 {
+            // A chip about to fade IN is placed at its target frame with NO animation first, so the
+            // first animated frame moves it FROM the right edge rather than gliding in from wherever
+            // the previous gesture left it.
+            chip.frame = frame(for: state, reduceMotion: reduceMotion)
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.transitionDuration
+            context.timingFunction = Self.transitionCurve
+            chip.animator().alphaValue = alpha(for: state)
+            if let state {
+                chip.animator().frame = frame(for: state, reduceMotion: reduceMotion)
             }
         }
-        .animation(.timingCurve(0, 0, 0.58, 1, duration: 0.15), value: controls.swipePeel)
+    }
+
+    private func alpha(for state: SwipePeelChipState?) -> CGFloat {
+        guard let state else { return 0 }
+        // Confirm pulse → DIM HOLD: the scale-up plays inside the ambient curve above, then the chip
+        // HOLDS at low opacity until the planner's ~520 ms clear task removes it — the hold is what
+        // actually spans the 150–400 ms inject→capture→stream beat, the only fire acknowledgement
+        // there is. Fading to 0 here would end the visible pulse early and hold an invisible chip.
+        return state.confirming ? 0.35 : 1
+    }
+
+    private func frame(for state: SwipePeelChipState, reduceMotion: Bool) -> NSRect {
+        let scale = reduceMotion ? 1 : (state.confirming ? 1.12 : (state.committed ? 1.06 : 1))
+        let side = Self.chipSize * scale
+        // Emergence: the chip TUCKS toward its pane edge as progress grows (tucked ~12 pt at the arm
+        // line, flush at commit) — reduce-motion renders in place, no tuck.
+        let tuck = reduceMotion ? 0 : (1 - state.progress) * 12
+        let y = bounds.midY - side / 2
+        let x: CGFloat = switch state.direction {
+        case .back: Self.edgeInset - tuck
+        case .forward: bounds.width - Self.edgeInset - side + tuck
+        }
+        return NSRect(x: x, y: y, width: side, height: side)
     }
 }
 
 /// The swipe-peel progress chip: a chevron in a flat circle whose ring fills toward the commit
 /// threshold and turns solid the instant a release would navigate — the ENTIRE visible
 /// feedback: the streamed image itself never moves (v6 HW verdict — a remote pane is a window
-/// onto a desktop, so translating it reads as dragging the pane, not peeling a page). To still
-/// live with the finger, the chip EMERGES from its pane edge as progress grows: tucked ~12 pt
-/// at the arm line, fully out at commit. White-on-any-video (the Chromium overscroll idiom
-/// users already know), flat fills only (no material — never glass over the `CAMetalLayer`).
-struct MacSwipePeelChipView: View {
-    let state: SwipePeelChipState
-    /// Reduce Motion: the chip renders IN PLACE (no tuck emergence, no scale pulse) and changes
-    /// by fades only. The ring fill, the committed solid state and the haptic stay — they are
-    /// information, not motion.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// onto a desktop, so translating it reads as dragging the pane, not peeling a page). White-on-any-
+/// video (the Chromium overscroll idiom users already know), flat fills only (no material — never
+/// glass over the `CAMetalLayer`).
+///
+/// Drawn with Core Graphics rather than `CAShapeLayer` sublayers: a one-shot vector redraw per state
+/// change is simpler to reason about than a `CAShapeLayer`'s animatable-property lifecycle, and
+/// correctness here matters more than a glide between two of the planner's quantized progress steps —
+/// the SAME quantization that already keeps a 120 Hz gesture stream from redrawing more than a few
+/// dozen times per gesture (``MacVideoPaneControls/swipePeel``). The size/position/opacity animation
+/// that SwiftUI's `.animation` used to give the whole chip for free is ``MacSwipePeelOverlayView``'s.
+final class MacSwipePeelChipView: NSView {
+    var state: SwipePeelChipState? {
+        didSet { needsDisplay = true }
+    }
 
-    var body: some View {
-        // Emergence: progress is quantized to 1/32 by the planner, so the outer `.animation`
-        // smooths this into a glide instead of re-laying-out per 120 Hz event.
-        let tuck = reduceMotion ? 0 : (1 - state.progress) * 12
-        ZStack {
-            Circle()
-                .fill(Color.white.opacity(state.committed ? 0.95 : 0.82))
-            Circle()
-                .stroke(Color.black.opacity(0.12), lineWidth: 1)
-            Circle()
-                .trim(from: 0, to: state.progress)
-                .stroke(Color.black.opacity(0.75), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .opacity(state.committed ? 0 : 1) // the solid state replaces the progress ring
-            Image(systemName: state.direction == .back ? "chevron.left" : "chevron.right")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.black.opacity(state.committed ? 0.9 : 0.45))
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.25
+        layer?.shadowRadius = 4
+        layer?.shadowOffset = CGSize(width: 0, height: -1) // AppKit shadow offset is bottom-up
+        layer?.masksToBounds = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not supported") }
+
+    /// Never eats input — belt-and-suspenders alongside ``MacSwipePeelOverlayView/hitTest(_:)``, which
+    /// already returns `nil` unconditionally and so never reaches this view's own hit test at all. Kept
+    /// so this view is provably transparent even if it is ever mounted somewhere else.
+    override func hitTest(_: NSPoint) -> NSView? { nil }
+
+    override func draw(_: NSRect) {
+        guard let state else { return }
+
+        // Background fill.
+        NSColor.white.withAlphaComponent(state.committed ? 0.95 : 0.82).setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+
+        // Hairline border, inset by half its width so the 1 pt stroke lands fully inside the view.
+        let border = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
+        border.lineWidth = 1
+        NSColor.black.withAlphaComponent(0.12).setStroke()
+        border.stroke()
+
+        // Progress ring, replaced by the solid fill above once committed.
+        if !state.committed {
+            let center = NSPoint(x: bounds.midX, y: bounds.midY)
+            let radius = bounds.width / 2 - 1
+            let ring = NSBezierPath()
+            // Starts at 12 o'clock (90°) and sweeps clockwise on screen as progress grows — the
+            // Core-Graphics spelling of the SwiftUI ring's `rotationEffect(-90°)` +
+            // `trim(from: 0, to: progress)`, which fills clockwise from the top.
+            ring.appendArc(
+                withCenter: center, radius: radius,
+                startAngle: 90, endAngle: 90 - 360 * state.progress, clockwise: true,
+            )
+            ring.lineWidth = 2
+            ring.lineCapStyle = .round
+            NSColor.black.withAlphaComponent(0.75).setStroke()
+            ring.stroke()
         }
-        .frame(width: 36, height: 36)
-        .scaleEffect(reduceMotion ? 1.0 : (state.confirming ? 1.12 : (state.committed ? 1.06 : 1.0)))
-        .shadow(color: Color.black.opacity(0.25), radius: 4, y: 1)
-        .offset(x: state.direction == .back ? -tuck : tuck)
-        // Confirm pulse → DIM HOLD: the scale-up plays inside the ambient 0.15 s curve, then the
-        // chip HOLDS at low opacity until the ~520 ms clear task removes it (the removal
-        // transition fades the rest) — the hold is what actually spans the 150–400 ms
-        // inject→capture→stream beat, the only fire acknowledgement there is. Fading to 0 here
-        // would end the visible pulse at ~150 ms and hold an invisible chip.
-        .opacity(state.confirming ? 0.35 : 1)
+
+        // Chevron glyph.
+        let symbolName = state.direction == .back ? "chevron.left" : "chevron.right"
+        let glyphAlpha = state.committed ? 0.9 : 0.45
+        if let glyph = Self.tintedChevron(named: symbolName, alpha: glyphAlpha) {
+            let origin = NSPoint(x: bounds.midX - glyph.size.width / 2, y: bounds.midY - glyph.size.height / 2)
+            glyph.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+        }
+    }
+
+    /// Renders `named` at the chip's glyph weight/size, tinted to `alpha`-opacity black. `NSImage` has
+    /// no direct "draw as this color" call for a template image the way SwiftUI's
+    /// `.foregroundStyle(_:)` does; the standard AppKit recipe draws the glyph once and then fills the
+    /// tint color with `.sourceAtop` so only the glyph's own alpha picks it up.
+    private static func tintedChevron(named symbolName: String, alpha: CGFloat) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        guard let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        else { return nil }
+        let tinted = NSImage(size: symbol.size)
+        tinted.lockFocus()
+        symbol.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+        NSColor.black.withAlphaComponent(alpha).set()
+        NSRect(origin: .zero, size: symbol.size).fill(using: .sourceAtop)
+        tinted.unlockFocus()
+        return tinted
     }
 }
