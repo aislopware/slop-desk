@@ -363,9 +363,10 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
     /// The New-Tab drop slot — mounted (and its frame registered) only while a pane drag is in flight,
     /// pinned ABOVE the footer so it never needs scrolling into view.
     private func syncNewTabSlot() {
-        guard let paneDrag else { return }
-        // Read through the OWNER rather than the guard's binding: the arm escapes, and capturing the
-        // coordinator directly would hold it for the follow's life instead of the column's.
+        // Presence only — the coordinator is deliberately NOT bound here. The arm escapes, and this
+        // column holds `paneDrag` strongly, so capturing it would keep it alive for the follow's life
+        // rather than the column's. Both closures read it back through the owner instead.
+        guard paneDrag != nil else { return }
         slotFollow = ObservationFollow.arm(self, replacing: slotFollow) { column in
             column.paneDrag?.drag != nil
         } apply: { column, live in
