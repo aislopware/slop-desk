@@ -1,4 +1,4 @@
-// StatusDotView — the SwiftUI renderers of the shared status mark.
+// StatusDotView — the PHONE's renderers of the shared status mark.
 //
 // WHAT a mark is (``StatusDot``'s geometry, ``StatusMark``'s silhouette set, ``StatusDotStyle``'s
 // resolved pair, ``AgentSpinner``'s wandering tempo and ``BrailleCell``'s walk) is `SlopDeskSlate`,
@@ -6,178 +6,290 @@
 // `NSView`s (`MacStatusMarkView`, `MacAgentSpinnerView` — docs/56 stage D), so a state edge cannot
 // mean one thing in the rail and another in a hosted card. See `SlateStatusMark.swift` for every
 // design note behind the numbers.
+//
+// These two are transliterations of the Mac's pair, on purpose and nearly line for line, because those
+// already resolved every question this drawing asks. The ONE difference deletes code rather than adding
+// it: `BrailleCell` and `StatusDot.ringDotFrame` answer in a TOP-DOWN box, which is UIKit's own space,
+// so the y-mirror the AppKit twin carries in two places is simply absent here.
 
 #if os(iOS)
+import QuartzCore // the spinners' display link
 import SFSafeSymbols
 import SlopDeskSlate
+// ⚠️ THE ONE SwiftUI IMPORT LEFT IN THIS FILE, and it is not a view — `StatusDotStyle.ink` is a
+// `Color` (SlopDeskSlate/SlateStatusMark.swift), so `UIColor(_:)`'s bridging initializer is what turns
+// a resolved mark into ink a `CGContext` can fill with. It goes when that token becomes native; nothing
+// below draws with SwiftUI.
 import SwiftUI
+import UIKit
 
-/// The mark itself. Only the spinner carries a timeline; every other state is drawn once and holds
-/// still. AX-hidden: the row title's accessibility value already speaks the same state, so the mark
-/// never double-announces.
+/// One resolved mark in the fixed ``StatusDot/footprint`` column. `style == nil` draws nothing and the
+/// column still holds its width, so a row that gains a mark never shifts the label beside it.
 ///
-/// `internal` again, and back on time. It was `package` for ONE caller —
-/// `SlopDeskMacUI/RailStatusMarks`, the titlebar band's cluster, which was still hosted SwiftUI —
-/// under a comment promising the widening would be collected the moment that cluster became
-/// `MacStatusMarkView`s. It did (docs/56 increment 46), so this did too: a widened access level that
-/// outlives its caller reads exactly like one that still has it.
-///
-/// The Mac now draws every one of its marks in AppKit. This is the PHONE's renderer, with one caller
-/// (``NavigatorColumn``), and it does not expire — after the Stage D rename this target is the
-/// phone's and a SwiftUI mark is what it should have.
-struct StatusDotView: View {
-    let style: StatusDotStyle
-
-    init(style: StatusDotStyle) { self.style = style }
-
-    var body: some View {
-        mark
-            // ONE footprint for every mark, so ring rows, spinning rows and symbol rows share the
-            // column's centre line.
-            .frame(width: StatusDot.footprint, height: StatusDot.footprint)
-            .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private var mark: some View {
-        if let system = style.mark.systemSymbol {
-            // A system symbol at otty's configuration for it — the artwork is Apple's, so this is
-            // the EXACT drawing otty mounts rather than a redraw of it.
-            Image(systemSymbol: system.symbol)
-                .font(.system(size: system.size, weight: StatusDot.symbolWeight))
-                .foregroundStyle(style.ink)
-        } else {
-            switch style.mark {
-            case .working:
-                // A frozen cell holds at phase 0 — the SAME still Reduce Motion asks for, through
-                // the same one parameter, so a disabled slot and an accessibility freeze can never
-                // become two different drawings of "not moving".
-                AgentSpinnerView(ink: style.ink, pinnedPhase: style.frozen ? 0 : nil)
-            case .awaiting:
-                VectorIconView(icon: OttyIcon.hand, side: StatusDot.handSide, ink: style.ink)
-            default:
-                DottedRing()
-                    .fill(style.ink)
-                    .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
-            }
+/// AX-hidden: the row title's accessibility value already speaks the same state, so the mark never
+/// double-announces.
+@MainActor
+final class SlateStatusMarkView: UIView {
+    var style: StatusDotStyle? {
+        didSet {
+            guard style != oldValue else { return }
+            setNeedsDisplay()
+            syncTicker()
         }
     }
-}
 
-/// The agent-presence ring: ``StatusDot/ringDotCount`` DOTS spaced evenly round a circle, the first
-/// at 12 o'clock. A `Shape` rather than a stack of circles so the ring has one definition every
-/// reading of it must share — and so it is a `Path`, which can be filled, hit-tested and scaled
-/// like any other.
-///
-/// ⚠️ It was a DASHED ring until 2026-08-10 (lucide `circle-dashed`, stroked with a 0.6-fill dash
-/// pattern), replaced on the user's instruction by dots standing further apart than those dashes did.
-/// A dash is a fragment of a line that happens to be curved; a dot is its own shape, and at this size
-/// that is the difference between a ring that looks broken and a ring that looks made of parts.
-///
-/// The dot size scales with the rect, so a magnified still is a true redraw rather than a blown-up
-/// 10pt bitmap — the same lesson ``AgentSpinner`` learned about `scaleEffect`. The geometry itself is
-/// ``StatusDot/ringDotFrame(_:in:)``'s (docs/56 batch 3), one floor down and shared with the Mac's
-/// `MacStatusMarkView.drawRing`; this `Shape` only turns those frames into a `Path`.
-struct DottedRing: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
+    /// Where in the shared wander this mount sits — rolled once and held for the view's lifetime
+    /// (``StatusDot/tempoSeedSpan``). Every mark obeys the same tempo law; the seed is only an offset
+    /// into it, so two panes are never hurrying and dwelling in step.
+    private let seed = Double.random(in: 0..<StatusDot.tempoSeedSpan)
+    private var link: CADisplayLink?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        // Transparent: the mark is INK on whatever row it sits in, and an opaque backing would paint
+        // the row's fill a second time at a tone the row did not choose.
+        backgroundColor = .clear
+        isOpaque = false
+        // AX-hidden: the row title's accessibility value already speaks this state, so the mark never
+        // double-announces.
+        isAccessibilityElement = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not from a nib") }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: StatusDot.footprint, height: StatusDot.footprint)
+    }
+
+    /// ⚠️ THE DISPLAY LINK'S WHOLE LIFETIME, and the reason `phone-display-links-are-invalidated`
+    /// exists. A `CADisplayLink` retains its target STRONGLY and the run loop retains the link, so a
+    /// view that starts one and is then removed is not deallocated — it is a live object being ticked
+    /// at 120 Hz forever, drawing into a layer nobody composites. `didMoveToWindow` is the one edge
+    /// that sees both directions (a `nil` window is a removal), which is why the start and the stop
+    /// are the same function rather than a pair someone has to keep matched.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        syncTicker()
+    }
+
+    /// The spinner's clock: a display link while a RUNNING spinner is mounted in a window, nothing
+    /// otherwise — a resting navigator costs no frames. Reduce Motion freezes it HERE rather than in
+    /// the drawing, so an accessibility freeze and the render rig's pinned still are the same one
+    /// parameter (phase 0) and can never become two different drawings of "not moving".
+    private func syncTicker() {
+        let wants = window != nil && style?.mark == .working && style?.frozen == false
+            && !UIAccessibility.isReduceMotionEnabled
+        if wants, link == nil {
+            let displayLink = CADisplayLink(target: self, selector: #selector(tick))
+            displayLink.add(to: .main, forMode: .common)
+            link = displayLink
+        } else if !wants {
+            link?.invalidate()
+            link = nil
+        }
+    }
+
+    @objc
+    private func tick() { setNeedsDisplay() }
+
+    override func draw(_: CGRect) {
+        guard let style else { return }
+        let ink = UIColor(style.ink)
+        switch style.mark {
+        case .working: drawSpinner(ink: ink, frozen: style.frozen)
+        case .agentRing: drawRing(ink: ink)
+        case .awaiting: drawHand(ink: ink)
+        case .agentFinish: drawSymbol(style.mark, ink: ink)
+        }
+    }
+
+    /// A system symbol at otty's own configuration for it — the artwork is Apple's, so this mounts the
+    /// EXACT drawing rather than a redraw of it.
+    ///
+    /// ⚠️ `.medium` IS ``StatusDot/symbolWeight``, spelled again. The token is a `Font.Weight` and the
+    /// platform weight enums do not bridge, so each renderer names its own value and the two must be
+    /// kept in step by eye — the AppKit twin has the same seam at `MacStatusMarkView.drawSymbol`. The
+    /// INK rides the image rather than a tint: this view has no cell to hand a template one.
+    private func drawSymbol(_ mark: StatusMark, ink: UIColor) {
+        guard let system = mark.systemSymbol,
+              let image = UIImage(
+                  systemName: system.symbol.rawValue,
+                  withConfiguration: UIImage.SymbolConfiguration(
+                      pointSize: system.size, weight: .medium,
+                  ),
+              )?.withTintColor(ink, renderingMode: .alwaysOriginal)
+        else { return }
+        let size = image.size
+        image.draw(in: CGRect(
+            x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+            width: size.width, height: size.height,
+        ))
+    }
+
+    /// The agent-presence ring — ``StatusDot/ringDotCount`` dots spaced evenly round a circle, the
+    /// first at 12 o'clock. The geometry is ``StatusDot/ringDotFrame(_:in:)``'s, shared with both other
+    /// renderers; this only turns those frames into ovals.
+    private func drawRing(ink: UIColor) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        let box = CGRect(
+            x: bounds.midX - StatusDot.ringDiameter / 2, y: bounds.midY - StatusDot.ringDiameter / 2,
+            width: StatusDot.ringDiameter, height: StatusDot.ringDiameter,
+        )
+        ink.setFill()
         for index in 0..<StatusDot.ringDotCount {
-            path.addEllipse(in: StatusDot.ringDotFrame(index, in: rect))
+            context.fillEllipse(in: StatusDot.ringDotFrame(index, in: box))
         }
-        return path
+    }
+
+    /// otty's awaiting badge — lucide `hand`, stroked from the SAME path data both other renderers
+    /// draw (``OttyIcon/hand``), scaled out of its 24-unit viewBox.
+    private func drawHand(ink: UIColor) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        let icon = OttyIcon.hand
+        let side = StatusDot.handSide
+        let rect = CGRect(
+            x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side,
+        )
+        let scale = side / icon.viewBox
+        context.saveGState()
+        context.setStrokeColor(ink.cgColor)
+        context.setLineWidth(icon.strokeWidth * scale)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        for outline in icon.outlines {
+            context.addPath(SVGPath.path(outline, viewBox: icon.viewBox, in: rect).cgPath)
+            context.strokePath()
+        }
+        context.restoreGState()
+    }
+
+    /// The THINKING mark: a braille cell with every dot lit and ONE hole running round it. The hole's
+    /// position is ``AgentSpinner/phase(at:seed:)`` and each dot's ink is ``AgentSpinner/lit(_:hole:)``
+    /// of its distance from it, so the gap SLIDES rather than hopping between eight positions.
+    private func drawSpinner(ink: UIColor, frozen: Bool) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        let phase = frozen ? 0 : AgentSpinner.phase(at: Date(), seed: seed)
+        SlateBrailleDraw.cell(
+            in: context, ink: ink, hole: phase * Double(BrailleCell.dotCount),
+            box: CGSize(width: StatusDot.footprint, height: StatusDot.footprint),
+            origin: CGPoint(
+                x: bounds.midX - StatusDot.footprint / 2, y: bounds.midY - StatusDot.footprint / 2,
+            ),
+            zoom: 1,
+        )
     }
 }
 
-/// The THINKING mark, drawn in SwiftUI. Its whole cadence is ``AgentSpinner`` — this view only puts
-/// the lit dots where ``BrailleCell/position(of:in:zoom:)`` says and inks them by
-/// ``AgentSpinner/lit(_:hole:)``.
+/// The THINKING mark on its own, for the surfaces that mount a spinner without a whole status column
+/// around it. Its cadence is ``AgentSpinner``'s: this view only puts the lit dots where
+/// ``BrailleCell/position(of:in:zoom:)`` says and inks them by ``AgentSpinner/lit(_:hole:)``.
 ///
-/// ⚠️ It is PURE SwiftUI, so `ImageRenderer` can rasterize it. The platform indicator could not be
-/// rendered at all, which meant the one mark that moved was also the one mark no test could look at.
 /// ⚠️ Reduce Motion freezes it — a frozen cell is still a distinct silhouette, so the state is never
 /// lost, only the movement.
-///
-/// `internal` for the same reason ``StatusDotView`` is: the Mac draws its own spinner
-/// (`MacAgentSpinnerView`, an `NSView`), so this one's only caller is in this target and its
-/// `package` had outlived the cross-target reader it was widened for (docs/56 increment 46).
-struct AgentSpinnerView: View {
+@MainActor
+final class SlateAgentSpinnerView: UIView {
     /// The lit dots' ink. The hole is this same ink taken down to ``StatusDot/holeFloor``.
-    let ink: Color
+    var tint: UIColor = .label {
+        didSet { setNeedsDisplay() }
+    }
+
     /// Multiplies the whole mark — the render rig's way of magnifying it without resampling.
-    var zoom: CGFloat = 1
-    /// Hold the hole at ONE point of its lap instead of running it. The render rig's only way to
-    /// photograph a moving mark (a still of a wall-clock spinner catches an arbitrary moment, so a
-    /// filmstrip of pinned phases is what a reviewer can actually read), and `0` is also what Reduce
-    /// Motion asks for — one parameter, so the frozen mark a snapshot shows IS the one that ships.
-    var pinnedPhase: Double?
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// Where in the shared wander this mount sits, rolled once and held for as long as the view keeps
-    /// its identity (``StatusDot/tempoSeedSpan``). Every mark obeys the same tempo law; the seed is
-    /// only an offset into it, so two panes are never hurrying and dwelling in step. `@State` rather
-    /// than a computed roll because a fresh number on every re-render would make the hole jump, which
-    /// is the exact defect the wall-clock phase exists to prevent.
-    @State private var seed = Double.random(in: 0..<StatusDot.tempoSeedSpan)
-
-    var body: some View {
-        cell
-            .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
-    }
-
-    @ViewBuilder private var cell: some View {
-        if let pinnedPhase {
-            dots(phase: pinnedPhase)
-        } else if reduceMotion {
-            dots(phase: 0)
-        } else {
-            // `.animation` schedules at the display's own refresh rate, so the hole slides at
-            // 60/120 Hz rather than stepping — and the phase stays a pure function of the date.
-            TimelineView(.animation) { timeline in
-                dots(phase: AgentSpinner.phase(at: timeline.date, seed: seed))
-            }
+    var zoom: CGFloat = 1 {
+        didSet {
+            invalidateIntrinsicContentSize()
+            setNeedsDisplay()
         }
     }
 
-    private func dots(phase: Double) -> some View {
-        let hole = phase * Double(BrailleCell.dotCount)
-        let side = StatusDot.dotDiameter * zoom
-        let box = CGSize(
-            width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom,
+    /// Hold the hole at ONE point of its lap instead of running it — the render rig's only way to
+    /// photograph a moving mark, and the same still Reduce Motion asks for.
+    var pinnedPhase: Double? {
+        didSet { syncTicker() }
+    }
+
+    private let seed = Double.random(in: 0..<StatusDot.tempoSeedSpan)
+    private var link: CADisplayLink?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = .clear
+        isOpaque = false
+        isAccessibilityElement = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not from a nib") }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
+    }
+
+    /// See ``SlateStatusMarkView/didMoveToWindow()`` for why the start and the stop are one function.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        syncTicker()
+    }
+
+    private func syncTicker() {
+        setNeedsDisplay()
+        let wants = window != nil && pinnedPhase == nil && !UIAccessibility.isReduceMotionEnabled
+        if wants, link == nil {
+            let displayLink = CADisplayLink(target: self, selector: #selector(tick))
+            displayLink.add(to: .main, forMode: .common)
+            link = displayLink
+        } else if !wants {
+            link?.invalidate()
+            link = nil
+        }
+    }
+
+    @objc
+    private func tick() { setNeedsDisplay() }
+
+    override func draw(_: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        // Frozen at the head of the lap when the link is not running — the same still the render rig
+        // photographs, so what a snapshot shows IS what Reduce Motion ships.
+        let phase = pinnedPhase ?? (link == nil ? 0 : AgentSpinner.phase(at: Date(), seed: seed))
+        SlateBrailleDraw.cell(
+            in: context, ink: tint, hole: phase * Double(BrailleCell.dotCount),
+            box: CGSize(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom),
+            origin: .zero, zoom: zoom,
         )
-        return ZStack {
-            ForEach(0..<BrailleCell.dotCount, id: \.self) { index in
-                Circle()
-                    .fill(ink.opacity(AgentSpinner.lit(index, hole: hole)))
-                    .frame(width: side, height: side)
-                    .position(BrailleCell.position(of: index, in: box, zoom: zoom))
-            }
-        }
-        .frame(width: box.width, height: box.height)
     }
 }
 
-/// The PLATFORM's indeterminate circular progress indicator — the generic "this control is waiting"
-/// spinner, in the 14pt box otty lays its own out in. NOT the agent's mark any more (that is
-/// ``AgentSpinner``): what is left here is the ordinary busy affordance a button or a list row shows
-/// while a request is in flight, where matching every other spinner on the device is the point, so
-/// it is the system's `ProgressView` and not a drawing of one.
+/// The braille cell's dots, drawn once for both `UIView`s above.
 ///
-/// ⚠️ Reduce Motion is the PLATFORM's call here — the control makes it, which is half of why a
-/// generic wait still uses it.
-///
-/// The ink is the chrome's own secondary, the same one every other quiet mark in these rows takes:
-/// the wheel is furniture around the row's content, never the thing being read.
-struct WorkingSpinner: View {
-    var body: some View {
-        ProgressView()
-            .progressViewStyle(.circular)
-            .controlSize(.small)
-            .tint(Slate.Text.secondary)
-            // The small control is 16pt; otty's box is 14. Scaling the control (rather than clipping
-            // a 16pt spinner into a 14pt frame) keeps the fins whole and the column exact.
-            .scaleEffect(StatusDot.spinnerSide / StatusDot.smallControlSide)
-            .frame(width: StatusDot.spinnerSide, height: StatusDot.spinnerSide)
+/// Shared rather than copied because the two spinners differ only in where the cell sits: the mark
+/// centres it in a wider column, the standalone spinner fills its own bounds. Everything else — which
+/// dots are lit, how bright, where they go — is ``AgentSpinner``'s and ``BrailleCell``'s.
+@MainActor
+enum SlateBrailleDraw {
+    /// ⚠️ `fillEllipse` rather than a `UIBezierPath(ovalIn:)` per dot: this loop runs on a display
+    /// link, so a path object per dot is EIGHT heap allocations (each with its own backing `CGPath`)
+    /// per frame per glyph, thrown away before the next tick — measured at 28.6 µs/frame with the
+    /// paths against 22.5 µs without, on the AppKit twin this is transliterated from. A navigator full
+    /// of thinking agents runs this once per mark per display refresh.
+    static func cell(
+        in context: CGContext, ink: UIColor, hole: Double, box: CGSize, origin: CGPoint, zoom: CGFloat,
+    ) {
+        let side = StatusDot.dotDiameter * zoom
+        for index in 0..<BrailleCell.dotCount {
+            let lit = AgentSpinner.lit(index, hole: hole)
+            guard lit > 0 else { continue }
+            // `BrailleCell.position` answers in a TOP-DOWN box, which is UIKit's own space — the
+            // AppKit twin mirrors the y here and this does not.
+            let point = BrailleCell.position(of: index, in: box, zoom: zoom)
+            ink.withAlphaComponent(lit).setFill()
+            context.fillEllipse(in: CGRect(
+                x: origin.x + point.x - side / 2, y: origin.y + point.y - side / 2,
+                width: side, height: side,
+            ))
+        }
     }
 }
 #endif

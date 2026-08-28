@@ -7,11 +7,10 @@
 // campaign is about: `scenePhase` reported `.inactive` and `.background` through one `onChange` that
 // then had to say which of them it was looking at, and UIKit hands each edge its own entry point.
 //
-// The root is a `UIHostingController` for exactly as long as stage D takes: the workspace root is
-// still SwiftUI, and mounting it from a UIKit parent is ONE implementation reached from a UIKit
-// shell, not two (docs/62 §6, the carve-out). Stage D replaces this line with a real controller and
-// deletes what it hosted in the same change; the hosting-controller count is a stage exit condition
-// and it only falls.
+// The root was a `UIHostingController` over the still-SwiftUI `WorkspaceRootView` for exactly as long
+// as stage D took. It is a real controller now — ``WorkspaceRootViewController`` — and what it hosted
+// was deleted in the same change, which is the exit condition stage D was written to reach: this
+// module holds no hosting controller and no SwiftUI import.
 //
 // WHAT IS NOT HERE, on purpose: the composition, the notification sinks, the clipboard loops and the
 // responder chain's tail are all ``PhoneAppDelegate``'s. They belong to the PROCESS, and putting
@@ -21,7 +20,6 @@
 #if os(iOS)
 import SlopDeskClientCore
 import SlopDeskWorkspaceCore
-import SwiftUI // UIHostingController — the stage-A mount of the still-SwiftUI workspace root
 import UIKit
 
 /// The window scene: one window, the workspace root, and the foreground/background fan-out.
@@ -55,14 +53,14 @@ public final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
         // EVERY app-lifetime value the tree reads arrives here, as arguments. There is no custom
         // environment left to inject (docs/62 stage B): a `UIViewController` inherits none, and even in
         // SwiftUI a `.sheet` / `.fullScreenCover` did not inherit the presenter's — so the two `@Entry`
-        // keys this scene used to seed had to be re-injected at every presentation anyway.
-        let root = WorkspaceRootView(
+        // keys this scene used to seed had to be re-injected at every presentation anyway. What was a
+        // workaround there is simply how a controller is built here.
+        let root = WorkspaceRootViewController(
             store: app.store, connection: app.connection, overlay: app.overlayCoordinator,
             chrome: app.chrome, preferences: app.preferences,
         )
-        let host = UIHostingController(rootView: root)
         let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = host
+        window.rootViewController = root
         self.window = window
         window.makeKeyAndVisible()
     }
