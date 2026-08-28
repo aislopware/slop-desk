@@ -133,10 +133,27 @@ final class SlatePlateIconButton: UIControl {
         }
     }
 
+    /// ⚠️ REFUSING AND DIMMING ARE ONE ACT. `UIControl` gives the refusal for free — a disabled control
+    /// takes no touch — and nothing at all for the second half, so a plate that had gone dead looked
+    /// exactly like a live one and the tap simply vanished. ``Slate/Opacity/withheld`` is the rung whose
+    /// own comment names this pairing: "refusing without dimming reads as a broken button".
+    ///
+    /// Spent as the CONTROL's alpha rather than the glyph's ink, because the plate fill is withheld with
+    /// it — a latched-but-disabled plate that kept its full selection tint would be the loudest thing on
+    /// the strip. There is nothing to re-resolve on an appearance change, so unlike every other state
+    /// here it needs no `refresh*` pass.
+    override var isEnabled: Bool {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            alpha = isEnabled ? 1 : Slate.Opacity.withheld
+        }
+    }
+
     @objc
     private func hovered(_ recogniser: UIHoverGestureRecognizer) {
         switch recogniser.state {
-        case .began, .changed: hovering = true
+        case .began,
+             .changed: hovering = true
         default: hovering = false
         }
     }
@@ -193,13 +210,14 @@ final class SlatePlateIconButton: UIControl {
     private func refreshFill(animated: Bool = true) {
         let pressed = isHighlighted
         // XOR: pressing previews the latch state the tap lands on.
-        let fill: UIColor = if active != pressed {
-            onTray ? Slate.Native.Surface.raised : Slate.Native.State.selected
-        } else if !hovering, !pressed {
-            .clear
-        } else {
-            onTray ? Slate.Native.State.selected : Slate.Native.State.hover
-        }
+        let fill: UIColor =
+            if active != pressed {
+                onTray ? Slate.Native.Surface.raised : Slate.Native.State.selected
+            } else if !hovering, !pressed {
+                .clear
+            } else {
+                onTray ? Slate.Native.State.selected : Slate.Native.State.hover
+            }
         let resolved = fill.resolvedColor(with: traitCollection).cgColor
         CATransaction.begin()
         if animated {

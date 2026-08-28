@@ -34,6 +34,21 @@
 // is exactly why a sticky card's ✕ is UNCONDITIONAL: on the Mac hover reveals it, and on the phone nothing
 // would.
 //
+// ⚠️ TWO OF THESE MAY BE LIVE AT ONCE, and the type is built for it rather than merely surviving it.
+// The right panel is a `.fullScreen` presentation, which UIKit takes OUT of the window hierarchy once
+// its transition lands — so a stack mounted on the shell root paints UNDER the cover, and a notification
+// raised while the panel is up would be invisible rather than late. The panel therefore mounts a SECOND
+// stack over its own root (the deleted `PhonePanelSheet` did the same with an `.overlay`).
+//
+// Nothing here is shared, static or singleton: `cards`, `column` and `generation` are per-instance, and
+// each instance builds its OWN card per toast, with its own dwell `Timer`. So a second stack cannot steal
+// the first's queue or cancel its countdowns. The ARBITER is the model both read — two cards for one toast
+// run two copies of the same countdown from the same ``ToastPresentation/dwellSeconds(_:)``, whichever
+// expires first calls ``OverlayCoordinator/dismissToast(_:)``, and that is a `removeAll(where:)` on an id,
+// so the second call is a no-op and the other stack's card leaves through `sync` on the next arm. A card
+// mounted LATE (the panel opened mid-dwell) starts its own clock at zero and simply outlives its purpose
+// by nothing: the older stack's timer still dismisses the toast on the original schedule.
+//
 // ⚠️ THE HOST IS ALWAYS MOUNTED AND MUST BE DEAF WHEN EMPTY. It is a full-bleed child of
 // ``PhoneOverlayLayerView``, so its own `hitTest` has to pass a touch through the corner's empty space AND
 // through the gaps between cards — a `UIStackView` answers with ITSELF for a point in a gap, which would

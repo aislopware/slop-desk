@@ -22,9 +22,14 @@
 // drops a view at `alpha == 0` (or hidden, or interaction-disabled) out of the hit-test walk entirely,
 // and catching the tap that dismisses the card is the floor's whole job. Clear is not transparent.
 //
-// ⚠️ GLOBAL SEARCH IS THE ONE NON-MODAL MEMBER and gets NO floor. It is deliberately excluded from
-// ``OverlayCoordinator/anyModalVisible`` because it must not swallow taps over the workspace, so this
-// host disables the floor for it and lets everything outside the card fall through.
+// ⚠️ GLOBAL SEARCH IS THE ONE MEMBER OUTSIDE ``OverlayCoordinator/anyModalVisible``, and that buys it
+// exactly one thing: ``ContentColumnViewController`` does not disable the canvas underneath while it is
+// up. It still gets the floor, like every sibling — both shipped halves gave it one (the deleted
+// `OverlayHostView` mounted it on the same hit-catching backdrop as the other three, and the Mac's rides
+// a `MacOverlayPanelController` whose content view IS a dismiss floor), and without one the surface has
+// no touch dismissal at all: it carries no ✕ by design and its Esc needs a hardware keyboard.
+// (The coordinator's own comment on `globalSearchVisible` still describes a host that mounts it without a
+// backdrop. That host is deleted and never behaved that way — see this cluster's report.)
 //
 // ⚠️ TEARING A CARD DOWN HANDS THE KEYBOARD BACK. The card's field is the window's first responder while
 // it is up, and simply removing it leaves the WINDOW holding the responder — so the pane the user was
@@ -182,8 +187,8 @@ final class PhoneOverlayCardHostView: UIView {
             return
         }
 
-        // Global Search is non-modal — see the file header.
-        floor.isUserInteractionEnabled = active != .globalSearch
+        // Every surface gets the floor, Global Search included — see the file header.
+        floor.isUserInteractionEnabled = true
         card = made
         made.translatesAutoresizingMaskIntoConstraints = false
         addSubview(made)
