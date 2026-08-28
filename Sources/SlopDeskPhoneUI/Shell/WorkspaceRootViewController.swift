@@ -149,6 +149,13 @@ public final class WorkspaceRootViewController: UIViewController {
         super.viewDidAppear(animated)
         guard !canPresent else { return }
         canPresent = true
+        reapply()
+    }
+
+    /// Actuate against the CURRENT values, outside the tracker. Reading here does not subscribe, and
+    /// must not: the arm from ``follow()`` is still the live one, and a second arm would double every
+    /// re-arm after it.
+    private func reapply() {
         applyChrome(
             sidebarCollapsed: chrome.sidebarCollapsed, panelCollapsed: chrome.codeSidebarCollapsed,
             cheatSheetVisible: overlay.cheatSheetVisible,
@@ -244,17 +251,49 @@ public final class WorkspaceRootViewController: UIViewController {
             split.preferredDisplayMode = sidebarCollapsed ? .secondaryOnly : .oneBesideSecondary
             isActuating = false
         }
-        // The two presentations wait for a window. Leaving the applied values UNSET while they wait is
-        // what makes the wait recoverable: `viewDidAppear` re-applies, sees the mismatch still there,
-        // and puts the panel up. Recording the value here instead would swallow it forever.
-        guard canPresent else { return }
+        // ONE PRESENTATION AT A TIME, and the two are actuated in a fixed order rather than in one
+        // pass. Leaving the applied value UNSET when a step is refused is what makes the refusal
+        // recoverable: the next pass sees the mismatch still there and actuates it. Recording it
+        // anyway — the obvious shape — would swallow the transition forever.
+        guard canPresent, !isTransitioning else { return }
         if appliedPanelCollapsed != panelCollapsed {
+            // A dismissal is always allowed; only a PRESENTATION has to wait for the surface in front
+            // of it to leave. Refusing the dismissal too would deadlock the pair: the cheat sheet
+            // could never come down to let the panel go up.
+            guard panelCollapsed || canStartPresentation else { return }
             appliedPanelCollapsed = panelCollapsed
             if panelCollapsed { dismissPanel() } else { presentPanel() }
+            return
         }
         if appliedCheatSheetVisible != cheatSheetVisible {
+            guard !cheatSheetVisible || canStartPresentation else { return }
             appliedCheatSheetVisible = cheatSheetVisible
             if cheatSheetVisible { presentCheatSheet() } else { dismissCheatSheet() }
+        }
+    }
+
+    /// Whether `present(_:animated:)` from this controller would actually do something.
+    ///
+    /// ⚠️ UIKIT DROPS A SECOND PRESENTATION, silently and with only a console line. It is not a queue:
+    /// `present` while `presentedViewController != nil` does nothing at all. Both surfaces here are
+    /// presented from `self` and both are driven by shared observable flags, so "⌘/ while the panel is
+    /// up" reaches this — and the flag would then read as actuated with nothing on screen. The deleted
+    /// SwiftUI half never hit it because the runtime serialised `.sheet` and `.fullScreenCover`
+    /// itself; in UIKit that serialisation has to be written down.
+    private var canStartPresentation: Bool { presentedViewController == nil }
+
+    /// Set for the length of a present/dismiss animation. UIKit is equally deaf DURING one: a `present`
+    /// issued while a dismissal is still animating is dropped the same way. The completion clears this
+    /// and calls ``reapply()``, so a value that arrived mid-flight is actuated rather than lost.
+    private var isTransitioning = false
+
+    /// One transition, with the busy flag held across it and a re-apply behind it.
+    private func transition(_ body: (@escaping () -> Void) -> Void) {
+        isTransitioning = true
+        body { [weak self] in
+            guard let self else { return }
+            isTransitioning = false
+            reapply()
         }
     }
 
@@ -293,13 +332,13 @@ public final class WorkspaceRootViewController: UIViewController {
         // workstyle choice persists exactly as the Mac's hide toggle writes it.
         panel.onClose = { [chrome] in chrome.collapseCodeSidebar() }
         self.panel = panel
-        present(panel, animated: true)
+        transition { done in present(panel, animated: true, completion: done) }
     }
 
     private func dismissPanel() {
         guard let panel else { return }
         self.panel = nil
-        panel.dismiss(animated: true)
+        transition { done in panel.dismiss(animated: true, completion: done) }
     }
 
     private func presentCheatSheet() {
@@ -312,13 +351,13 @@ public final class WorkspaceRootViewController: UIViewController {
         // ⌘/ toggles it shut.
         sheet.onDismiss = { [overlay] in overlay.closeCheatSheet() }
         cheatSheet = sheet
-        present(sheet, animated: true)
+        transition { done in present(sheet, animated: true, completion: done) }
     }
 
     private func dismissCheatSheet() {
         guard let cheatSheet else { return }
         self.cheatSheet = nil
-        cheatSheet.dismiss(animated: true)
+        transition { done in cheatSheet.dismiss(animated: true, completion: done) }
     }
 
     // MARK: - Wiring the shared seams
