@@ -4,9 +4,6 @@ import SlopDeskTestSupport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
-#if canImport(SwiftUI)
-import SwiftUI
-#endif
 
 /// (see docs/42 §"Keybindings + command palette + cheat sheet"): pins the **tree-command-routing**
 /// contract — the single ``WorkspaceBindingRegistry`` source the menu bar, ⌘K palette, ⌘/ cheat sheet, AND
@@ -15,8 +12,8 @@ import SwiftUI
 /// ``TreeWorkspace`` / registry change, never a recompute of the registry (no tautology).
 ///
 /// Injects the `makeSession` seam with a ``FakePaneSession`` (never a real `SlopDeskClient` / `HostServer`)
-/// so the tree is the live source the routing drives. No SwiftUI view is built — `route(_:to:)` is the pure seam, identical to what a menu `Button` /
-/// palette row / chord dispatch invokes.
+/// so the tree is the live source the routing drives. No VIEW is built — `route(_:to:)` is the pure
+/// seam, identical to what a menu item / palette row / chord dispatch invokes.
 @MainActor
 final class TreeCommandRoutingTests: XCTestCase {
     // MARK: - Fixtures
@@ -562,8 +559,8 @@ final class TreeCommandRoutingTests: XCTestCase {
     /// `.closeWindow` (⌘⇧W / View ▸ Close Window) ACTUATES a real close: when an actuator closure is
     /// supplied (the live app wires it to `window.performClose(nil)` → the native `windowShouldClose` →
     /// `WindowCloseGate` confirmation) the route FORWARDS to it EXACTLY once and does NOT silently park
-    /// `pendingWindowClose`. The audit found the bare-park path had no SwiftUI observer, so ⌘⇧W parked a flag
-    /// nothing read and never closed the window — this proves the chord now drives a close instead.
+    /// `pendingWindowClose`. The audit found the bare-park path had no observer at all, so ⌘⇧W parked a
+    /// flag nothing read and never closed the window — this proves the chord now drives a close instead.
     ///
     /// REVERT-TO-CONFIRM-FAIL: with the routing case left `case .closeWindow: store.requestCloseWindow()` the
     /// actuator never fires (`fired == 0`) AND the busy window close is PARKED (`pendingWindowClose ==
