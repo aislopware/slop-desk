@@ -29,11 +29,10 @@
 //
 // ## What this half spells that the phone's `.task`, `.overlay` and `.id` spelled for it
 //
-// ⚠️ FOUR OBSERVATIONS, EACH RE-ARMING ITSELF. `withObservationTracking` fires ONCE, so every follower
-// here re-registers from inside its own `onChange` — the idiom `MacCodePanelSurfaces` established and
-// the single most common way an AppKit port of an `@Observable` model goes quiet after one update. They
-// are split by what they REBUILD rather than by what they read: a plate latching must not rebuild the
-// header, and a device leaving the list must not tear down the console.
+// ⚠️ FOUR OBSERVATIONS, EACH ITS OWN ``ObservationFollow``. They are split by what they REBUILD rather
+// than by what they read: a plate latching must not rebuild the header, and a device leaving the list
+// must not tear down the console. The re-arm itself is the follow type's — see its header for why the
+// eleven-line hand-written prologue this file used to carry is no longer a thing a site can get wrong.
 //
 // ⚠️ THE STAGE IS KEYED ON THE UDID, which is the phone's `.id(model.selection)` and load-bearing for
 // the same reason: a second device's frames must never reach a decoder configured with the first one's
@@ -42,6 +41,7 @@
 // click had just opened.
 
 import AppKit
+import SlopDeskClientCore // ObservationFollow — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
@@ -175,40 +175,37 @@ final class MacSimulatorStageView: NSView {
     /// captioning a device it cannot name. A device can also leave the list UNDER the panel (someone
     /// shuts it down from Xcode), which is the same case arriving from the other direction.
     private func followHeader() {
-        var device: SimulatorDevice?
-        var resolution: CGSize?
-        var orientation = SimulatorOrientation.portrait
-        var pinned: SimulatorCoordinate?
-        withObservationTracking {
-            device = self.selected
-            resolution = self.model.resolution
-            orientation = self.model.orientation
-            pinned = self.model.pinnedLocation
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followHeader() }
-            }
-        }
-        // The mounted stage learns of the turn HERE rather than through a fifth observation: the header
-        // prints the orientation, so it is already reading the value the bezel needs.
-        applyOrientation?(orientation)
+        ObservationFollow.arm(self) { stage in
+            (
+                device: stage.selected,
+                resolution: stage.model.resolution,
+                orientation: stage.model.orientation,
+                pinned: stage.model.pinnedLocation,
+            )
+        } apply: { stage, reading in
+            // The mounted stage learns of the turn HERE rather than through a fifth observation: the
+            // header prints the orientation, so it is already reading the value the bezel needs.
+            stage.applyOrientation?(reading.orientation)
 
-        for view in headerHost.subviews { view.removeFromSuperview() }
-        guard let device else { return }
-        let band = MacSimulatorDeviceHeader(
-            device: device, resolution: resolution, orientation: orientation, pinnedLocation: pinned,
-            actions: toolbar,
-            // ONE transaction, matching the way in: the drill's transitions are declared on the surface
-            // that owns both depths, and this write is what opens a beat for them.
-            onBack: { [model] in model.select(nil) },
-        )
-        headerHost.addSubview(band)
-        NSLayoutConstraint.activate([
-            band.leadingAnchor.constraint(equalTo: headerHost.leadingAnchor),
-            band.trailingAnchor.constraint(equalTo: headerHost.trailingAnchor),
-            band.topAnchor.constraint(equalTo: headerHost.topAnchor),
-            band.bottomAnchor.constraint(equalTo: headerHost.bottomAnchor),
-        ])
+            for view in stage.headerHost.subviews { view.removeFromSuperview() }
+            guard let device = reading.device else { return }
+            let model = stage.model
+            let band = MacSimulatorDeviceHeader(
+                device: device, resolution: reading.resolution, orientation: reading.orientation,
+                pinnedLocation: reading.pinned,
+                actions: stage.toolbar,
+                // ONE transaction, matching the way in: the drill's transitions are declared on the
+                // surface that owns both depths, and this write is what opens a beat for them.
+                onBack: { [model] in model.select(nil) },
+            )
+            stage.headerHost.addSubview(band)
+            NSLayoutConstraint.activate([
+                band.leadingAnchor.constraint(equalTo: stage.headerHost.leadingAnchor),
+                band.trailingAnchor.constraint(equalTo: stage.headerHost.trailingAnchor),
+                band.topAnchor.constraint(equalTo: stage.headerHost.topAnchor),
+                band.bottomAnchor.constraint(equalTo: stage.headerHost.bottomAnchor),
+            ])
+        }
     }
 
     private var selected: SimulatorDevice? {
@@ -225,59 +222,63 @@ final class MacSimulatorStageView: NSView {
     /// answer actually changed. Without the guard a chrome fetch that resolves to the same bundle would
     /// drop the stream for a keyframe.
     private func followDevice() {
-        var udid: String?
-        var bundle: SimulatorChromeBundle?
-        withObservationTracking {
-            udid = self.model.selection
-            bundle = self.model.chrome
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followDevice() }
+        ObservationFollow.arm(self) { stage in
+            (udid: stage.model.selection, bundle: stage.model.chrome)
+        } apply: { stage, reading in
+            let art = reading.bundle.flatMap { MacSimulatorChrome.art(for: $0) }
+            let wantsBody = art != nil
+            guard reading.udid != stage.mountedDevice || wantsBody != stage.mountedBody else { return }
+            stage.mountedDevice = reading.udid
+            stage.mountedBody = wantsBody
+
+            for view in stage.stageHost.subviews where view !== stage.veilView {
+                view.removeFromSuperview()
             }
-        }
-        let art = bundle.flatMap { MacSimulatorChrome.art(for: $0) }
-        let wantsBody = art != nil
-        guard udid != mountedDevice || wantsBody != mountedBody else { return }
-        mountedDevice = udid
-        mountedBody = wantsBody
+            stage.applyOrientation = nil
+            guard reading.udid != nil else { return }
 
-        for view in stageHost.subviews where view !== veilView { view.removeFromSuperview() }
-        applyOrientation = nil
-        guard udid != nil else { return }
-
-        let orientation = model.orientation
-        let send: (SimulatorInputEnvelope) -> Void = { [model] in model.send($0) }
-        let observed: (CGSize) -> Void = { [model] in model.observed(resolution: $0) }
-        let inset: CGFloat
-        let device: NSView
-        if let art {
-            let bezel = MacSimulatorBezelView(
-                art: art, frames: model.frames, orientation: orientation,
-                send: send, onContentSize: observed,
-            )
-            applyOrientation = { [weak bezel] in bezel?.orientation = $0 }
-            device = bezel
-            // The body's own margin. A bezel drawn to the band's edge reads as a screenshot of a device
-            // rather than as a device standing on the panel.
-            inset = Slate.Metric.space3
-        } else {
-            let bare = MacSimulatorBareScreen(
-                frames: model.frames, orientation: orientation,
-                send: send, onContentSize: observed,
-            )
-            applyOrientation = { [weak bare] in bare?.orientation = $0 }
-            device = bare
-            // NO margin without a body: the bare rect is the picture itself, and insetting it would be
-            // a frame drawn around a stream to stand in for the bezel that failed to load.
-            inset = 0
+            let model = stage.model
+            let orientation = model.orientation
+            let send: (SimulatorInputEnvelope) -> Void = { [model] in model.send($0) }
+            let observed: (CGSize) -> Void = { [model] in model.observed(resolution: $0) }
+            let inset: CGFloat
+            let device: NSView
+            if let art {
+                let bezel = MacSimulatorBezelView(
+                    art: art, frames: model.frames, orientation: orientation,
+                    send: send, onContentSize: observed,
+                )
+                stage.applyOrientation = { [weak bezel] in bezel?.orientation = $0 }
+                device = bezel
+                // The body's own margin. A bezel drawn to the band's edge reads as a screenshot of a
+                // device rather than as a device standing on the panel.
+                inset = Slate.Metric.space3
+            } else {
+                let bare = MacSimulatorBareScreen(
+                    frames: model.frames, orientation: orientation,
+                    send: send, onContentSize: observed,
+                )
+                stage.applyOrientation = { [weak bare] in bare?.orientation = $0 }
+                device = bare
+                // NO margin without a body: the bare rect is the picture itself, and insetting it
+                // would be a frame drawn around a stream to stand in for the bezel that failed to
+                // load.
+                inset = 0
+            }
+            stage.stageHost.addSubview(device, positioned: .below, relativeTo: stage.veilView)
+            NSLayoutConstraint.activate([
+                device.leadingAnchor.constraint(
+                    equalTo: stage.stageHost.leadingAnchor, constant: inset,
+                ),
+                device.trailingAnchor.constraint(
+                    equalTo: stage.stageHost.trailingAnchor, constant: -inset,
+                ),
+                device.topAnchor.constraint(equalTo: stage.stageHost.topAnchor, constant: inset),
+                device.bottomAnchor.constraint(
+                    equalTo: stage.stageHost.bottomAnchor, constant: -inset,
+                ),
+            ])
         }
-        stageHost.addSubview(device, positioned: .below, relativeTo: veilView)
-        NSLayoutConstraint.activate([
-            device.leadingAnchor.constraint(equalTo: stageHost.leadingAnchor, constant: inset),
-            device.trailingAnchor.constraint(equalTo: stageHost.trailingAnchor, constant: -inset),
-            device.topAnchor.constraint(equalTo: stageHost.topAnchor, constant: inset),
-            device.bottomAnchor.constraint(equalTo: stageHost.bottomAnchor, constant: -inset),
-        ])
     }
 
     // MARK: - The stage's other two states
@@ -286,28 +287,25 @@ final class MacSimulatorStageView: NSView {
     /// moves. ``SimulatorPresentation/stage(isSelected:showsLoading:isAwaitingStream:hasVideo:)`` owns
     /// the ordering of the three answers; this reads the four inputs and draws the one it is handed.
     private func followStageState() {
-        // All three are READ for the tracking edge and none is kept: ``refreshVeil`` asks the model for
-        // the current values, so a copy taken here would be one the cancelled sleep could return to
-        // stale.
-        withObservationTracking {
-            _ = self.model.isAwaitingStream
-            _ = self.model.hasVideo
-            _ = self.model.selection
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followStageState() }
+        ObservationFollow.arm(self) { stage in
+            // All three are READ for the tracking edge and none is kept: ``refreshVeil`` asks the
+            // model for the current values, so a copy carried out of here would be one the cancelled
+            // sleep could return to stale.
+            _ = stage.model.isAwaitingStream
+            _ = stage.model.hasVideo
+            _ = stage.model.selection
+        } apply: { stage, _ in
+            // Keyed on the FLAG, which gives the delay `.task(id:)`'s cancellation for free: a wait
+            // for a stream that arrived in time is cancelled before its veil is ever written.
+            let isAwaiting = stage.model.isAwaitingStream
+            stage.veilLoop.keyed(on: isAwaiting ? "awaiting" : "settled") { [weak stage] in
+                guard let state = await SimulatorPresentation.loadingVeil(isAwaiting: isAwaiting)
+                else { return }
+                stage?.showsLoading = state
+                stage?.refreshVeil()
             }
+            stage.refreshVeil()
         }
-        // Keyed on the FLAG, which gives the delay `.task(id:)`'s cancellation for free: a wait for a
-        // stream that arrived in time is cancelled before its veil is ever written.
-        let isAwaiting = model.isAwaitingStream
-        veilLoop.keyed(on: isAwaiting ? "awaiting" : "settled") { [weak self] in
-            guard let state = await SimulatorPresentation.loadingVeil(isAwaiting: isAwaiting)
-            else { return }
-            self?.showsLoading = state
-            self?.refreshVeil()
-        }
-        refreshVeil()
     }
 
     /// A stage with no picture on it says WHICH of the two reasons that is. Covering the stage rather
@@ -444,34 +442,32 @@ final class MacSimulatorStageView: NSView {
     /// Only the tooltips and the lit state move here — a plate rebuilt to change its own latch would
     /// take the pointer's hover state and any popover anchored to it with it.
     private func followControls() {
-        var isOverridden = false
-        var pinned: SimulatorCoordinate?
-        var isSending = false
-        var isConsoleOpen = false
-        withObservationTracking {
-            isOverridden = self.model.isStatusBarOverridden
-            pinned = self.model.pinnedLocation
-            isSending = self.model.isSendingFile
-            isConsoleOpen = self.model.isConsoleOpen
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followControls() }
-            }
-        }
-        statusBar.active = isOverridden
-        statusBar.toolTip = SimulatorPresentation.Toolbar.statusBar(isOverridden: isOverridden).help
-        location.active = pinned != nil
-        location.toolTip = SimulatorPresentation.Toolbar.location(isPinned: pinned != nil).help
-        console.active = isConsoleOpen
-        console.toolTip = SimulatorPresentation.Toolbar.console(isOpen: isConsoleOpen).help
+        ObservationFollow.arm(self) { stage in
+            (
+                isOverridden: stage.model.isStatusBarOverridden,
+                pinned: stage.model.pinnedLocation,
+                isSending: stage.model.isSendingFile,
+                isConsoleOpen: stage.model.isConsoleOpen,
+            )
+        } apply: { stage, reading in
+            stage.statusBar.active = reading.isOverridden
+            stage.statusBar.toolTip = SimulatorPresentation.Toolbar
+                .statusBar(isOverridden: reading.isOverridden).help
+            stage.location.active = reading.pinned != nil
+            stage.location.toolTip = SimulatorPresentation.Toolbar
+                .location(isPinned: reading.pinned != nil).help
+            stage.console.active = reading.isConsoleOpen
+            stage.console.toolTip = SimulatorPresentation.Toolbar
+                .console(isOpen: reading.isConsoleOpen).help
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Slate.Motion.smallFade.duration
-            context.timingFunction = Slate.Motion.smallFade.timingFunction
-            context.allowsImplicitAnimation = true
-            sending.isHidden = !isSending
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Slate.Motion.smallFade.duration
+                context.timingFunction = Slate.Motion.smallFade.timingFunction
+                context.allowsImplicitAnimation = true
+                stage.sending.isHidden = !reading.isSending
+            }
+            stage.setConsole(open: reading.isConsoleOpen)
         }
-        setConsole(open: isConsoleOpen)
     }
 
     private func openLocation() {
