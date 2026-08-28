@@ -1,8 +1,8 @@
 // OutlinePresentation — the near-side FACE of `slopdesk_workspace::outline`.
 //
 // The Outline tab's two readings: how long ago a row ran, and how it ended. Both are pure mappings, and
-// both stayed free of `Slate` / SwiftUI so the ONLY theme-coupled part is the view's `Gutter → colour`
-// map.
+// both stayed free of `Slate` and of any view framework, so the ONLY theme-coupled part is each shell's
+// own `Gutter → colour` map.
 //
 // THE CLOCK STAYS HERE. `relativeTime(from:now:)` still takes two `Date`s and subtracts them, because a
 // door that read a clock would answer differently for the same inputs — which is not a rule. What crosses

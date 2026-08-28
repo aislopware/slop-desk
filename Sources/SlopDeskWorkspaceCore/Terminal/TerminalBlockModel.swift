@@ -18,7 +18,8 @@
 //
 // ## Why `blocks` is a mirror rather than a query
 //
-// `@Observable` tracks stored properties, so the array SwiftUI reads has to live here. When the ring
+// `@Observable` tracks stored properties, so the array the navigator's tracked arm reads has to live here —
+// a computed projection over the door would register no dependency at all and wake nobody. When the ring
 // MOVES — a new command, an eviction, a reset — it is rebuilt by one `slopdesk_block_store_project`
 // crossing that writes every row and the one arena their command texts share, rather than 64
 // crossings for one answer. When a known block merely CHANGES, the door names the slot it landed in
@@ -37,7 +38,7 @@ import SlopDeskClient
 /// demand (``TerminalBlockModel/requestOutput(index:send:completion:)`` → wire type 15 → 29) so the
 /// CONTROL channel never floods with command output.
 ///
-/// A PURE value type (metadata only, no SwiftUI/client) so the block model is headlessly testable.
+/// A PURE value type (metadata only — no view framework, no client) so the block model is headlessly testable.
 /// Every derived property — ``status``, ``isFailed``, ``durationLabel`` — asks the door, so the rule
 /// behind it has one speller.
 public struct CommandBlock: Equatable, Sendable, Identifiable {
@@ -61,7 +62,13 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
     /// is skipped for such a block rather than mis-landing.
     public var promptOrdinal: UInt32
 
-    /// `Identifiable` over the stable wire index — so SwiftUI lists key rows by the block identity.
+    /// `Identifiable` over the stable wire index: a block's identity is the index the host segmented it at,
+    /// never its position in ``TerminalBlockModel/blocks`` — which shifts under every eviction.
+    ///
+    /// ⚠️ NOTHING READS THIS TODAY. It was the key a SwiftUI list diffed rows by, and the imperative
+    /// navigators (`MacCommandNavigator` / the phone's) address rows by `index` directly. Kept because the
+    /// conformance is the honest statement of what identifies a block, and a future diffing data source
+    /// wants exactly this key — not because a caller needs it.
     public var id: UInt32 { index }
 
     public init(
@@ -236,9 +243,9 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
 /// the host's `commandBlock` metadata (wire type 28), plus a pending-output-request registry resolved by
 /// `blockOutput` (type 29) — empty-eviction handled so it never hangs.
 ///
-/// PURE + headlessly testable: no SwiftUI / surface / actor state. The owning ``TerminalViewModel``
-/// folds the two block events in; the SwiftUI surfaces (navigator / sticky header / chrome chip) read
-/// its observable projections. `@MainActor @Observable` (fold + reads are both on the main actor), yet
+/// PURE + headlessly testable: no view framework, no surface, no actor state. The owning ``TerminalViewModel``
+/// folds the two block events in; the surfaces that show them (navigator / sticky header / chrome chip) track
+/// its observable projections from their own arms. `@MainActor @Observable` (fold + reads are both on the main actor), yet
 /// every method is a synchronous mutation a unit test drives directly.
 @preconcurrency
 @MainActor

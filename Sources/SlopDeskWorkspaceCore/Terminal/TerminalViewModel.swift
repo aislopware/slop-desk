@@ -48,17 +48,19 @@ public enum PaneProgress: Equatable, Sendable {
 }
 
 /// The terminal screen's view-model: it consumes a ``SlopDeskClient``'s `output` byte stream +
-/// `events` and projects connection / title / exit / byte-count state for the SwiftUI views.
+/// `events` and projects connection / title / exit / byte-count state for the two imperative shells.
 ///
-/// It is the bridge between the actor world (`SlopDeskClient`) and the UI: a `.task` calls
-/// ``observe(client:)`` which drains both streams and folds them into `@Observable`
-/// properties SwiftUI tracks. The terminal **pixels** are produced by the
-/// ``SlopDeskTerminal/TerminalSurface`` the view-model feeds (the libghostty `GhosttySurface` in
-/// the app target, or `nil` in the headless/placeholder case) — the view-model never parses
-/// VT itself (libghostty-only).
+/// It is the bridge between the actor world (`SlopDeskClient`) and the UI: ``ConnectionViewModel``
+/// owns a `Task` that calls ``observe(client:)``, which drains the output stream and folds it into
+/// `@Observable` properties. Nothing here draws — the readers are the leaves' and the chrome's
+/// `withObservationTracking` arms (`MacTerminalLeafView` / `TerminalLeafView` and the rollups above
+/// them), each of which RE-ARMS from its own handler, since `withObservationTracking` fires exactly
+/// once per arm. The terminal **pixels** are produced by the ``SlopDeskTerminal/TerminalSurface``
+/// the view-model feeds (the libghostty `GhosttySurface` in the app target, or `nil` in the
+/// headless/placeholder case) — the view-model never parses VT itself (libghostty-only).
 ///
-/// `@MainActor` so it is safe to mutate from SwiftUI and to drive a `@MainActor`
-/// `GhosttySurface`; `@Observable` so the views update automatically.
+/// `@MainActor` so it is safe to mutate from the shells and to drive a `@MainActor`
+/// `GhosttySurface`; `@Observable` so a tracked arm is woken by a change instead of polling.
 @preconcurrency
 @MainActor
 @Observable
@@ -146,13 +148,20 @@ public final class TerminalViewModel {
     /// the app target sets it to a libghostty ``GhosttySurface``.
     ///
     /// `@ObservationIgnored`: WIRING, not view state — like ``inputSink`` / ``resizeSink`` / ``onRequestFocus``.
-    /// It MUST NOT be observation-tracked: ``attachSurface(_:)`` both READS (`self.surface !== surface`) and
-    /// WRITES it, and runs from `GhosttyMetalLayerView.updateNSView` — INSIDE a SwiftUI AttributeGraph update.
-    /// If tracked, the read registers the updating attribute as a dependency and the write invalidates it, so
-    /// SwiftUI re-runs update → `updateNSView` → `attach` → `attachSurface` → read+write → invalidate → ∞: an
-    /// infinite re-render loop pinning the main thread (a multi-second beachball "crash" on a focus change /
-    /// reconnect that triggers `updateNSView`). Ignoring removes the dependency. No view body reads `surface`,
-    /// so nothing needs it reactive (the renderer view owns its own surface; this is only the feed target).
+    /// It MUST NOT be observation-tracked, and the reason is the READ-THEN-WRITE in ``attachSurface(_:)``: it
+    /// compares (`self.surface !== surface`) and then assigns, from inside `GhosttyLayerBackedView.attach(model:)`
+    /// — the renderer's own mount path. Tracked, that pair is a self-invalidating cycle: any arm that read
+    /// `surface` would be woken by the write its own re-arm provoked.
+    ///
+    /// ⚠️ THE IMPERATIVE SHELLS DID NOT RETIRE THIS. The hazard was first written against SwiftUI, where the
+    /// same attach ran inside an AttributeGraph update and the cycle was body → `updateNSView` → `attach` →
+    /// read+write → invalidate → ∞, a main-thread pin that read as a multi-second beachball on a focus change
+    /// or a reconnect. `withObservationTracking` registers dependencies the SAME way, so an arm that read this
+    /// would re-fire on every attach exactly as a body did; only the SHAPE of the wasted work changed (one
+    /// re-armed handler instead of a whole re-render). Ignoring removes the dependency outright.
+    ///
+    /// Nothing needs it reactive either way: no leaf reads `surface` — the renderer view owns its own surface,
+    /// and this is only the feed target.
     @ObservationIgnored public weak var surface: (any TerminalSurface)?
 
     /// OUT path sink: the encoded keystroke/escape bytes libghostty emits from the renderer's `key`/`text`
@@ -198,12 +207,12 @@ public final class TerminalViewModel {
     /// Default off.
     @ObservationIgnored private var resizeDeliverySuspended = false
 
-    /// Click-to-focus hook (macOS). The terminal NSView (`GhosttyLayerBackedView`) installs `mouseDown`, which
-    /// CONSUMES the click the pane's `.onTapGesture { store.focus(id) }` would otherwise receive — so a body click
-    /// would start a libghostty selection but NOT focus the pane (no focus ring, keyboard stuck on the old
-    /// pane). The renderer calls this at the TOP of `mouseDown`; the leaf wires it to `store.focus(paneID)` so
-    /// the click ALSO transfers workspace focus. `@ObservationIgnored`: wiring, not view state. Nil for headless
-    /// / preview callers (no store), never invoked.
+    /// Click-to-focus hook (macOS). The terminal NSView (`GhosttyLayerBackedView`) installs `mouseDown`, and it
+    /// is the DEEPEST view in the pane, so it wins the hit-test and the click never reaches any focus handler
+    /// an ancestor might install — a click would start a libghostty selection but NOT focus the pane (no focus
+    /// ring, keyboard stuck on the old pane). The renderer calls this at the TOP of `mouseDown`; the leaf wires
+    /// it to `store.focus(paneID)` so the click ALSO transfers workspace focus. `@ObservationIgnored`: wiring,
+    /// not view state. Nil for headless callers (no store), never invoked.
     @ObservationIgnored public var onRequestFocus: (() -> Void)?
 
     /// Pans the CANVAS by a (sign-adjusted) delta when an ⌥-scroll lands on this terminal. A plain scroll
@@ -266,13 +275,16 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onRequestMenuItem: ((TerminalContextMenu.Item) -> Void)?
 
     /// The ⌘F / right-click "Find…" action — opens the find-in-terminal bar over THIS pane. The
-    /// renderer's menu (and the `find:` responder selector) call it; the leaf wires it to the find-bar
-    /// `@State`. `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
+    /// renderer's menu (and the `find:` responder selector) call it; the leaf's `TerminalPaneWiring`
+    /// binds it to the pane's `TerminalFindBarModel` on attach and clears it on detach, so a torn-down
+    /// leaf cannot drive a dead bar. `@ObservationIgnored`: wiring, not view state. Nil for headless
+    /// callers.
     @ObservationIgnored public var onRequestFind: (() -> Void)?
 
     /// The ⌘G "Find Next" / ⇧⌘G "Find Previous" actions — advance / retreat the find bar's match
-    /// over THIS pane (and OPEN the bar when closed). The leaf wires these to its find-bar `@State`
-    /// (next()/previous() + the libghostty `navigate_search:` highlight); the store reaches them via
+    /// over THIS pane (and OPEN the bar when closed). The leaf's `TerminalPaneWiring` binds these to the
+    /// pane's `TerminalFindBarModel` (next()/previous() + the libghostty `navigate_search:` highlight);
+    /// the store reaches them via
     /// ``WorkspaceStore/requestFindNextInActivePane()`` / `requestFindPrevInActivePane()`, falling back to
     /// ``onRequestFind`` when unset so ⌘G still opens the bar. `@ObservationIgnored`: wiring, not view state.
     /// Nil for headless/preview callers (never invoked).
@@ -352,17 +364,19 @@ public final class TerminalViewModel {
     /// TRUE while this pane is in modal keyboard COPY-MODE (tmux/zellij parity): every keystroke this pane's
     /// `keyDown` sees is routed through ``handleCopyModeKey(_:)`` (navigation / search / copy / exit) instead
     /// of forwarded to the shell. VIEW state, NOT persisted (mirrors `isFindPresented`): `@ObservationIgnored`
-    /// because the keyDown intercept READS it from inside the renderer event path — it must not register a
-    /// SwiftUI dependency. The overlay reads the observable ``copyModeBadgeActive`` twin below instead.
+    /// because the keyDown intercept READS it from inside the renderer's own event path, which also WRITES
+    /// it — so it must register no Observation dependency at all (the read-then-write cycle documented on
+    /// ``surface``). The overlay reads the observable ``copyModeBadgeActive`` twin below instead.
     @ObservationIgnored public var isCopyMode = false {
         didSet { copyModeBadgeActive = isCopyMode }
     }
 
-    /// OBSERVABLE mirror of ``isCopyMode`` for the SwiftUI status-bar badge. ``isCopyMode`` itself is
-    /// `@ObservationIgnored` because the keyDown intercept reads it from inside the renderer's AttributeGraph
-    /// update path (the infinite-render-loop hazard documented on ``surface``). The vi / copy-mode pill
-    /// (``ViModePill``) reads THIS twin from a normal view body (reactive). Kept in lock-step by
-    /// ``isCopyMode``'s `didSet`.
+    /// OBSERVABLE mirror of ``isCopyMode`` for the mode badge. ``isCopyMode`` itself is
+    /// `@ObservationIgnored` because the keyDown intercept reads it from inside the renderer's own event
+    /// path, which also writes it (the self-invalidating cycle documented on ``surface``). The vi /
+    /// copy-mode pill — `MacViModePill` on the Mac, `ViModePillView` on the phone — tracks THIS twin from
+    /// its overlay's `withObservationTracking` arm instead, and gets a wake-up per real flip. Kept in
+    /// lock-step by ``isCopyMode``'s `didSet`.
     public private(set) var copyModeBadgeActive = false
 
     /// The most recent clipboard-copy receipt — OBSERVABLE: the pane's transient `COPIED · N` chip
@@ -517,9 +531,9 @@ public final class TerminalViewModel {
 
     /// The PURE copy-mode vi state: the pending repeat-count digits + the active visual mode. Free of
     /// `@Observable`/`NSEvent` so ``handleCopyModeKey(_:)`` (driven from the renderer keyDown event path)
-    /// mutates it without registering a SwiftUI dependency — same rationale as ``isCopyMode`` being
-    /// `@ObservationIgnored`. The observable ``viPendingCount``/``viVisualMode`` mirrors (read by the pill) are
-    /// kept in lock-step by ``syncViObservables()`` after every key.
+    /// mutates it without registering an Observation dependency — same rationale as ``isCopyMode`` being
+    /// `@ObservationIgnored`. The observable ``viPendingCount``/``viVisualMode`` mirrors (tracked by the pill's
+    /// arm) are kept in lock-step by ``syncViObservables()`` after every key.
     struct CopyModeState: Equatable {
         /// `nil` = no count pending; otherwise the accumulated decimal repeat-count (vim left-to-right).
         var pendingCount: Int?
@@ -610,7 +624,9 @@ public final class TerminalViewModel {
     }
 
     /// Mirrors the pure ``copyModeState`` into the observable ``viPendingCount``/``viVisualMode`` twins so the
-    /// pill re-renders. Written ONLY on a real change (SwiftUI change tracking is not free).
+    /// pill redraws. Each is written ONLY on a real change — a guarded write, so a key that moved neither
+    /// value wakes no tracked arm. That matters MORE under the imperative shells than it did: an arm that
+    /// fires re-arms, so an echo write costs a full re-registration on every keystroke of a repeat count.
     private func syncViObservables() {
         if viPendingCount != copyModeState.pendingCount { viPendingCount = copyModeState.pendingCount }
         if viVisualMode != copyModeState.visualMode { viVisualMode = copyModeState.visualMode }
@@ -1358,9 +1374,9 @@ public final class TerminalViewModel {
     /// ingest is UNTOUCHED — the host's video/bytes keep streaming; the pane is "view only".
     ///
     /// VIEW state, NOT persisted (the `isCopyMode` / `copyModeBadgeActive` twin pattern): `@ObservationIgnored`
-    /// because the renderer's `keyDown` / mouse-report path READS this flag from inside the AttributeGraph
-    /// update path (the infinite-render-loop hazard documented on ``surface``), so it must not register a
-    /// SwiftUI dependency. The pill reads the observable ``readOnlyBadgeActive`` mirror instead, kept in
+    /// because the renderer's `keyDown` / mouse-report path READS this flag from inside the renderer's own
+    /// event path, which also writes it (the self-invalidating cycle documented on ``surface``), so it must
+    /// register no Observation dependency. The pill tracks the observable ``readOnlyBadgeActive`` mirror instead, kept in
     /// lock-step by this `didSet`, which ALSO fires ``onReadOnlyChanged`` so the pill `×`, the menu, and the
     /// command-palette term converge to one source of truth through the store.
     @ObservationIgnored public var isReadOnly = false {
@@ -1370,9 +1386,10 @@ public final class TerminalViewModel {
         }
     }
 
-    /// OBSERVABLE mirror of ``isReadOnly`` for the SwiftUI `🔒 READ ONLY ×` pill. ``isReadOnly`` itself is
-    /// `@ObservationIgnored` (the keyDown intercept reads it from the renderer's AttributeGraph update path);
-    /// the pill reads THIS twin from a normal view body (reactive). Kept in lock-step by ``isReadOnly``'s `didSet`.
+    /// OBSERVABLE mirror of ``isReadOnly`` for the `🔒 READ ONLY ×` pill. ``isReadOnly`` itself is
+    /// `@ObservationIgnored` (the keyDown intercept reads it from the renderer's own read-then-write event
+    /// path); the pill's `withObservationTracking` arm reads THIS twin instead and is woken per real flip.
+    /// Kept in lock-step by ``isReadOnly``'s `didSet`.
     public private(set) var readOnlyBadgeActive = false
 
     /// The read-only transition hook: the store wires it (in `wireMaterializedLeaf`) so flipping ``isReadOnly``
@@ -1471,8 +1488,8 @@ public final class TerminalViewModel {
 
     /// OBSERVABLE mirror that drives the `🛡 SECURE INPUT` pill: TRUE when secure input is active for this pane
     /// — either the AUTO path (the "Auto Secure Input" setting is on AND the host is at a no-echo prompt) or
-    /// the MANUAL toggle. `@ObservationIgnored` `hostNoEcho`/`manualSecureInput` feed it; the pill reads THIS
-    /// twin from a normal view body (reactive). Always `false` off macOS (secure input is macOS-only), so the
+    /// the MANUAL toggle. `@ObservationIgnored` `hostNoEcho`/`manualSecureInput` feed it; the pill's tracked
+    /// arm reads THIS twin. Always `false` off macOS (secure input is macOS-only), so the
     /// shared cross-platform pill never lights on iOS. Kept in lock-step by ``refreshSecureInput()``.
     public private(set) var secureInputActive = false
 
@@ -1486,7 +1503,8 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onManualSecureInputChanged: ((Bool) -> Void)?
 
     /// Recomputes the observable ``secureInputActive`` pill mirror from the raw inputs, writing it only on a
-    /// real change (SwiftUI change tracking is not free). Mirrors the `SecureKeyboardEntryController`'s engage
+    /// real change — a guarded write, so a recompute that lands on the same verdict wakes no tracked arm (and
+    /// therefore costs no re-arm). Mirrors the `SecureKeyboardEntryController`'s engage
     /// formula `(autoSecureInput && hostNoEcho) || manualOn` so the pill and the OS actuator agree; gated to
     /// `false` off macOS so the cross-platform pill never lights on iOS (secure input is macOS-only).
     private func refreshSecureInput() {
@@ -1517,8 +1535,10 @@ public final class TerminalViewModel {
     }
 
     /// The "Command Navigator" toggle (⌃⌘O / the chrome chip / a menu item) — opens the searchable
-    /// recent-blocks popover over THIS pane. The leaf wires it to the navigator `@State` (the ``onRequestFind``
-    /// pattern). `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
+    /// recent-blocks popover over THIS pane. `TerminalPaneWiring` binds it to a TOGGLE on the leaf's
+    /// `CommandNavigatorChrome.isVisible` (the ``onRequestFind`` pattern), and the leaf's tracked arm is what
+    /// mounts or drops the card off that flag. `@ObservationIgnored`: wiring, not view state. Nil for headless
+    /// callers.
     @ObservationIgnored public var onRequestBlockNavigator: (() -> Void)?
 
     /// The OUT-path sink that fires a `requestBlockOutput(index)` (wire type 15) on the live client. Set by
@@ -1530,27 +1550,29 @@ public final class TerminalViewModel {
     // MARK: Link interaction (⌘-hold underline + full-path hover)
 
     /// TRUE while ⌘ is held over this pane's terminal (set by the macOS renderer's `flagsChanged`). Drives the
-    /// ``LinkHighlightOverlay``, which underlines every detected path/URL in the visible viewport. OBSERVABLE
-    /// (a normal `@Observable` property, NOT `@ObservationIgnored`) so the overlay reveals / clears reactively —
-    /// and WRITTEN from the renderer's `flagsChanged` handler (NOT from inside an `updateNSView` / AttributeGraph
-    /// pass, unlike ``isReadOnly``), so there is no infinite-render hazard. Always FALSE on iOS — no ⌘ modifier,
+    /// link-highlight overlay (`MacLinkHighlightOverlay` / `LinkHighlightOverlayView`), which underlines every
+    /// detected path/URL in the visible viewport. OBSERVABLE (a normal `@Observable` property, NOT
+    /// `@ObservationIgnored`) so the overlay's tracked arm is woken on reveal / clear — and safely so, because
+    /// it is WRITTEN from the renderer's `flagsChanged` handler and never READ back there, unlike
+    /// ``isReadOnly``: no read means no dependency to invalidate, so none of the self-invalidating cycle
+    /// documented on ``surface``. Always FALSE on iOS — no ⌘ modifier,
     /// so the overlay is inert there (the iOS affordance is tap-on-label / long-press, not ⌘-hold).
     public var linkHighlightActive = false
 
     /// A monotonic tick bumped whenever the LOCAL viewport scrolls (mouse-wheel / trackpad scrollback
-    /// navigation) WITHOUT any new wire bytes — the reactive signal the ``LinkHighlightOverlay`` observes so its
+    /// navigation) WITHOUT any new wire bytes — the signal the link-highlight overlay's arm tracks so its
     /// ⌘-hold underlines RE-DETECT against the post-scroll `viewportTextRows()` instead of clinging to the
     /// pre-scroll rows at fixed screen positions. libghostty owns the viewport internally, so a local scrollback
     /// scroll bumps no ``bytesReceived`` (the only other viewport-change signal); the renderer's `scrollWheel` /
-    /// pan handler calls ``noteViewportScrolled()`` after forwarding the delta. OBSERVABLE so the overlay body
-    /// re-evaluates; the MAGNITUDE is never read (a pure change-signal), so a wrap is harmless. Inert on a pane
+    /// pan handler calls ``noteViewportScrolled()`` after forwarding the delta. OBSERVABLE so the overlay's arm
+    /// re-fires; the MAGNITUDE is never read (a pure change-signal), so a wrap is harmless. Inert on a pane
     /// with no ⌘-hold underline active.
     public private(set) var viewportRevision: Int = 0
 
     /// Bumps ``viewportRevision`` — called by the renderer AFTER forwarding a LOCAL scroll to libghostty so the
     /// ⌘-hold link overlay re-detects against the moved viewport. `&+` wrap: a pure change-signal, never read
-    /// for magnitude. WRITTEN from the renderer's event handler (NOT from inside an `updateNSView` /
-    /// AttributeGraph pass), so there is no infinite-render hazard.
+    /// for magnitude. WRITE-ONLY from the renderer's event handler — the renderer never reads it back, so
+    /// there is no dependency for the write to invalidate and none of the cycle documented on ``surface``.
     public func noteViewportScrolled() { viewportRevision &+= 1 }
 
     /// The resolved absolute path (or raw text, when it cannot be resolved purely — a `~`-path, a bare URL) of
@@ -1563,8 +1585,9 @@ public final class TerminalViewModel {
 
     /// The pane's last-known working directory (OSC 7 `pane/cwd`), mirrored here by the leaf so the
     /// AppKit renderer's ⌘-hover hit-test can resolve a RELATIVE detected path to absolute for the status-bar
-    /// preview. WIRING, not view state (`@ObservationIgnored`): syncing it must never invalidate a view, and the
-    /// SwiftUI ``LinkHighlightOverlay`` takes cwd as a parameter — only the renderer reads this.
+    /// preview. WIRING, not view state (`@ObservationIgnored`): syncing it must never wake a tracked arm, and
+    /// the two shells' link-highlight overlays (`MacLinkHighlightOverlay` / `LinkHighlightOverlayView`) take
+    /// cwd as an init parameter the leaf re-pushes on change — only the renderer reads this.
     @ObservationIgnored public var linkCwd: String?
 
     // `hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)` was here: the pure ⌘-hover hit-test,
@@ -1714,15 +1737,24 @@ public final class TerminalViewModel {
     // MARK: Replay byte-ring (surface-rebuild survival)
 
     /// Bounded FIFO of the COMPLETE `output` chunks fed to the surface, kept so a REBUILT surface can be
-    /// repainted from scratch. SwiftUI dismantles the terminal representable when its tab/pane goes off-screen
-    /// (tab switch, compact carousel flip) → ``detachSurface()`` closes the live `GhosttySurface`; on re-appear
-    /// ``attachSurface(_:)`` receives a BRAND-NEW empty surface. The *connection never dropped*, so the host
-    /// does NOT re-send the scrollback — without this ring the prior screen would be lost. On attach of a
-    /// different surface instance we replay the ring (see ``attachSurface(_:)``).
+    /// repainted from scratch. When a leaf comes down, ``detachSurface(_:)`` closes the live `GhosttySurface`;
+    /// on the next mount ``attachSurface(_:)`` receives a BRAND-NEW empty one. The *connection never dropped*,
+    /// so the host does NOT re-send the scrollback — without this ring the prior screen would be lost. On
+    /// attach of a different surface instance we replay it (see ``attachSurface(_:)``).
+    ///
+    /// ⚠️ THIS IS THE FALLBACK, NOT THE ORDINARY PATH, and the canvas keeps it that way ON PURPOSE. Replay is
+    /// LOSSY (see LIMITATION below), so `PaneCanvasMounting.mountedTabs` holds every RETAINED session's tabs
+    /// in the tree rather than unmounting the ones off screen: an ordinary tab switch must not reach this ring
+    /// at all. What still does: a session evicted from the LRU retention set and switched back to (its leaves
+    /// were torn down for real), a pane whose KIND flips so the container rebuilds the leaf, and a session
+    /// swapped under a stable pane id. That list is the imperative canvas's, and it is SHORTER than the
+    /// SwiftUI one this ring was first written for — where an off-screen tab dismantled the representable and
+    /// every switch paid the lossy repaint.
     ///
     /// Each element is one whole wire `output` payload; eviction drops WHOLE oldest chunks (never splits a
     /// `Data`) so a replayed chunk is always a complete prefix-aligned slice the VT parser can consume.
-    /// `@ObservationIgnored`: replay buffer, not view state — mutating it must not invalidate SwiftUI.
+    /// `@ObservationIgnored`: replay buffer, not view state — it is mutated per output chunk, so tracking it
+    /// would wake every armed leaf at wire rate for a value none of them draws.
     ///
     /// LIMITATION: replay is a naive re-feed of the retained raw bytes, prefixed with a DECSTR soft reset. It
     /// restores the *main-screen* scrollback faithfully for the common case, but is NOT a true VT snapshot: if
@@ -1887,14 +1919,14 @@ public final class TerminalViewModel {
     /// suppress ONLY inside a true full-screen TUI.
     public var isAlternateScreen: Bool { modeTracker.mode == .altScreen }
 
-    /// The OBSERVABLE twin of ``isAlternateScreen`` — the same truth, readable by a view that needs to
+    /// The OBSERVABLE twin of ``isAlternateScreen`` — the same truth, readable by an overlay that needs to
     /// be told when it changes. Same idiom as the ``isCopyMode``/``copyModeBadgeActive`` pair above,
     /// and here for the same reason: ``modeTracker`` is `@ObservationIgnored`, so reading
-    /// ``isAlternateScreen`` inside a SwiftUI body or a `withObservationTracking` closure registers
-    /// **nothing**. Two overlay headers claimed it did.
+    /// ``isAlternateScreen`` inside a `withObservationTracking` closure registers **nothing**. Two overlay
+    /// headers claimed it did.
     ///
     /// WHAT THAT COSTS, precisely, because it is not "the overlay never updates". A screen flip
-    /// arrives WITH bytes, so any view that also reads an ingest-driven property re-evaluates on the
+    /// arrives WITH bytes, so an arm that also reads an ingest-driven property re-fires on the
     /// next chunk and looks correct. The miss is the quiet case: ⌘ held over a pane that flips to a
     /// full-screen TUI and then stops producing output leaves the link underlines drawn over vim —
     /// decoration positioned by a grid that no longer exists. A wrong mark, not a missing one, which
@@ -2066,9 +2098,10 @@ public final class TerminalViewModel {
 
     // MARK: Stream observation
 
-    /// Drains the client's `output` byte stream ONLY, folding each chunk into observable state. Call from a
-    /// SwiftUI `.task { await model.observe(client: client) }`; returns when the output stream finishes (client
-    /// closed / child exited).
+    /// Drains the client's `output` byte stream ONLY, folding each chunk into observable state. Driven by
+    /// ``ConnectionViewModel``'s `outputTask` — a `Task { @MainActor [weak self] in await self?.terminal
+    /// .observe(client:) }` started on connect and cancelled on teardown, so the pump's lifetime is the
+    /// CONNECTION's and not any view's. Returns when the output stream finishes (client closed / child exited).
     ///
     /// ### Single events consumer (the race this avoids)
     /// The view-model does **not** open its own `for await client.events` loop. Events are owned by the
@@ -2150,8 +2183,8 @@ public final class TerminalViewModel {
     @ObservationIgnored private(set) var sessionEpoch = 0
 
     /// Max bytes fed to the surface per synchronous MainActor pass. Between passes the drain yields so input
-    /// events / the display link / SwiftUI interleave — a multi-MB backlog (cat of a big file) no longer
-    /// monopolizes the main thread in one job.
+    /// events, the renderer's display link, and the shells' woken observation handlers + their layout pass can
+    /// interleave — a multi-MB backlog (cat of a big file) no longer monopolizes the main thread in one job.
     static let ingestByteBudget = 256 * 1024
 
     /// Folds a BATCH of `output` chunks in budget-bounded synchronous passes: each pass runs ring bookkeeping
@@ -2276,7 +2309,9 @@ public final class TerminalViewModel {
             }
             compactRingIfNeeded()
         }
-        // ONE observable mutation per pass (SwiftUI change tracking is not free per chunk).
+        // ONE observable mutation per pass, not one per chunk: every write to an `@Observable` property wakes
+        // every arm that read it, and a woken arm RE-ARMS — so the per-chunk spelling would charge each
+        // reader a full re-registration for every wire payload in the backlog.
         bytesReceived += passBytes
 
         surface?.feedBatch(chunks)
@@ -2311,13 +2346,14 @@ public final class TerminalViewModel {
     private static let risHardReset = Data([0x1B, 0x63])
 
     /// Attaches a renderer surface and, if this is a *different* instance than the one currently held and the
-    /// replay ring is non-empty, REPLAYS the retained output so a rebuilt surface (tab switch / compact flip
-    /// dismantled + recreated the representable) shows the prior screen even though the host did not re-send it.
+    /// replay ring is non-empty, REPLAYS the retained output so a rebuilt surface (see ``ring`` for the three
+    /// paths that still rebuild one) shows the prior screen even though the host did not re-send it.
     ///
     /// Replay is fully synchronous (DECSTR soft reset, then every retained chunk in FIFO order) to honor the
     /// surface main-thread no-`await` contract ([18 §C] — `feed`/`refresh`/`draw` must not interleave with
-    /// suspension). Attaching the SAME instance again (idempotent SwiftUI `updateNSView`/`updateUIView`
-    /// re-attach) does NOT replay — the bytes are already on screen; re-feeding would duplicate them.
+    /// suspension). Attaching the SAME instance again does NOT replay — the bytes are already on screen and
+    /// re-feeding would duplicate them. The caller, `GhosttyLayerBackedView.attach(model:)`, is deliberately
+    /// idempotent and re-runs on every re-mount, so that guard is load-bearing rather than defensive.
     public func attachSurface(_ surface: any TerminalSurface) {
         let isDifferentInstance = (self.surface !== surface)
         self.surface = surface
@@ -2328,16 +2364,26 @@ public final class TerminalViewModel {
         surface.feedBatch(ArraySlice([Self.decstrSoftReset] + ring[ringStart...]))
     }
 
-    /// Detaches the renderer surface (the representable was dismantled). Drops the `weak` reference; the
-    /// retained replay ring is KEPT so the next ``attachSurface(_:)`` can repaint.
+    /// Detaches the renderer surface — the leaf holding it came down (`teardown()`, or a `setLive` that swapped
+    /// the session under a stable pane id). Drops the `weak` reference; the retained replay ring is KEPT so the
+    /// next ``attachSurface(_:)`` can repaint.
     ///
-    /// IDENTITY-GATED: only clears `self.surface` when `surface` IS the one we are currently feeding. SwiftUI
-    /// can build the terminal representable more than once (a sizing/identity pass), so an OLDER surface can be
-    /// dismantled AFTER a NEWER one already attached and became `self.surface`. A blind `self.surface = nil`
-    /// there would stop feeding the LIVE (on-screen) surface — it then freezes on its initial replay while all
-    /// new host output is silently dropped (the "renders the prompt then never repaints" bug, reproduced on a
-    /// Mac Studio). Passing the detaching surface lets us clear ONLY when it matches. Called with no argument
-    /// (legacy/tests) it clears unconditionally, preserving prior behavior.
+    /// IDENTITY-GATED: only clears `self.surface` when `surface` IS the one we are currently feeding, because
+    /// an OLDER surface can be closed AFTER a NEWER one already attached and became `self.surface`. A blind
+    /// `self.surface = nil` there would stop feeding the LIVE (on-screen) surface — it then freezes on its
+    /// initial replay while all new host output is silently dropped (the "renders the prompt then never
+    /// repaints" bug, reproduced on a Mac Studio).
+    ///
+    /// ⚠️ THE GATE OUTLIVED THE FRAMEWORK THAT MOTIVATED IT. It was written when SwiftUI could build the
+    /// terminal representable more than once for one pane (a sizing/identity pass), which is what made a stale
+    /// duplicate ordinary. The imperative canvas builds one view per mount — but the ORDERING is still the
+    /// renderer's to decide, not the model's: `GhosttyLayerBackedView.detach()` passes the surface it is
+    /// closing, and a view the factory built but nothing ever mounted makes NO call at all, precisely so it
+    /// cannot reach the unconditional branch and nil out a live pane's surface. Deleting the gate would give
+    /// the model an ordering guarantee no caller offers it.
+    ///
+    /// Called with no argument it clears unconditionally. That form has no production caller — it is the tests'
+    /// spelling for "there is no surface any more, full stop".
     public func detachSurface(_ surface: (any TerminalSurface)? = nil) {
         if let surface {
             if self.surface === surface { self.surface = nil }

@@ -109,9 +109,9 @@ public struct GlobalSearchResults: Equatable, Sendable {
 /// Transient per-group collapse state for the Global Search surface (⇧⌘F): the set of result groups the
 /// user has explicitly collapsed, keyed by each group's stable ``PaneID`` (one group == one source pane).
 ///
-/// A PURE value type so the disclosure-toggle reducer is unit-testable WITHOUT instantiating the SwiftUI
-/// overlay (the hang-safety rule keeps real surfaces/windows out of tests). The view owns one as `@State`
-/// and asks it whether to render a group's hit rows; keying by ``PaneID`` (not by index) means a live
+/// A PURE value type so the disclosure-toggle reducer is unit-testable WITHOUT instantiating the overlay
+/// (the hang-safety rule keeps real surfaces/windows out of tests). `MacGlobalSearch` holds one as a plain
+/// stored property and asks it whether to draw a group's hit rows; keying by ``PaneID`` (not by index) means a live
 /// re-run that re-orders or drops groups carries the collapse intent forward where the pane survives and
 /// simply lets a vanished pane's stale id fall away — never collapsing the WRONG group.
 ///
