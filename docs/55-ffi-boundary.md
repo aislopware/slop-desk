@@ -1087,10 +1087,54 @@ correct rather than to be used. The public signature is unchanged from the Swift
 replaced, so its callers and its tests did not move — which is what makes "delete the original in
 the same change" a diff a reviewer can check.
 
+### What the imperative UI changed at this boundary, and what it did not
+
+The client is now AppKit and UIKit with no SwiftUI anywhere. That was a large change to the tree and
+a **nil** change to this document's §4 — worth writing down, because the reasonable assumption is the
+opposite and acting on it would delete load-bearing code.
+
+Nothing on the Rust side moves. A door is a pure function over `(ptr, len)`; it never knew which
+framework was asking, so no convention, no signature and no measurement in §4c is affected.
+
+What changed is the CONSUMER, and only in one respect — **how often a door is called**:
+
+- A SwiftUI body re-ran on every invalidation, so a door reached from a body was called once per
+  render pass, at a rate the view could not control.
+- An imperative view calls a door once per actual state change, from a tracked arm or a `layout()`
+  pass, and holds the answer in a stored property until the next one.
+
+Three rules follow, and they are the whole of the imperative contract:
+
+1. **A door is called from a tracked arm, an event handler, or a layout pass — never from a draw
+   pass.** `draw(_:)` / `drawRect` runs per invalidated rect and can run several times for one
+   logical change; a crossing there pays §4c's marshalling cost at a rate nothing bounds. Compute in
+   the arm, store the answer, and let the draw read the stored value.
+2. **No view file calls a door directly, with one narrow exception.** Doors are reached through
+   `SlopDeskClientCore` / `SlopDeskWorkspaceCore` readouts, which is what keeps the view layer thin
+   and testable without a window server. The exception is a door whose ARGUMENT is a platform type
+   the readout layer cannot name — `MacMetalLayerBackedView.cgScrollPhaseCode` takes an
+   `NSEvent.Phase`, so it can only live where AppKit is visible. Those are scalar-in/scalar-out
+   doors with no memory crossing (§4's "entry that takes no memory at all"), and they exist to stop
+   a wire-stable encoding being spelled twice in two languages.
+3. **The memo layer STAYS.** This is the one that looks deletable and is not. `RailRowsMemo` exists
+   because Observation tracks at PROPERTY granularity — reading `dict[oneKey]` is a dependency on the
+   whole dictionary — so any pane's status tick invalidated the whole sidebar. That pressure is
+   Observation's, not SwiftUI's, and `withObservationTracking` tracks identically: a `follow()` arm
+   that reads a volatile per-pane dict re-fires on every unrelated pane's tick exactly as a body did.
+   What the rebuild changed is only the REPAIR — `reconfigureItems` on one cell instead of a
+   whole-body re-render — which makes the miss cheaper, not rarer.
+
+The one thing the rebuild really did retire is **API widened for SwiftUI's benefit**. `RailRowsMemo.init`
+was `nonisolated` for a single reason: a SwiftUI `@State` default value is evaluated in the view
+struct's nonisolated memberwise init. A view controller builds the memo in its own `@MainActor` init,
+so the widening left a `@MainActor` class constructible off the main actor for no caller at all. It is
+gone. That is the shape to look for when auditing this seam — not "which door died", but "which Swift
+declaration was loosened to suit a framework that is no longer here".
+
 ### Where the line falls when the module is a vocabulary
 
 `SlopDeskAgentDetect` forced the question the other two ports did not have to answer: an agent's
-status is an `enum` a SwiftUI `switch` reads, so *something* stays in Swift. The line, and it is
+status is an `enum` a view's `switch` reads, so *something* stays in Swift. The line, and it is
 gated:
 
 - **The case list stays, for the cases a view still reads.** `AgentKind`, `ClaudeStatus`,
