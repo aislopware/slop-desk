@@ -834,6 +834,15 @@ package enum Slate {
         package static let rim = 0.20
         /// De-emphasised ink ON a plate — a ruled-out hint letter, the dock badge's track.
         package static let dim = 0.35
+        /// The wash a FOUND run is lit with — the amber behind a match in a search excerpt.
+        ///
+        /// Its own rung rather than ``dim``'s, which it happens to equal: that one is INK stepped back
+        /// on a plate, this is a plate laid behind ink, and the two would move in opposite directions
+        /// the first time either was tuned. It is also a pair by construction — the Mac's results panel
+        /// and the phone's mark the same hit, and a result found on one must not be a different colour
+        /// of found from the other — which is the rule ``accentRing`` was written down for one dimension
+        /// over.
+        package static let findWash = 0.35
         /// The accent spent as an OUTLINE rather than as a fill — a LIT chip's ring.
         ///
         /// Its own rung because a ring answers a question no fill does. The plate under it is already

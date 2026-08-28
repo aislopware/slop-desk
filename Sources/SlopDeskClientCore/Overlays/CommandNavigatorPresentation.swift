@@ -1,8 +1,8 @@
 // CommandNavigatorPresentation — the near-side FACE of `slopdesk_workspace::command_navigator`.
 //
 // The navigator is `Platform::Both` (`binding_rows.rs:131`) and therefore has two drawings: the
-// phone's SwiftUI `CommandNavigatorView` and the Mac's AppKit `MacCommandNavigatorView`. Everything
-// below is the part of that card which is neither AppKit nor SwiftUI — a placeholder, four zero-state
+// phone's UIKit ``PhoneCommandNavigatorView`` and the Mac's AppKit `MacCommandNavigatorView`.
+// Everything below is the part of that card which is neither of them — a placeholder, four zero-state
 // sentences, three footer hints, the two help strings the row's affordances carry, and the card's own
 // width and results ceiling. It crossed for the reason ``PaletteMetrics`` and ``FindBarMetrics`` did:
 // a number or a sentence re-typed into a second renderer is a pair that drifts the first time either

@@ -610,7 +610,9 @@ final class MacGlobalSearchRowView: NSView {
             attributes: [
                 .font: font,
                 .foregroundColor: Slate.Native.Overlay.primary,
-                .backgroundColor: Slate.Native.Status.warn.withAlphaComponent(0.35),
+                // ``Slate/Opacity/findWash``, not a `0.35` of this renderer's own: the phone's half
+                // marks the same hit, and a result found there must not be a different colour of found.
+                .backgroundColor: Slate.Native.Status.warn.slateScalingAlpha(Slate.Opacity.findWash),
             ],
         ))
         spliced.append(NSAttributedString(

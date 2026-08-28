@@ -143,8 +143,12 @@ package final class WorkspaceChromeState {
 /// selects. Two REAL host resources (the project's workbench, the host's simulator and device sets)
 /// and one announced-but-empty one; they share no protocol, which is why they are four surfaces
 /// rather than one with modes.
-/// `Hashable` because the phone's tab row is a `ForEach` keyed on the surface — the Mac's strip lays
-/// its four plates out by hand and never needed an identity.
+/// `Hashable` was for the phone's tab row, a `ForEach` keyed on the surface. That row is
+/// ``PhonePanelTabGroup`` now and lays its plates out by hand exactly as the Mac's strip always did,
+/// so NOTHING hashes a surface any more — the live uses are all `==` against a case, which a plain
+/// enum synthesises without any conformance at all. Kept because it costs nothing and a panel surface
+/// is the sort of thing a keyed table wants next; recorded as unearned so the next reader does not
+/// take it for a requirement.
 package enum PanelSurface: Hashable, Sendable, CaseIterable {
     case code
     case simulators

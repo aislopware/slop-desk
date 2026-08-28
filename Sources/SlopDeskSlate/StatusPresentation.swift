@@ -351,7 +351,14 @@ package enum StatusPresentation {
 
     /// The accessibility / tooltip label for a tab badge, so the otherwise icon-only glyph is VoiceOver-
     /// legible and testable. Pure text — mirrors the `progress-state.md` badge vocabulary.
-    package static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
+    ///
+    /// `nonisolated` against the type's `@MainActor`, and it is the ONE member here that earns the
+    /// exception: everything else on ``StatusPresentation`` resolves an ink or a symbol out of the
+    /// appearance-dependent token layer, which is main-actor state, while this forwards to
+    /// ``TabBadgeReading/label(_:)`` — a nonisolated enum in `SlopDeskWorkspaceModel` — and touches
+    /// nothing else. A caller assembling a VoiceOver string has no reason to be on the main actor,
+    /// and making it hop for a switch over an enum would be isolation for the annotation's sake.
+    nonisolated package static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
         TabBadgeReading.label(kind)
     }
 }

@@ -299,7 +299,7 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
             if let symbol = StatusPresentation.outcomeSymbol(receipt.outcome) {
                 configure(
                     slotImage, symbol: symbol.rawValue,
-                    ink: NSColor(StatusPresentation.outcomeInk(receipt.outcome)),
+                    ink: StatusPresentation.outcomeInk(receipt.outcome),
                     size: StatusDot.receiptCheckSize, weight: .semibold,
                 )
                 slotImage.setAccessibilityElement(false)
@@ -307,7 +307,7 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
             }
             slot.stringValue = receipt.name
             slot.font = Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .bold)
-            slot.textColor = NSColor(StatusPresentation.outcomeInk(receipt.outcome))
+            slot.textColor = StatusPresentation.outcomeInk(receipt.outcome)
             return slot
         }
         guard let label = reading.processLabel else { return nil }
@@ -319,21 +319,23 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
         slot.font = Slate.Typeface.instrumentNative(
             Slate.Typeface.small, weight: isCommand ? .bold : .regular,
         )
-        slot.textColor = NSColor(StatusPresentation.slotNameInk(isCommand: isCommand))
+        slot.textColor = StatusPresentation.slotNameInk(isCommand: isCommand)
         return slot
     }
 
-    /// The privilege marker — `#` or `∞`, drawn as the same artwork the SwiftUI slot mounts.
+    /// The privilege marker — `#` or `∞`, drawn from the same ``TabBadgeStyle`` the phone's slot
+    /// mounts. Both shells are imperative now, so "the same artwork" is one value and two renderers
+    /// rather than one framework's drawing and a hand-copy of it.
     private func badgeView(_ style: TabBadgeStyle) -> NSView {
         switch style.art {
         case let .symbol(symbol):
             configure(
-                slotImage, symbol: symbol.rawValue, ink: NSColor(style.tint),
+                slotImage, symbol: symbol.rawValue, ink: style.tint,
                 size: StatusDot.badgeSymbolSize,
             )
             return slotImage
         case let .vector(icon):
-            return MacVectorIconView(icon: icon, side: StatusDot.footprint, ink: NSColor(style.tint))
+            return MacVectorIconView(icon: icon, side: StatusDot.footprint, ink: style.tint)
         }
     }
 
@@ -537,7 +539,7 @@ final class MacVectorIconView: NSView {
         let scale = CGFloat.minimum(bounds.width, bounds.height) / icon.viewBox
         for layer in icon.fills {
             context.setFillColor(ink.withAlphaComponent(layer.opacity).cgColor)
-            context.addPath(SVGPath.path(layer.data, viewBox: icon.viewBox, in: bounds).cgPath)
+            context.addPath(SVGPath.cgPath(layer.data, viewBox: icon.viewBox, in: bounds))
             // ⚠️ EVEN-ODD, not the default winding: a Material duotone punches its holes with a
             // second subpath wound the SAME way as the outer one, which non-zero would fill solid.
             context.fillPath(using: .evenOdd)
@@ -547,7 +549,7 @@ final class MacVectorIconView: NSView {
         context.setLineCap(.round)
         context.setLineJoin(.round)
         for outline in icon.outlines {
-            context.addPath(SVGPath.path(outline, viewBox: icon.viewBox, in: bounds).cgPath)
+            context.addPath(SVGPath.cgPath(outline, viewBox: icon.viewBox, in: bounds))
             context.strokePath()
         }
     }

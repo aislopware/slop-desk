@@ -51,6 +51,7 @@ import AppKit
 import Defaults // fire-time reads of the Code Agent sound toggles in the attention sink
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
+import SlopDeskVideoProtocol // `EnvConfig` — the env → settings-overlay resolver the quit gate reads through
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import UserNotifications // explicit OSC 9/777 child notifications → local UNUserNotification
@@ -496,7 +497,7 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    follow(body)
+                    self.follow(body)
                 }
             }
         }

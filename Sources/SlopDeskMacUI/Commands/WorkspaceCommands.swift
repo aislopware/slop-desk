@@ -87,9 +87,11 @@ enum WorkspaceCommands {
     private static func appMenuItem(target: AnyObject) -> NSMenuItem {
         let name = ProcessInfo.processInfo.processName
         let menu = NSMenu()
-        menu.addItem(withTitle: "About \(name)", action: #selector(
-            NSApplication.orderFrontStandardAboutPanel(_:),
-        ), keyEquivalent: "")
+        menu.addItem(
+            withTitle: "About \(name)",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: "",
+        )
         menu.addItem(.separator())
         // ⌘, is the one shortcut declared for a non-standard action, and it is the APP MENU's rather
         // than the workspace's — which is why it does not fall under this file's no-key-equivalent
@@ -109,9 +111,11 @@ enum WorkspaceCommands {
         NSApp.servicesMenu = servicesMenu
         menu.addItem(services)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Hide \(name)", action: #selector(
-            NSApplication.hide(_:),
-        ), keyEquivalent: "h")
+        menu.addItem(
+            withTitle: "Hide \(name)",
+            action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h",
+        )
         let hideOthers = NSMenuItem(
             title: "Hide Others",
             action: #selector(NSApplication.hideOtherApplications(_:)),
@@ -119,15 +123,19 @@ enum WorkspaceCommands {
         )
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(hideOthers)
-        menu.addItem(withTitle: "Show All", action: #selector(
-            NSApplication.unhideAllApplications(_:),
-        ), keyEquivalent: "")
+        menu.addItem(
+            withTitle: "Show All",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: "",
+        )
         menu.addItem(.separator())
         // ⌘Q — the chord the entire quit drain hangs off. `terminate:` reaches `NSApp`, which asks its
         // delegate, which is ``SlopDeskMacApp``.
-        menu.addItem(withTitle: "Quit \(name)", action: #selector(
-            NSApplication.terminate(_:),
-        ), keyEquivalent: "q")
+        menu.addItem(
+            withTitle: "Quit \(name)",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q",
+        )
         let item = NSMenuItem(title: name, action: nil, keyEquivalent: "")
         item.submenu = menu
         return item
@@ -146,9 +154,11 @@ enum WorkspaceCommands {
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Select All", action: #selector(
-            NSText.selectAll(_:),
-        ), keyEquivalent: "a")
+        menu.addItem(
+            withTitle: "Select All",
+            action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a",
+        )
         let item = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         item.submenu = menu
         return item
@@ -208,9 +218,11 @@ enum WorkspaceCommands {
     /// scene said the same thing by replacing `.newItem` with an empty group.
     private static func windowMenuItem(target: AnyObject) -> NSMenuItem {
         let menu = NSMenu(title: "Window")
-        menu.addItem(withTitle: "Minimize", action: #selector(
-            NSWindow.performMiniaturize(_:),
-        ), keyEquivalent: "m")
+        menu.addItem(
+            withTitle: "Minimize",
+            action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m",
+        )
         menu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         menu.addItem(.separator())
         // ⌘⇧W's MENU TWIN, and deliberately without the key equivalent: the chord itself is the
