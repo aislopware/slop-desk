@@ -84,11 +84,22 @@ public final class WorkspaceRootViewController: UIViewController {
     /// callback arrives BEFORE the flag it is echoing has settled.
     private var isActuating = false
 
-    /// The tab count the auto-hide policy last ran against, so a re-arm that did not change it does
-    /// not re-run the policy. `nil` until the first run — which must happen at launch, the way the
-    /// deleted `.onChange(of:initial: true)` did, so a single-tab `.auto` session opens with the TABS
-    /// panel already hidden.
-    private var lastTabCount: Int?
+    /// The inputs the auto-hide policy last ran against, so a re-arm that changed neither does not
+    /// re-run it. `nil` until the first run — which must happen at launch, the way the deleted
+    /// `.onChange(of:initial: true)` did, so a single-tab `.auto` session opens with the TABS panel
+    /// already hidden.
+    ///
+    /// ⚠️ BOTH halves, not just the count. The deleted view carried a SECOND `.onChange`, on the mode
+    /// itself; a setting flipped to `.auto` while the tab count sits still is exactly the case a
+    /// count-only guard drops on the floor.
+    private var lastAutoHide: (mode: AutoHideTabsPanelMode, tabCount: Int)?
+
+    /// Whether this controller's view has reached a window, and so whether ``applyChrome()`` may
+    /// present. ⚠️ A presentation attempted from `viewDidLoad` FAILS SILENTLY — there is no presenter
+    /// in the hierarchy yet — and `codeSidebarCollapsed` is persisted, so the launch that restores an
+    /// open panel is precisely the launch that would lose it. The applied values are left untouched
+    /// while this is `false`, which is what makes ``viewDidAppear(_:)``'s single re-apply enough.
+    private var canPresent = false
 
     public init(
         store: WorkspaceStore, connection: AppConnection, overlay: OverlayCoordinator,
@@ -124,6 +135,24 @@ public final class WorkspaceRootViewController: UIViewController {
         wireChromeActions()
 
         follow()
+    }
+
+    /// The first pass that may PRESENT. ``follow()`` ran at load — early enough for the auto-hide
+    /// policy and the split's display mode, both of which work on a view that has not been shown —
+    /// but left the two presentations for here.
+    ///
+    /// This deliberately re-applies rather than calling ``follow()`` again: `withObservationTracking`
+    /// arms ONE registration per call and the re-arm happens inside `onChange`, so a second `follow()`
+    /// would leave two live trackers and double every subsequent re-arm. The tracker armed at load is
+    /// still the live one; this just actuates what it already read.
+    override public func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !canPresent else { return }
+        canPresent = true
+        applyChrome(
+            sidebarCollapsed: chrome.sidebarCollapsed, panelCollapsed: chrome.codeSidebarCollapsed,
+            cheatSheetVisible: overlay.cheatSheetVisible,
+        )
     }
 
     private func mountSplit() {
@@ -179,17 +208,23 @@ public final class WorkspaceRootViewController: UIViewController {
         var panelCollapsed = false
         var cheatSheetVisible = false
         var tabCount = 0
+        var autoHide = AutoHideTabsPanelMode.default
         withObservationTracking {
             sidebarCollapsed = chrome.sidebarCollapsed
             panelCollapsed = chrome.codeSidebarCollapsed
             cheatSheetVisible = overlay.cheatSheetVisible
             tabCount = store.tree.activeSession?.tabs.count ?? 0
+            // ⚠️ INSIDE the tracked block, and that placement is the whole point — the read below is
+            // what arms the tracker on ``ConfigRevision``, the only observable edge a config-file edit
+            // has. Hoisted out (read where the policy runs, say) it observes nothing and a settings
+            // flip stays invisible until something unrelated happens to wake this.
+            autoHide = autoHideTabsPanel
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.follow() }
             }
         }
-        applyAutoHidePolicy(tabCount: tabCount)
+        applyAutoHidePolicy(mode: autoHide, tabCount: tabCount)
         applyChrome(
             sidebarCollapsed: sidebarCollapsed, panelCollapsed: panelCollapsed,
             cheatSheetVisible: cheatSheetVisible,
@@ -209,6 +244,10 @@ public final class WorkspaceRootViewController: UIViewController {
             split.preferredDisplayMode = sidebarCollapsed ? .secondaryOnly : .oneBesideSecondary
             isActuating = false
         }
+        // The two presentations wait for a window. Leaving the applied values UNSET while they wait is
+        // what makes the wait recoverable: `viewDidAppear` re-applies, sees the mismatch still there,
+        // and puts the panel up. Recording the value here instead would swallow it forever.
+        guard canPresent else { return }
         if appliedPanelCollapsed != panelCollapsed {
             appliedPanelCollapsed = panelCollapsed
             if panelCollapsed { dismissPanel() } else { presentPanel() }
@@ -219,13 +258,12 @@ public final class WorkspaceRootViewController: UIViewController {
         }
     }
 
-    /// Thin glue over ``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)`` — read the live
-    /// inputs and actuate, so the tested unit stays the policy. Runs on the FIRST pass as well as on
-    /// every transition, which is what the deleted `.onChange(of:initial: true)` bought.
-    private func applyAutoHidePolicy(tabCount: Int) {
-        let mode = autoHideTabsPanel
-        guard lastTabCount != tabCount || appliedSidebarCollapsed == nil else { return }
-        lastTabCount = tabCount
+    /// Thin glue over ``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)`` — actuate the
+    /// tracked inputs, so the tested unit stays the policy. Runs on the FIRST pass as well as on every
+    /// transition of EITHER input, which is what the deleted view's two `.onChange`s bought.
+    private func applyAutoHidePolicy(mode: AutoHideTabsPanelMode, tabCount: Int) {
+        guard lastAutoHide?.mode != mode || lastAutoHide?.tabCount != tabCount else { return }
+        lastAutoHide = (mode, tabCount)
         WorkspaceChromePolicy.applyAutoHide(mode: mode, tabCount: tabCount, chrome: chrome)
     }
 
