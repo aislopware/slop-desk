@@ -34,7 +34,12 @@ final class PaneContainerView: UIView {
     private let overlayCoordinator: OverlayCoordinator?
     private let chrome: WorkspaceChromeState?
 
-    private var isFocused: Bool
+    // NOT `isFocused`, which `UIView` already declares: that one is the UIKit FOCUS ENGINE's state
+    // (the Apple TV / hardware-keyboard focus system), read-only and unrelated to which pane this
+    // workspace considers focused. A stored property of that name does not compile — a private var
+    // cannot override an open one — and adopting the inherited property would be worse than a rename,
+    // because the focus engine writes it for its own reasons.
+    private var isPaneFocused: Bool
     /// Whether this pane is ON-SCREEN — its tab is active AND it is not zoom-hidden. The video leaf
     /// reads it as its activation lifecycle; the terminal leaf reads its inverse as occlusion.
     private var isVisible: Bool
@@ -75,7 +80,7 @@ final class PaneContainerView: UIView {
     ) {
         self.store = store
         self.paneID = paneID
-        self.isFocused = isFocused
+        isPaneFocused = isFocused
         self.isVisible = isVisible
         overlayCoordinator = overlay
         self.chrome = chrome
@@ -174,8 +179,8 @@ final class PaneContainerView: UIView {
     // MARK: - What the canvas pushes
 
     func setFocused(_ isFocused: Bool) {
-        guard isFocused != self.isFocused else { return }
-        self.isFocused = isFocused
+        guard isFocused != isPaneFocused else { return }
+        isPaneFocused = isFocused
         (leaf as? TerminalLeafView)?.setFocused(isFocused)
         (leaf as? GuiLeafView)?.setFocused(isFocused)
         if isWired { follow() }
@@ -251,22 +256,23 @@ final class PaneContainerView: UIView {
 
         // `.desktop` is the whole video set today; the check matches `PaneKind.isVideo`, which is
         // internal to WorkspaceCore and so cannot be named from here.
-        let built: UIView = if kind == .desktop {
-            GuiLeafView(
-                live: live, isFocused: isFocused, isVisible: isVisible, store: store, paneID: paneID,
-            )
-        } else {
-            TerminalLeafView(
-                live: live,
-                isFocused: isFocused,
-                // The host-reported cwd feeds the leaf's bottom status bar. The host is the app-global
-                // connection target: device-local, and it never rides the shared layout.
-                cwd: store.paneCwd(for: paneID),
-                store: store,
-                overlay: overlayCoordinator,
-                chrome: chrome,
-            )
-        }
+        let built: UIView =
+            if kind == .desktop {
+                GuiLeafView(
+                    live: live, isFocused: isPaneFocused, isVisible: isVisible, store: store, paneID: paneID,
+                )
+            } else {
+                TerminalLeafView(
+                    live: live,
+                    isFocused: isPaneFocused,
+                    // The host-reported cwd feeds the leaf's bottom status bar. The host is the app-global
+                    // connection target: device-local, and it never rides the shared layout.
+                    cwd: store.paneCwd(for: paneID),
+                    store: store,
+                    overlay: overlayCoordinator,
+                    chrome: chrome,
+                )
+            }
         (built as? TerminalLeafView)?.setOccluded(!isVisible)
         leaf = built
         receiver.mount(built)
@@ -301,15 +307,15 @@ final class PaneContainerView: UIView {
             // makes a change to it INVALIDATE, which nothing else in this view was doing.
             _ = live?.awaitingResizeReflow
             // A hidden tab's pane is not the subject of anything, so both marks read from the SAME
-            // `isFocused` this container was pushed rather than from the store — the canvas already
+            // `isPaneFocused` this container was pushed rather than from the store — the canvas already
             // resolved the zoom-hidden and sidebar-owns-keyboard arms before pushing it.
             showsCorner = PaneFocusPolicy.showsFocusCorner(
-                isFocused: isFocused, tabPaneCount: tabPaneCount,
+                isFocused: isPaneFocused, tabPaneCount: tabPaneCount,
             )
             // Observing the switcher HERE is what repaints the veil on every step. It costs nothing at
             // rest, where the switcher is nil and the branch is a compare.
             recedes = PaneFocusPolicy.showsSwitcherRecede(
-                switcherIsOpen: store.paneSwitcher != nil, isFocused: isFocused,
+                switcherIsOpen: store.paneSwitcher != nil, isFocused: isPaneFocused,
             )
             cwd = store.paneCwd(for: paneID)
         } onChange: { [weak self] in
@@ -345,7 +351,8 @@ final class PaneContainerView: UIView {
 
     // MARK: - The tap
 
-    @objc private func handleTap() {
+    @objc
+    private func handleTap() {
         store.focusPaneTree(paneID)
     }
 }

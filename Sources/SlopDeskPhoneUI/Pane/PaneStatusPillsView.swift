@@ -169,7 +169,6 @@ final class PaneStatusPillView: UIView {
             ],
         )
     }
-
 }
 
 // MARK: - This renderer's ink ladder, as ONE value
@@ -181,6 +180,9 @@ final class PaneStatusPillView: UIView {
 /// against the accent — `secure-input.png` is the green-accent Paper theme yet the pill is the same
 /// royal blue), and only a NAME can say that, which is why ``PaneStatusPillFill`` is a kind rather
 /// than a colour in the first place.
+// `@MainActor` because every token it resolves is: `Slate.Native.*` is main-actor state, so a
+// nonisolated initialiser cannot read one. The struct is only ever built from a main-actor view.
+@MainActor
 private struct Appearance {
     /// The chip's plate.
     let plate: UIColor
@@ -199,7 +201,11 @@ private struct Appearance {
     /// full white on a vivid one, where a secondary tone would vanish.
     let closeInk: UIColor
     /// A vivid chip carries more weight than a chrome one — it is louder on purpose.
-    let glyphWeight: UIFont.Weight
+    ///
+    /// TWO weight types, not one: `UIImage.SymbolConfiguration` takes `UIImage.SymbolWeight` and the
+    /// label takes `UIFont.Weight`, and the two do not convert. The Mac twin needs only `NSFont.Weight`
+    /// because `NSImage.SymbolConfiguration` accepts it.
+    let glyphWeight: UIImage.SymbolWeight
     let labelWeight: UIFont.Weight
 
     init(fill: PaneStatusPillFill) {
@@ -317,7 +323,8 @@ final class PaneStatusPillCloseView: UIControl {
     @objc
     private func hovered(_ recogniser: UIHoverGestureRecognizer) {
         switch recogniser.state {
-        case .began, .changed: hovering = true
+        case .began,
+             .changed: hovering = true
         default: hovering = false
         }
     }
@@ -333,13 +340,14 @@ final class PaneStatusPillCloseView: UIControl {
     private func repaint(animated: Bool) {
         // The SELECTION wash, not the hover fill, for a press: this is the same plate the tab row's own
         // `×` grows, and the two are compared by anyone who closes a tab and then dismisses a chip.
-        let fill: UIColor = if isHighlighted {
-            Slate.Native.State.selected
-        } else if hovering {
-            Slate.Native.State.hover
-        } else {
-            .clear
-        }
+        let fill: UIColor =
+            if isHighlighted {
+                Slate.Native.State.selected
+            } else if hovering {
+                Slate.Native.State.hover
+            } else {
+                .clear
+            }
         let resolved = fill.resolvedColor(with: traitCollection).cgColor
         CATransaction.begin()
         if animated {
