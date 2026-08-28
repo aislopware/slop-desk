@@ -245,13 +245,13 @@ final class MacConnectionIsland: NSView {
     /// Re-resolve the whole island against the live connection + telemetry, re-arming for the next
     /// change. Every decision below the palette is ``ConnectionReading``'s.
     private func refresh() {
+        // The DETACHED island has no model to follow — it was handed its one reading at `init`.
         guard let store, let connection else { return }
-        var next: Reading?
-        withObservationTracking {
+        ObservationFollow.arm(self) { _ in
             let status = connection.status
             let ping = ConnectionTelemetry.pingMS(store)
             let slot = ConnectionReading.trailingDetail(status: status, pingMS: ping, mount: .bedded)
-            next = Reading(
+            return Reading(
                 host: connection.hostDisplayName ?? connection.target.host,
                 led: ConnectionReading.ledState(status: status, pingMS: ping),
                 detail: slot?.text,
@@ -265,24 +265,19 @@ final class MacConnectionIsland: NSView {
                     pulse: connection.hostPulse,
                 ),
             )
-        } onChange: { [weak self] in
-            // ⚠️ `onChange` fires BEFORE the write lands — the next read is SCHEDULED, never run
-            // inline, or it paints one frame stale. The tracking is one-shot, so this cannot pile up.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
+        } apply: { island, next in
+            guard next != island.painted else { return }
+            // The inks brighten on the NEEDLE curve — the same orchestrated moment the handshake owns.
+            let settling = island.painted?.led != next.led
+            island.painted = next
+            island.apply(next)
+            guard settling else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Slate.Motion.needle.duration
+                context.timingFunction = Slate.Motion.needle.timingFunction
+                context.allowsImplicitAnimation = true
+                island.layoutSubtreeIfNeeded()
             }
-        }
-        guard let next, next != painted else { return }
-        // The inks brighten on the NEEDLE curve — the same orchestrated moment the handshake owns.
-        let settling = painted?.led != next.led
-        painted = next
-        apply(next)
-        guard settling else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Slate.Motion.needle.duration
-            context.timingFunction = Slate.Motion.needle.timingFunction
-            context.allowsImplicitAnimation = true
-            layoutSubtreeIfNeeded()
         }
     }
 

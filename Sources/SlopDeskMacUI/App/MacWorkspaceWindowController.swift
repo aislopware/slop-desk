@@ -246,20 +246,19 @@ final class MacWorkspaceWindowController: NSWindowController, NSWindowDelegate {
     /// that supplied one implicitly. It reads the same two flags and calls the same one method; what
     /// is gone is the machinery that made a whole view tree the unit of re-evaluation.
     private func followChrome() {
-        var sidebarCollapsed = false
-        var codeSidebarCollapsed = false
-        withObservationTracking {
-            sidebarCollapsed = chrome.sidebarCollapsed
-            codeSidebarCollapsed = chrome.codeSidebarCollapsed
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followChrome() }
+        ObservationFollow.arm(self) { controller in
+            (
+                sidebar: controller.chrome.sidebarCollapsed,
+                codeSidebar: controller.chrome.codeSidebarCollapsed,
+            )
+        } apply: { controller, reading in
+            controller.split.applyCollapse(
+                sidebarCollapsed: reading.sidebar, codeSidebarCollapsed: reading.codeSidebar,
+            )
+            controller.sidebarToggle.apply(collapsed: reading.sidebar) { [chrome = controller.chrome] in
+                chrome.toggleSidebar()
             }
         }
-        split.applyCollapse(
-            sidebarCollapsed: sidebarCollapsed, codeSidebarCollapsed: codeSidebarCollapsed,
-        )
-        sidebarToggle.apply(collapsed: sidebarCollapsed) { [chrome] in chrome.toggleSidebar() }
     }
 
     // MARK: The title
@@ -272,22 +271,21 @@ final class MacWorkspaceWindowController: NSWindowController, NSWindowDelegate {
     /// (the cwd folder name).
     ///
     /// ⚠️ IT IS ITS OWN FOLLOW, not a line inside another one. The title reads deep into the store —
-    /// the active pane's spec, its process, its cwd — and joining it to the collapse follow would
-    /// re-push the split's items on every character a shell prints into a title sequence.
+    /// the active pane's spec, its process, its cwd — and folding it into the collapse follow's `read`
+    /// would re-push the split's items on every character a shell prints into a title sequence. (The
+    /// other half of that fear — work smuggled into the tracked block widening it — is now
+    /// ``ObservationFollow``'s `read`/`apply` signature rather than this comment's to hold.)
     private func followTitle() {
-        var title = ""
-        withObservationTracking {
-            title = WorkspaceChromePolicy.windowTitle(for: store)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followTitle() }
-            }
+        ObservationFollow.arm(self) { controller in
+            WorkspaceChromePolicy.windowTitle(for: controller.store)
+        } apply: { controller, title in
+            controller.window?.title = title
+            // The grid-mode sizing wants REAL cell metrics and a fresh window has none; a title change
+            // is the first thing that happens after a terminal surface lays out and reports them, so it
+            // is where the one deferred re-measure is taken. See
+            // ``retryGridSizeWhenCellMetricsArrive(_:)``.
+            controller.takeGridSizeRetry()
         }
-        window?.title = title
-        // The grid-mode sizing wants REAL cell metrics and a fresh window has none; a title change is
-        // the first thing that happens after a terminal surface lays out and reports them, so it is
-        // where the one deferred re-measure is taken. See ``retryGridSizeWhenCellMetricsArrive(_:)``.
-        takeGridSizeRetry()
     }
 
     /// Hand back the one deferred window re-size for `grid` mode.
@@ -354,35 +352,34 @@ final class MacWorkspaceWindowController: NSWindowController, NSWindowDelegate {
     /// The auto-hide policy rides the same follow because it reads the same tab list: splitting them
     /// would mean two blocks both observing `store.tree.activeSession`, waking each other.
     private func followFocus() {
-        var landing = FocusLanding()
-        var tabCount = 0
-        var mode = AutoHideTabsPanelMode.default
-        withObservationTracking {
-            landing = focusLanding
-            tabCount = activeTabCount
-            mode = autoHideTabsPanel
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followFocus() }
+        ObservationFollow.arm(self) { controller in
+            (
+                landing: controller.focusLanding,
+                tabCount: controller.activeTabCount,
+                mode: controller.autoHideTabsPanel,
+            )
+        } apply: { controller, reading in
+            if let previous = controller.lastLanding, previous != reading.landing {
+                controller.honourFocusRegion(from: previous, to: reading.landing)
             }
-        }
-        if let previous = lastLanding, previous != landing {
-            honourFocusRegion(from: previous, to: landing)
-        }
-        lastLanding = landing
-        // Drive the vertical TABS panel auto-hide. On a tab-count TRANSITION or a Settings mode flip,
-        // apply the policy to the live `chrome.sidebarCollapsed` — but only when the policy has an
-        // opinion (`.auto`) AND the 1↔>1 tab-count regime crossed, so a manual ⌘⇧L is never fought by
-        // an unrelated tab open/close (``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)``
-        // gates on the regime edge + a manual-override bit). `.default`/`.always` leave it alone.
-        //
-        // ⚠️ The FIRST arm runs it too — this is the `initial: true` the SwiftUI observer carried.
-        // Without it a persisted `.auto` single-tab session would launch with the sidebar REVEALED
-        // until the user added or removed a tab. `sidebarCollapsed` is not persisted, so applying at
-        // launch is safe (the first application reads as a regime edge and actuates).
-        if lastTabCount != tabCount || lastTabCount == nil {
-            lastTabCount = tabCount
-            WorkspaceChromePolicy.applyAutoHide(mode: mode, tabCount: tabCount, chrome: chrome)
+            controller.lastLanding = reading.landing
+            // Drive the vertical TABS panel auto-hide. On a tab-count TRANSITION or a Settings mode
+            // flip, apply the policy to the live `chrome.sidebarCollapsed` — but only when the policy
+            // has an opinion (`.auto`) AND the 1↔>1 tab-count regime crossed, so a manual ⌘⇧L is never
+            // fought by an unrelated tab open/close
+            // (``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)`` gates on the regime edge
+            // + a manual-override bit). `.default`/`.always` leave it alone.
+            //
+            // ⚠️ The FIRST arm runs it too — this is the `initial: true` the SwiftUI observer carried.
+            // Without it a persisted `.auto` single-tab session would launch with the sidebar REVEALED
+            // until the user added or removed a tab. `sidebarCollapsed` is not persisted, so applying
+            // at launch is safe (the first application reads as a regime edge and actuates).
+            if controller.lastTabCount != reading.tabCount || controller.lastTabCount == nil {
+                controller.lastTabCount = reading.tabCount
+                WorkspaceChromePolicy.applyAutoHide(
+                    mode: reading.mode, tabCount: reading.tabCount, chrome: controller.chrome,
+                )
+            }
         }
     }
 

@@ -109,20 +109,19 @@ final class MacTitlebarBand: NSView {
     /// Follow the chrome's two collapse flags. The band's whole content is COLLAPSED-ONLY: with the
     /// navigator open the tabs and the status are in it, and the band is bare ground.
     private func follow() {
-        var sidebarCollapsed = false
-        var panelCollapsed = false
-        withObservationTracking {
-            sidebarCollapsed = chrome.sidebarCollapsed
-            panelCollapsed = chrome.codeSidebarCollapsed
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { band in
+            (
+                sidebarCollapsed: band.chrome.sidebarCollapsed,
+                panelCollapsed: band.chrome.codeSidebarCollapsed,
+            )
+        } apply: { band, reading in
+            band.trailing?.constant = reading.panelCollapsed
+                ? Slate.Metric.panelRailWidth
+                : Slate.Metric.space2
+            guard reading.sidebarCollapsed != band.visible else { return }
+            band.visible = reading.sidebarCollapsed
+            band.travel(arriving: reading.sidebarCollapsed)
         }
-        trailing?.constant = panelCollapsed ? Slate.Metric.panelRailWidth : Slate.Metric.space2
-        guard sidebarCollapsed != visible else { return }
-        visible = sidebarCollapsed
-        travel(arriving: sidebarCollapsed)
     }
 
     /// The two halves of the band fill in FROM THEIR OWN EDGES: the tabs wait one control to the

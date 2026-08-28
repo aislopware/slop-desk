@@ -499,64 +499,66 @@ final class RailStatusRollupMount: NSView {
     /// tracked block touches is something the cluster's picture depends on, and nothing else in the
     /// window observes any of it.
     private func refresh() {
-        var active: [RailStatusRollup.Kind] = []
-        var panesByKind: [RailStatusRollup.Kind: [PaneID]] = [:]
-        var lead: CGFloat = 0
-        var wantsCollapsed = false
-        withObservationTracking {
+        ObservationFollow.arm(self) { mount in
             // The flash-decay tick, observed at CLUSTER scope exactly as a navigator row observes it:
             // a clean completion's badge decays off the wall clock, not off an `@Observable`
             // dependency, so without this the done mark would outlive the row's own.
-            _ = store.completionFlashTick
-            let rows = rowsMemo.rows(for: store)
+            _ = mount.store.completionFlashTick
+            let rows = mount.rowsMemo.rows(for: mount.store)
             // The BATCH entry, because this walk has the whole array in hand: the per-row one re-reads
             // `commandBadgeGates` and `agentBadgeGates` — six `UserDefaults` bools at 305 ns each —
             // and re-resolves the active session's tab list, once per row, for settings that cannot
             // change while a cluster draws.
-            let sightings = zip(rows, RailRowsBuilder.liveChrome(for: rows, store: store)).map { row, chrome in
-                (
-                    pane: row.id,
-                    reading: RailStatusRollup.Reading(
-                        status: chrome.status, badge: chrome.badge,
-                        unseenDone: store.paneUnseenDone.contains(row.id),
-                    ),
-                )
-            }
-            active = RailStatusRollup.kinds(sightings.map(\.reading))
+            let sightings = zip(rows, RailRowsBuilder.liveChrome(for: rows, store: mount.store))
+                .map { row, chrome in
+                    (
+                        pane: row.id,
+                        reading: RailStatusRollup.Reading(
+                            status: chrome.status, badge: chrome.badge,
+                            unseenDone: mount.store.paneUnseenDone.contains(row.id),
+                        ),
+                    )
+                }
+            var panesByKind: [RailStatusRollup.Kind: [PaneID]] = [:]
             for kind in RailStatusRollup.order {
                 panesByKind[kind] = sightings
                     .filter { RailStatusRollup.matches(kind, $0.reading) }
                     .map(\.pane)
             }
-            wantsCollapsed = chrome.sidebarCollapsed
-            lead = Self.lead(
-                collapsed: wantsCollapsed,
-                // Before the split view has reported a width there is nothing to park against, so the
-                // design's own resting column stands in — which is what the divider will report anyway.
-                navigatorWidth: chrome.navigatorWidth ?? Slate.Metric.sidebarWidth,
+            let wantsCollapsed = mount.chrome.sidebarCollapsed
+            return (
+                active: RailStatusRollup.kinds(sightings.map(\.reading)),
+                panesByKind: panesByKind,
+                wantsCollapsed: wantsCollapsed,
+                lead: Self.lead(
+                    collapsed: wantsCollapsed,
+                    // Before the split view has reported a width there is nothing to park against, so
+                    // the design's own resting column stands in — which is what the divider will
+                    // report anyway.
+                    navigatorWidth: mount.chrome.navigatorWidth ?? Slate.Metric.sidebarWidth,
+                ),
             )
-        } onChange: { [weak self] in
-            // Deferred to the next main-actor turn: `onChange` fires at `willSet`, so a body run
-            // inside it would read the value being replaced. Same idiom as ``MacTitlebarBand/follow()``.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
+        } apply: { mount, reading in
+            // ⚠️ ONE call into the cluster, never two setters. The lit set and the click both decide
+            // whether a slot takes a press, so applying them separately leaves a window in which a mark
+            // is already lit and still inert, or the reverse. (This was the deleted representable's
+            // single `updateNSView`, and the reason it was single.)
+            mount.cluster.apply(active: reading.active) { [weak mount] kind in
+                mount?.jump(kind, panes: reading.panesByKind[kind] ?? [])
             }
+            // ⚠️ NO cross-fade on the MARKS, and that is not an omission.
+            // `.animation(Slate.Anim.smallFade, value: kinds)` used to fade a slot's hue between
+            // ``RailStatusRollup/disabledInk`` and the state's own; the AppKit alternative — a
+            // `CATransition` over the mark's layer CONTENTS — would smear the working slot, which
+            // repaints at display-link rate and would ride the transition for every tick inside its
+            // duration. The rows and the tab chips have always taken the straight step for exactly
+            // these marks; the band matches them.
+            mount.travel(
+                to: reading.lead,
+                animated: mount.collapsed != nil && mount.collapsed != reading.wantsCollapsed,
+            )
+            mount.collapsed = reading.wantsCollapsed
         }
-        // ⚠️ ONE call into the cluster, never two setters. The lit set and the click both decide
-        // whether a slot takes a press, so applying them separately leaves a window in which a mark is
-        // already lit and still inert, or the reverse. (This was the deleted representable's single
-        // `updateNSView`, and the reason it was single.)
-        cluster.apply(active: active) { [weak self] kind in
-            self?.jump(kind, panes: panesByKind[kind] ?? [])
-        }
-        // ⚠️ NO cross-fade on the MARKS, and that is not an omission. `.animation(Slate.Anim.smallFade,
-        // value: kinds)` used to fade a slot's hue between ``RailStatusRollup/disabledInk`` and the
-        // state's own; the AppKit alternative — a `CATransition` over the mark's layer CONTENTS —
-        // would smear the working slot, which repaints at display-link rate and would ride the
-        // transition for every tick inside its duration. The rows and the tab chips have always taken
-        // the straight step for exactly these marks; the band matches them.
-        travel(to: lead, animated: collapsed != nil && collapsed != wantsCollapsed)
-        collapsed = wantsCollapsed
     }
 
     /// Slide the cluster to `lead`.
