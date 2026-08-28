@@ -18,22 +18,33 @@ use crate::tree::Tree;
 /// that nothing reached. The two halves that can drift are the run KEY (a move and a drag never
 /// merge; a scroll is keyed by its phase signature so a gesture boundary never joins the bulk run)
 /// and the merge (keep the latest, but SUM a scroll's deltas — keeping the latest silently drops
-/// scrolled distance). Both live in `slopdesk-video` now, and the answer is a PLAN: a slot names
-/// the input it is built from, so the `.text` arm's string never has to cross a flat record.
+/// scrolled distance). Both live in `slopdesk-video`, and the answer is a PLAN: a slot names the
+/// input it is built from, so the `.text` arm's string never has to cross a flat record.
+///
+/// `docs/61` deleted the Swift face and its `slopdesk_input_coalesce_plan` door;
+/// `rust/slopdesk-videohostd` collapses a run by calling the crate directly. So the ban is re-aimed
+/// at the daemon: the run key and the merge are the two things a drain loop is tempted to re-type,
+/// because both look like three lines at the point where the batch is in hand. A daemon copy that
+/// kept the LATEST scroll rather than summing drops scrolled distance with nothing red anywhere —
+/// the page just moves less than the finger did.
+///
+/// The "no Swift brings this back" half is stated tree-wide in
+/// [`crate::rules::deleted_video_swift`], which bans declaring any video-host type in any Swift
+/// target rather than in the one file that used to hold this one.
 #[must_use]
 pub fn one_motion_run_rule_answers(tree: &Tree) -> Report {
     let claims = [
-        Claim::Names {
-            path: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-            needle: "slopdesk_input_coalesce_plan",
-            message: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift no longer takes its coalescing plan \
-                      from slopdesk_input_coalesce_plan",
-        },
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskVideoHost/VideoSessionLogic.swift"],
-            pattern: r"enum RunKey|func runKey|func mergeRun",
+        Claim::NoneUnder {
+            roots: &["rust/slopdesk-videohostd"],
+            extensions: RUST,
+            pattern: r"\b(enum|struct) RunKey\b|\bfn (run_key|merge_run|coalesce_plan|coalesce_motion)\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "{files} decides a motion run again — the rule is input_routing.rs's coalesce_plan",
+            exempt: &[],
+            message: "the daemon decides a motion run for itself in {files} — the rule is \
+                      input_routing.rs's coalesce_plan, and a copy that keeps the latest scroll rather than \
+                      summing drops scrolled distance with nothing red anywhere (docs/61 §3)",
         },
         Claim::Mentions {
             path: "rust/slopdesk-video/src/input_routing.rs",
@@ -266,8 +277,9 @@ mod tests {
     fn write_one_motion_run_rule_answers(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-                "slopdesk_input_coalesce_plan\nkept so the ban has a haystack\n",
+                "rust/slopdesk-videohostd/src/session_inbound.rs",
+                "use slopdesk_video::input_routing::{self, ScrollCoalescePlanner};\nlet planned = \
+                 input.planner.plan(run, now);\n",
             )
             .write(
                 "rust/slopdesk-video/src/input_routing.rs",
@@ -276,20 +288,31 @@ mod tests {
     }
 
     #[test]
-    fn one_motion_run_rule_answers_holds_its_faces_to_their_doors() {
+    fn one_motion_run_rule_answers_holds_the_daemon_to_the_crate() {
         let fixture = Fixture::new("one-motion-run-rule-answers");
         write_one_motion_run_rule_answers(&fixture);
         assert!(super::one_motion_run_rule_answers(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskVideoHost/VideoSessionLogic.swift", "");
+        // The crate stopped writing the rule — there is no single answer left to ask for.
+        fixture.write(
+            "rust/slopdesk-video/src/input_routing.rs",
+            "kept so the ban has a haystack\n",
+        );
         assert!(!super::one_motion_run_rule_answers(&fixture.tree()).is_clean());
 
-        // And the law it was banned from respelling, respelled.
+        // The run KEY, re-typed in the drain loop that has the batch in hand.
         write_one_motion_run_rule_answers(&fixture);
         fixture.append(
-            "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-            "enum RunKey\n",
+            "rust/slopdesk-videohostd/src/session_inbound.rs",
+            "enum RunKey { Move, Drag, Scroll }\n",
+        );
+        assert!(!super::one_motion_run_rule_answers(&fixture.tree()).is_clean());
+
+        // And the MERGE, which is the half that silently drops scrolled distance.
+        write_one_motion_run_rule_answers(&fixture);
+        fixture.append(
+            "rust/slopdesk-videohostd/src/session_inbound.rs",
+            "fn merge_run(slot: &mut Slot, event: &InputEvent) { *slot = latest(event); }\n",
         );
         assert!(!super::one_motion_run_rule_answers(&fixture.tree()).is_clean());
     }

@@ -9,12 +9,16 @@
 //! reverted by hand in the working copy, the rule was run, and the file was restored from the copy.
 //! Each rule's comment records the verdict.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-/// The encoder, whose quantiser knobs go through one door.
-const VIDEO_ENCODER: &str = "Sources/SlopDeskVideoHost/VideoEncoder.swift";
+/// The GUI video host, which is where the encoder's knobs are read now.
+///
+/// Named as a DIRECTORY rather than as a file for the reason [`crate::rules::video_host`] gives:
+/// the daemon's modules are still being split, and a claim pinned to a filename would go wrong the
+/// moment one divides — which is drift none of these rules is about.
+const DAEMON: &str = "rust/slopdesk-videohostd";
 /// The client session, which receives control datagrams.
 const CLIENT_SESSION: &str = "Sources/SlopDeskVideoClient/SlopDeskVideoClientSession.swift";
 /// The state machine's Swift face.
@@ -197,6 +201,21 @@ pub fn the_scroll_phases_are_one_table(tree: &Tree) -> Report {
 /// public face the capturer once borrowed across the file boundary — went with the port: the fifth
 /// caller lives in the same crate as the other four, so nothing is left to borrow it.
 ///
+/// ## Where the hand-rolled parse could come back now
+/// The ban used to name `VideoEncoder.swift` and `WindowCapturer.swift`, the two Swift files that
+/// held the reject. Both are deleted (`docs/61`), and the language a fifth copy could be written in
+/// is the daemon's own: `rust/slopdesk-videohostd` reads the same knobs, so it is the one place
+/// that could clamp a `[1, 51]` ordinal for itself instead of asking. The ban is therefore
+/// TRANSLATED rather than dropped — a `.clamp(1, 51)`, a private `QP_MIN`/`QP_MAX`/`MIN_QP`, or a
+/// literal frame-QP ceiling, spelled in the daemon. It is scoped to the daemon alone on purpose:
+/// `rust/slopdesk-video` legitimately spells every one of those, because it is the module that
+/// owns them.
+///
+/// The positive half is re-aimed the same way. It used to say "the Swift face CALLS the door";
+/// with the door gone it says the daemon still ASKS `qp_control` and `encoder_config` rather than
+/// resolving an operating point of its own. The "no Swift declares a video-host type" half of the
+/// old claim is stated once, tree-wide, in [`crate::rules::deleted_video_swift`].
+///
 /// ## And the message-shaped control face stays a WRAPPER
 /// After the datagram fix its only callers are the state-machine tests, which is the shape the
 /// one-implementation rule bans — unless it decides nothing, which it does not: it encodes and
@@ -204,8 +223,6 @@ pub fn the_scroll_phases_are_one_table(tree: &Tree) -> Report {
 /// into a second transition that only the tests would exercise.
 #[must_use]
 pub fn a_quantiser_knob_clamps_rather_than_rejects(tree: &Tree) -> Report {
-    /// The capturer, which held the fifth knob of the same shape before it was ported.
-    const WINDOW_CAPTURER: &str = "Sources/SlopDeskVideoHost/WindowCapturer.swift";
     /// Where the encoder's four knobs are resolved.
     const ENCODER_CONFIG: &str = "rust/slopdesk-video/src/encoder_config.rs";
     /// Where the capture operating point resolves the fifth.
@@ -222,14 +239,31 @@ pub fn a_quantiser_knob_clamps_rather_than_rejects(tree: &Tree) -> Report {
             message: "the encoder resolves its quantiser knobs some other way — the parse and the clamp are \
                       qp_knob's",
         },
-        // Matched on the `environment[…]` read followed by a bare `Int(` parse, which is the
-        // shape all five had and none of them has now.
-        Claim::NoneOf {
-            paths: &[VIDEO_ENCODER, WINDOW_CAPTURER],
-            pattern: r#"environment\["SLOPDESK_((MAX|CONST|CRISP|COMPACT)_QP|AQP_MAX)"\], *let v = Int\("#,
+        // The ask, re-aimed off the two deleted Swift faces and onto the daemon that reads the
+        // knobs now. A host that stopped naming these modules is a host that has started
+        // resolving its own operating point.
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["qp_control", "encoder_config"],
+            message: "the daemon stopped asking {entry} — the parse, the clamp and the five [1,51] knobs \
+                      are rust/slopdesk-video's, and a host that resolves them itself is the sixth spelling \
+                      of a rule that has one (docs/61 §3)",
+        },
+        // The Swift shape was `environment[…]` followed by a bare `Int(` parse. Translated into
+        // the language a sixth copy could now be written in: a clamp to the ordinal's own bounds,
+        // a private floor/ceiling constant, or a literal frame-QP ceiling. Scoped to the DAEMON —
+        // rust/slopdesk-video spells all three legitimately, because it is what owns them.
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\.clamp\(1, *51\)|\b(QP_MIN|QP_MAX|MIN_QP)\b|max_allowed_frame_qp *[:=] *[0-9]",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "a [1,51] quantiser knob is parsed by hand again — clamping through the door is the \
-                      answer the caller can act on",
+            exempt: &[],
+            message: "a [1,51] quantiser knob is bounded by hand again in {files} — the ordinal's floor, \
+                      its ceiling and the clamp between them are qp_control.rs's, and a second copy answers \
+                      SLOPDESK_MAX_QP=0 with the coarsest ceiling the encoder has (docs/61 §3)",
         },
         Claim::Matches {
             path: CAPTURE_GATES,
@@ -316,6 +350,14 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
 /// the non-finite, which no clamp can express: `NaN` compares false against both bounds, so a clamp
 /// would pass it straight through into the controller's arithmetic.
 ///
+/// Two of those three implementations were Swift in the deleted `SlopDeskVideoHost` target and went
+/// with `docs/61`. What survives them is the RULE, and the reason the rule needed a gate: the
+/// reject reading is one function, it is Rust's, and the way it comes back is a reader growing a
+/// private parse beside the door rather than instead of it. So the two dead per-file claims are
+/// re-aimed at `rust/slopdesk-videohostd`, which is the reader now — it must still ASK `congestion`
+/// and `fps_governor`, and it may not spell a validating parse of its own. Both halves are scoped
+/// to the daemon; `rust/slopdesk-video` holds the one implementation and has to spell it.
+///
 /// `FPSGovernor`'s copy carried a second bug on top of the duplication, and it is the one that
 /// would have been reported as "the setting does nothing": it read
 /// `ProcessInfo.processInfo.environment` DIRECTLY, bypassing `EnvConfig`'s overlay, so every
@@ -340,11 +382,12 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
 /// is answered by the real environment alone, so the knob is written, persisted, shown as active,
 /// and read past.
 ///
-/// `View::Code` is load-bearing here and was CHECKED rather than assumed: `FPSGovernor`,
-/// `LiveCongestionController`, `QPController`, `AdaptiveFECPolicy`, `CaptureGateTable` and
-/// `EnvConfig` itself all name the banned spelling in DOC COMMENTS — including the paragraph above
-/// — and every one of those mentions is a whole-line `///`, which `Source::code` drops. A rule
-/// whose own explanation matched its corpus has bitten this crate before.
+/// `View::Code` is load-bearing here and was CHECKED rather than assumed: `AdaptiveFECPolicy`,
+/// `CaptureGateTable` and `EnvConfig` itself all name the banned spelling in DOC COMMENTS —
+/// including the paragraph above — and every one of those mentions is a whole-line `///`, which
+/// `Source::code` drops. It matters twice over on the daemon side, where `docs/61` left the deleted
+/// Swift's names in the doc comments of the Rust that replaced them. A rule whose own explanation
+/// matched its corpus has bitten this crate before.
 ///
 /// ### The one `unless`, and why it is a key rather than a file
 /// `SLOPDESK_VIDEO_DEBUG` is a developer gate, not a setting: it has no `config.toml` row,
@@ -362,7 +405,10 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
 /// a per-KEY resolver and no merged map, and re-spelling `env → overlay` at a walk site would be a
 /// second copy of the one precedence rule that type owns — so those knob families are env-only,
 /// recorded rather than fixed. A SEAM is a default argument a test replaces (`EnvBridge`,
-/// `AppSupportContainer`, `WindowParkingSidecar`, `WorkspaceStore+Bootstrap`, `FocusDebugProbe`).
+/// `AppSupportContainer`, `WorkspaceStore+Bootstrap`, `FocusDebugProbe`). Two entries went with
+/// `docs/61` rather than being re-aimed — `WindowParkingSidecar.swift`'s seam and
+/// `RecoveryIDRPolicyTests.swift`'s skip guard — because an exemption is a permission, and a
+/// permission for a file that does not exist excuses nothing while reading as though it did.
 /// `EnvConfig` itself is exempt because it is THE reader. The `Tests` entries are harness reads — a
 /// child process's environment, a snapshot output directory, or a guard that must consult the REAL
 /// environment to skip when one is set, which is the opposite of reading a knob past the overlay.
@@ -379,10 +425,6 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
 /// helper, an extension, a test fake — is caught by its first user rather than by its author.
 #[must_use]
 pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
-    /// The congestion controller, whose copy went through `EnvConfig` and was only duplicated.
-    const ABR_CONTROLLER: &str = "Sources/SlopDeskVideoHost/LiveCongestionController.swift";
-    /// The governor, whose copy was duplicated AND deaf.
-    const FPS_GOVERNOR: &str = "Sources/SlopDeskVideoHost/FPSGovernor.swift";
     /// The overlay reader, which held the generic pair.
     const ENV_CONFIG: &str = "Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift";
 
@@ -400,8 +442,6 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
         "Sources/SlopDeskVideoClient/PacerDepthPolicy.swift",
         // WALK: same shape for `SLOPDESK_TREND_*`, whose names are `trendline`'s.
         "Sources/SlopDeskVideoClient/TrendlineEstimator.swift",
-        // SEAM: `environment:` default argument on the parking sidecar's resolver.
-        "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
         // WALK: both statics hand the whole map to a PURE function that is unit-tested on it.
         "Sources/SlopDeskVideoProtocol/AdaptiveFECPolicy.swift",
         // WALK: same shape for the escalation floor.
@@ -433,20 +473,60 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
         // Guards that must consult the REAL environment to SKIP when a knob is set outside the
         // overlay — the opposite of reading one past it.
         "Tests/SlopDeskVideoClientTests/SharpenResolutionTests.swift",
-        "Tests/SlopDeskVideoHostTests/RecoveryIDRPolicyTests.swift",
         "Tests/SlopDeskVideoProtocolTests/SettingsReachConsumerTests.swift",
         // The behaviour-preservation proof: it has to spell the legacy expression to compare
         // `EnvConfig.string` against it.
         "Tests/SlopDeskVideoProtocolTests/EnvConfigTests.swift",
     ];
 
-    let mut claims = vec![
-        Claim::NoneOf {
-            paths: &[ABR_CONTROLLER, FPS_GOVERNOR, ENV_CONFIG],
+    let claims = vec![
+        Claim::Lacks {
+            path: ENV_CONFIG,
             pattern: r"(Int|Double)\([a-zA-Z_]+\), *[a-zA-Z_]+ *(>=|<=|>|<) ",
             view: View::Code,
-            message: "a numeric env knob is parsed by hand again — the reject rule is \
-                      slopdesk_abr_validated_int/_double and the clamp rule is slopdesk_qp_clamped_int",
+            message: "the overlay reader parses a numeric env knob by hand again — it resolves TEXT, and \
+                      the reject rule that reads it is congestion.rs's",
+        },
+        // The two Swift readers are deleted; the daemon is the reader now, so the ask is re-aimed
+        // at it. `congestion` holds the validating parse for rates and fractions, `fps_governor`
+        // the tunables that were read past the overlay entirely — a daemon that names neither has
+        // gone back to deciding its own operating point.
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["congestion", "fps_governor"],
+            message: "the daemon stopped asking {entry} — the reject reading of a rate or a fraction is \
+                      rust/slopdesk-video's, and a knob resolved here is one the settings overlay cannot \
+                      reach (docs/61 §3)",
+        },
+        // The Swift shape was `Int(s), v >= lo` — a parse and a bounds comparison on one line. Its
+        // Rust respelling is the same two acts: a `.parse` whose result is immediately compared, and
+        // a private validator named after the door it replaces. Daemon-scoped; congestion.rs and
+        // fps_governor.rs spell exactly this, which is the point of their existing.
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\bfn (validated|clamped)_(int|double)",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon grew its own validating parse in {files} — the reject rule and the clamp \
+                      rule are congestion.rs's and qp_control.rs's, and a private one beside the door is \
+                      how the third copy of this arrived the first time (docs/61 §3)",
+        },
+        // The knob NAME and the parse on one line, which is the reader resolving a SLOPDESK_* key
+        // for itself rather than handing the text to the module that owns the key.
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"SLOPDESK_[A-Z_]+",
+            all: &[r"\.parse"],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon parses a SLOPDESK_* knob where it names it, in {files} — the KEYS tables \
+                      and the readings over them are rust/slopdesk-video's, so a parse here is a second \
+                      answer for a knob the settings sheet still shows one value for (docs/61 §3)",
         },
         // The corpus is the whole Swift tree; if it ever reads as fewer than 200 files the walk has
         // gone stale and the two bans below are passing on nothing.
@@ -484,22 +564,6 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
                       and is deleted; ask a door",
         },
     ];
-    for caller in [ABR_CONTROLLER, FPS_GOVERNOR] {
-        claims.push(Claim::Matches {
-            path: caller,
-            pattern: r"slopdesk_abr_validated_int\(",
-            view: View::Code,
-            message: "a congestion reader no longer asks slopdesk_abr_validated_int — the reject rule is \
-                      congestion.rs's",
-        });
-        claims.push(Claim::Matches {
-            path: caller,
-            pattern: r"slopdesk_abr_validated_double\(",
-            view: View::Code,
-            message: "a congestion reader no longer asks slopdesk_abr_validated_double — the reject rule is \
-                      congestion.rs's",
-        });
-    }
     check_all(tree, &claims)
 }
 
@@ -614,17 +678,12 @@ mod tests {
                 "rust/slopdesk-video/src/capture_gates.rs",
                 "let aqp = qp_knob(at(\"SLOPDESK_AQP_MAX\"), context.max_allowed_frame_qp);\n",
             )
-            // The two Swift faces still exist and still hold quantiser prose; what they may not hold
-            // is a hand-rolled parse. A NoneOf claim has nothing to say about a path that is not
-            // there, so the green half writes them rather than leaving the claim unexercised.
+            // The daemon reads the knobs now, so it is what has to ask. Both modules are named on
+            // one `use`, which is how the real encode path spells it.
             .write(
-                super::VIDEO_ENCODER,
-                "public static var maxAllowedFrameQP: Int { Int(slopdesk_video_encoder_max_allowed_frame_qp()) \
-                 }\n",
-            )
-            .write(
-                "Sources/SlopDeskVideoHost/WindowCapturer.swift",
-                "private static var adaptiveQPMax: Int { Int(gates.adaptive_qp_max) }\n",
+                "rust/slopdesk-videohostd/src/encode.rs",
+                "use slopdesk_video::encoder_config::{Config, DEFAULT_BITRATE};\nuse \
+                 slopdesk_video::qp_control::QpConfig;\n",
             )
             .write(
                 super::SESSION_LOGIC,
@@ -634,10 +693,29 @@ mod tests {
         assert!(super::a_quantiser_knob_clamps_rather_than_rejects(&fixture.tree()).is_clean());
 
         // The reject that INVERTS the request: `SLOPDESK_MAX_QP=0` asking for the sharpest ceiling
-        // and getting the coarsest, with nothing said.
+        // and getting the coarsest, with nothing said. Respelled in the language it could come back
+        // in — the daemon bounding the ordinal for itself instead of asking qp_control.
+        fixture.append(
+            "rust/slopdesk-videohostd/src/encode.rs",
+            "let ceiling = requested.clamp(1, 51);\n",
+        );
+        assert!(!super::a_quantiser_knob_clamps_rather_than_rejects(&fixture.tree()).is_clean());
+
+        // And the same drift as a private bound rather than a clamp, which is the shape that reads
+        // as a constant nobody would question.
         fixture.write(
-            super::VIDEO_ENCODER,
-            "if let s = environment[\"SLOPDESK_MAX_QP\"], let v = Int(s), v >= 1 { return v }\n",
+            "rust/slopdesk-videohostd/src/encode.rs",
+            "use slopdesk_video::encoder_config::Config;\nuse slopdesk_video::qp_control::QpConfig;\nconst \
+             QP_MAX: i32 = 51;\n",
+        );
+        assert!(!super::a_quantiser_knob_clamps_rather_than_rejects(&fixture.tree()).is_clean());
+
+        // The daemon that stopped asking at all: nothing is respelled here, so only the ask can
+        // fail — which is the half a drained corpus would otherwise pass vacuously. The seed reads
+        // RAW rather than comment-stripped, so it may not name either module even in prose.
+        fixture.write(
+            "rust/slopdesk-videohostd/src/encode.rs",
+            "let ceiling = self.tuned_ceiling;\n",
         );
         assert!(!super::a_quantiser_knob_clamps_rather_than_rejects(&fixture.tree()).is_clean());
     }
@@ -661,19 +739,16 @@ mod tests {
         assert!(!super::the_settings_sheet_shows_the_encoders_defaults(&fixture.tree()).is_clean());
     }
 
-    /// The corpus floor, plus the three files that have held a copy of the reject parse.
+    /// The corpus floor, the overlay reader, and the daemon that reads the knobs now.
     fn reject(fixture: &Fixture) {
         for index in 0..200 {
             fixture.write(&format!("Sources/Filler/Filler{index}.swift"), "let filler = 0\n");
         }
         fixture
             .write(
-                "Sources/SlopDeskVideoHost/LiveCongestionController.swift",
-                "slopdesk_abr_validated_int(key, lo, hi)\nslopdesk_abr_validated_double(key, lo, hi)\n",
-            )
-            .write(
-                "Sources/SlopDeskVideoHost/FPSGovernor.swift",
-                "slopdesk_abr_validated_int(key, lo, hi)\nslopdesk_abr_validated_double(key, lo, hi)\n",
+                "rust/slopdesk-videohostd/src/session_capture.rs",
+                "use slopdesk_video::congestion::{ABR_KEYS, CongestionConfig};\nuse \
+                 slopdesk_video::fps_governor::FpsGovernorConfig;\n",
             )
             .write(
                 "Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift",
@@ -687,18 +762,36 @@ mod tests {
         reject(&fixture);
         assert!(super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
 
-        // The read that bypasses the overlay — set, persisted, shown as active, never read.
-        fixture.write(
-            "Sources/SlopDeskVideoHost/FPSGovernor.swift",
-            "slopdesk_abr_validated_int(key, lo, hi)\nslopdesk_abr_validated_double(key, lo, hi)\nlet raw = \
-             ProcessInfo.processInfo.environment[key]\n",
+        // The third copy's shape, in the language it could come back in: a validator grown BESIDE
+        // the door rather than instead of it, which is exactly how the third one arrived in Swift.
+        fixture.append(
+            "rust/slopdesk-videohostd/src/session_capture.rs",
+            "fn validated_double(raw: &str, lo: f64, hi: f64) -> Option<f64> { None }\n",
         );
         assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
 
-        // And the generic pair back, caught by its first USER rather than by its author.
+        // The knob resolved where it is named. `SLOPDESK_ABR_LOSS` clamped is a controller that
+        // treats every frame as catastrophic loss forever, and the reading that decides which of
+        // clamp or reject applies is the owning module's, not the reader's.
+        reject(&fixture);
+        fixture.append(
+            "rust/slopdesk-videohostd/src/session_capture.rs",
+            "let loss = env(\"SLOPDESK_ABR_LOSS\").and_then(|v| v.parse::<f64>().ok());\n",
+        );
+        assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+
+        // The daemon that stopped asking either module — the half that has no respelling to catch.
         reject(&fixture);
         fixture.write(
-            "Sources/SlopDeskVideoHost/Governor.swift",
+            "rust/slopdesk-videohostd/src/session_capture.rs",
+            "let target = self.tuned_target;\n",
+        );
+        assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+
+        // And the generic Swift pair back, caught by its first USER rather than by its author.
+        reject(&fixture);
+        fixture.write(
+            "Sources/SlopDeskVideoClient/Governor.swift",
             "let n = EnvConfig.int(\"SLOPDESK_ABR_LOSS\", 1, 100)\n",
         );
         assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());

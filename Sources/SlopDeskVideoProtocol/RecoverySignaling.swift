@@ -10,7 +10,7 @@ import Foundation
 /// (`kVTCompressionPropertyKey_EnableLTR` + `ForceLTRRefresh`). No usable frame within
 /// ~2 RTT ⇒ escalate to a forced-IDR request. Invalidation direction is **client→host**
 /// (doc 17 §3.6). Models the messages only; the LTR encode wiring lives in
-/// `SlopDeskVideoHost.VideoEncoder`.
+/// `slopdesk-videohostd`'s `encode::Encoder`.
 ///
 /// A client→host **NetworkStats** report rides this same `.recovery` channel. Fixed-width,
 /// all-`UInt32`: a malformed/truncated report throws on decode → the router drops the one
@@ -92,7 +92,8 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// Doubles as the LTR ack: sent after a SUCCESSFUL decode of an LTR-flagged frame
     /// (``FrameFragmentHeader/Flags/isLTR``), carrying that frame's `frameID` in the `streamSeq`
     /// field — the field name is a misnomer in that arm, the host feeds the value to
-    /// ``LTRController/ackFrame(frameID:)``, NOT to a streamSeq. Tells the host the client holds
+    /// `slopdesk_video::ltr::LtrController::ack_frame`, NOT to a streamSeq. Tells the host the
+    /// client holds
     /// that long-term reference and may `ForceLTRRefresh` against it.
     case ack(streamSeq: UInt32)
 

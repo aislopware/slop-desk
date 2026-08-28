@@ -1,6 +1,6 @@
 //! The lane → session sink table, and the one ordering property it exists to give.
 //!
-//! `Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift`'s `VideoMuxSinkTable`.
+//! What the Swift host's mux registry carried as its `VideoMuxSinkTable`.
 //!
 //! The registry READS this on every dispatch; a lane's own transport WRITES it, synchronously,
 //! inside `session.start()`. That synchrony is the whole point and not an implementation accident:

@@ -6,7 +6,7 @@
 //! overlay spelled `60` and the config text spelled `60.0`, a committed chip promised a gesture the
 //! host swallowed. None of them is a crash, and each is invisible from either side alone.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -17,7 +17,8 @@ const SWIFT_LOADER: &str = "Sources/SlopDeskVideoProtocol/Settings/KeybindConfig
 const RUST_CLI_CONFIG: &str = "rust/slopdesk-cli/src/shell/config.rs";
 const SWIFT_ENVBRIDGE: &str = "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift";
 const SWIFT_TERMCONF: &str = "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift";
-const SWIFT_SWIPE_CONFIG: &str = "Sources/SlopDeskVideoHost/SwipeNavHostConfig.swift";
+/// Where the swipe-nav operating point is parsed, and every question about it answered.
+const SWIPE_NAV_CONFIG: &str = "rust/slopdesk-video/src/swipe_nav_config.rs";
 
 /// The folders rank once, and a jump reads that rank
 ///
@@ -152,27 +153,49 @@ pub fn a_number_is_spelled_once(tree: &Tree) -> Report {
 /// scalars holds that — and because its owner is a process-lifetime namespace that never copies it
 /// (`docs/55` §4b). Deleted with it: the Swift `SwipeNavPolicy` face and the four doors that
 /// answered the allowlist, the extension list and the travel knob apart from an operating point.
+///
+/// ## What `docs/61` moved, and what the claim points at now
+/// `SwipeNavHostConfig.swift` was the Swift half and went with the rest of the GUI host, so the
+/// claim that it still asked its five doors has nothing left to name. The rule it stated survives
+/// the file exactly, though, and it is a claim about `swipe_nav_config.rs`'s SHAPE rather than
+/// about any caller: ONE parse of the family, and every question answered off the parsed value.
+/// So the ask is re-aimed onto that module's own surface — `from_env` parses, `eligible` and
+/// `eligible_window_target` answer the fire, `status` and `window_status` answer the push — and
+/// each name is pinned as a `pub fn`, so an answer moved back out into a free function that reads
+/// the environment for itself fails here rather than passing as a rename.
+///
+/// It is deliberately NOT re-aimed at `rust/slopdesk-videohostd`, and the reason is the one
+/// [`crate::rules::video_host`]'s accumulators give for leaving `recovery_dedupe` out of its ask:
+/// the daemon does not import this module yet — the injection half reaches it through
+/// `injector_gates` — so a claim that it did would be a claim about a schedule rather than about a
+/// law. The bans below hold either way.
 #[must_use]
 pub fn the_swipe_nav_operating_point_is_a_handle(tree: &Tree) -> Report {
     let claims = [
         Claim::Mentions {
-            path: SWIFT_SWIPE_CONFIG,
+            path: SWIPE_NAV_CONFIG,
             names: &[
-                "slopdesk_swipe_nav_config_parse",
-                "slopdesk_swipe_nav_config_eligible",
-                "slopdesk_swipe_nav_config_window_eligible",
-                "slopdesk_swipe_nav_config_status",
-                "slopdesk_swipe_nav_config_window_status",
+                "pub fn from_env",
+                "pub fn eligible",
+                "pub fn eligible_window_target",
+                "pub fn status",
+                "pub fn window_status",
             ],
-            message: "SwipeNavHostConfig.swift no longer asks {entry} — the operating point is \
-                      swipe_nav_config's",
+            message: "swipe_nav_config.rs lost {entry} — the operating point is parsed once and every \
+                      question is answered off it, so an answer that moved out of this module is a second \
+                      parse of the SLOPDESK_SWIPE_NAV* family",
         },
-        Claim::Lacks {
-            path: SWIFT_SWIPE_CONFIG,
-            pattern: r"SwipeNavStatusMessage\(\s*$|SwipeNavStatusMessage\(eligible",
+        Claim::NoneUnder {
+            roots: &["rust/slopdesk-videohostd"],
+            extensions: RUST,
+            pattern: r"SwipeNavStatusMessage *\{|\bfn [a-z_]*swipe_nav[a-z_]*\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "SwipeNavHostConfig.swift builds a status message by hand again — the zeroing rule for \
-                      an ineligible push is the door's",
+            exempt: &[],
+            message: "the daemon answers a swipe-nav question itself in {files} — the eligibility, the \
+                      travel and the zeroing rule for an ineligible push are swipe_nav_config's, and a \
+                      second answer is a committed chip promising a fire the host swallows (docs/61 §3)",
         },
         Claim::NoneUnder {
             roots: &["Sources", "Tests"],
@@ -292,12 +315,15 @@ mod tests {
     fn swipe(fixture: &Fixture) {
         fixture
             .write(
-                super::SWIFT_SWIPE_CONFIG,
-                "slopdesk_swipe_nav_config_parse\nslopdesk_swipe_nav_config_eligible\\
-                 nslopdesk_swipe_nav_config_window_eligible\nslopdesk_swipe_nav_config_status\\
-                 nslopdesk_swipe_nav_config_window_status\n",
+                super::SWIPE_NAV_CONFIG,
+                "pub fn from_env\npub fn eligible\npub fn eligible_window_target\npub fn status\npub fn \
+                 window_status\n",
             )
             .write("Tests/Placeholder.swift", "kept so the ban has a haystack\n")
+            .write(
+                "rust/slopdesk-videohostd/src/injection.rs",
+                "kept so the ban has a haystack\n",
+            )
             .write("rust/slopdesk-ffi/src/lib.rs", "kept so the ban has a haystack\n");
     }
 
@@ -307,7 +333,21 @@ mod tests {
         swipe(&fixture);
         assert!(super::the_swipe_nav_operating_point_is_a_handle(&fixture.tree()).is_clean());
 
-        fixture.write(super::SWIFT_SWIPE_CONFIG, "");
+        // An answer moved out of the module that parses the operating point is a second parse of
+        // the family, whatever it is renamed to on the way out.
+        fixture.write(
+            super::SWIPE_NAV_CONFIG,
+            "pub fn from_env\npub fn eligible\npub fn eligible_window_target\npub fn status\n",
+        );
+        assert!(!super::the_swipe_nav_operating_point_is_a_handle(&fixture.tree()).is_clean());
+
+        // The host answering the push for itself, in the language it is written in now: the zeroing
+        // rule for an ineligible status is the module's, and a second one promises a fire.
+        swipe(&fixture);
+        fixture.append(
+            "rust/slopdesk-videohostd/src/injection.rs",
+            "let push = SwipeNavStatusMessage { eligible: true, travel: 0.0 };\n",
+        );
         assert!(!super::the_swipe_nav_operating_point_is_a_handle(&fixture.tree()).is_clean());
 
         // The deleted Swift face, back under any path.

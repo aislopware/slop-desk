@@ -55,7 +55,7 @@ public struct ClientNetworkStatsSnapshot: Sendable, Equatable {
 }
 
 /// The client-side session orchestrator for the GUI video path (PATH 2) — the exact mirror of
-/// `SlopDeskVideoHost.SlopDeskVideoHostSession`.
+/// `slopdesk-videohostd`'s `session::Session`.
 ///
 /// The pipeline it wires:
 ///
@@ -1718,7 +1718,7 @@ public actor SlopDeskVideoClientSession {
         // message would letterbox INPUT against a different aspect than RENDER → drag/click land on the
         // wrong pixel (wrong coordinates, or the video not filling the pane). So geometry NEVER touches
         // `decodedSize`; it stays capture-pinned. (Move/resize still drives host-side cursor/input bounds in
-        // `SlopDeskVideoHostSession.onGeometry`, so absolute injection tracks the live window.)
+        // the daemon's `session::Session` geometry fold, so absolute injection tracks the live window.)
         let kind =
             switch message {
             case .move: "move"
@@ -1765,7 +1765,8 @@ public actor SlopDeskVideoClientSession {
     }
 
     /// Logs a SESSION-ACTOR cursor RX gap > 100 ms — the host/network side of the freeze. The host
-    /// ``CursorSampler`` samples position OFF its main thread at 120 Hz unconditionally (built so a
+    /// The host's cursor sampler — `slopdesk_video::cursor_sampling`, driven by the video daemon —
+    /// samples position OFF its main thread at 120 Hz unconditionally (built so a
     /// window-raise can't stall it), so a spike here would mean a genuine host/net stall. If this stays
     /// SMALL on click-back while the main-actor APPLY/RENDER gaps spike, the freeze is a CLIENT main-actor
     /// block (the focus re-render), not the host — which is the decisive split for the fix.
@@ -1827,7 +1828,8 @@ public actor SlopDeskVideoClientSession {
     ///
     /// The two redundant paths (``sendMouseUp(button:viewPoint:clickCount:modifiers:)`` and a
     /// held-modifier key-up) already say the bytes are built once and put on the wire unchanged —
-    /// that is what makes the host's ``InputButtonBalance`` able to suppress the duplicates. Sending
+    /// that is what makes the host's `slopdesk_video::input_routing::InputButtonBalance` able to
+    /// suppress the duplicates. Sending
     /// through ``sendInput(_:)`` per repeat re-ran `slopdesk_input_event_encode` and allocated a
     /// fresh `Data` each time (measured: 227 ns a call), so the comment was true of the intent and
     /// not of the code. Encoding is pure, so the repeats were never DIFFERENT bytes — this makes
@@ -1953,7 +1955,8 @@ public actor SlopDeskVideoClientSession {
         // loss-resilient redundancy as `sendMouseUp` — a lost modifier release permanently latches
         // the flag on the host's shared `hidSystemState` source (every later plain scroll becomes
         // ⌘-scroll) until the user happens to press+release that modifier again. Same bytes each
-        // time: the host's `InputButtonBalance` posts the FIRST and suppresses the duplicates, so
+        // time: the host's `input_routing::InputButtonBalance` posts the FIRST and suppresses the
+        // duplicates, so
         // the redundancy never becomes a spurious extra modifier edge. Everything else stays a
         // single datagram (an ordinary key-up loss is a visible, self-healing miss).
         let event = inputEncoder.key(keyCode: keyCode, down: down, modifiers: modifiers)

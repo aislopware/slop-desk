@@ -163,9 +163,12 @@ pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
 /// a file-level ban with a multi-line pattern: the introducer and the guard are two lines that only
 /// mean something together, and no single line carries the shape.
 ///
-/// Scoped to the three targets that can SEE the latch. `SlopDeskVideoHost` and
-/// `SlopDeskVideoClient` hold one-shots of the same shape and depend on nothing that could carry
-/// `DeadlineLatch` down to them, so pinning them here would only demand an impossible import.
+/// Scoped to the three targets that can SEE the latch. `SlopDeskVideoClient` holds one-shots of the
+/// same shape and depends on nothing that could carry `DeadlineLatch` down to it, so pinning it
+/// here would only demand an impossible import. The GUI video host held the same shape and is no
+/// longer a Swift target at all — `docs/61` moved it to `rust/slopdesk-videohostd`, where a
+/// re-armable deadline is a `tokio` task rather than this five-line type, so it is out of this
+/// rule's reach in a second way as well.
 ///
 /// The six arming sites are pinned positively for the reason every shared helper needs it: the
 /// timer is shared, the state is not, and a caller that quietly grows its own back passes the ban
@@ -626,22 +629,24 @@ mod tests {
                 super::SIDECAR_JSON,
                 "encoder.outputFormatting = [.prettyPrinted, .sortedKeys]\n",
             )
+            // The second encoder in the tree, since `docs/61` deleted the parking sidecar's: the
+            // env bridge's, which writes the settings sidecar `slopdesk config` reads back.
             .write(
-                "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
+                "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift",
                 "encoder.outputFormatting = [.sortedKeys]\n",
             );
         assert!(super::one_sidecar_encoder(&fixture.tree()).is_clean());
 
         // The file that names outputFormatting is the one that has to name .sortedKeys too.
         fixture.write(
-            "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
+            "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift",
             "encoder.outputFormatting = [.prettyPrinted]\n",
         );
         assert!(!super::one_sidecar_encoder(&fixture.tree()).is_clean());
 
         // And a second encoder inside WorkspaceCore, where one answers all four stores.
         fixture.write(
-            "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
+            "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift",
             "encoder.outputFormatting = [.sortedKeys]\n",
         );
         fixture.write(
@@ -699,8 +704,12 @@ mod tests {
             "public enum VideoChannel: UInt8 {\ncase control = 0\ncase video = 1\ncase geometry = 2\ncase \
              cursor = 3\ncase input = 4\ncase recovery = 5\ncase audio = 6\n}\n",
         );
+        // Seeded in the CLIENT since `docs/61`. The host's copy is what the rule was written
+        // against, and it went with the Swift host — but the client's was the other half of that
+        // pair, it is still Swift, and it still depends on SlopDeskVideoProtocol, so it is where a
+        // byte-identical redeclaration can be written today rather than where one used to be.
         fixture.write(
-            "Sources/SlopDeskVideoHost/HostChannels.swift",
+            "Sources/SlopDeskVideoClient/ClientChannels.swift",
             "enum VideoChannel: UInt8 { case control = 0 }\n",
         );
         assert!(!super::one_channel_tag(&fixture.tree()).is_clean());

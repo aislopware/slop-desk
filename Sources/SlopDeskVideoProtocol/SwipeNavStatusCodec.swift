@@ -34,7 +34,7 @@ public struct SwipeNavStatusMessage: Equatable, Sendable {
     public var canGoBack: Bool
     /// The target app's ⌘] would navigate right now. Meaningless unless ``historyKnown``.
     public var canGoForward: Bool
-    /// The host actually READ the history state this push (`HostNavHistory`). False ⇒ the read
+    /// The host actually READ the history state this push (its `navhistory`). False ⇒ the read
     /// failed or is disabled and the client must FAIL OPEN (treat both directions as navigable
     /// — the pre-gate behavior), never dark.
     public var historyKnown: Bool

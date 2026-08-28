@@ -91,10 +91,10 @@ pub fn scrape(log: &str) -> Trace {
 /// # Errors
 /// When the host binary is missing, the synclient build fails, or the gesture itself fails.
 pub fn run(root: &Path, window: &str, args: &[String]) -> Result<(), String> {
-    let host = root.join(".build/release/slopdesk-videohostd");
+    let host = crate::hostbin::binary_of(root, crate::hostbin::Daemon::Video, true);
     if !host.is_file() {
         return Err(format!(
-            "{} is missing — run 'swift build -c release' first",
+            "{} is missing — run 'just videohostd' first",
             host.display()
         ));
     }
@@ -105,8 +105,8 @@ pub fn run(root: &Path, window: &str, args: &[String]) -> Result<(), String> {
     // way up — AX-moving whatever windows it names back off a dead virtual display — and UNLINKS it
     // unconditionally, before it even tries to decode it. Pointed at the real container, an
     // un-isolated run restores and then destroys the crash journal belonging to the developer's own
-    // videohostd, and moves their windows while doing it. `video-prefs.json` folds into
-    // `EnvConfig.overlay` at the same moment, so it would also measure a configuration nobody wrote.
+    // videohostd, and moves their windows while doing it. `video-prefs.json` folds into the daemon's
+    // `env::Overlay` at the same moment, so it would also measure a configuration nobody wrote.
     let state = std::env::temp_dir().join(format!("slopdesk-input-test.{}", std::process::id()));
     let environment = container(&state)?;
 

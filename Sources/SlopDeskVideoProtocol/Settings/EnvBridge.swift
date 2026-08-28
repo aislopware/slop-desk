@@ -8,8 +8,10 @@ import Foundation
 ///     ready to fold into ``EnvConfig/overlay``. An UNSET field emits NO entry, so a default-constructed
 ///     model yields an EMPTY overlay ⇒ byte-identical to today's compile-time defaults (W12 invariant).
 ///  2. The `video-prefs.json` SIDECAR — host-daemon prefs (video + agent) serialised to a file the
-///     daemon reads at launch (``loadSidecar(at:into:)``) and folds into ``EnvConfig/overlay`` BEFORE any
-///     consumer's `static let` is forced (decision #10: no live reload — "applies on reconnect").
+///     daemon reads at launch and gap-fills its own overlay from BEFORE any consumer resolves a knob
+///     (decision #10: no live reload — "applies on reconnect"). The READING half is the daemon's:
+///     `rust/slopdesk-videohostd`'s `env::Overlay` (docs/61 §1). What stays here is the SHAPE, the
+///     write, the read and the default location — one file, written by Swift and read by Rust.
 ///
 /// SYMMETRIC keys (``symmetricKeys``) must be set IDENTICALLY on host AND client (`SLOPDESK_FEC_M` /
 /// `_FEC_K`, the mux window) or the two ends disagree — the UI surfaces a "set on both ends" warning.
@@ -150,30 +152,11 @@ public enum EnvBridge {
         return try? JSONDecoder().decode(VideoSidecar.self, from: data)
     }
 
-    /// Daemon launch hook: read the sidecar (if present + valid) and fold its overlay into
-    /// `EnvConfig.overlay`, WITHOUT clobbering an entry already there (a real `SLOPDESK_*` env var,
-    /// or an earlier overlay write, wins — the sidecar only fills gaps so a deliberate env override is
-    /// honoured). Returns the keys it actually applied (for a launch-time debug line). Call this in
-    /// `main()` BEFORE the video pipeline / any consumer `static let` is touched.
-    @discardableResult
-    public static func loadSidecar(at url: URL, into overlay: inout [String: String]) -> [String] {
-        guard let sidecar = readSidecar(at: url) else { return [] }
-        let env = ProcessInfo.processInfo.environment
-        var applied: [String] = []
-        for (key, value) in sidecar.toEnv() {
-            // A real env var, or an existing overlay entry, always wins over the sidecar.
-            if env[key] != nil || overlay[key] != nil { continue }
-            overlay[key] = value
-            applied.append(key)
-        }
-        return applied
-    }
-
-    /// Convenience: fold the default-location sidecar into the process-wide ``EnvConfig/overlay``.
-    /// The one-liner a daemon `main()` calls.
-    @discardableResult
-    public static func loadDefaultSidecarIntoEnvConfig(fileManager: FileManager = .default) -> [String] {
-        guard let url = defaultSidecarURL(fileManager: fileManager) else { return [] }
-        return loadSidecar(at: url, into: &EnvConfig.overlay)
-    }
+    // NOTE: the DAEMON-LAUNCH fold — `loadSidecar(at:into:)` and its
+    // `loadDefaultSidecarIntoEnvConfig()` one-liner — is GONE (docs/61 §1 row 10). It read this file
+    // and gap-filled `EnvConfig.overlay` in a daemon `main()` before any consumer `static let` was
+    // forced; both daemons are Rust now, and `rust/slopdesk-videohostd`'s `env::Overlay` is that
+    // fold, gap-fill precedence and `rawOverrides`-last included. What stays here is the half the
+    // CLIENT still owns: the shape, the WRITE (Settings), the READ, and the default location — one
+    // file, written by Swift and read by Rust.
 }

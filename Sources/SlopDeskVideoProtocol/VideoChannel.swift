@@ -34,7 +34,7 @@ public enum VideoChannel: UInt8, Sendable, CaseIterable {
     /// DEDICATED channel, not multiplexed onto `.input`: `RecoveryMessage`'s leading type bytes
     /// (1/2/3) overlap `InputEvent`'s (mouseMove/Down/Up), so sharing `.input` would mis-decode a
     /// recovery datagram as a phantom mouse event. The per-purpose channel also lets the host route
-    /// recovery to ``InputDatagramRouter``-free handling.
+    /// recovery to handling that never reaches `slopdesk_video::input_routing` at all.
     case recovery = 5
     /// Host → client app audio (``AudioChannelMessage``: a config packet + ~10 ms encoded frames).
     /// Rides the shared MEDIA socket (the socket-selection predicate routes every non-cursor tag

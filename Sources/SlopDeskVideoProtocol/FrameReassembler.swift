@@ -209,7 +209,8 @@ public final class FrameReassembler {
 public extension UInt32 {
     /// Signed wrap-aware distance `self - other` interpreted in a 32-bit sequence space (handles the
     /// `frameID`/`streamSeq` wrap at 2^32). Positive ⇒ `self` is "ahead of" `other`. Public so the
-    /// host's ``VideoMuxRouter`` can bound its retired channelID set with the SAME wrap-aware
+    /// host's `slopdesk_video::mux_routing::VideoMuxRouter` can bound its retired channelID set
+    /// with the SAME wrap-aware
     /// high-water-mark prune.
     ///
     /// A two's-complement wrap-subtract (`Int(Int32(bitPattern: self &- other))`); the canonical

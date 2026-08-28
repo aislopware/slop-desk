@@ -29,8 +29,7 @@ use slopdesk_workspace::frecency::{
 };
 use slopdesk_workspace::jump::resolve;
 
-use crate::host_state::SlopDeskByteSpan;
-use crate::{borrow, records_of};
+use crate::{SlopDeskByteSpan, borrow, records_of};
 
 /// Visited within the last hour — the freshest, highest-weight bucket.
 pub const SLOPDESK_FOLDER_WEIGHT_HOUR: u32 = 0;
@@ -380,7 +379,7 @@ mod tests {
         slopdesk_folder_recency_weight, slopdesk_folder_sanitized, slopdesk_folder_score,
         slopdesk_folder_weight, slopdesk_jump_resolve,
     };
-    use crate::host_state::SlopDeskByteSpan;
+    use crate::SlopDeskByteSpan;
 
     const NOW: f64 = 1_000_000_000.0;
     const HOME: &str = "/Users/me";

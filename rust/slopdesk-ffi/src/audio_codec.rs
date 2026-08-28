@@ -1,8 +1,9 @@
 //! The audio codec's doors: a capture buffer becomes wire payloads, a wire payload becomes samples.
 //!
-//! `Sources/SlopDeskVideoHost/AudioStreamEncoder.swift` and
-//! `Sources/SlopDeskVideoClient/AudioStreamDecoder.swift` were 640 lines of `AudioConverter` calls
-//! wrapped around about forty lines of rule. Both are gone. Three crates meet at this door:
+//! The Swift host's audio stream encoder and `Sources/SlopDeskVideoClient/AudioStreamDecoder.swift`
+//! were 640 lines of `AudioConverter` calls wrapped around about forty lines of rule. Not one of
+//! those calls is left: the encoding half went with the video host's port to Rust, and what remains
+//! of the decoder is a face. Three crates meet at this door:
 //!
 //! | crate | what it answers |
 //! | --- | --- |
@@ -25,15 +26,9 @@
 //! and `slopdesk_ffi.h` declares them inside its `TARGET_OS_OSX` region. Every client decodes, so
 //! the decoder doors are declared outside it. That is `slopdesk-apple-vt`'s split exactly.
 
-// The encoder's two pointer types, and macOS-only with the encoder itself: `CMSampleBuffer` is what
-// `ScreenCaptureKit` hands its callback, and there is no `ScreenCaptureKit` on a client slice.
-#[cfg(target_os = "macos")]
-use core::ffi::c_void;
 use core::ffi::{c_float, c_uchar};
 
 use slopdesk_apple_audio::Decoder;
-#[cfg(target_os = "macos")]
-use slopdesk_apple_audio::{CMSampleBuffer, Encoder, read_stereo};
 use slopdesk_video::audio_wire::{AudioStreamConfig, AudioWireFormat};
 
 use crate::borrow;
@@ -58,37 +53,6 @@ pub const extern "C" fn slopdesk_audio_source_constant(index: u8) -> usize {
         2 => slopdesk_video::audio_source::FRAMES_PER_BLOCK,
         _ => 0,
     }
-}
-
-/// Which codec this process puts on the wire, as a `SLOPDESK_AUDIO_FORMAT_*` code.
-///
-/// A door rather than a Swift `== "pcm"` for the reason every env door here exists: the fallback is
-/// the interesting part. An unrecognised value must land on AAC-ELD, because silently dropping to
-/// raw PCM is sixteen times the bitrate on a link that was sized for the other number, and a caller
-/// spelling the comparison itself is a caller who can spell the fallback the other way round.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_audio_wire_format() -> u8 {
-    slopdesk_video::audio_source::wire_format(&|key| std::env::var(key).ok()).raw_value()
-}
-
-/// The AAC-ELD target bitrate this process resolved, already clamped. The PCM arm ignores it.
-///
-/// Never zero: text that is not a number answers the default rather than the floor, because "this
-/// is not a bitrate" and "this bitrate is too low" are different statements and answering 32 kbps
-/// to a typo is the request inverted with nothing said.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_audio_bitrate_bps() -> u32 {
-    slopdesk_video::audio_source::bitrate_bps(&|key| std::env::var(key).ok())
 }
 
 /// The decoder, as the caller's token.
@@ -194,244 +158,6 @@ pub unsafe extern "C" fn slopdesk_audio_decoder_decode(
     let decoded = held.decoder.decode(payload);
     // SAFETY: the caller's obligation, discharged at the call site by a scoped buffer access.
     unsafe { crate::spill(&decoded, out, cap) }
-}
-
-/// The encoder, as the caller's token.
-#[cfg(target_os = "macos")]
-#[derive(Debug)]
-pub struct SlopDeskAudioEncoder {
-    encoder: Encoder,
-}
-
-/// One finished wire payload, handed over for the length of the call only.
-///
-/// `bytes` points into the encoder's own scratch and is invalid the moment the callback returns, so
-/// a caller that keeps it must copy. That is the same borrow the capture and encode doors hand out,
-/// and for the same reason: the alternative is an allocation per payload at a hundred a second.
-#[cfg(target_os = "macos")]
-pub type SlopDeskAudioPayloadFn =
-    Option<unsafe extern "C" fn(context: *mut c_void, bytes: *const c_uchar, len: usize)>;
-
-/// The wire config, flattened — everything but the cookie, which is a span and comes separately.
-#[cfg(target_os = "macos")]
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SlopDeskAudioEncoderConfig {
-    /// The on-wire format id, as [`AudioWireFormat::raw_value`] spells it.
-    pub format: u8,
-    /// Sample rate in Hz.
-    pub sample_rate: u32,
-    /// Interleaved channel count.
-    pub channels: u8,
-    /// How many cookie bytes [`slopdesk_audio_encoder_cookie`] will answer. Zero for the PCM arm.
-    pub cookie_len: usize,
-}
-
-/// Turns the caller's encoder handle back into a reference.
-///
-/// # Safety
-/// `handle` must be null, or a pointer returned by [`slopdesk_audio_encoder_new`] that has not been
-/// freed, with no other live reference for the duration of the call.
-#[cfg(target_os = "macos")]
-#[expect(
-    unsafe_code,
-    reason = "turning the caller's handle back into a reference is this module's whole obligation"
-)]
-const unsafe fn held_encoder<'a>(handle: *mut SlopDeskAudioEncoder) -> Option<&'a mut SlopDeskAudioEncoder> {
-    // SAFETY: by the caller's obligation this is a live, exclusively-held allocation from `new`.
-    unsafe { handle.as_mut() }
-}
-
-/// An encoder for `format` at `bitrate_bps`. Never null unless allocation itself failed.
-///
-/// An unknown format id falls back to the wire default rather than refusing, because there is no
-/// null to interpret on this side: the caller picked the format from its own environment variable,
-/// and a typo there should cost the default codec rather than the whole audio lane.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_audio_encoder_new(format: u8, bitrate_bps: u32) -> *mut SlopDeskAudioEncoder {
-    let format = AudioWireFormat::from_raw(format).unwrap_or_default();
-    Box::into_raw(Box::new(SlopDeskAudioEncoder {
-        encoder: Encoder::new(format, bitrate_bps),
-    }))
-}
-
-/// Frees an encoder. Null is a no-op, and the same pointer must not be freed twice.
-///
-/// # Safety
-/// `handle` must be null or a pointer from [`slopdesk_audio_encoder_new`], freed exactly once.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_audio_encoder_free(handle: *mut SlopDeskAudioEncoder) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: by the caller's obligation this pointer came from one `new` and is freed once.
-    drop(unsafe { Box::from_raw(handle) });
-}
-
-/// The wire config, when there is one; `false` means "do not send a config packet yet".
-///
-/// The PCM arm answers from the first call. The AAC arm answers `false` until the converter has
-/// built, and — once [`slopdesk_audio_encoder_failed`] latches — forever.
-///
-/// # Safety
-/// `handle` must satisfy [`held_encoder`]'s obligation, and `out` must be null or live writable
-/// memory for one [`SlopDeskAudioEncoderConfig`], for the whole call.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub const unsafe extern "C" fn slopdesk_audio_encoder_config(
-    handle: *mut SlopDeskAudioEncoder,
-    out: *mut SlopDeskAudioEncoderConfig,
-) -> bool {
-    // SAFETY: the caller's obligation, discharged by the Swift owner holding one handle.
-    let Some(held) = (unsafe { held_encoder(handle) }) else {
-        return false;
-    };
-    let Some(config) = held.encoder.config() else {
-        return false;
-    };
-    let answer = SlopDeskAudioEncoderConfig {
-        format: config.format.raw_value(),
-        sample_rate: config.sample_rate,
-        channels: config.channels,
-        cookie_len: config.cookie.len(),
-    };
-    if out.is_null() {
-        // A presence probe. Answering true without writing is the honest reading of a null sink.
-        return true;
-    }
-    // SAFETY: the caller's obligation — one live, aligned destination of the declared type.
-    unsafe { out.write(answer) };
-    true
-}
-
-/// The magic cookie the client decoder is initialised from; answers the byte count it needs.
-///
-/// Empty for the PCM arm, which is a real answer: there is no codec to describe.
-///
-/// # Safety
-/// `handle` must satisfy [`held_encoder`]'s obligation, and `(out, cap)` must be null or describe
-/// live writable memory for `cap` bytes, for the whole call.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_audio_encoder_cookie(
-    handle: *mut SlopDeskAudioEncoder,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, discharged by the Swift owner holding one handle.
-    let Some(held) = (unsafe { held_encoder(handle) }) else {
-        return 0;
-    };
-    let Some(config) = held.encoder.config() else {
-        return 0;
-    };
-    // SAFETY: the caller's obligation, discharged at the call site by a scoped buffer access.
-    unsafe { crate::deliver(&config.cookie, out, cap) }
-}
-
-/// Whether the converter refused to build — a permanently silent lane, not a transient.
-///
-/// # Safety
-/// `handle` must satisfy [`held_encoder`]'s obligation.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_audio_encoder_failed(handle: *mut SlopDeskAudioEncoder) -> bool {
-    // SAFETY: the caller's obligation, discharged by the Swift owner holding one handle.
-    unsafe { held_encoder(handle) }.is_some_and(|held| held.encoder.failed())
-}
-
-/// Drops the sub-block remainder AND the codec's carried state — the enable transition.
-///
-/// # Safety
-/// `handle` must satisfy [`held_encoder`]'s obligation.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_audio_encoder_reset(handle: *mut SlopDeskAudioEncoder) {
-    // SAFETY: the caller's obligation, discharged by the Swift owner holding one handle.
-    if let Some(held) = unsafe { held_encoder(handle) } {
-        held.encoder.reset();
-    }
-}
-
-/// Feeds ONE captured sample buffer and calls `sink` once per completed wire payload.
-///
-/// A buffer whose format is not the configured Float32 LPCM is dropped without a callback, and so
-/// is a buffer that completes no block. Answers how many payloads were handed over, which is what
-/// lets the caller skip the config-cadence work when there is nothing to announce.
-///
-/// # Safety
-/// `handle` must satisfy [`held_encoder`]'s obligation. `sample_buffer` must be null or a live
-/// `CMSampleBufferRef` for the whole call. `sink`, if non-null, must be safe to call with `context`
-/// and must not free the handle or re-enter this door.
-#[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_audio_encoder_push_sample_buffer(
-    handle: *mut SlopDeskAudioEncoder,
-    sample_buffer: *const c_void,
-    sink: SlopDeskAudioPayloadFn,
-    context: *mut c_void,
-) -> usize {
-    // SAFETY: the caller's obligation, discharged by the Swift owner holding one handle.
-    let Some(held) = (unsafe { held_encoder(handle) }) else {
-        return 0;
-    };
-    let Some(buffer) = core::ptr::NonNull::new(sample_buffer.cast_mut().cast::<CMSampleBuffer>()) else {
-        return 0;
-    };
-    // SAFETY: the caller's obligation — a live `CMSampleBufferRef` borrowed for this call, which is
-    // exactly what `ScreenCaptureKit` hands its stream-output callback.
-    let sample = unsafe { buffer.as_ref() };
-    let Some(interleaved) = read_stereo(sample) else {
-        return 0;
-    };
-    // `read_stereo` folds to exactly `CHANNEL_COUNT` channels or answers `None`, so this division
-    // is a channel count coming back out of an interleaved length, not an estimate.
-    #[expect(
-        clippy::integer_division,
-        reason = "an interleaved sample count over its channel count IS the frame count"
-    )]
-    let frames = interleaved.len() / slopdesk_video::audio_source::CHANNEL_COUNT;
-    let payloads = held.encoder.push(&interleaved, frames);
-    let Some(sink) = sink else {
-        return payloads.len();
-    };
-    for payload in &payloads {
-        // SAFETY: the caller's obligation — `sink` is a live function pointer registered by the
-        // owner of `context`, and the span it is given points into `payload`, which is alive for
-        // the whole call and not touched again until the callback returns.
-        unsafe { sink(context, payload.as_ptr(), payload.len()) };
-    }
-    payloads.len()
 }
 
 #[cfg(test)]

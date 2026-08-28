@@ -1180,7 +1180,7 @@ package final class VideoWindowPipeline {
         }
         // `.high` priority: the keypress/mouse → encode → UDP-send hop is tiny but latency-critical
         // (P1 — input must feel instant), so it must not queue behind ambient pool/UI work. Mirrors the
-        // two inbound pumps (SlopDeskVideoHostSession / SlopDeskVideoClientSession), both `.high`.
+        // client's own inbound pump (SlopDeskVideoClientSession), also `.high`.
         outboundConsumer = Task(priority: .high) { [weak self] in
             for await action in stream {
                 if Task.isCancelled { break }

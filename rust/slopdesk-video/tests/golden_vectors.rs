@@ -61,6 +61,7 @@ use core::fmt::Write as _;
 use serde_json::Value;
 use slopdesk_video::fps_governor::{FpsGovernor, FpsGovernorConfig};
 use slopdesk_video::geometry::{VideoPoint, VideoRect, VideoSize};
+use slopdesk_video::input_routing::coalesce_motion;
 use slopdesk_video::network_estimate::NetworkEstimate;
 use slopdesk_video::recovery_routing::StaticIdrDecider;
 use slopdesk_video::video_control::{
@@ -888,6 +889,56 @@ fn every_pinned_input_event_matches_in_both_directions() {
         };
         assert_eq!(decoded, expected, "{label}: the decoded value drifted");
         assert_eq!(decoded.tag(), tag, "{label}: the self-inject tag drifted");
+    }
+}
+
+/// The fourteen coalescer runs, replayed through the rule that decides them.
+///
+/// The key was frozen against a Swift suite (`InputMotionCoalesceGoldenVectorTests`) that called
+/// `InputMotionCoalescer.coalesce`, and that call had ALREADY been a door onto
+/// [`slopdesk_video::input_routing::coalesce_plan`] for as long as the plan existed — the Swift
+/// held the events and asked Rust which ones survived. Deleting the daemon deleted the suite, and
+/// `golden-check` caught what a symbol gate could not: a frozen vector with no reader is a
+/// recording of a law nobody re-runs, which is exactly how `vdRefreshRates` once pinned a
+/// superseded one.
+///
+/// So the replay lands here rather than being re-pinned: the vectors go in as WIRE BYTES and come
+/// back out as wire bytes, which keeps the corpus honest about the codec too — a coalescer that
+/// kept the right event but re-encoded it differently fails this, where a struct comparison would
+/// not. `coalesce_scroll` is `false`, the operating point the corpus was generated at and the one
+/// where a scroll is a hard barrier.
+#[test]
+fn every_pinned_coalescer_run_keeps_exactly_what_swift_kept() {
+    let root = corpus();
+    let vectors = group_of(&root, "inputMotionCoalesce");
+    assert_eq!(
+        vectors.len(),
+        14,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let name = vector["name"].as_str().expect("a case name");
+        let batch: Vec<InputEvent> = vector["inputHex"]
+            .as_array()
+            .expect("a hex list")
+            .iter()
+            .map(|hex| {
+                InputEvent::decode(&from_hex(hex.as_str().expect("a hex event")))
+                    .unwrap_or_else(|error| panic!("{name}: an input event did not decode: {error:?}"))
+            })
+            .collect();
+        let pinned: Vec<String> = vector["outputHex"]
+            .as_array()
+            .expect("a hex list")
+            .iter()
+            .map(|hex| hex.as_str().expect("a hex event").to_owned())
+            .collect();
+        let survivors: Vec<String> = coalesce_motion(batch, false)
+            .iter()
+            .map(|event| to_hex(&event.encode()))
+            .collect();
+        assert_eq!(survivors, pinned, "{name}: the coalesced run drifted");
     }
 }
 

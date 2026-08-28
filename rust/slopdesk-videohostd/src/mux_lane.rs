@@ -1,6 +1,6 @@
 //! One lane of the shared flow, seen as a whole transport by the session riding it.
 //!
-//! `Sources/SlopDeskVideoHost/Mux/VideoMuxChannelTransport.swift`.
+//! The Rust home of the per-channel mux transport the Swift host mounted each of its sessions on.
 //!
 //! The daemon mints one of these per client video channel. From the session's side it looks like a
 //! transport it owns; the difference is entirely below:

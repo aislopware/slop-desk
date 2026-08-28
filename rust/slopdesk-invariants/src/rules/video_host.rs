@@ -5,16 +5,34 @@
 //! must be SINGLE because two surfaces ask it: the router's lane sets and the client's, the
 //! picker's inclusion test and the feed's, the encoder's budget and the pacer's. A second copy
 //! agrees on the easy cases and diverges exactly where nobody is watching.
+//!
+//! ## What `docs/61` changed, and what it did not
+//!
+//! Every rule here used to name a file under `Sources/SlopDeskVideoHost` and ask two things of it:
+//! that it CALLED the crate's door, and that it did not respell the interior behind that door. The
+//! Swift host is deleted and its doors went with it — `rust/slopdesk-videohostd` links
+//! `slopdesk-video` as a Rust dependency, so there is no `(ptr, len)` to prove a call across.
+//!
+//! So the door half is re-aimed rather than dropped: the claim "the law is asked, not re-derived"
+//! is now a [`Claim::MentionsUnder`] over the DAEMON's directory, naming the crate module each rule
+//! is about. It reads the directory rather than a file because the daemon's modules are still being
+//! split — a claim pinned to a filename would go wrong the moment a session module divides, which
+//! is drift the rule was never about.
+//!
+//! The Swift half is re-aimed to [`crate::rules::deleted_video_swift`], where it is stated ONCE at
+//! full strength: no Swift target may declare a video-host type, not just the file that used to.
+//! What is left in each rule below is the ban that only makes sense HERE — the interior, spelled in
+//! the daemon's own language, which is the one language it could now come back in.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-const SWIFT_MUX_ROUTER: &str = "Sources/SlopDeskVideoHost/Mux/VideoMuxRouter.swift";
-const SWIFT_MUX_FLOWS: &str = "Sources/SlopDeskVideoHost/Mux/MuxFlowTable.swift";
-const SWIFT_MUX_BYE: &str = "Sources/SlopDeskVideoHost/Mux/UnboundLaneByePolicy.swift";
-const SWIFT_MUX_REGISTRY: &str = "Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift";
-const SWIFT_MUX_TRANSPORT: &str = "Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatagramTransport.swift";
+/// The daemon that IS the GUI host — `docs/61`.
+///
+/// A directory rather than a file for the reason the module doc gives: the faces this file used to
+/// name one-for-one are modules of this crate, and which module holds which face is still moving.
+const DAEMON: &str = "rust/slopdesk-videohostd";
 
 /// The HOST MUX's five deciders — `mux_routing` and `mux_flow`.
 ///
@@ -37,121 +55,50 @@ const SWIFT_MUX_TRANSPORT: &str = "Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatag
 /// session-LESS discovery request starts earning a bye — which would tell a client with no session
 /// that its session ended.
 ///
-/// The registry's hello switch is named because that switch IS the mint rule: a Swift copy of it
-/// that missed one bootstrapping message would leave a whole pane kind unable to open a session,
-/// with both suites green — `helloDisplay` is the message it would miss, and it has been missed
-/// from a hand-mirrored copy of this exact switch before.
+/// The registry's hello switch is named because that switch IS the mint rule: a copy of it that
+/// missed one bootstrapping message would leave a whole pane kind unable to open a session, with
+/// both suites green — `helloDisplay` is the message it would miss, and it has been missed from a
+/// hand-mirrored copy of this exact switch before. `dispatch_decision` is the one answer, and the
+/// daemon's registry asks it rather than switching itself.
 ///
 /// The transport's keepalive test is named because the type byte it used to compare against, `6`,
 /// is also `VideoChannel::Audio`'s raw value, one table away from the `channel == .control` test it
 /// sat beside. It feeds the reaper's STICKY liveness proof, so getting it wrong decides whether a
 /// lane can ever be reaped at all — silently, in either direction.
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the whole mux seam in one list is the property this rule exists to have — a face split off \
-              into its own function is a face nobody reads beside the others"
-)]
 pub fn host_mux(tree: &Tree) -> Report {
     let claims = [
-        Claim::Doors {
-            path: SWIFT_MUX_ROUTER,
-            entries: &[
-                "slopdesk_mux_router_new",
-                "slopdesk_mux_router_free",
-                "slopdesk_mux_router_admit",
-                "slopdesk_mux_router_retire",
-                "slopdesk_mux_router_begin_drain",
-                "slopdesk_mux_router_end_drain",
-                "slopdesk_mux_router_is_admitted",
-                "slopdesk_mux_router_is_draining",
-                "slopdesk_mux_router_route",
-                "slopdesk_mux_bootstrap_action",
-            ],
-            message: "Sources/SlopDeskVideoHost/Mux/VideoMuxRouter.swift no longer calls {entry} — the mux \
-                      routing law is rust/slopdesk-video's",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["mux_routing", "dispatch_decision", "mux_flow", "mux_header"],
+            message: "the daemon stopped asking {entry} — the mux routing law, the flow bookkeeping and the \
+                      header grammar are rust/slopdesk-video's, and a host that stopped asking has started \
+                      deciding (docs/61 §3)",
         },
-        Claim::Lacks {
-            path: SWIFT_MUX_ROUTER,
-            pattern: r"retiredCap|retiredPruneWindow|distanceWrapped|admitted\.insert|retired\.insert|draining\.insert",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(admitted|retired|draining|media_reply|cursor_reply|last_sent)\.insert\(|\b(retired_cap|retired_prune_window|distance_wrapped|unadmitted_stamp_at|flow_last_inbound)\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/Mux/VideoMuxRouter.swift spells the lane sets or the \
-                      retired bound again — those live in mux_routing.rs",
+            exempt: &[],
+            message: "the daemon spells a lane set, a reply stamp or the retired bound itself in {files} — \
+                      those live in mux_routing.rs and mux_flow.rs, and a copy here is a datagram from a \
+                      dead generation reaching a live session (docs/61 §3)",
         },
-        Claim::Doors {
-            path: SWIFT_MUX_FLOWS,
-            entries: &[
-                "slopdesk_mux_flows_new",
-                "slopdesk_mux_flows_free",
-                "slopdesk_mux_flows_accept",
-                "slopdesk_mux_flows_note_inbound",
-                "slopdesk_mux_flows_stamp_media_reply",
-                "slopdesk_mux_flows_stamp_media_bootstrap",
-                "slopdesk_mux_flows_stamp_cursor_reply",
-                "slopdesk_mux_flows_retire_lane",
-                "slopdesk_mux_flows_did_reset",
-                "slopdesk_mux_flows_tracks",
-                "slopdesk_mux_flows_reap",
-                "slopdesk_mux_flows_remove_all",
-                "slopdesk_mux_flows_media_reply",
-                "slopdesk_mux_flows_cursor_reply",
-                "slopdesk_mux_flows_count",
-            ],
-            message: "Sources/SlopDeskVideoHost/Mux/MuxFlowTable.swift no longer calls {entry} — the flow \
-                      bookkeeping is rust/slopdesk-video's",
-        },
-        Claim::Lacks {
-            path: SWIFT_MUX_FLOWS,
-            pattern: r"mediaReply\[|cursorReply\[|unadmittedStampAt|flowLastInbound|referenced\.insert|now - lastInbound",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"payload\[1\] == 6|\[1\] == 6u8",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/Mux/MuxFlowTable.swift spells the stamp maps or the reap \
-                      rules again — those live in mux_flow.rs",
-        },
-        Claim::Doors {
-            path: SWIFT_MUX_BYE,
-            entries: &[
-                "slopdesk_mux_warrants_bye",
-                "slopdesk_mux_bye_limiter_new",
-                "slopdesk_mux_bye_limiter_free",
-                "slopdesk_mux_bye_limiter_admit",
-            ],
-            message: "Sources/SlopDeskVideoHost/Mux/UnboundLaneByePolicy.swift no longer calls {entry} — \
-                      the unbound-lane bye policy is rust/slopdesk-video's",
-        },
-        Claim::Lacks {
-            path: SWIFT_MUX_BYE,
-            pattern: r"VideoControlMessage\.decode|case \.keepalive|lastSent\[|listSystemDialogs",
-            view: View::Code,
-            message: "Sources/SlopDeskVideoHost/Mux/UnboundLaneByePolicy.swift decodes control or spells \
-                      the limiter map again — those live in mux_flow.rs",
-        },
-        Claim::Doors {
-            path: SWIFT_MUX_REGISTRY,
-            entries: &["slopdesk_mux_dispatch_decision"],
-            message: "Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift no longer calls {entry} — \
-                      the mint-vs-deliver-vs-drop rule is rust/slopdesk-video's (docs/55 §4)",
-        },
-        Claim::Lacks {
-            path: SWIFT_MUX_REGISTRY,
-            pattern: r"case \.hello\b|\.helloDisplay",
-            view: View::Code,
-            message: "Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift spells the hello switch \
-                      again — which messages mint lives in mux_routing.rs, reached through docs/55 §4's \
-                      dispatch door",
-        },
-        Claim::Doors {
-            path: SWIFT_MUX_TRANSPORT,
-            entries: &["slopdesk_mux_payload_is_keepalive"],
-            message: "Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatagramTransport.swift no longer calls \
-                      {entry} — the reaper's keepalive proof is rust/slopdesk-video's (docs/55 §4)",
-        },
-        Claim::Lacks {
-            path: SWIFT_MUX_TRANSPORT,
-            pattern: r"startIndex \+ 1\] ==|case \.keepalive",
-            view: View::Code,
-            message: "Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatagramTransport.swift reads the control \
-                      type byte by offset again — that byte is mux_flow.rs's, and 6 is also \
-                      VideoChannel.audio's raw value",
+            exempt: &[],
+            message: "the daemon reads the control type byte by offset again in {files} — that byte is \
+                      mux_flow.rs's, and 6 is also VideoChannel::Audio's raw value; the reaper's liveness \
+                      proof is sticky, so a wrong read decides whether a lane can ever be reaped at all \
+                      (docs/61 §3)",
         },
     ];
     check_all(tree, &claims)
@@ -159,7 +106,7 @@ pub fn host_mux(tree: &Tree) -> Report {
 
 /// The HOST WINDOW FEED — `window_feed_host`.
 ///
-/// Four Swift files against one crate module: what to list, how to pack it, who to push it to, and
+/// Four decisions against one crate module: what to list, how to pack it, who to push it to, and
 /// when. The inclusion verdict is the one that has to be single, because the PICKER and the FEED
 /// both ask it — two copies would show a window in one surface and not the other.
 ///
@@ -171,78 +118,33 @@ pub fn host_mux(tree: &Tree) -> Report {
 /// whole coalescing contract: a copy that called a title structural would put a typing window into
 /// permanent 4 Hz burst.
 ///
-/// The record marshalling is spelled ONCE, on the protocol side, and both the client assembler and
-/// the host cache use it. A fourth hand-rolled row layout is how the arena offsets drift.
+/// The record marshalling is the half that did NOT move. It is spelled ONCE, on the protocol side,
+/// and both the client assembler and the host's own packer use it — so those three claims still
+/// name `HostWindowRecordRows.swift`, which is live client Swift and not a host face. A fourth
+/// hand-rolled row layout is how the arena offsets drift.
 #[must_use]
 pub fn window_feed(tree: &Tree) -> Report {
-    const BUILD: &str = "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedSnapshotBuilder.swift";
-    const CACHE: &str = "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedCache.swift";
-    const PUSH: &str = "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedSubscribers.swift";
     const ROWS: &str = "Sources/SlopDeskVideoProtocol/HostWindowRecordRows.swift";
 
     let claims = [
-        Claim::Doors {
-            path: BUILD,
-            entries: &[
-                "slopdesk_feed_constants",
-                "slopdesk_feed_includes",
-                "slopdesk_feed_snapshot",
-            ],
-            message: "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedSnapshotBuilder.swift no longer calls \
-                      {entry} — the listing law is rust/slopdesk-video's",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["window_feed_host"],
+            message: "the daemon stopped asking {entry} — the listing law, the cache, the packer and the \
+                      push policy are rust/slopdesk-video's, and the inclusion verdict has to be the same \
+                      one the picker asks (docs/61 §3)",
         },
-        Claim::Lacks {
-            path: BUILD,
-            pattern: r"excludedSystemApps|junkTitlesByOwner|Window Server|focusedAssigned|isAXListed \|\||= 80$|truncatedUTF8",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(excluded_system_apps|junk_titles_by_owner|focused_assigned|structural_bits|burst_until|last_volatile_fold)\b|generation \+= 1|\bfn skeleton\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "WindowFeedSnapshotBuilder.swift spells the exclusions, the evidence gate or a cap \
-                      again — those live in window_feed_host.rs",
-        },
-        Claim::Doors {
-            path: CACHE,
-            entries: &[
-                "slopdesk_feed_chunks",
-                "slopdesk_feed_cache_new",
-                "slopdesk_feed_cache_free",
-                "slopdesk_feed_cache_generation",
-                "slopdesk_feed_cache_records",
-                "slopdesk_feed_cache_needs_rebuild",
-                "slopdesk_feed_cache_fold",
-                "slopdesk_feed_cache_reply",
-            ],
-            message: "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedCache.swift no longer calls {entry} — \
-                      the cache and the packer are rust/slopdesk-video's",
-        },
-        Claim::Lacks {
-            path: CACHE,
-            pattern: r"generation &\+= 1|currentBytes|feedRecordBytesPerChunk|groups\.append|builtAt",
-            view: View::Code,
-            message: "WindowFeedCache.swift spells the generation bump or the packer again — those live in \
-                      window_feed_host.rs",
-        },
-        Claim::Doors {
-            path: PUSH,
-            entries: &[
-                "slopdesk_feed_subscribers_new",
-                "slopdesk_feed_subscribers_free",
-                "slopdesk_feed_subscribers_count",
-                "slopdesk_feed_subscribers_renew",
-                "slopdesk_feed_subscribers_reap",
-                "slopdesk_feed_subscribers_live",
-                "slopdesk_feed_classify",
-                "slopdesk_feed_policy_new",
-                "slopdesk_feed_should_fold",
-                "slopdesk_feed_tick_interval",
-            ],
-            message: "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedSubscribers.swift no longer calls \
-                      {entry} — the push policy is rust/slopdesk-video's",
-        },
-        Claim::Lacks {
-            path: PUSH,
-            pattern: r"structuralBits|func skeleton|burstUntil|lastVolatileFold|lastRenewal|= 0\.25|= 3\.0",
-            view: View::Code,
-            message: "WindowFeedSubscribers.swift spells the differ, a cadence or the subscriber map again \
-                      — those live in window_feed_host.rs",
+            exempt: &[],
+            message: "the daemon spells an exclusion, the evidence gate, the generation bump or the \
+                      structural differ itself in {files} — those live in window_feed_host.rs, and a copy \
+                      that calls a title structural puts a typing window into permanent burst (docs/61 §3)",
         },
         Claim::Names {
             path: ROWS,
@@ -277,58 +179,34 @@ pub fn window_feed(tree: &Tree) -> Report {
 ///
 /// They are pinned precisely BECAUSE they are small: a rule that is one `guard` and a rung ladder
 /// that is one ternary are what get re-typed at the call site instead of called, and a suppression
-/// rule that forgot one obligation freezes a client on a frame it is waiting for.
+/// rule that forgot one obligation freezes a client on a frame it is waiting for. Nothing about
+/// that argument was Swift's — a `if hash == last { return }` typed into the daemon's capture loop
+/// is the same second answer in a different language, and cheaper to type.
 ///
 /// The density and the floor are named because the encoder's QP ceiling is sized against the budget
 /// they produce: a second copy that rounds differently drops frames on one machine and not the
 /// other.
 #[must_use]
 pub fn send_path_decisions(tree: &Tree) -> Report {
-    const SUPPRESS: &str = "Sources/SlopDeskVideoHost/StaticFrameSuppressionDecider.swift";
-    const STILLNESS: &str = "Sources/SlopDeskVideoHost/StillnessCrispDecider.swift";
-    const BITRATE: &str = "Sources/SlopDeskVideoHost/LiveBitratePolicy.swift";
-    const RUNG: &str = "Sources/SlopDeskVideoHost/CaptureRegionRecovery.swift";
-
     let claims = [
-        Claim::Doors {
-            path: SUPPRESS,
-            entries: &["slopdesk_should_suppress_static_frame"],
-            message: "StaticFrameSuppressionDecider.swift no longer calls {entry} — that decision is \
-                      rust/slopdesk-video's",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["frame_gate", "live_bitrate", "capture_recovery"],
+            message: "the daemon stopped asking {entry} — the static-frame suppression, the stillness \
+                      crisp, the live bitrate target and the capture-failure rung are rust/slopdesk-video's \
+                      (docs/61 §3)",
         },
-        Claim::Doors {
-            path: STILLNESS,
-            entries: &[
-                "slopdesk_stillness_crisp_new",
-                "slopdesk_stillness_crisp_on_frame",
-                "slopdesk_stillness_crisp_should_fire",
-                "slopdesk_stillness_crisp_note_fired",
-            ],
-            message: "StillnessCrispDecider.swift no longer calls {entry} — that decision is \
-                      rust/slopdesk-video's",
-        },
-        Claim::Doors {
-            path: BITRATE,
-            entries: &[
-                "slopdesk_live_bitrate_defaults",
-                "slopdesk_live_bitrate_bits_per_pixel",
-                "slopdesk_live_bitrate_target",
-            ],
-            message: "LiveBitratePolicy.swift no longer calls {entry} — that decision is \
-                      rust/slopdesk-video's",
-        },
-        Claim::Doors {
-            path: RUNG,
-            entries: &["slopdesk_capture_failure_action"],
-            message: "CaptureRegionRecovery.swift no longer calls {entry} — that decision is \
-                      rust/slopdesk-video's",
-        },
-        Claim::NoneOf {
-            paths: &[SUPPRESS, STILLNESS, BITRATE, RUNG],
-            pattern: r"guard hashEqualToLast|consecutiveEqual \+= 1|firedThisRest = true|= 0\.25|1_000_000|isFallbackRebuild \?",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(consecutive_equal|fired_this_rest|is_fallback_rebuild)\b|hash_equal_to_last",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "a send-path decision is spelled in Swift again ({files}) — those live in \
-                      frame_gate.rs, live_bitrate.rs and capture_recovery.rs",
+            exempt: &[],
+            message: "a send-path decision is spelled in the daemon again ({files}) — those live in \
+                      frame_gate.rs, live_bitrate.rs and capture_recovery.rs, and a suppression rule that \
+                      forgot one obligation freezes a client on the frame it is waiting for (docs/61 §3)",
         },
     ];
     check_all(tree, &claims)
@@ -340,74 +218,35 @@ pub fn send_path_decisions(tree: &Tree) -> Report {
 /// the load-bearing one: a second "has anything been acked" that drifts open issues a refresh
 /// against a reference the client never held — corruption until the next IDR, with no error.
 ///
-/// The ring's hand-parsed header offset is named because that is exactly how the Swift copy read a
-/// fragment index — a byte offset that silently mis-selects the moment the wire header moves.
+/// The ring's hand-parsed header offset is named because that is exactly how the deleted Swift copy
+/// read a fragment index — a byte offset that silently mis-selects the moment the wire header
+/// moves. `fragment::FrameFragmentHeader` is the only reader, in either language.
+///
+/// `recovery_dedupe` is deliberately absent from the ask below and present in the ban. The daemon's
+/// inbound half is still landing, so a claim that it already imports that module would be a claim
+/// about a schedule rather than about a law; the ban is the half that holds either way — whenever
+/// the dedupe arrives, it arrives as the crate's and not as a second admission window.
 #[must_use]
 pub fn accumulators(tree: &Tree) -> Report {
-    const LTR: &str = "Sources/SlopDeskVideoHost/LTRController.swift";
-    const DEDUPE: &str = "Sources/SlopDeskVideoHost/RecoveryRequestDeduper.swift";
-    const REAPER: &str = "Sources/SlopDeskVideoHost/IdleReapDecider.swift";
-    const RING: &str = "Sources/SlopDeskVideoHost/RetransmitRing.swift";
-
     let claims = [
-        Claim::Doors {
-            path: LTR,
-            entries: &[
-                "slopdesk_ltr_caps",
-                "slopdesk_ltr_new",
-                "slopdesk_ltr_free",
-                "slopdesk_ltr_record",
-                "slopdesk_ltr_ack",
-                "slopdesk_ltr_reset",
-                "slopdesk_ltr_decision",
-                "slopdesk_ltr_frames",
-                "slopdesk_ltr_acked_tokens",
-            ],
-            message: "LTRController.swift no longer calls {entry} — that accumulator is \
-                      rust/slopdesk-video's",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["ltr::", "idle_reap", "retransmit_ring"],
+            message: "the daemon stopped asking {entry} — the reference gate, the idle reaper and the \
+                      retransmit ring are rust/slopdesk-video's; an LTR gate that drifts open issues a \
+                      refresh against a reference the client never held (docs/61 §3)",
         },
-        Claim::Doors {
-            path: DEDUPE,
-            entries: &[
-                "slopdesk_recovery_dedupe_defaults",
-                "slopdesk_recovery_dedupe_new",
-                "slopdesk_recovery_dedupe_free",
-                "slopdesk_recovery_dedupe_admit",
-            ],
-            message: "RecoveryRequestDeduper.swift no longer calls {entry} — that accumulator is \
-                      rust/slopdesk-video's",
-        },
-        Claim::Doors {
-            path: REAPER,
-            entries: &[
-                "slopdesk_idle_reaper_new",
-                "slopdesk_idle_reaper_free",
-                "slopdesk_idle_reaper_note_inbound",
-                "slopdesk_idle_reaper_reap",
-                "slopdesk_idle_reaper_forget",
-                "slopdesk_idle_reaper_record",
-            ],
-            message: "IdleReapDecider.swift no longer calls {entry} — that accumulator is \
-                      rust/slopdesk-video's",
-        },
-        Claim::Doors {
-            path: RING,
-            entries: &[
-                "slopdesk_retransmit_ring_new",
-                "slopdesk_retransmit_ring_free",
-                "slopdesk_retransmit_ring_record",
-                "slopdesk_retransmit_ring_select",
-                "slopdesk_retransmit_ring_take",
-            ],
-            message: "RetransmitRing.swift no longer calls {entry} — that accumulator is \
-                      rust/slopdesk-video's",
-        },
-        Claim::NoneOf {
-            paths: &[LTR, DEDUPE, REAPER, RING],
-            pattern: r"frameOrder\.append|acknowledgedTokens\.append|frameTokenCap = |entries\.removeAll|windowSeconds > 0|flows\[|byFrame\[|startIndex \+ 8",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(frame_order|acknowledged_tokens)\.push\(|\b(frame_token_cap|window_seconds|by_frame)\b|\[\.\.8\]\.try_into",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "a host accumulator's interior is spelled in Swift again ({files}) — those live in \
-                      ltr.rs, recovery_dedupe.rs, idle_reap.rs and retransmit_ring.rs",
+            exempt: &[],
+            message: "a host accumulator's interior is spelled in the daemon again ({files}) — those live \
+                      in ltr.rs, recovery_dedupe.rs, idle_reap.rs and retransmit_ring.rs, and a fragment \
+                      index read by byte offset mis-selects the moment the wire header moves (docs/61 §3)",
         },
     ];
     check_all(tree, &claims)
@@ -417,15 +256,20 @@ pub fn accumulators(tree: &Tree) -> Report {
 ///
 /// `view_point` is the exact inverse of the input encoder's normalise, so a second copy that
 /// contracts one multiply-add lands the cursor overlay a pixel off the click it is drawn for — on
-/// one machine and not the other. It is golden-pinned for exactly that reason.
+/// one machine and not the other. It is golden-pinned for exactly that reason. That half is
+/// unchanged: `Geometry.swift` is CLIENT Swift, still a face over three doors, and still the file
+/// the claim names.
 ///
-/// `Double.maximum` is named in the ban because it is the NaN-ignoring form the crate's `f64::max`
-/// requires — a plain `max` here would silently poison the multi-monitor pick instead of clamping
-/// it.
+/// `Double.maximum` is named in the ban for the same file because it is the NaN-ignoring form the
+/// crate's `f64::max` requires — a plain `max` here would silently poison the multi-monitor pick
+/// instead of clamping it.
+///
+/// The virtual-display throttle is the half that moved. The cooldown, the single-flight rule and
+/// the set of channels a recreate must disconnect are `capture_recovery`'s and `virtual_display`'s,
+/// and the daemon's `vdisplay` asks them.
 #[must_use]
 pub fn geometry(tree: &Tree) -> Report {
     const GEOM: &str = "Sources/SlopDeskVideoProtocol/Geometry.swift";
-    const VD: &str = "Sources/SlopDeskVideoHost/VirtualDisplayRecoveryPolicy.swift";
 
     let claims = [
         Claim::Doors {
@@ -438,22 +282,31 @@ pub fn geometry(tree: &Tree) -> Report {
             message: "Sources/SlopDeskVideoProtocol/Geometry.swift no longer calls {entry} — that geometry \
                       is rust/slopdesk-video's",
         },
-        Claim::Doors {
-            path: VD,
-            entries: &[
-                "slopdesk_vd_recreate_cooldown",
-                "slopdesk_vd_recreate_should_attempt",
-                "slopdesk_vd_channels_to_disconnect",
-            ],
-            message: "VirtualDisplayRecoveryPolicy.swift no longer calls {entry} — that geometry is \
-                      rust/slopdesk-video's",
-        },
-        Claim::NoneOf {
-            paths: &[GEOM, VD],
-            pattern: r"Double\.maximum|Double\.minimum|panLimit|invZoom|intersection\(|TimeInterval = 30",
+        Claim::Lacks {
+            path: GEOM,
+            pattern: r"Double\.maximum|Double\.minimum|panLimit|invZoom|intersection\(",
             view: View::Code,
-            message: "the aspect geometry or the VD throttle is spelled in Swift again ({files}) — those \
-                      live in geometry.rs and capture_recovery.rs",
+            message: "the aspect geometry is spelled in Swift again in \
+                      Sources/SlopDeskVideoProtocol/Geometry.swift — view_point is the exact inverse of the \
+                      input encoder's normalise and is golden-pinned, so a second copy lands the cursor \
+                      overlay a pixel off the click it is drawn for",
+        },
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["capture_recovery", "virtual_display"],
+            message: "the daemon stopped asking {entry} — the recreate cooldown, the single-flight rule and \
+                      the channels a recreate disconnects are rust/slopdesk-video's (docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"= *30\.0 *; *// *cooldown|\brecreate_cooldown_seconds *: *f64 *=",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon types the virtual-display recreate throttle itself in {files} — the \
+                      cooldown is capture_recovery.rs's RECREATE_COOLDOWN_SECONDS (docs/61 §3)",
         },
     ];
     check_all(tree, &claims)
@@ -463,49 +316,52 @@ pub fn geometry(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
-    /// The failure all three mux deciders guard: a datagram from a session that no longer exists
-    /// reaching one that does. A Swift lane set is the second answer that lets it happen.
+    /// A daemon that stopped importing the routing law has started deciding it — which is the
+    /// failure, whichever way it happened.
     #[test]
-    fn a_swift_lane_set_growing_back_is_caught() {
-        let fixture = seeded("mux-lane-set");
+    fn a_daemon_that_stops_asking_the_mux_law_is_caught() {
+        let fixture = seeded("mux-law-unasked");
         assert!(super::host_mux(&fixture.tree()).is_clean());
 
         fixture.write(
-            super::SWIFT_MUX_ROUTER,
-            &format!("{ROUTER_DOORS}admitted.insert(lane)\n"),
+            "rust/slopdesk-videohostd/src/mux_registry.rs",
+            "use slopdesk_video::mux_flow::FlowId;\n",
         );
         let report = super::host_mux(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("lane sets")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("dispatch_decision")),
             "{report:?}"
         );
     }
 
-    /// `helloDisplay` is the arm a hand-mirrored copy of this switch has already dropped once. A
-    /// Swift respelling would leave the full-desktop pane unable to open a session, both suites
-    /// green, because no input reaches both copies.
+    /// The failure all three mux deciders guard: a datagram from a session that no longer exists
+    /// reaching one that does. A lane set kept in the daemon is the second answer that lets it
+    /// happen — and it is cheaper to type in Rust than it ever was in Swift.
     #[test]
-    fn a_swift_hello_switch_growing_back_is_caught() {
-        let fixture = seeded("mux-hello-switch");
-        fixture.write(
-            super::SWIFT_MUX_REGISTRY,
-            &format!("{REGISTRY_DOORS}case .hello, .helloDisplay: return .mint(channelID: id)\n"),
+    fn a_lane_set_growing_back_in_the_daemon_is_caught() {
+        let fixture = seeded("mux-lane-set");
+        fixture.append(
+            "rust/slopdesk-videohostd/src/mux_registry.rs",
+            "fn admit(&mut self, lane: u32) {\n    self.admitted.insert(lane);\n}\n",
         );
         let report = super::host_mux(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("hello switch")),
+            report.violations().iter().any(|v| v.contains("lane set")),
             "{report:?}"
         );
     }
 
-    /// The reaper's keepalive proof is sticky and gates reap eligibility outright, and the byte it
-    /// used to be read from — `6` — is also `VideoChannel.audio`'s raw value.
+    /// The type byte the reaper's sticky liveness proof turns on, read by offset again. `6` is also
+    /// `VideoChannel::Audio`'s raw value.
     #[test]
-    fn a_swift_keepalive_byte_peek_growing_back_is_caught() {
+    fn a_keepalive_byte_peek_growing_back_is_caught() {
         let fixture = seeded("mux-keepalive-peek");
-        fixture.write(
-            super::SWIFT_MUX_TRANSPORT,
-            &format!("{TRANSPORT_DOORS}let isKA = rest[rest.startIndex + 1] == 6\n"),
+        fixture.append(
+            "rust/slopdesk-videohostd/src/mux_transport.rs",
+            "let is_ka = payload[1] == 6;\n",
         );
         let report = super::host_mux(&fixture.tree());
         assert!(
@@ -517,98 +373,145 @@ mod tests {
         );
     }
 
-    /// A door that stopped being called is the other half of the ratchet: the near side has grown a
-    /// second implementation somewhere, and this is the only place that can say so.
+    /// The feed's structural differ, re-derived in the daemon: a copy that calls a title structural
+    /// puts a typing window into permanent burst, and nothing turns red for it.
     #[test]
-    fn a_dispatch_door_falling_out_of_the_registry_is_caught() {
-        let fixture = seeded("mux-dispatch-door");
-        fixture.write(super::SWIFT_MUX_REGISTRY, "// the door call is gone\n");
-        let report = super::host_mux(&fixture.tree());
+    fn a_structural_differ_growing_back_in_the_daemon_is_caught() {
+        let fixture = seeded("feed-differ");
+        assert!(super::window_feed(&fixture.tree()).is_clean());
+
+        fixture.append(
+            "rust/slopdesk-videohostd/src/feed.rs",
+            "fn skeleton(record: &Record) -> u64 {\n    record.structural_bits\n}\n",
+        );
+        let report = super::window_feed(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("slopdesk_mux_dispatch_decision")),
+                .any(|v| v.contains("structural differ")),
             "{report:?}"
         );
     }
 
-    /// Every mux face, spelled the way a clean tree spells it.
+    /// The suppression rule re-typed at the call site — the shape the rule was always about, now in
+    /// the only language left to type it in.
+    #[test]
+    fn a_send_path_decision_growing_back_in_the_daemon_is_caught() {
+        let fixture = seeded("send-path-decision");
+        assert!(super::send_path_decisions(&fixture.tree()).is_clean());
+
+        fixture.append(
+            "rust/slopdesk-videohostd/src/capture.rs",
+            "if hash_equal_to_last { return; }\n",
+        );
+        assert!(!super::send_path_decisions(&fixture.tree()).is_clean());
+    }
+
+    /// The ring's fragment index, read by byte offset. It is the exact shape the deleted Swift copy
+    /// had, and it mis-selects silently the moment the wire header moves.
+    #[test]
+    fn a_hand_read_fragment_index_is_caught() {
+        let fixture = seeded("ring-offset");
+        assert!(super::accumulators(&fixture.tree()).is_clean());
+
+        fixture.append(
+            "rust/slopdesk-videohostd/src/sendlane.rs",
+            "let index = u64::from_be_bytes(header[..8].try_into().unwrap());\n",
+        );
+        let report = super::accumulators(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("accumulator's interior")),
+            "{report:?}"
+        );
+    }
+
+    /// The client half of `geometry` did not move, and its ban is still a ban about one Swift file.
+    #[test]
+    fn a_swift_aspect_geometry_growing_back_is_caught() {
+        let fixture = seeded("geometry-swift");
+        assert!(super::geometry(&fixture.tree()).is_clean());
+
+        fixture.append(
+            "Sources/SlopDeskVideoProtocol/Geometry.swift",
+            "let side = Double.maximum(a, b)\n",
+        );
+        let report = super::geometry(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("aspect geometry")),
+            "{report:?}"
+        );
+    }
+
+    /// A `MentionsUnder` over a directory that stripped to nothing must FAIL rather than pass —
+    /// a drained daemon is the healthiest-looking answer this gate can print, and it means nothing.
+    #[test]
+    fn a_drained_daemon_cannot_satisfy_the_ask() {
+        // Fixture names are a GLOBAL key: `Fixture::new` does a name-keyed `remove_dir_all` and the
+        // tests run concurrently, so two files sharing a name delete each other's scratch tree
+        // mid-run. Prefixed with this module's subject to keep it unique across the crate.
+        let fixture = Fixture::new("videohost-daemon-drained");
+        fixture.write(
+            "rust/slopdesk-videohostd/src/mux_registry.rs",
+            "// every call is a comment now\n",
+        );
+        assert!(!super::host_mux(&fixture.tree()).is_clean());
+    }
+
+    /// The daemon and the two live Swift files, spelled the way a clean tree spells them.
     fn seeded(name: &str) -> Fixture {
         let fixture = Fixture::new(name);
         fixture
-            .write(super::SWIFT_MUX_ROUTER, ROUTER_DOORS)
-            .write(super::SWIFT_MUX_FLOWS, FLOWS_DOORS)
-            .write(super::SWIFT_MUX_BYE, BYE_DOORS)
-            .write(super::SWIFT_MUX_REGISTRY, REGISTRY_DOORS)
-            .write(super::SWIFT_MUX_TRANSPORT, TRANSPORT_DOORS);
-        fixture
-    }
-
-    /// A multi-file ban must not be satisfied by a file that stripped to nothing — that is the
-    /// healthiest-looking result this gate can print, and it means nothing.
-    #[test]
-    fn an_all_comment_file_under_a_multi_file_ban_says_so() {
-        let fixture = Fixture::new("geometry-comment");
-        fixture
             .write(
-                "Sources/SlopDeskVideoProtocol/Geometry.swift",
-                "// prose naming Double.maximum, which is the banned thing\n",
+                "rust/slopdesk-videohostd/src/mux_registry.rs",
+                "use slopdesk_video::mux_routing::{DispatchDecision, dispatch_decision};\n",
             )
             .write(
-                "Sources/SlopDeskVideoHost/VirtualDisplayRecoveryPolicy.swift",
-                "slopdesk_vd_recreate_cooldown(x)\nslopdesk_vd_recreate_should_attempt(x)\\
-                 nslopdesk_vd_channels_to_disconnect(x)\n",
+                "rust/slopdesk-videohostd/src/mux_transport.rs",
+                "use slopdesk_video::mux_flow::FlowId;\nuse slopdesk_video::mux_header;\nuse \
+                 slopdesk_video::idle_reap::IdleReapDecider;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/feed.rs",
+                "use slopdesk_video::window_feed_host::includes_window;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/capture.rs",
+                "use slopdesk_video::frame_gate::FrameGate;\nuse slopdesk_video::capture_recovery;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/session_capture.rs",
+                "use slopdesk_video::live_bitrate::{self, BITS_PER_PIXEL_KEY};\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/session_wiring.rs",
+                "use slopdesk_video::ltr::LtrController;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/sendlane.rs",
+                "use slopdesk_video::retransmit_ring::RetransmitRing;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/vdisplay.rs",
+                "use slopdesk_video::virtual_display::{Geometry, chip_pixel_limit};\n",
+            )
+            .write(
+                "Sources/SlopDeskVideoProtocol/Geometry.swift",
+                "slopdesk_geometry_intersection_area(x)\nslopdesk_geometry_displayed_video_rect(x)\\
+                 nslopdesk_geometry_view_point(x)\n",
+            )
+            .write(
+                "Sources/SlopDeskVideoProtocol/HostWindowRecordRows.swift",
+                "func row(into arena: Arena) {}\nstatic func of(_ row: Row) {}\nstatic func rows(_ records: \
+                 [Record]) {}\n",
+            )
+            .write(
+                "Sources/SlopDeskVideoProtocol/WindowFeedAssembler.swift",
+                "let assembled = 1\n",
             );
-        let report = super::geometry(&fixture.tree());
-        assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("stripped to nothing")),
-            "{report:?}"
-        );
+        fixture
     }
-
-    const ROUTER_DOORS: &str = "\
-slopdesk_mux_router_new(x)
-slopdesk_mux_router_free(x)
-slopdesk_mux_router_admit(x)
-slopdesk_mux_router_retire(x)
-slopdesk_mux_router_begin_drain(x)
-slopdesk_mux_router_end_drain(x)
-slopdesk_mux_router_is_admitted(x)
-slopdesk_mux_router_is_draining(x)
-slopdesk_mux_router_route(x)
-slopdesk_mux_bootstrap_action(x)
-";
-    const FLOWS_DOORS: &str = "\
-slopdesk_mux_flows_new(x)
-slopdesk_mux_flows_free(x)
-slopdesk_mux_flows_accept(x)
-slopdesk_mux_flows_note_inbound(x)
-slopdesk_mux_flows_stamp_media_reply(x)
-slopdesk_mux_flows_stamp_media_bootstrap(x)
-slopdesk_mux_flows_stamp_cursor_reply(x)
-slopdesk_mux_flows_retire_lane(x)
-slopdesk_mux_flows_did_reset(x)
-slopdesk_mux_flows_tracks(x)
-slopdesk_mux_flows_reap(x)
-slopdesk_mux_flows_remove_all(x)
-slopdesk_mux_flows_media_reply(x)
-slopdesk_mux_flows_cursor_reply(x)
-slopdesk_mux_flows_count(x)
-";
-    const BYE_DOORS: &str = "\
-slopdesk_mux_warrants_bye(x)
-slopdesk_mux_bye_limiter_new(x)
-slopdesk_mux_bye_limiter_free(x)
-slopdesk_mux_bye_limiter_admit(x)
-";
-    const REGISTRY_DOORS: &str = "\
-slopdesk_mux_dispatch_decision(x)
-";
-    const TRANSPORT_DOORS: &str = "\
-slopdesk_mux_payload_is_keepalive(x)
-";
 }

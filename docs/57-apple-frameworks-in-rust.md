@@ -133,10 +133,11 @@ and each call site's remaining job is the one thing a reader can actually check 
 of them: *does this function's name contain `Copy` or `Create`?* The cap is unchanged and
 `apple-family` still counts two qualified paths; what moved is where the crate spends them.
 
-**And ONE crate is exempt from the raw-pointer ban, because Core Audio hands out SAMPLE MEMORY
-rather than objects.** `slopdesk-apple-audio` may write `slice::from_raw_parts`, `.read()`, `.add()`
-and their kin; every other crate in the family may not, and the exemption does not generalise to a
-second crate without a change to this paragraph.
+**And TWO crates are exempt from the raw-pointer ban, because their frameworks hand out MEMORY
+rather than objects.** `slopdesk-apple-audio` and `slopdesk-apple-vt` may write
+`slice::from_raw_parts`, `.read()`, `.add()` and their kin; every other crate in the family may not.
+They are a NAMED LIST in `crate_policy.rs`, each with its own site cap, and a third does not join by
+resembling them — it joins by a change to this paragraph.
 
 The reason is a difference in what the framework gives you, not in what the crate wants. Everywhere
 else in this family the thing crossing is an OBJECT — a `CGEvent`, an `AXUIElement`, a
@@ -162,15 +163,48 @@ Three routes were checked before widening the rule, and each fails on its own te
   it costs about 640 lines of Swift making the same pointer arguments with no `# Safety` note, no
   leak test and no gate counting the sites.
 
-So the exemption is real, and what keeps it from being a door is that it is a RATCHET rather than a
-category. `apple-family` counts the raw-pointer sites in that crate against a fixed number and fails
-BOTH ways: above it, because a crate that grew a site did so in a commit that should have said what
-the site is for; at zero, because an exemption nothing spends should be deleted rather than left
-lying around for the next crate to notice. The counting pattern is deliberately WIDER than the ban's
-— it adds `.read(`, `.write(`, `.add(` and `.offset(` — since a ratchet that missed `pointer.read()`
-would let the exempt crate grow sites the count never saw. Everything else in §2 still binds it: the
-`deny(unsafe_op_in_unsafe_fn)`, the `# Safety` note naming the AudioToolbox or CoreMedia rule per
-block, the leak test, and the ban on logic.
+`slopdesk-apple-vt` is the second, over TWO framework areas, and it is worth saying why it was
+refused for years before it was granted. HEVC parameter sets — the VPS, SPS and PPS a decoder must have before it can
+decode anything — live in the FORMAT DESCRIPTION rather than inline in the sample, and
+`CMVideoFormatDescriptionGetHEVCParameterSetAtIndex` is the only way to reach them. It reports a
+pointer. There is no `…CopyParameterSet…` anywhere in CoreMedia, so the same "no reading of this
+that does not go through `slice::from_raw_parts`" that Core Audio has is true here, for one call.
+
+The other area is a LOCKED pixel buffer. `CVPixelBufferGetBaseAddressOfPlane` answers where a plane
+starts and `…GetBytesPerRowOfPlane` how far apart its rows are, and what those two describe IS a
+mapping — there is no plane object to hold instead, and the pair is only meaningful while the lock
+guard is alive. Encoding reads one; the loopback harness writes a synthetic picture into one and
+reads the decoded one back, which is why the crate answers both a shared and an exclusive view.
+
+The three-route test above is what refused it. Route one — move the obligation to `slopdesk-ffi` —
+did NOT fail for this crate: the encoder driver lived there, `slopdesk-ffi`'s whole remit is that
+question, and the crate answered parameter sets as `(NonNull<u8>, usize)` VALUES so the slice was
+made on the other side of the boundary. The planes were the same arrangement one module over —
+`slopdesk-ffi::pixel_plane` existed for no reason but "this crate may write `unsafe` and apple-vt
+may not". An exemption while its own escape hatch is open would be the door this section is written
+to prevent, so `docs/61` §2 recorded it as a debt with a trigger rather than granting it early.
+
+The trigger fired when `Sources/SlopDeskVideoHost` was deleted. With no Swift calling the encoder,
+the `extern "C"` doors went with it, and a shim crate stopped being the natural home for a driver
+whose only caller is a Rust daemon — one that is `forbid(unsafe_code)` like every crate outside these
+two families, and so cannot make the slice itself. At that point route one no longer exists and the
+site has to be at the framework, which is here. What landed is narrower than the debt anticipated:
+`EncodedSample` now answers only COPIES, `FrameworkBytes` is gone, `Locked` answers a plane as a
+slice rather than a base address, and no framework pointer leaves that crate at all — so the driver
+needed no exemption of its own, and the whole spend is three reads: `copy_parameter_sets_into` and
+the two plane views.
+
+So each exemption is real, and what keeps it from being a door is that it is a RATCHET rather than a
+category. `apple-family` counts the raw-pointer sites in each listed crate against ITS OWN fixed
+number and fails BOTH ways: above it, because a crate that grew a site did so in a commit that should
+have said what the site is for; at zero, because an exemption nothing spends should be deleted rather
+than left lying around for the next crate to notice. A listed crate that no longer exists fails too,
+since a ratchet naming a folded-away crate reads for years like a checked claim. The counting pattern
+is deliberately WIDER than the ban's — it adds `.read(`, `.write(`, `.add(` and `.offset(` — since a
+ratchet that missed `pointer.read()` would let an exempt crate grow sites the count never saw. Caps
+are per crate rather than shared, or the tighter one would be protected by the looser. Everything
+else in §2 still binds both: the `deny(unsafe_op_in_unsafe_fn)`, the `# Safety` note naming the
+AudioToolbox or CoreMedia rule per block, the leak test, and the ban on logic.
 
 **Every `unsafe` block names the FRAMEWORK rule it satisfies**, not a Rust rule. `// SAFETY: the
 buffer outlives the call` is the wrong comment here — the binding already proved that. The right one
@@ -251,6 +285,7 @@ accessor it needs, so the ownership question was answered by the binding rather 
 
 | `slopdesk-apple-pasteboard` | `NSPasteboard` (+ the `NSBitmapImageRep` transcode) | `SystemPasteboard`, `PasteboardClip`'s `AppKit` arm | **landed** (stage E) — costs **one** `unsafe` block, and **neither** §2 admission |
 | `slopdesk-apple-fsevents` | `FSEvents` | `RepoStatusWatcher`'s stream | **landed** (stage E) — costs **zero** `unsafe` blocks and **neither** admission; see the no-context-pointer note below |
+| `slopdesk-apple-nsapp` | `NSApplication` | the video host `main`'s `setActivationPolicy(.accessory)`, and its `NSApplication.run()`-vs-`dispatchMain()` block | **landed** (stage F) — costs **zero** `unsafe` blocks and **neither** admission. A separate crate from `slopdesk-apple-app` because §2's unit is a framework AREA and these are two: that one resolves OTHER processes, this one is what THIS process is — its window-server connection, its activation policy, its run loop. It keeps the Swift's TWO loops rather than unifying them: `dispatch_main()` is the proven default and `NSApplication.run()` is the arm a registered `CGVirtualDisplay` needs for its `CFRunLoop`, and the superset costing the default path nothing is a claim nobody has measured |
 | `slopdesk-apple-machine` | `NSHost` | `HostWorkspaceStore.hostDisplayName`'s first rung | **landed** (stage F) — costs **zero** `unsafe` blocks and **neither** admission; the ledger's `SCDynamicStoreCopyComputedName` was where the name LIVES, not what the Swift called. The class is deprecated, so the crate carries the family's first `#[expect(deprecated, reason = …)]`, at the one call and not crate-wide: `Network` replaces the four RESOLVING names this crate deliberately does not expose, and answers nothing at all for the label |
 
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s

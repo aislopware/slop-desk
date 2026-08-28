@@ -256,6 +256,7 @@ pub mod window_feed;
 pub mod window_feed_host;
 pub mod window_geometry;
 pub mod window_list;
+pub mod window_parking;
 pub mod window_placement;
 pub mod window_restore;
 pub mod ycbcr;

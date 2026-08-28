@@ -14,27 +14,22 @@
 //! strategy found a pair); exit `2` ⇒ every read was unknown; exit `1` ⇒ the target is not running.
 //!
 //! ## Why it is no longer Swift
-//! It was 58 lines of Swift over `HostNavHistory`, which is itself a face over
-//! `slopdesk_ffi::nav_history` — so the probe questioned the reader through a marshaller and could
-//! only ever prove the marshaller forwarded. Here it holds the reader itself.
+//! It was 58 lines of Swift over `HostNavHistory`, which is itself a face over a C door — so the
+//! probe questioned the reader through a marshaller and could only ever prove the marshaller
+//! forwarded. Here it holds the reader itself: `slopdesk_videohostd::navhistory`'s, the very type
+//! the daemon's 4 Hz status beat drives, with no door between.
 //!
 //! ```text
 //! slopdesk-navhistory-probe [bundle-id] [--pid N] [--seconds N]
 //! ```
-//!
-//! ## PENDING: this crate does not compile until `slopdesk-ffi` grows its Rust face
-//! [`SlopDeskNavHistory`] is public but its constructor is `slopdesk_nav_history_new` — a C door —
-//! and its `read` is private, so today the reader is reachable only through `unsafe extern "C"`.
-//! This crate is `forbid(unsafe_code)` and may not go that way. The change it waits on is two
-//! functions in `rust/slopdesk-ffi/src/nav_history.rs`, `reader()` and a `pub` `read`, which is the
-//! same "Rust-native face alongside the C door" `slopdesk-loopback-validate` already relies on for
-//! the encoder and the decoder. Nothing builds this crate — it is its own workspace, in no `just`
-//! recipe — so it waits harmlessly until that lands.
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use slopdesk_ffi::nav_history::SlopDeskNavHistory;
+use slopdesk_videohostd::navhistory::NavHistoryReader;
+// The FORCED beat — the unknown-retry plus the window-currency verify — is not a number of this
+// probe's own: it is the daemon's, so a probe run and a live session force on the same beat.
+use slopdesk_videohostd::navstatus::FORCED_EVERY;
 
 /// The app the probe watches when the caller names none — the browser the gate was built against.
 const DEFAULT_BUNDLE: &str = "com.google.Chrome";
@@ -47,10 +42,6 @@ const MAX_SECONDS: f64 = 3600.0;
 
 /// The gap between beats. Four a second is the kicker's own change-poll cadence.
 const BEAT: Duration = Duration::from_millis(250);
-
-/// One beat in every this many is the FORCED beat: the unknown-retry plus the window-currency
-/// verify, mirroring the kicker's heartbeat.
-const FORCED_EVERY: u32 = 8;
 
 /// What the caller asked for.
 #[derive(Debug)]
@@ -144,7 +135,7 @@ fn main() -> ExitCode {
     };
     eprintln!("target {} pid {pid}", options.bundle);
 
-    let reader = SlopDeskNavHistory::reader();
+    let reader = NavHistoryReader::new();
     // Bounded because `Duration::from_secs_f64` panics on a negative or non-finite argument and
     // `Instant + Duration` panics on overflow, and a typo in an operator's command line is not a
     // reason for a diagnostic to abort.

@@ -13,7 +13,8 @@ import Foundation
 ///
 /// PRECEDENCE (decision #16): a real `ProcessInfo` env var ALWAYS wins over the settings overlay,
 /// which wins over the compile-time default — `env → overlay → default`. This matches the host
-/// sidecar's gap-fill (``EnvBridge/loadSidecar(at:into:)`` skips a key a real env var already set) and
+/// sidecar's gap-fill (`rust/slopdesk-videohostd`'s `env::Overlay` skips a key a real env var already
+/// set, and folds `rawOverrides` last, exactly as this tier does) and
 /// the "an explicit env override is honoured" contract: a deliberate `SLOPDESK_*=…` on the command
 /// line is the operator's escape hatch and is never silently overridden by a persisted setting. (The
 /// `rawOverrides` a user types in the Settings UI are part of the OVERLAY tier — they still yield to a
@@ -87,13 +88,15 @@ public enum EnvConfig {
     // rule with no callers, sitting under a comment asserting it had a dozen.
     //
     // The rule itself did not go away; it moved to where it can only be written once. It is
-    // `slopdesk_abr_validated_int` / `_double` now, over `slopdesk_video::congestion`, and the two
-    // private copies call it. The LOOKUP stays here — ``string(_:)`` is the env → overlay
-    // precedence, which is this type's whole job and is not a policy any door should hold.
+    // `slopdesk_video::congestion`'s own validated read now, and the host that used to reach it
+    // through a C door is `rust/slopdesk-videohostd`, which calls it in-process (docs/61 §5). The
+    // LOOKUP stays here — ``string(_:)`` is the env → overlay precedence, which is this type's whole
+    // job and is not a policy any door should hold.
     //
-    // Anything NEW that needs a validated number asks the door and resolves its text through
-    // ``string(_:)``; anything that needs the CLAMPING reading asks `slopdesk_qp_clamped_int`.
-    // Do not grow a third generic accessor here — that is exactly what these two were.
+    // Anything NEW that needs a validated number resolves its text through ``string(_:)`` and hands
+    // it to the crate that owns the rule; the CLAMPING reading is `slopdesk_video::qp_control`'s, on
+    // the same terms. Do not grow a third generic accessor here — that is exactly what these two
+    // were.
 
     /// Resolve a `RawRepresentable` (e.g. an enum) by its raw string, falling back to `def` on an
     /// unknown / unset value. Validate-then-default: an unrecognised value never traps.

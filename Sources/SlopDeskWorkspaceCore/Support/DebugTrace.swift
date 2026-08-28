@@ -16,9 +16,9 @@ import Foundation
 ///
 /// It lives here rather than a level lower because its two homes are the workspace store and the
 /// client's views, and ClientUI already depends on this target. The VIDEO host's `SLOPDESK_AUDIO_DEBUG`
-/// / `SLOPDESK_VIDEO_DEBUG` tracers are deliberately NOT folded in: `SlopDeskVideoHost` depends on
-/// neither this target nor anything that could carry this down to it, and inventing a shared leaf to
-/// hold six lines would cost more than it saves.
+/// / `SLOPDESK_VIDEO_DEBUG` tracers are deliberately NOT folded in: they are a separate PROCESS's now
+/// (`rust/slopdesk-videohostd`, docs/61), which shares no Swift target with this one at all, so there
+/// is nothing a shared leaf could carry them down to.
 public struct DebugTrace: Sendable {
     /// `SLOPDESK_BLOCKS_DEBUG` — the jump choreography end to end: issue → arm → scrollbar echo →
     /// settle → paint. One flag, both ends, which is the point of it being one flag.

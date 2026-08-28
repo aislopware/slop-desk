@@ -14,12 +14,12 @@ use crate::tree::Tree;
 
 /// Where the three seeded names are minted.
 const TREE_WORKSPACE: &str = "Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeWorkspace.swift";
-/// The target whose two encoder faces ask for their tuned defaults.
-const VIDEO_HOST: &str = "Sources/SlopDeskVideoHost/";
-/// The face whose `Config` fields are seeded from a door.
-const IDR_FACE: &str = "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift";
-/// The face whose env fallbacks are the door's answer, never a digit.
-const QP_FACE: &str = "Sources/SlopDeskVideoHost/QPController.swift";
+/// The GUI video host, which asks for its tuned defaults rather than seeding them.
+///
+/// A DIRECTORY rather than a file, the way [`crate::rules::video_host`] argues for: the daemon's
+/// modules are still being split, and this rule is about the host asking, not about which of its
+/// files does the asking.
+const DAEMON: &str = "rust/slopdesk-videohostd";
 /// The builder whose relabelling is quadratic if asked per row.
 const RAIL: &str = "Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift";
 /// The host performer that used to hold a second `:line[:col]` splitter.
@@ -98,39 +98,62 @@ pub fn the_seeded_names_are_the_crates(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The tuned encoder defaults are Rust's, and the host asks for them
+/// The tuned encoder defaults are the crate's, and the host asks for them
 ///
 /// Eleven numbers — four quantiser knobs, seven recovery-keyframe ones — used to be spelled in both
 /// `qp_control.rs`/`recovery_idr.rs` and their Swift faces. Nothing failed when they agreed and
 /// nothing would have failed when they stopped: the host would simply encode at the old operating
-/// point, or grant keyframes on the old bucket, with no build error and no failing test. The two
-/// `*_config_default` doors put the table on one side; this stops the literals growing back.
+/// point, or grant keyframes on the old bucket, with no build error and no failing test.
 ///
-/// Two bans, each the exact shape the regrowth takes on its own side. A `var` in the IDR config
-/// carrying its own literal wins silently, because the struct's fields are seeded from the door in
-/// `init()` and a default on the declaration is applied first. On the quantiser side the same thing
-/// arrives as an env fallback typed as a digit rather than read from the door's answer.
+/// `docs/61` deleted both faces and the two `*_config_default` doors they crossed, and neither the
+/// regression nor its invisibility went with them. `rust/slopdesk-videohostd` runs the encoder now,
+/// and it can seed an operating point of its own exactly as easily as `QPController` could — more
+/// easily, because a plain struct literal in the same language reads as configuration rather than
+/// as a second answer. So the rule is re-aimed rather than dropped: the daemon must still ASK
+/// `qp_control` and `recovery_idr`, and the eleven numbers may not be spelled where it asks.
+///
+/// Two bans, each the exact shape the regrowth takes now. The IDR side's is by FIELD NAME —
+/// `grace_fraction`, the bucket's capacity and refill, the ring's capacity and the rest — because
+/// those seven names are `RecoveryIdrConfig`'s and a daemon that spells one is a daemon holding its
+/// own copy of the struct. The quantiser side's is by field-and-literal, `sharp: 26`, which is the
+/// same drift the Swift `envInt("SLOPDESK_QP_…", 38)` fallback was: a tuned number typed in beside
+/// the door instead of read out of it.
+///
+/// Both are scoped to the daemon. `rust/slopdesk-video` spells all eleven, because it is what owns
+/// them, and banning them there would ban the answer along with the copy.
 #[must_use]
 pub fn the_encoder_defaults_are_the_crates(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::MentionsUnder {
-            root: VIDEO_HOST,
-            names: &["slopdesk_qp_config_default", "slopdesk_idr_config_default"],
-            message: "{entry} lost its caller — the tuned defaults are spelled Swift-side again (docs/55 §8)",
+            root: DAEMON,
+            names: &["qp_control", "recovery_idr"],
+            message: "the daemon stopped asking {entry} — the tuned defaults are the crate's, and a host \
+                      that stopped asking is a host encoding at an operating point nothing else knows about \
+                      (docs/61 §3)",
         },
-        Claim::Lacks {
-            path: IDR_FACE,
-            pattern: r"^ *public var [a-zA-Z]+: (Double|Int) = ",
-            view: View::Raw,
-            message: "RecoveryIDRPolicy put literal defaults back on Config's fields — they come from \
-                      slopdesk_idr_config_default()",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(grace_fraction|grace_floor_seconds|grace_ceil_seconds|bucket_capacity|refill_tokens_per_second|grant_pending_timeout|keyframe_ring_capacity)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon spells a recovery-keyframe field in {files} — those seven belong to \
+                      recovery_idr.rs's RecoveryIdrConfig, and a second copy grants keyframes on a bucket \
+                      the policy never sees refill (docs/61 §3)",
         },
-        Claim::Lacks {
-            path: QP_FACE,
-            pattern: r#"envInt\("SLOPDESK_QP_[A-Z_]+", [0-9]"#,
-            view: View::Raw,
-            message: "QPController typed a quantiser default back in — the fallback is \
-                      slopdesk_qp_config_default()'s",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(sharp|coarse|up_step|down_interval) *: *[0-9]",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a quantiser default is typed back in in {files} — the four ladder numbers are \
+                      qp_control.rs's QpConfig, and one seeded here wins over the door the same way a \
+                      literal on a Swift field used to (docs/61 §3)",
         },
     ])
 }
@@ -299,17 +322,18 @@ mod tests {
         assert!(!super::the_seeded_names_are_the_crates(&fixture.tree()).is_clean());
     }
 
-    /// Both faces asking their door, neither carrying a literal.
+    /// The daemon asking both modules, spelling neither table.
     fn encoders(fixture: &Fixture) {
         fixture
             .write(
-                super::QP_FACE,
-                "let d = slopdesk_qp_config_default()\nlet floor = envInt(\"SLOPDESK_QP_FLOOR\", d.floor)\n",
+                "rust/slopdesk-videohostd/src/session_capture.rs",
+                "use slopdesk_video::qp_control::{self, QpConfig};\nlet ladder = \
+                 QpConfig::from_env(&overlay);\n",
             )
             .write(
-                super::IDR_FACE,
-                "public struct Config {\n\x20   public var window: Double\n\x20   init() { self = \
-                 slopdesk_idr_config_default() }\n}\n",
+                "rust/slopdesk-videohostd/src/session.rs",
+                "use slopdesk_video::recovery_idr::RecoveryIdrConfig;\nlet idr = \
+                 RecoveryIdrConfig::from_env(&overlay);\n",
             );
     }
 
@@ -319,27 +343,29 @@ mod tests {
         encoders(&fixture);
         assert!(super::the_encoder_defaults_are_the_crates(&fixture.tree()).is_clean());
 
-        // A default on the declaration is applied before init() reads the door, so it wins silently.
-        fixture.write(
-            super::IDR_FACE,
-            "public struct Config {\n\x20   public var window: Double = 2.5\n\x20   init() { self = \
-             slopdesk_idr_config_default() }\n}\n",
+        // A field of the recovery config spelled where the daemon reads it is the daemon holding a
+        // second copy of the table — it grants keyframes on a bucket the policy never refills.
+        fixture.append(
+            "rust/slopdesk-videohostd/src/session.rs",
+            "let idr = RecoveryIdrConfig { bucket_capacity: 4, ..idr };\n",
         );
         assert!(!super::the_encoder_defaults_are_the_crates(&fixture.tree()).is_clean());
 
-        // Same regression on the quantiser side, arriving as an env fallback typed as a digit.
+        // Same regression on the quantiser side, arriving as a tuned number typed in beside the
+        // module that answers it — the Rust spelling of the old `envInt(…, 38)` fallback.
         encoders(&fixture);
-        fixture.write(
-            super::QP_FACE,
-            "let d = slopdesk_qp_config_default()\nlet floor = envInt(\"SLOPDESK_QP_FLOOR\", 38)\n",
+        fixture.append(
+            "rust/slopdesk-videohostd/src/session_capture.rs",
+            "let ladder = QpConfig { sharp: 26, coarse: 40, ..ladder };\n",
         );
         assert!(!super::the_encoder_defaults_are_the_crates(&fixture.tree()).is_clean());
 
-        // And the door losing its only caller in the target.
+        // And the ask losing its only site: nothing is respelled, so the only claim left to fail is
+        // the one that says the host still asks at all.
         encoders(&fixture);
         fixture.write(
-            super::IDR_FACE,
-            "public struct Config {\n\x20   public var window: Double\n}\n",
+            "rust/slopdesk-videohostd/src/session.rs",
+            "let idr = self.tuned_recovery;\n",
         );
         assert!(!super::the_encoder_defaults_are_the_crates(&fixture.tree()).is_clean());
     }

@@ -1,38 +1,43 @@
 //! The host synthesises, decodes and decides nothing of its own.
 //!
 //! Ported from the deleted `check-supervisor.sh`. Three ports out of Swift and into the `objc2`
-//! family `docs/57` opens the unsafe gate for, and each is pinned the same way: the crate and the
-//! door exist, the Swift no longer does the work beside them, and the macOS-only BIJECTION is
-//! spelled in all three of its places.
+//! family `docs/57` opens the unsafe gate for, and each is pinned the same way: the crate exists,
+//! no Swift does the work beside it, and the Rust that replaced the Swift still ASKS it.
+//!
+//! ## The shape changed with `docs/61`, and the doc header says so because the change was large
+//! Each of these rules used to have a fourth arm: the macOS-only BIJECTION, spelled in all three of
+//! its places — the `cfg`, the header's `MACOS-ONLY` region, the Cargo edge. That arm named C doors
+//! (`slopdesk_injector_inject`, `slopdesk_cgwindow_frontmost_pid`, `slopdesk_cgdisplay_list`, the
+//! three portable capture deciders) whose ONLY caller was the Swift video host, and `docs/61`
+//! deletes both sides at once. Seventeen claims went with them rather than being re-aimed — two,
+//! seven and eight, in the three rules below — because a claim that keeps a dead door alive makes
+//! its deletion read as a regression. Each rule carries the accounting for its own share under
+//! "What was DROPPED".
+//!
+//! What replaced them is a check the door-shaped claims could not make. A bijection claim asks
+//! "is this declaration on the right side of a line"; it never asked whether anyone still CALLS the
+//! thing. `rust/slopdesk-videohostd` links these crates as ordinary Rust dependencies now, so the
+//! question that matters is whether it still asks them — a daemon that inlines an answer keeps
+//! every suite green until the two copies drift. That is a [`Claim::MentionsUnder`] per rule.
 //!
 //! Every ban here reads [`View::Code`], and that is load-bearing rather than tidy. The files still
 //! NAME these calls in prose, and should: the comments carry the hardware measurements that decided
 //! the tablet path and the suppression interval, why the feed uses `CGWindowList` over
 //! `SCShareableContent`, and why the probe walks displays out of process. A gate that could not
 //! tell a call from a sentence about one would force that knowledge out of the file to stay green.
+//! Four live client files argue in prose about `CGEventSource` latching modifiers, and the
+//! now-tree-wide injection ban would delete those paragraphs if it read them.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::text::matches_line;
 use crate::tree::Tree;
 
-/// The generated header both slices compile against.
-const HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
-/// The shim's manifest, where the macOS-only edges are gated.
-const FFI_MANIFEST: &str = "rust/slopdesk-ffi/Cargo.toml";
-/// The header's macOS-only region, as an `awk` range.
-const MACOS_REGION: (&str, &str) = ("MACOS-ONLY BEGIN", "MACOS-ONLY END");
-/// The manifest's macOS-gated dependency table.
+/// The Rust daemon that replaced the Swift GUI video host.
 ///
-/// Ended at the NEXT table header rather than a fixed window. This was `grep -A 12`, and the
-/// twelfth line was reached the moment a crate arrived with a comment above it — the gate then
-/// failed on a `Cargo.toml` that was perfectly gated, naming the wrong defect.
-const MACOS_EDGES: (&str, &str) = (
-    r#"^\[target\.'cfg\(target_os = "macos"\)'\.dependencies\]"#,
-    r"^\[",
-);
-/// The orchestrator that used to build events.
-const INJECTOR: &str = "Sources/SlopDeskVideoHost/InputInjector.swift";
+/// A DIRECTORY rather than a file: `docs/61` split what the Swift host held across a dozen modules,
+/// and which one holds a given ask is the daemon's business. What is not is that it ASKS.
+const DAEMON: &str = "rust/slopdesk-videohostd";
 /// Every extension a private Objective-C class could be named in under `Sources`.
 ///
 /// Wider than [`SWIFT`] on purpose: the shape this bans is not "Swift calls the class" but "the
@@ -44,77 +49,102 @@ const SOURCES: &[&str] = &["swift", "m", "h"];
 ///
 /// Every injected `CGEvent` is built and posted by `rust/slopdesk-apple-cgevent`, the first crate
 /// of the `objc2` family, and the orchestration above it — the bounds, the balance, the resampler,
-/// the raise chain — is `rust/slopdesk-ffi/src/injector.rs` since `docs/60`. `InputInjector.swift`
-/// is what is left over: an ARC owner for the handle. It builds no event, sets no field on one,
-/// warps no cursor and posts nothing, and the ban below is what keeps it that way, because an ARC
-/// owner is exactly the file somebody would reach for to add "just one" direct post to.
+/// the raise chain — is `rust/slopdesk-videohostd/src/injector.rs`. The Swift `InputInjector` that
+/// used to own the handle is gone with `docs/61`, and so is the shim module that used to hold the
+/// orchestration behind a C door: the daemon that installs the injector is the crate that writes
+/// it.
 ///
 /// The line matters because the two languages fail differently here. Swift's `Int32(_:)` TRAPS on a
-/// value off the wire; Rust's clamp saturates. Swift's `CGEvent` construction is nine call sites
+/// value off the wire; Rust's clamp saturates. Swift's `CGEvent` construction was nine call sites
 /// that each had to remember the click-state rule, the untagged-keyboard rule and the suppression
-/// interval; Rust's is one. A second `CGEvent` built in Swift would not be a duplicate
-/// implementation in the abstract — it would be the specific bug each of those rules was written to
-/// close.
+/// interval; Rust's is one. A `CGEvent` built in Swift would not be a duplicate implementation in
+/// the abstract — it would be the specific bug each of those rules was written to close.
 ///
-/// The BIJECTION is three spellings — the `cfg`, the header region, the Cargo edge — and
-/// `slopdesk-gate ffi` checks only the third leg, on all three slices. The first two are checked
-/// here, because a header that declares an iOS-reachable CoreGraphics door fails at LINK, far from
-/// here.
+/// ## The ban went from ONE FILE to the whole tree
+/// It used to name the ARC owner, because that was the file somebody would reach for to add "just
+/// one" direct post to. With the owner deleted there is no such file, and a per-file ban would have
+/// nothing to check — so the ban is now tree-wide over `Sources` and `Tests`, which is what it
+/// should always have been. A `CGEvent` posted from the client, from a device panel or from a test
+/// helper is the same bug in a target nobody was watching.
 ///
-/// BREAK-TEST: restored `CGEvent(mouseEventSource:` in `InputInjector` ⇒ FAIL "builds a `CGEvent`
-/// itself". Separately restored `static func clampToInt32` there ⇒ FAIL "keeps its own narrowing".
-/// Separately deleted the Rust crate ⇒ FAIL "has no Rust behind it". Separately moved the injector
-/// declarations out of the MACOS-ONLY region ⇒ FAIL "declares a CoreGraphics door outside the
-/// macOS-only region". Separately ungated the Cargo edge ⇒ FAIL "is not target-gated". All five
-/// restored from /tmp; PASS.
+/// The prose is deliberately untouched by this: [`View::Code`] drops whole-line comments, and four
+/// live client files argue in PROSE about the shared `CGEventSource(.hidSystemState)` latching
+/// modifiers and about `CGEvent(.cghidEventTap)` keystrokes reaching a secure field. Those
+/// paragraphs are the measurements that decided the modifier protocol, and a gate that could not
+/// tell a call from a sentence about one would force them out of the files that need them.
+///
+/// ## The narrowing check moved languages, and could not go tree-wide
+/// `clampToInt32` is NOT banned across Swift, and the reason is a fact about the tree rather than a
+/// principle: `SlopDeskDevicePanels` declares its own twice, for the Android and shared panel
+/// geometries, and a ban wide enough to catch a revival would fire on the tree it ships with. The
+/// check re-aimed onto the DAEMON instead, in Rust spelling, where the narrowing would actually
+/// come back — and the Swift half is covered anyway, because
+/// [`crate::rules::deleted_video_swift`] bans declaring an `InputInjector` in any Swift target.
+///
+/// ## What was DROPPED, and where the protection went
+/// Two claims are gone. The header claim pinned `slopdesk_injector_inject` inside the MACOS-ONLY
+/// region, and the manifest claim pinned the `slopdesk-apple-cgevent` edge as target-gated. Both
+/// protected the same thing — a CoreGraphics door reachable from an iOS slice fails at LINK, far
+/// from here — and both named a door whose only caller was the deleted Swift. `docs/61` deletes
+/// those exports, so re-aiming either would have pinned a symbol on its way out: a claim that keeps
+/// a dead door alive is worse than no claim, because it makes the deletion look like a regression.
+/// The protection did not evaporate — it moved DOWN a level. The daemon links
+/// `slopdesk-apple-cgevent` as an ordinary Rust dependency with no C door in between, and
+/// `slopdesk-gate ffi` still checks the Cargo edge of every door the library does export. The
+/// `Exists` claim MOVED with the orchestration: `docs/61` deleted the shim module too, once the
+/// settings faces that called its gate-key doors went with the Swift host, so the claim now names
+/// the daemon's own module.
+///
+/// BREAK-TEST: added `CGEvent(mouseEventSource:` to a live client file ⇒ FAIL "builds a `CGEvent`
+/// itself". Separately added `fn clamp_to_i32` under the daemon ⇒ FAIL "keeps its own narrowing".
+/// Separately deleted the Rust crate ⇒ FAIL "has no Rust behind it". Separately dropped the
+/// daemon's `injector_gates` ask ⇒ FAIL "stopped asking". All four restored from /tmp; PASS.
 #[must_use]
 pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::Exists {
             path: "rust/slopdesk-apple-cgevent/src/inject.rs",
-            message: "InputInjector has no Rust behind it — the host synthesises no event of its own \
+            message: "the injector has no Rust behind it — the host synthesises no event of its own \
                       (docs/57 §5, docs/56 increment 84)",
         },
         Claim::Exists {
-            path: "rust/slopdesk-ffi/src/injector.rs",
-            message: "InputInjector has no door behind it — the host synthesises no event of its own \
-                      (docs/57 §5, docs/56 increment 84)",
+            path: "rust/slopdesk-videohostd/src/injector.rs",
+            message: "the injector has no implementation behind it — the bounds, the balance, the resampler \
+                      and the raise chain live in ONE module of the daemon that installs it, with no C door \
+                      in between (docs/57 §5, docs/61 §3)",
         },
-        Claim::Lacks {
-            path: INJECTOR,
+        Claim::NoneUnder {
+            roots: &["Sources", "Tests"],
+            extensions: SWIFT,
             pattern: r"CGEvent\(|\.setIntegerValueField|\.post\(tap:|\.postToPid\(|CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition|CGEventSource\(",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "InputInjector builds a CGEvent itself — synthesis, field-setting, the warp and the \
-                      post are slopdesk-apple-cgevent's, and a second copy here is where the click-state \
-                      rule and the untagged-keyboard rule drift apart (docs/57 §5)",
+            exempt: &[],
+            message: "Swift builds a CGEvent itself in {files} — synthesis, field-setting, the warp and the \
+                      post are slopdesk-apple-cgevent's, orchestrated once in the injector module, and a \
+                      second copy anywhere is where the click-state rule and the untagged-keyboard rule \
+                      drift apart. No Swift target injects any more (docs/57 §5, docs/61)",
         },
-        Claim::Lacks {
-            path: INJECTOR,
-            pattern: r"func (clampToInt32|scaledScrollDelta)",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn clamp_to_i32|fn scaled_scroll_delta",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "InputInjector keeps its own narrowing — clamp_to_i32 is slopdesk-video's, and a Swift \
-                      copy is the trapping Int32(_:) coming back under a new name on a path that parses \
-                      hostile datagrams (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon keeps its own narrowing in {files} — clamp_to_i32 and the scroll resampler \
+                      are slopdesk_video's, and a second copy on a path that parses hostile datagrams is \
+                      the trapping conversion coming back under a new name (docs/57 §5)",
         },
-        Claim::Within {
-            path: HEADER,
-            start: MACOS_REGION.0,
-            end: MACOS_REGION.1,
-            pattern: r"slopdesk_injector_inject\(",
-            view: View::Raw,
-            message: "slopdesk_ffi.h declares a CoreGraphics door outside the macOS-only region — iOS has \
-                      no CGEvent at all, so an ungated declaration is not a wasted byte, it is a link \
-                      failure on two of the three slices (docs/57 §3)",
-        },
-        Claim::Within {
-            path: FFI_MANIFEST,
-            start: MACOS_EDGES.0,
-            end: MACOS_EDGES.1,
-            pattern: "slopdesk-apple-cgevent",
-            view: View::Code,
-            message: "rust/slopdesk-ffi/Cargo.toml: the slopdesk-apple-cgevent edge is not target-gated — \
-                      the macOS-only bijection is three spellings (the cfg, the header region, the Cargo \
-                      edge) and slopdesk-gate ffi only checks what the library exports (docs/57 §3)",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["slopdesk_video::injector_gates"],
+            message: "the daemon stopped asking {entry} — which keys the injector gates, and at what \
+                      resample rate, is resolved once from the overlay and read the same way by the \
+                      settings face; a daemon that resolved it itself would answer the same question twice \
+                      with nothing comparing the two (docs/61 §3)",
         },
     ])
 }
@@ -138,33 +168,41 @@ pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
 /// the read answers the launching app for the process's whole life. `HostFrontmostApp` elects from
 /// the window list instead, and nothing in the host may go back.
 ///
-/// The feed enumeration is the ONE file still allowed its own record build: it needs three `AppKit`
-/// reads per pid that no CoreGraphics door can answer, and moving it is increment 86's job. It is
-/// named here so the exemption is a decision on the record rather than a grep that happens to miss
-/// it.
+/// ## The last exemption is gone, and the ban is now TOTAL
+/// The feed enumeration used to be the ONE file allowed its own record build: it needed three
+/// `AppKit` reads per pid that no CoreGraphics door could answer, so the Swift glue was named here
+/// rather than left to a grep that happens to miss it. `docs/61` moved the feed into
+/// `rust/slopdesk-videohostd`, where the three reads are the `slopdesk-apple-*` family's, and the
+/// exemption went with the file it named. Removing it is the point rather than housekeeping: an
+/// exemption that outlives its file is a hole any new file can be named into, and the four-way
+/// decode drift this rule exists for is exactly what walks through such a hole.
 ///
-/// BREAK-TEST: restored `CGWindowListCopyWindowInfo` in `WindowGeometryWatcher` ⇒ FAIL "decode a
-/// window record themselves". Separately restored `NSWorkspace.shared.frontmostApplication` in
-/// `WindowFeedGlue` ⇒ FAIL "read a frozen frontmost". Separately deleted the cgwindow crate ⇒ FAIL
-/// "has no Rust behind it". Separately moved the declarations out of the MACOS-ONLY region ⇒ FAIL
-/// "declares a `WindowServer` door outside the macOS-only region". Separately ungated a Cargo edge
-/// ⇒ FAIL "is not target-gated". All five restored from /tmp; PASS.
+/// ## What was DROPPED, and where the protection went
+/// Seven claims are gone: the two `Exists` on the shim's `cgwindow` and `cgdisplay` modules, the
+/// two header claims gating `slopdesk_cgwindow_frontmost_pid` and `slopdesk_cgdisplay_list`, and
+/// the three manifest claims gating the `cgwindow`, `cgdisplay` and `sck` edges. Every one of them
+/// named a door or an edge that existed ONLY for the deleted Swift host, and `docs/61` deletes them
+/// in the same change. Re-aiming any of them would have pinned a symbol on its way out and made the
+/// deletion read as a regression.
+///
+/// What they protected survives in a stronger form. Their subject was "the `WindowServer` decode
+/// happens once"; the daemon now reaches `slopdesk-apple-cgwindow` and `slopdesk-apple-cgdisplay`
+/// as ordinary Rust dependencies, with no C door in between to gate — so the claim that it still
+/// does is a `MentionsUnder` over the daemon, which is a check the door-shaped claims could never
+/// make. The bijection they guarded is `slopdesk-gate ffi`'s for the doors that remain, and the
+/// `Exists` claims on the two apple crates are untouched: those are the homes.
+///
+/// BREAK-TEST: added `CGWindowListCopyWindowInfo` to a live client file ⇒ FAIL "decode a window
+/// record themselves". Separately added `NSWorkspace.shared.frontmostApplication` to one ⇒ FAIL
+/// "read a frozen frontmost". Separately deleted the cgwindow crate ⇒ FAIL "has no Rust behind it".
+/// Separately dropped the daemon's `slopdesk_apple_cgwindow` calls ⇒ FAIL "stopped asking". All
+/// four restored from /tmp; PASS.
 #[must_use]
 pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
-    /// The crates and doors this port stands on.
+    /// The crates this port stands on. The shim's two modules are NOT here — see the note above.
     const REQUIRED: &[&str] = &[
         "rust/slopdesk-apple-cgwindow/src/list.rs",
         "rust/slopdesk-apple-cgdisplay/src/displays.rs",
-        "rust/slopdesk-ffi/src/cgwindow.rs",
-        "rust/slopdesk-ffi/src/cgdisplay.rs",
-    ];
-    /// The doors that must sit inside the header's macOS-only region.
-    const GATED_DOORS: &[&str] = &[r"slopdesk_cgwindow_frontmost_pid\(", r"slopdesk_cgdisplay_list\("];
-    /// The crate edges that must be target-gated in the shim's manifest.
-    const GATED_EDGES: &[&str] = &[
-        "slopdesk-apple-cgwindow",
-        "slopdesk-apple-cgdisplay",
-        "slopdesk-apple-sck",
     ];
 
     let mut report = Report::new();
@@ -185,11 +223,14 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
                 all: &[],
                 unless: &[],
                 view: View::Code,
-                exempt: &["Sources/slopdesk-videohostd/WindowFeedGlue.swift"],
+                // No exemption, and that is the change docs/61 bought: the feed glue that held the
+                // only one was deleted with its target, so the ban is total.
+                exempt: &[],
                 message: "these decode a window record themselves: {files} — the CGWindowList and \
                           display-list reads are slopdesk-apple-cgwindow's and \
-                          slopdesk-apple-cgdisplay's, and a second decode is where 'a missing field \
-                          means Int.min' comes back (docs/57 §5)",
+                          slopdesk-apple-cgdisplay's, asked from rust/slopdesk-videohostd, and a second \
+                          decode is where 'a missing field means Int.min' comes back (docs/57 §5, \
+                          docs/61 §3)",
             },
             Claim::NoneUnder {
                 roots: &["Sources"],
@@ -204,32 +245,16 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
                           run loop, so the read answers the launching app for the process's whole \
                           life. HostFrontmostApp elects from the window list (docs/57 §5)",
             },
+            Claim::MentionsUnder {
+                root: DAEMON,
+                names: &["slopdesk_apple_cgwindow", "slopdesk_apple_cgdisplay"],
+                message: "the daemon stopped calling {entry} — the window and display reads it makes on \
+                          every geometry poll, every park and every mint go through the one crate that \
+                          decodes a record; a daemon that stopped asking either is one that started \
+                          reading CoreGraphics some other way (docs/57 §5, docs/61 §3)",
+            },
         ],
     ));
-    for door in GATED_DOORS {
-        report.absorb(check_all(tree, &[Claim::Within {
-            path: HEADER,
-            start: MACOS_REGION.0,
-            end: MACOS_REGION.1,
-            pattern: door,
-            view: View::Raw,
-            message: "slopdesk_ffi.h declares a WindowServer door outside the macOS-only region — iOS has \
-                      no WindowServer at all, so an ungated declaration is not a wasted byte, it is a link \
-                      failure on two of the three slices (docs/57 §3)",
-        }]));
-    }
-    for edge in GATED_EDGES {
-        report.absorb(check_all(tree, &[Claim::Within {
-            path: FFI_MANIFEST,
-            start: MACOS_EDGES.0,
-            end: MACOS_EDGES.1,
-            pattern: edge,
-            view: View::Code,
-            message: "rust/slopdesk-ffi/Cargo.toml: an apple-family edge is not target-gated — the \
-                      macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) \
-                      and slopdesk-gate ffi only checks what the library exports (docs/57 §3)",
-        }]));
-    }
     report
 }
 
@@ -248,28 +273,34 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
 /// are replayed by the Rust integration suite, which `golden-check.sh` independently requires to
 /// exist.
 ///
-/// The doors are PORTABLE, and that arm is the MIRROR of the two rules above rather than a copy of
-/// them: these decide rather than read, so a declaration inside the MACOS-ONLY region would drop
-/// them from the iOS slices for no reason and hide that they are pure.
+/// ## What was DROPPED, and where the protection went
+/// The doors were PORTABLE, and that arm used to be the MIRROR of the two rules above rather than a
+/// copy of them: these decide rather than read, so a declaration inside the MACOS-ONLY region would
+/// drop them from the iOS slices for no reason and hide that they are pure. Eight claims stated it
+/// — two `Exists` on the shim's `capture_region` and `window_list` modules, and a
+/// `Matches`/`LacksWithin` pair per decider — and all eight are gone, because all eight named C
+/// doors whose only caller was the deleted Swift host. `docs/61` deletes them in this same change,
+/// so keeping any of the eight would pin a symbol on its way out.
 ///
-/// BREAK-TEST: reintroduced `enum CaptureRegionMath` in `WindowGeometryWatcher` ⇒ FAIL "decide a
-/// capture region themselves". Separately deleted `rust/slopdesk-video/src/capture_region.rs` ⇒
-/// FAIL "has no Rust behind its capture region". Separately moved `slopdesk_capture_union_region`
-/// inside the MACOS-ONLY region ⇒ FAIL "declares a portable decider inside the macOS-only region".
-/// All three restored from /tmp; PASS.
+/// The MIRROR argument itself is not lost, only relocated: the deciders are pure Rust functions the
+/// daemon calls in-process now, so "do not gate a pure decider behind macOS" is not a property
+/// anyone can get wrong any more — there is no gate to put them behind. What CAN still go wrong is
+/// a second copy of the algebra, and that is what survives: the `Exists` floor on the rules module,
+/// the tree-wide Swift ban, and a new `MentionsUnder` proving the daemon still ASKS. The 23 golden
+/// vectors are replayed by the Rust integration suite either way, which `golden-check.sh`
+/// independently requires to exist.
+///
+/// BREAK-TEST: reintroduced `enum CaptureRegionMath` in a live client file ⇒ FAIL "decide a capture
+/// region themselves". Separately deleted `rust/slopdesk-video/src/capture_region.rs` ⇒ FAIL "has
+/// no Rust behind its capture region". Separately dropped the daemon's `capture_region` ask ⇒ FAIL
+/// "stopped asking". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
-    /// The rules and the doors over them.
+    /// The rules the 23 golden vectors are replayed against. The shim's two modules are NOT here —
+    /// see the note above.
     const REQUIRED: &[&str] = &[
         "rust/slopdesk-video/src/capture_region.rs",
-        "rust/slopdesk-ffi/src/capture_region.rs",
-        "rust/slopdesk-ffi/src/window_list.rs",
-    ];
-    /// The three deciders, which must be declared and must NOT be gated.
-    const PORTABLE_DOORS: &[&str] = &[
-        r"slopdesk_capture_union_region\(",
-        r"slopdesk_capture_region_decision\(",
-        r"slopdesk_window_display_for_frame\(",
+        "rust/slopdesk-video/src/window_list.rs",
     ];
 
     let mut report = Report::new();
@@ -282,41 +313,33 @@ pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
     }
     report.absorb(check_all(
         tree,
-        &[Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
-            extensions: SWIFT,
-            pattern: r"enum CaptureRegionMath|enum WindowDisplayResolver|CaptureRegionMath\.|WindowDisplayResolver\.",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "these decide a capture region themselves: {files} — the union, the content \
-                      rects, the hysteresis gate and the display pick are \
-                      slopdesk_video::capture_region's and ::window_list's, and a second copy is a \
-                      predicate that drifts one ulp under a green suite (docs/56 increment 86)",
-        }],
+        &[
+            Claim::NoneUnder {
+                roots: &["Sources", "Tests"],
+                extensions: SWIFT,
+                pattern: r"enum CaptureRegionMath|enum WindowDisplayResolver|CaptureRegionMath\.|WindowDisplayResolver\.",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "these decide a capture region themselves: {files} — the union, the content \
+                          rects, the hysteresis gate and the display pick are \
+                          slopdesk_video::capture_region's and ::window_list's, and a second copy is a \
+                          predicate that drifts one ulp under a green suite (docs/56 increment 86)",
+            },
+            Claim::MentionsUnder {
+                root: DAEMON,
+                names: &[
+                    "slopdesk_video::capture_region",
+                    "slopdesk_video::window_list",
+                ],
+                message: "the daemon stopped asking {entry} — the union with an attached panel, the \
+                          per-edge hysteresis gate and the display pick are golden-pinned as raw f64 bit \
+                          patterns, and a daemon that answers any of them itself is the 23 vectors going \
+                          unreplayed on the one path that uses them (docs/56 increment 86, docs/61 §3)",
+            },
+        ],
     ));
-    for door in PORTABLE_DOORS {
-        report.absorb(check_all(tree, &[
-            Claim::Matches {
-                path: HEADER,
-                pattern: door,
-                view: View::Raw,
-                message: "slopdesk_ffi.h does not declare a capture decider the Swift face calls — a \
-                          missing declaration is a link failure the moment anyone rebuilds (docs/55 §3)",
-            },
-            Claim::LacksWithin {
-                path: HEADER,
-                start: MACOS_REGION.0,
-                end: MACOS_REGION.1,
-                pattern: door,
-                view: View::Raw,
-                message: "slopdesk_ffi.h declares a portable decider inside the macOS-only region — it \
-                          reads no WindowServer and its answers are golden-pinned on every slice, so gating \
-                          it hides that it is pure and costs the iOS slices a door for nothing (docs/57 §3)",
-            },
-        ]));
-    }
     report
 }
 
@@ -351,9 +374,13 @@ const AREA_FLOORS: &[(&str, &str)] = &[
 /// checkable — the header alone could come back under a different name, and the `.m` alone links
 /// nothing, so either one restored is the target coming back.
 ///
-/// `VirtualDisplay.swift` is NOT here, and that is the difference between this port and a deletion:
-/// the file still exists and still owns the handle's lifetime and the trampoline. What left it is
-/// the private classes, which the ban below is about.
+/// When this was written, the Swift `VirtualDisplay` was deliberately NOT in this list, because it
+/// still existed and still owned the handle's lifetime and the trampoline — only the private
+/// classes had left it. `docs/61` then deleted the whole target, and the handle's lifetime is
+/// `rust/slopdesk-videohostd/src/vdisplay.rs`'s. The list did not grow a row for it, and that is
+/// the right answer twice over: [`crate::rules::deleted_video_swift`] bans the DIRECTORY it lived
+/// in, which no filename dodge can satisfy, and what this constant is for is narrower — a SHIM is a
+/// pair of files, and naming both is what makes "the shim is gone" checkable.
 const DELETED_VIRTUAL_DISPLAY_SHIM: &[&str] = &[
     "Sources/CSlopDeskVirtualDisplay/include/CGVirtualDisplayPrivate.h",
     "Sources/CSlopDeskVirtualDisplay/shim.m",
@@ -398,11 +425,12 @@ const DELETED_VIRTUAL_DISPLAY_SHIM: &[&str] = &[
 /// added `NSHost::currentHost()` to `rust/slopdesk-hostd/src/workspacestore.rs` ⇒ FAIL, naming
 /// `slopdesk-apple-machine` as the home. Separately deleted
 /// `rust/slopdesk-apple-fsevents/src/watch.rs` ⇒ FAIL "has no Rust behind it". Separately added
-/// `let cls: AnyClass = CGVirtualDisplayDescriptor;` to `rust/slopdesk-ffi/src/virtual_display.rs`
+/// `let cls: AnyClass = CGVirtualDisplayDescriptor;` to `rust/slopdesk-videohostd/src/vdisplay.rs`
 /// ⇒ FAIL, naming the cgvirtualdisplay crate as the home. Separately restored a one-line
 /// `Sources/CSlopDeskVirtualDisplay/shim.m` ⇒ FAIL "the private-class shim is back". Separately
-/// added `let d = CGVirtualDisplayDescriptor()` to
-/// `Sources/SlopDeskVideoHost/VirtualDisplay.swift` ⇒ FAIL "names a private
+/// added `let d = CGVirtualDisplayDescriptor()` to a live Swift target — the handle's own file is
+/// `rust/slopdesk-videohostd/src/vdisplay.rs` now, so the Swift ban has no host file left to fire
+/// on and the seed goes wherever the class could next be named ⇒ FAIL "names a private
 /// `CGVirtualDisplay` class". All six restored from /tmp; PASS.
 #[must_use]
 pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
@@ -473,114 +501,105 @@ pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
-    /// The crates and doors all three rules stand on, plus a header and a manifest.
-    fn floors(fixture: &Fixture, header: &str, injector: &str) {
+    /// The crates all three rules stand on, plus the daemon that has to be ASKING them.
+    ///
+    /// The daemon half is not decoration. Every rule here now carries a [`Claim::MentionsUnder`],
+    /// which refuses to pass on an EMPTY directory — so a fixture that seeded only the crates would
+    /// go red for a reason no test was asking about, and the tempting repair is to weaken the
+    /// claim. Seeding the asks is what keeps the "no vacuous pass" guard from reading as a bug.
+    fn floors(fixture: &Fixture) {
         for path in [
             "rust/slopdesk-apple-cgevent/src/inject.rs",
-            "rust/slopdesk-ffi/src/injector.rs",
+            "rust/slopdesk-videohostd/src/injector.rs",
             "rust/slopdesk-apple-cgwindow/src/list.rs",
             "rust/slopdesk-apple-cgdisplay/src/displays.rs",
-            "rust/slopdesk-ffi/src/cgwindow.rs",
-            "rust/slopdesk-ffi/src/cgdisplay.rs",
             "rust/slopdesk-video/src/capture_region.rs",
-            "rust/slopdesk-ffi/src/capture_region.rs",
-            "rust/slopdesk-ffi/src/window_list.rs",
+            "rust/slopdesk-video/src/window_list.rs",
         ] {
             fixture.write(path, "pub fn f() {}\n");
         }
         fixture
-            .write(super::HEADER, header)
             .write(
-                super::FFI_MANIFEST,
-                "[dependencies]\nslopdesk-wire = { path = \"../slopdesk-wire\" }\n\n[target.'cfg(target_os \
-                 = \"macos\")'.dependencies]\nslopdesk-apple-cgevent = { path = \
-                 \"../slopdesk-apple-cgevent\" }\nslopdesk-apple-cgdisplay = { path = \
-                 \"../slopdesk-apple-cgdisplay\" }\nslopdesk-apple-sck = { path = \"../slopdesk-apple-sck\" \
-                 }\nslopdesk-apple-cgwindow = { path = \"../slopdesk-apple-cgwindow\" \
-                 }\n\n[profile.release]\nopt-level = 3\n",
+                "rust/slopdesk-videohostd/src/main.rs",
+                "use slopdesk_video::injector_gates::InjectorGates;\n",
             )
-            .write(super::INJECTOR, injector);
+            .write(
+                "rust/slopdesk-videohostd/src/windowgeometry.rs",
+                "use slopdesk_video::capture_region::WindowSnapshot;\nuse \
+                 slopdesk_video::window_list::display_for_window_frame;\nfn poll(id: u32) {\n    let _ = \
+                 slopdesk_apple_cgwindow::bounds_of(id, None);\n    let _ = \
+                 slopdesk_apple_cgdisplay::under(point);\n}\n",
+            );
     }
 
-    /// A header with the gated doors inside the region and the portable deciders outside it.
-    fn header(gated: &str, portable: &str) -> String {
-        format!(
-            "void slopdesk_free(void *p);\n{portable}\n// MACOS-ONLY BEGIN\n{gated}\n// MACOS-ONLY \
-             END\nvoid slopdesk_wire_decode(const uint8_t *p, size_t n);\n"
-        )
-    }
-
-    /// Every door, in the place it belongs.
-    fn placed() -> String {
-        header(
-            "void slopdesk_injector_inject(void *h, int32_t x);\nint32_t \
-             slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, size_t \
-             cap);",
-            "bool slopdesk_capture_union_region(const double *a, double *out);\nbool \
-             slopdesk_capture_region_decision(const double *a, double *out);\nbool \
-             slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
-        )
-    }
-
+    /// A `CGEvent` built in a LIVE Swift target, which is the drift the old per-file ban could not
+    /// see. The host file it named is deleted, so the only way this comes back is somewhere nobody
+    /// was watching — the client, a device panel, a test helper.
     #[test]
-    fn an_injector_that_builds_an_event_is_red() {
+    fn swift_that_builds_an_event_is_red() {
         let fixture = Fixture::new("apple-inject");
-        floors(
-            &fixture,
-            &placed(),
-            "// The suppression interval is why this used to call CGEvent(mouseEventSource:).\nlet plan = \
-             slopdesk_injector_inject(h, x)\n",
+        floors(&fixture);
+        fixture.write(
+            "Sources/SlopDeskVideoClient/VideoClientSessionLogic.swift",
+            "// The suppression interval is why the host calls CGEvent(mouseEventSource:) once.\nlet plan = \
+             1\n",
         );
-        // The prose still names the call, and must — the measurements that decided the tablet path
-        // live there. A gate that read comments would force them out of the file.
+        // The prose still names the call, and must — the measurements that decided the modifier
+        // protocol live there. A gate that read comments would force them out of the file.
         assert!(super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
 
-        floors(
-            &fixture,
-            &placed(),
+        for call in [
             "let event = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown)\n",
-        );
-        assert!(!super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
-
-        // The trapping Int32(_:) coming back under a new name, on a path that parses hostile
-        // datagrams.
-        floors(
-            &fixture,
-            &placed(),
-            "static func clampToInt32(_ v: Double) -> Int32 { 0 }\n",
-        );
-        assert!(!super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
+            "event.setIntegerValueField(.mouseEventClickState, value: 2)\n",
+            "event.post(tap: .cghidEventTap)\n",
+            "CGWarpMouseCursorPosition(point)\n",
+            "let src = CGEventSource(stateID: .hidSystemState)\n",
+        ] {
+            let fixture = Fixture::new("apple-inject-revived");
+            floors(&fixture);
+            fixture.write("Sources/SlopDeskVideoClient/InputRelay.swift", call);
+            let report = super::the_host_synthesises_no_event(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("InputRelay")),
+                "{call:?} was not caught: {report:?}"
+            );
+        }
     }
 
+    /// The narrowing, re-aimed to the daemon. It cannot be banned across Swift:
+    /// `SlopDeskDevicePanels` declares its own `clampToInt32` twice, for the Android and shared
+    /// panel geometries, so a tree-wide ban would fire on the tree it ships with.
     #[test]
-    fn an_ungated_coregraphics_door_is_red() {
-        // Its own fixture, because writes accumulate and this case moves a declaration.
-        let fixture = Fixture::new("apple-region");
-        let ungated = header(
-            "int32_t slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, \
-             size_t cap);",
-            "void slopdesk_injector_inject(void *h, int32_t x);\nbool slopdesk_capture_union_region(const \
-             double *a, double *out);\nbool slopdesk_capture_region_decision(const double *a, double \
-             *out);\nbool slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
-        );
-        floors(&fixture, &ungated, "let plan = slopdesk_injector_inject(h, x)\n");
-        assert!(!super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
+    fn a_daemon_that_keeps_its_own_narrowing_is_red() {
+        for line in [
+            "fn clamp_to_i32(v: f64) -> i32 { 0 }\n",
+            "fn scaled_scroll_delta(v: f64) -> i32 { 0 }\n",
+        ] {
+            let fixture = Fixture::new("apple-narrowing");
+            floors(&fixture);
+            fixture.append("rust/slopdesk-videohostd/src/main.rs", line);
+            let report = super::the_host_synthesises_no_event(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("own narrowing")),
+                "{line:?} was not caught: {report:?}"
+            );
+        }
     }
 
+    /// A window decode in a live target. There is no exemption left to hide behind: the feed glue
+    /// that held the only one was deleted with its target, so the ban is total.
     #[test]
     fn a_second_window_decode_is_red() {
         let fixture = Fixture::new("apple-window");
-        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
+        floors(&fixture);
         fixture.write(
-            "Sources/slopdesk-videohostd/WindowFeedGlue.swift",
-            "// The feed needs three AppKit reads per pid that no door can answer.\nlet info = \
-             CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)\n",
+            "Sources/SlopDeskWorkspaceCore/Video/WindowGeometryRelay.swift",
+            "// The feed needs three AppKit reads per pid that no door can answer.\nlet ordinary = 1\n",
         );
-        // The ONE exemption, named so it is a decision on the record.
         assert!(super::the_host_decodes_no_window_record(&fixture.tree()).is_clean());
 
-        fixture.write(
-            "Sources/SlopDeskVideoHost/WindowGeometryWatcher.swift",
+        fixture.append(
+            "Sources/SlopDeskWorkspaceCore/Video/WindowGeometryRelay.swift",
             "let info = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)\n",
         );
         let found = super::the_host_decodes_no_window_record(&fixture.tree());
@@ -588,7 +607,8 @@ mod tests {
             found
                 .violations()
                 .iter()
-                .any(|line| line.contains("WindowGeometryWatcher"))
+                .any(|line| line.contains("WindowGeometryRelay")),
+            "{found:?}"
         );
     }
 
@@ -597,32 +617,70 @@ mod tests {
         // Its own fixture: the daemon's snapshot never updates, so the read answers the launching
         // app for the process's whole life.
         let fixture = Fixture::new("apple-frontmost");
-        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
+        floors(&fixture);
         fixture.write(
-            "Sources/slopdesk-videohostd/WindowFeedGlue.swift",
+            "Sources/SlopDeskWorkspaceCore/Video/FrontmostRelay.swift",
             "let app = NSWorkspace.shared.frontmostApplication\n",
         );
         assert!(!super::the_host_decodes_no_window_record(&fixture.tree()).is_clean());
     }
 
+    /// The drift the door-shaped claims never could see: the daemon stops asking, inlines the
+    /// answer, and every suite stays green because the two copies agree until one is edited.
     #[test]
-    fn a_gated_portable_decider_is_red() {
-        let fixture = Fixture::new("apple-region-portable");
-        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
-        assert!(super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
+    fn a_daemon_that_stopped_asking_is_red() {
+        for (name, ask) in [
+            ("cgwindow", "slopdesk_apple_cgwindow"),
+            ("cgdisplay", "slopdesk_apple_cgdisplay"),
+            ("region", "slopdesk_video::capture_region"),
+            ("list", "slopdesk_video::window_list"),
+            ("gates", "slopdesk_video::injector_gates"),
+        ] {
+            let fixture = Fixture::new(&format!("apple-stopped-asking-{name}"));
+            floors(&fixture);
+            for path in [
+                "rust/slopdesk-videohostd/src/main.rs",
+                "rust/slopdesk-videohostd/src/windowgeometry.rs",
+            ] {
+                let text = fixture.tree().read(path).unwrap_or_default();
+                let kept = text
+                    .lines()
+                    .filter(|line| !line.contains(ask))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                fixture.write(path, &format!("{kept}\n"));
+            }
+            let reports = [
+                super::the_host_synthesises_no_event(&fixture.tree()),
+                super::the_host_decodes_no_window_record(&fixture.tree()),
+                super::the_host_decides_no_capture_region(&fixture.tree()),
+            ];
+            assert!(
+                reports
+                    .iter()
+                    .any(|r| r.violations().iter().any(|v| v.contains(ask))),
+                "{ask} could be dropped with nothing red: {reports:?}"
+            );
+        }
+    }
 
-        // Gating a pure decider costs the iOS slices a door for nothing, and hides that it is pure.
-        floors(
-            &fixture,
-            &header(
-                "void slopdesk_injector_inject(void *h, int32_t x);\nint32_t \
-                 slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, \
-                 size_t cap);\nbool slopdesk_capture_union_region(const double *a, double *out);",
-                "bool slopdesk_capture_region_decision(const double *a, double *out);\nbool \
-                 slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
-            ),
-            "let plan = slopdesk_injector_inject(h, x)\n",
-        );
+    /// A drained daemon cannot satisfy any of the three asks — the one failure mode a
+    /// "the daemon still calls X" claim has, and why the claim refuses an empty root.
+    #[test]
+    fn a_drained_daemon_cannot_satisfy_the_ask() {
+        let fixture = Fixture::new("apple-daemon-drained");
+        for path in [
+            "rust/slopdesk-apple-cgevent/src/inject.rs",
+            "rust/slopdesk-videohostd/src/injector.rs",
+            "rust/slopdesk-apple-cgwindow/src/list.rs",
+            "rust/slopdesk-apple-cgdisplay/src/displays.rs",
+            "rust/slopdesk-video/src/capture_region.rs",
+            "rust/slopdesk-video/src/window_list.rs",
+        ] {
+            fixture.write(path, "pub fn f() {}\n");
+        }
+        assert!(!super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
+        assert!(!super::the_host_decodes_no_window_record(&fixture.tree()).is_clean());
         assert!(!super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
     }
 
@@ -630,12 +688,31 @@ mod tests {
     fn a_swift_capture_decider_is_red() {
         // Its own fixture: a second copy of a predicate that drifts one ulp under a green suite.
         let fixture = Fixture::new("apple-region-swift");
-        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
+        floors(&fixture);
+        assert!(super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
+
         fixture.write(
-            "Sources/SlopDeskVideoHost/WindowGeometryWatcher.swift",
+            "Sources/SlopDeskWorkspaceCore/Video/RegionRelay.swift",
             "enum CaptureRegionMath { static func union(_ a: CGRect, _ b: CGRect) -> CGRect { a } }\n",
         );
         assert!(!super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
+    }
+
+    /// The rules module the 23 golden vectors are replayed against is a FLOOR: delete it and the
+    /// vectors have nothing to replay, with the Swift ban above still perfectly green.
+    #[test]
+    fn a_deleted_capture_region_module_is_red() {
+        let fixture = Fixture::new("apple-region-deleted");
+        floors(&fixture);
+        fixture.remove("rust/slopdesk-video/src/capture_region.rs");
+        let report = super::the_host_decides_no_capture_region(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no Rust behind its capture region")),
+            "{report:?}"
+        );
     }
 
     /// Every home the port landed, plus one ordinary Rust file for the ban to read.

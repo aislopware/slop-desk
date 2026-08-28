@@ -8,21 +8,17 @@
 
 use std::collections::BTreeSet;
 
-use crate::swipe_nav::SwipeNavStatusMessage;
-use crate::swipe_recognizer::{extra_apps, fire_travel_from_env, is_navigable};
-
 /// One read of a target app's history availability: can the back or forward chord navigate right
 /// now?
 ///
-/// A plain value, so the mapping stays testable everywhere; only the reader that PRODUCES it is
-/// platform-bound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NavHistoryFlags {
-    /// Back would navigate.
-    pub can_go_back: bool,
-    /// Forward would navigate.
-    pub can_go_forward: bool,
-}
+/// [`crate::nav_history::Flags`] under the name this module's callers know it by, and NOT a second
+/// declaration of the same two booleans. It was one for as long as the reader was Swift, because
+/// the two ends of the C door could not share a type; a Rust reader hands its answer straight to
+/// [`SwipeNavHostConfig::status`], and a copy here would be a value the daemon had to translate
+/// between two spellings of on every beat.
+pub use crate::nav_history::Flags as NavHistoryFlags;
+use crate::swipe_nav::SwipeNavStatusMessage;
+use crate::swipe_recognizer::{extra_apps, fire_travel_from_env, is_navigable};
 
 /// The parsed operating point.
 #[derive(Debug, Clone, PartialEq)]

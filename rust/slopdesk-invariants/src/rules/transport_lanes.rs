@@ -211,6 +211,18 @@ pub fn one_receive_buffer_and_one_narrowing(tree: &Tree) -> Report {
 /// FILLS an arena for had each written their own `intern`. `crate::arena_span`/`arena_text` and
 /// `ArenaText` are the one of each; a face keeps a one-line overload for its own named
 /// `(offset, length)` struct and calls through, it does not spell the read or the write again.
+///
+/// ## One row dropped, and why it is not re-aimed
+/// `SlopDeskVideoHost` used to be an eighth target on the table below. `docs/61` deleted it, and
+/// unlike the bans in [`crate::rules::video_host`] this row has nothing to re-aim: it is a
+/// `Claim::Depends`, and what a `Depends` states is that a target which CROSSES the arena
+/// convention takes it from `SlopDeskArena` rather than respelling it. The daemon does not cross
+/// that convention at all — there is no `(offset, length)` pair to read, because
+/// `rust/slopdesk-videohostd` links `slopdesk-video` as an ordinary Rust dependency and hands it
+/// `&str`. A row demanding it depend on a Swift package would be a demand no Rust binary can meet,
+/// and one demanding some Rust equivalent would be inventing a convention rather than pinning one.
+/// The other seven targets are untouched, and the Swift-side ban above still covers every file the
+/// deleted target's arena readers could come back in, because it was already tree-wide.
 #[must_use]
 pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
     let claims = [
@@ -258,11 +270,6 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
         },
         Claim::Depends {
             target: "SlopDeskWorkspaceCore",
-            dependency: "SlopDeskArena",
-            message: "it crosses §4c's convention and must not spell it",
-        },
-        Claim::Depends {
-            target: "SlopDeskVideoHost",
             dependency: "SlopDeskArena",
             message: "it crosses §4c's convention and must not spell it",
         },
@@ -514,7 +521,6 @@ mod tests {
         ("SlopDeskWorkspaceModel", &["SlopDeskArena"]),
         ("SlopDeskFileTransfer", &["SlopDeskArena", "SlopDeskNet"]),
         ("SlopDeskWorkspaceCore", &["SlopDeskArena"]),
-        ("SlopDeskVideoHost", &["SlopDeskArena"]),
         ("SlopDeskVideoClient", &["SlopDeskArena"]),
         ("SlopDeskInspector", &["SlopDeskNet"]),
     ];
@@ -538,11 +544,15 @@ mod tests {
         // A target that dropped the edge — which is how a face comes to spell the read itself. The
         // `.library` line still names it and the neighbour above still declares the edge, so this is
         // also the case the shell's `grep -A 24` window could not tell from a kept one.
+        //
+        // Seeded on `SlopDeskWorkspaceCore` since `docs/61`. It used to be `SlopDeskVideoHost`, and
+        // that target is deleted: a break-test that drops an edge nothing demands proves only that
+        // the fixture can be edited, which is the shape of green this whole crate exists to refuse.
         seed(&fixture);
         let dropped: Vec<_> = ARENA
             .iter()
             .map(|(target, deps)| {
-                if *target == "SlopDeskVideoHost" {
+                if *target == "SlopDeskWorkspaceCore" {
                     (*target, &[][..])
                 } else {
                     (*target, *deps)

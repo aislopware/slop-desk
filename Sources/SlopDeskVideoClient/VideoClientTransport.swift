@@ -6,7 +6,7 @@ import SlopDeskVideoProtocol
 /// socket; cursor on the dedicated cursor socket).
 ///
 /// This protocol is the **hang-safe test seam**, the exact mirror of the host's
-/// `SlopDeskVideoHost.VideoDatagramTransport`. The production conformer
+/// `slopdesk-videohostd` `sendlane::DatagramSink`. The production conformer
 /// (``VideoMuxClientTransport``, a lane on the shared ``NWVideoMuxClientFlow``) opens real
 /// `NWConnection` `.udp` flows and is NEVER instantiated in a test; the orchestrator's pure
 /// logic is exercised against an in-memory fake that records sent datagrams and feeds

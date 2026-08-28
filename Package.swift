@@ -117,7 +117,6 @@ let package = Package(
         .library(name: "SlopDeskPhoneUI", targets: ["SlopDeskPhoneUI"]),
         // PATH 2 (GUI video path, Phase 4 / WF-9).
         .library(name: "SlopDeskVideoProtocol", targets: ["SlopDeskVideoProtocol"]),
-        .library(name: "SlopDeskVideoHost", targets: ["SlopDeskVideoHost"]),
         .library(name: "SlopDeskVideoClient", targets: ["SlopDeskVideoClient"]),
         // …and its two VIEW halves (docs/56 §3, the video carve). `SlopDeskVideoClient` is the decode
         // + pace + transport engine and holds no views; these are the AppKit and UIKit surfaces over
@@ -671,36 +670,18 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // macOS-only host capture + encode + input injection. USES ScreenCaptureKit / VideoToolbox /
-        // CoreGraphics / AppKit. COMPILED + code-reviewed, NEVER executed in tests: SCStream capture
-        // AND VTCompressionSession HW encode HANG without a window-server + Screen-Recording TCC
-        // session, absent in a headless test/CI run (docs/research/spikes/vtbench/RESULTS.md). The
-        // encoder/capture configs match the MEASURED spike configs exactly.
-        //
-        // The private `CGVirtualDisplay*` classes used to need a clang-module shim target here, to
-        // declare four `@interface`s and `weak_import` them. They do not any more: they are
-        // Objective-C CLASSES in the PUBLIC CoreGraphics framework, so
-        // `rust/slopdesk-apple-cgvirtualdisplay` reaches them by NAME through the Objective-C
-        // runtime — which makes the linkage attribute and the `NSClassFromString` gate one lookup —
-        // and the whole area arrives through `CSlopDeskFFI` with everything else. Nothing links
-        // them, so there is no `linkerSettings` row to keep either.
-        .target(
-            name: "SlopDeskVideoHost",
-            // CSlopDeskFFI: the host's admission laws — the constant-QP AIMD and the recovery-IDR
-            // token bucket — are `rust/slopdesk-video`, reached in process. Named directly rather
-            // than inherited through SlopDeskVideoProtocol, so the link survives that target's deps
-            // changing.
-            // SlopDeskArena: the snapshot builder fills a text arena for `window_feed_pack`
-            // (docs/55 §4c) and interns through the one implementation of that convention.
-            dependencies: [
-                "SlopDeskVideoProtocol", "CSlopDeskFFI", "SlopDeskArena",
-            ],
-            // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
-            // (SlopDeskVideoProtocol stays cross-platform; only this host layer is gated.)
-            swiftSettings: [],
-
-            linkerSettings: ffiCLibraries,
-        ),
+        // NOTE: `SlopDeskVideoHost` is GONE from this graph, with the `slopdesk-videohostd`
+        // executable that was its only shipping caller (`docs/61`). The whole host half of PATH 2 —
+        // capture, HEVC encode, the paced send lane, the packetize lane, the cursor channel, the
+        // window feed, the virtual display, input injection and the session that owned them all — is
+        // `rust/slopdesk-videohostd` now, a binary on the same two UDP sockets. It reaches
+        // ScreenCaptureKit, VideoToolbox, CoreGraphics and the accessibility tree through the
+        // `slopdesk-apple-*` family (`docs/57`), so nothing here links them any more and no FFI door
+        // was ever added for the daemon: there is no C boundary between the two halves to unpick.
+        // The private `CGVirtualDisplay*` classes used to need a clang-module shim target here too,
+        // to declare four `@interface`s and `weak_import` them; `rust/slopdesk-apple-cgvirtualdisplay`
+        // reaches them by NAME through the Objective-C runtime instead, which makes the linkage
+        // attribute and the `NSClassFromString` gate one lookup.
 
         // macOS + iOS client decode + Metal render + client-side cursor. USES VideoToolbox (decode) /
         // Metal / CoreVideo / QuartzCore. COMPILED + reviewed; decode is MEASURED-safe (~0.9-1.1ms
@@ -801,14 +782,10 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // GUI video path (PATH 2) host daemon: enumerate shareable windows, bind the UDP
-        // media+cursor sockets, run `SlopDeskVideoHostSession`. macOS-only at runtime
-        // (ScreenCaptureKit/VideoToolbox); the `main.swift` is `#if os(macOS)`-gated with a
-        // clear non-macOS error. COMPILED + reviewed; live behaviour is GUI+TCC-gated.
-        .executableTarget(
-            name: "slopdesk-videohostd",
-            dependencies: ["SlopDeskVideoHost", "SlopDeskVideoProtocol"],
-        ),
+        // (The GUI video path's host daemon is `rust/slopdesk-videohostd` — `just videohostd`,
+        // docs/61. It was a Swift executable target here only because capture, encode, the window
+        // feed and the session that owned them were Swift; all of that is Rust's now, so the binary
+        // is built by cargo and dialled over the same two UDP sockets.)
 
         // (The differential-parity oracle for the detect engine is `slopdesk-screend explain` —
         // docs/52. It was a Swift executable target here only because the rule ladder was in Swift;
@@ -819,15 +796,14 @@ let package = Package(
         // encoder, the wire and every controller it drives were reachable from Swift; they are
         // Rust's now, so the harness drives them directly.)
 
-        // Headless VideoToolbox encode/decode TIMING benchmark (perf work, not shipped product):
-        // real VideoEncoder + VideoDecoder + packetizer/FEC at the ACTUAL host configs (resolution ×
-        // LiveBitratePolicy bitrate × fps × motion) → per-frame encode latency, output size /
-        // effective bitrate (QP starvation = blur), drops, decode + packetize timing. Runs from a
-        // normal shell (VT hangs only inside xctest). macOS-only.
-        .executableTarget(
-            name: "slopdesk-perfbench",
-            dependencies: ["SlopDeskVideoHost", "SlopDeskVideoClient", "SlopDeskVideoProtocol"],
-        ),
+        // (The headless encode/decode TIMING benchmark is `rust/slopdesk-loopback-validate` —
+        // `just loopback-validate`, docs/46. `slopdesk-perfbench` was a Swift executable target here
+        // only because it drove `VideoEncoder`, `VideoDecoder` and the packetizer directly; all
+        // three are Rust now, and a Swift harness over the door would have been measuring a
+        // reimplementation rather than the object the host actually drives — the same argument
+        // docs/61 §2 made when the loopback harness followed the encoder driver instead of keeping a
+        // copy. The encode-wall findings it produced are recorded in
+        // `docs/research/perf-2026-07-04-encode-wall.md`.)
 
         // Frame-cadence watcher: SCK desktopIndependentWindow capture of ANY window (foreground
         // or background) that logs per-frame arrival timestamps + content checksums and prints a
@@ -1054,14 +1030,10 @@ let package = Package(
         // the host/client video code HANGS without a window-server + TCC session, so
         // it is COMPILED (swift build) + code-reviewed, never executed in a test.
         .testTarget(name: "SlopDeskVideoProtocolTests", dependencies: ["SlopDeskVideoProtocol"]),
-        // WF-9 host orchestrator: ONLY the PURE host-session logic is unit-tested —
-        // the session state machine (hello/helloAck/bye transitions + strict version
-        // check), the input-datagram routing decisions (inject/drop/ignore + raise
-        // latch), and the send-scheduler channel/packet ordering — all against an
-        // in-memory `VideoDatagramTransport` fake. NO SCStream / VTCompressionSession /
-        // CGEvent / live UDP socket is instantiated here (the hang-safety rule): the
-        // capture/encode/inject components are COMPILED + code-reviewed only.
-        .testTarget(name: "SlopDeskVideoHostTests", dependencies: ["SlopDeskVideoHost", "SlopDeskVideoProtocol"]),
+        // (`SlopDeskVideoHostTests` is GONE with its target — the host-session state machine, the
+        // input-datagram routing, the send scheduler and every pure policy it covered are
+        // `rust/slopdesk-videohostd`'s and `rust/slopdesk-video`'s, tested by `just videohostd-test`
+        // and `just video-test`. docs/61.)
         // WF-9 client orchestrator: ONLY the PURE client-session logic is unit-tested —
         // the client state machine (hello/helloAck/bye transitions + accept/reject + the
         // idempotent duplicate ack), the videoScale math (layer/decoded ratio + cursor

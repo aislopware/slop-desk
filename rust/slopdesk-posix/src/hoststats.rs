@@ -195,6 +195,63 @@ pub fn memory_pressure_level() -> Option<i32> {
     sysctl_scalar::<i32>("kern.memorystatus_vm_pressure_level\0")
 }
 
+/// The CPU's marketing name — `sysctl machdep.cpu.brand_string`, e.g. `Apple M2 Max`.
+///
+/// `None` when the name is unreadable or answers something that is not UTF-8. Every caller here
+/// treats that as the permissive fallback rather than as a failure: the string is used to place a
+/// chip on a ladder of framebuffer limits, and refusing to act because a `sysctl` did not answer
+/// would be a worse trade than acting on the ladder's most generous rung.
+///
+/// Two calls rather than one guess at a length: the first asks how many bytes the kernel will
+/// write, the second lends exactly that many.
+#[must_use]
+#[expect(
+    unsafe_code,
+    reason = "`sysctlbyname` has no wrapper in std or nix for a variable-length read by name"
+)]
+pub fn cpu_brand() -> Option<String> {
+    const NAME: &str = "machdep.cpu.brand_string\0";
+    let mut size: usize = 0;
+    // SAFETY: `NAME` is a NUL-terminated Rust literal, so its pointer is a valid C string. The
+    // output pointer is NULL, which is how this call is asked for the LENGTH alone and is the one
+    // case where it writes nothing through it; `size` names a live local that outlives the call.
+    let sized = unsafe {
+        libc::sysctlbyname(
+            NAME.as_ptr().cast::<libc::c_char>(),
+            std::ptr::null_mut(),
+            &raw mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if sized != 0 || size == 0 {
+        return None;
+    }
+    let mut buffer = vec![0u8; size];
+    // SAFETY: same C string. `buffer` is `size` initialised bytes this frame owns, and `size` is
+    // what the call reads before writing — so it cannot write past the allocation. Neither cell
+    // escapes, and the bytes are read afterwards only by safe code.
+    let read = unsafe {
+        libc::sysctlbyname(
+            NAME.as_ptr().cast::<libc::c_char>(),
+            buffer.as_mut_ptr().cast::<libc::c_void>(),
+            &raw mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read != 0 {
+        return None;
+    }
+    // The kernel writes a C string into the buffer it sized, so the trailing NUL is inside it.
+    buffer.truncate(size);
+    let text = buffer
+        .split(|byte| *byte == 0)
+        .next()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())?;
+    Some(text.to_owned())
+}
+
 /// One `sysctlbyname` reading a scalar of exactly `T`'s width.
 ///
 /// `name` must end in a NUL — every caller in this module is a literal that does, and taking the

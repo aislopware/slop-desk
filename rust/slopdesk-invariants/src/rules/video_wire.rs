@@ -9,9 +9,12 @@
 //! So none of these assert BEHAVIOUR. They assert SHAPE: the Swift file still calls each door, and
 //! the names a re-implementation would need are absent.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
+
+/// The Rust host, which is where every claim that used to name the Swift one now points.
+const DAEMON: &str = "rust/slopdesk-videohostd";
 
 const PACKETIZER: &str = "Sources/SlopDeskVideoProtocol/FramePacketizer.swift";
 const REASSEMBLER: &str = "Sources/SlopDeskVideoProtocol/FrameReassembler.swift";
@@ -35,6 +38,24 @@ const CLIENT_SESSION: &str = "Sources/SlopDeskVideoClient/SlopDeskVideoClientSes
 /// outside the packetizer, `slopdesk-loopback-validate`, reordering by hand after asking for an
 /// un-interleaved frame, which is the shape a mirror takes: a tool that reproduces the host's
 /// composition instead of driving it.
+///
+/// The SENDER at the top of that path is no longer Swift at all. `VideoSessionLogic` used to be
+/// asked here not to grow a second `scheduleFrame`, and `docs/61` deleted it as a face; the same
+/// question is now asked of `rust/slopdesk-videohostd`, which is the only sender left. It has to be
+/// asked, because the daemon started life with a `packetize.rs` that had re-declared the crate's
+/// own `Outgoing` and `schedule_frame_raw` — the drift is not hypothetical, it is what `docs/61 §3`
+/// deleted. The verdict must be single for the reason the golden vectors exist: what leaves this
+/// host is pinned byte-for-byte against `rust/slopdesk-video`'s composition, so a daemon-local
+/// second composition is unpinned by construction and de-syncs a client mid-session rather than
+/// failing a test. The "no Swift brings this back" half is stated tree-wide in
+/// [`crate::rules::deleted_video_swift`].
+///
+/// The ban covers the crate's own name, `schedule_frame_raw`, and not only the shorter one, because
+/// the ask above is satisfied by an IMPORT LINE. A daemon that declared its own `fn
+/// schedule_frame_raw` would still be spelling the name the ask looks for, so the ask alone would
+/// read green on precisely the file that re-derived the law. The ban is what makes the pair decide
+/// anything: one half says the daemon must reach for the crate, the other says the reach must not
+/// be to itself.
 #[must_use]
 pub fn send_path(tree: &Tree) -> Report {
     let claims = [
@@ -103,14 +124,34 @@ pub fn send_path(tree: &Tree) -> Report {
             path: "Tests/SlopDeskVideoProtocolTests/FragmentInterleaverTests.swift",
             message: "the reorder law is rust/slopdesk-video's, reached through packetize(interleave:)",
         },
-        // The dead scheduler arm went with it: it re-encoded fragments the send path had already
-        // produced as bytes, and only a test kept it alive.
-        Claim::Lacks {
-            path: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-            pattern: r"func scheduleFrame\(",
+        // The host end of the same path, now that the host is Rust. `docs/61 §3` deleted
+        // `packetize.rs` from the daemon because it had re-declared the rules crate's own
+        // `Outgoing` and `schedule_frame_raw`; the daemon ASKS for both instead.
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &[
+                "packetizer",
+                "recovery_routing",
+                "schedule_frame_raw",
+                "send_pacing",
+            ],
+            message: "rust/slopdesk-videohostd stopped naming {entry} — the send path's fragments, its \
+                      routing verdict, its raw-frame schedule and its pacing are rust/slopdesk-video's, and \
+                      a daemon that no longer asks for one of them is either deriving it or has dropped it \
+                      (docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn schedule_frame(_raw)? *\(|\b(struct|enum) Outgoing\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "VideoSendScheduler.scheduleFrame is back — the send path schedules DATAGRAMS \
-                      (scheduleFrameRaw)",
+            exempt: &[],
+            message: "rust/slopdesk-videohostd re-declares the send path's own shape in {files} — \
+                      `Outgoing` and the frame schedule are slopdesk_video::recovery_routing's, and a \
+                      daemon-local copy is a second answer to what goes on the wire, byte-for-byte \
+                      invisible to the golden vectors that pin the crate's (docs/61 §3)",
         },
     ];
     check_all(tree, &claims)
@@ -618,6 +659,26 @@ mod tests {
         );
     }
 
+    /// The Swift half of the send path, green: every door called, no builder re-grown.
+    const PACKETIZER_OK_PATH: &str = "Sources/SlopDeskVideoProtocol/FramePacketizer.swift";
+    // Both fixtures below carry REAL newlines rather than `\n\` continuations: `format_strings`
+    // reflows an escaped `\n` across a break into `\\` + `n`, which silently turns the separator
+    // into a literal letter and merges the seeded lines. The leading `\` form is immune.
+    const PACKETIZER_OK: &str = "\
+slopdesk_video_packetizer_raw(x)
+slopdesk_video_packetizer_answer(x)
+slopdesk_video_packetizer_free(x)
+slopdesk_video_fragment_encode(x)
+slopdesk_video_fragment_decode(x)
+";
+
+    /// A daemon send lane that asks the crate for every part of the send path.
+    const DAEMON_SENDER: &str = "\
+use slopdesk_video::packetizer::Packetizer;
+use slopdesk_video::recovery_routing::{VideoChannel, schedule_frame_raw};
+use slopdesk_video::send_pacing::next_release;
+";
+
     /// A deleted file coming back, including the C target that was a whole DIRECTORY.
     #[test]
     fn a_deleted_swift_backend_returning_is_caught() {
@@ -629,10 +690,7 @@ mod tests {
                  nslopdesk_video_packetizer_free(x)\nslopdesk_video_fragment_encode(x)\\
                  nslopdesk_video_fragment_decode(x)\n",
             )
-            .write(
-                "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-                "func scheduleFrameRaw() {}\n",
-            );
+            .write("rust/slopdesk-videohostd/src/sendlane.rs", DAEMON_SENDER);
         assert!(super::send_path(&fixture.tree()).is_clean());
 
         fixture.write("Sources/SlopDeskVideoProtocol/GF256.swift", "enum GF256 {}\n");
@@ -649,6 +707,67 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("GF(2^8) backend is back")),
+            "{report:?}"
+        );
+    }
+
+    /// A send path whose Swift half is green and whose Rust half has grown a second composition.
+    ///
+    /// This is the drift `docs/61 §3` actually deleted once: the daemon's own `packetize.rs` had
+    /// re-declared `Outgoing` and `schedule_frame_raw`. Every Swift claim in the rule still passes,
+    /// and the golden vectors still pin the crate — they just no longer pin what the host sends.
+    #[test]
+    fn a_daemon_that_recomposes_the_send_path_is_caught() {
+        for line in [
+            "fn schedule_frame(session: &mut Session) -> Vec<u8> { Vec::new() }\n",
+            "fn schedule_frame_raw(session: &mut Session) -> Vec<u8> { Vec::new() }\n",
+            "struct Outgoing { channel: u8 }\n",
+            "enum Outgoing { Frame, Control }\n",
+        ] {
+            let fixture = Fixture::new("video-daemon-recompose");
+            fixture
+                .write(PACKETIZER_OK_PATH, PACKETIZER_OK)
+                .write("rust/slopdesk-videohostd/src/sendlane.rs", DAEMON_SENDER);
+            assert!(super::send_path(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append("rust/slopdesk-videohostd/src/sendlane.rs", line);
+            let report = super::send_path(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("re-declares the send path's own shape")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// The failure this whole rule exists to make impossible: the ask goes quiet.
+    ///
+    /// A daemon that stopped naming `send_pacing` is not a daemon that stopped pacing — it is one
+    /// that paces somewhere the crate's suite does not reach. `MentionsUnder` fails on a drained
+    /// root for exactly that reason, so the rule cannot pass by having nothing left to check.
+    #[test]
+    fn a_daemon_that_stopped_asking_the_crate_is_caught() {
+        let fixture = Fixture::new("video-daemon-drained");
+        fixture
+            .write(PACKETIZER_OK_PATH, PACKETIZER_OK)
+            .write("rust/slopdesk-videohostd/src/sendlane.rs", DAEMON_SENDER);
+        assert!(super::send_path(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-videohostd/src/sendlane.rs",
+            "\
+use slopdesk_video::packetizer::Packetizer;
+use slopdesk_video::recovery_routing::{VideoChannel, schedule_frame_raw};
+",
+        );
+        let report = super::send_path(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("stopped naming send_pacing")),
             "{report:?}"
         );
     }

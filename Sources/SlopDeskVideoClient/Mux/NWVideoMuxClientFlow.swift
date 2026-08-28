@@ -8,7 +8,8 @@ import SlopDeskVideoProtocol
 /// host, shared across all of that host's video panes and demultiplexed by a `UInt32`
 /// channelID (``VideoMuxHeaderCodec``).
 ///
-/// This is the mirror of the host's ``NWVideoMuxDatagramTransport`` — one flow per host,
+/// This is the mirror of the host's own transport — `rust/slopdesk-videohostd`'s `mux_transport`,
+/// which asks `slopdesk_video::mux_flow` the same questions — one flow per host,
 /// N panes, the only video wire there is.
 ///
 /// ## Wire (must match the host)

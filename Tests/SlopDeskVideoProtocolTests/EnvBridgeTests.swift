@@ -174,22 +174,8 @@ final class EnvBridgeTests: XCTestCase {
         XCTAssertNil(EnvBridge.readSidecar(at: bad))
     }
 
-    // MARK: Daemon-launch overlay fold
-
-    func testLoadSidecarFillsOverlayButRealEnvWins() throws {
-        let sidecar = EnvBridge.VideoSidecar(video: VideoPreferences(qpSharp: 24, virtualDisplay: false))
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-w12-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let url = dir.appendingPathComponent("video-prefs.json")
-        try EnvBridge.writeSidecar(sidecar, to: url)
-
-        // A key already in the overlay (simulating an explicit env / earlier write) is NOT clobbered.
-        var overlay = ["SLOPDESK_QP_SHARP": "30"]
-        let applied = EnvBridge.loadSidecar(at: url, into: &overlay)
-        XCTAssertEqual(overlay["SLOPDESK_QP_SHARP"], "30") // pre-existing wins
-        XCTAssertEqual(overlay["SLOPDESK_VD"], "0") // gap filled from the sidecar
-        XCTAssertTrue(applied.contains("SLOPDESK_VD"))
-        XCTAssertFalse(applied.contains("SLOPDESK_QP_SHARP"))
-    }
+    // NOTE: the daemon-launch overlay fold's test went with the fold (docs/61 §1 row 10). Its claim
+    // — a real env var or an earlier overlay entry beats the sidecar, and only a GAP is filled — is
+    // `rust/slopdesk-videohostd`'s `env::Overlay` now, and is pinned by that crate's own suite
+    // against the same `video-prefs.json` this file still writes.
 }

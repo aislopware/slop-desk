@@ -1,7 +1,7 @@
 //! The two sockets, the three threads, and the one lock every mux decision is taken under.
 //!
-//! `Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatagramTransport.swift`, and with it the Swift faces
-//! that only reached rules through a door: `MuxFlowTable.swift`, `VideoMuxRouter.swift` and
+//! The Rust home of the Swift host's mux datagram transport, and with it the Swift faces that only
+//! reached rules through a door: `MuxFlowTable.swift`, `VideoMuxRouter.swift` and
 //! `UnboundLaneByePolicy.swift`. Those three are called DIRECTLY here —
 //! [`slopdesk_video::mux_flow`], [`slopdesk_video::mux_routing`] — so the port removes them rather
 //! than re-facing them.

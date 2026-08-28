@@ -15,6 +15,17 @@ use crate::tree::Tree;
 /// The `claude` and wrapper matches already reduced a process name in Rust while Swift kept its own
 /// reducer beside them, plus the version-directory walk and an eleven-name sensitive set with no
 /// Rust twin at all. One name, read three ways, must reduce the same way each time.
+///
+/// The BUNDLE-ID end of the vocabulary moved the same way the process end did, one document later.
+/// `HostFrontmostApp.swift` was a face over two doors and `docs/61` deleted it with the rest of the
+/// Swift host; `rust/slopdesk-videohostd` asks `slopdesk_apple_app` directly, so the claim is
+/// re-aimed at the daemon rather than dropped. It keeps saying what it always said — the host
+/// ASKS for a running application's identity rather than reaching for the framework that answers —
+/// and the ban beside it is the shape that would mean it had stopped: an `AppKit` type named in the
+/// daemon, which is the one language a second frontmost-app rule could now be written in. Every
+/// effect on the system is Rust's, but it is `slopdesk-apple-*`'s Rust, and only through `objc2`
+/// (`docs/57` §5) — a raw `NSRunningApplication` here is that floor breached and a second identity
+/// vocabulary in one move.
 #[must_use]
 pub fn one_vocabulary_for_foreground_process(tree: &Tree) -> Report {
     let claims = [
@@ -67,11 +78,27 @@ pub fn one_vocabulary_for_foreground_process(tree: &Tree) -> Report {
             message: "rust/slopdesk-agent/src/process.rs lost {entry} — the foreground vocabulary is one \
                       module",
         },
-        Claim::Names {
-            path: "Sources/SlopDeskVideoHost/HostFrontmostApp.swift",
-            needle: "slopdesk_app_bundle_id",
-            message: "Sources/SlopDeskVideoHost/HostFrontmostApp.swift stopped asking the bundle-id door — \
-                      it is a face over two doors",
+        // Named as a DIRECTORY, the way `crate::rules::video_host` argues: the daemon's window
+        // source is still being split, and this claim is about the host asking rather than about
+        // which of its files does.
+        Claim::MentionsUnder {
+            root: "rust/slopdesk-videohostd",
+            names: &["slopdesk_apple_app"],
+            message: "the daemon stopped asking {entry} — a running application's bundle id and hidden \
+                      state are that crate's, and a host that stopped asking has started reading the \
+                      framework itself (docs/57 §5, docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &["rust/slopdesk-videohostd"],
+            extensions: RUST,
+            pattern: r"\bNSRunningApplication\b|\bobjc2_app_kit\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon reaches AppKit for a running application in {files} — that is a second \
+                      identity vocabulary AND the objc2 floor breached in one line; the wrapper is \
+                      slopdesk-apple-app (docs/57 §5)",
         },
     ];
     check_all(tree, &claims)
@@ -147,9 +174,11 @@ pub fn hostd_finds_program_by_one(tree: &Tree) -> Report {
 
 #[cfg(test)]
 mod tests {
-    //! Every seed here is Rust under [`HOSTD_CRATES`](crate::paths::HOSTD_CRATES), because that is
-    //! where the drift can be written now: a Swift pattern translated by hand would match none of
-    //! the tree and the rule would pass while guarding nothing.
+    //! Almost every seed here is Rust — under [`HOSTD_CRATES`](crate::paths::HOSTD_CRATES) for the
+    //! process vocabulary, under `rust/slopdesk-videohostd` for the bundle-id half — because that
+    //! is where the drift can be written now: a Swift pattern translated by hand would match none
+    //! of the tree and the rule would pass while guarding nothing. The two Swift seeds that remain
+    //! are the two faces that are still Swift.
 
     use crate::tests::Fixture;
 
@@ -174,8 +203,8 @@ mod tests {
                  basename\nkept so the ban has a haystack\n",
             )
             .write(
-                "Sources/SlopDeskVideoHost/HostFrontmostApp.swift",
-                "slopdesk_app_bundle_id\nkept so the ban has a haystack\n",
+                "rust/slopdesk-videohostd/src/windowsource.rs",
+                "slopdesk_apple_app::bundle_id(pid)\nkept so the ban has a haystack\n",
             );
     }
 
@@ -203,6 +232,24 @@ mod tests {
         // The module that owns it, gone.
         write_one_vocabulary_for_foreground_process(&fixture);
         fixture.write("rust/slopdesk-agent/src/process.rs", "");
+        assert!(!super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
+
+        // The bundle-id half, respelled where the window source runs: AppKit reached for directly
+        // is a second identity vocabulary and the objc2 floor breached at once.
+        write_one_vocabulary_for_foreground_process(&fixture);
+        fixture.append(
+            "rust/slopdesk-videohostd/src/windowsource.rs",
+            "let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid);\n",
+        );
+        assert!(!super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
+
+        // And the daemon that stopped asking the wrapper at all — nothing is respelled here, so
+        // only the ask can fail.
+        write_one_vocabulary_for_foreground_process(&fixture);
+        fixture.write(
+            "rust/slopdesk-videohostd/src/windowsource.rs",
+            "let id = self.owner;\n",
+        );
         assert!(!super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
     }
 

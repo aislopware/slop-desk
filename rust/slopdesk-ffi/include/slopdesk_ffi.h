@@ -2388,9 +2388,6 @@ typedef struct {
   bool has_frontier;
 } SlopDeskRecoveryDecision;
 
-uint32_t slopdesk_recovery_route(const uint8_t *bytes, size_t len, bool media_flowing,
-                                 SlopDeskRecoveryDecision *out, uint16_t *frags,
-                                 size_t frags_cap);
 double slopdesk_recovery_escalation_floor_seconds(const uint8_t *raw, size_t len);
 bool slopdesk_recovery_should_escalate_to_idr(double idr_timeout_rtt_multiple,
                                               double lossy_idr_timeout_rtt_multiple,
@@ -2445,9 +2442,6 @@ double slopdesk_recovery_expected_request_loss_freeze(double per_datagram_loss, 
  *
  * `quiet_window` defaults to `heartbeat` on the Rust side; a caller with no separate window passes
  * `heartbeat` twice. */
-bool slopdesk_static_idr_should_reencode(double heartbeat, double quiet_window,
-                                         double last_complete_encode, double last_synthetic_encode,
-                                         double now, bool forced_latched, bool has_retained_buffer);
 /* Rewrites the ring IN PLACE: `events` is both the `count` timestamps held and the `cap` slots the
  * answer may use. Returns the new length; `cap` too small leaves the buffer untouched. */
 size_t slopdesk_recovery_loss_window_note(double window_seconds, size_t capacity, double *events,
@@ -2729,8 +2723,6 @@ typedef struct {
 // The display a window sits on: the one holding its CENTRE, else the LARGEST. false — there are no
 // displays at all — leaves *out untouched, and the caller then reports the window's own size as its
 // resize ceiling rather than a zero one nobody could resize to.
-bool slopdesk_window_display_for_frame(SlopDeskVideoRect frame, const SlopDeskVideoRect *displays,
-                                       size_t count, SlopDeskVideoRect *out);
 
 // DIALOG-EXPAND. `windows` is the front-to-back slice strictly IN FRONT of the target — exactly what
 // slopdesk_cgwindow_in_front_of answers — and the region is the target frame ∪ every same-pid panel
@@ -2739,24 +2731,14 @@ bool slopdesk_window_display_for_frame(SlopDeskVideoRect frame, const SlopDeskVi
 // The overlap fraction and the hysteresis delta do NOT cross: they are the crate's constants, and
 // the one caller took both defaults, so carrying them over would have made a second place to change
 // one.
-SlopDeskVideoRect slopdesk_capture_union_region(SlopDeskVideoRect target, uint32_t target_window_id,
-                                                int32_t target_pid,
-                                                const SlopDeskWindowRecord *windows, size_t count,
-                                                SlopDeskVideoRect display);
 
 // The OPAQUE pieces inside that region — the target, then each panel — so the client can mask the
 // black flank BETWEEN them, which the bounding box cannot express. The answer is the count NEEDED.
-size_t slopdesk_capture_content_rects(SlopDeskVideoRect target, uint32_t target_window_id,
-                                      int32_t target_pid, const SlopDeskWindowRecord *windows,
-                                      size_t count, SlopDeskVideoRect display,
-                                      SlopDeskVideoRect *out, size_t cap);
 
 // Whether a region change is worth acting on — every one is an encoder rebuild and an IDR.
-bool slopdesk_capture_should_retarget(SlopDeskVideoRect current, SlopDeskVideoRect desired);
 
 // Whether a window MOVE should re-origin the input and cursor mapping to the plain window frame.
 // The pair is this ABI's spelling of `CGRect?`: active_region is read only when region_active.
-bool slopdesk_capture_should_reorigin(SlopDeskVideoRect active_region, bool region_active);
 
 #define SLOPDESK_REGION_HOLD 0u
 #define SLOPDESK_REGION_EXPAND 1u
@@ -2765,9 +2747,6 @@ bool slopdesk_capture_should_reorigin(SlopDeskVideoRect active_region, bool regi
 // What a freshly measured union means for a capture currently at `current` — has_current false
 // being the plain window frame. Answers one of the three SLOPDESK_REGION_* verdicts, and writes
 // *out only for EXPAND. A null out cannot carry an expansion, so it is answered HOLD.
-uint32_t slopdesk_capture_region_decision(SlopDeskVideoRect union_global,
-                                          SlopDeskVideoRect window_frame, SlopDeskVideoRect current,
-                                          bool has_current, SlopDeskVideoRect *out);
 
 /* The cursor OVERLAY placement — bit-exact with `view_point` above, because the overlay must track
  * the same displayed pixel a click lands on at every zoom and in every letterbox. */
@@ -2787,15 +2766,7 @@ SlopDeskVideoSize slopdesk_cursor_rendered_shape_size(SlopDeskVideoSize logical,
 
 /* The `windowList` reply's arrangement: on-screen first, untitled off-screen entries dropped. The
  * windows never cross — the two flags do, and the answer is the caller's own indices. */
-size_t slopdesk_arrange_streamable_windows(const bool *on_screen, const bool *titled, size_t count,
-                                           uint32_t *order, size_t cap);
 
-double slopdesk_vd_recreate_cooldown(void);
-bool slopdesk_vd_recreate_should_attempt(double now, double last_attempt, bool has_last_attempt,
-                                         double cooldown, bool attempt_in_flight);
-size_t slopdesk_vd_channels_to_disconnect(const uint32_t *parked, size_t parked_count,
-                                          const uint32_t *live, size_t live_count, uint32_t *out,
-                                          size_t cap);
 
 /* The keepalive timing contract, and the stall threshold it is sized against. ONE record, because
  * the five numbers are one argument: the stall threshold tolerates two lost host heartbeats, and
@@ -2809,53 +2780,6 @@ typedef struct {
 } SlopDeskKeepaliveTiming;
 
 SlopDeskKeepaliveTiming slopdesk_keepalive_timing(void);
-
-/* ---------------------------------------------------------------------------- *
- * The host's four smallest send-path decisions: suppress, re-sharpen, budget, degrade.
- *
- * All by value — the far side reads every field of every one of them, and none holds anything
- * between calls. The stillness decider is a FOLD: hand back the two numbers you were last given.
- * ---------------------------------------------------------------------------- */
-
-typedef struct {
-  bool is_first_frame;
-  bool forced_keyframe_pending;
-  bool recovery_pending;
-  bool heartbeat_due;
-  bool ltr_refresh_due;
-  bool self_heal_due;
-} SlopDeskFrameObligations;
-
-typedef struct {
-  size_t consecutive_equal;
-  bool   fired_this_rest;
-} SlopDeskStillnessCrisp;
-
-typedef struct {
-  double  default_bits_per_pixel;
-  int64_t minimum_bitrate;
-} SlopDeskLiveBitrateDefaults;
-
-#define SLOPDESK_CAPTURE_ABANDON 0u
-#define SLOPDESK_CAPTURE_REBUILD_PLAIN_WINDOW 1u
-#define SLOPDESK_CAPTURE_DISCONNECT 2u
-
-bool slopdesk_should_suppress_static_frame(bool hash_equal_to_last,
-                                           SlopDeskFrameObligations obligations);
-
-SlopDeskStillnessCrisp slopdesk_stillness_crisp_new(void);
-SlopDeskStillnessCrisp slopdesk_stillness_crisp_on_frame(SlopDeskStillnessCrisp state,
-                                                         bool hash_equal_to_previous);
-bool slopdesk_stillness_crisp_should_fire(SlopDeskStillnessCrisp state, size_t rest_threshold);
-SlopDeskStillnessCrisp slopdesk_stillness_crisp_note_fired(SlopDeskStillnessCrisp state);
-
-SlopDeskLiveBitrateDefaults slopdesk_live_bitrate_defaults(void);
-double slopdesk_live_bitrate_bits_per_pixel(const uint8_t *raw, size_t raw_len);
-int64_t slopdesk_live_bitrate_target(int64_t pixel_width, int64_t pixel_height, int64_t fps,
-                                     int64_t floor, double bits_per_pixel_per_frame);
-
-uint32_t slopdesk_capture_failure_action(bool media_flowing, bool superseded,
-                                         bool is_fallback_rebuild);
 
 /* ---------------------------------------------------------------------------- *
  * The host's four bounded accumulators: the LTR map, the dedup window, the idle reaper, the
@@ -3137,148 +3061,9 @@ typedef struct {
   size_t total_len;
 } SlopDeskRetransmitSelection;
 
-SlopDeskLtrCaps slopdesk_ltr_caps(void);
-SlopDeskLtrController *slopdesk_ltr_new(void);
-void slopdesk_ltr_free(SlopDeskLtrController *handle);
-void slopdesk_ltr_record(SlopDeskLtrController *handle, uint32_t frame_id, int64_t token);
-bool slopdesk_ltr_ack(SlopDeskLtrController *handle, uint32_t frame_id, int64_t *out_token);
-void slopdesk_ltr_reset(SlopDeskLtrController *handle);
-uint32_t slopdesk_ltr_decision(SlopDeskLtrController *handle, uint32_t request,
-                               bool has_enable_ltr);
-size_t slopdesk_ltr_frames(SlopDeskLtrController *handle, uint32_t *ids, int64_t *tokens,
-                           size_t cap);
-size_t slopdesk_ltr_acked_tokens(SlopDeskLtrController *handle, int64_t *out, size_t cap);
 
-SlopDeskRecoveryDedupeDefaults slopdesk_recovery_dedupe_defaults(void);
-SlopDeskRecoveryDeduper *slopdesk_recovery_dedupe_new(double window_seconds, size_t capacity);
-void slopdesk_recovery_dedupe_free(SlopDeskRecoveryDeduper *handle);
-bool slopdesk_recovery_dedupe_admit(SlopDeskRecoveryDeduper *handle, const uint8_t *datagram,
-                                    size_t len, double now);
 
-SlopDeskIdleReaper *slopdesk_idle_reaper_new(double idle_timeout);
-void slopdesk_idle_reaper_free(SlopDeskIdleReaper *handle);
-void slopdesk_idle_reaper_note_inbound(SlopDeskIdleReaper *handle, uint32_t id, double now,
-                                       bool is_keepalive);
-size_t slopdesk_idle_reaper_reap(SlopDeskIdleReaper *handle, double now, uint32_t *out, size_t cap);
-void slopdesk_idle_reaper_forget(SlopDeskIdleReaper *handle, uint32_t id);
-bool slopdesk_idle_reaper_record(SlopDeskIdleReaper *handle, uint32_t id,
-                                 SlopDeskFlowRecord *out);
 
-SlopDeskRetransmitRing *slopdesk_retransmit_ring_new(size_t max_frames, size_t max_bytes);
-void slopdesk_retransmit_ring_free(SlopDeskRetransmitRing *handle);
-void slopdesk_retransmit_ring_record(SlopDeskRetransmitRing *handle, uint32_t frame_id,
-                                     const SlopDeskByteSpan *spans, size_t span_count,
-                                     const uint8_t *arena, size_t arena_len);
-SlopDeskRetransmitSelection slopdesk_retransmit_ring_select(SlopDeskRetransmitRing *handle,
-                                                            uint32_t frame_id,
-                                                            const uint16_t *indices,
-                                                            size_t index_count);
-bool slopdesk_retransmit_ring_take(SlopDeskRetransmitRing *handle, SlopDeskByteSpan *spans,
-                                   size_t span_cap, uint8_t *arena, size_t arena_cap);
-
-/* ---------------------------------------------------------------------------- *
- * mux_host — the host mux's three deciders: which lane a datagram belongs to,
- * which flow it replies on, and what a lane that has none is owed.
- *
- * The router and the flow table are HANDLES: the router holds up to five hundred
- * retired ids and answers one verdict per datagram, the table holds a record per
- * flow, per reply stamp and per never-admitted lane and answers a short list at
- * reap time. Neither is ever read whole. `warrants_bye` is a question about one
- * payload, so it crosses as a call.
- *
- * A flow crosses as an opaque uint64_t the caller assigns — the near side's flow
- * is an NWConnection, which the crate neither can nor wants to hold. Which object
- * an id names stays over there; which id survives a reap is answered here.
- *
- * The reap asks its caller back, because rule one needs to know whether a lane got
- * admitted inside its window and that answer lives in the router. A snapshot would
- * have to be taken before the sweep it feeds, which is the one ordering the rule
- * forbids.
- * ---------------------------------------------------------------------------- */
-
-typedef struct SlopDeskMuxRouter SlopDeskMuxRouter;
-typedef struct SlopDeskMuxFlowTable SlopDeskMuxFlowTable;
-typedef struct SlopDeskUnboundByeLimiter SlopDeskUnboundByeLimiter;
-
-#define SLOPDESK_MUX_ROUTE 0u
-#define SLOPDESK_MUX_REJECT_UNADMITTED 1u
-#define SLOPDESK_MUX_DROP_RETIRED 2u
-#define SLOPDESK_MUX_DROP_DRAINING 3u
-#define SLOPDESK_MUX_DROP_EMPTY 4u
-
-#define SLOPDESK_MUX_BOOTSTRAP_DELIVER 0u
-#define SLOPDESK_MUX_DROP_NO_STAMP 1u
-
-// Whether a lane is currently admitted, asked of whatever holds that answer. The
-// context pointer is passed straight back, untouched.
-typedef bool (*SlopDeskLaneAdmittedFn)(uint32_t channel_id, void *context);
-
-SlopDeskMuxRouter *slopdesk_mux_router_new(void);
-void slopdesk_mux_router_free(SlopDeskMuxRouter *handle);
-void slopdesk_mux_router_admit(SlopDeskMuxRouter *handle, uint32_t channel_id);
-void slopdesk_mux_router_retire(SlopDeskMuxRouter *handle, uint32_t channel_id);
-void slopdesk_mux_router_begin_drain(SlopDeskMuxRouter *handle, uint32_t channel_id);
-void slopdesk_mux_router_end_drain(SlopDeskMuxRouter *handle, uint32_t channel_id);
-bool slopdesk_mux_router_is_admitted(SlopDeskMuxRouter *handle, uint32_t channel_id);
-bool slopdesk_mux_router_is_draining(SlopDeskMuxRouter *handle, uint32_t channel_id);
-uint32_t slopdesk_mux_router_route(SlopDeskMuxRouter *handle, uint32_t channel_id,
-                                   size_t bytes_count);
-uint32_t slopdesk_mux_bootstrap_action(uint32_t decision, uint8_t channel, bool payload_is_hello,
-                                       bool payload_is_list_request);
-
-// What one inbound datagram on one lane is for, decided BEFORE any session lookup.
-//
-// `channel` is the mux envelope's channel byte, `lane_is_live` whether the registry
-// already holds a session for the lane, `mint_in_flight` whether a mint for that
-// same lane is already under way — the guard that stops a hello burst minting twice.
-//
-// The lane id does NOT cross: it is pure echo, and the caller re-attaches it near-side
-// exactly as `slopdesk_mux_router_route` documents. A NULL payload is an empty one.
-#define SLOPDESK_MUX_DISPATCH_DELIVER 0u
-#define SLOPDESK_MUX_DISPATCH_MINT 1u
-#define SLOPDESK_MUX_DISPATCH_DROP_UNBOUND 2u
-
-uint32_t slopdesk_mux_dispatch_decision(uint8_t channel, const uint8_t *payload,
-                                        size_t payload_len, bool lane_is_live,
-                                        bool mint_in_flight);
-
-// Whether this payload on this channel is a keepalive — the peek the bye limiter's
-// `warrants_bye` already made, lent so the near side stops re-spelling the control
-// grammar as a byte offset. A zero-body control message tolerates a trailing
-// remainder, and both predicates read it the same way on purpose.
-bool slopdesk_mux_payload_is_keepalive(uint8_t channel, const uint8_t *payload,
-                                       size_t payload_len);
-
-SlopDeskMuxFlowTable *slopdesk_mux_flows_new(double idle_timeout);
-void slopdesk_mux_flows_free(SlopDeskMuxFlowTable *handle);
-void slopdesk_mux_flows_accept(SlopDeskMuxFlowTable *handle, uint64_t flow, bool is_media,
-                               double now);
-void slopdesk_mux_flows_note_inbound(SlopDeskMuxFlowTable *handle, uint64_t flow, double now);
-void slopdesk_mux_flows_stamp_media_reply(SlopDeskMuxFlowTable *handle, uint32_t channel_id,
-                                          uint64_t flow);
-void slopdesk_mux_flows_stamp_media_bootstrap(SlopDeskMuxFlowTable *handle, uint32_t channel_id,
-                                              uint64_t flow, double now);
-void slopdesk_mux_flows_stamp_cursor_reply(SlopDeskMuxFlowTable *handle, uint32_t channel_id,
-                                           uint64_t flow, double now, bool is_admitted);
-void slopdesk_mux_flows_retire_lane(SlopDeskMuxFlowTable *handle, uint32_t channel_id);
-void slopdesk_mux_flows_did_reset(SlopDeskMuxFlowTable *handle, uint64_t flow, bool is_media);
-bool slopdesk_mux_flows_tracks(SlopDeskMuxFlowTable *handle, uint64_t flow);
-size_t slopdesk_mux_flows_reap(SlopDeskMuxFlowTable *handle, double now,
-                               SlopDeskLaneAdmittedFn is_admitted, void *context, uint64_t *out,
-                               size_t cap);
-size_t slopdesk_mux_flows_remove_all(SlopDeskMuxFlowTable *handle, uint64_t *out, size_t cap);
-bool slopdesk_mux_flows_media_reply(SlopDeskMuxFlowTable *handle, uint32_t channel_id,
-                                    uint64_t *out_flow);
-bool slopdesk_mux_flows_cursor_reply(SlopDeskMuxFlowTable *handle, uint32_t channel_id,
-                                     uint64_t *out_flow);
-size_t slopdesk_mux_flows_count(SlopDeskMuxFlowTable *handle);
-
-bool slopdesk_mux_warrants_bye(uint8_t channel, const uint8_t *payload, size_t payload_len);
-
-SlopDeskUnboundByeLimiter *slopdesk_mux_bye_limiter_new(double min_interval, size_t capacity);
-void slopdesk_mux_bye_limiter_free(SlopDeskUnboundByeLimiter *handle);
-bool slopdesk_mux_bye_limiter_admit(SlopDeskUnboundByeLimiter *handle, uint32_t channel_id,
-                                    double now);
 
 /* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
@@ -3414,18 +3199,12 @@ typedef struct {
   int64_t  exit_code;
 } SlopDeskInputBoxState;
 
-typedef struct {
-  size_t rendered_len;
-  size_t event_count;
-} SlopDeskIngest;
-
 SlopDeskInputBox *slopdesk_input_box_new(void);
 void   slopdesk_input_box_free(SlopDeskInputBox *handle);
 void   slopdesk_input_box_reset(SlopDeskInputBox *handle);
 SlopDeskInputBoxState slopdesk_input_box_state(SlopDeskInputBox *handle);
-SlopDeskIngest slopdesk_input_box_ingest(SlopDeskInputBox *handle, const uint8_t *bytes, size_t len);
+size_t slopdesk_input_box_ingest(SlopDeskInputBox *handle, const uint8_t *bytes, size_t len);
 size_t slopdesk_input_box_take_rendered(SlopDeskInputBox *handle, uint8_t *out, size_t cap);
-SlopDeskModeEvent slopdesk_input_box_event(SlopDeskInputBox *handle, size_t index);
 void   slopdesk_input_box_record_compose_sent(SlopDeskInputBox *handle, const uint8_t *bytes,
                                               size_t len);
 
@@ -4225,36 +4004,14 @@ size_t slopdesk_block_rerun_bytes(const uint8_t *command, size_t command_len, ui
                                   size_t cap);
 
 /* ---------------------------------------------------------------------------- *
- * The host's two admission laws: what quantiser the encoder runs at, and whether a client's
- * recovery request may force a keyframe.
+ * The quantiser ladder's tuned defaults, and nothing else.
  *
- * Both are folds over injected time and injected verdicts, so both cross whole. What does NOT cross
- * is where the knobs come from: the host resolves `SLOPDESK_QP_*` through its own overlay-aware
- * EnvConfig, so a GUI setting can beat an environment variable, and the door only ever sees the
- * resolved text or the resolved numbers. slopdesk_qp_clamped_int is that resolution's parser, and
- * it CLAMPS an out-of-range knob rather than rejecting it — a quantiser has a nearest legal value.
- *
- * They take opposite conventions, and the far side is what picks. The quantiser controller is a
- * Swift struct copied by value: its owner takes a copy, folds a report into it and writes it back,
- * and equality is part of the contract — so it crosses as a pure fold, state in and state out, with
- * no handle to alias and nothing allocated. The clean streak travels with it because it IS the
- * state; a fold that dropped it would sharpen on every clean report instead of one per interval.
- *
- * The recovery policy is a Swift final class, one per session, holding a token bucket and a ring of
- * recently sent keyframes that must not be copied by accident — so it crosses as a handle.
- * decide() answers one SLOPDESK_IDR_VERDICT_* value, and its branch order is load-bearing: refill,
- * grant-pending, stale, in-flight, rate-limited, grant. `has_last_decoded` false is the wire's
- * "nothing decoded yet", treated as maximally behind so a lost first keyframe rides the bypass.
- * A null handle answers _SUPPRESS_RATE_LIMITED, because no policy must mean no keyframe.
+ * This section used to carry the host's two admission laws — the quantiser fold and the recovery-IDR
+ * policy handle. Both are the GUI video host's, and the host is `rust/slopdesk-videohostd` now, so
+ * both folds run in-process against `slopdesk_video` with no door between (docs/61 §5). What is
+ * left is the one thing a CLIENT still asks: the values every `SLOPDESK_QP_*` parse falls back TO,
+ * so the client's own preferences hold no second copy of them.
  * ---------------------------------------------------------------------------- */
-
-typedef struct SlopDeskIdrPolicy SlopDeskIdrPolicy;
-
-#define SLOPDESK_IDR_VERDICT_GRANT 0u
-#define SLOPDESK_IDR_VERDICT_SUPPRESS_GRANT_PENDING 1u
-#define SLOPDESK_IDR_VERDICT_SUPPRESS_STALE 2u
-#define SLOPDESK_IDR_VERDICT_SUPPRESS_IN_FLIGHT 3u
-#define SLOPDESK_IDR_VERDICT_SUPPRESS_RATE_LIMITED 4u
 
 typedef struct {
   int32_t sharp;              /* the sharpest — lowest — quantiser on a clean link */
@@ -4263,312 +4020,9 @@ typedef struct {
   int32_t down_interval;      /* clean reports per one-step sharpen */
 } SlopDeskQpConfig;
 
-typedef struct {
-  SlopDeskQpConfig config;    /* already sanitised by whichever entry produced this */
-  int32_t          q;
-  int32_t          clean_streak;
-} SlopDeskQpController;
-
-typedef struct {
-  double grace_fraction;      /* the in-flight grace is this much of the smoothed round trip */
-  double grace_floor_seconds; /* covers the bootstrap, where the round trip is still zero */
-  double grace_ceil_seconds;  /* the duplicate-keyframe spacing */
-  double bucket_capacity;     /* one ordinary grant plus one casualty bypass */
-  double refill_tokens_per_second;
-  double grant_pending_timeout;
-  size_t keyframe_ring_capacity;
-} SlopDeskIdrConfig;
-
-/* The tuned defaults each knob's parse falls back TO, so the host holds no copy of them. */
+/* The tuned defaults each knob's parse falls back TO, so the caller holds no copy of them. */
 SlopDeskQpConfig  slopdesk_qp_config_default(void);
-SlopDeskIdrConfig slopdesk_idr_config_default(void);
 
-/* The three operator knobs that tune the defaults above, and the CLAMPS that make a typo
- * survivable, both on this side.
- *
- * The key NAMES cross too, NUL-separated in the order the parse expects, so the host never
- * spells `SLOPDESK_IDR_TOKENS` — it asks for the list, looks each one up through its settings
- * overlay (a raw ProcessInfo read would be invisible to a Settings write, docs/58), and lends
- * the texts back in the same slots. One pair per key rather than a blob list, so a key added
- * on the Rust side cannot silently travel as a shorter list.
- *
- * A text that will not parse leaves ONLY its own field at the default — one bad knob is one
- * bad knob, never a reset of the other two. An empty (NULL, 0) pair is an unset knob. */
-size_t slopdesk_idr_gate_keys(uint8_t *out, size_t cap);
-SlopDeskIdrConfig slopdesk_idr_config_from_env(const uint8_t *tokens, size_t tokens_len,
-                                               const uint8_t *refill_millis,
-                                               size_t refill_millis_len,
-                                               const uint8_t *grace_millis,
-                                               size_t grace_millis_len);
-
-SlopDeskQpController slopdesk_qp_new(SlopDeskQpConfig config, int32_t seed_q);
-SlopDeskQpController slopdesk_qp_decide(SlopDeskQpController controller, bool congested);
-int32_t slopdesk_qp_clamped_int(const uint8_t *raw, size_t raw_len, bool has_raw,
-                                int32_t fallback, int32_t lo, int32_t hi);
-
-SlopDeskIdrPolicy *slopdesk_idr_policy_new(SlopDeskIdrConfig config);
-void     slopdesk_idr_policy_free(SlopDeskIdrPolicy *handle);
-void     slopdesk_idr_policy_note_keyframe_sent(SlopDeskIdrPolicy *handle, uint32_t frame_id,
-                                                double now);
-void     slopdesk_idr_policy_note_keyframe_delivered(SlopDeskIdrPolicy *handle, uint32_t frame_id);
-uint32_t slopdesk_idr_policy_decide(SlopDeskIdrPolicy *handle, double now, bool has_last_decoded,
-                                    uint32_t last_decoded, double smoothed_rtt_seconds);
-double   slopdesk_idr_policy_grace(SlopDeskIdrPolicy *handle, double rtt);
-double   slopdesk_idr_policy_available_tokens(SlopDeskIdrPolicy *handle);
-
-/* ---------------------------------------------------------------------------- *
- * The live stream's rate law: what the client's periodic report folds into, and what the AIMD
- * controller does with it.
- *
- * Two types, crossing together because one is the other's only input, and both BY VALUE — each is a
- * Swift struct its owner copies out, folds into and writes back. State in, state out; no handle,
- * nothing allocated on either side on any call.
- *
- * EVERY FIELD TRAVELS, and each one is load-bearing. `rtt_inflated_streak` is what makes one noisy
- * report harmless. `prev_smoothed_rtt_millis` IS the drain gate — without it a backlog flushing out
- * walks the rate to the floor. `sample_count` is the two-fold warmup that stops the very first
- * jitter sample reading as a rise. A crossing carrying only "the interesting numbers" would be a
- * different control law that agreed on the easy cases.
- *
- * Two optionals cross as a value plus a flag, never a sentinel: a rejected round-trip sample is
- * `has_last_rtt_sample == false` (every finite millisecond is a legal reading), and an absent knee
- * or user ceiling is its flag (zero is a rate the floor forbids but a hostile state could name).
- *
- * The tunables ride INSIDE the controller, as they do inside the Rust type. What does not cross is
- * where they come from: the host resolves every `SLOPDESK_ABR_*` knob through its overlay-aware
- * EnvConfig, validate-then-default, and overwrites the fields it was given a value for —
- * slopdesk_abr_config_default() spells the defaults once, here, so Swift never spells them twice.
- *
- * slopdesk_abr_decide answers the controller AND the target AND the branch that set it, because the
- * host's `abr: actuate` debug line attributes a cut to its trigger; without the reason the gradient
- * path's efficacy is unmeasurable from logs.
- * ---------------------------------------------------------------------------- */
-
-#define SLOPDESK_ABR_REASON_WARMUP 0u
-#define SLOPDESK_ABR_REASON_HOLD 1u
-#define SLOPDESK_ABR_REASON_DRAIN 2u
-#define SLOPDESK_ABR_REASON_PROBE 3u
-#define SLOPDESK_ABR_REASON_KNEE 4u
-#define SLOPDESK_ABR_REASON_APP_LIMITED 5u
-#define SLOPDESK_ABR_REASON_RTT_STREAK 6u
-#define SLOPDESK_ABR_REASON_LOSS_CORROBORATED 7u
-#define SLOPDESK_ABR_REASON_GRADIENT 8u
-#define SLOPDESK_ABR_REASON_CATASTROPHIC 9u
-
-typedef struct {
-  double   smoothed_rtt_millis;
-  double   min_rtt_millis;      /* infinite until the first sample — the no-queue baseline */
-  double   loss_rate;           /* smoothed; for logging and trend only */
-  double   last_loss_sample;    /* RAW, per report — what the controller keys on */
-  double   owd_trend_modified;  /* diagnostics only */
-  double   last_rtt_sample_millis; /* read only when has_last_rtt_sample */
-  bool     has_last_rtt_sample;
-  bool     owd_gradient_rising; /* a two-sample hint; the controller does not consult it */
-  bool     owd_trend_overusing; /* the client's trendline — THIS is the gradient signal */
-  uint32_t last_owd_jitter_micros;
-  uint32_t sample_count;
-} SlopDeskNetEstimate;
-
-typedef struct {
-  double  loss_threshold;
-  double  severe_loss_threshold;
-  double  catastrophic_loss_threshold;
-  double  decrease_factor;
-  double  severe_decrease_factor;
-  double  ramp_utilization_fraction;
-  double  decay_utilization_fraction;
-  double  decay_headroom;
-  double  decay_step_fraction;
-  double  rtt_inflate_factor;
-  double  rtt_slack_millis;
-  double  rtt_slack_fraction;
-  double  rtt_decrease_floor_factor;
-  double  rtt_decrease_cap_factor;
-  double  min_fraction;
-  double  seed_fraction;
-  double  material_fraction;
-  double  gradient_decrease_factor;
-  int64_t increase_divisor;
-  int64_t material_floor_bps;
-  uint32_t warmup_ticks;
-  uint32_t hold_ticks;
-  uint32_t rtt_streak_ticks;
-  uint32_t cut_hold_ticks;
-  int64_t  knee_caution_divisor;
-  uint32_t knee_ttl_ticks;
-  bool     loss_needs_rtt_corroboration;
-} SlopDeskAbrConfig;
-
-typedef struct {
-  SlopDeskAbrConfig config;
-  int64_t  ceiling;
-  int64_t  floor;
-  int64_t  user_ceiling_bps;    /* read only when has_user_ceiling */
-  int64_t  current;
-  int64_t  knee_bps;            /* read only when has_knee */
-  double   prev_smoothed_rtt_millis;
-  uint32_t ticks;
-  uint32_t hold_until_tick;
-  uint32_t rtt_inflated_streak;
-  uint32_t cut_hold_until_tick;
-  uint32_t knee_expires_at_tick;
-  bool     has_user_ceiling;
-  bool     has_knee;
-  bool     gradient_cut_enabled;
-} SlopDeskAbrController;
-
-typedef struct {
-  SlopDeskAbrController controller; /* what the caller writes back */
-  int64_t  target;
-  uint32_t reason;              /* SLOPDESK_ABR_REASON_* */
-} SlopDeskAbrDecision;
-
-SlopDeskNetEstimate slopdesk_net_estimate_new(void);
-bool slopdesk_net_estimate_rtt_millis(uint32_t host_now_ms, uint32_t latest_host_send_ts,
-                                      uint32_t client_hold_ms, int64_t *out_millis);
-SlopDeskNetEstimate slopdesk_net_estimate_fold(SlopDeskNetEstimate estimate, bool has_rtt,
-                                               int64_t rtt_millis, uint32_t frames_received,
-                                               uint32_t unrecovered, uint32_t owd_jitter_micros,
-                                               uint8_t owd_trend_state,
-                                               int32_t owd_trend_modified_milli);
-
-SlopDeskAbrConfig     slopdesk_abr_config_default(void);
-SlopDeskAbrController slopdesk_abr_new(int64_t ceiling, int64_t floor, SlopDeskAbrConfig config,
-                                       bool gradient_cut_enabled);
-SlopDeskAbrController slopdesk_abr_with_ceiling(int64_t ceiling, SlopDeskAbrConfig config,
-                                                bool gradient_cut_enabled);
-int64_t slopdesk_abr_effective_ceiling(SlopDeskAbrController controller);
-SlopDeskAbrController slopdesk_abr_set_user_ceiling(SlopDeskAbrController controller,
-                                                    bool has_user_ceiling, int64_t user_bps);
-SlopDeskAbrDecision   slopdesk_abr_decide(SlopDeskAbrController controller,
-                                          SlopDeskNetEstimate estimate, bool has_offered,
-                                          double offered_bps);
-double slopdesk_abr_effective_slack(SlopDeskAbrConfig config, double min_rtt_millis);
-bool   slopdesk_abr_is_material_change(int64_t previous, int64_t target, int64_t ceiling,
-                                       SlopDeskAbrConfig config);
-// A numeric knob read out of the environment, REJECT-style: a value that does not parse, or parses
-// outside [lo, hi], yields the compile-time default rather than the nearest legal value. That is
-// the opposite reading from the quantiser clamp door, and the difference is deliberate — a
-// quantiser ordinal has a meaningful nearest legal value, a malformed rate does not, so a
-// fat-fingered `SLOPDESK_ABR_LOSS=900` must not silently run pinned at the ceiling. The double
-// form also rejects the non-finite; NaN and the infinities are never in band.
-//
-// `has_raw` is the presence flag: false means the variable is unset, and `raw`/`raw_len` are not
-// read. An exported-but-empty variable is a shell accident — it arrives as a zero-length slice,
-// fails to parse, and lands on the default by the rule rather than by a special case.
-//
-// The LOOKUP stays on the near side; only the PARSE crosses. Swift already holds the resolved
-// string, because the settings overlay is a Swift dictionary no daemon can see, so a door that
-// took a KEY would force this end to re-derive that overlay. One that takes the resolved bytes
-// borrows a buffer the caller already has and allocates nothing.
-int64_t slopdesk_abr_validated_int(const uint8_t *raw, size_t raw_len, bool has_raw,
-                                   int64_t fallback, int64_t lo, int64_t hi);
-double  slopdesk_abr_validated_double(const uint8_t *raw, size_t raw_len, bool has_raw,
-                                      double fallback, double lo, double hi);
-
-/* ---------------------------------------------------------------------------- *
- * The FRAME-RATE axis — two governors, the gate they actuate through, and the self-heal cadence
- * that follows them down.
- *
- * When the encoder cannot coarsen any further, the only way to fit the actuated rate is to send
- * FEWER frames, each with a bigger byte budget. Both governors pick from a CLEAN-DIVISOR ladder of
- * the base rate, so a governed rate is an exact multiple of the delivery slot and the cadence stays
- * a metronome — an alternating skip would deliver at irregular intervals, which is the stutter this
- * exists to avoid.
- *
- * Both cross BY VALUE, state in and state out, because both are Swift structs their owners copy.
- * What does NOT cross is the LADDER: it is a function of the base rate and the floor, both of which
- * travel, so carrying it would be carrying a derivation that could arrive disagreeing with the
- * numbers it came from. A caller that wants the rungs asks — slopdesk_fps_ladder fills a buffer
- * under §4's convention and answers how many there are. Four is the whole answer.
- *
- * The two axes are independent and compose as the MINIMUM at the hand-off, so they never fight: the
- * LINK governor steps down on network congestion, the COMPUTE pacer on encoder over-run.
- *
- * slopdesk_fps_congestion_evidence takes the BITRATE law's tunables, not its own. If the two
- * controllers disagreed about what "congested" means the frame rate would step down on evidence the
- * rate controller ignored, so the slack rule is read from one place.
- * ---------------------------------------------------------------------------- */
-
-typedef struct {
-  double  headroom_factor;      /* offered-load overage tolerated before over budget */
-  double  bytes_alpha;
-  int64_t min_fps;              /* the ladder's floor */
-  uint32_t step_down_ticks;     /* consecutive over-budget AND congested reports */
-  uint32_t step_down_hold_ticks;/* one rung per spacing window */
-  uint32_t step_up_ticks;
-  uint32_t warmup_ticks;
-} SlopDeskFpsConfig;
-
-typedef struct {
-  SlopDeskFpsConfig config;
-  double  bytes_per_frame_avg;  /* zero is UNSEEDED, and the governor never acts unseeded */
-  int64_t base_fps;
-  int64_t current_fps;
-  uint32_t ticks;
-  uint32_t over_budget_run;
-  uint32_t clean_run;
-  uint32_t down_hold_until_tick;
-} SlopDeskFpsGovernor;
-
-typedef struct {
-  SlopDeskFpsGovernor governor;  /* what the caller writes back */
-  int64_t fps;
-} SlopDeskFpsTick;
-
-typedef struct {
-  double next_due_seconds;      /* a REJECTION leaves this where it was */
-  bool   admitted;
-} SlopDeskFpsGateVerdict;
-
-typedef struct {
-  double  alpha;
-  double  down_fraction;        /* step down at this share of the CURRENT rung's budget */
-  double  up_fraction;          /* step up while fitting this share of the NEXT rung's */
-  uint32_t down_ticks;
-  uint32_t up_ticks;
-  uint32_t warmup_ticks;
-} SlopDeskFpsPacerConfig;
-
-typedef struct {
-  SlopDeskFpsPacerConfig config;
-  double  encode_millis_avg;
-  int64_t base_fps;
-  int64_t min_fps;              /* the pacer takes the floor as an argument, so it rides along */
-  int64_t current_fps;
-  uint32_t ticks;
-  uint32_t over_run;
-  uint32_t clean_run;
-} SlopDeskFpsPacer;
-
-typedef struct {
-  SlopDeskFpsPacer pacer;        /* what the caller writes back */
-  int64_t fps;
-} SlopDeskFpsPacerNote;
-
-SlopDeskFpsConfig   slopdesk_fps_config_default(void);
-size_t              slopdesk_fps_ladder(int64_t base_fps, int64_t min_fps, int64_t *out, size_t cap);
-SlopDeskFpsGovernor slopdesk_fps_governor_new(int64_t base_fps, SlopDeskFpsConfig config);
-SlopDeskFpsGovernor slopdesk_fps_governor_note_frame(SlopDeskFpsGovernor governor, int64_t bytes,
-                                                     bool is_anchor);
-SlopDeskFpsTick     slopdesk_fps_governor_tick(SlopDeskFpsGovernor governor, int64_t target_bps,
-                                               bool congested);
-bool slopdesk_fps_congestion_evidence(SlopDeskAbrConfig config, double last_loss_sample,
-                                      double smoothed_rtt_millis, double min_rtt_millis,
-                                      bool has_abr_current, int64_t abr_current,
-                                      bool has_abr_ceiling, int64_t abr_ceiling);
-
-SlopDeskFpsGateVerdict slopdesk_fps_gate_admit(double next_due_seconds, double now_seconds,
-                                               double target_interval_seconds,
-                                               double tolerance_seconds, bool forced);
-int64_t slopdesk_fps_self_heal_every(int64_t base_every, int64_t base_fps, int64_t governed_fps);
-
-SlopDeskFpsPacerConfig slopdesk_fps_pacer_config_default(void);
-double                 slopdesk_fps_budget_millis(int64_t fps);
-SlopDeskFpsPacer       slopdesk_fps_pacer_new(int64_t base_fps, SlopDeskFpsPacerConfig config,
-                                              int64_t min_fps);
-SlopDeskFpsPacerNote   slopdesk_fps_pacer_note(SlopDeskFpsPacer pacer, double encode_millis,
-                                               bool is_anchor);
 
 /* ---------------------------------------------------------------------------- *
  * The PRESENTATION DEPTH — the one-way-delay spike detector, and the policy that pays one frame of
@@ -5416,28 +4870,6 @@ typedef struct {
   uint32_t source;
 } SlopDeskCoalescedSlot;
 
-size_t slopdesk_input_coalesce_plan(const SlopDeskInputEvent *events, size_t count,
-                                    bool coalesce_scroll, SlopDeskCoalescedSlot *out, size_t cap);
-
-/* ---------------------------------------------------------------------------- *
- * The RAISE decision, which is the expensive half of injecting: six to ten synchronous
- * cross-process accessibility calls the input consumer AWAITS before the click is posted. So "does
- * this event need it" is the dominant felt input latency, and it is one reading of one event rather
- * than four call sites: a button-down ALWAYS raises, a mouse-up re-arms the latch for the next
- * event, a scroll is EXEMPT even with the latch armed (the window server sends it to the window
- * under the cursor) and does not satisfy the latch, and everything else raises only when armed.
- *
- * An event no arm answers to reads as raise: erring that way costs latency, while erring the other
- * way posts a click into a window that was never focused.
-
- * ---------------------------------------------------------------------------- */
-
-#define SLOPDESK_INPUT_RAISE_FIRST 1u
-#define SLOPDESK_INPUT_RAISE_ALWAYS 2u
-#define SLOPDESK_INPUT_RAISE_REARM 4u
-#define SLOPDESK_INPUT_RAISE_LATCH_EXEMPT 8u
-
-uint32_t slopdesk_input_raise_flags(SlopDeskInputEvent event, bool needs_raise);
 
 /* ---------------------------------------------------------------------------- *
  * The BUTTON AND MODIFIER LEDGER. The ordered consumer keeps one interaction's down, drag and up in
@@ -5467,8 +4899,6 @@ typedef struct {
   bool suppress;
 } SlopDeskInjectionPlan;
 
-SlopDeskInjectionPlan slopdesk_input_balance_plan(SlopDeskInputBalance state,
-                                                  SlopDeskInputEvent event);
 size_t   slopdesk_input_modifier_key_codes(uint16_t *out, size_t cap);
 uint16_t slopdesk_input_caps_lock_key_code(void);
 
@@ -5509,10 +4939,6 @@ typedef struct {
   bool has_source;
 } SlopDeskPlannedEvent;
 
-SlopDeskScrollPlanner slopdesk_scroll_planner_new(double inject_interval, bool coalesce_scroll);
-SlopDeskScrollPlanner slopdesk_scroll_planner_clear(SlopDeskScrollPlanner state);
-size_t slopdesk_scroll_planner_plan(SlopDeskScrollPlanner *state, const SlopDeskInputEvent *events,
-                                    size_t count, double now, SlopDeskPlannedEvent *out, size_t cap);
 
 /* ---------------------------------------------------------------------------- *
  * The three low-rate metadata wires: window geometry, swipe-nav status, app audio.
@@ -5572,10 +4998,6 @@ typedef struct {
   bool   needs_resize;  /* false when the shrink is inside the tolerance — the app is not asked */
 } SlopDeskWindowPlacement;
 
-SlopDeskWindowPlacement slopdesk_window_placement(double window_width, double window_height,
-                                                  double display_x, double display_y,
-                                                  double display_width, double display_height);
-bool slopdesk_window_fits(double width, double height, double bounds_width, double bounds_height);
 
 /* Whether launch hygiene should move a window a CRASHED daemon left parked back to the frame that
  * run recorded for it. A clean shutdown un-parks everything, so this only ever reads a sidecar a
@@ -5587,10 +5009,6 @@ bool slopdesk_window_fits(double width, double height, double bounds_width, doub
  *
  * `displays` is 4 * display_count doubles: x, y, width, height per display, in the same global
  * top-left space as the window frame (`CGDisplayBounds` / `CGWindowBounds`, both standardised). */
-bool slopdesk_window_should_restore(double current_x, double current_y,
-                                    double current_width, double current_height,
-                                    double original_x, double original_y,
-                                    const double *displays, size_t display_count);
 
 /* ---- What a HiDPI virtual display IS, before WindowServer is asked for one ---------------
  * The arithmetic half of `VirtualDisplay.swift`: everything the descriptor is filled with, and
@@ -5623,17 +5041,10 @@ typedef struct {
   double y;
 } SlopDeskVirtualDisplayOrigin;
 
-SlopDeskVirtualDisplayGeometry slopdesk_vd_geometry(int32_t point_width, int32_t point_height,
-                                                    int32_t scale, int32_t max_horizontal_pixels);
 
 /* The physical size to advertise for a target density. `target_ppi` is floored at 1.0 by an ORDERED
  * comparison, so a NaN takes the floor rather than propagating; the division and the multiplication
  * stay separate and left-to-right, because `virtualDisplayGeometry` pins both as bit patterns. */
-SlopDeskVirtualDisplaySize slopdesk_vd_size_in_millimeters(int32_t point_width, int32_t point_height,
-                                                           int32_t scale,
-                                                           int32_t max_horizontal_pixels,
-                                                           double target_ppi);
-double slopdesk_vd_default_target_ppi(void);
 
 /* Flush RIGHT of every display in `displays`, at y = 0 — the placement that can never overlap a
  * real display. `displays` is 4 * display_count doubles: x, y, width, height per display.
@@ -5642,14 +5053,11 @@ double slopdesk_vd_default_target_ppi(void);
  * standardises, and pre-abs'ing an extent while keeping the raw origin would move the right edge.
  * The fold updates only on a strict `<`, so a tie keeps the FIRST display; an empty or NULL list
  * answers the origin. */
-SlopDeskVirtualDisplayOrigin slopdesk_vd_origin_to_right(const double *displays,
-                                                         size_t display_count);
 
 /* The chip's horizontal framebuffer budget, from `machdep.cpu.brand_string`. Pro/Max/Ultra is
  * tested BEFORE the bare "apple m" prefix, so "Apple M1 Max" is the wide budget. An unknown or
  * absent brand answers the PERMISSIVE one — an over-budget create still fails safe through the
  * `displayID == 0` guard, where an over-strict limit refuses a display that would have worked. */
-int32_t slopdesk_vd_chip_pixel_limit(const uint8_t *brand, size_t brand_len);
 
 /* The refresh modes to advertise for a capture source feeding an `fps` encode, descending: the
  * 60 + 30 baseline, the capped 2:1 oversample that keeps the capture from beating against the
@@ -5658,7 +5066,6 @@ int32_t slopdesk_vd_chip_pixel_limit(const uint8_t *brand, size_t brand_len);
  * Writes into `out` only when `capacity` holds the WHOLE answer, and always returns how many rates
  * the rule produced. A return above `capacity` means nothing was written — the order is part of the
  * answer, so a truncated read is a wrong one; re-call with a buffer of the returned size. */
-size_t slopdesk_vd_refresh_rates(int32_t fps, double *out, size_t capacity);
 
 /* ---- What content size a window OPENS at, and where it lands ----------------------------
  * The sibling of the placement above, for the client's own window rather than a remoted one.
@@ -5754,10 +5161,6 @@ typedef struct {
   bool     has_prior;            /* an absent frame is not a frame of zeroes */
 } SlopDeskMintRescue;
 
-SlopDeskMintRescue slopdesk_mint_rescue_begin(uint32_t poll_attempts);
-SlopDeskMintRescue slopdesk_mint_rescue_advance(SlopDeskMintRescue state, uint32_t saw,
-                                                uint32_t outcome, double x, double y, double width,
-                                                double height);
 
 typedef struct {
   uint16_t fire_travel;
@@ -5822,30 +5225,6 @@ bool slopdesk_swipe_nav_allows_chip(SlopDeskSwipeNavStatus status, uint8_t direc
 size_t slopdesk_swipe_nav_constant(uint8_t index);
 
 /* ---------------------------------------------------------------------------- *
- * The paced-send lane's SCHEDULE. The sleeps and the abort generation are Swift concurrency and
- * stay there; the chunk boundaries, their ABSOLUTE deadlines and the skip-the-lane test are here.
- *
- * The datagrams never cross — a chunk names the caller's own array by index, so a frame's hundreds
- * of kilobytes stay where they were packetized. Measure with a null `out`, then fill.
- * ---------------------------------------------------------------------------- */
-
-typedef struct {
-  uint64_t gap_nanos;
-  uint64_t leading_delay_nanos;
-  size_t outgoing_count;
-  size_t chunk_fragments;
-} SlopDeskSendJob;
-
-typedef struct {
-  uint64_t due_nanos;
-  size_t start;
-  size_t end;
-} SlopDeskPacedChunk;
-
-size_t   slopdesk_send_pace_plan(SlopDeskSendJob job, SlopDeskPacedChunk *out, size_t cap);
-bool     slopdesk_send_may_inline(SlopDeskSendJob job, bool closed, size_t queued, bool transmitting);
-
-/* ---------------------------------------------------------------------------- *
  * The video host's whole `SLOPDESK_*` OPERATING POINT — every default, every clamp, and the
  * precedence between the pacing keys, resolved once per process.
  *
@@ -5899,158 +5278,6 @@ typedef struct {
   double client_silence_pause_seconds;
 } SlopDeskVideoHostGates;
 
-size_t slopdesk_video_host_gate_keys(uint8_t *out, size_t cap);
-bool   slopdesk_video_host_gates(const uint8_t *values, size_t len,
-                                 bool scroll_resampler_active, double keepalive_interval,
-                                 double idle_timeout, SlopDeskVideoHostGates *out);
-
-/* ---------------------------------------------------------------------------- *
- * The CAPTURE path's operating point, and the five decisions it feeds — WindowCapturer.swift.
- *
- * The same two-step shape as the host table above, and for one extra reason. Twenty-five of the
- * Swift statics this replaces read ProcessInfo DIRECTLY rather than through EnvConfig, so the
- * settings overlay (docs/58 — there is NO settings GUI) never reached them: they were knobs only an
- * exported shell variable could move. Resolving the family through one door fixes that for all
- * twenty-eight at once, and the caller can only resolve what the key list names.
- *
- * FOUR OF THE DECISIONS TAKE THE TABLE BY POINTER, not by value. They are on the per-frame path —
- * needs_frame_hash runs once per captured frame at 60 Hz — and a thirty-field aggregate copied per
- * frame is the one thing this port could plausibly make slower than the Swift it replaces. Each
- * answers INERTLY for a null table (no hash, no skip, no heal, enqueue), which is what a capturer
- * that has not resolved its gates should do.
- * ---------------------------------------------------------------------------- */
-
-#define SLOPDESK_CAPTURE_BACKLOG_ENQUEUE       0  /* append + schedule a drain                    */
-#define SLOPDESK_CAPTURE_BACKLOG_DROP_INCOMING 1  /* full: drop the newest delta — historical     */
-#define SLOPDESK_CAPTURE_BACKLOG_EVICT_OLDEST  2  /* freshest-wins: evict *evict_index, then push */
-
-typedef struct {
-  bool     motion_heartbeat;         // periodic motion IDR. Default OFF
-  bool     audio_capture;            // configure the capture audio tap. Default ON
-  bool     crisp_when_static;        // static-IDR timer re-encodes near-lossless. Default ON
-  bool     static_suppress;          // drop a pixel-identical re-delivery. Default OFF
-  bool     still_crisp;              // crisp re-anchor off identical frames. Default OFF
-  bool     scroll_reproject;         // measure scroll and send the offset. Default OFF
-  bool     adaptive_qp;              // per-frame QP ceiling from measured change. Default OFF
-  bool     idle_skip;                // drop a truly-idle frame. Default OFF; NEEDS adaptive_qp
-  bool     encode_off_queue;         // encode on its own serial queue. Default ON
-  bool     encode_pacer;             // step fps down on encode over-run. Default ON; NEEDS the queue
-  bool     freshest_wins;            // evict the oldest pending delta. Default OFF; NEEDS the queue
-  bool     self_heal_loss_gate;      // suppress the heal on a clean link. Default OFF
-  bool     debug_gaps;               // capture-gap diagnostics. PRESENCE, so =0 ENABLES it
-  uint32_t still_crisp_threshold;    // identical frames the re-anchor needs. Default 2, clamp 1…30
-  uint8_t  scroll_quantize_shift;    // luma right-shift before the row hash. Default 3, clamp 0…7
-  int32_t  adaptive_qp_sharp;        // the sharp ceiling. Default 22, clamp 1…51
-  int32_t  adaptive_qp_max;          // the coarse ceiling. Defaults to the caller's own
-  int32_t  adaptive_qp_up_ramp;      // frames to ease UP. Default 1 (instant), floor 1
-  int32_t  adaptive_qp_down_step;    // most QP per frame easing DOWN. Default 4, floor 1
-  uint32_t adaptive_qp_band_lo_milli;// changed-row band low end. Default 20, ≤ 1000
-  uint32_t adaptive_qp_band_hi_milli;// changed-row band high end. Default 300, ≤ 1000
-  int32_t  scroll_fps;               // fps cap during sustained fast scroll. 0 disables
-  uint32_t scroll_motion_threshold_milli; // changed-row fraction that IS fast scroll. Default 120
-  uint32_t scroll_motion_sustain_frames;  // the cap's debounce — the crate's own constant
-  int32_t  max_encode_pending;       // pending encodes admitted. Default 3, clamp 1…12
-  int32_t  force_compact_every;      // DIAGNOSTIC compact IDR every Nth frame. 0 disables
-  int32_t  self_heal_every;          // deltas between LTR refreshes. Default 30; 0 off; else 2…120
-  double   min_recovery_idr_interval;// SECONDS between sent recovery IDRs. 0 disables the gate
-  double   self_heal_loss_gate_threshold; // the crate's own constant, not a gate
-} SlopDeskVideoCaptureGates;
-
-size_t slopdesk_video_capture_gate_keys(uint8_t *out, size_t cap);
-// `values` is a blob list of the key texts in key order, ABSENT for a key the environment does not
-// set — which is not an empty one, and the presence gate is why. The two scalars are the inputs no
-// key carries: the encoder's own static QP ceiling (the adaptive cap's default) and the pacer's
-// EWMA weight. `false` writes nothing and means the caller built the list wrong.
-bool   slopdesk_video_capture_gates(const uint8_t *values, size_t len, int32_t max_allowed_frame_qp,
-                                    double encode_ewma_alpha, SlopDeskVideoCaptureGates *out);
-// The union of the three gates that consume the shared full-NV12 hash. Idle-skip wants it only for
-// a frame it might actually skip, which is why the change measurement is a parameter.
-bool   slopdesk_video_capture_needs_frame_hash(const SlopDeskVideoCaptureGates *gates, bool measured,
-                                               uint32_t change_milli);
-// Whether this frame may be dropped as idle. `measured` rejects the degenerate-frame fallback, which
-// also reports change 0 but on an UNMEASURABLE frame — a genuinely-unknown frame is never idle.
-bool   slopdesk_video_capture_skips_idle_frame(const SlopDeskVideoCaptureGates *gates, bool measured,
-                                               uint32_t change_milli);
-// The self-heal cadence has NO door: `08d33f2e` took the capture path's last Swift caller, and the
-// Rust daemon asks `slopdesk_video::capture_gates::CaptureGates::should_self_heal` in values form.
-// `pending_forced` is one byte per already-queued frame, oldest first, non-zero for a forced one.
-// `evict_index` is written ONLY for SLOPDESK_CAPTURE_BACKLOG_EVICT_OLDEST.
-uint8_t slopdesk_video_capture_backlog_decision(const SlopDeskVideoCaptureGates *gates,
-                                                const uint8_t *pending_forced, size_t pending_len,
-                                                bool incoming_forced, size_t *evict_index);
-// The encode-wall EWMA fold: the first sample seeds the average WHOLE — a zero-drag warm-up would
-// report a first frame as far faster than it was and let the pacer conclude it had headroom.
-double slopdesk_video_capture_fold_encode_ewma(double current, double sample_millis, double alpha);
-
-// ---- The four rules the capturer used to keep for itself ----------------------------------------
-//
-// Each was arithmetic over the table above with no framework call in it, living in
-// `WindowCapturer.swift` only because that is where the state it read happened to sit. The two
-// doubles lead in every record below, so the layout is the same under every C ABI this header is
-// read by.
-
-// The frame-by-frame state of the scroll-fps cap: what the caller writes back, and the verdict.
-typedef struct {
-  uint32_t motion_run;             // consecutive fast-scroll frames, after this one
-  int32_t  phase;                  // the Bresenham accumulator, after this one
-  bool     encode;                 // false drops this frame before the encode hand-off
-} SlopDeskVideoScrollDecimation;
-
-// The anchors the below-gate resolution carries between frames. The caller owns them and assigns
-// every field back from the resolution.
-typedef struct {
-  double  last_heartbeat;          // uptime of the last heartbeat-cadence anchor: any emitted keyframe
-  double  last_keyframe_emit;      // uptime of the last EMITTED keyframe — the recovery-IDR cooldown
-  int32_t frames_since_anchor;     // live frames since the last keyframe or LTR refresh
-  int32_t force_compact_counter;   // the DIAGNOSTIC compact-storm counter
-  bool    has_emitted_first_frame; // false only before the very first frame of this capturer
-} SlopDeskVideoEncodeAnchors;
-
-// One frame's below-gate inputs that are neither the table nor the anchors.
-typedef struct {
-  double  now;                     // uptime, the clock the anchors are stamped in — read ONCE per frame
-  double  heartbeat_interval;      // the periodic motion-IDR cadence, in SECONDS
-  double  self_heal_loss_rate;     // the folded loss EWMA; infinite before any report
-  int32_t heal_every;              // the self-heal K, REBASED at the governed fps
-  bool    keyframe_latched;        // the DRAINED forced-keyframe latch
-  bool    ltr_latched;             // the DRAINED LTR-refresh latch
-  bool    self_heal_eligible;      // whether client LTR acks are flowing
-} SlopDeskVideoEncodeFrame;
-
-// What the below-gate path does with one frame, and the anchors it leaves behind.
-typedef struct {
-  SlopDeskVideoEncodeAnchors anchors; // the advanced anchors — assign every field back
-  bool force_keyframe;                // encode this frame as an IDR
-  bool compact;                       // …and make it SMALL+coarse; never on the first frame
-  bool ltr_refresh;                   // encode it as a cheap ForceLTRRefresh P-frame instead
-} SlopDeskVideoEncodeResolution;
-
-// Whether the periodic motion IDR is due. The gate is half the question — an OFF table never is.
-bool   slopdesk_video_capture_heartbeat_due(const SlopDeskVideoCaptureGates *gates, double now,
-                                            double last_heartbeat, double interval);
-// The ASYMMETRIC adaptive-QP smoothing law. `has_previous` false seeds the smoother WHOLE.
-// Coarsening eases up by (raw - smoothed)/up_ramp floored at ONE QP so a step is never lost to
-// truncation; re-sharpening steps down by at most down_step per frame.
-int32_t slopdesk_video_capture_smooth_adaptive_qp(const SlopDeskVideoCaptureGates *gates,
-                                                  bool has_previous, int32_t previous,
-                                                  int32_t raw_qp);
-// The scroll-fps cap: a sustain-run debounce, then an even Bresenham decimation. `obligated` is the
-// OR of every reason this frame must be encoded regardless — a forced keyframe, a pending latch.
-SlopDeskVideoScrollDecimation
-       slopdesk_video_capture_scroll_decimation(const SlopDeskVideoCaptureGates *gates,
-                                                uint32_t motion_run, int32_t phase, int32_t base_fps,
-                                                bool measured, uint32_t change_milli, bool obligated);
-// The WHOLE below-gate resolution in one answer: first frame, heartbeat, the recovery-IDR cooldown
-// collapse, compact, LTR-refresh precedence, the self-heal cadence and the force-compact
-// diagnostic. A null table answers the anchors back unchanged with all three verdicts false.
-SlopDeskVideoEncodeResolution
-       slopdesk_video_capture_resolve_encode(const SlopDeskVideoCaptureGates *gates,
-                                             SlopDeskVideoEncodeAnchors anchors,
-                                             SlopDeskVideoEncodeFrame frame);
-// The synthetic 90 kHz PTS is a COUNTER, not a clock: exactly one tick past the last emitted.
-int64_t slopdesk_video_capture_synthetic_pts(int64_t last_ticks);
-// …and a real frame never reverses it. The high-water clamp, in ticks.
-int64_t slopdesk_video_capture_monotonic_pts(int64_t last_ticks, int64_t incoming_ticks);
 
 /* ---------------------------------------------------------------------------- *
  * The CLIENT's pointer and gesture policies. Every rule here belongs to a view that is never
@@ -6222,29 +5449,6 @@ uint8_t slopdesk_scroll_phase_for_gesture_state(uint8_t state);
 
 typedef struct SlopDeskSwipeNavConfig SlopDeskSwipeNavConfig;
 
-SlopDeskSwipeNavConfig *slopdesk_swipe_nav_config_parse(
-    const uint8_t *enabled, size_t enabled_len, const uint8_t *apps, size_t apps_len,
-    const uint8_t *travel, size_t travel_len, const uint8_t *slow, size_t slow_len,
-    const uint8_t *history, size_t history_len);
-void   slopdesk_swipe_nav_config_free(SlopDeskSwipeNavConfig *handle);
-bool   slopdesk_swipe_nav_config_enabled(const SlopDeskSwipeNavConfig *handle);
-double slopdesk_swipe_nav_config_fire_travel(const SlopDeskSwipeNavConfig *handle);
-bool   slopdesk_swipe_nav_config_slow_tier(const SlopDeskSwipeNavConfig *handle);
-bool   slopdesk_swipe_nav_config_history_gate(const SlopDeskSwipeNavConfig *handle);
-bool   slopdesk_swipe_nav_config_eligible(const SlopDeskSwipeNavConfig *handle,
-                                          const uint8_t *bundle_id, size_t bundle_len);
-bool   slopdesk_swipe_nav_config_window_eligible(const SlopDeskSwipeNavConfig *handle,
-                                                 const uint8_t *pane_bundle_id, size_t pane_len,
-                                                 const uint8_t *frontmost_bundle_id,
-                                                 size_t frontmost_len);
-SlopDeskSwipeNavStatus slopdesk_swipe_nav_config_status(const SlopDeskSwipeNavConfig *handle,
-                                                        const uint8_t *bundle_id, size_t bundle_len,
-                                                        bool has_history, bool can_go_back,
-                                                        bool can_go_forward);
-SlopDeskSwipeNavStatus slopdesk_swipe_nav_config_window_status(
-    const SlopDeskSwipeNavConfig *handle, const uint8_t *pane_bundle_id, size_t pane_len,
-    const uint8_t *frontmost_bundle_id, size_t frontmost_len, bool has_history, bool can_go_back,
-    bool can_go_forward);
 
 typedef struct {
   uint32_t seq;
@@ -6476,51 +5680,9 @@ typedef struct {
   bool   has_volatile_fold;
 } SlopDeskFeedPushPolicy;
 
-SlopDeskFeedConstants slopdesk_feed_constants(void);
-bool slopdesk_feed_includes(const unsigned char *owner, size_t owner_len,
-                            const unsigned char *title, size_t title_len, int32_t width_pt,
-                            int32_t height_pt);
-SlopDeskFeedShape slopdesk_feed_snapshot(const SlopDeskFeedSource *sources, size_t source_count,
-                                         const unsigned char *in_arena, size_t in_arena_len,
-                                         SlopDeskControlRecord *out_rows, size_t row_cap,
-                                         unsigned char *out_arena, size_t arena_cap);
-SlopDeskFeedShape slopdesk_feed_chunks(uint32_t generation, const SlopDeskControlRecord *rows,
-                                       size_t count, const unsigned char *arena, size_t arena_len,
-                                       SlopDeskByteSpan *out_spans, size_t span_cap,
-                                       unsigned char *out_bytes, size_t bytes_cap);
 
-SlopDeskFeedCache *slopdesk_feed_cache_new(double ttl);
-void slopdesk_feed_cache_free(SlopDeskFeedCache *handle);
-uint32_t slopdesk_feed_cache_generation(SlopDeskFeedCache *handle);
-bool slopdesk_feed_cache_needs_rebuild(SlopDeskFeedCache *handle, double now);
-void slopdesk_feed_cache_fold(SlopDeskFeedCache *handle, const SlopDeskControlRecord *rows,
-                              size_t count, const unsigned char *arena, size_t arena_len,
-                              double now);
-SlopDeskFeedShape slopdesk_feed_cache_records(SlopDeskFeedCache *handle,
-                                              SlopDeskControlRecord *out_rows, size_t row_cap,
-                                              unsigned char *out_arena, size_t arena_cap);
-SlopDeskFeedShape slopdesk_feed_cache_reply(SlopDeskFeedCache *handle, uint32_t known_generation,
-                                            bool *out_is_snapshot, SlopDeskByteSpan *out_spans,
-                                            size_t span_cap, unsigned char *out_bytes,
-                                            size_t bytes_cap);
 
-SlopDeskFeedSubscribers *slopdesk_feed_subscribers_new(double ttl, size_t capacity);
-void slopdesk_feed_subscribers_free(SlopDeskFeedSubscribers *handle);
-size_t slopdesk_feed_subscribers_count(SlopDeskFeedSubscribers *handle);
-bool slopdesk_feed_subscribers_renew(SlopDeskFeedSubscribers *handle, uint32_t channel_id,
-                                     double now);
-size_t slopdesk_feed_subscribers_reap(SlopDeskFeedSubscribers *handle, double now, uint32_t *out,
-                                      size_t cap);
-size_t slopdesk_feed_subscribers_live(SlopDeskFeedSubscribers *handle, double now, uint32_t *out,
-                                      size_t cap);
 
-uint32_t slopdesk_feed_classify(const SlopDeskControlRecord *old_rows, size_t old_count,
-                                const unsigned char *old_arena, size_t old_arena_len,
-                                const SlopDeskControlRecord *new_rows, size_t new_count,
-                                const unsigned char *new_arena, size_t new_arena_len);
-SlopDeskFeedPushPolicy slopdesk_feed_policy_new(void);
-bool slopdesk_feed_should_fold(SlopDeskFeedPushPolicy *policy, uint32_t change, double now);
-double slopdesk_feed_tick_interval(SlopDeskFeedPushPolicy policy, double now);
 
 uint32_t slopdesk_video_control_decode(const uint8_t *bytes, size_t len, SlopDeskVideoControl *out,
                                        SlopDeskControlRecord *records, size_t records_cap,
@@ -7699,25 +6861,6 @@ typedef struct {
   size_t arena;
 } SlopDeskVideoSessionShape;
 
-SlopDeskVideoSessionMachine slopdesk_video_session_new(uint32_t next_stream_id, bool full_range);
-bool slopdesk_video_session_media_flowing(SlopDeskVideoSessionMachine machine);
-void slopdesk_video_session_start(SlopDeskVideoSessionMachine *machine);
-SlopDeskVideoSessionShape slopdesk_video_session_stop(SlopDeskVideoSessionMachine *machine,
-                                                      SlopDeskVideoSessionEffect *effects,
-                                                      size_t effects_cap, uint8_t *arena,
-                                                      size_t arena_cap);
-SlopDeskVideoSessionShape slopdesk_video_session_control(
-    SlopDeskVideoSessionMachine *machine, const uint8_t *control, size_t control_len,
-    SlopDeskVideoRect window_bounds_cg, SlopDeskResolvedSize capture, SlopDeskResolvedSize resize,
-    SlopDeskResolvedSize display, SlopDeskVideoSessionEffect *effects, size_t effects_cap,
-    uint8_t *arena, size_t arena_cap);
-SlopDeskResolvedSize slopdesk_video_session_clamp_capture(SlopDeskVideoSize desired,
-                                                          SlopDeskVideoSize min,
-                                                          SlopDeskVideoSize max);
-bool slopdesk_video_session_stale_epoch(uint32_t epoch, uint32_t last_applied);
-bool slopdesk_video_fps_cap_from_wire(uint8_t raw, int64_t *cap);
-bool slopdesk_video_bitrate_ceiling_from_wire(uint32_t raw, int64_t *ceiling);
-int64_t slopdesk_video_effective_fps(int64_t governed, bool has_cap, int64_t cap);
 
 SlopDeskVideoClientMachine slopdesk_video_client_new(uint32_t target_kind, uint32_t target_id,
                                                      SlopDeskVideoSize viewport);
@@ -9042,13 +8185,11 @@ typedef struct SlopDeskInjector SlopDeskInjector;
 // the caller resolves them all through the same overlay-aware lookup (EnvConfig.string,
 // docs/58) in the same breath. SLOPDESK_INPUT_TRACE is deliberately NOT here: the
 // session's own gate table already resolves it, and it crosses as the bool below.
-size_t slopdesk_injector_gate_keys(uint8_t *out, size_t cap);
 
 // The resampler's output rate, or 0 for the direct-post path. Needed BEFORE any injector
 // exists — the scroll coalescer's default follows it, because the resampler already caps
 // the post rate and stacking the summing gate under it double-quantizes the stream. An
 // unreadable list answers the default rather than off.
-int64_t slopdesk_injector_resample_hz(const uint8_t *values, size_t len);
 
 // Builds one session's injector and starts whichever threads it needs. Never null.
 //
@@ -9060,39 +8201,30 @@ int64_t slopdesk_injector_resample_hz(const uint8_t *values, size_t len);
 // transparent reconnect rebuilds the injector while the user may still be PHYSICALLY
 // holding a drag or Command; seeding empty would classify the eventual release as an
 // orphan, suppress it, and strand the host mid-drag.
-SlopDeskInjector *slopdesk_injector_new(const uint8_t *values, size_t len, bool input_trace,
-                                        int32_t pid, uint32_t window_id, SlopDeskVideoRect bounds,
-                                        SlopDeskInputBalance held);
 
 // Stops both threads and releases the handle. Null is inert. This JOINS rather than
 // cancels: a pump still holding the shared state when the box went away would be reading
 // freed memory, so the wait is the safety property. Bounded — the only thing either
 // thread blocks on is the channel this closes.
-void slopdesk_injector_free(SlopDeskInjector *handle);
 
 // Re-points the coordinate mapping at the window's current frame, as the geometry watcher
 // sees it move.
-void slopdesk_injector_update_bounds(SlopDeskInjector *handle, SlopDeskVideoRect bounds);
 
 // Requests the raise chain for the first event of an interaction, and returns IMMEDIATELY.
 // The chain is 6-10 synchronous AX round-trips against a backgrounded target — measured at
 // 1-7 seconds — which is why it never runs on the caller's thread; on the main actor it
 // starved the main-only cursor-shape refresh for whole seconds. A display-scoped session
 // has nothing to raise and this is a no-op.
-void slopdesk_injector_raise(SlopDeskInjector *handle);
 
 // Posts one remote input event. `text` carries the text arm's bytes and is ignored by
 // every other arm — the split SlopDeskInputEvent already uses, because a string has no
 // home in a flat record and the caller is holding the datagram it came out of. false
 // means the record described no event this build answers to.
-bool slopdesk_injector_inject(SlopDeskInjector *handle, SlopDeskInputEvent event,
-                              const uint8_t *text, size_t text_len);
 
 // The held-button/held-modifier ledger, as a snapshot. The session reads this off the
 // STALE injector at teardown and threads it into the replacement's seed. A record rather
 // than a handle, per docs/55 §4b: the balance is twelve bits, and a handle for it would be
 // an allocation to leak.
-bool slopdesk_injector_balance(const SlopDeskInjector *handle, SlopDeskInputBalance *out);
 
 // ---- The WindowServer's read side ------------------------------------------------
 //
@@ -9113,20 +8245,16 @@ bool slopdesk_injector_balance(const SlopDeskInjector *handle, SlopDeskInputBala
 // already fails CLOSED on it. Read from the window list and NEVER from NSWorkspace:
 // that snapshot freezes at first access in a daemon that pumps no AppKit run loop,
 // which is the bug this door exists to have fixed.
-int32_t slopdesk_cgwindow_frontmost_pid(void);
 
 // One window's current bounds. `expected_pid` of 0 accepts any owner; anything else
 // requires that owner, because CGWindowIDs are per-boot and REUSABLE — a stale id
 // must never let the parked-window restore move an unrelated app's window. false
 // leaves *out untouched.
-bool slopdesk_cgwindow_bounds(uint32_t window_id, int32_t expected_pid,
-                              SlopDeskVideoRect *out);
 
 // Every on-screen window strictly IN FRONT of `window_id`, front-to-back, as
 // SlopDeskWindowRecord — declared with the deciders that consume it, above. The answer
 // is the count NEEDED (§4), so a caller that lent too little is told what to lend. A
 // window_id of 0 names nothing and answers 0.
-size_t slopdesk_cgwindow_in_front_of(uint32_t window_id, SlopDeskWindowRecord *out, size_t cap);
 
 typedef struct {
   SlopDeskVideoRect bounds; // CG global points, top-left origin
@@ -9137,27 +8265,22 @@ typedef struct {
 // — mirrored and sleeping ones included — rather than only the drawable ones: a
 // window on a sleeping display is not stranded, and the restore must not move it.
 // The answer is the count NEEDED (§4).
-size_t slopdesk_cgdisplay_list(bool online_only, SlopDeskCGDisplay *out, size_t cap);
 
 // The display under a point. false — the point is off every display — leaves *out
 // untouched.
-bool slopdesk_cgdisplay_under(double x, double y, SlopDeskCGDisplay *out);
 
 // One display's bounds, by id, for the callers that already hold one from
 // SCShareableContent or from the virtual display they created. An id naming no
 // display answers a zero rect, which is CoreGraphics's own answer.
-SlopDeskVideoRect slopdesk_cgdisplay_bounds_of(uint32_t display_id);
 
 // The bundle identifier of a pid, or 0 (§4's None) when it names no application — it
 // exited, it is not an app bundle, or it has no Info.plist. Every caller reads that as
 // "not eligible" and fails CLOSED. Pair it with slopdesk_cgwindow_frontmost_pid above;
 // together they are the whole frontmost read, with no AppKit on the Swift side.
-size_t slopdesk_app_bundle_id(int32_t pid, uint8_t *out, size_t cap);
 
 // Whether that app is HIDDEN (⌘H, or hidden by another app becoming active). A pid
 // naming no application answers false — the window feed reads hidden as a reason to
 // SUPPRESS a row, and a window belonging to nothing is not a window a person hid.
-bool slopdesk_app_is_hidden(int32_t pid);
 
 // ---- Keeping the Mac's SCREEN awake ---------------------------------------------------
 //
@@ -9184,16 +8307,12 @@ bool slopdesk_app_is_hidden(int32_t pid);
 
 typedef struct SlopDeskDisplayWake SlopDeskDisplayWake;
 
-SlopDeskDisplayWake *slopdesk_display_wake_new(void);
 
-void slopdesk_display_wake_free(SlopDeskDisplayWake *handle);
 
 // One more streaming desktop session; answers whether the display assertion is held.
-bool slopdesk_display_wake_acquire(SlopDeskDisplayWake *handle);
 
 // One session ended. An UNBALANCED release clamps at zero rather than underflowing —
 // a count that wrapped would hold the screen awake with no live session to release it.
-bool slopdesk_display_wake_release(SlopDeskDisplayWake *handle);
 
 // There is no `_is_held` twin here, and its absence is the rule rather than an omission: both doors
 // above already answer the state they reached, and `HostDisplayWake` reads neither. An unread door
@@ -9231,12 +8350,9 @@ typedef struct {
 // refused, or the app clamped the shrink so the window still overhangs. On the last two
 // the window is rolled BACK to where it started, so a 1x fallback captures it cleanly in
 // place rather than over-cropping a half-moved one. `out` is written only on true.
-bool slopdesk_ax_park_window(uint32_t window_id, int32_t pid, uint32_t display_id,
-                             SlopDeskAxPark *out);
 
 // Puts the window back at `frame` — the inverse of a park, ORIGIN before size, so it
 // crosses back to the roomier display before it is asked to grow.
-bool slopdesk_ax_restore_window(uint32_t window_id, int32_t pid, SlopDeskVideoRect frame);
 
 #define SLOPDESK_AX_DEMINIATURIZE_FAILED        0
 #define SLOPDESK_AX_DEMINIATURIZE_NOT_MINIMIZED 1
@@ -9245,7 +8361,6 @@ bool slopdesk_ax_restore_window(uint32_t window_id, int32_t pid, SlopDeskVideoRe
 // Un-minimizes the window so the WindowServer paints it again — a minimized window is
 // never rendered, so capturing one streams nothing. Read-then-write: a window that is
 // not minimized is left completely untouched.
-int32_t slopdesk_ax_deminiaturize(uint32_t window_id, int32_t pid);
 
 // Resizes the window and answers the size it ACTUALLY took, which is the source of truth
 // for the encoder reconfigure — the window may clamp to its own min/max.
@@ -9255,17 +8370,12 @@ int32_t slopdesk_ax_deminiaturize(uint32_t window_id, int32_t pid);
 // window on screen from its CURRENT position, so a window parked mid-screen cannot grow
 // to fill the display until it has been moved to the origin first. Lend nothing to skip
 // the re-anchor. out_width/out_height are written only on true.
-bool slopdesk_ax_resize_window(uint32_t window_id, int32_t pid, double width, double height,
-                               const SlopDeskVideoRect *displays, size_t display_count,
-                               double *out_width, double *out_height);
 
 // The budgeted minimized probe (docs/45 Phase 5): which off-screen windows are minimized
 // rather than on another Space, and which have any AX evidence of being real windows at
 // all — the feed's junk filter for the phantom entries CGWindowList reports.
 typedef struct SlopDeskAxProbe SlopDeskAxProbe;
 
-SlopDeskAxProbe *slopdesk_ax_probe_new(void);
-void slopdesk_ax_probe_free(SlopDeskAxProbe *handle);
 
 typedef struct {
   uint32_t window_id;
@@ -9288,8 +8398,6 @@ typedef struct {
 //
 // Reports the count it NEEDS. A retry re-classifies from the ledger and sweeps nothing
 // new — this tick's pids are already stamped — so it is cheap and stable.
-size_t slopdesk_ax_probe_classify(SlopDeskAxProbe *handle, const SlopDeskAxOffScreen *windows,
-                                  size_t count, double now, SlopDeskAxVerdict *out, size_t cap);
 
 // ---- The swipe-nav history gate (doc 20 §9.6) ---------------------------------------
 
@@ -9306,8 +8414,6 @@ size_t slopdesk_ax_probe_classify(SlopDeskAxProbe *handle, const SlopDeskAxOffSc
 // calls on it may overlap.
 typedef struct SlopDeskNavHistory SlopDeskNavHistory;
 
-SlopDeskNavHistory *slopdesk_nav_history_new(void);
-void slopdesk_nav_history_free(SlopDeskNavHistory *handle);
 
 typedef struct {
   bool can_go_back;     // whether Cmd-[ would navigate
@@ -9326,8 +8432,6 @@ typedef struct {
 //
 // Blocks on out-of-process IPC, bounded by a per-message cap and a scan deadline. Call
 // it OFF the main thread.
-bool slopdesk_nav_history_read(SlopDeskNavHistory *handle, int32_t pid, bool rescan_unknown,
-                               bool verify_window, SlopDeskNavFlags *out);
 
 // ---- The cursor side-channel's host end --------------------------------------------
 
@@ -9345,17 +8449,11 @@ bool slopdesk_nav_history_read(SlopDeskNavHistory *handle, int32_t pid, bool res
 typedef struct SlopDeskCursorSampler SlopDeskCursorSampler;
 
 // Builds a sampler for a window at these CG top-left bounds. Never NULL.
-SlopDeskCursorSampler *slopdesk_cursor_sampler_new(double x, double y, double width,
-                                                   double height);
-void slopdesk_cursor_sampler_free(SlopDeskCursorSampler *handle);
 
 // Retargets the sampler; call from the geometry watcher on any thread.
-void slopdesk_cursor_sampler_set_bounds(SlopDeskCursorSampler *handle, double x, double y,
-                                        double width, double height);
 
 // Counts one tick and answers whether it should go to the main thread for a fresh
 // shape. Reads the cursor seed itself — there is nothing to pass in. Sampling thread.
-bool slopdesk_cursor_sampler_should_refresh(SlopDeskCursorSampler *handle);
 
 // The encoded CursorUpdate for a mouse at these GLOBAL COCOA points (bottom-left
 // origin — the space the off-main window-server query answers in). Sampling thread.
@@ -9363,8 +8461,6 @@ bool slopdesk_cursor_sampler_should_refresh(SlopDeskCursorSampler *handle);
 // 0 until the first refresh has primed the shape id and screen height: an update sent
 // before that would name a shape the client has never been given. The answer is a
 // fixed 36 bytes, so size the buffer once and never retry.
-size_t slopdesk_cursor_sampler_position(SlopDeskCursorSampler *handle, double mouse_x,
-                                        double mouse_y, uint8_t *out, size_t cap);
 
 // Reads the displayed cursor and caches what the position path needs. MAIN THREAD
 // ONLY; a call from anywhere else answers 0 and touches nothing.
@@ -9377,155 +8473,16 @@ size_t slopdesk_cursor_sampler_position(SlopDeskCursorSampler *handle, double mo
 // primary_height is the main display's height in points, for the Cocoa-to-CG flip. It
 // is passed in because NSScreen is a different framework area than the one crate this
 // door reads its cursor from (docs/57 §2).
-size_t slopdesk_cursor_sampler_refresh(SlopDeskCursorSampler *handle, double primary_height);
 
 // Copies out the shape message the last _refresh minted.
-size_t slopdesk_cursor_sampler_answer(SlopDeskCursorSampler *handle, uint8_t *out, size_t cap);
 
 // An already-shipped shape message by id, for a client that lost the one-shot
 // shipment. 0 for an id never minted — re-reading the cursor would answer whatever is
 // displayed NOW rather than the shape asked for. Any thread.
-size_t slopdesk_cursor_sampler_shape(SlopDeskCursorSampler *handle, uint16_t shape_id,
-                                     uint8_t *out, size_t cap);
 
 // Whether a refresh changed the shape id since this was last asked, and CLEARS the
 // flag. Taken rather than read so the caller emits exactly one extra position update
 // per change — the client switches its pointer on the next update carrying the new id.
-bool slopdesk_cursor_sampler_take_id_change(SlopDeskCursorSampler *handle);
-
-// ---- The HEVC encoder ---------------------------------------------------------------
-
-// THE ONE DOOR THAT CALLS BACK. Every other entry point in this header answers when
-// asked; this one hands frames over when VideoToolbox says so, on a thread VideoToolbox
-// chose. That is a THIRD convention beside the (out, cap) -> needed one at the top of
-// this header and the handle one below it, and it exists for exactly one reason: a
-// finished frame must reach the wire before the next one arrives 16 ms later, and both
-// existing conventions require the caller to ask. Polling would be latency added on
-// purpose to preserve a rule about shapes.
-//
-// Its terms:
-//   * The callback's (avcc, len) is borrowed for the duration of the call. COPY IT.
-//   * It runs on a framework thread, never reentrantly into the handle.
-//   * It is registered once, at _new, and never changed.
-//   * The context must outlive the handle. Free the handle first.
-//
-// Behind it: the session (slopdesk-apple-vt), every knob resolved and clamped
-// (slopdesk_video::encoder_config), and the whole rate-control state machine — the
-// crisp and compact brackets, the three quantiser regimes, the drop-relief integrator,
-// the deferred restore (slopdesk_video::encoder_state). The caller keeps the capture
-// queue, the pixel buffers, and the send path.
-//
-// COPIES: a delta frame whose block buffer is contiguous — the ordinary case — is handed
-// over where the encoder left it, so the caller's own Data(bytes:count:) is the only copy
-// in the system. A keyframe costs one more, because HEVC parameter sets live in the
-// format description rather than inline and have to be laid down in front of the slice.
-typedef struct SlopDeskVideoEncoder SlopDeskVideoEncoder;
-
-// One finished frame. ltr_token is meaningful only when has_ltr_token is true — a token
-// may legitimately be any int64_t, so no value is reserved as a sentinel.
-typedef void (*SlopDeskEncodedFrameFn)(void *context, const uint8_t *avcc, size_t len,
-                                       bool keyframe, bool crisp, int64_t ltr_token,
-                                       bool has_ltr_token, bool acked_anchored);
-
-// Creates a hardware HEVC session and applies the whole low-latency configuration.
-//
-// NULL when the session could not be created or a latency-critical property was rejected
-// — RealTime, AllowFrameReordering, AverageBitRate and DataRateLimits, whose silent
-// failure would leave a session that looks configured and encodes like the default one.
-// Everything else is best-effort: several of the quantiser keys are rejected outright on
-// some HEVC encoders, and aborting on one would yield a stream of zero frames rather than
-// a soft one. status_out takes the framework's OSStatus when non-NULL.
-//
-// qp_decouple is the one knob a graphical setting may override; every other knob is read
-// from the environment on the far side. context is carried, unread, to every callback.
-SlopDeskVideoEncoder *slopdesk_video_encoder_new(int32_t width, int32_t height,
-                                                 int64_t bitrate, int64_t fps,
-                                                 bool full_range, bool ltr_enabled,
-                                                 bool qp_decouple, void *context,
-                                                 SlopDeskEncodedFrameFn deliver,
-                                                 int32_t *status_out);
-
-// Drains and tears down. The drain is not the caller's to remember: a session
-// invalidated with frames still queued silently discards output that was already
-// encoded, so completing first is part of what freeing MEANS here.
-void slopdesk_video_encoder_free(SlopDeskVideoEncoder *handle);
-
-// One live frame. per_frame_max_qp is read only when has_per_frame_max_qp is true —
-// the content-driven ceiling being ABSENT is not the same as it being zero. Answers the
-// framework's OSStatus; 0 is success.
-int32_t slopdesk_video_encoder_encode_live(SlopDeskVideoEncoder *handle,
-                                           const void *pixel_buffer,
-                                           int64_t presentation_value,
-                                           int32_t presentation_timescale,
-                                           bool force_keyframe, int32_t per_frame_max_qp,
-                                           bool has_per_frame_max_qp);
-
-// The near-lossless static refresh: bracketed, drained on both sides, sharp. Restoring
-// before the frame has finished is what silently ships a SOFT crisp frame, encoded at
-// the live ceiling — which is why the drain is inside this door rather than beside it.
-int32_t slopdesk_video_encoder_encode_crisp(SlopDeskVideoEncoder *handle,
-                                            const void *pixel_buffer,
-                                            int64_t presentation_value,
-                                            int32_t presentation_timescale);
-
-// A recovery or heartbeat intra frame small enough to survive a burst — the crisp
-// bracket inverted, ceiling up and target down. Tagged as an ordinary keyframe on the
-// wire, because that is what it is. By default its restore is DEFERRED to the next
-// encode with no drain at all: two drains at ~115 ms of blocked capture each, six times
-// a second under a recovery storm, IS the scroll judder.
-int32_t slopdesk_video_encoder_encode_compact(SlopDeskVideoEncoder *handle,
-                                              const void *pixel_buffer,
-                                              int64_t presentation_value,
-                                              int32_t presentation_timescale);
-
-// A cheap refresh anchored on an ACKNOWLEDGED long-term reference — no decoder flush and
-// a fraction of the bytes of a recovery IDR. Deliberately unbracketed: the brackets exist
-// to shape an intra frame, and this is the alternative to one. A no-op reference when the
-// session was created with ltr_enabled false.
-int32_t slopdesk_video_encoder_encode_ltr_refresh(SlopDeskVideoEncoder *handle,
-                                                  const void *pixel_buffer,
-                                                  int64_t presentation_value,
-                                                  int32_t presentation_timescale);
-
-// Actuates the live target, clamped into [minimum, ceiling]. Answers whether it changed.
-// The write is SKIPPED while a bracket is mid-relax; that bracket's restore applies it,
-// from its own fresh read, which is why the restore writes both rate knobs rather than
-// only the one it relaxed.
-bool slopdesk_video_encoder_set_live_bitrate(SlopDeskVideoEncoder *handle, int64_t target);
-
-// The link controller's constant quantiser, and its congestion verdict. Both are no-ops
-// unless const-QP mode is engaged, and neither writes anything: they clear the frame memo
-// so the NEXT frame re-pins under the new band. Callable per network report.
-bool slopdesk_video_encoder_set_const_qp(SlopDeskVideoEncoder *handle, int32_t q);
-bool slopdesk_video_encoder_set_link_congested(SlopDeskVideoEncoder *handle, bool congested);
-
-// The rate-control window's frame-rate hint. Deliberately NOT paired with a bitrate
-// change: fewer frames sharing the same budget is bigger, sharper frames, which is the
-// point of stepping the rate down.
-void slopdesk_video_encoder_set_expected_frame_rate(SlopDeskVideoEncoder *handle, int64_t fps);
-
-// Stages a token the client acknowledged decoding, deduplicated and bounded to the most
-// recent few. _clear drops every staged token, and the caller must call it when a
-// keyframe ships: an IDR flushes the client's picture buffer, long-term references
-// included, so a pre-IDR acknowledgement names a reference that is gone.
-void slopdesk_video_encoder_stage_acked_token(SlopDeskVideoEncoder *handle, int64_t token);
-void slopdesk_video_encoder_clear_staged_tokens(SlopDeskVideoEncoder *handle);
-
-// Blocks until every frame presented so far has reached the callback. Call before
-// dropping an encoder on a resize swap.
-int32_t slopdesk_video_encoder_complete_frames(SlopDeskVideoEncoder *handle);
-
-// The three knobs the CAPTURER and the session builder need before an encoder exists —
-// the pure convention reduced to its smallest case, no buffer, because each answer is one
-// number. ZERO IS ABSENT throughout, and that is not a reserved value dressed up as one:
-// the HEVC quantiser range starts at 1, so zero cannot be a real answer to any of them.
-int64_t slopdesk_video_encoder_default_bitrate(void);
-int32_t slopdesk_video_encoder_max_allowed_frame_qp(void);
-
-// The const-QP seed, or 0 when the mode is off. PRESENCE engages the mode, so ask this
-// rather than reading the variable: a knob whose text is not a number leaves it off, and
-// only this door knows that.
-int32_t slopdesk_video_encoder_const_qp(void);
 
 // ---- The capture stream -------------------------------------------------------------
 //
@@ -9534,9 +8491,21 @@ int32_t slopdesk_video_encoder_const_qp(void);
 // the backlog pacer, the adaptive-QP measurement, the scroll reprojection, the static-IDR
 // timer — is the caller's and stays there.
 //
-// The callback convention is the encoder's above, term for term: borrowed pointers valid
-// only for the duration of the call, registered once at _start and never changed, and a
-// context that outlives the handle.
+// THE ONE DOOR THAT CALLS BACK, now that the HEVC encoder's has gone. Every other entry
+// point in this header answers when asked; this one hands frames over when
+// ScreenCaptureKit says so, on a thread ScreenCaptureKit chose. That is a THIRD convention
+// beside the (out, cap) -> needed one at the top of this header and the handle one below
+// it, and it exists for the same reason the encoder's did: a delivered frame must reach
+// the encoder before the next one arrives 16 ms later, and both existing conventions
+// require the caller to ask. Polling would be latency added on purpose to preserve a rule
+// about shapes.
+//
+// Its terms:
+//   * Every pointer the callback is handed is borrowed for the duration of the call.
+//     COPY WHAT YOU KEEP.
+//   * It runs on a framework thread, never reentrantly into the handle.
+//   * It is registered once, at _start, and never changed.
+//   * The context must outlive the handle. Free the handle first.
 //
 // THE QUEUES ARE THE CALLER'S, and that is load-bearing. The frame queue must be the same
 // serial queue the caller's static-IDR timer runs on — that sharing IS the discipline
@@ -9599,38 +8568,25 @@ typedef struct {
 // window server), -3 nothing matching the id, -4 not reconfigurable.
 //
 // BLOCKS on the framework, and needs a window server plus a Screen-Recording grant.
-SlopDeskCapture *slopdesk_capture_start(const SlopDeskCaptureDesc *desc, void *context,
-                                        SlopDeskCaptureFrameFn frame,
-                                        SlopDeskCaptureAudioFn audio,
-                                        SlopDeskCaptureStoppedFn stopped,
-                                        const void *frame_queue, const void *audio_queue,
-                                        int32_t *status_out);
 
 // Stops the capture and waits for the framework to confirm; 0 is success. Separate from
 // _free because a caller stops on its teardown path and frees when the last reference
 // goes, and those are not the same moment.
-int32_t slopdesk_capture_stop(SlopDeskCapture *handle);
 
 // Releases the handle. Does NOT stop the stream — call _stop first.
-void slopdesk_capture_free(SlopDeskCapture *handle);
 
 // Re-origins a display-anchored crop after the window moved, in GLOBAL points. 1 when the
 // move was under half a point and not worth a reconfigure, 0 when the live stream took the
 // new crop, negative otherwise. Force a keyframe after a 0: the crop jump lands mid-GOP as
 // a whole-frame delta, and an anchor right after it is what keeps a late-joining client
 // from decoding half of each.
-int32_t slopdesk_capture_reanchor(SlopDeskCapture *handle, double x, double y);
 
 // Resizes a display-anchored capture in place, keeping the crop's origin; 0 is success.
 // -4 for a stream this is not allowed on — the caller restart-fallbacks. On a framework
 // refusal the stream keeps running at the OLD size rather than dying.
-int32_t slopdesk_capture_resize(SlopDeskCapture *handle, int32_t pixel_width,
-                                int32_t pixel_height);
 
 // Whether the crop is anchored to a DISPLAY rather than to the window's backing store,
 // and whether it is a poller-owned union region — an in-place resize must not touch one.
-bool slopdesk_capture_is_display_anchored(const SlopDeskCapture *handle);
-bool slopdesk_capture_is_union_anchored(const SlopDeskCapture *handle);
 
 // The capture rules, with no stream in the room. _hz is the same resolution _start
 // applies, exposed because the caller's cadence gate takes its tolerance from it, so the
@@ -9639,19 +8595,11 @@ bool slopdesk_capture_is_union_anchored(const SlopDeskCapture *handle);
 // The surface queue depth is NOT here. It is resolved inside _start and written straight
 // onto the SCStreamConfiguration; no caller compares against it the way the cadence gate
 // compares against _hz, so a second way to ask would be a face with no reader.
-int32_t slopdesk_capture_hz(int32_t fps);
-double slopdesk_capture_heartbeat_seconds(void);
-double slopdesk_capture_quiet_window(double heartbeat);
-double slopdesk_capture_idr_tick(void);
-bool slopdesk_capture_can_resize_in_place(bool enabled, bool display_anchored,
-                                          bool union_owned);
 
 // Which filter to build, as one of the SLOPDESK_CAPTURE_MODE_* above. The request arrives
 // as TEXT from the caller rather than being read on the far side, because the caller
 // resolves it through a settings overlay in front of the environment — a graphical setting
 // can force the capture filter, and an empty overlay reads exactly like a bare lookup.
-int32_t slopdesk_capture_mode(const uint8_t *raw, size_t len,
-                              bool prefer_display_anchored);
 
 // ---- The AAC-ELD audio encoder ---------------------------------------------------
 //
@@ -9685,28 +8633,16 @@ typedef struct {
 // silently dropping to raw PCM is sixteen times the bitrate on a link sized for the other number.
 // _bitrate_bps answers SLOPDESK_AUDIO_BITRATE clamped into the band, and is never 0: text that is
 // not a number answers the default, not the floor.
-uint8_t  slopdesk_audio_wire_format(void);
-uint32_t slopdesk_audio_bitrate_bps(void);
 
-SlopDeskAudioEncoder *slopdesk_audio_encoder_new(uint8_t format, uint32_t bitrate_bps);
-void slopdesk_audio_encoder_free(SlopDeskAudioEncoder *handle);
 
 // The wire config, when there is one. false means "do not send a config packet yet": the PCM arm
 // answers from the first call, the AAC arm only once its converter has built. A NULL `out` is a
 // presence probe and answers true without writing.
-bool   slopdesk_audio_encoder_config(SlopDeskAudioEncoder *handle,
-                                     SlopDeskAudioEncoderConfig *out);
 // The magic cookie the client decoder is initialised from, under §4's size-then-fetch convention.
 // Empty for the PCM arm — there is no codec to describe.
-size_t slopdesk_audio_encoder_cookie(SlopDeskAudioEncoder *handle, uint8_t *out, size_t cap);
 // Whether the converter REFUSED to build: a permanently silent lane, not a transient.
-bool   slopdesk_audio_encoder_failed(SlopDeskAudioEncoder *handle);
 // Drops the sub-block remainder AND the codec's carried state — the enable transition.
-void   slopdesk_audio_encoder_reset(SlopDeskAudioEncoder *handle);
 
-size_t slopdesk_audio_encoder_push_sample_buffer(SlopDeskAudioEncoder *handle,
-                                                 const void *sample_buffer,
-                                                 SlopDeskAudioPayloadFn sink, void *context);
 
 // ---- The HiDPI virtual display ------------------------------------------------------
 //
@@ -9731,27 +8667,13 @@ typedef void (*SlopDeskVirtualDisplayTerminatedFn)(void *context);
 
 // Whether this machine's CoreGraphics actually publishes the four classes. Answered by the
 // runtime lookup itself, so a false here is the same fact `_create` would return 0 for.
-uint32_t slopdesk_virtual_display_private_classes_available(void);
-SlopDeskVirtualDisplay *slopdesk_virtual_display_new(void);
-void slopdesk_virtual_display_free(SlopDeskVirtualDisplay *handle);
 
 // Points and scale, not pixels: the caller asks for the layout it wants and the scale it
 // wants it backed at. `max_horizontal_pixels` is the chip's own limit
 // (`slopdesk_vd_chip_pixel_limit`), and `name` is `(ptr, len)` UTF-8 as everywhere else.
-uint32_t slopdesk_virtual_display_create(const SlopDeskVirtualDisplay *handle,
-                                         uint32_t point_width, uint32_t point_height,
-                                         uint32_t scale, uint32_t max_horizontal_pixels,
-                                         uint32_t fps,
-                                         const uint8_t *name, size_t name_len);
-uint32_t slopdesk_virtual_display_id(const SlopDeskVirtualDisplay *handle);
-uint32_t slopdesk_virtual_display_scale(const SlopDeskVirtualDisplay *handle);
 
 // A NULL callback disarms. The context is opaque and never freed here — see the barrier
 // note above for the one moment at which the caller may release it.
-void slopdesk_virtual_display_set_terminated(const SlopDeskVirtualDisplay *handle,
-                                             SlopDeskVirtualDisplayTerminatedFn callback,
-                                             void *context);
-void slopdesk_virtual_display_destroy(const SlopDeskVirtualDisplay *handle);
 
 // ---- The controlling terminal, and the write that finishes ---------------------------
 //

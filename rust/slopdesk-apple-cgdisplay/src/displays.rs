@@ -4,8 +4,8 @@ use core::ptr;
 
 use objc2_core_foundation::CGPoint;
 use objc2_core_graphics::{
-    CGDirectDisplayID, CGDisplayBounds, CGError, CGGetActiveDisplayList, CGGetDisplaysWithPoint,
-    CGGetOnlineDisplayList,
+    CGDirectDisplayID, CGDisplayBounds, CGDisplayPixelsWide, CGError, CGGetActiveDisplayList,
+    CGGetDisplaysWithPoint, CGGetOnlineDisplayList,
 };
 use slopdesk_video::geometry::{VideoPoint, VideoRect};
 
@@ -24,6 +24,28 @@ pub struct Display {
 pub fn bounds_of(display: CGDirectDisplayID) -> VideoRect {
     let rect = CGDisplayBounds(display);
     VideoRect::xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+}
+
+/// One display's BACKING ratio: its pixels divided by its points. Two on a Retina display, one
+/// otherwise, and whatever a virtual display was actually granted.
+///
+/// Read rather than assumed, because it is the only number that ties a capture's pixel dimensions
+/// to the points every coordinate on the wire is expressed in. A display whose bounds cannot be
+/// read answers one — a soft picture, where a zero would be no picture at all.
+#[must_use]
+pub fn backing_scale(display: CGDirectDisplayID) -> f64 {
+    let points = bounds_of(display).size.width;
+    if points <= 0.0 {
+        return 1.0;
+    }
+    // `CGDisplayPixelsWide` is generated safe: an id in, a count out. The count is a pixel width,
+    // so it is exact in `f64` for every display that exists and every one that ever will.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a display's pixel width is exact in f64 far past any panel that exists"
+    )]
+    let pixels = CGDisplayPixelsWide(display) as f64;
+    pixels / points
 }
 
 /// The two-call enumeration both display lists use: ask for the count, lend a buffer of exactly

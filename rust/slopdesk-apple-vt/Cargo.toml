@@ -37,11 +37,14 @@
 #    allocated, at a length the framework itself just reported. Nothing foreign is dereferenced —
 #    the same shape `slopdesk-apple-ax` uses for `AXValueGetValue`.
 #
-# What is NOT here: turning a `(pointer, length)` the framework hands out into a slice. The HEVC
-# parameter sets arrive that way, and `slice::from_raw_parts` is a Rust obligation, not a framework
-# one, so [`EncodedSample::parameter_sets`] answers the pairs as VALUES and `slopdesk-ffi` — whose
-# entire `unsafe` remit is "is this `(ptr, len)` live for the duration of this call" — makes the
-# slices, with the owning sample still borrowed for the call that reads them.
+# And one that is RUST's rather than a framework's: turning a `(pointer, length)` the framework
+# hands out into a slice. That is `docs/57` §2's sample-memory amendment, which this crate is on the
+# named list for, at a site count `slopdesk-invariants` ratchets — the HEVC parameter sets, which
+# CoreMedia publishes as a bare pointer with no copy-out variant anywhere, and each of a locked
+# `CVPixelBuffer`'s two planes. It lives here because the alternative no longer exists: the doors
+# these feed are Rust daemons that `forbid(unsafe_code)`, and the shim that used to make the slices
+# is no longer on the path. No pointer into framework memory leaves this crate — `EncodedSample`
+# answers COPIES and `Locked` answers BYTES.
 #
 # ## TWO framework areas, on two different sets of slices
 # Compression is macOS-only: only the host encodes. Its doors are declared inside `slopdesk_ffi.h`'s

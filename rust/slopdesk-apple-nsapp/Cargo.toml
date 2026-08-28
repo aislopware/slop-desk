@@ -1,0 +1,137 @@
+# `slopdesk-apple-nsapp` — `NSApplication`: this process's own application object, and its loop.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# Three calls and no decisions: connect this process to the window server without giving it a Dock
+# tile or a menu bar, run the main event loop, or drain the main dispatch queue. WHICH loop a daemon
+# runs is `slopdesk-videohostd`'s argv, not this crate's — it is the one caller and it decides.
+#
+# It is a SEPARATE crate from `slopdesk-apple-app` even though both are AppKit, because §2's unit is
+# one framework AREA and these are two: `NSRunningApplication` resolves OTHER processes, this one is
+# about THIS process — its window-server connection, its activation policy and its run loop. A
+# reviewer of one holds a different question from a reviewer of the other.
+#
+# ## The `unsafe` in this crate: NONE
+# `objc2-app-kit` generates `sharedApplication`, `setActivationPolicy:` and `run` SAFE, each gated
+# behind a `MainThreadMarker` that states AppKit's own thread rule in the type system, and
+# `dispatch2::dispatch_main` is safe as well. There is no `#[expect(unsafe_code)]` anywhere in it,
+# and NEITHER CoreFoundation admission (§2's `CFRetained::from_raw` / `CFRetained::retain`) is spent:
+# no CoreFoundation object crosses this crate's boundary at all.
+#
+# `unsafe_code` is `deny` rather than `forbid` for a reason that is a GATE and not a preference:
+# `crate_policy::unsafe_policy` treats every `rust/slopdesk-apple-*` manifest as exempt by NAME and
+# then requires each exempt manifest to state exactly `unsafe_code = "deny"`, because the per-site
+# `#[expect]` audit depends on that level. A `forbid` here fails `just lint-invariants`.
+# `slopdesk-apple-app` — the family's other zero-`unsafe` crate — carries `deny` for the same reason.
+#
+# ## macOS ONLY
+# Every module is `#[cfg(target_os = "macos")]` and the dependencies are target-gated, so the crate
+# compiles to nothing elsewhere — `docs/57` §3.5. It follows `slopdesk-apple-cgvirtualdisplay` rather
+# than `slopdesk-apple-app` in offering no non-macOS twins: `slopdesk-ffi` does not link it, its one
+# caller is a macOS-only daemon, and a diverging function has no honest shape on a platform with no
+# main run loop to run.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-nsapp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "NSApplication for slopdesk — the window-server connection and the main event loop"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_nsapp"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+# `MainThreadMarker` only. It is the whole thread argument this crate makes: an `Option`, so an
+# off-main caller is REFUSED rather than trapped.
+objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  # The class itself, and `run`.
+  "NSApplication",
+  # `sharedApplication` lives in an impl gated on this — `NSApplication` is an `NSResponder`, and
+  # without the feature the constructor is simply absent rather than taking a different marker.
+  "NSResponder",
+  # `setActivationPolicy:` and the `NSApplicationActivationPolicy::Accessory` constant are BOTH
+  # generated into the running-application header, so the accessory policy is gated on it.
+  "NSRunningApplication",
+] }
+# `dispatch_main()`, the default path's run loop. `slopdesk-apple-sck` asks this crate for `objc2`
+# as well; that feature buys the queue-argument APIs, and nothing here takes a queue.
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
+
+# Mirrors the rest of the family's: this is linked into the same daemon.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` for the
+# gate reason spelled out in the header above; this crate writes none.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

@@ -25,22 +25,20 @@
 //! The above is the PURE convention and covers every function whose answer is a function of its
 //! arguments. What it cannot cover is a thing that IS memory — [`replay::SlopDeskReplay`], up to
 //! 256 MiB of retained PTY output appended on every chunk; [`blocks`]'s ring of command blocks;
-//! [`rate_control::SlopDeskIdrPolicy`]'s token bucket — so those use the HANDLE convention
-//! documented in their modules: Rust owns the object, the caller holds an opaque token, and answers
-//! are still read out with `(out, cap) -> needed`. Adding a third convention is a design change,
-//! not a patch.
+//! [`blob::SlopDeskBlobAssembler`]'s partial icons — so those use the HANDLE convention documented
+//! in their modules: Rust owns the object, the caller holds an opaque token, and answers are still
+//! read out with `(out, cap) -> needed`. Adding a third convention is a design change, not a patch.
 //!
 //! Which of the two a port takes is decided by the FAR side, not this one. A Swift `struct` copied
 //! by value cannot be a handle without two owners silently aliasing one allocation, so it crosses
-//! as a pure fold over its own state — see [`rate_control::SlopDeskQpController`]. A Swift `final
-//! class` deliberately held by reference can be a handle, and should be.
+//! as a pure fold over its own state. A Swift `final class` deliberately held by reference can be a
+//! handle, and should be.
 //!
 //! ## What must never appear in this file
 //! A decision. No branch that means something, no default that encodes policy, no error mapped to
 //! a different error. If a change here needs a paragraph about terminals, it is in the wrong crate:
 //! move it down into the crate being wrapped, where the compiler still forbids unsafe.
 
-pub mod abr;
 pub mod adaptive_fec;
 pub mod agent;
 pub mod agent_readout;
@@ -51,14 +49,15 @@ pub mod android_presentation;
 pub mod android_sidebar;
 pub mod android_stream;
 pub mod annexb;
-// macOS only: `NSRunningApplication`, which no iOS slice has. See the module.
-#[cfg(target_os = "macos")]
-pub mod app;
 pub mod attention_fold;
+// macOS only: the Accessibility grant, which is a question about THIS PROCESS and so cannot be
+// asked from a slice that has no such grant to hold. See the module.
+#[cfg(target_os = "macos")]
+pub mod ax;
 // Apple only, both, and for the same reason `decoder`/`encoder` are: they are the audio row's other
-// half. `audio_codec` gates its ENCODER half to macOS inside the module, exactly as
-// `slopdesk-apple-audio` does — every client decodes, only the host encodes. `audio_player` is the
-// client's speakers and rides the same cfg because its `cpal` edge does.
+// half. `audio_codec` is the DECODER now — the encoding half went to `rust/slopdesk-videohostd`
+// with the rest of the host, and every client decodes. `audio_player` is the client's speakers and
+// rides the same cfg because its `cpal` edge does.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub mod audio_codec;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -69,17 +68,6 @@ pub mod binding_search;
 pub mod blob;
 pub mod block_rerun;
 pub mod blocks;
-// macOS only: behind it is `ScreenCaptureKit`, and there is no window server on a client slice to
-// point it at. See the module.
-#[cfg(target_os = "macos")]
-pub mod capture;
-pub mod capture_gates;
-pub mod capture_region;
-// macOS only, both: behind them is the `WindowServer`, which no iOS slice has. See each module.
-#[cfg(target_os = "macos")]
-pub mod cgdisplay;
-#[cfg(target_os = "macos")]
-pub mod cgwindow;
 pub mod channel_run;
 pub mod cheat_sheet;
 pub mod chip_notice;
@@ -103,17 +91,11 @@ pub mod context_menu;
 pub mod control_request;
 pub mod copy_receipt;
 pub mod cursor_overlay;
-// macOS only: `NSCursor` and the window server's cursor seed. The one handle here that two threads
-// may call at once, because the pointer must keep flowing while the main thread is busy. See the
-// module.
-#[cfg(target_os = "macos")]
-pub mod ax;
-#[cfg(target_os = "macos")]
-pub mod cursor_sampler;
 pub mod cursor_wire;
 pub mod decode_admission;
-// UNGATED, and the only `slopdesk-apple-*` door that is: every client decodes, so this ships on
-// every slice. Its macOS-only twin below is the asymmetry, not this. See the module.
+// UNGATED, and the only `slopdesk-apple-*` door left: every client decodes, so this ships on every
+// slice. The encoder it used to be paired with is the host's, and the host links VideoToolbox
+// directly. See the module.
 pub mod decoder;
 pub mod device_geometry;
 pub mod device_log;
@@ -121,17 +103,11 @@ pub mod device_panel;
 pub mod device_sections;
 pub mod drop_action;
 pub mod drop_register;
-// macOS only: behind it is VideoToolbox's hardware HEVC encoder. iOS HAS VideoToolbox, so an
-// ungated edge here would LINK and merely bloat every client slice with a host-only encoder — which
-// is worse than a link error, because nothing would fail. See the module.
-#[cfg(target_os = "macos")]
-pub mod encoder;
 pub mod file_transfer;
 pub mod find_bar;
 pub mod find_matches;
 pub mod folders;
 pub mod frame_decoder;
-pub mod frame_rate;
 pub mod fuzzy;
 pub mod git_line;
 pub mod global_search;
@@ -141,17 +117,8 @@ pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
 pub mod hint_scan;
-pub mod host_gates;
-pub mod host_policy;
-pub mod host_state;
-// macOS only: behind it is CoreGraphics event synthesis and the accessibility tree, neither of
-// which an iOS slice has. The SECOND handle in this crate that more than one thread may call, and
-// the only one that owns threads of its own. See the module.
-#[cfg(target_os = "macos")]
-pub mod injector;
 pub mod input_box;
 pub mod input_event;
-pub mod input_routing;
 pub mod inspector;
 pub mod inspector_store;
 pub mod jump_breadcrumb;
@@ -168,7 +135,6 @@ pub mod list_nav;
 pub mod listen_port;
 pub mod metadata;
 pub mod metadata_wire;
-pub mod mint_rescue;
 pub mod mirror_fold;
 pub mod mux_admission;
 pub mod mux_channels;
@@ -177,11 +143,6 @@ pub mod mux_decoder;
 pub mod mux_envelope;
 pub mod mux_flow;
 pub mod mux_header;
-pub mod mux_host;
-// macOS only: the swipe-nav history gate's accessibility read — one browser's Back/Forward
-// availability, cached per pid across beats. See the module.
-#[cfg(target_os = "macos")]
-pub mod nav_history;
 pub mod new_tab_position;
 pub mod notify;
 pub mod notify_rate_limit;
@@ -205,14 +166,6 @@ pub mod paste_menu;
 pub mod paste_safety;
 pub mod peek_reply;
 pub mod phone_key;
-// macOS only: behind it is an `IOPMAssertion`, which is IOKit power management about the machine
-// this process runs on. A client never asks it of itself. See the module.
-#[cfg(target_os = "macos")]
-pub mod power;
-// No C door at all — a RUST-only surface, for the validation harness that writes a synthetic
-// picture and reads the decoded one back. It lives here because turning a locked plane's
-// (address, stride) into a slice is this crate's remit and no other crate's. See the module.
-pub mod pixel_plane;
 pub mod pointer_shape;
 pub mod preference;
 pub mod present_queue;
@@ -221,16 +174,13 @@ pub mod rail_list;
 pub mod rail_structure;
 pub mod rate_control;
 pub mod recovery;
-pub mod recovery_idr;
 pub mod remote_window;
 pub mod replay;
 pub mod responsive;
 pub mod sanitize;
 pub mod scroll_reproject;
 pub mod search_rank;
-pub mod send_pacing;
 pub mod session_marks;
-pub mod session_state;
 pub mod session_template_engine;
 pub mod sidebar_row;
 pub mod simulator_decode;
@@ -252,7 +202,6 @@ pub mod store_video_slots;
 // in the middle. A door nothing calls is not free — it is a second spelling of the protocol that
 // compiles, tests green, and drifts.
 pub mod surface_gesture;
-pub mod swipe_nav_config;
 pub mod swipe_recognizer;
 pub mod terminal_config;
 pub mod terminal_controls;
@@ -274,12 +223,8 @@ pub mod video_packetize;
 pub mod video_policy;
 pub mod video_reassemble;
 pub mod vimotion;
-pub mod virtual_display;
 pub mod watch;
 pub mod window_feed;
-pub mod window_feed_host;
-pub mod window_list;
-pub mod window_placement;
 pub mod window_rail;
 pub mod window_size;
 pub mod wire_message;
@@ -498,10 +443,26 @@ pub(crate) unsafe fn lend(
 ///
 /// Every door that hands Swift a list of records with text in them uses one: the records carry
 /// `(offset, length)` pairs into it rather than pointers, so no record makes the caller own a
-/// lifetime. Each door names its own `(offset, length)` struct, because the pair belongs to that
-/// door's vocabulary — this only counts bytes.
+/// lifetime. Most doors name their own `(offset, length)` struct, because the pair belongs to that
+/// door's vocabulary — this only counts bytes. [`SlopDeskByteSpan`] is the exception, for the doors
+/// whose record IS the run and nothing else.
 #[derive(Debug, Default)]
 pub(crate) struct TextArena(pub(crate) Vec<u8>);
+
+/// One run of bytes inside the caller's arena.
+///
+/// The unnamed pair, for a door whose record carries no other field to name it after — the pane
+/// session's paths and the folder store's. It lived in the video host's own module until that host
+/// became a Rust daemon that needs no door at all; it is here now because the two doors that still
+/// speak it belong to different vocabularies and neither can own the other's.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SlopDeskByteSpan {
+    /// Where the run starts.
+    pub offset: u32,
+    /// How long it is.
+    pub length: u32,
+}
 
 impl TextArena {
     /// Appends `bytes` and answers `(offset, length)`.

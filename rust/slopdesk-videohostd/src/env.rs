@@ -38,7 +38,11 @@ const SIDECAR_NAME: &str = "video-prefs.json";
 ///
 /// Built ONCE, before any gate is read, and read-only thereafter — the same write-once-at-launch
 /// contract the Swift documented, and the reason no lock appears here.
-#[derive(Debug, Default)]
+/// `Clone` because a session OWNS its overlay: the encoder and the audio lane resolve their knobs
+/// at build time, a session outlives several builds, and the alternative — one shared handle behind
+/// an [`std::sync::Arc`] — would put a refcount bump on a table that is written once at launch and
+/// only ever read afterwards. A clone is a handful of short strings, paid once per mint.
+#[derive(Debug, Default, Clone)]
 pub struct Overlay {
     values: BTreeMap<String, String>,
 }

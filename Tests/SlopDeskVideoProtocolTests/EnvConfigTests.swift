@@ -136,9 +136,9 @@ final class EnvConfigTests: XCTestCase {
     // (2026-08-22). They were the ONLY callers of `EnvConfig.int` / `.double` in the tree, which is
     // the shape `docs/55` §8 warns about at its sharpest: a rule with a test and no production
     // caller, beside two private copies of the same rule that had no test at all. The rule now has
-    // one implementation — `slopdesk_abr_validated_int` / `_double` — and its differential lives in
-    // `rust/slopdesk-ffi`'s `abr` module, where it is held against the CLAMPING reading on the same
-    // input rather than checked against itself.
+    // one implementation — `slopdesk_video::congestion`'s validated read — and its tests live there,
+    // where it is held against the CLAMPING reading on the same input rather than checked against
+    // itself.
 
     func testEnumAccessor() {
         let key = "SLOPDESK_TEST_ENUM"

@@ -974,6 +974,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-apple-nsapp"
+version = "0.1.0"
+dependencies = [
+ "dispatch2",
+ "objc2",
+ "objc2-app-kit",
+]
+
+[[package]]
 name = "slopdesk-apple-power"
 version = "0.1.0"
 dependencies = [
@@ -1155,6 +1164,7 @@ dependencies = [
  "slopdesk-apple-vt",
  "slopdesk-ffi",
  "slopdesk-video",
+ "slopdesk-videohostd",
 ]
 
 [[package]]
@@ -1259,6 +1269,31 @@ name = "slopdesk-video"
 version = "0.1.0"
 dependencies = [
  "slopdesk-gfsimd",
+]
+
+[[package]]
+name = "slopdesk-videohostd"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "serde",
+ "serde_json",
+ "slopdesk-apple-app",
+ "slopdesk-apple-audio",
+ "slopdesk-apple-ax",
+ "slopdesk-apple-cgdisplay",
+ "slopdesk-apple-cgevent",
+ "slopdesk-apple-cgvirtualdisplay",
+ "slopdesk-apple-cgwindow",
+ "slopdesk-apple-cursor",
+ "slopdesk-apple-nsapp",
+ "slopdesk-apple-power",
+ "slopdesk-apple-sck",
+ "slopdesk-apple-vt",
+ "slopdesk-hostlaunch",
+ "slopdesk-posix",
+ "slopdesk-terminal",
+ "slopdesk-video",
 ]
 
 [[package]]

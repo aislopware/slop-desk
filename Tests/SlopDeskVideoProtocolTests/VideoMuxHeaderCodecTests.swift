@@ -160,7 +160,7 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
     // and the slice-through receive path stay byte-identical to the two-copy originals.
 
     func testMediaSendShapePinsManualWireBytes() {
-        // Media-socket send (host ``NWVideoMuxDatagramTransport/send`` + client
+        // Media-socket send (the daemon's `mux_transport` send + client
         // ``NWVideoMuxClientFlow/send``): `[UInt32 BE channelID][UInt8 tag][payload...]`.
         let cases: [(channelID: UInt32, tag: UInt8, payload: Data)] = [
             (0x0A0B_0C0D, 4, Data([0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x7F])), // input-shaped

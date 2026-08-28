@@ -136,9 +136,12 @@ pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
 /// ⚠️ ONE MODIFIER FOLD, WITHIN THE PANELS. `AndroidScreenNSView` carried a private six-line copy
 /// for exactly one increment, because the shared one sat one target UP while the view was still in
 /// the phone's half. Both are in the floor now; a second walk in either panel target is that copy
-/// back. Scoped to the panel targets on purpose — `SlopDeskVideoHost/InputInjector` and
-/// `SlopDeskVideoClient/VideoWindowView` fold the same flags for the GUI-video path, which is a
-/// different direction over a different wire, and naming them here would be pinning a coincidence.
+/// back. Scoped to the panel targets on purpose — `SlopDeskVideoClient/VideoWindowView` and, on the
+/// far end, `rust/slopdesk-video`'s `input_routing` as the daemon asks it (`docs/61` §3) fold the
+/// same flags for the GUI-video path, which is a different direction over a different wire, and
+/// naming them here would be pinning a coincidence. That the host end is no longer even Swift is
+/// the same argument at full strength: two folds in two languages for two wires are two rules, and
+/// this one is about the panels.
 #[must_use]
 pub fn two_device_panels_drawn_twice(tree: &Tree) -> Report {
     const FACES: &[(&str, &str)] = &[

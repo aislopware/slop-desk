@@ -15,7 +15,7 @@ import SlopDeskVideoProtocol
 // docs/55 §4b) and each transition answers a list of effects through lent buffers.
 
 /// Lifecycle state of a client video session (the mirror of the host's
-/// ``VideoSessionState``).
+/// `slopdesk_video::session_state`).
 public enum VideoClientState: Equatable, Sendable {
     /// Not yet started.
     case idle
@@ -666,7 +666,8 @@ public enum FrameDecodability: Equatable, Sendable {
     }
 }
 
-/// Pure frame-gated resize-adoption decision (client mirror of the host's ``SizeNegotiation``):
+/// Pure frame-gated resize-adoption decision (client mirror of the host's own resize negotiation,
+/// which is `slopdesk_video::session_state`'s):
 /// after the host acks an in-session resize, the client adopts the new size as its aspect-fit
 /// denominator (``decodedSize``) ONLY when a decoded `CVPixelBuffer` at the new size actually
 /// arrives — an in-flight OLD-size frame queued behind the ack must NOT trip adoption early (it

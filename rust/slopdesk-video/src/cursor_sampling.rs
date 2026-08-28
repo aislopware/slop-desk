@@ -1,6 +1,6 @@
 //! What the cursor sampler DECIDES, with the framework reads taken out.
 //!
-//! `Sources/SlopDeskVideoHost/CursorSampler.swift` used to be a 389-line class in which four
+//! The deleted `CursorSampler.swift` (docs/61 §1) used to be a 389-line Swift class in which four
 //! separate rules were tangled with two `AppKit` reads and a `dlsym`: when to go to the main thread
 //! for a fresh shape, where the pointer is in the captured window's space, which id a shape gets,
 //! and what pixel size to render it at. None of the four needs a framework — they are functions

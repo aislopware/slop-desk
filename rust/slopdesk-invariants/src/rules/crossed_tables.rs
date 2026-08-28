@@ -6,7 +6,7 @@
 //! re-spelled threshold makes a client quietly stop repairing, a fourth built-in row added on one
 //! side only shows up weeks later as a duplicated menu entry with nothing in any log.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -20,10 +20,12 @@ const FEC_POLICY: &str = "Sources/SlopDeskVideoProtocol/AdaptiveFECPolicy.swift"
 const METADATA_CODEC: &str = "Sources/SlopDeskProtocol/Metadata/MetadataCodec.swift";
 /// The crate that holds the two shipped tables — and must not hold a dead expansion.
 const TEMPLATES: &str = "rust/slopdesk-workspace/src/templates.rs";
-/// The session that used to hand-roll the paced send.
-const VH_SESSION: &str = "Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift";
-/// The lane both drains ask.
-const VH_LANE: &str = "Sources/SlopDeskVideoHost/VideoSendLane.swift";
+/// The GUI video host, which holds both drains of the paced send.
+///
+/// A DIRECTORY rather than a file, for the reason [`crate::rules::video_host`] states: the two
+/// drains already live in two of the daemon's modules and the split is still moving, so a claim
+/// pinned to a filename would report an ordinary relocation as the schedule going missing.
+const DAEMON: &str = "rust/slopdesk-videohostd";
 /// The model file whose built-ins are the crate's session templates.
 const MODEL_TEMPLATE: &str = "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplate.swift";
 /// Its sibling, holding the launch presets.
@@ -153,34 +155,61 @@ pub fn the_dead_rust_expansion_stays_deleted(tree: &Tree) -> Report {
 /// the one frame whose delivery time IS the client's recovery time. Nothing could fail on it: the
 /// inline path has no test, and the two paths are never both live.
 ///
-/// The gap is computed once by the caller and the schedule comes from `slopdesk_send_pace_plan`
-/// through `VideoSendLane.plan`, which both drains ask. The gap is COUNTED rather than banned,
-/// because one call is exactly right and two is the regression — a ban cannot state that, and a
-/// presence check agrees with itself while the second copy appears beside the first.
+/// The gap is computed once by the caller and the schedule comes from `send_pacing::pace_plan`,
+/// which both drains ask.
+///
+/// `docs/61` deleted the Swift session and the Swift lane and moved both drains into
+/// `rust/slopdesk-videohostd`, and the defect they had is exactly as available there: the two are
+/// still two, they still send the same job down different code, and the inline one still has no
+/// test that a divergence would fail. What changed is only which language a second schedule would
+/// be written in. So the rule keeps both halves and re-aims them at the daemon: it must still ASK
+/// `send_pacing`, and it may not respell what that module answers.
+///
+/// The COUNTED claim could not survive the move and is the one thing here that is genuinely
+/// different. `Exactly` counts occurrences in ONE file, and the two drains are now two modules — a
+/// count over either alone would be one number about half the question, and the split is still
+/// moving besides. The ban replaces it and is stronger than the count was: rather than "the gap is
+/// computed once", it says the daemon may not hold a pacing computation AT ALL. `pace_plan`
+/// answers the schedule and `may_send_inline` answers whether the inline drain may take the frame,
+/// so a `fn` here named for either is the hand-rolled half coming back — which is what actually
+/// paced a recovery IDR off a post-backoff ABR the first time.
+///
+/// Daemon-scoped, like every other ban re-aimed by `docs/61`:
+/// `rust/slopdesk-video/src/send_pacing.rs` declares all four of these names, because declaring
+/// them is what it is for.
 #[must_use]
 pub fn one_pacing_schedule_and_one_gap(tree: &Tree) -> Report {
     check_all(tree, &[
-        Claim::Matches {
-            path: VH_SESSION,
-            pattern: r"VideoSendLane\.plan\(for: job\)",
-            view: View::Raw,
-            message: "the host session stopped asking VideoSendLane.plan — the paced-send schedule is \
-                      slopdesk_send_pace_plan's",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["send_pacing", "pace_plan"],
+            message: "the daemon stopped asking {entry} — the chunk boundaries and the deadline they carry \
+                      are rust/slopdesk-video's, and a drain that stopped asking is a drain that has \
+                      started chunking (docs/61 §3)",
         },
-        Claim::Exactly {
-            path: VH_SESSION,
-            pattern: r"Self\.adaptivePaceGapNanos\(",
-            count: 1,
-            view: View::Raw,
-            message: "the host session computes the pacing gap in {found} places, not 1 — the two copies \
-                      had already parted on keyframes",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\bfn (pace_plan|total_span_nanos|may_send_inline)\b|\bstruct PacedChunk\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon declares a pacing schedule of its own in {files} — the plan, its span, its \
+                      chunk and the inline admission are send_pacing.rs's, and the second copy is invisible \
+                      because the two drains are never both live (docs/61 §3)",
         },
-        Claim::Matches {
-            path: VH_LANE,
-            pattern: r"slopdesk_send_pace_plan\(",
-            view: View::Raw,
-            message: "the send lane stopped calling slopdesk_send_pace_plan — the chunk boundaries would be \
-                      hand-rolled again",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\bfn [a-z_]*pace_gap[a-z_]*\b|\bfn [a-z_]*chunk_boundaries\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon computes a pacing gap in {files} — that is the copy that had no keyframe \
+                      in scope and floored EVERY frame at the delta target, serializing the one frame whose \
+                      delivery time is the client's recovery time (docs/61 §3)",
         },
     ])
 }
@@ -315,17 +344,17 @@ mod tests {
         assert!(!super::the_dead_rust_expansion_stays_deleted(&fixture.tree()).is_clean());
     }
 
-    /// One schedule, one gap, both drains asking the lane.
+    /// One schedule, no gap of its own, both drains asking the module.
     fn pacing(fixture: &Fixture) {
         fixture
             .write(
-                super::VH_SESSION,
-                "let gap = Self.adaptivePaceGapNanos(for: job, keyframe: job.keyframe)\nlet plan = \
-                 VideoSendLane.plan(for: job)\n",
+                "rust/slopdesk-videohostd/src/sendlane.rs",
+                "use slopdesk_video::send_pacing::{SendJob, may_send_inline, pace_plan};\nlet plan = \
+                 pace_plan(job.spec());\n",
             )
             .write(
-                super::VH_LANE,
-                "static func plan(for job: Job) -> Plan { slopdesk_send_pace_plan(job.bytes) }\n",
+                "rust/slopdesk-videohostd/src/session_pump.rs",
+                "use slopdesk_video::send_pacing::pace_plan;\nlet plan = pace_plan(job.spec());\n",
             );
     }
 
@@ -335,21 +364,34 @@ mod tests {
         pacing(&fixture);
         assert!(super::one_pacing_schedule_and_one_gap(&fixture.tree()).is_clean());
 
-        // One call is right and two is the regression, which a ban cannot state.
-        fixture.write(
-            super::VH_SESSION,
-            "let gap = Self.adaptivePaceGapNanos(for: job, keyframe: job.keyframe)\nlet plan = \
-             VideoSendLane.plan(for: job)\nlet inlineGap = Self.adaptivePaceGapNanos(for: job, keyframe: \
-             false)\n",
+        // The inline drain deciding the gap for itself, which is the copy that had no keyframe in
+        // scope and floored every frame at the delta target.
+        fixture.append(
+            "rust/slopdesk-videohostd/src/session_pump.rs",
+            "fn adaptive_pace_gap_nanos(target_bps: u64) -> u64 { 1_000_000_000 / target_bps }\n",
         );
         assert!(!super::one_pacing_schedule_and_one_gap(&fixture.tree()).is_clean());
 
-        // And the lane hand-rolling the chunk boundaries again.
+        // And the lane hand-rolling the chunk boundaries again, in the language the port left it in.
         pacing(&fixture);
         fixture.write(
-            super::VH_LANE,
-            "static func plan(for job: Job) -> Plan { chunked(job) }\n",
+            "rust/slopdesk-videohostd/src/sendlane.rs",
+            "use slopdesk_video::send_pacing::SendJob;\nfn pace_plan(job: SendJob) -> Vec<Chunk> { \
+             chunked(job) }\n",
         );
+        assert!(!super::one_pacing_schedule_and_one_gap(&fixture.tree()).is_clean());
+
+        // The daemon that stopped asking at all — nothing is respelled, so only the ask can fail.
+        pacing(&fixture);
+        fixture
+            .write(
+                "rust/slopdesk-videohostd/src/sendlane.rs",
+                "let plan = self.schedule;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/session_pump.rs",
+                "let plan = self.schedule;\n",
+            );
         assert!(!super::one_pacing_schedule_and_one_gap(&fixture.tree()).is_clean());
     }
 

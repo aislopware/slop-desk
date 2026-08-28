@@ -20,9 +20,6 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_video::capture_recovery::{
-    RECREATE_COOLDOWN_SECONDS, arrange_streamable_windows, channels_to_disconnect, should_attempt_recreate,
-};
 use slopdesk_video::coordinate_mapping::window_point;
 use slopdesk_video::geometry::{
     VideoContentMode, VideoPoint, VideoRect, VideoSize, displayed_video_rect, view_point,
@@ -37,8 +34,6 @@ use slopdesk_video::playout::{
 };
 use slopdesk_video::stream_stall::{Liveness, StreamVerdict, verdict};
 use slopdesk_video::ycbcr::{ColorRange, coefficients};
-
-use crate::records_of;
 
 /// The seven BT.709 YCbCr→RGB coefficients the fragment shader applies.
 ///
@@ -422,130 +417,6 @@ pub extern "C" fn slopdesk_geometry_view_point(
         x: answer.x,
         y: answer.y,
     }
-}
-
-/// Arranges a `windowList` reply, answering the caller's own indices in reply order.
-///
-/// The windows themselves never cross: the arrangement reads two facts about each — is it on
-/// screen, and does it carry a title — so the caller lends those two arrays and maps the answer
-/// back onto records it already holds. On-screen first, each side keeping its original relative
-/// order, and UNTITLED OFF-screen entries dropped: phantom enumeration junk carries no title, while
-/// a real minimized window keeps its.
-///
-/// # Safety
-/// Both flag arrays must hold `count` live entries for the call, and `order` must be null or
-/// writable for `cap` indices.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_arrange_streamable_windows(
-    on_screen: *const bool,
-    titled: *const bool,
-    count: usize,
-    order: *mut u32,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation on the two flag arrays.
-    let (visible, named) = unsafe { (records_of(on_screen, count), records_of(titled, count)) };
-    if visible.len() != count || named.len() != count {
-        return 0;
-    }
-    let windows: Vec<(u32, bool, &'static str)> = (0..count)
-        .map(|index| {
-            let seen = visible.get(index).copied().unwrap_or(false);
-            let has_title = named.get(index).copied().unwrap_or(false);
-            (
-                u32::try_from(index).unwrap_or(u32::MAX),
-                seen,
-                if has_title { "t" } else { "" },
-            )
-        })
-        .collect();
-    let arranged = arrange_streamable_windows(windows, |window| window.1, |window| window.2);
-    let indices: Vec<u32> = arranged.iter().map(|window| window.0).collect();
-    if indices.is_empty() || indices.len() > cap || order.is_null() {
-        return indices.len();
-    }
-    // SAFETY: the buffer is non-null and holds at least `indices.len()` entries, by the check above
-    // and the caller's obligation that it is writable for `cap`.
-    unsafe { std::ptr::copy_nonoverlapping(indices.as_ptr(), order, indices.len()) };
-    indices.len()
-}
-
-/// Whether a virtual-display re-create attempt may start now.
-///
-/// An in-flight attempt always blocks; otherwise the first attempt is free and later ones must be a
-/// cooldown past the previous attempt's START, because a hung create must not re-arm early. The
-/// LOCK that serialises concurrent mint lanes stays with the caller — a lock is not a rule.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_vd_recreate_should_attempt(
-    now: f64,
-    last_attempt: f64,
-    has_last_attempt: bool,
-    cooldown: f64,
-    attempt_in_flight: bool,
-) -> bool {
-    should_attempt_recreate(
-        now,
-        if has_last_attempt {
-            Some(last_attempt)
-        } else {
-            None
-        },
-        cooldown,
-        attempt_in_flight,
-    )
-}
-
-/// The default seconds between virtual-display re-create attempts.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_vd_recreate_cooldown() -> f64 {
-    RECREATE_COOLDOWN_SECONDS
-}
-
-/// The channel ids to disconnect when the virtual display is terminated under them, sorted.
-///
-/// Answers the count either way, so a caller that lent too little learns what to lend.
-///
-/// # Safety
-/// `parked` and `live` must each be null, or describe their stated number of live entries for the
-/// call; `out` must be null, or writable for `cap` `uint32_t`.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_vd_channels_to_disconnect(
-    parked: *const u32,
-    parked_count: usize,
-    live: *const u32,
-    live_count: usize,
-    out: *mut u32,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations above are this function's, restated on `records_of`.
-    let (parked, live) = unsafe { (records_of(parked, parked_count), records_of(live, live_count)) };
-    let doomed = channels_to_disconnect(&parked.iter().copied().collect(), &live.iter().copied().collect());
-    let count = doomed.len();
-    if count > cap || out.is_null() {
-        return count;
-    }
-    for (index, channel) in doomed.iter().enumerate() {
-        // SAFETY: `count <= cap` was just checked and `out` is writable for `cap` entries by the
-        // caller's obligation.
-        unsafe { out.add(index).write(*channel) };
-    }
-    count
 }
 
 #[cfg(test)]

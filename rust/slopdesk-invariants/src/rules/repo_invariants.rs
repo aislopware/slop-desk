@@ -486,21 +486,17 @@ pub fn the_formula_installs_every_binary_the_release_ships(tree: &Tree) -> Repor
 /// `ConnectionTarget.swift` is a four-field `Codable` value 20 files hold and `SwiftUI` diffs — a
 /// vocabulary by `docs/55` §6, so the Rust twin is the copy that should go, not the Swift.
 ///
-/// The four `slopdesk-videohostd` names are the SAME debt with a known end date, and they are here
-/// rather than wired because wiring them would be the worse lie. `docs/61` §3 says the capture half
-/// is not ported yet: with no `SCStream` there are no frames, so a `main.rs` that opened the
-/// encoder and started the feed would compose a daemon that runs and serves nothing.
-/// `Sources/SlopDeskVideoHost` is what still runs, and `docs/61` §1 is the eleven-row cascade that
-/// deletes it. All four names leave this list in that one commit — the composition and the deletion
-/// are the same change, because until it lands the Swift is the only implementation and the rule
-/// this gate serves is satisfied, not broken.
-const STRANDED_RUST_MODULES: [&str; 5] = [
-    "slopdesk-workspace::connection",
-    "slopdesk-videohostd::encode",
-    "slopdesk-videohostd::feed",
-    "slopdesk-videohostd::mux_registry",
-    "slopdesk-videohostd::windowgeometry",
-];
+/// `slopdesk-videohostd::encode`, `::feed`, `::mux_registry` and `::windowgeometry` USED to be
+/// here, registered as debt with a known end date: `docs/61` §3 said the capture half was not
+/// ported, so with no `SCStream` there were no frames and a `main.rs` that opened the encoder would
+/// compose a daemon that ran and served nothing. `Sources/SlopDeskVideoHost` was what actually ran.
+///
+/// It does not run any more — `docs/61` §1 deleted it — so all four names left in that same commit,
+/// because removing a name here is the last step of finishing a port, never a step of its own. If
+/// this gate is red on a `slopdesk-videohostd` module, the daemon's composition has not reached it
+/// yet and the answer is to WIRE it; putting the name back would re-register debt the deletion
+/// already spent.
+const STRANDED_RUST_MODULES: [&str; 1] = ["slopdesk-workspace::connection"];
 
 /// A crate module nothing reaches is a port that stopped one step short of finishing.
 ///
@@ -516,6 +512,33 @@ const STRANDED_RUST_MODULES: [&str; 5] = [
 /// itself counts as a caller, but its own `pub mod` / `pub use` lines do not: a re-export is what a
 /// stranded module has INSTEAD of a caller, so reading it as one would make this gate unable to
 /// fail.
+///
+/// The method names an INHERENT `impl` declares count too, for the same reason a re-exported name
+/// does. A module holding nothing but `impl Session` blocks for a `Session` its sibling defines
+/// exports no nameable item at all: the type belongs to the other module, the module path leads to
+/// nothing a caller could spell, and `lib.rs` has no `pub use` to re-export because there is
+/// nothing to re-export. Its methods are reached THROUGH the type — a sibling writes
+/// `self.resize_capture` and the effect lands here — so the call site this gate is looking for
+/// exists and simply never mentions the module. That is `slopdesk-videohostd::session_actuate` and
+/// `::session_resize`, both wired from `session.rs` and both read as stranded until the impl names
+/// were evidence.
+///
+/// Four narrowings keep the gate able to fail, because a method name is far weaker evidence than a
+/// type name and would otherwise excuse most of the tree. An impl on a type the module DECLARES is
+/// not this shape at all and is skipped: the type is a nameable item, so `module::` and the
+/// `pub use` path already answer for it, and counting `as_byte` on a locally declared `StatusKind`
+/// as well would buy no reach the gate did not have while handing every `as_byte` in every other
+/// crate to whichever module happens to declare one.
+///
+/// The other three: a TRAIT impl is skipped, because a body satisfying `Display` names the trait's
+/// methods and not its own, and those names are spelled in every crate in the tree. Only a method
+/// carrying a visibility qualifier counts — a private one cannot be called from a sibling file at
+/// all, so its name elsewhere belongs to some other function, and Rust forbids a qualifier on a
+/// trait impl's method, which makes this the same narrowing twice over. And the evidence is the
+/// CALL shape, the name followed by its open paren, rather than the bare name a re-exported type is
+/// matched by: a method is reached by being called, and without the paren a `run` or a `new` named
+/// in any comment anywhere would excuse its module. A module of impls whose public methods nobody
+/// calls is still red.
 #[must_use]
 pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -566,6 +589,28 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
             let mut alternatives = vec![format!("{module}::")];
             if let Some(names) = exported.get(&module) {
                 alternatives.extend(names.iter().map(|name| format!(r"{name}\b")));
+            }
+            // What a module of inherent impls has INSTEAD of a nameable item: methods on a type
+            // some OTHER module declares. A trait impl is skipped by its `for`, and again by the
+            // visibility qualifier the pattern demands — Rust forbids one on a trait method.
+            let declared = text::capture_set(
+                &body,
+                r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|union|trait) (\w+)",
+            );
+            for (header, block) in text::capture_pairs(&body, r"(?s)^impl([^\n{]*)\{(.*?)\n\}") {
+                let subject = text::capture_first(&header, r"^(?:<[^>]*>)?\s*(\w+)");
+                // An impl on a type this module DECLARES is not the stranded shape: the type is a
+                // nameable item, so `module::` and the `pub use` path above already speak for it.
+                if header.contains(" for ") || subject.is_none_or(|name| declared.contains(&name)) {
+                    continue;
+                }
+                alternatives.extend(
+                    text::capture_all(&block, r"^\s+pub(?:\([^)]*\))?(?: (?:const|async|unsafe|extern))* fn (\w+)")
+                        .into_iter()
+                        // The CALL, not the name: a method is reached by being called, and a bare
+                        // name would let any mention in any comment excuse the module.
+                        .map(|name| format!(r"{name}\s*\(")),
+                );
             }
             let reaches = text::cached(&format!(r"\b(?:{})", alternatives.join("|")));
             let wired = sources.iter().any(|(path, held)| {
@@ -1328,6 +1373,63 @@ mod tests {
             "use crate::Solver;\npub fn go(s: Solver) {}\n",
         );
         assert!(no_rust_module_is_written_and_then_never_called(&wired.tree()).is_clean());
+    }
+
+    /// A module of inherent impls, which is the shape that has NO name to be reached by.
+    ///
+    /// `session_actuate` and `session_resize` are both of them: every line is `impl Session`, the
+    /// type is `session.rs`'s, and the effect arrives as `self.resize_capture(…)` from a sibling.
+    /// Nothing spells the module, nothing is re-exported, and the gate called both stranded while
+    /// the daemon ran them. The second half is what keeps it a gate: take the call away and the
+    /// same module is red again.
+    #[test]
+    fn a_module_of_inherent_impls_is_reached_through_its_methods() {
+        let module = "use crate::session::Session;\nimpl Session {\n    pub(crate) fn resize_capture(&self, \
+                      width: u16) {}\n}\n";
+        // `session` is reached by the impl module's own `use crate::session::Session`, so the only
+        // verdict either half of this test turns on is `session_resize`'s.
+        let manifest = "pub mod session;\npub mod session_resize;\n";
+        let wired = Fixture::new("stranded-impl-wired");
+        wired.write("rust/slopdesk-x/src/lib.rs", manifest);
+        wired.write(
+            "rust/slopdesk-x/src/session.rs",
+            "pub struct Session;\npub fn pump(s: &Session) {\n    s.resize_capture(8);\n}\n",
+        );
+        wired.write("rust/slopdesk-x/src/session_resize.rs", module);
+        assert!(no_rust_module_is_written_and_then_never_called(&wired.tree()).is_clean());
+
+        let stranded = Fixture::new("stranded-impl-uncalled");
+        stranded.write("rust/slopdesk-x/src/lib.rs", manifest);
+        stranded.write(
+            "rust/slopdesk-x/src/session.rs",
+            "pub struct Session;\npub fn pump(s: &Session) {}\n",
+        );
+        stranded.write("rust/slopdesk-x/src/session_resize.rs", module);
+        assert!(!no_rust_module_is_written_and_then_never_called(&stranded.tree()).is_clean());
+    }
+
+    /// An impl on the module's OWN type is not evidence, and counting it would strand the gate.
+    ///
+    /// A method name is far weaker than a type name: `as_byte` on a locally declared `StatusKind`
+    /// is spelled by nine files across this tree that have nothing to do with the module holding
+    /// it. Reading that as reach buys nothing — a declared type is nameable, so `module::` and the
+    /// `pub use` path already answer for it — while handing every `as_byte` anywhere to whichever
+    /// module declares one. Here `other.rs` calls a same-named method on an unrelated value, and
+    /// `status` must stay red.
+    #[test]
+    fn an_impl_on_the_modules_own_type_is_not_evidence() {
+        let fixture = Fixture::new("stranded-impl-own-type");
+        fixture.write("rust/slopdesk-x/src/lib.rs", "pub mod status;\npub mod other;\n");
+        fixture.write(
+            "rust/slopdesk-x/src/status.rs",
+            "pub enum StatusKind {\n    Up,\n}\nimpl StatusKind {\n    \
+             pub const fn as_byte(self) -> u8 {\n        0\n    }\n}\n",
+        );
+        fixture.write(
+            "rust/slopdesk-x/src/other.rs",
+            "pub fn unrelated(ink: u8) -> u8 {\n    ink.as_byte()\n}\n",
+        );
+        assert!(!no_rust_module_is_written_and_then_never_called(&fixture.tree()).is_clean());
     }
 
     /// A door's caller is Swift, which is in no `.rs` file — so `no_mangle` is what stands in for

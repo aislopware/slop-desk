@@ -27,17 +27,72 @@ const HAND_WRITTEN: [&str; 3] = [
     "rust/slopdesk-gfsimd/Cargo.toml",
 ];
 
-/// The ONE `slopdesk-apple-*` crate exempt from the raw-pointer ban. See [`apple_family`].
-const SAMPLE_MEMORY_CRATE: &str = "rust/slopdesk-apple-audio";
-
-/// How many raw-pointer sites that exemption is worth today.
+/// One `slopdesk-apple-*` crate exempt from the raw-pointer ban, and what the exemption is worth.
 ///
-/// Two slice constructions over a captured buffer's runs, one flexible-array read of the buffer
-/// list, one copy of the stream description, and the pointer arithmetic and slot writes the two
-/// converter callbacks are, on both ends of the wire. The number is a RATCHET rather than a budget:
-/// it is what the crate needs EXACTLY, and it moves only in a commit that says what the new site is
-/// for. Slack here would be a budget to spend quietly, which is the thing a ratchet is not.
-const SAMPLE_MEMORY_SITE_CAP: usize = 19;
+/// A named pair rather than two parallel lists, so a crate cannot be admitted without a count and a
+/// count cannot outlive the crate it was measured for. See [`apple_family`].
+struct SampleMemory {
+    /// The crate directory, without a trailing slash.
+    crate_dir: &'static str,
+    /// How many raw-pointer sites the exemption is worth TODAY.
+    ///
+    /// A RATCHET rather than a budget: it is what the crate needs EXACTLY, and it moves only in a
+    /// commit that says what the new site is for. Slack here would be a budget to spend quietly,
+    /// which is the thing a ratchet is not.
+    cap: usize,
+}
+
+/// Every crate exempt from the raw-pointer ban, and there are two.
+///
+/// Each is here for the SAME reason and it is the SDK's, never the code's: the framework publishes
+/// memory as a bare `(pointer, length)` and offers no copy-out variant, so there is no version of
+/// the crate without a raw read. Neither is here because a raw pointer was convenient.
+///
+/// * `slopdesk-apple-audio` — Core Audio publishes SAMPLE MEMORY everywhere: the
+///   `AudioConverterFillComplexBuffer` input proc exists to hand back an `AudioBufferList`,
+///   `CMSampleBuffer` delivers captured audio the same way, and `AVAudioConverter`'s
+///   `floatChannelData` is a `*mut NonNull<c_float>`. Its count is two slice constructions over a
+///   captured buffer's runs, one flexible-array read of the buffer list, one copy of the stream
+///   description, and the pointer arithmetic and slot writes the two converter callbacks are, on
+///   both ends of the wire.
+/// * `slopdesk-apple-vt` — TWO framework areas hand this crate memory rather than an object, and
+///   its count is one site each way. HEVC parameter sets live in the FORMAT DESCRIPTION rather than
+///   inline, and `CMVideoFormatDescriptionGetHEVCParameterSetAtIndex` is the only way to reach
+///   them: it reports a pointer, and the SDK has no call that copies one into a caller's buffer —
+///   that is `EncodedSample::copy_parameter_sets_into`. A LOCKED pixel buffer is the other:
+///   `CVPixelBufferGetBaseAddressOfPlane` answers where a plane starts and `…GetBytesPerRowOfPlane`
+///   how far apart its rows are, and a mapping is what those two describe — there is no plane
+///   object to hold instead. Every other reading in the crate is a framework copy into memory this
+///   process allocated.
+///
+/// `slopdesk-apple-vt` joined this list in the commit that deleted `Sources/SlopDeskVideoHost`, and
+/// the timing is the whole argument. `docs/57` §2's three-route test rejects an exemption while the
+/// "move the obligation to `slopdesk-ffi`" hatch is open, and for years it was: the encoder driver
+/// lived in `slopdesk-ffi`, whose entire remit is that question. That hatch closed when the C doors
+/// died — a shim crate is no longer the natural home for a driver no Swift calls — and the site had
+/// to land somewhere a `forbid(unsafe_code)` daemon could reach. `docs/61` §2 is the ledger.
+///
+/// The plane site arrived in the SAME commit and by the same argument: it lived in
+/// `slopdesk-ffi::pixel_plane`, a module that existed for no reason but "this crate may write
+/// `unsafe` and apple-vt may not". When the daemon stopped linking the shim, that module's home
+/// stopped being a home, and the mapping went to the crate that locks the buffer. Both moves paid
+/// for the exemption the same way — the raw type went with them, so `slopdesk-apple-vt` now hands
+/// out no framework pointer at all.
+const SAMPLE_MEMORY: [SampleMemory; 2] = [
+    SampleMemory {
+        crate_dir: "rust/slopdesk-apple-audio",
+        cap: 19,
+    },
+    SampleMemory {
+        crate_dir: "rust/slopdesk-apple-vt",
+        cap: 3,
+    },
+];
+
+/// The exemption for one crate directory, or `None` when it has none.
+fn sample_memory_for(crate_dir: &str) -> Option<&'static SampleMemory> {
+    SAMPLE_MEMORY.iter().find(|exempt| exempt.crate_dir == crate_dir)
+}
 
 /// Every crate is `unsafe_code = "forbid"` except two named families.
 ///
@@ -149,22 +204,18 @@ pub fn unsafe_policy(tree: &Tree) -> Report {
 /// that helper rather than a second obligation — and a second `from_raw` fails the gate with the
 /// same message as a `transmute` would.
 ///
-/// ## The amendment, and why it is one crate and not a category
-/// `slopdesk-apple-audio` is exempt from the raw-pointer ban, and it is the ONLY crate that is.
-/// Every other framework in this family hands out OBJECTS — `objc2` models those, and the binding
-/// answers the ownership question, so the crate never has to. Core Audio hands out SAMPLE MEMORY:
-/// `AudioConverterFillComplexBuffer` takes a C input proc whose whole job is to publish a
-/// `(pointer, length)` through an `AudioBufferList`, `CMSampleBuffer` delivers captured audio the
-/// same way, and `AVAudioConverter`'s block API reaches the same samples through
-/// `floatChannelData`, which is a `*mut NonNull<c_float>`. There is no version of that crate
-/// without raw-pointer work, and the operation cannot move to `slopdesk-ffi` either —
-/// `slopdesk-ffi` already depends on this family, so the reverse edge is a cycle.
+/// ## The amendment, and why it is a NAMED LIST and not a category
+/// Two crates are exempt from the raw-pointer ban, they are named in [`SAMPLE_MEMORY`] with the
+/// reason each earned it, and no third gets in by resembling them. Every other framework in this
+/// family hands out OBJECTS — `objc2` models those, and the binding answers the ownership question,
+/// so the crate never has to. The two on the list are the two whose SDK hands out MEMORY and offers
+/// no call that copies it out, which is a fact about Apple's headers rather than about the code.
 ///
 /// What keeps this from being the hole a category would be is the SITE COUNT, the same instrument
-/// the two Core Foundation admissions use. The exemption is a ratchet, not a door: the count below
-/// is what the crate needs today, and a change that wants one more has to move it here and say why
-/// in the same commit. Every other §2 obligation still applies to that crate and is still checked —
-/// `unsafe_op_in_unsafe_fn`, the `objc2` edge, and one `CFRetained::from_raw`.
+/// the two Core Foundation admissions use. Each exemption is a ratchet, not a door: the cap beside
+/// a crate is what it needs today, and a change that wants one more has to move it there and say
+/// why in the same commit. Every other §2 obligation still applies to both crates and is still
+/// checked — `unsafe_op_in_unsafe_fn`, the `objc2` edge, and one `CFRetained::from_raw`.
 /// What one crate's sources spend, in the four counts §2 argues about.
 #[derive(Default)]
 struct Spend {
@@ -173,7 +224,7 @@ struct Spend {
     read_any: bool,
     /// A raw-pointer operation outside both admissions, in a crate that is not the exempt one.
     hand_written: bool,
-    /// The exempt crate's ratchet count. Always zero elsewhere.
+    /// An exempt crate's ratchet count. Always zero elsewhere.
     sample_memory_sites: usize,
     /// `CFRetained::from_raw`, the Copy/Create-rule admission. At most one per crate.
     copy_rule_sites: usize,
@@ -235,6 +286,21 @@ pub fn apple_family(tree: &Tree) -> Report {
         "no slopdesk-apple-* crate exists — this gate reads nothing and would pass (docs/57)".to_owned(),
     );
 
+    // A ratchet naming a crate that has been renamed or folded away protects nothing, and reads for
+    // years like it does — the same failure `unsafe_policy` checks for its own exemption list, which
+    // cannot see this one because this one is a subset chosen by hand rather than by glob.
+    for exempt in &SAMPLE_MEMORY {
+        let manifest = format!("{}/Cargo.toml", exempt.crate_dir);
+        report.fail_if(
+            tree.get(&manifest).is_none(),
+            format!(
+                "{} holds a sample-memory exemption and does not exist — the ratchet has gone stale \
+                 (docs/57 §2's amendment)",
+                exempt.crate_dir,
+            ),
+        );
+    }
+
     for manifest in family {
         let Some(source) = tree.get(&manifest) else {
             continue;
@@ -258,14 +324,14 @@ pub fn apple_family(tree: &Tree) -> Report {
 
         let crate_dir = manifest.trim_end_matches("/Cargo.toml");
         let src = format!("{crate_dir}/src");
-        let sample_memory = crate_dir == SAMPLE_MEMORY_CRATE;
+        let sample_memory = sample_memory_for(crate_dir);
         let Spend {
             read_any,
             hand_written,
             sample_memory_sites,
             copy_rule_sites,
             get_rule_sites,
-        } = scan_spend(tree, &src, sample_memory);
+        } = scan_spend(tree, &src, sample_memory.is_some());
         report.fail_if(
             !read_any,
             format!("{src} holds no Rust source — the ban below reads nothing and would pass"),
@@ -278,22 +344,25 @@ pub fn apple_family(tree: &Tree) -> Report {
                  slopdesk-posix or slopdesk-ffi (docs/57 §2)",
             ),
         );
-        report.fail_if(
-            sample_memory && sample_memory_sites == 0,
-            format!(
-                "{crate_dir} is the ONE crate exempt from the raw-pointer ban and writes none — the \
-                 exemption exists because Core Audio publishes SAMPLE MEMORY as (pointer, length); a crate \
-                 that no longer needs it should lose it, not keep it (docs/57 §2's amendment)",
-            ),
-        );
-        report.fail_if(
-            sample_memory_sites > SAMPLE_MEMORY_SITE_CAP,
-            format!(
-                "{crate_dir} touches raw pointers at {sample_memory_sites} sites — the sample-memory \
-                 amendment is a RATCHET at {SAMPLE_MEMORY_SITE_CAP}, so a new site moves the cap here and \
-                 says why in the same commit (docs/57 §2's amendment)",
-            ),
-        );
+        if let Some(exempt) = sample_memory {
+            let cap = exempt.cap;
+            report.fail_if(
+                sample_memory_sites == 0,
+                format!(
+                    "{crate_dir} is exempt from the raw-pointer ban and writes none — the exemption exists \
+                     because its SDK publishes memory as (pointer, length) and offers no copy-out; a crate \
+                     that no longer needs it should LOSE it, not keep it (docs/57 §2's amendment)",
+                ),
+            );
+            report.fail_if(
+                sample_memory_sites > cap,
+                format!(
+                    "{crate_dir} touches raw pointers at {sample_memory_sites} sites — its sample-memory \
+                     amendment is a RATCHET at {cap}, so a new site moves the cap here and says why in the \
+                     same commit (docs/57 §2's amendment)",
+                ),
+            );
+        }
         report.fail_if(
             copy_rule_sites > 1,
             format!(
@@ -644,24 +713,22 @@ mod tests {
         );
     }
 
-    /// The amendment is one crate, and it is a RATCHET rather than a door: the exempt crate may
-    /// write raw-pointer work, and a site past the cap fails exactly as a transmute elsewhere does.
+    /// One raw-pointer site, in the spelling the ban's own pattern recognises.
+    const ONE_RAW_SITE: &str =
+        "pub fn read() { let _ = unsafe { std::slice::from_raw_parts(base, len) }; }\n";
+
+    /// The amendment is a NAMED LIST and a RATCHET rather than a door: a listed crate may write
+    /// raw-pointer work, and the same line in an unlisted one fails exactly as a transmute does.
     #[test]
-    fn the_sample_memory_crate_is_exempt_up_to_its_cap() {
+    fn a_listed_crate_is_exempt_and_an_unlisted_one_is_not() {
         let fixture = policy_fixture("apple-sample-memory");
-        let one = "pub fn read() { let _ = unsafe { std::slice::from_raw_parts(base, len) }; }\n";
-        fixture.write(
-            &format!("{}/Cargo.toml", super::SAMPLE_MEMORY_CRATE),
-            APPLE_MANIFEST,
-        );
-        fixture.write(&format!("{}/src/lib.rs", super::SAMPLE_MEMORY_CRATE), one);
         assert!(
             super::apple_family(&fixture.tree()).is_clean(),
-            "the one exempt crate may publish sample memory"
+            "every listed crate may publish the memory its SDK hands out"
         );
 
         // The same line in any OTHER crate of the family is still the ban's business.
-        fixture.write("rust/slopdesk-apple-cgevent/src/lib.rs", one);
+        fixture.write("rust/slopdesk-apple-cgevent/src/lib.rs", ONE_RAW_SITE);
         let report = super::apple_family(&fixture.tree());
         assert!(
             report
@@ -673,40 +740,59 @@ mod tests {
     }
 
     /// A ratchet with slack is a budget. One site past the cap has to fail, or the count says
-    /// nothing about what the crate actually needs.
+    /// nothing about what the crate actually needs — and it has to fail per crate, at that crate's
+    /// own number, or the tighter cap is protected by the looser one.
     #[test]
-    fn a_sample_memory_site_past_the_cap_is_caught() {
-        let fixture = policy_fixture("apple-sample-cap");
-        fixture.write(
-            &format!("{}/Cargo.toml", super::SAMPLE_MEMORY_CRATE),
-            APPLE_MANIFEST,
-        );
-        let over = "pub fn read() { let _ = unsafe { std::slice::from_raw_parts(base, len) }; }\n"
-            .repeat(super::SAMPLE_MEMORY_SITE_CAP + 1);
-        fixture.write(&format!("{}/src/lib.rs", super::SAMPLE_MEMORY_CRATE), &over);
-        let report = super::apple_family(&fixture.tree());
-        assert!(
-            report.violations().iter().any(|v| v.contains("RATCHET")),
-            "{report:?}"
-        );
+    fn a_sample_memory_site_past_a_crates_own_cap_is_caught() {
+        for exempt in &super::SAMPLE_MEMORY {
+            let fixture = policy_fixture(&format!("apple-sample-cap-{}", exempt.cap));
+            fixture.write(
+                &format!("{}/src/lib.rs", exempt.crate_dir),
+                &ONE_RAW_SITE.repeat(exempt.cap + 1),
+            );
+            let report = super::apple_family(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains(exempt.crate_dir) && v.contains("RATCHET")),
+                "{} must ratchet at {}: {report:?}",
+                exempt.crate_dir,
+                exempt.cap,
+            );
+        }
     }
 
     /// An exemption nothing spends is an exemption to delete, and it reads for years like a crate
     /// that needs it.
     #[test]
     fn an_unspent_sample_memory_exemption_is_caught() {
-        let fixture = policy_fixture("apple-sample-unspent");
-        fixture.write(
-            &format!("{}/Cargo.toml", super::SAMPLE_MEMORY_CRATE),
-            APPLE_MANIFEST,
-        );
-        fixture.write(
-            &format!("{}/src/lib.rs", super::SAMPLE_MEMORY_CRATE),
-            "pub fn f() {}\n",
-        );
+        for exempt in &super::SAMPLE_MEMORY {
+            let fixture = policy_fixture(&format!("apple-sample-unspent-{}", exempt.cap));
+            fixture.write(&format!("{}/src/lib.rs", exempt.crate_dir), "pub fn f() {}\n");
+            let report = super::apple_family(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains(exempt.crate_dir) && v.contains("writes none")),
+                "{}: {report:?}",
+                exempt.crate_dir,
+            );
+        }
+    }
+
+    /// A ratchet naming a crate that has been folded away protects nothing. This one cannot ride on
+    /// `unsafe_policy`'s stale check, which reads a GLOB of the family rather than this hand-picked
+    /// subset — so it is checked here and broken here.
+    #[test]
+    fn a_stale_sample_memory_entry_is_caught() {
+        let fixture = policy_fixture("apple-sample-stale");
+        let manifest = format!("{}/Cargo.toml", super::SAMPLE_MEMORY[0].crate_dir);
+        std::fs::remove_file(fixture.tree().root().join(&manifest)).expect("remove the exempt manifest");
         let report = super::apple_family(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("writes none")),
+            report.violations().iter().any(|v| v.contains("gone stale")),
             "{report:?}"
         );
     }
@@ -944,6 +1030,15 @@ mod tests {
             .write("rust/slopdesk-apple-cgevent/Cargo.toml", APPLE_MANIFEST)
             .write("rust/slopdesk-apple-cgevent/src/lib.rs", "pub fn f() {}\n")
             .write("rust/slopdesk-wire/Cargo.toml", CLEAN);
+        // Every crate holding a sample-memory exemption, each SPENDING exactly one site. Both halves
+        // are required of a compliant tree — a listed crate that is missing is a stale ratchet, and
+        // one that writes nothing is an exemption to delete — so a fixture that left either out
+        // would fail every case above for a reason the case is not about.
+        for exempt in &super::SAMPLE_MEMORY {
+            fixture
+                .write(&format!("{}/Cargo.toml", exempt.crate_dir), APPLE_MANIFEST)
+                .write(&format!("{}/src/lib.rs", exempt.crate_dir), ONE_RAW_SITE);
+        }
         fixture
     }
 }

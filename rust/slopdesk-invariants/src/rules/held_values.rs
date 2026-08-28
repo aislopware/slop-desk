@@ -9,7 +9,7 @@
 //! The measurements are `swiftc -O` against the shipped staticlib, two runs agreeing inside 4%
 //! each.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -36,16 +36,36 @@ const WS_STATE: &str = "Sources/SlopDeskWorkspaceModel/State/HostWorkspaceState.
 /// re-implementation starts as. The ban list is the FRAMEWORKS rather than the code shapes, which
 /// is both narrower to write and impossible to satisfy while re-growing the loop.
 ///
-/// The ring, the pump and the Swift stage face went with them, and the PATHS are the unambiguous
-/// fact — a re-added `AudioJitterBuffer.swift` would carry whatever names its author picked.
+/// ## The capture end of the row is no longer a face
+/// `docs/61` deleted `AudioStreamEncoder.swift` along with the rest of the Swift host, and the door
+/// it asked went with it — `rust/slopdesk-videohostd` links `slopdesk-apple-audio` and
+/// `slopdesk-video` as ordinary crates, so there is no `(ptr, len)` left to prove a call across.
+/// The claim is re-aimed rather than dropped, because the thing it protected is not the door: the
+/// tap end of this row still must not hold a fold, a widen or a converter of its own, and now it is
+/// the one place in the tree that could grow one back in the same language the answer is written
+/// in.
+///
+/// So the daemon carries this rule's two halves in the daemon's own terms. It must ASK
+/// `slopdesk_apple_audio` and `audio_source` — the framework wrapper and the fold — and it may not
+/// name a `CoreAudio` type directly, which is the `import AudioToolbox` of a crate: an
+/// `AudioStreamBasicDescription` or an `AudioBufferList` spelled here is the converter coming back
+/// outside the one `objc2` crate allowed to hold it (`docs/57` §5). `rust/slopdesk-apple-audio` and
+/// `rust/slopdesk-video` are out of scope for the ban, because holding those is what they are for.
+///
+/// The ring, the pump and the Swift stage face went with the loop, and the PATHS are the
+/// unambiguous fact — a re-added `AudioJitterBuffer.swift` would carry whatever names its author
+/// picked. The "no Swift declares `AudioStreamEncoder`" half is stated tree-wide, once, in
+/// [`crate::rules::deleted_video_swift`].
 #[must_use]
 pub fn the_audio_row_is_rusts(tree: &Tree) -> Report {
-    /// Each surviving face and the door it must still ask.
+    /// The GUI video host, which holds the capture end of the row now.
+    ///
+    /// A DIRECTORY rather than a file, the way [`crate::rules::video_host`] argues: the daemon's
+    /// audio module is still being split off the session, and this rule is about the tap asking,
+    /// not about which file does the asking.
+    const DAEMON: &str = "rust/slopdesk-videohostd";
+    /// Each surviving Swift face and the door it must still ask.
     const FACES: &[(&str, &str)] = &[
-        (
-            "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift",
-            r"slopdesk_audio_encoder_push_sample_buffer\(",
-        ),
         (
             "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift",
             r"slopdesk_audio_decoder_decode\(",
@@ -63,7 +83,39 @@ pub fn the_audio_row_is_rusts(tree: &Tree) -> Report {
         "Tests/SlopDeskVideoClientTests/AudioPlaybackPumpTests.swift",
     ];
 
-    let mut claims = Vec::new();
+    let mut claims = vec![
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["slopdesk_apple_audio", "audio_source", "audio_wire"],
+            message: "the daemon stopped asking {entry} — the converter, the stereo fold and the wire \
+                      header are the crates', and a tap that stopped asking has started widening samples of \
+                      its own (docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\bAudioStreamBasicDescription\b|\bAudioBufferList\b|\bAudioConverterRef\b|\bkAudioFormat[A-Za-z0-9]*\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon names a CoreAudio type directly in {files} — that is this row's `import \
+                      AudioToolbox`, and the framework's own contract may only be carried inside \
+                      slopdesk-apple-audio (docs/57 §5, docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\bfn (fold_interleaved_to_stereo|fold_planar_to_stereo|pack_s16le|decode_pcm_s16le)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the daemon declares a fold or a widen of its own in {files} — those are \
+                      audio_source.rs's and audio_wire.rs's, and a drifted normalisation is audio that is \
+                      slightly quieter than it should be, which nobody files (docs/61 §3)",
+        },
+    ];
     for (face, door) in FACES {
         claims.push(Claim::Matches {
             path: face,
@@ -250,8 +302,10 @@ mod tests {
     fn faces(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift",
-                "import Foundation\nslopdesk_audio_encoder_push_sample_buffer(handle, buffer)\n",
+                "rust/slopdesk-videohostd/src/audio.rs",
+                "use slopdesk_apple_audio::{CMSampleBuffer, Encoder, read_stereo};\nuse \
+                 slopdesk_video::audio_source::{CHANNEL_COUNT, SAMPLE_RATE};\nuse \
+                 slopdesk_video::audio_wire::AudioStreamConfig;\n",
             )
             .write(
                 "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift",
@@ -281,6 +335,33 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskVideoClient/AudioJitterBuffer.swift",
             "final class AudioJitterBuffer {}\n",
+        );
+        assert!(!super::the_audio_row_is_rusts(&fixture.tree()).is_clean());
+
+        // The same drift at the capture end, in the language it can be written in now: a CoreAudio
+        // type named where the tap runs is this row's `import AudioToolbox`, and the obligation it
+        // carries belongs inside slopdesk-apple-audio rather than beside the caller.
+        faces(&fixture);
+        fixture.append(
+            "rust/slopdesk-videohostd/src/audio.rs",
+            "let mut asbd = AudioStreamBasicDescription::default();\n",
+        );
+        assert!(!super::the_audio_row_is_rusts(&fixture.tree()).is_clean());
+
+        // The fold itself regrown beside the module that answers it — the pair that cannot be
+        // caught disagreeing, because a drifted normalisation is only slightly quieter.
+        faces(&fixture);
+        fixture.append(
+            "rust/slopdesk-videohostd/src/audio.rs",
+            "fn fold_planar_to_stereo(planes: &[&[f32]]) -> Vec<f32> { Vec::new() }\n",
+        );
+        assert!(!super::the_audio_row_is_rusts(&fixture.tree()).is_clean());
+
+        // And the tap that stopped asking at all — nothing is respelled, so only the ask can fail.
+        faces(&fixture);
+        fixture.write(
+            "rust/slopdesk-videohostd/src/audio.rs",
+            "let samples = self.staged;\n",
         );
         assert!(!super::the_audio_row_is_rusts(&fixture.tree()).is_clean());
     }

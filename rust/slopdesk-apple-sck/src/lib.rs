@@ -56,7 +56,7 @@ mod tap;
 #[cfg(target_os = "macos")]
 pub use content::{Display, ShareableContent, Window};
 #[cfg(target_os = "macos")]
-pub use dispatch2::DispatchQueue;
+pub use dispatch2::{DispatchQueue, DispatchRetained};
 #[cfg(target_os = "macos")]
 pub use frame::FrameKeys;
 #[cfg(target_os = "macos")]

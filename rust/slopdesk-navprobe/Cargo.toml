@@ -2,23 +2,23 @@
 #
 # ## Why it is not a bin in `slopdesk-instruments`
 # Because of what it costs. The other instruments dial a socket and need the wire crates; this one
-# needs the JOIN — `slopdesk-ffi`'s `nav_history`, where `slopdesk-apple-ax`'s element reads meet
-# `slopdesk_video::nav_history`'s rules — and `slopdesk-ffi`'s dependency tree is the whole
-# application. Putting a 90-line probe in the same crate as a socket bench would make the bench pay
-# for the app.
+# needs the JOIN — `slopdesk-videohostd`'s `navhistory`, where `slopdesk-apple-ax`'s element reads
+# meet `slopdesk_video::nav_history`'s rules — and the daemon's dependency tree is every Apple
+# framework the host touches. Putting a 90-line probe in the same crate as a socket bench would make
+# the bench pay for the whole host.
 #
-# ## Why it is not a bin inside `slopdesk-ffi` either
-# `slopdesk-loopback-validate`'s argument, unchanged: `slopdesk-gate ffi` stamps the linked artifact
-# against the source closure it walks from the shim down its `path = "../…"` edges. A bin inside
-# that workspace would put every probe tweak inside that closure, so an argument rename here would
-# re-stale the `.xcframework` and re-run `just ffi` for a change no Swift file can see. The edge
-# points one way: this crate depends on the shim, the shim knows nothing about it.
+# ## Why it is not a bin inside `slopdesk-videohostd` either
+# `slopdesk-loopback-validate`'s argument, transposed: a bin in that crate would be built by every
+# `cargo` invocation the daemon's own recipes make, so an argument rename here would rebuild the
+# host. The edge points one way — this crate depends on the daemon, the daemon knows nothing about
+# it — and that is also why the probe cannot drift from what ships: it drives the SAME reader the
+# 4 Hz status beat drives, not a copy of it.
 #
 # ## Why it may not write `unsafe`
 # `CLAUDE.md` names the three crates that may, and this is not one of them. It does not need to be:
-# the reader carries a Rust-native face alongside its C door, `slopdesk_apple_ax::is_trusted` is
-# safe, and every pid read is `slopdesk-posix`'s — so the whole probe is safe Rust calling safe
-# Rust, and the `unsafe` it would otherwise have hand-written stays where it is owned.
+# the reader is safe Rust over `slopdesk-apple-ax`, `slopdesk_apple_ax::is_trusted` is safe, and
+# every pid read is `slopdesk-posix`'s — so the whole probe is safe Rust calling safe Rust, and the
+# `unsafe` it would otherwise have hand-written stays where it is owned.
 [workspace]
 resolver = "3"
 
@@ -37,8 +37,8 @@ path = "src/main.rs"
 
 [dependencies]
 # The join under test: the strategy selection, the walk bounds, the per-window currency rule and the
-# cache, reached through its Rust face rather than its C door.
-slopdesk-ffi = { path = "../slopdesk-ffi" }
+# cache — the daemon's own reader, linked rather than mirrored.
+slopdesk-videohostd = { path = "../slopdesk-videohostd" }
 # The Accessibility grant, asked the way every other caller asks it.
 slopdesk-apple-ax = { path = "../slopdesk-apple-ax" }
 # A pid's bundle identifier — the half of "which process is Chrome" that is AppKit's.
@@ -72,7 +72,7 @@ dbg_macro = "deny"
 #   absence.
 suboptimal_flops = "allow"
 imprecise_flops = "allow"
-# - `multiple_crate_versions` (cargo): the duplicates are deep inside `slopdesk-ffi`'s own tree and
+# - `multiple_crate_versions` (cargo): the duplicates are deep inside the daemon's own tree and
 #   nothing this crate can choose changes them.
 multiple_crate_versions = "allow"
 

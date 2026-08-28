@@ -7,7 +7,7 @@
 //! is the ban — the shapes a re-implementation would grow back — because a door can be called AND
 //! second-guessed, and the second guess is what diverges on the link that was already in trouble.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -147,37 +147,32 @@ pub fn decode_admission(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-const SWIFT_ENCODER: &str = "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift";
 const SWIFT_DECODER: &str = "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift";
 const SWIFT_PLAYER: &str = "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift";
-const SWIFT_SENDER: &str = "Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift";
 
-/// The faces ask their doors, and each of the three that hold one frees it in `deinit`.
-const fn audio_faces() -> [Claim; 7] {
+/// The Rust host, which holds the SENDING half of the row now.
+const DAEMON: &str = "rust/slopdesk-videohostd";
+
+/// The faces ask their doors, the daemon asks its crates, and each face that holds a handle frees
+/// it in `deinit`.
+const fn audio_faces() -> [Claim; 5] {
     [
-        Claim::Doors {
-            path: SWIFT_ENCODER,
-            entries: &[
-                "slopdesk_audio_encoder_new",
-                "slopdesk_audio_encoder_free",
-                "slopdesk_audio_encoder_config",
-                "slopdesk_audio_encoder_cookie",
-                "slopdesk_audio_encoder_reset",
-                "slopdesk_audio_encoder_push_sample_buffer",
-                "slopdesk_audio_source_constant",
-            ],
-            message: "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift no longer calls {entry} — the \
-                      AAC-ELD encode is rust/slopdesk-apple-audio's",
-        },
-        // The two knobs `_new` takes. They sit on the SENDER rather than the face, because the
-        // sender is what builds an encoder — and they are here rather than nowhere because the
-        // fallback is the whole decision: an unrecognised codec name must land on AAC-ELD, and a
-        // bitrate that is not a number must land on the default rather than the floor.
-        Claim::Doors {
-            path: SWIFT_SENDER,
-            entries: &["slopdesk_audio_wire_format", "slopdesk_audio_bitrate_bps"],
-            message: "Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift no longer calls {entry} — \
-                      the codec pick and the bitrate band are audio_source.rs's",
+        // The sending half. `AudioStreamEncoder` and the host session were the two Swift faces
+        // here, and `docs/61` deleted both; the same two questions — is the encode still
+        // `slopdesk-apple-audio`'s, and are the codec pick and the bitrate band still
+        // `audio_source`'s — are now asked of the daemon that replaced them. The fallback is the
+        // whole decision on that second one: an unrecognised codec name must land on AAC-ELD and a
+        // bitrate that is not a number must land on the default rather than the floor, which is a
+        // rule with exactly one right answer and therefore exactly one home. `audio_wire` is named
+        // beside them because the eleven-byte header and the config flag are what the encoder's
+        // output has to become (docs/57 §5, docs/61 §3).
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["audio_source", "audio_wire", "slopdesk_apple_audio"],
+            message: "rust/slopdesk-videohostd stopped naming {entry} — the block cadence and the two knobs \
+                      are slopdesk_video::audio_source's, the datagram header is \
+                      slopdesk_video::audio_wire's and the AAC-ELD encode is rust/slopdesk-apple-audio's, \
+                      so a daemon that no longer asks for one of them is spelling it itself (docs/61 §3)",
         },
         Claim::Doors {
             path: SWIFT_DECODER,
@@ -203,13 +198,11 @@ const fn audio_faces() -> [Claim; 7] {
                       output stream is rust/slopdesk-audio-out's",
         },
         // Each handle is freed by its owner's `deinit`; a face that stops leaks one per session,
-        // and for the player that is a device thread as well as an allocation.
-        Claim::Names {
-            path: SWIFT_ENCODER,
-            needle: "if let handle { slopdesk_audio_encoder_free",
-            message: "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift no longer frees its encoder in \
-                      deinit — one _free per _new (docs/55)",
-        },
+        // and for the player that is a device thread as well as an allocation. The ENCODER's
+        // `deinit` used to be pinned the same way and no longer can be: its handle went with the
+        // Swift face, and the daemon owns an encoder by move, so the compiler answers what that
+        // claim was standing in for. `rust/slopdesk-apple-audio` carries the leak test for the
+        // framework side of it (docs/57).
         Claim::Names {
             path: SWIFT_DECODER,
             needle: "if let handle { slopdesk_audio_decoder_free",
@@ -225,8 +218,9 @@ const fn audio_faces() -> [Claim; 7] {
     ]
 }
 
-/// And the state a re-implementation is made of stays out of `Sources`.
-const fn audio_bans() -> [Claim; 4] {
+/// And the state a re-implementation is made of stays out of `Sources` — and, for the sending
+/// half, out of the daemon.
+const fn audio_bans() -> [Claim; 6] {
     [
         // A Swift block list is a second reorder law and a second play frontier; the pump's two
         // sample budgets and its starvation test are the door's too.
@@ -281,6 +275,40 @@ const fn audio_bans() -> [Claim; 4] {
             message: "{files} reaches for a ring or stage door — both are inside rust/slopdesk-audio-out \
                       now, and a door for either is a design change (DECISIONS)",
         },
+        // The encoder's half again, in the language the sending side is written in now. The
+        // remainder the capture cadence leaves behind, the fold that turns whatever
+        // ScreenCaptureKit delivered into the wire's stereo, the packing, the block size and the
+        // header size are all `slopdesk_video`'s — every one of them a constant two implementations
+        // would agree on until a device arrives with a layout nobody tested. `rust/slopdesk-video`
+        // is deliberately out of scope: it IS the accumulator.
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn pack_s16le *\(|struct BlockAccumulator\b|fn fold_(interleaved|planar)_to_stereo *\(|\bconst (FRAMES_PER_BLOCK|HEADER_SIZE)\b|\b32768\.0",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd spells the audio accumulator, the channel fold or a wire \
+                      constant in {files} — the 480-frame block, the stereo fold, the S16LE packing and the \
+                      eleven-byte header live in slopdesk_video::audio_source and \
+                      slopdesk_video::audio_wire (docs/61 §3)",
+        },
+        // And the two knobs, on the side that resolves them. `View::Code` is why the prose in
+        // `audio.rs` that NAMES them is not a violation: a doc line explaining that a knob now
+        // honours `video-prefs.json` is the explanation, not a second reader.
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"SLOPDESK_AUDIO_CODEC|SLOPDESK_AUDIO_BITRATE",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd reads an audio knob by name in {files} — the codec pick and \
+                      the bitrate band are slopdesk_video::audio_source's, fallbacks included, and a second \
+                      reader is a second clamp that no test can hold in step (docs/61 §3)",
+        },
     ]
 }
 
@@ -294,16 +322,26 @@ const fn audio_bans() -> [Claim; 4] {
 /// moving it would need a DECISIONS entry rather than a commit. It got one: `rtrb` is that ring,
 /// `cpal` is that render callback, and neither is code this repo maintains.
 ///
-/// So what the row keeps in Swift is four FACES that marshal, and what this rule asks is that they
+/// So what the row keeps in Swift is two FACES that marshal, and what this rule asks is that they
 /// stay faces. Each names its door; a face that stops calling one has grown an implementation.
 ///
-/// The BANS ride along, every one of them on state a re-implementation is made of. The stage's
-/// ordering law — a block list, a play frontier, a sample budget — is `audio_jitter`'s wherever it
-/// appears in `Sources`. The encoder's is `audio_source`'s: an interleaved accumulator carrying a
-/// sub-block remainder, and the channel fold that fills it. And the row's two knobs are read by
-/// `audio_source` too, so the environment name itself may not appear in `Sources` — a Swift
-/// `ProcessInfo` read of either is a second clamp, and two clamps that must agree cannot be
-/// tested for.
+/// The row's SENDING half is no longer Swift at all. `AudioStreamEncoder` and the host session
+/// were the other two faces, and `docs/61` deleted both — so the two questions they answered are
+/// asked of `rust/slopdesk-videohostd` instead, by directory rather than by filename, because the
+/// daemon's modules are still being split and a claim pinned to a guessed one would go wrong for a
+/// reason this rule was never about.
+///
+/// The BANS ride along, every one of them on state a re-implementation is made of, and they now
+/// run down both sides of the row. The stage's ordering law — a block list, a play frontier, a
+/// sample budget — is `audio_jitter`'s wherever it appears in `Sources`. The encoder's is
+/// `audio_source`'s: an interleaved accumulator carrying a sub-block remainder, and the channel
+/// fold that fills it — banned in the daemon now, since the daemon is the only thing that could
+/// grow one. And the row's two knobs are read by `audio_source` too, so the environment name
+/// itself may appear in neither `Sources` nor the daemon: a second reader of either is a second
+/// clamp, and two clamps that must agree cannot be tested for.
+///
+/// Every ban is scoped away from `rust/slopdesk-video` and `rust/slopdesk-apple-audio` on purpose.
+/// Those crates spell every one of these names, because they are what owns them.
 #[must_use]
 pub fn audio_row(tree: &Tree) -> Report {
     let claims: Vec<Claim> = audio_faces().into_iter().chain(audio_bans()).collect();
@@ -753,18 +791,116 @@ mod tests {
     }
 
     /// The encoder's accumulator and channel fold are `audio_source`'s, wherever in `Sources` they
-    /// reappear — the ban is not scoped to the file that used to hold them.
+    /// reappear — the ban is not scoped to the file that used to hold them, and
+    /// `SlopDeskVideoClient` is a LIVE target, so nothing about this seed is a deleted
+    /// directory.
     #[test]
     fn a_returning_swift_audio_accumulator_is_caught() {
         let fixture = Fixture::new("audio-accumulator");
         write_audio_row(&fixture);
         fixture.write(
-            "Sources/SlopDeskVideoHost/SomethingElse.swift",
+            "Sources/SlopDeskVideoClient/SomethingElse.swift",
             "func encodePCM(_ s: [Float]) {}\n",
         );
         let report = super::audio_row(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("audio_source.rs")),
+            "{report:?}"
+        );
+    }
+
+    /// The same law, in the language the sending half is written in now.
+    ///
+    /// Every one of these is a line the compiler accepts and no suite can see: the daemon still
+    /// calls `audio_source`, and now also carries its own block size, its own packing or its own
+    /// idea of full scale beside it. The two agree until a device arrives with a channel layout
+    /// nobody tested.
+    #[test]
+    fn a_daemon_that_respells_the_audio_accumulator_is_caught() {
+        for line in [
+            "fn pack_s16le(samples: &[f32]) -> Vec<u8> { Vec::new() }\n",
+            "struct BlockAccumulator { pending: Vec<f32> }\n",
+            "fn fold_interleaved_to_stereo(src: &[f32]) -> Option<Vec<f32>> { None }\n",
+            "fn fold_planar_to_stereo(left: &[f32]) -> Option<Vec<f32>> { None }\n",
+            "const FRAMES_PER_BLOCK: usize = 480;\n",
+            "const HEADER_SIZE: usize = 11;\n",
+            "let scaled = sample * 32768.0;\n",
+        ] {
+            let fixture = Fixture::new("daemon-audio-accumulator");
+            write_audio_row(&fixture);
+            assert!(super::audio_row(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_AUDIO, line);
+            let report = super::audio_row(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("audio accumulator, the channel fold")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// A knob read by name on the side that is supposed to be asking for it. `audio_source` owns
+    /// the fallbacks — AAC-ELD for an unrecognised codec, the default rather than the floor for a
+    /// bitrate that is not a number — and a second reader is a second set of them.
+    #[test]
+    fn a_daemon_that_reads_an_audio_knob_by_name_is_caught() {
+        let fixture = Fixture::new("daemon-audio-knob");
+        write_audio_row(&fixture);
+        assert!(super::audio_row(&fixture.tree()).is_clean());
+
+        fixture.append(
+            DAEMON_AUDIO,
+            "let raw = std::env::var(\"SLOPDESK_AUDIO_BITRATE\").ok();\n",
+        );
+        let report = super::audio_row(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("reads an audio knob by name")),
+            "{report:?}"
+        );
+    }
+
+    /// `docs/61` left the knob names in the daemon's own doc comments, explaining that they now
+    /// honour `video-prefs.json`. `View::Code` is what keeps the explanation from reading as a
+    /// second reader — this is the test that says so.
+    #[test]
+    fn a_doc_comment_naming_an_audio_knob_is_not_a_second_reader() {
+        let fixture = Fixture::new("daemon-audio-prose");
+        write_audio_row(&fixture);
+        fixture.append(
+            DAEMON_AUDIO,
+            "/// `SLOPDESK_AUDIO_CODEC` and `SLOPDESK_AUDIO_BITRATE` now honour video-prefs.json.\n",
+        );
+        assert!(super::audio_row(&fixture.tree()).is_clean());
+    }
+
+    /// The ask going quiet is the failure this re-aim exists to make impossible: a daemon that
+    /// stopped naming `audio_wire` is not one that stopped sending audio, it is one composing the
+    /// eleven-byte header somewhere the crate's golden vectors do not reach.
+    #[test]
+    fn a_daemon_that_stopped_asking_the_audio_crates_is_caught() {
+        let fixture = Fixture::new("daemon-audio-drained");
+        write_audio_row(&fixture);
+        assert!(super::audio_row(&fixture.tree()).is_clean());
+
+        fixture.write(
+            DAEMON_AUDIO,
+            "\
+use slopdesk_apple_audio::AacEldEncoder;
+use slopdesk_video::audio_source::CHANNEL_COUNT;
+",
+        );
+        let report = super::audio_row(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("stopped naming audio_wire")),
             "{report:?}"
         );
     }
@@ -793,15 +929,19 @@ mod tests {
         );
     }
 
-    /// The three faces, each calling every door its `Claim::Doors` names and freeing its handle.
+    /// The daemon file the sending half's ask reads, and the drift every break-test seeds into it.
+    const DAEMON_AUDIO: &str = "rust/slopdesk-videohostd/src/audio.rs";
+    const DAEMON_AUDIO_ASKS: &str = "\
+use slopdesk_apple_audio::AacEldEncoder;
+use slopdesk_video::audio_source::{self, CHANNEL_COUNT, SAMPLE_RATE};
+use slopdesk_video::audio_wire::{AudioStreamConfig, AudioWireFormat};
+";
+
+    /// The two surviving faces, each calling every door its `Claim::Doors` names and freeing its
+    /// handle, plus the daemon that holds the sending half.
     fn write_audio_row(fixture: &Fixture) {
         fixture
-            .write(
-                "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift",
-                &format!(
-                    "{ENCODER_DOORS}deinit {{ if let handle {{ slopdesk_audio_encoder_free(handle) }} }}\n"
-                ),
-            )
+            .write(DAEMON_AUDIO, DAEMON_AUDIO_ASKS)
             .write(
                 "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift",
                 &format!(
@@ -813,22 +953,9 @@ mod tests {
                 &format!(
                     "{PLAYER_DOORS}deinit {{ if let handle {{ slopdesk_audio_player_free(handle) }} }}\n"
                 ),
-            )
-            .write(
-                "Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift",
-                "slopdesk_audio_wire_format()\nslopdesk_audio_bitrate_bps()\n",
             );
     }
 
-    const ENCODER_DOORS: &str = "\
-slopdesk_audio_encoder_new(x)
-slopdesk_audio_encoder_free(x)
-slopdesk_audio_encoder_config(x)
-slopdesk_audio_encoder_cookie(x)
-slopdesk_audio_encoder_reset(x)
-slopdesk_audio_encoder_push_sample_buffer(x)
-slopdesk_audio_source_constant(x)
-";
     const DECODER_DOORS: &str = "\
 slopdesk_audio_decoder_new(x)
 slopdesk_audio_decoder_free(x)

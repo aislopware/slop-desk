@@ -23,11 +23,9 @@
 use core::ffi::c_uchar;
 
 use slopdesk_terminal::inputbox::{InputAffordance, InputBoxModel};
-use slopdesk_terminal::mode::{TerminalMode, TerminalModeEvent};
+use slopdesk_terminal::mode::TerminalMode;
 
-use crate::terminal_mode::{
-    SLOPDESK_TERMINAL_MODE_ALT_SCREEN, SLOPDESK_TERMINAL_MODE_SHELL_PROMPT, SlopDeskModeEvent,
-};
+use crate::terminal_mode::{SLOPDESK_TERMINAL_MODE_ALT_SCREEN, SLOPDESK_TERMINAL_MODE_SHELL_PROMPT};
 use crate::{borrow, deliver};
 
 /// **A** — a shell command box. Echo flows normally in the surface above.
@@ -90,30 +88,15 @@ impl SlopDeskInputBoxState {
     }
 }
 
-/// The two counts one chunk produced. Both index into slots that hold until the next ingest.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SlopDeskIngest {
-    /// Bytes to render, waiting in the slot for [`slopdesk_input_box_take_rendered`].
-    pub rendered_len: usize,
-    /// Markers seen, waiting in the slot for [`slopdesk_input_box_event`].
-    pub event_count: usize,
-}
-
-impl SlopDeskIngest {
-    /// Nothing ingested — the answer to a null handle.
-    const EMPTY: Self = Self {
-        rendered_len: 0,
-        event_count: 0,
-    };
-}
-
-/// The opaque handle: the model, and the two slots its last ingest filled.
+/// The opaque handle: the model, and the one slot its last ingest filled.
+///
+/// The MARKERS a chunk carried are not parked here. Every one of them has already moved the model
+/// — the affordance, the running flag, the exit code — and that folded state is the whole of what a
+/// view binds; `TerminalModeTracker` is the one way to ask for the events themselves.
 #[derive(Debug, Default)]
 pub struct SlopDeskInputBox {
     model: InputBoxModel,
     rendered: Vec<u8>,
-    events: Vec<TerminalModeEvent>,
 }
 
 /// Turns a caller's handle pointer into a reference for the duration of one call.
@@ -182,7 +165,6 @@ pub unsafe extern "C" fn slopdesk_input_box_reset(handle: *mut SlopDeskInputBox)
     if let Some(state) = unsafe { held(handle) } {
         state.model.reset();
         state.rendered.clear();
-        state.events.clear();
     }
 }
 
@@ -203,8 +185,8 @@ pub unsafe extern "C" fn slopdesk_input_box_state(handle: *mut SlopDeskInputBox)
     SlopDeskInputBoxState::of(&state.model)
 }
 
-/// Feeds one output chunk: parks the bytes to render and the markers seen, and answers how many of
-/// each. Both slots hold until the next ingest.
+/// Feeds one output chunk: parks the bytes to render and answers how many there are. The slot holds
+/// until the next ingest.
 ///
 /// Safe to call with chunks split at any byte boundary — the parser and the ring both carry their
 /// partial state across calls.
@@ -221,21 +203,16 @@ pub unsafe extern "C" fn slopdesk_input_box_ingest(
     handle: *mut SlopDeskInputBox,
     bytes: *const c_uchar,
     len: usize,
-) -> SlopDeskIngest {
+) -> usize {
     // SAFETY: the caller's obligation on the handle, and on `(bytes, len)` discharged by Swift's
     // `withUnsafeBytes`, whose scope is exactly this call.
     let Some(state) = (unsafe { held(handle) }) else {
-        return SlopDeskIngest::EMPTY;
+        return 0;
     };
     // SAFETY: as above — the pair is live for the call or null, which borrows as empty.
     let chunk = unsafe { borrow(bytes, len) };
-    let ingested = state.model.ingest_output(chunk);
-    state.rendered = ingested.bytes;
-    state.events = ingested.events;
-    SlopDeskIngest {
-        rendered_len: state.rendered.len(),
-        event_count: state.events.len(),
-    }
+    state.rendered = state.model.ingest_output(chunk).bytes;
+    state.rendered.len()
 }
 
 /// Copies the parked render bytes into the caller's buffer.
@@ -264,30 +241,6 @@ pub unsafe extern "C" fn slopdesk_input_box_take_rendered(
     // SAFETY: `out` is null or writable for `cap` bytes by the caller's obligation, and the slot
     // is a live Rust vector that cannot overlap it.
     unsafe { deliver(&state.rendered, out, cap) }
-}
-
-/// Reads one parked marker. An index past the end — or a null handle — answers
-/// `SLOPDESK_MODE_EVENT_NONE`, so a caller that miscounts gets a defined non-event.
-///
-/// # Safety
-/// `handle` must satisfy [`held`]'s obligation.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_input_box_event(
-    handle: *mut SlopDeskInputBox,
-    index: usize,
-) -> SlopDeskModeEvent {
-    // SAFETY: the caller's obligation, as above.
-    let Some(state) = (unsafe { held(handle) }) else {
-        return SlopDeskModeEvent::NONE;
-    };
-    state
-        .events
-        .get(index)
-        .map_or(SlopDeskModeEvent::NONE, |event| SlopDeskModeEvent::pack(*event))
 }
 
 /// Records bytes the compose box just wrote to the PTY so their echo can be suppressed.
@@ -323,29 +276,23 @@ pub unsafe extern "C" fn slopdesk_input_box_record_compose_sent(
 mod tests {
     use super::{
         SLOPDESK_INPUT_AFFORDANCE_SHELL_COMMAND, SLOPDESK_INPUT_AFFORDANCE_TUI_COMPOSE,
-        slopdesk_input_box_event, slopdesk_input_box_free, slopdesk_input_box_ingest, slopdesk_input_box_new,
+        slopdesk_input_box_free, slopdesk_input_box_ingest, slopdesk_input_box_new,
         slopdesk_input_box_record_compose_sent, slopdesk_input_box_reset, slopdesk_input_box_state,
         slopdesk_input_box_take_rendered,
     };
-    use crate::terminal_mode::{
-        SLOPDESK_MODE_EVENT_COMMAND_FINISHED, SLOPDESK_MODE_EVENT_ENTERED_ALT_SCREEN,
-        SLOPDESK_MODE_EVENT_NONE, SLOPDESK_TERMINAL_MODE_ALT_SCREEN,
-    };
+    use crate::terminal_mode::SLOPDESK_TERMINAL_MODE_ALT_SCREEN;
 
     /// Ingests a chunk and reads the render slot back, the way the Swift face does.
-    fn ingest(handle: *mut super::SlopDeskInputBox, chunk: &[u8]) -> (Vec<u8>, Vec<u32>) {
-        let counts = unsafe { slopdesk_input_box_ingest(handle, chunk.as_ptr(), chunk.len()) };
-        let mut rendered = vec![0_u8; counts.rendered_len];
+    fn ingest(handle: *mut super::SlopDeskInputBox, chunk: &[u8]) -> Vec<u8> {
+        let rendered_len = unsafe { slopdesk_input_box_ingest(handle, chunk.as_ptr(), chunk.len()) };
+        let mut rendered = vec![0_u8; rendered_len];
         let written =
             unsafe { slopdesk_input_box_take_rendered(handle, rendered.as_mut_ptr(), rendered.len()) };
         assert_eq!(
-            written, counts.rendered_len,
+            written, rendered_len,
             "the slot answered a size it then would not fill"
         );
-        let kinds = (0..counts.event_count)
-            .map(|index| unsafe { slopdesk_input_box_event(handle, index) }.kind)
-            .collect();
-        (rendered, kinds)
+        rendered
     }
 
     #[test]
@@ -359,14 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn the_alt_screen_flip_switches_the_affordance_and_is_reported_as_an_event() {
+    fn the_alt_screen_flip_switches_the_affordance_and_still_renders() {
         let handle = unsafe { slopdesk_input_box_new() };
-        let (rendered, kinds) = ingest(handle, b"\x1b[?1049h");
+        let rendered = ingest(handle, b"\x1b[?1049h");
         assert_eq!(
             rendered, b"\x1b[?1049h",
             "the flip itself still reaches the surface"
         );
-        assert_eq!(kinds, vec![SLOPDESK_MODE_EVENT_ENTERED_ALT_SCREEN]);
         let state = unsafe { slopdesk_input_box_state(handle) };
         assert_eq!(state.affordance, SLOPDESK_INPUT_AFFORDANCE_TUI_COMPOSE);
         assert_eq!(state.mode, SLOPDESK_TERMINAL_MODE_ALT_SCREEN);
@@ -379,7 +325,7 @@ mod tests {
         let _entered = ingest(handle, b"\x1b[?1049h");
         let sent = b"hi\r";
         unsafe { slopdesk_input_box_record_compose_sent(handle, sent.as_ptr(), sent.len()) };
-        let (rendered, _kinds) = ingest(handle, b"hi\r\n");
+        let rendered = ingest(handle, b"hi\r\n");
         assert!(
             rendered.is_empty(),
             "the whole echo was confirmed, so nothing renders"
@@ -392,7 +338,7 @@ mod tests {
         let handle = unsafe { slopdesk_input_box_new() };
         let sent = b"ls\r";
         unsafe { slopdesk_input_box_record_compose_sent(handle, sent.as_ptr(), sent.len()) };
-        let (rendered, _kinds) = ingest(handle, b"ls\r\n");
+        let rendered = ingest(handle, b"ls\r\n");
         assert_eq!(rendered, b"ls\r\n", "echo is what the shell box is FOR");
         unsafe { slopdesk_input_box_free(handle) };
     }
@@ -400,8 +346,7 @@ mod tests {
     #[test]
     fn a_command_finish_reaches_the_state_with_its_exit_code() {
         let handle = unsafe { slopdesk_input_box_new() };
-        let (_rendered, kinds) = ingest(handle, b"\x1b]133;D;7\x07");
-        assert_eq!(kinds, vec![SLOPDESK_MODE_EVENT_COMMAND_FINISHED]);
+        let _rendered = ingest(handle, b"\x1b]133;D;7\x07");
         let state = unsafe { slopdesk_input_box_state(handle) };
         assert!(state.has_exit_code);
         assert_eq!(state.exit_code, 7);
@@ -417,11 +362,6 @@ mod tests {
         let state = unsafe { slopdesk_input_box_state(handle) };
         assert_eq!(state.affordance, SLOPDESK_INPUT_AFFORDANCE_SHELL_COMMAND);
         assert!(!state.has_exit_code);
-        assert_eq!(
-            unsafe { slopdesk_input_box_event(handle, 0) }.kind,
-            SLOPDESK_MODE_EVENT_NONE,
-            "the reset emptied the event slot too",
-        );
         unsafe { slopdesk_input_box_free(handle) };
     }
 
@@ -429,9 +369,8 @@ mod tests {
     fn a_null_handle_answers_rather_than_faults() {
         let state = unsafe { slopdesk_input_box_state(std::ptr::null_mut()) };
         assert_eq!(state.affordance, SLOPDESK_INPUT_AFFORDANCE_SHELL_COMMAND);
-        let counts = unsafe { slopdesk_input_box_ingest(std::ptr::null_mut(), b"x".as_ptr(), 1) };
-        assert_eq!(counts.rendered_len, 0);
-        assert_eq!(counts.event_count, 0);
+        let rendered_len = unsafe { slopdesk_input_box_ingest(std::ptr::null_mut(), b"x".as_ptr(), 1) };
+        assert_eq!(rendered_len, 0);
         unsafe { slopdesk_input_box_free(std::ptr::null_mut()) };
     }
 }

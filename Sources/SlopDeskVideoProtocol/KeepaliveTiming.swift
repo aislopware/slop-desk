@@ -8,10 +8,12 @@ import Foundation
 /// UDP has no FIN: a client that VANISHES without a `bye` (crash, network drop, or a
 /// last-lane close racing its fire-and-forget bye egress) would leave the host's pinned flow
 /// slot pinned and its capture/encode running with no peer (single-pin: one stuck slot;
-/// mux: a leaked minted ``SlopDeskVideoHostSession`` per lane). The clean-`bye` path already
-/// frees the slot (``VideoDatagramTransport/resetClientFlow``); the crash-without-bye case is
+/// mux: a leaked minted host `session::Session` per lane). The clean-`bye` path already
+/// frees the slot (the daemon's `mux_transport` reset, over `slopdesk_video::mux_flow`); the
+/// crash-without-bye case is
 /// handled by a keepalive heartbeat (client) + an idle-timeout reaper (host) that reclaims a
-/// dead flow, driven by the pure ``IdleReapDecider`` (never-reap-without-keepalive safety rule).
+/// dead flow, driven by the pure `slopdesk_video::idle_reap::IdleReapDecider`
+/// (never-reap-without-keepalive safety rule).
 public enum KeepaliveTiming {
     // MARK: Constants (the timing contract — RFC 7675 §5.1 / RFC 9000 §10.1.2)
 

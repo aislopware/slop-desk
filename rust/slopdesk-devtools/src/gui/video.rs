@@ -43,7 +43,7 @@ use regex::Regex;
 use super::control::Launch;
 use super::{
     Hostd, Log, Suite, alive, banner, build_app, complain, holds_udp, kill_matching, poll, port, raise, reap,
-    say, screenshot, swift_build, work_dir,
+    say, screenshot, work_dir,
 };
 use crate::ops::container;
 
@@ -221,13 +221,13 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     let suite = Suite::for_gate("video");
 
     say("video", "building slopdesk-videohostd + slopdesk-hostd");
-    swift_build(root, "slopdesk-videohostd")?;
+    crate::hostbin::build_of(root, crate::hostbin::Daemon::Video, false)?;
     crate::hostbin::build(root, false)?;
     say("video", "generating + building the client app");
     let app = build_app(root, &work, "DD")?;
 
     // Before ANY daemon runs, including the `--list` enumeration: `slopdesk-videohostd` folds
-    // `video-prefs.json` into `EnvConfig.overlay` on its very first line of `main`, so even the
+    // `video-prefs.json` into its `env::Overlay` on its very first line of `main`, so even the
     // listing pass would otherwise read the developer's tuning and measure a configuration nobody
     // wrote down. And `parked-windows.json` is a crash journal it READS at launch — AX-moving the
     // windows it names back off a dead virtual display — and UNLINKS unconditionally, so pointed at
@@ -241,7 +241,7 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
         "video",
         "enumerating shareable windows (needs Screen-Recording TCC + a GUI session)",
     );
-    let videohostd = root.join(".build/debug/slopdesk-videohostd");
+    let videohostd = crate::hostbin::binary_of(root, crate::hostbin::Daemon::Video, false);
     let mut listing_command = Command::new(&videohostd);
     listing_command.arg("--list");
     for (key, value) in &environment {

@@ -26,9 +26,8 @@ use slopdesk_video::geometry::VideoPoint;
 use slopdesk_video::input_event::{
     InputEvent, InputModifiers, KeyEvent, MouseButton, MouseButtonEvent, ScrollEvent, modifier_keys,
 };
-use slopdesk_video::input_routing::coalesce_plan;
 
-use crate::{borrow, deliver, records_of};
+use crate::{borrow, deliver};
 
 /// The datagram parsed.
 pub const INPUT_DECODE_OK: u32 = 0;
@@ -294,77 +293,6 @@ pub const extern "C" fn slopdesk_input_caps_lock_key_code() -> u16 {
     modifier_keys::CAPS_LOCK_KEY_CODE
 }
 
-/// One output event of a coalesced batch: WHICH input it is built from, and the deltas it carries.
-///
-/// See `slopdesk_input_coalesce_plan` for why the answer is a plan.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct SlopDeskCoalescedSlot {
-    /// The horizontal delta — the run's SUM for a merged scroll, the event's own otherwise.
-    pub dx: f64,
-    /// The vertical delta, on the same terms.
-    pub dy: f64,
-    /// The index in the batch this output event is built from.
-    pub source: u32,
-}
-
-/// Coalesces a motion batch and answers the PLAN — one slot per output event, in order.
-///
-/// The caller holds the events; this side holds the rule. A surviving move or drag IS the run's
-/// last input and a merged scroll is the run's last input with summed deltas, so naming the source
-/// says everything — and it keeps the text arm's bytes, which have no home in the flat record, from
-/// having to cross at all. `source` indices strictly increase, so the caller walks its batch and
-/// this answer in one pass.
-///
-/// A record this build cannot rebuild — an unknown `message_type`, a button outside 0..2 — counts
-/// as a BARRIER, which is the conservative answer: it is emitted on its own and nothing merges
-/// across it.
-///
-/// Returns the number of slots NEEDED under §4; nothing is written when that exceeds `cap`.
-///
-/// # Safety
-/// `events` must be null or point to `count` readable records, and `out` must be null or point to
-/// `cap` writable slots, both for the whole call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_input_coalesce_plan(
-    events: *const SlopDeskInputEvent,
-    count: usize,
-    coalesce_scroll: bool,
-    out: *mut SlopDeskCoalescedSlot,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, discharged by Swift's `withUnsafeBufferPointer`.
-    let records = unsafe { records_of(events, count) };
-    // The text a record points at is not needed to key a run — every text event is a barrier
-    // whatever it says — so the empty payload here costs nothing and copies nothing.
-    let batch: Vec<InputEvent> = records
-        .iter()
-        .map(|record| rebuild(*record, &[]).unwrap_or_else(|| InputEvent::Text(String::new(), 0)))
-        .collect();
-    let plan = coalesce_plan(&batch, coalesce_scroll);
-    if out.is_null() || plan.len() > cap {
-        return plan.len();
-    }
-    let slots: Vec<SlopDeskCoalescedSlot> = plan
-        .iter()
-        .map(|slot| {
-            SlopDeskCoalescedSlot {
-                dx: slot.dx,
-                dy: slot.dy,
-                source: u32::try_from(slot.source).unwrap_or(u32::MAX),
-            }
-        })
-        .collect();
-    // SAFETY: `slots.len() <= cap` was just checked, `out` is non-null and writable for `cap` slots
-    // by the caller's obligation, and `slots` was allocated inside this call so it cannot overlap.
-    unsafe { core::ptr::copy_nonoverlapping(slots.as_ptr(), out, slots.len()) };
-    slots.len()
-}
-
 #[cfg(test)]
 #[expect(
     unsafe_code,
@@ -373,9 +301,8 @@ pub unsafe extern "C" fn slopdesk_input_coalesce_plan(
 )]
 mod tests {
     use super::{
-        INPUT_DECODE_MALFORMED, INPUT_DECODE_OK, INPUT_DECODE_TRUNCATED, SlopDeskCoalescedSlot,
-        SlopDeskInputEvent, slopdesk_input_coalesce_plan, slopdesk_input_event_constant,
-        slopdesk_input_event_decode, slopdesk_input_event_encode,
+        INPUT_DECODE_MALFORMED, INPUT_DECODE_OK, INPUT_DECODE_TRUNCATED, SlopDeskInputEvent,
+        slopdesk_input_event_constant, slopdesk_input_event_decode, slopdesk_input_event_encode,
     };
 
     fn round_trip(event: SlopDeskInputEvent, text: &[u8]) -> (SlopDeskInputEvent, Vec<u8>) {
@@ -477,83 +404,5 @@ mod tests {
             slopdesk_input_event_encode(bad_button, core::ptr::null(), 0, core::ptr::null_mut(), 0)
         };
         assert_eq!(refused, 0);
-    }
-
-    /// The plan the door answers for a batch, sized in one call and filled in a second.
-    fn plan(batch: &[SlopDeskInputEvent], coalesce_scroll: bool) -> Vec<SlopDeskCoalescedSlot> {
-        let needed = unsafe {
-            slopdesk_input_coalesce_plan(
-                batch.as_ptr(),
-                batch.len(),
-                coalesce_scroll,
-                core::ptr::null_mut(),
-                0,
-            )
-        };
-        let mut slots = vec![SlopDeskCoalescedSlot::default(); needed];
-        let written = unsafe {
-            slopdesk_input_coalesce_plan(
-                batch.as_ptr(),
-                batch.len(),
-                coalesce_scroll,
-                slots.as_mut_ptr(),
-                slots.len(),
-            )
-        };
-        assert_eq!(written, needed);
-        slots
-    }
-
-    fn record(message_type: u8) -> SlopDeskInputEvent {
-        SlopDeskInputEvent {
-            message_type,
-            ..SlopDeskInputEvent::default()
-        }
-    }
-
-    /// A move run collapses to its last, and a barrier flushes it first — named, never carried.
-    #[test]
-    fn the_plan_names_the_survivor_of_every_run() {
-        let batch = [record(1), record(1), record(1), record(5), record(1)];
-        let sources: Vec<u32> = plan(&batch, false).iter().map(|slot| slot.source).collect();
-        assert_eq!(sources, [2, 3, 4], "the run's latest, the key, the trailing run");
-    }
-
-    /// The deltas are the run's SUM, which is the one number a caller cannot read off its own
-    /// event.
-    #[test]
-    fn a_merged_scroll_carries_the_runs_summed_travel() {
-        let scroll = |dy: f64| {
-            SlopDeskInputEvent {
-                dy,
-                scroll_phase: 2,
-                ..record(4)
-            }
-        };
-        let batch = [scroll(-10.0), scroll(-20.0), scroll(-30.0)];
-        let merged = plan(&batch, true);
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].source, 2);
-        #[expect(
-            clippy::float_cmp,
-            reason = "the sum of three exact deltas is exact, which is the property under test"
-        )]
-        {
-            assert_eq!(merged[0].dy, -60.0);
-        }
-        assert_eq!(
-            plan(&batch, false).len(),
-            3,
-            "with the knob off a scroll is a hard barrier, so nothing merges",
-        );
-    }
-
-    /// A record this build cannot rebuild is a BARRIER — the conservative answer, never a merge.
-    #[test]
-    fn a_record_no_arm_answers_to_stops_a_run_rather_than_joining_it() {
-        let batch = [record(1), record(9), record(1)];
-        let sources: Vec<u32> = plan(&batch, false).iter().map(|slot| slot.source).collect();
-        assert_eq!(sources, [0, 1, 2], "nothing merged across the unknown record");
-        assert_eq!(plan(&[], false).len(), 0, "an empty batch plans nothing");
     }
 }

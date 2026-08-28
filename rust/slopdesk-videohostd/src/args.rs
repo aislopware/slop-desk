@@ -8,13 +8,13 @@
 //!
 //! ## Faithfulness
 //!
-//! Carried from `Sources/slopdesk-videohostd/main.swift`'s `VideoHostdArguments` verbatim,
-//! including the parts that are not the project's usual shape. An unknown argument is a USAGE error
-//! rather than an ignored token. `--help` takes the same path as a parse failure, so the usage text
-//! goes to stderr and the exit code is 2 either way. The `--scale`/`--bitrate`/`--fps` bounds are
-//! checked during the parse, not after, so `--fps 0` is a usage error rather than a clamp.
-//! `--vd-point-size` lowercases before splitting, so `1920X1080` parses. `-h`/`--help` is not
-//! a separate arm: it falls through the same `_` the unknown arguments do.
+//! Carried from the Swift daemon's `VideoHostdArguments` verbatim, including the parts that are not
+//! the project's usual shape. An unknown argument is a USAGE error rather than an ignored token.
+//! `--help` takes the same path as a parse failure, so the usage text goes to stderr and the exit
+//! code is 2 either way. The `--scale`/`--bitrate`/`--fps` bounds are checked during the parse, not
+//! after, so `--fps 0` is a usage error rather than a clamp. `--vd-point-size` lowercases before
+//! splitting, so `1920X1080` parses. `-h`/`--help` is not a separate arm: it falls through the same
+//! `_` the unknown arguments do.
 
 use core::fmt;
 

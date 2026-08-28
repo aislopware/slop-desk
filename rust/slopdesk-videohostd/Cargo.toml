@@ -68,18 +68,14 @@ serde_json = "1"
 # the whole enumeration — the two lookups by id were all the capture path ever asked for.
 slopdesk-apple-sck = { path = "../slopdesk-apple-sck" }
 
-# The VideoToolbox compression session, its timestamps and its pixel buffers, as safe Rust.
+# The VideoToolbox compression session, its timestamps and its pixel buffers, as safe Rust — and,
+# since the Swift half was deleted, the ENCODER DRIVER's only framework edge. The driver lived in
+# `slopdesk-ffi` for as long as the C doors did, because the SDK publishes HEVC parameter sets as a
+# bare pointer and the `slice::from_raw_parts` that laid them in front of a slice had to be written
+# by a crate allowed one. `EncodedSample::copy_parameter_sets_into` moved that read to the framework
+# side under `docs/57` §2's sample-memory amendment, so `src/encode.rs` holds the driver, this crate
+# stays `forbid(unsafe_code)`, and the shim edge that `docs/61` §2 registered as debt is GONE.
 slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
-
-# The ENCODER DRIVER, and the one edge in this manifest that names the Swift shim. It is here
-# because that is where the driver's single `unsafe` obligation is legal: HEVC parameter sets have
-# no copy-out variant in the SDK, so `slopdesk-apple-vt` answers them as `(ptr, len)` values and the
-# one `slice::from_raw_parts` that lays them down in front of a slice is made in `slopdesk-ffi`,
-# whose entire remit `docs/57` §2 states is that question. Lifting the driver into a crate of its
-# own would make a FOURTH hand-written-`unsafe` crate, which `CLAUDE.md` admits only for a MEASURED
-# perf conflict. This crate takes only the values-form face; the `extern "C"` doors beside it have
-# no caller here. When the Swift half is deleted, the driver moves and this edge goes with it.
-slopdesk-ffi = { path = "../slopdesk-ffi" }
 
 # The window feed's four framework edges. The census (`cgwindow`) is the feed's spine; the display
 # list (`cgdisplay`) turns a frame into an ordinal; the app reads (`app`) answer a bundle id and a
@@ -90,6 +86,42 @@ slopdesk-apple-cgwindow = { path = "../slopdesk-apple-cgwindow" }
 slopdesk-apple-cgdisplay = { path = "../slopdesk-apple-cgdisplay" }
 slopdesk-apple-app = { path = "../slopdesk-apple-app" }
 slopdesk-apple-ax = { path = "../slopdesk-apple-ax" }
+
+# Remote input's one effect: every pointer, scroll, key and text event the client sends is built and
+# posted through this crate. It is the last framework edge the daemon needed — with it, the whole
+# input path from the wire to the window server is Rust and the injector's orchestration lives beside
+# the session that drives it rather than across a language boundary from it.
+slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
+
+# The cursor's own channel. `NSCursor` is a window-server read on the MAIN thread, which is why the
+# sampler hops for the shape and never for the position — the two are different framework areas and
+# the crate wraps only the one.
+slopdesk-apple-cursor = { path = "../slopdesk-apple-cursor" }
+
+# The sleep assertion a full-desktop session holds. `IOPMAssertion` is a refcount the daemon owns
+# process-wide, so the crate wraps the assertion and this one holds the count.
+slopdesk-apple-power = { path = "../slopdesk-apple-power" }
+
+# The virtual display a parked window lives on. Private `CGVirtualDisplay` classes, probed rather
+# than assumed — the wrapper answers whether they resolved at all.
+slopdesk-apple-cgvirtualdisplay = { path = "../slopdesk-apple-cgvirtualdisplay" }
+
+# This process's own application object, and the main event loop it runs. Capture refuses to start
+# in a process with no window-server connection (`CGS_REQUIRE_INIT`), and the virtual display
+# dispatches to the MAIN QUEUE — so `main` ends in a real loop, never a park.
+slopdesk-apple-nsapp = { path = "../slopdesk-apple-nsapp" }
+
+# One syscall with no safe wrapper: `machdep.cpu.brand_string`, which places the running chip on
+# the framebuffer-limit ladder the virtual display's geometry is refused or granted by.
+slopdesk-posix = { path = "../slopdesk-posix" }
+
+# The shutdown signals, blocked before any thread exists and waited on rather than handled — the
+# discipline `slopdesk-hostd`'s own `main` argues at length.
+nix = { version = "0.31", features = ["signal"] }
+
+# The second stream `ScreenCaptureKit` already delivers. The AAC converter it wraps is `!Send` by
+# design, which is why `src/audio.rs` confines it to one thread rather than locking it.
+slopdesk-apple-audio = { path = "../slopdesk-apple-audio" }
 
 [dev-dependencies]
 

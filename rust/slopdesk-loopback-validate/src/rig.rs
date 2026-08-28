@@ -1,22 +1,29 @@
 //! The rig: a hardware encoder, a hardware decoder, and a synthetic frame to feed them.
 //!
 //! Everything here is a thin holder over the real product components. The encoder is
-//! `slopdesk-ffi`'s join over `VTCompressionSession` plus `slopdesk-video`'s rate-control rules —
-//! the same object the host drives — reached through its Rust-native sink rather than its C door,
-//! so this crate hand-writes no callback and needs no `unsafe`. The decoder is the same arrangement
-//! on the client's side. The frame is a `CVPixelBuffer` filled by `slopdesk_video::loopback`'s
-//! formulas, whose analytic twin is what the picture check measures against.
+//! `slopdesk-videohostd`'s join over `VTCompressionSession` plus `slopdesk-video`'s rate-control
+//! rules — literally the object the host drives, not a second one shaped like it. It moved there
+//! from `slopdesk-ffi` when the Swift host was deleted and the C doors went with it (`docs/61` §2),
+//! and this crate followed rather than keeping a copy: a harness that measured a different encoder
+//! from the one that ships would answer the wrong question. The decoder is still the shim's, which
+//! is right — the client half of the wire is Swift's caller, and its C door is live. Both are
+//! reached through their Rust-native sinks rather than through a callback this crate would have to
+//! hand-write, which is why it needs no `unsafe`. The frame is a `CVPixelBuffer` filled by
+//! `slopdesk_video::loopback`'s formulas, whose analytic twin is what the picture check measures
+//! against.
 
 use std::sync::{Arc, Mutex};
 
 use slopdesk_apple_vt::{PixelBuffer, Timestamp};
 use slopdesk_ffi::decoder::{DecodeOutcome, DecodedFrameSink, SlopDeskVideoDecoder};
-use slopdesk_ffi::encoder::{EncodedFrame, EncodedFrameSink, EncoderSpec, SlopDeskVideoEncoder};
-use slopdesk_ffi::pixel_plane::{plane_mut, plane_view};
 use slopdesk_video::loopback::{
     LumaView, Mad, PlaneMut, fill_chroma, fill_chroma_neutral, fill_luma, fill_luma_low_motion, fill_noise,
     noise_seed,
 };
+use slopdesk_videohostd::encode::{
+    EncodeError, EncodedFrameSink, Encoder as HostEncoder, FinishedFrame, Shape,
+};
+use slopdesk_videohostd::env::Overlay;
 
 /// The picture every scenario runs at — 720p60, the live path's own operating point.
 pub const WIDTH: usize = 1280;
@@ -48,7 +55,7 @@ struct Collector {
 }
 
 impl EncodedFrameSink for Collector {
-    fn frame(&self, frame: &EncodedFrame<'_>) {
+    fn frame(&self, frame: &FinishedFrame<'_>) {
         if let Ok(mut items) = self.items.lock() {
             items.push(Emitted {
                 avcc: frame.avcc.to_vec(),
@@ -63,7 +70,7 @@ impl EncodedFrameSink for Collector {
 #[derive(Debug)]
 pub struct Encoder {
     /// The session and the rules that drive it.
-    inner: SlopDeskVideoEncoder,
+    inner: HostEncoder,
     /// Where its frames land.
     collector: Arc<Collector>,
 }
@@ -76,34 +83,40 @@ impl Encoder {
     /// refused create reports itself.
     pub fn create(full_range: bool, ltr_enabled: bool, bitrate: i64) -> Result<Self, i32> {
         let collector = Arc::new(Collector::default());
-        let sink: Arc<dyn EncodedFrameSink> = Arc::clone(&collector) as Arc<dyn EncodedFrameSink>;
-        let inner = SlopDeskVideoEncoder::create(
-            EncoderSpec {
-                width: i32::try_from(WIDTH).unwrap_or(1280),
-                height: i32::try_from(HEIGHT).unwrap_or(720),
+        let sink: Arc<dyn EncodedFrameSink> = collector.clone();
+        // The harness IS run from a shell with the knobs exported — that is how an operator sweeps
+        // an operating point — and the launch overlay reads the real environment FIRST, so this is
+        // exactly the reader it wants and the sidecar is the fallback the host itself uses.
+        let mut inner = HostEncoder::new(
+            Shape {
+                width: WIDTH,
+                height: HEIGHT,
                 bitrate,
                 fps: FPS,
                 full_range,
                 ltr_enabled,
-                qp_decouple: false,
             },
-            // The harness IS run from a shell with the knobs exported — that is how an operator
-            // sweeps an operating point — so the process environment is exactly the reader it wants.
-            &|key| std::env::var(key).ok(),
             Some(sink),
-        )?;
+            &Overlay::from_launch(),
+        );
+        inner.open().map_err(status)?;
         Ok(Self { inner, collector })
     }
 
-    /// Encodes one live frame at presentation index `index`.
+    /// Encodes one live frame at presentation index `index`, answering the framework's status.
+    ///
+    /// A status rather than the driver's `Result` because a scenario COUNTS refusals and carries on
+    /// — a harness that stopped at the first one would measure the encoder up to its first hiccup.
     pub fn encode_live(&self, source: &Source, index: usize, force_keyframe: bool) -> i32 {
-        self.inner
-            .encode_live(source.image(), stamp(index), force_keyframe, None)
+        status_of(
+            self.inner
+                .encode_live(source.image(), stamp(index), force_keyframe, None),
+        )
     }
 
     /// Encodes a refresh anchored on an acknowledged long-term reference.
     pub fn encode_ltr_refresh(&self, source: &Source, index: usize) -> i32 {
-        self.inner.encode_ltr_refresh(source.image(), stamp(index))
+        status_of(self.inner.encode_ltr_refresh(source.image(), stamp(index)))
     }
 
     /// Actuates the live target bitrate. Answers whether it changed.
@@ -123,7 +136,7 @@ impl Encoder {
 
     /// Blocks until every frame presented so far has reached the collector.
     pub fn complete_frames(&self) {
-        let _ = self.inner.complete_frames();
+        self.inner.complete_frames();
     }
 
     /// Takes everything finished since the last call, oldest first.
@@ -175,7 +188,7 @@ impl DecodedFrameSink for Screen {
         let Some(locked) = image.lock_read_only() else {
             return;
         };
-        let Some(plane) = plane_view(&locked, 0) else {
+        let Some(plane) = locked.plane_view(0) else {
             return;
         };
         let (index, low_motion, drop_recent) = (state.source_index, state.low_motion, state.drop_recent);
@@ -281,7 +294,7 @@ impl Source {
         let Some(mut locked) = self.buffer.lock() else {
             return;
         };
-        if let Some(mut luma) = plane_mut(&mut locked, 0) {
+        if let Some(mut luma) = locked.plane_mut(0) {
             let mut plane = as_plane(&mut luma);
             if low_motion {
                 fill_luma_low_motion(&mut plane, index);
@@ -289,7 +302,7 @@ impl Source {
                 fill_luma(&mut plane, index);
             }
         }
-        if let Some(mut chroma) = plane_mut(&mut locked, 1) {
+        if let Some(mut chroma) = locked.plane_mut(1) {
             let mut plane = as_chroma_plane(&mut chroma);
             if low_motion {
                 fill_chroma_neutral(&mut plane);
@@ -306,10 +319,10 @@ impl Source {
             return;
         };
         let mut state = noise_seed(index);
-        if let Some(mut luma) = plane_mut(&mut locked, 0) {
+        if let Some(mut luma) = locked.plane_mut(0) {
             fill_noise(&mut as_plane(&mut luma), &mut state);
         }
-        if let Some(mut chroma) = plane_mut(&mut locked, 1) {
+        if let Some(mut chroma) = locked.plane_mut(1) {
             fill_noise(&mut as_chroma_plane(&mut chroma), &mut state);
         }
     }
@@ -317,7 +330,7 @@ impl Source {
 
 /// The harness's LUMA plane, as the fill formulas take it — one byte per sample, so the sample
 /// width Core Video reports IS the byte width.
-const fn as_plane<'a>(plane: &'a mut slopdesk_ffi::pixel_plane::PlaneBytes<'_>) -> PlaneMut<'a> {
+const fn as_plane<'a>(plane: &'a mut slopdesk_apple_vt::PlaneBytes<'_>) -> PlaneMut<'a> {
     PlaneMut {
         bytes: plane.bytes,
         stride: plane.stride,
@@ -333,7 +346,7 @@ const fn as_plane<'a>(plane: &'a mut slopdesk_ffi::pixel_plane::PlaneBytes<'_>) 
 /// defined on the byte index — so the visible span has to be the byte one, or the right half of
 /// every chroma row keeps whatever the allocator left in it and the encoder sees a different
 /// picture than the one the harness thinks it painted.
-const fn as_chroma_plane<'a>(plane: &'a mut slopdesk_ffi::pixel_plane::PlaneBytes<'_>) -> PlaneMut<'a> {
+const fn as_chroma_plane<'a>(plane: &'a mut slopdesk_apple_vt::PlaneBytes<'_>) -> PlaneMut<'a> {
     let doubled = plane.width.saturating_mul(2);
     PlaneMut {
         bytes: plane.bytes,
@@ -353,4 +366,20 @@ fn stamp(index: usize) -> Timestamp {
         value: i64::try_from(index).unwrap_or(i64::MAX),
         timescale: i32::try_from(FPS).unwrap_or(60),
     }
+}
+
+/// The framework status inside a driver error.
+///
+/// The driver's two arms are "the session could not be made" and "the frame was refused", and both
+/// carry the `OSStatus` the framework gave — which is the only thing a harness scenario reports, so
+/// flattening here keeps every call site reading as it did when the door answered a bare status.
+const fn status(error: EncodeError) -> i32 {
+    match error {
+        EncodeError::SessionCreate(code) | EncodeError::Encode(code) => code,
+    }
+}
+
+/// The same, for a call that may have succeeded. Success is the framework's own zero.
+fn status_of(result: Result<(), EncodeError>) -> i32 {
+    result.map_or_else(status, |()| 0)
 }

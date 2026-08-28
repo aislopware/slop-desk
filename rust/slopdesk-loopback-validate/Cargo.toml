@@ -32,8 +32,15 @@ path = "src/main.rs"
 # The whole loop under test: the packetizer, the reassembler, FEC, every controller, and the
 # harness's own deterministic content and loss primitives in `loopback`.
 slopdesk-video = { path = "../slopdesk-video" }
-# The encoder and decoder joins, reached through their Rust-native sinks rather than their C doors.
+# The DECODER join, reached through its Rust-native sink rather than its C door. The client half of
+# the wire is still Swift's caller, so that door is live and the shim is still its home.
 slopdesk-ffi = { path = "../slopdesk-ffi" }
+# The ENCODER join. It moved out of the shim when the Swift host was deleted (`docs/61` §2), and the
+# harness followed it rather than keeping a copy: the whole claim this crate makes is that it
+# measures the object the host actually drives, and a second encoder shaped like it would answer a
+# different question. The daemon's own workspace and profile come with it, which is the cost of that
+# claim and is the right one to pay.
+slopdesk-videohostd = { path = "../slopdesk-videohostd" }
 # `PixelBuffer` — the synthetic frame source, and the read-back the picture check measures.
 slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
 

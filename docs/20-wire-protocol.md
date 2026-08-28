@@ -718,9 +718,10 @@ topology). See docs/DECISIONS.md 2026-07-28.
 
 > **STATUS: CURRENT.** The wire format, packetization, FEC and recovery logic are **Rust**
 > (`rust/slopdesk-video`, reached from the `SlopDeskVideoProtocol` face through `CSlopDeskFFI`, with
-> the FEC's GF(2⁸) NEON kernel isolated in `rust/slopdesk-gfsimd`); `SlopDeskVideoHost`
-> (`NWVideoMuxDatagramTransport`) and `SlopDeskVideoClient` (`NWVideoMuxClientFlow`)
-> capture/encode/decode/render and drive the sockets. This secondary GUI
+> the FEC's GF(2⁸) NEON kernel isolated in `rust/slopdesk-gfsimd`). The two ends are no longer the
+> same language: the HOST is `rust/slopdesk-videohostd`, which captures, encodes and drives its
+> sockets entirely in Rust (docs/61 deleted the `SlopDeskVideoHost` target), while the CLIENT is
+> still `SlopDeskVideoClient` (`NWVideoMuxClientFlow`) decoding and rendering. This secondary GUI
 > video path (doc 17 §3, doc 18 measured spike config) is **independent of PATH 1** — its own
 > protocol over plain UDP, with NO TCP, no `WireMessage`, no `FrameDecoder`.
 
@@ -772,9 +773,13 @@ bulk traffic delay latency-critical control" rationale as PATH 1's dual TCP (§1
 > (mouseMove/Down/Up), so multiplexing them onto `input` would have the host mis-decode a recovery
 > request as a phantom mouse event. The dedicated tag removes that ambiguity (no discriminator byte).
 
-The enum is defined identically (byte-for-byte raw values) in both `SlopDeskVideoHost` and
-`SlopDeskVideoClient`; the client cannot depend on the macOS-only host module, so it carries its own
-copy. *(Candidate to hoist into `SlopDeskVideoProtocol` so one definition is shared.)*
+The enum is declared ONCE in Swift, in `Sources/SlopDeskVideoProtocol/VideoChannel.swift` — the host
+and the client each used to carry a byte-identical copy, which is the two-declarations-of-one-contract
+shape `docs/55` §6 bans. `rust/slopdesk-invariants`'s `one-channel-tag` rule keeps a second Swift one
+from growing back AND pins the seven raw values, which are the wire tags themselves. The host that
+reads them is Rust now — `rust/slopdesk-video`'s `VideoChannel`, whose `raw_value` /
+`from_raw_value` carry the same seven numbers — so what remains is one spelling per LANGUAGE rather
+than two on the same side of the wire.
 
 ## 9.2 Session bring-up — `VideoControlMessage` (control channel)
 
@@ -1029,10 +1034,13 @@ off 3: UInt16  fireTravel — points, the host's clamped SLOPDESK_SWIPE_NAV_TRAV
 off 5: UInt8   navFlags   — bit0 canGoBack, bit1 canGoForward, bit2 historyKnown
 ```
 
-Sent by the host on every frontmost-app **activation**, on every **history-state change** (a ~250 ms
-poll of the target's AX Back/Forward state — `HostNavHistory`; history flips on every navigation, so
-change-pushes keep the chip honest between heartbeats), plus a ~2 s heartbeat (`SwipeNavStatusKicker`
-fan-out; a window session resolves eligibility against its own target app instead of the frontmost).
+Sent by the host on every **history-state change** (a ~250 ms poll of the target's AX Back/Forward
+state — `slopdesk-videohostd`'s `navhistory`; history flips on every navigation, so change-pushes
+keep the chip honest between heartbeats), plus a ~2 s heartbeat (`navstatus`'s beat and the registry
+fan-out under it; a window session resolves eligibility against its own target app instead of the
+frontmost). The Swift daemon also pushed instantly on frontmost-app **activation**; the Rust one has
+no workspace-notification wrapper to hook, so an activation lands on the next change beat instead —
+at most one 250 ms poll later (`docs/61` §6).
 `navFlags` carries whether ⌘[/⌘] would actually navigate: with `historyKnown` set, the client hides
 the chip for a dead direction; `historyKnown`=0 (AX read failed/disabled, no menu/toolbar pair, or
 `SLOPDESK_SWIPE_NAV_HISTORY=0`) means the client must FAIL OPEN and treat both directions as

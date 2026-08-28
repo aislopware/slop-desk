@@ -1,17 +1,37 @@
-//! The two operations that live in exactly one crate, and the three Swift modules that became
-//! faces over Rust rather than second copies of it.
+//! The two operations that live in exactly one crate, and the callers that ask Rust for a verdict
+//! rather than keeping a second copy of it.
 //!
 //! Ported from the deleted `check-supervisor.sh`. What the first pair have in common is that the
 //! guarantee is attached to the LOCATION rather than to the code: a disassembly pin can only guard
 //! a symbol compiled beside it, and a C entry point next to the logic it marshals is a pointer bug
-//! one edit away from being a terminal bug. The rest are `import CSlopDeskFFI` plus a ban list,
-//! because unlike the ported daemons these files legitimately still exist — so "is it still a face"
-//! is a question about CONTENT, and the answer is: it calls the door, and it does not hold the
-//! table.
+//! one edit away from being a terminal bug.
+//!
+//! The rest ask "is this still a caller and not a second answer", which is a question about
+//! CONTENT: it asks for the verdict, and it does not hold the table. `docs/61` changed WHO gets
+//! asked that, not what it asks. Encode and capture used to be Swift faces over C doors, and both
+//! files are deleted — their caller is `rust/slopdesk-videohostd`, which links `slopdesk-video` as
+//! an ordinary Rust dependency, so the ask is a `use` and the check is a [`Claim::MentionsUnder`]
+//! over the daemon DIRECTORY. Of the VIDEO path's faces exactly one is still Swift and still
+//! checked as one — the client's `VideoDecoder`, which `import CSlopDeskFFI` plus a ban list
+//! describes exactly — and the replay buffer and the three agent-detection files are checked the
+//! same way for reasons of their own, unrelated to `docs/61`. The framework bans the two ported
+//! rules carry did not move with their subjects: they went TREE-WIDE over Swift, because with no
+//! Swift host left there is no target that could hold a legitimate compression session or capture
+//! stream.
 
 use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
+
+/// The Rust daemon that replaced the Swift GUI video host.
+///
+/// A DIRECTORY rather than a file, and that is the whole reason the re-aim works. `docs/61` split
+/// the deleted `WindowCapturer.swift` and `VideoEncoder.swift` across a dozen modules — `capture`,
+/// `encode`, `session_capture`, `session_pump`, `minter`, `windowgeometry` — and which module holds
+/// which ask is an implementation choice that may move again. What may NOT move is that the daemon
+/// asks `slopdesk_video` for the verdict and does not respell it, and that is a property of the
+/// crate, not of any file in it.
+const DAEMON: &str = "rust/slopdesk-videohostd";
 
 /// `fork`, `openpty` and `extern "C"`, each allowed in exactly one crate.
 ///
@@ -244,12 +264,16 @@ pub fn agent_detection(tree: &Tree) -> Report {
 /// leaves out is the point. Every EFFECT on a window — park, restore, resize, un-minimize, raise —
 /// is `rust/slopdesk-apple-ax`'s, and so is every attribute READ, the trust check and the private
 /// window-id symbol; all of those are banned outright. What is not banned is
-/// `AXUIElementCreateApplication` and `AXUIElementSetMessagingTimeout`, because
-/// `WindowFeedAXObserver` still needs both: an observer with a run loop behind it is a SUBSCRIPTION
-/// rather than an effect on the system, and `docs/57` §1's test for what belongs in the objc2
-/// family is the latter. Those two calls create and configure the element a subscription attaches
-/// to and read nothing, so leaving them is not leaving debt — the file that makes them is where
-/// they belong.
+/// `AXUIElementCreateApplication` and `AXUIElementSetMessagingTimeout`: those two calls create and
+/// configure the element a subscription attaches to and read nothing, and an observer with a run
+/// loop behind it is a SUBSCRIPTION rather than an effect on the system, which is `docs/57` §1's
+/// test for what belongs in the objc2 family.
+///
+/// The observer that used to make both was the window feed's, and `docs/61` moved the feed into
+/// `rust/slopdesk-videohostd`, so the carve-out currently protects nothing. It stays because it is
+/// a ruling rather than an exemption — the two calls are not effects, whoever makes them — and its
+/// break-test below is what keeps a later widening from sweeping them in on the argument that
+/// nothing needs them today.
 ///
 /// The read half joined the ban when `HostNavHistory` moved. While it was still Swift, banning
 /// `AXUIElementCopyAttributeValue` would have needed an exemption for it, and a ban whose exemption
@@ -288,12 +312,12 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
         "|CGSCurrentCursorSeed",
         "|SLSCurrentCursorSeed"
     );
-    // NOT `AXUIElementCreateApplication` or `…SetMessagingTimeout`, which `WindowFeedAXObserver`
-    // still makes: it holds a SUBSCRIPTION with a run loop, and `docs/57` §1 keeps those Swift. Every
-    // other reach into the tree is banned — the READ, the write, the action, the trust check and the
-    // private window-id symbol. The last is the sharpest: it was a `@_silgen_name` declaration in
-    // `InputInjector`, and a second declaration of a private symbol is how two callers end up
-    // disagreeing about which framework exports it.
+    // NOT `AXUIElementCreateApplication` or `…SetMessagingTimeout`: those attach a SUBSCRIPTION with
+    // a run loop and read nothing, and `docs/57` §1 keeps those Swift. Every other reach into the
+    // tree is banned — the READ, the write, the action, the trust check and the private window-id
+    // symbol. The last is the sharpest: it was a `@_silgen_name` declaration in the deleted
+    // injector, and a second declaration of a private symbol is how two callers end up disagreeing
+    // about which framework exports it.
     const ACCESSIBILITY: &str = concat!(
         "AXIsProcessTrusted",
         "|AXUIElementCopyAttributeValue",
@@ -363,7 +387,7 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
     ])
 }
 
-/// HEVC ENCODE is `slopdesk-apple-vt`, and `VideoEncoder.swift` is a face with a callback.
+/// HEVC ENCODE is `slopdesk-apple-vt`, and `rust/slopdesk-videohostd` is the driver over it.
 ///
 /// The ban is on the COMPRESSION half of `VideoToolbox`. Its decompression twin is the rule below,
 /// separate rather than folded in because the two have different audiences — only the host encodes,
@@ -377,20 +401,39 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
 /// `EncoderForceKeyframe`, so a Swift respelling would look right, apply without error, and ship
 /// every forced IDR as a delta frame.
 ///
-/// The face itself is checked by CONTENT, like `replay_buffer` above: it legitimately still exists,
-/// so "is it still a face" is a question about what it holds. It must call the door, and it must
-/// not hold the four things the rules crate owns — the quantiser bracket, the drop-relief
-/// integrator, the budget-to-ceiling ramp, and the six constants that ramp was calibrated with.
+/// ## The Swift ban outlived its subject, and got STRONGER for it
+/// `docs/61` deleted the Swift video host's `VideoEncoder`, and with it the last Swift that had
+/// any business near a compression session. The ban did not narrow when its one plausible
+/// offender left — it widened, because there is now no host target left that could hold a
+/// legitimate one. Every `VTCompressionSession*` under `Sources` or `Tests` is a re-port, with no
+/// exemption possible and none granted.
 ///
-/// The last two arrive from `check-supervisor.sh`'s withdrawn section 1, which pinned this file to
-/// three FFI doors it no longer calls: the ramp used to be driven from Swift against arithmetic in
-/// `encoder_ceiling.rs`, and now `encoder_state` calls that module directly. The doors went with
-/// the rule. What survives is the part that was never about the doors — a re-transcription has to
-/// divide a budget by a pixel rate and interpolate across a band, so it has to spell one of these
-/// four shapes, and it has to type at least one of the six constants as a literal.
+/// ## What the CONTENT half re-aimed onto
+/// The old rule checked the Swift face by content: it must call the door, and it must not hold the
+/// four things the rules crate owns — the quantiser bracket, the drop-relief integrator, the
+/// budget-to-ceiling ramp and the six constants that ramp was calibrated with. Both halves survive
+/// the language change, because neither was ever about Swift.
+///
+/// The DRIVER is `rust/slopdesk-videohostd/src/encode.rs`, and what it must still do is ASK:
+/// `slopdesk_video::encoder_config` for every knob resolved and clamped, and
+/// `slopdesk_video::encoder_state` for which properties to write and when. That ask is checked over
+/// the whole daemon directory rather than at that file, because which module holds it is the
+/// daemon's business and moving it is not this rule's failure.
+///
+/// The four bans are the SAME four, respelled in Rust and scoped to the daemon alone.
+/// `rust/slopdesk-video` and the `slopdesk-apple-*` family legitimately spell these interiors —
+/// `encoder_state` and `encoder_ceiling` ARE the bracket and the ramp — so a ban over `rust/`
+/// would fire on the home it points at. What the daemon may not do is answer any of the four
+/// itself: a re-transcription has to divide a budget by a pixel rate and interpolate across a band,
+/// so it has to spell one of these four shapes, and it has to type at least one of the six
+/// constants as a literal.
+///
+/// The doors this rule used to name are gone. `check-supervisor.sh`'s withdrawn section 1 pinned
+/// the Swift face to three FFI doors, and `docs/61` §2 deleted the shim's whole encoder module
+/// outright: the daemon links `slopdesk-apple-vt` as an ordinary Rust dependency, so there is no
+/// `slopdesk_video_encoder_*` to call and the message no longer claims there is.
 #[must_use]
 pub fn hevc_encode_is_rusts(tree: &Tree) -> Report {
-    const ENCODER: &str = "Sources/SlopDeskVideoHost/VideoEncoder.swift";
     // Assembled for the same reason as the rules above it: this file is scanned by nothing, but the
     // prose that explains a ban is read by everyone, and a literal here is a string this repo now
     // contains twice.
@@ -416,47 +459,70 @@ pub fn hevc_encode_is_rusts(tree: &Tree) -> Report {
             view: View::Code,
             exempt: &[],
             message: "a Swift HEVC compression session is back in {files} — slopdesk-apple-vt holds the \
-                      session and every property write, slopdesk_video::encoder_config resolves the knobs, \
-                      ::encoder_state runs the brackets, and slopdesk_video_encoder_* is the whole door \
-                      (docs/57 §5)",
+                      session and every property write, slopdesk_video::encoder_config resolves the knobs \
+                      and ::encoder_state runs the brackets, all of it linked into rust/slopdesk-videohostd \
+                      as ordinary Rust. No Swift target encodes any more, so there is no exemption to ask \
+                      for (docs/57 §5, docs/61 §2)",
         },
-        Claim::Names {
-            path: ENCODER,
-            needle: "import CSlopDeskFFI",
-            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift no longer calls the Rust encoder — the \
-                      port was undone (docs/57 §5)",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["slopdesk_video::encoder_config", "slopdesk_video::encoder_state"],
+            message: "the daemon stopped asking {entry} — rust/slopdesk-videohostd/src/encode.rs drives the \
+                      compression session and asks the rules crate for every knob and every property write; \
+                      a driver that answers either itself is the 1500-line Swift file growing back in a new \
+                      language (docs/61 §2)",
         },
-        Claim::Lacks {
-            path: ENCODER,
-            pattern: "func beginCrispBracket|func beginCompactBracket|bracketDepth",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn begin_crisp_bracket|fn begin_compact_bracket|\bbracket_depth\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift grew the quantiser bracket back — a \
-                      bracket owns the quantiser for its whole span and that invariant lives in \
-                      rust/slopdesk-video::encoder_state (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon grew the quantiser bracket back in {files} — a bracket owns the quantiser \
+                      for its whole span and that invariant lives in rust/slopdesk-video::encoder_state, \
+                      which is exercised where no encoder exists (docs/57 §5, docs/61 §2)",
         },
-        Claim::Lacks {
-            path: ENCODER,
-            pattern: "dropRelief|consecutiveDrops",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(drop_relief|consecutive_drops)\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift grew the drop-relief integrator back — \
-                      the Swift one folded only in the default regime's else arm, so under const-QP its \
-                      counter never drained (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon grew the drop-relief integrator back in {files} — the Swift one folded \
+                      only in the default regime's else arm, so under const-QP its counter never drained; \
+                      rust/slopdesk-video::encoder_state folds it unconditionally (docs/57 §5, docs/61 §2)",
         },
-        Claim::Lacks {
-            path: ENCODER,
-            pattern: r"Double\(targetBps\) */|/ *pixelRate|Double\(sharp *- *coarse\)|Double\(coarse *- *sharp\)",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"/ *pixel_rate\b|\bsharp *- *coarse\b|\bcoarse *- *sharp\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift spells the quantiser ramp again — the \
-                      budget→ceiling law is rust/slopdesk-video::encoder_ceiling, and it is the same ramp \
-                      the per-frame adaptive quantiser walks (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon spells the quantiser ramp again in {files} — the budget→ceiling law is \
+                      rust/slopdesk-video::encoder_ceiling, reached through ::encoder_state, and it is the \
+                      same ramp the per-frame adaptive quantiser walks (docs/57 §5, docs/61 §2)",
         },
-        Claim::Lacks {
-            path: ENCODER,
-            pattern: r"(attackStep|holdFrames|decayEvery|sharpQPCeiling|qpCeiling(Sharp|Coarse)Bpp) *(:[^=]*)?= *[0-9]",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            // CASE-INSENSITIVE, which the Swift original had no need to be. A tuned constant in
+            // Rust is `const ATTACK_STEP`, not `attackStep`, and a ban that matched only the
+            // lower-case binding would miss the ONE spelling a re-transcription actually uses —
+            // green, and banning nothing.
+            pattern: r"\b(?i:attack_step|hold_frames|decay_every|sharp_qp_ceiling|qp_ceiling_(sharp|coarse)_bpp)\b *(:[^=]*)?= *[0-9]",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift types a tuned ceiling constant again — \
-                      all six were calibrated together on hardware and live in \
-                      rust/slopdesk-video::encoder_ceiling (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon types a tuned ceiling constant again in {files} — all six were calibrated \
+                      together on hardware and live beside the measurements in \
+                      rust/slopdesk-video::encoder_ceiling (docs/57 §5, docs/61 §2)",
         },
     ];
     check_all(tree, &claims)
@@ -542,15 +608,14 @@ pub fn hevc_decode_is_rusts(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// CAPTURE is `slopdesk-apple-sck`, and `WindowCapturer.swift` is the frame pipeline over it.
+/// CAPTURE is `slopdesk-apple-sck`, and `rust/slopdesk-videohostd` is the frame pipeline over it.
 ///
-/// The third row of `docs/57` §5's video group, and the one whose ban has to be NARROW. The other
-/// two could sweep a whole framework because nothing else in Swift touches `VideoToolbox`; here the
-/// window feed and `slopdesk-framewatch` both still ENUMERATE through
-/// `SCShareableContent`, `SCWindow` and `SCDisplay`, which is a read of what exists and not a
-/// capture. So the ban is on the STREAM: the filter, the configuration, the two protocols, the
-/// lifecycle calls and the per-sample attachment vocabulary. A rule that fired on the tree it ships
-/// with gets deleted rather than fixed.
+/// The third row of `docs/57` §5's video group. Its ban used to have to be NARROW for a reason that
+/// half survives: the other two could sweep a whole framework because nothing else in Swift touches
+/// `VideoToolbox`, whereas `SCShareableContent`, `SCWindow` and `SCDisplay` are an ENUMERATION of
+/// what exists and not a capture. So the ban is on the STREAM: the filter, the configuration, the
+/// two protocols, the lifecycle calls and the per-sample attachment vocabulary. A rule that fired
+/// on the tree it ships with gets deleted rather than fixed.
 ///
 /// Two of the banned strings are attachment READS rather than calls, and they are the ones worth
 /// having. `SCStreamFrameInfo` and `SCFrameStatus` are how a caller tells a frame carrying new
@@ -558,14 +623,40 @@ pub fn hevc_decode_is_rusts(tree: &Tree) -> Report {
 /// pipeline grows back: everything downstream of it — the pacer, the adaptive quantiser, the scroll
 /// reprojection — is already here, and only the SOURCE moved.
 ///
-/// The face is checked by content the way the two above are. It must call the door, and it must not
-/// hold the four things the far side owns: the delivery ceiling, the surface depth, the crop
-/// arithmetic and the in-place-resize gate. Each of the four is a clamp that was untestable where
-/// it sat — this file cannot be instantiated without a window server and a Screen-Recording grant —
-/// and a re-transcription has to spell one of these shapes to exist at all.
+/// ## The Swift ban outlived its subject, and lost an exemption
+/// `docs/61` deleted the Swift video host's `WindowCapturer` and the whole Swift `videohostd`
+/// entry point, so the preview glue that used to be exempted — it
+/// asked `SCScreenshotManager` for ONE still image, a different API that happens to take a filter
+/// and a configuration to describe the shot — is gone with them. Removing a dead exemption is not
+/// bookkeeping: an exemption list that outlives its file is a hole any new file can be named into.
+///
+/// ONE exemption survives, and it is a decision on the record rather than a grep that misses.
+/// `Sources/slopdesk-framewatch/main.swift` is the glass-to-glass measurement harness: it runs two
+/// streams at once and compares their delivery, so porting it would mean measuring the port with
+/// the port.
+///
+/// ## What the CONTENT half re-aimed onto
+/// The old rule checked the Swift face by content: it must call the door, and it must not hold the
+/// four things the far side owns — the delivery ceiling, the surface depth, the crop arithmetic and
+/// the in-place-resize gate. Each of the four is a clamp that was untestable where it sat, since
+/// nothing there could be instantiated without a window server and a Screen-Recording grant, and
+/// each is now golden-pinned where no window server exists.
+///
+/// The pipeline is `rust/slopdesk-videohostd`, spread across `capture`, `session_capture`,
+/// `session_pump`, `minter` and `windowgeometry`, and what it must still do is ASK:
+/// `slopdesk_video::capture_config` for every clamp, `::capture_gates` for the whole verdict
+/// ladder, `::capture_region` for the crop, `::frame_gate` for the static and stillness decisions,
+/// and `::scroll_reproject` for the shift hint. The ask is checked over the daemon DIRECTORY
+/// because which module holds which is the daemon's business.
+///
+/// The four bans are the same four, respelled in Rust and scoped to the daemon alone — a ban over
+/// `rust/` would fire on `rust/slopdesk-video`, which is the home these point at.
+///
+/// The door this rule used to name is gone. `slopdesk_capture_*` was the C entry point the Swift
+/// face called; the daemon links `slopdesk-apple-sck` as an ordinary Rust dependency, so the
+/// message no longer claims a door that nothing declares (`docs/61` §3).
 #[must_use]
 pub fn capture_is_rusts(tree: &Tree) -> Report {
-    const CAPTURER: &str = "Sources/SlopDeskVideoHost/WindowCapturer.swift";
     // The STREAM, not the framework — see the note above. The lifecycle METHOD names are
     // deliberately absent: `startCapture` and `stopCapture` are also the names of two effect cases
     // in `VideoSessionLogic`'s state machine, which is Swift's and staying, so banning the words
@@ -588,54 +679,72 @@ pub fn capture_is_rusts(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            // Two files name the stream vocabulary without being a capture stream. `framewatch` is
+            // ONE file names the stream vocabulary without being a capture stream. `framewatch` is
             // the glass-to-glass measurement harness: it runs two streams at once and compares
             // their delivery, so porting it would mean measuring the port with the port. The
-            // preview glue asks `SCScreenshotManager` for ONE still image — a different API that
-            // happens to take a filter and a configuration to describe the shot.
-            exempt: &[
-                "Sources/slopdesk-framewatch/main.swift",
-                "Sources/slopdesk-videohostd/WindowPreviewGlue.swift",
-            ],
+            // preview glue that used to sit beside it was deleted with its target (docs/61).
+            exempt: &["Sources/slopdesk-framewatch/main.swift"],
             message: "a Swift capture stream is back in {files} — slopdesk-apple-sck holds the filter, the \
                       configuration and the whole lifecycle, slopdesk_video::capture_config resolves every \
-                      clamp, and slopdesk_capture_* is the whole door. Enumerating through \
-                      SCShareableContent is still Swift's; capturing is not (docs/57 §5)",
+                      clamp, and rust/slopdesk-videohostd links both as ordinary Rust. Enumerating through \
+                      SCShareableContent is still Swift's; capturing is not, and no Swift target captures \
+                      any more (docs/57 §5, docs/61 §3)",
         },
-        Claim::Names {
-            path: CAPTURER,
-            needle: "import CSlopDeskFFI",
-            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift no longer calls the Rust capture \
-                      stream — the port was undone (docs/57 §5)",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &[
+                "slopdesk_video::capture_config",
+                "slopdesk_video::capture_gates",
+                "slopdesk_video::capture_region",
+                "slopdesk_video::frame_gate",
+                "slopdesk_video::scroll_reproject",
+            ],
+            message: "the daemon stopped asking {entry} — rust/slopdesk-videohostd owns the SCStream, the \
+                      order the verdicts are asked in and the pixel arithmetic, and nothing else; a \
+                      pipeline that stopped consulting one of these decides something the rules crate is \
+                      already golden-pinned for (docs/61 §3)",
         },
-        Claim::Lacks {
-            path: CAPTURER,
-            pattern: "func resolveCaptureHz|func resolveQuietWindow|func \
-                      resolveIDRPollTick|captureQueueDepth",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn resolve_capture_hz|fn resolve_quiet_window|fn resolve_idr_poll_tick|\bcapture_queue_depth\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift resolves a capture clamp again — the \
-                      delivery ceiling is TWICE the encode rate and the surface queue is five because both \
-                      were measured, and the measurements live next to the numbers in \
-                      rust/slopdesk-video::capture_config (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon resolves a capture clamp again in {files} — the delivery ceiling is TWICE \
+                      the encode rate and the surface queue is five because both were measured, and the \
+                      measurements live next to the numbers in rust/slopdesk-video::capture_config (docs/57 \
+                      §5, docs/61 §3)",
         },
-        Claim::Lacks {
-            path: CAPTURER,
-            pattern: "func resolveCaptureMode|func canResizeInPlace|enum CaptureMode",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn resolve_capture_mode|fn can_resize_in_place|enum CaptureMode",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift picks the content filter again — which \
-                      filter a parked window wants, and whether a resize may happen in place, are \
-                      rust/slopdesk-video::capture_config's and are exercised headless there (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon picks the content filter again in {files} — which filter a parked window \
+                      wants, and whether a resize may happen in place, are \
+                      rust/slopdesk-video::capture_config's and are exercised where no window server exists \
+                      (docs/57 §5, docs/61 §3)",
         },
-        Claim::Lacks {
-            path: CAPTURER,
-            // `DisplayAnchor` is spelled with its `struct` keyword because `preferDisplayAnchored`,
-            // `isDisplayAnchored` and the resize error's `notDisplayAnchored` all still live here —
-            // ASKING whether a crop is display-anchored is this file's, HOLDING the crop is not.
-            pattern: r"sourceRect|includeChildWindows|struct DisplayAnchor",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            // `DisplayAnchor` is spelled with its `struct` keyword because ASKING whether a crop is
+            // display-anchored is the daemon's — it has to know which filter to build — while
+            // HOLDING the crop is not.
+            pattern: r"\bsource_rect\b|\binclude_child_windows\b|struct DisplayAnchor",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift spells the crop again — the pin that \
-                      keeps a child window from softening the whole pane, and the display-local origin a \
-                      moved window re-anchors to, are rust/slopdesk-video::capture_config's (docs/57 §5)",
+            exempt: &[],
+            message: "the daemon spells the crop again in {files} — the pin that keeps a child window from \
+                      softening the whole pane, and the display-local origin a moved window re-anchors to, \
+                      are rust/slopdesk-video::capture_config's and ::capture_region's (docs/57 §5, docs/61 \
+                      §3)",
         },
     ];
     check_all(tree, &claims)
@@ -794,8 +903,39 @@ mod tests {
         }
     }
 
+    /// The daemon's asks, seeded so the two `MentionsUnder` claims can pass.
+    ///
+    /// A helper rather than a literal per test because [`Claim::MentionsUnder`] refuses to pass on
+    /// an EMPTY directory, so every fixture that exercises either video rule has to put the daemon
+    /// on disk first — a test that forgot would go red for the wrong reason and get "fixed" by
+    /// weakening the rule.
+    fn daemon(fixture: &Fixture) {
+        fixture
+            .write(
+                "rust/slopdesk-videohostd/src/encode.rs",
+                "use slopdesk_video::encoder_config::Config;\nuse \
+                 slopdesk_video::encoder_state::EncoderState;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/capture.rs",
+                "use slopdesk_video::capture_config::Clamps;\nuse \
+                 slopdesk_video::capture_gates::CaptureGates;\nuse \
+                 slopdesk_video::frame_gate::FrameObligations;\nuse \
+                 slopdesk_video::scroll_reproject::ScrollHint;\n",
+            )
+            .write(
+                "rust/slopdesk-videohostd/src/windowgeometry.rs",
+                "use slopdesk_video::capture_region::WindowSnapshot;\n",
+            );
+    }
+
     /// Each compression call and each key family is caught on its own — an alternation that matched
     /// only its first branch would pass a single-case test while banning nothing.
+    ///
+    /// The seed is a LIVE Swift target. The `SlopDeskVideoHost` target is deleted, so writing there
+    /// would seed a directory that a second rule already bans outright — this rule's job is the one
+    /// that ban cannot do, which is catching a compression session in a target nobody thinks of as
+    /// the video host.
     #[test]
     fn every_compression_call_the_encoder_used_to_make_is_caught_on_its_own() {
         for call in [
@@ -811,7 +951,8 @@ mod tests {
             "set(key, kVTQPModulationLevel_Disable)\n",
         ] {
             let fixture = Fixture::new("encoder-revived");
-            fixture.write("Sources/SlopDeskVideoHost/VideoEncoder.swift", call);
+            daemon(&fixture);
+            fixture.write("Sources/SlopDeskVideoClientMac/MacFrameRelay.swift", call);
             let report = super::hevc_encode_is_rusts(&fixture.tree());
             assert!(
                 report
@@ -879,15 +1020,10 @@ mod tests {
     #[test]
     fn the_decoder_face_must_call_the_door_and_must_not_hold_the_rules() {
         let fixture = Fixture::new("decoder-face");
-        fixture
-            .write(
-                "Sources/SlopDeskVideoClient/VideoDecoder.swift",
-                "import CSlopDeskFFI\nslopdesk_video_decoder_decode(handle, base, len, kf, &status)\n",
-            )
-            .write(
-                "Sources/SlopDeskVideoHost/VideoEncoder.swift",
-                "import CSlopDeskFFI\n",
-            );
+        fixture.write(
+            "Sources/SlopDeskVideoClient/VideoDecoder.swift",
+            "import CSlopDeskFFI\nslopdesk_video_decoder_decode(handle, base, len, kf, &status)\n",
+        );
         assert!(super::hevc_decode_is_rusts(&fixture.tree()).is_clean());
 
         for (revived, needle) in [
@@ -940,40 +1076,169 @@ mod tests {
         );
     }
 
-    /// The face is checked by CONTENT, so the two things the rules crate owns are named. The
-    /// integrator is the sharper of the two: the Swift original folded it only inside the default
-    /// regime's else arm, which is the bug the port found.
+    /// The DRIVER is checked by CONTENT, so the four things the rules crate owns are named. The
+    /// integrator is the sharpest: the Swift original folded it only inside the default regime's
+    /// else arm, which is the bug the port found — and a re-transcription into Rust would carry the
+    /// bug across with it, because the else arm is where the line reads naturally.
+    ///
+    /// Every revival is a Rust file under the DAEMON, which is the only place the ban runs.
+    /// `rust/slopdesk-video` spells all four of these legitimately — `encoder_state` IS the bracket
+    /// — so a ban that reached it would fire on the home it points at.
     #[test]
-    fn the_face_must_call_the_door_and_must_not_hold_the_state_machine() {
-        let fixture = Fixture::new("encoder-face");
-        fixture.write(
-            "Sources/SlopDeskVideoHost/VideoEncoder.swift",
-            "import CSlopDeskFFI\nslopdesk_video_encoder_encode_live(handle, buffer, pts, scale)\n",
-        );
+    fn the_driver_must_ask_the_rules_crate_and_must_not_hold_the_state_machine() {
+        let fixture = Fixture::new("encoder-driver");
+        daemon(&fixture);
         assert!(super::hevc_encode_is_rusts(&fixture.tree()).is_clean());
 
         for (revived, needle) in [
-            ("private var bracketDepth = 0\n", "quantiser bracket"),
-            ("private var dropRelief = 0\n", "drop-relief integrator"),
-            ("let bpp = Double(targetBps) / pixelRate\n", "quantiser ramp"),
-            ("let span = Double(sharp - coarse)\n", "quantiser ramp"),
-            ("static let attackStep = 4\n", "tuned ceiling constant"),
+            ("    let mut bracket_depth = 0usize;\n", "quantiser bracket"),
+            ("    fn begin_crisp_bracket(&mut self) {}\n", "quantiser bracket"),
+            ("    let mut drop_relief = 0u32;\n", "drop-relief integrator"),
             (
-                "static let qpCeilingSharpBpp: Double = 0.14\n",
+                "    let consecutive_drops = self.dropped;\n",
+                "drop-relief integrator",
+            ),
+            (
+                "    let bpp = f64::from(target_bps) / pixel_rate;\n",
+                "quantiser ramp",
+            ),
+            ("    let span = f64::from(sharp - coarse);\n", "quantiser ramp"),
+            ("    const ATTACK_STEP: u32 = 4;\n", "tuned ceiling constant"),
+            (
+                "    const QP_CEILING_SHARP_BPP: f64 = 0.14;\n",
                 "tuned ceiling constant",
             ),
         ] {
-            let fixture = Fixture::new("encoder-face-revived");
-            fixture.write(
-                "Sources/SlopDeskVideoHost/VideoEncoder.swift",
-                &format!("import CSlopDeskFFI\n{revived}"),
-            );
+            let fixture = Fixture::new("encoder-driver-revived");
+            daemon(&fixture);
+            fixture.append("rust/slopdesk-videohostd/src/encode.rs", revived);
             let report = super::hevc_encode_is_rusts(&fixture.tree());
             assert!(
                 report.violations().iter().any(|v| v.contains(needle)),
                 "{revived:?} was not caught: {report:?}"
             );
         }
+    }
+
+    /// A daemon that stopped asking the rules crate is the port undone, and it is drift no ban can
+    /// see: deleting the `use` line and inlining the clamp leaves every suite green, because the
+    /// numbers agree until the day somebody edits one of the two copies.
+    #[test]
+    fn a_driver_that_stopped_asking_the_rules_crate_is_red() {
+        for (name, ask) in [
+            ("config", "slopdesk_video::encoder_config"),
+            ("state", "slopdesk_video::encoder_state"),
+            ("clamps", "slopdesk_video::capture_config"),
+            ("gates", "slopdesk_video::capture_gates"),
+            ("region", "slopdesk_video::capture_region"),
+            ("frame", "slopdesk_video::frame_gate"),
+            ("scroll", "slopdesk_video::scroll_reproject"),
+        ] {
+            let fixture = Fixture::new(&format!("daemon-stopped-asking-{name}"));
+            daemon(&fixture);
+            for path in [
+                "rust/slopdesk-videohostd/src/encode.rs",
+                "rust/slopdesk-videohostd/src/capture.rs",
+                "rust/slopdesk-videohostd/src/windowgeometry.rs",
+            ] {
+                let text = fixture.tree().read(path).unwrap_or_default();
+                let kept = text
+                    .lines()
+                    .filter(|line| !line.contains(ask))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                fixture.write(path, &format!("{kept}\n"));
+            }
+            let encode = super::hevc_encode_is_rusts(&fixture.tree());
+            let capture = super::capture_is_rusts(&fixture.tree());
+            assert!(
+                encode.violations().iter().any(|v| v.contains(ask))
+                    || capture.violations().iter().any(|v| v.contains(ask)),
+                "{ask} could be dropped with nothing red: {encode:?} {capture:?}"
+            );
+        }
+    }
+
+    /// A drained daemon cannot satisfy the ask. Every `MentionsUnder` in this file would otherwise
+    /// pass VACUOUSLY the moment `rust/slopdesk-videohostd` were emptied — the one failure mode a
+    /// "the daemon still asks X" claim has, and the reason the claim refuses an empty root.
+    #[test]
+    fn a_drained_daemon_cannot_satisfy_the_ask() {
+        // Named for this FILE, not for the condition. `Fixture::new` keys its temp directory on the
+        // name and `remove_dir_all`s it, the suite runs concurrently, and `video_host.rs` has a
+        // test asking the same question of its own rules — two fixtures sharing a name wipe each
+        // other mid-run, which reads as a flake in whichever lost the race.
+        let fixture = Fixture::new("boundaries-daemon-drained");
+        fixture.write("Sources/SlopDeskVideoClient/A.swift", "let ordinary = 1\n");
+        assert!(!super::hevc_encode_is_rusts(&fixture.tree()).is_clean());
+        assert!(!super::capture_is_rusts(&fixture.tree()).is_clean());
+    }
+
+    /// The capture pipeline's four bans, each seeded as Rust under the daemon. The clamps are the
+    /// point: each was untestable where it sat, because nothing in the Swift could be instantiated
+    /// without a window server and a Screen-Recording grant.
+    #[test]
+    fn the_pipeline_must_not_hold_the_capture_clamps() {
+        let fixture = Fixture::new("capture-pipeline");
+        daemon(&fixture);
+        assert!(super::capture_is_rusts(&fixture.tree()).is_clean());
+
+        for (revived, needle) in [
+            (
+                "    fn resolve_capture_hz(&self) -> u32 { 60 }\n",
+                "capture clamp",
+            ),
+            (
+                "    fn resolve_quiet_window(&self) -> u32 { 8 }\n",
+                "capture clamp",
+            ),
+            ("    let capture_queue_depth = 5usize;\n", "capture clamp"),
+            (
+                "    fn resolve_capture_mode(&self) -> Mode { Mode::Window }\n",
+                "content filter",
+            ),
+            (
+                "    fn can_resize_in_place(&self) -> bool { true }\n",
+                "content filter",
+            ),
+            ("enum CaptureMode { Window, Display }\n", "content filter"),
+            ("    let source_rect = crop.to_cg();\n", "spells the crop"),
+            ("    let include_child_windows = false;\n", "spells the crop"),
+            ("struct DisplayAnchor { origin: (f64, f64) }\n", "spells the crop"),
+        ] {
+            let fixture = Fixture::new("capture-pipeline-revived");
+            daemon(&fixture);
+            fixture.append("rust/slopdesk-videohostd/src/capture.rs", revived);
+            let report = super::capture_is_rusts(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains(needle)),
+                "{revived:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// The measurement harness keeps its two streams. Porting `framewatch` would mean measuring the
+    /// port with the port, so its exemption is a decision on the record — and the same line proves
+    /// the ban is not vacuous, because an ordinary target with the same call is red.
+    #[test]
+    fn the_glass_to_glass_harness_keeps_its_streams() {
+        let fixture = Fixture::new("capture-framewatch");
+        daemon(&fixture);
+        fixture.write(
+            "Sources/slopdesk-framewatch/main.swift",
+            "final class Collector: NSObject, SCStreamOutput {}\nlet cfg = SCStreamConfiguration()\n",
+        );
+        assert!(super::capture_is_rusts(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskVideoClientMac/MacPreview.swift",
+            "let cfg = SCStreamConfiguration()\n",
+        );
+        let report = super::capture_is_rusts(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("MacPreview")),
+            "{report:?}"
+        );
     }
 
     /// Both halves of the cursor read are caught on their own, and both spellings of the private
@@ -986,7 +1251,7 @@ mod tests {
             "if let sym = dlsym(rtldDefault, \"SLSCurrentCursorSeed\") { return sym }\n",
         ] {
             let fixture = Fixture::new("cursor-revived");
-            fixture.write("Sources/SlopDeskVideoHost/CursorSampler.swift", read);
+            fixture.write("Sources/SlopDeskWorkspaceCore/Video/CursorRelay.swift", read);
             let report = super::one_probe_per_reading(&fixture.tree());
             assert!(
                 report.violations().iter().any(|v| v.contains("DISPLAYED cursor")),
@@ -1028,7 +1293,7 @@ mod tests {
             "if let cmd = attr(item, kAXMenuItemCmdCharAttribute) as? String { return cmd }\n",
         ] {
             let fixture = Fixture::new("ax-revived");
-            fixture.write("Sources/SlopDeskVideoHost/WindowPlacement.swift", effect);
+            fixture.write("Sources/SlopDeskWorkspaceCore/Video/WindowRelay.swift", effect);
             let report = super::one_probe_per_reading(&fixture.tree());
             assert!(
                 report.violations().iter().any(|v| v.contains("Swift AX write")),
@@ -1038,13 +1303,19 @@ mod tests {
     }
 
     /// A SUBSCRIPTION with a run loop stays Swift (docs/57 §1), so the two calls that create and
-    /// configure the element it attaches to are deliberately NOT banned. They read nothing; a ban
-    /// on `AXUIElementCreateApplication` as a token would report a live observer as debt.
+    /// configure the element it attaches to are deliberately NOT banned. They read nothing.
+    ///
+    /// The observer this carve-out was written for went with `docs/61` — the window feed is
+    /// `rust/slopdesk-videohostd`'s now. The carve-out stays anyway, and the difference matters: it
+    /// is a decision on the record about WHAT MAY COME BACK, not a note about a file. `docs/57` §1
+    /// draws the objc2 family's line at effects on the system, and an observer attached to a run
+    /// loop is on the Swift side of it — so the day a client grows one, this test is what keeps
+    /// somebody from widening the ban to two calls that read nothing.
     #[test]
     fn a_subscription_that_stays_swift_is_not_an_effect() {
         let fixture = Fixture::new("ax-observer");
         fixture.write(
-            "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedAXSupport.swift",
+            "Sources/SlopDeskWorkspaceCore/Video/WindowFeedObserver.swift",
             "let app = AXUIElementCreateApplication(pid)\nAXUIElementSetMessagingTimeout(app, \
              0.25)\nAXObserverAddNotification(observer, app, kAXWindowCreatedNotification as CFString, \
              nil)\n",
@@ -1087,7 +1358,7 @@ mod tests {
     fn the_pid_lookup_is_caught_wherever_it_reappears() {
         let fixture = Fixture::new("frontmost-revived");
         fixture.write(
-            "Sources/SlopDeskVideoHost/Front.swift",
+            "Sources/SlopDeskWorkspaceCore/Video/FrontRelay.swift",
             "let app = NSRunningApplication(processIdentifier: pid)\n",
         );
         let report = super::one_probe_per_reading(&fixture.tree());

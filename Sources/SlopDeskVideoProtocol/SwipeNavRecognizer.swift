@@ -38,7 +38,7 @@ import Foundation
 ///     content at its horizontal edge? can it scroll at all?) is what native browsers arbitrate
 ///     with, and that remains invisible remotely — commitment is the only proxy left. (History
 ///     AVAILABILITY — would ⌘[/⌘] navigate at all — IS readable via AX and gates the client's
-///     chip, `HostNavHistory`/doc 20 §9.6; it never changes this recogniser's decisions.)
+///     chip, the daemon's `navhistory`/doc 20 §9.6; it never changes this recogniser's decisions.)
 ///     There is no upper
 ///     duration bound: natively you may drag, hold, and release whenever. Slow gestures never
 ///     ARM — momentum confirmation is a flick mechanism (a slow lift has no tail).

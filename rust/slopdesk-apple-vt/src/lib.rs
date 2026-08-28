@@ -58,9 +58,9 @@ pub use objc2_core_foundation::CFRetained;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use objc2_core_video::CVImageBuffer;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub use pixels::{Locked, PixelBuffer, Plane};
+pub use pixels::{Locked, PixelBuffer, PlaneBytes, PlaneView};
 #[cfg(target_os = "macos")]
-pub use sample::{EncodedSample, FrameworkBytes};
+pub use sample::EncodedSample;
 #[cfg(target_os = "macos")]
 pub use session::{CompressionSession, FrameOptions, FrameSink, Spec, Timestamp, XPC_CREATE_RACE};
 #[cfg(any(target_os = "macos", target_os = "ios"))]

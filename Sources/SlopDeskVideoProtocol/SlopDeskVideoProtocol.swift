@@ -4,8 +4,8 @@
 /// This target has ZERO platform dependency (no ScreenCaptureKit, no VideoToolbox,
 /// no AppKit) so it compiles for macOS + iOS and is fully unit-testable in
 /// isolation — exactly the same discipline as `SlopDeskProtocol` for PATH 1. The
-/// capture/encode (`SlopDeskVideoHost`) and decode/render (`SlopDeskVideoClient`) targets
-/// build on these types.
+/// decode/render half (`SlopDeskVideoClient`) builds on these types; the capture/encode half
+/// is `rust/slopdesk-videohostd` and reaches the same wire through `rust/slopdesk-video`.
 ///
 /// Contents:
 /// - ``VideoPacketizer`` / ``FrameReassembler`` — fragment a NALU-bearing frame into

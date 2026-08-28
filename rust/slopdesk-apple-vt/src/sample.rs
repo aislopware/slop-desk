@@ -10,8 +10,24 @@
 //! Every reading happens ONCE per frame. The attachments dictionary in particular is fetched a
 //! single time and both the keyframe flag and the token come out of it, because fetching it is a
 //! bridge and this runs sixty times a second.
+//!
+//! ## Both readings COPY, and no framework pointer leaves this file
+//! [`EncodedSample::copy_parameter_sets_into`] and [`EncodedSample::copy_payload_into`] are the
+//! only two ways out, and each appends into a `Vec` the CALLER owns. Nothing here answers a
+//! `(pointer, length)`, so no consumer has to be a crate allowed to make a slice of framework
+//! memory — which is what lets the encoder driver be `forbid(unsafe_code)` (`docs/61` §2).
+//!
+//! The parameter-set copy is the ONE raw-pointer site `docs/57` §2's sample-memory amendment admits
+//! in this crate, and it is here rather than anywhere else because the SDK publishes HEVC parameter
+//! sets as a bare pointer and offers no copy-out variant at all. `slopdesk-invariants` ratchets the
+//! count at one.
+//!
+//! Copying the payload rather than handing over the block buffer's own run costs nothing that was
+//! ever saved: a finished frame crosses from `VideoToolbox`'s thread to the packetize lane, so it
+//! has to become owned bytes before it is sent whatever this file answers. The zero-copy path that
+//! used to exist here only ever deferred that copy to the Swift caller, which made one anyway.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use objc2_core_foundation::{CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
@@ -22,23 +38,14 @@ use objc2_core_media::{
 use crate::keys::Attachment;
 use crate::status::NO_ERR;
 
-/// A run of bytes the FRAMEWORK owns, as its own `(pointer, length)`.
+/// Big-endian length prefix width for an AVCC-framed NAL unit, and the only width this stream uses.
 ///
-/// A VALUE rather than a slice, deliberately. Turning a framework-owned `(pointer, length)` into a
-/// `&[u8]` is a RUST obligation — it asserts alignment, initialisation and a lifetime the framework
-/// never states — and `docs/57` §2 bars this family from writing one. `slopdesk-ffi`, whose entire
-/// `unsafe` remit is that exact question, makes the slice, and it can answer the lifetime half
-/// because it holds the [`EncodedSample`] borrowed across the call that reads it.
-///
-/// The bytes live as long as the `EncodedSample` this came from, which holds both the block buffer
-/// and the format description that own them.
-#[derive(Clone, Copy, Debug)]
-pub struct FrameworkBytes {
-    /// First byte of the run.
-    pub bytes: NonNull<u8>,
-    /// How many bytes.
-    pub len: usize,
-}
+/// Not a choice made here: it is what `VideoToolbox` reports for every HEVC format description it
+/// produces, and it is what the client builds its own format description with. It is written down
+/// so [`EncodedSample::copy_parameter_sets_into`] can CHECK the framework's answer against it
+/// rather than assume — a stream framed at a width the client does not expect decodes as garbage,
+/// and a mismatch is the one thing a length prefix cannot report about itself.
+const AVCC_LENGTH_BYTES: i32 = 4;
 
 /// A finished encode, with every per-frame reading already taken.
 #[derive(Debug)]
@@ -117,29 +124,47 @@ impl EncodedSample {
         self.payload_len
     }
 
-    /// The parameter sets a decoder needs before this frame, in index order.
+    /// Appends this frame's AVCC-framed parameter sets to `out`; answers whether it laid down ALL
+    /// of them.
     ///
-    /// Empty on a delta frame, and empty on a keyframe whose format description publishes none —
-    /// which is a real answer rather than a failure, and one the caller must handle, because a
-    /// keyframe shipped without them is a frame no client can decode.
+    /// `false` on a delta frame, which carries none and needs none — the ordinary case, and not a
+    /// failure. `false` ALSO on a keyframe whose format description publishes nothing readable,
+    /// which is a real answer the caller must handle: a keyframe shipped without parameter sets is
+    /// one a client with no format description yet cannot decode, so the caller decides whether to
+    /// ship it bare or drop it. Either way `out` is left exactly as it was found — a half-written
+    /// prefix is the one outcome that would corrupt the frame behind it.
+    ///
+    /// Appends rather than answering a `Vec` so a keyframe costs ONE allocation and one copy: the
+    /// caller lays the sets down and then [`Self::copy_payload_into`] appends the slice behind
+    /// them.
     ///
     /// # Safety
-    /// `CMVideoFormatDescriptionGetHEVCParameterSetAtIndex` writes through the caller's slots and
-    /// only the ones that are non-null; every slot passed here is a live local of the declared
-    /// type, and the two-pass shape — count first, then each set — is the header's own. The pointer
-    /// it reports is owned by the format description, which `self` holds for as long as the
-    /// returned values are usable. Nothing is dereferenced here.
-    #[must_use]
+    /// TWO obligations, and they are different in kind.
+    ///
+    /// The FRAMEWORK's: `CMVideoFormatDescriptionGetHEVCParameterSetAtIndex` writes through the
+    /// caller's slots and only the non-null ones; every slot passed here is a live local of the
+    /// declared type, and the two-pass shape — count and NAL width first, then each set — is the
+    /// header's own. The pointer it reports is owned by the format description, which `self` holds
+    /// for the whole of this call.
+    ///
+    /// RUST's, which this family does not normally carry: making a `&[u8]` of that pointer asserts
+    /// alignment, initialisation and a lifetime the framework never states. It is admitted here as
+    /// `docs/57` §2's sample-memory amendment, at the ONE site `slopdesk-invariants` ratchets, and
+    /// the reason it cannot move is the SDK's — HEVC parameter sets have no copy-out variant, so
+    /// there is no version of this read that is not a raw one. Alignment is trivially satisfied for
+    /// `u8`; initialisation and length are the framework's own answer for the same call; and the
+    /// lifetime is `self`'s, which outlives the `extend_from_slice` it is passed to.
     #[expect(
         unsafe_code,
-        reason = "the parameter-set enumerator writes through caller-owned slots"
+        reason = "the SDK publishes HEVC parameter sets as a bare pointer and offers no copy-out"
     )]
-    pub fn parameter_sets(&self) -> Vec<FrameworkBytes> {
+    pub fn copy_parameter_sets_into(&self, out: &mut Vec<u8>) -> bool {
         let Some(format) = self.format.as_deref() else {
-            return Vec::new();
+            return false;
         };
         let mut count = 0_usize;
-        // SAFETY: framework rule, above — a count-only probe with three null slots and one live one.
+        let mut nal_length = 0_i32;
+        // SAFETY: framework rule, above — a probe with two null slots and two live ones.
         let probe = unsafe {
             CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
                 format,
@@ -147,13 +172,16 @@ impl EncodedSample {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 &raw mut count,
-                core::ptr::null_mut(),
+                &raw mut nal_length,
             )
         };
-        if probe != NO_ERR || count == 0 {
-            return Vec::new();
+        // A width this stream does not frame at is refused rather than honoured: the client builds
+        // its format description at `AVCC_LENGTH_BYTES`, so writing the framework's other answer
+        // would produce a frame that parses as garbage and reports nothing.
+        if probe != NO_ERR || count == 0 || nal_length != AVCC_LENGTH_BYTES {
+            return false;
         }
-        let mut sets: Vec<FrameworkBytes> = Vec::with_capacity(count);
+        let start = out.len();
         for index in 0..count {
             let mut pointer: *const u8 = core::ptr::null();
             let mut len = 0_usize;
@@ -168,64 +196,19 @@ impl EncodedSample {
                     core::ptr::null_mut(),
                 )
             };
-            if status != NO_ERR || len == 0 {
-                // A partial answer is not one: a decoder given some of the three parameter sets is
-                // no better off than one given none, so the caller sees an empty list and can
-                // decide that this keyframe is not shippable.
-                return Vec::new();
-            }
-            let Some(bytes) = NonNull::new(pointer.cast_mut()) else {
-                return Vec::new();
+            // A partial answer is not one: a decoder given some of the three parameter sets is no
+            // better off than one given none, so the whole prefix is rolled back.
+            let prefix = u32::try_from(len).ok().filter(|_| status == NO_ERR && len > 0);
+            let (Some(prefix), Some(bytes)) = (prefix, NonNull::new(pointer.cast_mut())) else {
+                out.truncate(start);
+                return false;
             };
-            sets.push(FrameworkBytes { bytes, len });
+            out.extend_from_slice(&prefix.to_be_bytes());
+            // SAFETY: Rust's obligation, above — `len` initialised bytes the format description owns
+            // and `self` holds for this call, read as `u8`, which cannot be misaligned.
+            out.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast_const(), len) });
         }
-        sets
-    }
-
-    /// This frame's coded bytes IN PLACE, when the block buffer happens to hold them contiguously.
-    ///
-    /// The fast path, and the reason it exists: a delta frame needs no parameter sets prepended, so
-    /// if the bytes are already one run there is nothing to assemble and the consumer can read them
-    /// where the encoder left them. Sixty times a second that is the difference between one copy of
-    /// the frame and none.
-    ///
-    /// `None` means the buffer is SEGMENTED — `CMBlockBuffer` is a chain, and the framework
-    /// promises nothing about how many links a given sample arrives in — and the caller must fall
-    /// back to [`Self::copy_payload_into`], which asks the framework to assemble it. Answering the
-    /// first segment as if it were the frame is the bug this shape exists to make impossible.
-    ///
-    /// # Safety
-    /// `CMBlockBufferGetDataPointer` writes through the caller's slots, and only the non-null ones;
-    /// all four here are live locals of the declared types. The pointer it reports is owned by the
-    /// block buffer, which `self` holds for as long as the returned value is usable, and the run is
-    /// accepted ONLY when the framework's own `lengthAtOffset` says it covers the whole sample.
-    /// Nothing is dereferenced here.
-    #[must_use]
-    #[expect(
-        unsafe_code,
-        reason = "the data-pointer accessor writes through caller-owned slots"
-    )]
-    pub fn contiguous_payload(&self) -> Option<FrameworkBytes> {
-        if self.payload_len == 0 {
-            return None;
-        }
-        let mut run_len = 0_usize;
-        let mut total = 0_usize;
-        let mut pointer: *mut c_char = core::ptr::null_mut();
-        // SAFETY: framework rule, above — three live slots of the declared types on a live buffer.
-        let status = unsafe {
-            self.block
-                .data_pointer(0, &raw mut run_len, &raw mut total, &raw mut pointer)
-        };
-        if status != NO_ERR || run_len != self.payload_len || total != self.payload_len {
-            return None;
-        }
-        NonNull::new(pointer.cast::<u8>()).map(|bytes| {
-            FrameworkBytes {
-                bytes,
-                len: self.payload_len,
-            }
-        })
+        true
     }
 
     /// Appends this frame's coded bytes to `out`; answers whether the framework copied them.
@@ -234,6 +217,11 @@ impl EncodedSample {
     /// and pay for ONE allocation and ONE copy of the payload per frame. The Swift this replaces
     /// paid for two of each on every keyframe, because it built the payload and then built a second
     /// buffer that was the parameter sets followed by the payload.
+    ///
+    /// The framework assembles a segmented buffer on the way out, so this is also the answer for a
+    /// `CMBlockBuffer` that arrived as a chain — which the framework promises nothing about either
+    /// way, and which is why there is one door rather than a fast path and a fallback that could
+    /// disagree.
     ///
     /// # Safety
     /// `CMBlockBufferCopyDataBytes` copies `len` bytes into a destination the CALLER owns. The

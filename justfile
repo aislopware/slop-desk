@@ -897,15 +897,33 @@ apple-cgvirtualdisplay-test:
 apple-power-test:
     cd rust/slopdesk-apple-power && cargo test
 
-# `NSRunningApplication` — a pid in, a bundle id / hidden flag / activation out. The one crate in the
-# family that writes NO `unsafe` at all: `objc2-app-kit` generates every call it makes as safe, which
-# is the bar `docs/57` §3 sets per crate rather than as a budget. Its suite asks about pids that name
-# nothing, because that is the whole failure mode — every caller reads the answer as "not eligible"
-# and must fail CLOSED rather than on a stale or defaulted value.
+# `NSRunningApplication` — a pid in, a bundle id / hidden flag / activation out. One of the two
+# crates in the family that write NO `unsafe` at all (`apple-nsapp` below is the other):
+# `objc2-app-kit` generates every call it makes as safe, which is the bar `docs/57` §3 sets per crate
+# rather than as a budget. Its suite asks about pids that name nothing, because that is the whole
+# failure mode — every caller reads the answer as "not eligible" and must fail CLOSED rather than on
+# a stale or defaulted value.
 
 # cargo test for the running-application reads (nothing-pid answers, no-snapshot property)
 apple-app-test:
     cd rust/slopdesk-apple-app && cargo test
+
+# `NSApplication` — the OTHER half of AppKit, and a different framework area: not which app owns a
+# pid, but what THIS process is. Three calls, no decisions. `.accessory` initialises the shared
+# application, which is what establishes the window-server connection `SCStream.startCapture` aborts
+# without (`CGS_REQUIRE_INIT`) even though the `SCShareableContent` enumeration works fine without
+# one — the reason that failure reads as a missing Screen-Recording grant and is not. The two loops
+# stay two on purpose: `dispatch_main()` is the proven default, `NSApplication.run()` is the arm the
+# virtual display needs because a registered `CGVirtualDisplay` wants a live `CFRunLoop` the queue
+# drain does not provide, and unifying them is a claim about the default path nobody has measured.
+# Every call is generated SAFE behind a `MainThreadMarker`, so the suite can only reach the refusal
+# half — a `cargo test` thread is not the main thread, and an off-main caller must be answered rather
+# than trapped, because a wiring mistake in a daemon's launch order should not be a crash in the
+# field.
+
+# cargo test for the NSApplication connection (off-main refusal, refusals accumulate nothing)
+apple-nsapp-test:
+    cd rust/slopdesk-apple-nsapp && cargo test
 
 # The cursor shape the person is actually looking at. `NSCursor.currentSystemCursor` crosses the
 # window-server boundary, so it needs a main thread — which a `cargo test` thread is not, and that
@@ -952,6 +970,10 @@ apple-vt-test:
 # mux lane registry's mint-on-first-hello, the encoder session's lifetime, and the window feed's
 # TTL cache and differ. Its own `[workspace]` (a daemon's profile, not the fork-per-event `opt-level
 # = "z"`) is why `cargo -p` from `rust/` cannot reach it and this recipe has to `cd`.
+
+# Build slopdesk-videohostd (rust/slopdesk-videohostd)
+videohostd:
+    cd rust/slopdesk-videohostd && cargo build --release
 
 # cargo test for the GUI video daemon (argv, overlay, mux registry, encoder lifetime, window feed)
 videohostd-test:
@@ -1243,7 +1265,7 @@ host-status:
 # sees cargo — it just reports those tests skipped, by name.
 
 # cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # `superd` for the same load-bearing reason as `test` above, and it matters MORE here: this is the

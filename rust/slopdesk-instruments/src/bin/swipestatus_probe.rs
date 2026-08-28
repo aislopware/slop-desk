@@ -1,8 +1,9 @@
 //! `slopdesk-swipestatus-probe` — does a running videohostd actually PUSH type-3 `SwipeNavStatus`?
 //!
-//! The push path — `SwipeNavStatusKicker` → the registry fan-out → `pushSwipeNavStatus` →
-//! `scheduleCursor` → the cursor flow (`docs/20-wire-protocol.md` §9.6) — has no host-side logging,
-//! so "the chip never lit up" and "everything works" read identically from the host log. This is
+//! The push path — `slopdesk_videohostd::navstatus`'s beat → the registry fan-out →
+//! `LaneSession::push_nav_status` → the cursor flow (`docs/20-wire-protocol.md` §9.6) — logs
+//! nothing unless `SLOPDESK_SWIPE_NAV_TRACE` is set, so "the chip never lit up" and "everything
+//! works" read identically from an ordinary host log. This is
 //! the discriminator: it mints a real DISPLAY session the way a GUI client would (a `HelloDisplay`
 //! on the media socket, a cursor-flow prime on the cursor socket) and reports every cursor-socket
 //! message that arrives. The kicker heartbeats every 2 s, so a healthy host shows a type-3 within

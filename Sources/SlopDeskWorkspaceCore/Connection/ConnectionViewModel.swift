@@ -209,7 +209,7 @@ public final class ConnectionViewModel {
     }
 
     /// `@MainActor` FIFO of buffered OUT events the single drain task BATCH-pulls (mirrors
-    /// `SlopDeskVideoHostSession.InboundQueue.drainAll`). `inputSink`/`resizeSink` append here on the
+    /// the video daemon's own inbound queue drain). `inputSink`/`resizeSink` append here on the
     /// main actor; `outWake` (a `bufferingNewest(1)` signal) coalesces wakeups so the drain runs once per
     /// backlog. Because the per-event `await` on the reentrant `SlopDeskClient` actor is slower than the
     /// main-actor appends during a drag, the queue accumulates between drains → a fast drag collapses to

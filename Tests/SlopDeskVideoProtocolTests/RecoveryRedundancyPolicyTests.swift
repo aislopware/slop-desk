@@ -29,8 +29,8 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
         XCTAssertEqual(r.spacing, 0.003, accuracy: 1e-12)
         // Total spread must stay ≤ HALF the host dedup window (25 ms) so all copies dedup to one
         // even with reorder skew; the cross-side coupling at every legal copies count is pinned in
-        // RecoveryRequestDeduperTests.testRedundancySpreadVsDedupWindowCouplingAtDefaults (the host
-        // window constant lives in SlopDeskVideoHost, unreachable from this leaf target).
+        // `rust/slopdesk-video`'s `recovery::tests::the_redundancy_spread_stays_inside_half_the_dedup_window`,
+        // beside the window constant itself — the host that reads it is Rust now (docs/61 §1).
         XCTAssertLessThanOrEqual(try XCTUnwrap(r.sendOffsets.last), 0.025 / 2)
     }
 

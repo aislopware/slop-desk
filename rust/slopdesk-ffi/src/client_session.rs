@@ -32,12 +32,11 @@ use slopdesk_video::geometry::{VideoRect, VideoSize};
 use slopdesk_video::keepalive::StallVerdict;
 use slopdesk_video::video_control::{MaskRect, VideoControlMessage};
 
-use crate::borrow;
-use crate::host_state::SlopDeskByteSpan;
 use crate::video_policy::{
     SLOPDESK_STREAM_LIVE, SLOPDESK_STREAM_NOT_CONNECTED, SLOPDESK_STREAM_STALLED, SlopDeskVideoRect,
     SlopDeskVideoSize,
 };
+use crate::{SlopDeskByteSpan, borrow};
 
 /// Not yet started.
 pub const SLOPDESK_VIDEO_CLIENT_IDLE: u32 = 0;

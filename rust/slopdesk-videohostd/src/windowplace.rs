@@ -89,15 +89,41 @@ pub trait ActsOnWindow: fmt::Debug {
     fn set_minimized(&self, minimized: bool) -> bool;
 }
 
+/// Giving one of an application's windows keyboard focus.
+///
+/// Separate from [`ActsOnWindow`] because focus is the APPLICATION's to grant: a window element
+/// carries no route back to the application element that owns it, so the pair has to be held
+/// together by whoever wants both. Only the raise chain does, which is why this is its own trait
+/// rather than two more methods on the one every placement sequence uses.
+pub trait FocusesWindow: fmt::Debug {
+    /// The window type this application's elements come out as.
+    type Window: ActsOnWindow;
+    /// Makes `window` the application's focused and main one.
+    fn focus(&self, window: &Self::Window);
+}
+
 /// Finding one window of one process in the accessibility tree.
 pub trait ResolvesWindows: Send + Sync + fmt::Debug {
     /// What a resolved window is.
     type Window: ActsOnWindow;
-    /// The window `window_id` of `pid`, or `None`.
+    /// What the application a resolved window belongs to is.
+    type App: FocusesWindow<Window = Self::Window>;
+    /// The application element and the window `window_id` of `pid`, or `None`.
     ///
     /// `fallback` is the frame to match against when the private id symbol answers for NO candidate
     /// at all, which is what a locked screen does. [`NO_FALLBACK`] refuses the fallback outright.
-    fn resolve(&self, pid: i32, window_id: u32, fallback: VideoRect, timeout: f32) -> Option<Self::Window>;
+    ///
+    /// The pair crosses together, and the placement sequences below drop the application half at
+    /// once: an `AXUIElement` for a window is independent of the one for its application, and the
+    /// messaging cap was stamped on the window when it was read out of `AXWindows`. The raise chain
+    /// is the one caller that keeps both, because focus is the application's to grant.
+    fn resolve(
+        &self,
+        pid: i32,
+        window_id: u32,
+        fallback: VideoRect,
+        timeout: f32,
+    ) -> Option<(Self::App, Self::Window)>;
 }
 
 /// The real accessibility tree.
@@ -122,17 +148,28 @@ impl ActsOnWindow for slopdesk_apple_ax::Window {
     }
 }
 
+impl FocusesWindow for slopdesk_apple_ax::App {
+    type Window = slopdesk_apple_ax::Window;
+
+    fn focus(&self, window: &Self::Window) {
+        Self::focus(self, window);
+    }
+}
+
 impl ResolvesWindows for AccessibilityTree {
     type Window = slopdesk_apple_ax::Window;
+    type App = slopdesk_apple_ax::App;
 
     /// The preamble every sequence here opens with: make an application element, cap its messaging
     /// timeout, list its windows, ask each for its `CGWindowID`, and let
     /// [`slopdesk_video::ax_probe::match_window`] pick.
-    ///
-    /// The app element is dropped when this returns and the window is not, which is fine: an
-    /// `AXUIElement` for a window is independent of the one for its application, and the messaging
-    /// cap was stamped on the window when it was read out of `AXWindows`.
-    fn resolve(&self, pid: i32, window_id: u32, fallback: VideoRect, timeout: f32) -> Option<Self::Window> {
+    fn resolve(
+        &self,
+        pid: i32,
+        window_id: u32,
+        fallback: VideoRect,
+        timeout: f32,
+    ) -> Option<(Self::App, Self::Window)> {
         let app = slopdesk_apple_ax::App::new(pid, timeout);
         let mut windows = app.windows();
         let candidates: Vec<Candidate> = windows
@@ -161,7 +198,7 @@ impl ResolvesWindows for AccessibilityTree {
         if index >= windows.len() {
             return None;
         }
-        Some(windows.swap_remove(index))
+        Some((app, windows.swap_remove(index)))
     }
 }
 
@@ -184,7 +221,7 @@ pub fn park<T: ResolvesWindows>(tree: &T, window_id: u32, pid: i32, display: Vid
     if pid <= 0 {
         return None;
     }
-    let window = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT)?;
+    let (_app, window) = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT)?;
     let original = window.frame()?;
     let plan = window_placement::place(
         original.size.width,
@@ -223,7 +260,7 @@ pub fn restore<T: ResolvesWindows>(tree: &T, window_id: u32, pid: i32, frame: Vi
     if pid <= 0 {
         return false;
     }
-    let Some(window) = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT) else {
+    let Some((_app, window)) = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT) else {
         return false;
     };
     put_back(&window, frame);
@@ -238,7 +275,7 @@ pub fn deminiaturize<T: ResolvesWindows>(tree: &T, window_id: u32, pid: i32) -> 
     if pid <= 0 {
         return Deminiaturized::Failed;
     }
-    let Some(window) = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT) else {
+    let Some((_app, window)) = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT) else {
         return Deminiaturized::Failed;
     };
     if window.minimized() != Some(true) {
@@ -272,7 +309,7 @@ pub fn resize<T: ResolvesWindows>(
     if pid <= 0 {
         return None;
     }
-    let window = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT)?;
+    let (_app, window) = tree.resolve(pid, window_id, NO_FALLBACK, TIMEOUT)?;
     if let Some(live) = window.frame()
         && let Some(display) = display_for_window_frame(live, displays)
     {
@@ -291,11 +328,14 @@ pub fn resize<T: ResolvesWindows>(
 
 #[cfg(test)]
 mod tests {
+    use core::marker::PhantomData;
     use std::sync::{Mutex, PoisonError};
 
     use slopdesk_video::geometry::VideoRect;
 
-    use super::{ActsOnWindow, Deminiaturized, ResolvesWindows, deminiaturize, park, resize, restore};
+    use super::{
+        ActsOnWindow, Deminiaturized, FocusesWindow, ResolvesWindows, deminiaturize, park, resize, restore,
+    };
 
     /// Every effect a sequence sent, in order.
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -406,16 +446,29 @@ mod tests {
     #[derive(Debug)]
     struct Tree<'a>(Option<&'a Recorded>);
 
+    /// The application half of a resolution. Records nothing: no sequence under test focuses, and
+    /// a fake that recorded a call no caller makes would assert about the fake.
+    /// The lifetime is carried only so `Window` names the same borrow the tree hands out; nothing
+    /// here holds a reference.
+    #[derive(Debug)]
+    struct NoApp<'a>(PhantomData<&'a Recorded>);
+
+    impl<'a> FocusesWindow for NoApp<'a> {
+        type Window = &'a Recorded;
+        fn focus(&self, _window: &Self::Window) {}
+    }
+
     impl<'a> ResolvesWindows for Tree<'a> {
         type Window = &'a Recorded;
+        type App = NoApp<'a>;
         fn resolve(
             &self,
             _pid: i32,
             _window_id: u32,
             _fallback: VideoRect,
             _timeout: f32,
-        ) -> Option<&'a Recorded> {
-            self.0
+        ) -> Option<(NoApp<'a>, &'a Recorded)> {
+            self.0.map(|window| (NoApp(PhantomData), window))
         }
     }
 

@@ -27,19 +27,13 @@ const SWIFT_ROOTS: [&str; 3] = ["Sources", "Tests", "Apps"];
 /// The rule is not "delete every uncalled door". It is "an uncalled door is a DECISION, written
 /// down" — deleting one of these is a design change, not a cleanup, so a bare name added here is
 /// the failure this rule exists to prevent.
-const DELIBERATE: [(&str, &str); 2] = [
-    (
-        "slopdesk_swipe_nav_config_free",
-        "the destructor for a handle whose only shipped owner is a process-lifetime `static let`. A \
-         constructor whose ABI offers no destructor is what makes the NEXT owner — one that is per-window \
-         rather than per-process — leak for real.",
-    ),
-    (
-        "slopdesk_zoom_reset_policy_free",
-        "same as slopdesk_swipe_nav_config_free: PinchZeroPolicy parses once into a `static let` and never \
-         frees it, which is a singleton and not a leak.",
-    ),
-];
+const DELIBERATE: [(&str, &str); 1] = [(
+    "slopdesk_zoom_reset_policy_free",
+    "the destructor for a handle whose only shipped owner is a process-lifetime `static let` — \
+     PinchZeroPolicy parses once and never frees it, which is a singleton and not a leak. A constructor \
+     whose ABI offers no destructor is what makes the NEXT owner — one that is per-window rather than \
+     per-process — leak for real.",
+)];
 
 /// What to do with a door nothing calls, which differs by which of three things it is.
 const GUIDANCE: &str = "Each is one of three things, and the fix differs: a SECOND way to ask something a \
@@ -126,13 +120,12 @@ mod tests {
         fixture.write("Sources/A/Call.swift", "let w = slopdesk_ws_min_weight()\n");
         assert!(!every_ffi_door_is_opened_or_declared_deliberate(&fixture.tree()).is_clean());
 
-        // The green half declares the two deliberate faces as well, because an allowlist entry
-        // for a door that is not in the header is itself a finding — see the next test.
+        // The green half declares the deliberate face as well, because an allowlist entry for a
+        // door that is not in the header is itself a finding — see the next test.
         let opened = Fixture::new("ffi-doors-opened");
         opened.write(
             "rust/slopdesk-ffi/include/slopdesk_ffi.h",
-            "void slopdesk_ws_min_weight(void);\nvoid slopdesk_swipe_nav_config_free(void);\nvoid \
-             slopdesk_zoom_reset_policy_free(void);\n",
+            "void slopdesk_ws_min_weight(void);\nvoid slopdesk_zoom_reset_policy_free(void);\n",
         );
         opened.write("Sources/A/Call.swift", "let w = slopdesk_ws_min_weight()\n");
         assert!(every_ffi_door_is_opened_or_declared_deliberate(&opened.tree()).is_clean());
@@ -144,9 +137,9 @@ mod tests {
         let fixture = Fixture::new("ffi-doors-stale");
         fixture.write(
             "rust/slopdesk-ffi/include/slopdesk_ffi.h",
-            "void slopdesk_swipe_nav_config_free(void);\nvoid slopdesk_zoom_reset_policy_free(void);\n",
+            "void slopdesk_zoom_reset_policy_free(void);\n",
         );
-        fixture.write("Sources/A/Call.swift", "slopdesk_swipe_nav_config_free()\n");
+        fixture.write("Sources/A/Call.swift", "slopdesk_zoom_reset_policy_free()\n");
         assert!(!every_ffi_door_is_opened_or_declared_deliberate(&fixture.tree()).is_clean());
     }
 }

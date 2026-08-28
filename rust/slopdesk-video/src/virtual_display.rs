@@ -1,7 +1,7 @@
 //! The arithmetic that decides what a `HiDPI` virtual display IS, before any of it reaches
 //! `WindowServer`.
 //!
-//! `Sources/SlopDeskVideoHost/VirtualDisplay.swift` splits into two halves for a reason its own
+//! The deleted `VirtualDisplay.swift` (docs/61 §1) split into two halves for a reason its own
 //! header states: the `CGVirtualDisplay` half is synchronous Mach IPC to the window server and can
 //! only be exercised on real hardware, while the half BELOW is pure point↔pixel↔millimetre
 //! arithmetic that decides every field the descriptor is filled with. This module is that half, and

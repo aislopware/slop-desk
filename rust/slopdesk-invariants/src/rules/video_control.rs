@@ -5,141 +5,157 @@
 //! speller of any of them is a second control law that agrees on the easy cases and diverges on the
 //! link that was already in trouble — which is where nobody is watching, and where every test
 //! suite's numbers are too small to tell.
+//!
+//! Three of the four used to be asked of a Swift face under `Sources/SlopDeskVideoHost`. `docs/61`
+//! deleted every one of those faces, so the same three questions are now asked of
+//! `rust/slopdesk-videohostd`, which is the only asker left. Nothing about the argument changed —
+//! only which language could hold the second copy. `presentation_depth` is the client's and is
+//! untouched.
+//!
+//! Each host rule is a PAIR: the daemon must still ASK `rust/slopdesk-video` for the law, and it
+//! must not RE-SPELL the law's interior. The ask alone would pass a daemon that calls the crate for
+//! the easy path and hand-rolls the hard one beside it; the ban alone would pass a daemon that
+//! dropped the law entirely. `MentionsUnder` fails on a drained root for the same reason.
+//!
+//! The bans are scoped to the daemon and never to `rust/slopdesk-video` itself, which legitimately
+//! spells every one of these interiors — it is the crate that owns them.
+//!
+//! The "no Swift brings any of this back" half is stated tree-wide, at full strength, in
+//! [`crate::rules::deleted_video_swift`].
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-const SWIFT_QP: &str = "Sources/SlopDeskVideoHost/QPController.swift";
-const SWIFT_IDR: &str = "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift";
-const SWIFT_ABR: &str = "Sources/SlopDeskVideoHost/LiveCongestionController.swift";
-const SWIFT_ESTIMATE: &str = "Sources/SlopDeskVideoHost/VideoSessionLogic.swift";
-const SWIFT_FPS: &str = "Sources/SlopDeskVideoHost/FPSGovernor.swift";
+/// The Rust host — the only thing that asks these laws now.
+const DAEMON: &str = "rust/slopdesk-videohostd";
+
 const SWIFT_DEPTH: &str = "Sources/SlopDeskVideoClient/PacerDepthPolicy.swift";
 const SWIFT_OWD: &str = "Sources/SlopDeskVideoClient/OwdLateDetector.swift";
 
 /// The host's two ADMISSION LAWS — `rust/slopdesk-video`'s `qp_control` and `recovery_idr` — and
 /// the ROUTING law that feeds them.
 ///
-/// The two admissions take opposite conventions on purpose and the far side is what picks: the
-/// quantiser controller is a Swift struct copied by value, so it crosses as a pure fold with no
-/// handle to alias; the recovery policy is a `final class` holding one token bucket, so it crosses
-/// as a handle.
+/// The handle bookkeeping this rule used to pin DISSOLVED with the port. `RecoveryIDRPolicy` was a
+/// `final class` around a C handle, so "one new, one free" had to be asserted by naming the
+/// `deinit`; the policy is now an ordinary Rust value the daemon owns by move, and the compiler
+/// answers the lifetime question that claim was standing in for. What survives the dissolution is
+/// the question of WHO the daemon asks, so that is what is asked here.
 ///
-/// A handle that is allocated and never freed is the one failure a green test suite cannot see, so
-/// the `deinit` is pinned too.
+/// `session_state` is in the ask beside the two admissions because it is where both verdicts land:
+/// the daemon holds the machine, and the crate holds every transition in it. A daemon that asked
+/// for `qp_control` but kept its own idea of the session's phase would re-key on a state the crate
+/// never entered.
 ///
-/// The state a re-implementation would grow back: `cleanStreak` is the whole difference between one
-/// sharpen per interval and one per report; the keyframe ring and the bucket are the recovery law.
-/// Scoped to the video host, because a token bucket is a SHAPE rather than a law — the notification
-/// rate limiter in `SlopDeskWorkspaceCore` is its own, and is not what these entries pin.
+/// The state a re-implementation would grow back: `clean_streak` is the whole difference between
+/// one sharpen per interval and one per report; the keyframe ring and the token bucket are the
+/// recovery law, and `bucket_capacity`/`refill_tokens_per_second` are its two knobs. The daemon
+/// resolves those through `recovery_idr`'s own key table, never by naming a field — so a field name
+/// appearing in the daemon at all is a second bucket, not a lookup.
 ///
-/// The third entry is `recovery_routing`'s `route_recovery`, which decides what an arriving
-/// recovery datagram MEANS before either admission ever sees it. Its arm table is the boring half;
-/// the two halves that drift silently are the guard ORDER — not-streaming refuses before any decode
-/// — and the wire's no-frame-decoded SENTINEL, which must become an absent frontier on the far side
-/// and never cross as its number. So the door is pinned, and so is the absence of the sentinel's
-/// name: a `lastDecoded == noFrameDecodedSentinel` in the Swift face is the second speller of that
-/// mapping, and it would agree with the door on every frontier except the one that says the client
-/// has decoded nothing at all — a client at its most frozen.
+/// The routing half is `recovery_routing`'s, which decides what an arriving recovery datagram MEANS
+/// before either admission ever sees it. Its arm table is the boring half; the two halves that
+/// drift silently are the guard ORDER — not-streaming refuses before any decode — and the wire's
+/// no-frame-decoded SENTINEL, which must become an absent frontier inside the crate and never reach
+/// the daemon as its number. So the ask is pinned, and so is the absence of the sentinel's name and
+/// of its literal: a `last_decoded == NO_FRAME_DECODED_SENTINEL` in the daemon is the second
+/// speller of that mapping, and it would agree with the crate on every frontier except the one that
+/// says the client has decoded nothing at all — a client at its most frozen.
 #[must_use]
 pub fn admission(tree: &Tree) -> Report {
     let claims = [
-        Claim::Doors {
-            path: SWIFT_QP,
-            entries: &["slopdesk_qp_new", "slopdesk_qp_decide", "slopdesk_qp_clamped_int"],
-            message: "Sources/SlopDeskVideoHost/QPController.swift no longer calls {entry} — the \
-                      constant-QP AIMD is rust/slopdesk-video's",
-        },
-        Claim::Doors {
-            path: SWIFT_IDR,
-            entries: &[
-                "slopdesk_idr_policy_new",
-                "slopdesk_idr_policy_free",
-                "slopdesk_idr_policy_note_keyframe_sent",
-                "slopdesk_idr_policy_note_keyframe_delivered",
-                "slopdesk_idr_policy_decide",
-                "slopdesk_idr_policy_grace",
-                "slopdesk_idr_policy_available_tokens",
-            ],
-            message: "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift no longer calls {entry} — the \
-                      recovery-IDR admission is rust/slopdesk-video's",
-        },
-        Claim::Names {
-            path: SWIFT_IDR,
-            needle: "deinit { slopdesk_idr_policy_free",
-            message: "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift allocates a policy without freeing \
-                      it in deinit — one new, one free",
-        },
-        Claim::Doors {
-            path: SWIFT_ESTIMATE,
-            entries: &["slopdesk_recovery_route"],
-            message: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift no longer calls {entry} — the \
-                      recovery-datagram routing is rust/slopdesk-video's",
-        },
-        Claim::Lacks {
-            path: SWIFT_ESTIMATE,
-            pattern: r"noFrameDecodedSentinel",
-            view: View::Code,
-            message: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift compares against the \
-                      no-frame-decoded sentinel again — the frontier crosses as a value plus has_frontier, \
-                      and that mapping is route_recovery's",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["qp_control", "recovery_idr", "recovery_routing", "session_state"],
+            message: "rust/slopdesk-videohostd stopped naming {entry} — the quantiser admission, the \
+                      recovery-IDR admission, the routing that feeds them and the session machine they land \
+                      in are all rust/slopdesk-video's, and a daemon that no longer asks for one is \
+                      deciding it somewhere the crate's suite does not reach (docs/61 §3)",
         },
         Claim::NoneUnder {
-            roots: &["Sources/SlopDeskVideoHost", "Tests/SlopDeskVideoHostTests"],
-            extensions: SWIFT,
-            pattern: r"var cleanStreak\b|var recentKeyframes\b|var tokens: Double|func refill\(now:",
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\bclean_streak\b|\brecent_keyframes\b|fn refill *\(|\brefill_tokens_per_second\b|\bbucket_capacity\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift clean streak / keyframe ring / token bucket is back in {files} — those laws \
-                      are Rust's",
+            message: "rust/slopdesk-videohostd spells an admission's own state in {files} — the clean \
+                      streak, the keyframe ring and the token bucket are slopdesk_video's qp_control and \
+                      recovery_idr, and a daemon-local copy re-keys on evidence the crate never saw \
+                      (docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"NO_FRAME_DECODED_SENTINEL|0xFFFF_FFFF",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd names the no-frame-decoded sentinel in {files} — \
+                      recovery_routing turns it into an absent frontier so it never leaves the crate, and a \
+                      daemon that compares against it agrees on every frontier but the frozen one (docs/61 \
+                      §3)",
         },
     ];
     check_all(tree, &claims)
 }
 
-/// The RATE LAW — `rust/slopdesk-video`'s `congestion` and `network_estimate`, through the `abr`
-/// door.
+/// The RATE LAW — `rust/slopdesk-video`'s `congestion` and `network_estimate`.
 ///
-/// Two Swift structs their owners copy, so both cross by value, whole, every call. The only thing
-/// left on this side is resolving `SLOPDESK_ABR_*` through the overlay-aware `EnvConfig`.
+/// The AIMD is one crate's, asked by one daemon. The only thing left on the asking side is
+/// resolving the `SLOPDESK_ABR_*` family through the overlay, and even that is not a lookup the
+/// daemon composes: `ABR_KEYS` is the crate's own table and `CongestionConfig::from_env` is the
+/// crate's own resolver, so the daemon hands over resolved slots rather than choosing which knobs
+/// exist. That is why both names are in the ask and why a quoted `SLOPDESK_ABR_` anywhere in the
+/// daemon is a violation rather than an exception — a key spelled beside the table is a knob the
+/// table does not know it has, and the two would agree until someone adds the twenty-ninth.
+///
+/// This replaces a COUNT. The old rule counted the Swift face's `defaults.…` reads and demanded at
+/// least twenty-four, because a knob added later with a hand-written default beside it left both
+/// languages internally consistent. Asking for the table and banning the literal is strictly
+/// stronger: a new knob now arrives with its default inside the crate or not at all, and there is
+/// no number to keep in step with the code.
 ///
 /// The EWMA weights are the fold, not a tunable: no env reads them and nothing hands them across,
-/// so a Swift copy could drift for a whole release without a test noticing.
-///
-/// Every default is spelled once, on the far side: each env-resolved tunable falls back to a field
-/// of `slopdesk_abr_config_default()`, never to a literal. Counting the fallbacks is what catches a
-/// knob added later with a hand-written default beside it — the one drift no test can see, because
-/// both languages would still be internally consistent.
+/// so a second copy could drift for a whole release without a test noticing. The named branches are
+/// the decisions themselves — `decide_inner`, the app-limited decay, the utilisation gate, the
+/// clean-link step and the cut target — and a second speller of any one of them is a second control
+/// law that agrees on the easy cases and diverges on the link that was already in trouble.
 #[must_use]
 pub fn rate_law(tree: &Tree) -> Report {
     let claims = [
-        Claim::Doors {
-            path: SWIFT_ABR,
-            entries: &[
-                "slopdesk_abr_config_default",
-                "slopdesk_abr_new",
-                "slopdesk_abr_with_ceiling",
-                "slopdesk_abr_effective_ceiling",
-                "slopdesk_abr_set_user_ceiling",
-                "slopdesk_abr_decide",
-                "slopdesk_abr_effective_slack",
-                "slopdesk_abr_is_material_change",
-            ],
-            message: "Sources/SlopDeskVideoHost/LiveCongestionController.swift no longer calls {entry} — \
-                      the AIMD rate law is rust/slopdesk-video's",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &["congestion", "network_estimate", "ABR_KEYS", "CongestionConfig"],
+            message: "rust/slopdesk-videohostd stopped naming {entry} — the AIMD, the report fold, the knob \
+                      table and the config it resolves into are rust/slopdesk-video's, and a daemon that \
+                      stopped asking for one of them is deciding the send rate itself (docs/61 §3)",
         },
-        Claim::Doors {
-            path: SWIFT_ESTIMATE,
-            entries: &[
-                "slopdesk_net_estimate_new",
-                "slopdesk_net_estimate_rtt_millis",
-                "slopdesk_net_estimate_fold",
-            ],
-            message: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift no longer calls {entry} — the \
-                      report fold is rust/slopdesk-video's",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn decide_inner *\(|fn app_limited_decay *\(|fn utilization_permits_ramp *\(|fn clean_link_step *\(|fn cut_target *\(",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd re-spells an AIMD branch in {files} — the rate law is \
+                      decided once, inside slopdesk_video::congestion, and a daemon-local branch diverges \
+                      exactly on the congested link nobody is watching (docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r#""SLOPDESK_ABR_"#,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd spells an ABR knob name in {files} — the whole family \
+                      resolves from slopdesk_video::congestion::ABR_KEYS, so a literal beside the table is \
+                      a knob the table does not know it has (docs/61 §3)",
         },
         // Each names a decision the law makes, and a second speller of any one of them is a second
         // control law that agrees on the easy cases.
@@ -165,67 +181,100 @@ pub fn rate_law(tree: &Tree) -> Report {
             message: "the estimate's EWMA weights are spelled in Swift again ({files}) — they live in \
                       network_estimate.rs",
         },
-        Claim::AtLeast {
-            path: SWIFT_ABR,
-            pattern: r"\bdefaults\.[a-z_]+",
-            minimum: 24,
-            message: "Sources/SlopDeskVideoHost/LiveCongestionController.swift reads only {found} defaults \
-                      from the door — a knob is spelled twice",
+        // The same weights, in the language the host is written in now. The Rust respelling of
+        // `static let rttAlpha` is a `const` on the crate's own estimate, so it is the DECLARATION
+        // that is banned: a daemon that declares one is folding a report itself.
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"\b(const|let) (RTT_ALPHA|LOSS_ALPHA|MIN_RTT_DECAY)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd spells an EWMA weight in {files} — the fold lives in \
+                      slopdesk_video::network_estimate and no env reads these, so a daemon-local copy \
+                      drifts for a whole release with every suite green (docs/61 §3)",
         },
     ];
     check_all(tree, &claims)
 }
 
-/// The FRAME-RATE axis — `rust/slopdesk-video`'s `fps_governor`, through `frame_rate`.
+/// The FRAME-RATE axis — `rust/slopdesk-video`'s `fps_governor`.
 ///
-/// Two governors, the gate they actuate through and the self-heal cadence, all in one Swift file.
+/// Two governors, the gate they actuate through and the self-heal cadence, all in one crate module.
+/// `EncodeCadenceGate` is the DELIVERY axis's gate and `EncodeLoadPacer` is the COMPUTE axis's, so
+/// both are named: a daemon that asked for the governor but not the gate would be picking a rate
+/// and then admitting frames on a schedule of its own.
 ///
 /// The LADDER is the shape both axes step, and a second speller of it would let the two disagree
-/// about which rungs exist. The gate's schedule arithmetic is the other one — a drift-free advance
-/// re-derived by hand is how a metronome becomes a beat pattern. Scoped to the video host, because
-/// a frame interval is a shape rather than a law — the loopback harness computes its own slot
-/// times, and is not what these entries pin.
+/// about which rungs exist — which is why the divisor loop and the rung push are banned by their
+/// Rust spelling rather than their Swift one. The gate's schedule arithmetic is the other one: a
+/// drift-free advance re-derived by hand is how a metronome becomes a beat pattern, so
+/// `next_due_seconds +=` is banned even though reading the field back out of a restore is fine.
+/// The per-frame budget is the third — `1000.0 / f64::from(fps)` is four characters of arithmetic
+/// and a whole second answer to how long a frame may take.
 ///
-/// The congestion predicate must keep reading the RATE law's tunables. A local copy of the inflate
-/// factor here is the drift that makes the frame rate step down on evidence the rate law ignored.
+/// The bans are scoped to the daemon, because a frame interval is a shape rather than a law — the
+/// loopback harness computes its own slot times and is not what this rule pins.
+///
+/// The congestion predicate must keep reading the RATE law's tunables, and the crate now enforces
+/// that in its signature: `congestion_evidence` TAKES a `&CongestionConfig`. So what is left to
+/// pin is the other direction — a daemon that grows its own predicate, or its own copy of the
+/// inflate factor and the loss threshold, is the drift that makes the frame rate step down on
+/// evidence the rate law ignored. It is banned rather than asked because the daemon's inbound half
+/// is still landing; the ban holds from the first line of it, and the ask would have to wait.
 #[must_use]
 pub fn frame_rate(tree: &Tree) -> Report {
     let claims = [
-        Claim::Doors {
-            path: SWIFT_FPS,
-            entries: &[
-                "slopdesk_fps_config_default",
-                "slopdesk_fps_ladder",
-                "slopdesk_fps_governor_new",
-                "slopdesk_fps_governor_note_frame",
-                "slopdesk_fps_governor_tick",
-                "slopdesk_fps_congestion_evidence",
-                "slopdesk_fps_gate_admit",
-                "slopdesk_fps_self_heal_every",
-                "slopdesk_fps_pacer_config_default",
-                "slopdesk_fps_budget_millis",
-                "slopdesk_fps_pacer_new",
-                "slopdesk_fps_pacer_note",
+        Claim::MentionsUnder {
+            root: DAEMON,
+            names: &[
+                "fps_governor",
+                "FpsGovernorConfig",
+                "EncodeCadenceGate",
+                "EncodeLoadPacer",
             ],
-            message: "Sources/SlopDeskVideoHost/FPSGovernor.swift no longer calls {entry} — the frame-rate \
-                      axis is rust/slopdesk-video's",
+            message: "rust/slopdesk-videohostd stopped naming {entry} — the rate ladder, its config, the \
+                      delivery gate and the compute pacer are rust/slopdesk-video's fps_governor, and a \
+                      daemon missing one of them is choosing a cadence the crate never governed (docs/61 §3)",
         },
         Claim::NoneUnder {
-            roots: &["Sources/SlopDeskVideoHost", "Tests/SlopDeskVideoHostTests"],
-            extensions: SWIFT,
-            pattern: r"rungs\.insert\(|for divisor in|nextDueSeconds \+=|1000\.0 / Double\(",
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"rungs\.(push|insert)\(|for divisor in |next_due_seconds *\+=",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift ladder / cadence advance / per-frame budget is back in {files} — those live \
-                      in fps_governor.rs",
+            message: "rust/slopdesk-videohostd builds a ladder or advances a cadence in {files} — both live \
+                      in slopdesk_video::fps_governor, and a second speller of either turns a metronome \
+                      into a beat pattern (docs/61 §3)",
         },
-        Claim::Names {
-            path: SWIFT_FPS,
-            needle: "LiveCongestionController.config",
-            message: "Sources/SlopDeskVideoHost/FPSGovernor.swift stopped passing the ABR's own config — \
-                      the two controllers must agree",
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"1000\.0 */ *\(?(f64::from|[a-z_]+ as f64)",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd derives a per-frame budget in {files} — four characters of \
+                      arithmetic are still a whole second answer to how long a frame may take, and the \
+                      answer is slopdesk_video::fps_governor's (docs/61 §3)",
+        },
+        Claim::NoneUnder {
+            roots: &[DAEMON],
+            extensions: RUST,
+            pattern: r"fn congestion_evidence *\(|\brtt_inflate_factor\b|config\.loss_threshold",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "rust/slopdesk-videohostd decides congestion evidence itself in {files} — \
+                      slopdesk_video::fps_governor::congestion_evidence takes the ABR's own \
+                      &CongestionConfig for exactly this reason, so a local predicate steps the frame rate \
+                      down on evidence the rate law ignored (docs/61 §3)",
         },
     ];
     check_all(tree, &claims)
@@ -308,41 +357,98 @@ pub fn presentation_depth(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
-    /// A handle allocated and never freed is the one failure a green test suite cannot see.
-    #[test]
-    fn a_policy_handle_with_no_deinit_free_is_caught() {
-        let fixture = Fixture::new("idr-deinit");
-        fixture
-            .write("Sources/SlopDeskVideoHost/QPController.swift", QP_DOORS)
-            .write("Sources/SlopDeskVideoHost/VideoSessionLogic.swift", ROUTE_DOORS)
-            .write(
-                "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift",
-                &format!("{IDR_DOORS}deinit {{ slopdesk_idr_policy_free(handle) }}\n"),
-            );
-        assert!(super::admission(&fixture.tree()).is_clean());
+    /// A daemon that asks `rust/slopdesk-video` for every control law these three rules are about.
+    ///
+    /// ONE file rather than one per rule, because that is how the daemon reads: `session_capture`
+    /// resolves each key table through the crate's own resolver and hands the config straight back.
+    /// Every break-test below starts from this and seeds ONE drift into it, so what each test
+    /// demonstrates is the drift and not the scaffolding.
+    const DAEMON_ASKS: &str = "\
+use slopdesk_video::congestion::{self, ABR_KEYS, CongestionConfig};
+use slopdesk_video::fps_governor::{self, EncodeCadenceGate, EncodeLoadPacer, FpsGovernorConfig};
+use slopdesk_video::network_estimate::NetworkEstimate;
+use slopdesk_video::qp_control::{self, QpConfig};
+use slopdesk_video::recovery_idr::RecoveryIdrPolicy;
+use slopdesk_video::recovery_routing::route_recovery;
+use slopdesk_video::session_state::SessionState;
+";
 
-        fixture.write("Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift", IDR_DOORS);
-        let report = super::admission(&fixture.tree());
-        assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("one new, one free")),
-            "{report:?}"
-        );
+    /// The daemon file every break-test drifts, and the live Swift target that must stay quiet.
+    const DAEMON_FILE: &str = "rust/slopdesk-videohostd/src/session_capture.rs";
+
+    fn seeded(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(DAEMON_FILE, DAEMON_ASKS)
+            .write("Sources/SlopDeskVideoClient/A.swift", "let ordinary = 1\n");
+        fixture
     }
 
-    /// A token bucket in `SlopDeskWorkspaceCore` is a SHAPE, not this law. The scope is what keeps
-    /// the rule from firing on the notification rate limiter.
+    /// The state a re-implementation grows back, now that the re-implementation would be Rust.
+    ///
+    /// Each of these is one line the compiler is perfectly happy with and no suite can see: the
+    /// daemon still calls `qp_control`, still calls `recovery_idr`, and now also carries its own
+    /// streak or its own bucket beside them. The two agree until the link is in trouble.
     #[test]
-    fn a_token_bucket_outside_the_video_host_is_not_this_law() {
-        let fixture = Fixture::new("token-bucket-scope");
+    fn a_daemon_that_respells_an_admission_is_caught() {
+        for line in [
+            "let clean_streak = 0;\n",
+            "let recent_keyframes: Vec<u32> = Vec::new();\n",
+            "fn refill(now: f64) {}\n",
+            "let refill_tokens_per_second = 2.0;\n",
+            "let bucket_capacity = 2.0;\n",
+        ] {
+            let fixture = seeded("admission-respell");
+            assert!(super::admission(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_FILE, line);
+            let report = super::admission(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("admission's own state")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// The sentinel is HALF the routing rule, and the half a daemon is most likely to grow back:
+    /// the crate already answers the frontier, so a `== NO_FRAME_DECODED_SENTINEL` beside it looks
+    /// like a harmless normalisation. It is a second speller that agrees on every frontier except
+    /// "nothing decoded yet" — a client at its most frozen. The bare literal is the same drift
+    /// spelled without the name, which is why both are banned.
+    #[test]
+    fn a_daemon_that_names_the_sentinel_is_caught() {
+        for line in [
+            "let frontier = if raw == NO_FRAME_DECODED_SENTINEL { None } else { Some(raw) };\n",
+            "let frontier = if raw == 0xFFFF_FFFF { None } else { Some(raw) };\n",
+        ] {
+            let fixture = seeded("admission-sentinel");
+            assert!(super::admission(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_FILE, line);
+            let report = super::admission(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("no-frame-decoded sentinel")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// A token bucket is a SHAPE rather than a law, and the scope is what keeps the ban honest at
+    /// both ends: `rust/slopdesk-video` IS the bucket, so the crate that owns the law must not fire
+    /// on it, and the notification rate limiter in `SlopDeskWorkspaceCore` is its own.
+    #[test]
+    fn a_token_bucket_outside_the_daemon_is_not_this_law() {
+        let fixture = seeded("admission-scope");
         fixture
-            .write("Sources/SlopDeskVideoHost/QPController.swift", QP_DOORS)
-            .write("Sources/SlopDeskVideoHost/VideoSessionLogic.swift", ROUTE_DOORS)
             .write(
-                "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift",
-                &format!("{IDR_DOORS}deinit {{ slopdesk_idr_policy_free(handle) }}\n"),
+                "rust/slopdesk-video/src/recovery_idr.rs",
+                "struct Policy { tokens: f64, recent_keyframes: Vec<u32> }\nfn refill(now: f64) {}\n",
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/RateLimiter.swift",
@@ -351,140 +457,223 @@ mod tests {
         assert!(super::admission(&fixture.tree()).is_clean());
 
         fixture.write(
-            "Sources/SlopDeskVideoHost/Sneak.swift",
-            "var tokens: Double = 3\n",
+            "rust/slopdesk-videohostd/src/sneak.rs",
+            "fn refill(now: f64) {}\n",
         );
         let report = super::admission(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("token bucket is back")),
+                .any(|v| v.contains("admission's own state")),
             "{report:?}"
         );
     }
 
-    /// The sentinel→absent mapping is HALF the routing rule, and the half a Swift face is most
-    /// likely to grow back: the door already answers the frontier, so a `== noFrameDecodedSentinel`
-    /// beside it looks like a harmless normalisation. It is a second speller that agrees on every
-    /// frontier except "nothing decoded yet" — a client at its most frozen. Losing the door
-    /// entirely is the other direction, and the same rule has to catch both.
+    /// A rule whose subject stopped answering is worse than a deleted one, so `MentionsUnder` fails
+    /// on a drained root. A daemon that no longer names `recovery_idr` is not one that stopped
+    /// re-keying — it is one deciding when to re-key somewhere the crate's suite does not run.
     #[test]
-    fn the_sentinel_comparison_and_a_lost_route_door_are_both_caught() {
-        let fixture = Fixture::new("recovery-route");
-        fixture
-            .write("Sources/SlopDeskVideoHost/QPController.swift", QP_DOORS)
-            .write(
-                "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift",
-                &format!("{IDR_DOORS}deinit {{ slopdesk_idr_policy_free(handle) }}\n"),
-            )
-            .write("Sources/SlopDeskVideoHost/VideoSessionLogic.swift", ROUTE_DOORS);
+    fn a_daemon_that_stopped_asking_an_admission_is_caught() {
+        let fixture = seeded("admission-drained");
         assert!(super::admission(&fixture.tree()).is_clean());
 
         fixture.write(
-            "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-            &format!("{ROUTE_DOORS}let f = raw == RecoveryMessage.noFrameDecodedSentinel ? nil : raw\n"),
+            DAEMON_FILE,
+            "\
+use slopdesk_video::qp_control::QpConfig;
+use slopdesk_video::recovery_routing::route_recovery;
+use slopdesk_video::session_state::SessionState;
+",
         );
         let report = super::admission(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("no-frame-decoded sentinel")),
-            "{report:?}"
-        );
-
-        fixture.write(
-            "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-            "let d = RecoveryMessage.decode(datagram)\n",
-        );
-        let report = super::admission(&fixture.tree());
-        assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("slopdesk_recovery_route")),
+                .any(|v| v.contains("stopped naming recovery_idr")),
             "{report:?}"
         );
     }
 
-    /// The drift no test can see: a knob added later with a hand-written default beside it. Both
-    /// languages stay internally consistent, so only the COUNT catches it.
+    /// A second AIMD branch in the daemon agrees with the crate on every clean link and diverges on
+    /// the congested one — the case the suite's numbers are too small to tell apart.
     #[test]
-    fn a_knob_with_a_hand_written_default_is_caught_by_the_count() {
-        let fixture = Fixture::new("abr-defaults");
-        let doors = format!("{ABR_DOORS}{}", "let x = defaults.knob\n".repeat(24));
-        fixture
-            .write("Sources/SlopDeskVideoHost/LiveCongestionController.swift", &doors)
-            .write(
-                "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-                ESTIMATE_DOORS,
+    fn a_daemon_that_respells_an_aimd_branch_is_caught() {
+        for line in [
+            "fn decide_inner(&mut self) -> i64 { 0 }\n",
+            "fn app_limited_decay(&self) -> Option<i64> { None }\n",
+            "fn utilization_permits_ramp(&self) -> bool { true }\n",
+            "fn clean_link_step(&mut self) -> Option<i64> { None }\n",
+            "fn cut_target(&self) -> i64 { 0 }\n",
+        ] {
+            let fixture = seeded("rate-law-branch");
+            assert!(super::rate_law(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_FILE, line);
+            let report = super::rate_law(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("AIMD branch")),
+                "{line:?}: {report:?}"
             );
+        }
+    }
+
+    /// The drift the old COUNT was reaching for, seeded directly: a knob resolved beside the table
+    /// rather than out of it. `SLOPDESK_ABR_GRAD` is the honest-looking version — it IS a real key,
+    /// it IS the last slot of `ABR_KEYS`, and looking it up by hand is exactly how the daemon and
+    /// the crate stop agreeing about which knobs exist.
+    #[test]
+    fn a_daemon_that_spells_an_abr_knob_is_caught() {
+        let fixture = seeded("rate-law-knob");
         assert!(super::rate_law(&fixture.tree()).is_clean());
 
-        let fewer = format!("{ABR_DOORS}{}", "let x = defaults.knob\n".repeat(23));
-        fixture.write("Sources/SlopDeskVideoHost/LiveCongestionController.swift", &fewer);
+        fixture.append(
+            DAEMON_FILE,
+            "let raw = overlay.get(\"SLOPDESK_ABR_GRAD\").as_deref();\n",
+        );
         let report = super::rate_law(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("only 23 defaults")),
+            report.violations().iter().any(|v| v.contains("ABR knob name")),
             "{report:?}"
         );
     }
 
-    /// A local copy of the inflate factor makes the frame rate step down on evidence the rate law
-    /// ignored — two controllers reading two configs.
+    /// No env reads the EWMA weights and nothing hands them across, so a daemon-local declaration
+    /// of one could drift for a whole release with every suite green. Only the shape catches it.
     #[test]
-    fn the_frame_rate_axis_must_keep_reading_the_rate_laws_config() {
-        let fixture = Fixture::new("fps-config");
+    fn an_ewma_weight_declared_in_the_daemon_is_caught() {
+        for line in [
+            "const RTT_ALPHA: f64 = 0.125;\n",
+            "const LOSS_ALPHA: f64 = 0.125;\n",
+            "let MIN_RTT_DECAY = 0.01;\n",
+        ] {
+            let fixture = seeded("rate-law-ewma");
+            assert!(super::rate_law(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_FILE, line);
+            let report = super::rate_law(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("EWMA weight")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// The rate law's ask going quiet: a daemon that stopped naming `ABR_KEYS` is one that decided
+    /// for itself which knobs the operating point has.
+    #[test]
+    fn a_daemon_that_stopped_asking_the_rate_law_is_caught() {
+        let fixture = seeded("rate-law-drained");
+        assert!(super::rate_law(&fixture.tree()).is_clean());
+
         fixture.write(
-            "Sources/SlopDeskVideoHost/FPSGovernor.swift",
-            &format!("{FPS_DOORS}let c = LiveCongestionController.config\n"),
+            DAEMON_FILE,
+            "\
+use slopdesk_video::congestion::CongestionConfig;
+use slopdesk_video::network_estimate::NetworkEstimate;
+",
         );
+        let report = super::rate_law(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("stopped naming ABR_KEYS")),
+            "{report:?}"
+        );
+    }
+
+    /// A ladder built twice lets the two axes disagree about which rungs exist, and an advance
+    /// re-derived by hand is how a metronome becomes a beat pattern. Both are one line.
+    #[test]
+    fn a_daemon_that_rebuilds_the_ladder_is_caught() {
+        for line in [
+            "for divisor in 2..=4 {\n",
+            "rungs.push(rung);\n",
+            "self.next_due_seconds += interval;\n",
+        ] {
+            let fixture = seeded("frame-rate-ladder");
+            assert!(super::frame_rate(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_FILE, line);
+            let report = super::frame_rate(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("beat pattern")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// The budget is one division, and it is written both ways in real Rust — through `f64::from`
+    /// and through an `as` cast that the parenthesis hides. The ban has to see both spellings, so
+    /// the break-test seeds both.
+    #[test]
+    fn a_daemon_that_derives_the_frame_budget_is_caught() {
+        for line in [
+            "let budget = 1000.0 / f64::from(fps);\n",
+            "let budget = 1000.0 / (fps as f64);\n",
+            "let budget = 1000.0 / fps as f64;\n",
+        ] {
+            let fixture = seeded("frame-rate-budget");
+            assert!(super::frame_rate(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_FILE, line);
+            let report = super::frame_rate(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("how long a frame may take")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// The successor of the old "keep passing the ABR's own config" claim. The crate now demands
+    /// that config in `congestion_evidence`'s signature, so the drift left to catch is the daemon
+    /// answering the question itself — which steps the frame rate down on evidence the rate law
+    /// ignored, with both controllers internally consistent.
+    #[test]
+    fn a_daemon_that_decides_congestion_evidence_itself_is_caught() {
+        for line in [
+            "fn congestion_evidence(&self) -> bool { false }\n",
+            "let inflate = self.rtt_inflate_factor;\n",
+            "if loss > config.loss_threshold { return true; }\n",
+        ] {
+            let fixture = seeded("frame-rate-evidence");
+            assert!(super::frame_rate(&fixture.tree()).is_clean(), "{line}");
+
+            fixture.append(DAEMON_FILE, line);
+            let report = super::frame_rate(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("congestion evidence")),
+                "{line:?}: {report:?}"
+            );
+        }
+    }
+
+    /// The frame-rate ask going quiet: a governor without its gate is a rate chosen by the crate
+    /// and admitted on a schedule of the daemon's own.
+    #[test]
+    fn a_daemon_that_stopped_asking_the_frame_rate_axis_is_caught() {
+        let fixture = seeded("frame-rate-drained");
         assert!(super::frame_rate(&fixture.tree()).is_clean());
 
-        fixture.write("Sources/SlopDeskVideoHost/FPSGovernor.swift", FPS_DOORS);
+        fixture.write(
+            DAEMON_FILE,
+            "use slopdesk_video::fps_governor::{EncodeLoadPacer, FpsGovernorConfig};\n",
+        );
         let report = super::frame_rate(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("two controllers")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("stopped naming EncodeCadenceGate")),
             "{report:?}"
         );
     }
-
-    const QP_DOORS: &str = "slopdesk_qp_new(x)\nslopdesk_qp_decide(x)\nslopdesk_qp_clamped_int(x)\n";
-    const IDR_DOORS: &str = "\
-slopdesk_idr_policy_new(x)
-slopdesk_idr_policy_free(x)
-slopdesk_idr_policy_note_keyframe_sent(x)
-slopdesk_idr_policy_note_keyframe_delivered(x)
-slopdesk_idr_policy_decide(x)
-slopdesk_idr_policy_grace(x)
-slopdesk_idr_policy_available_tokens(x)
-";
-    const ABR_DOORS: &str = "\
-slopdesk_abr_config_default(x)
-slopdesk_abr_new(x)
-slopdesk_abr_with_ceiling(x)
-slopdesk_abr_effective_ceiling(x)
-slopdesk_abr_set_user_ceiling(x)
-slopdesk_abr_decide(x)
-slopdesk_abr_effective_slack(x)
-slopdesk_abr_is_material_change(x)
-";
-    const ROUTE_DOORS: &str = "slopdesk_recovery_route(x)\n";
-    const ESTIMATE_DOORS: &str =
-        "slopdesk_net_estimate_new(x)\nslopdesk_net_estimate_rtt_millis(x)\nslopdesk_net_estimate_fold(x)\n";
-    const FPS_DOORS: &str = "\
-slopdesk_fps_config_default(x)
-slopdesk_fps_ladder(x)
-slopdesk_fps_governor_new(x)
-slopdesk_fps_governor_note_frame(x)
-slopdesk_fps_governor_tick(x)
-slopdesk_fps_congestion_evidence(x)
-slopdesk_fps_gate_admit(x)
-slopdesk_fps_self_heal_every(x)
-slopdesk_fps_pacer_config_default(x)
-slopdesk_fps_budget_millis(x)
-slopdesk_fps_pacer_new(x)
-slopdesk_fps_pacer_note(x)
-";
 }

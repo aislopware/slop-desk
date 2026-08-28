@@ -102,8 +102,10 @@ avoidance of the two memcpys behind the recorded +30 ms cold-reattach regression
 
 New logic lands in `rust/slopdesk-muxsession` (`forbid(unsafe_code)`); doors land in
 `rust/slopdesk-ffi/src/`, beside `mux_resize.rs`. No fourth unsafe crate.
-`rust/slopdesk-ffi/src/mux_host.rs` already shows the ownership pattern for subscribers: *the flow id
-is the caller's, not ours* — an `NWConnection` crosses as an opaque `uint64_t` the caller assigns.
+`rust/slopdesk-videohostd/src/mux_peers.rs` already shows the ownership pattern for subscribers: *the
+flow id names the peer, and nothing else* — the door that used to carry an `NWConnection` across as an
+opaque `uint64_t` is gone with the Swift video host, and the id ↔ peer map that replaced it is where
+the ownership rule now reads.
 
 | Handle | Module | Serialized by | Rust owns | Swift keeps | What crosses |
 | --- | --- | --- | --- | --- | --- |

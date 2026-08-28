@@ -41,7 +41,6 @@ pub fn input_surface(tree: &Tree) -> Report {
                 "slopdesk_input_box_state",
                 "slopdesk_input_box_ingest",
                 "slopdesk_input_box_take_rendered",
-                "slopdesk_input_box_event",
                 "slopdesk_input_box_record_compose_sent",
             ],
             message: "Sources/SlopDeskClaudeCode/InputBoxModel.swift no longer calls {entry} — the input \

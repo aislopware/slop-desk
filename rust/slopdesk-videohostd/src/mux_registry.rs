@@ -1,6 +1,6 @@
 //! One shared flow into N independent sessions — the daemon's side of the mux.
 //!
-//! `Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift`.
+//! The Rust home of the session registry the Swift host's mux kept.
 //!
 //! ## The asymmetry this exists for (`docs/01` §2)
 //!
@@ -32,20 +32,37 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use slopdesk_video::geometry::{VideoPoint, VideoRect, VideoSize};
 use slopdesk_video::mux_routing::{DispatchDecision, dispatch_decision};
 use slopdesk_video::recovery_routing::VideoChannel;
+use slopdesk_video::swipe_nav_config::{NavHistoryFlags, SwipeNavHostConfig};
 use slopdesk_video::video_control::VideoControlMessage;
 
 use crate::mux_lane::{LaneControl, LaneRetired};
 use crate::mux_sink::MuxSinkTable;
 use crate::mux_transport::MuxObserver;
+use crate::navstatus::PushesStatus;
 
-/// A minted session, as the one verb the registry needs from it.
+/// A minted session, as the two verbs the registry needs from it.
 ///
-/// The capture, the encoder and the timers under this are `SlopDeskVideoHostSession`'s, which is
-/// not ported yet; this trait is the seam it lands behind, so nothing above has to change when it
-/// does.
+/// Two, and they are not the same kind of thing. [`Self::stop`] is a lifetime order the registry
+/// issues; [`Self::push_nav_status`] is a broadcast the registry only FORWARDS, because
+/// [`crate::navstatus`]'s beat is daemon-level and the sessions are the only things that hold
+/// lanes. Neither is a decision: the message a session ships is
+/// [`slopdesk_video::swipe_nav_config`]'s answer, asked per session because a window-scoped pane
+/// and a display-scoped one are eligible under different conditions.
 pub trait LaneSession: Send + Sync + core::fmt::Debug {
     /// Stops capture, encode and every timer. Idempotent — a reap and a `bye` can both reach it.
     fn stop(&self);
+
+    /// Ships this session's swipe-nav status over its cursor lane. Silent unless media is flowing.
+    ///
+    /// `history` is the beat's accessibility read of the FRONTMOST app, `None` for unknown — where
+    /// the client fails open rather than darking a chip it cannot vouch for. It gates only the
+    /// chip, never the fire (`docs/20` §9.6).
+    fn push_nav_status(
+        &self,
+        config: &SwipeNavHostConfig,
+        frontmost_bundle_id: Option<&str>,
+        history: Option<NavHistoryFlags>,
+    );
 }
 
 /// Why a mint could not produce a session: the window is gone, or the hello was malformed.
@@ -238,6 +255,26 @@ impl MuxSessionRegistry {
     }
 }
 
+impl PushesStatus for MuxSessionRegistry {
+    fn has_audience(&self) -> bool {
+        self.has_sessions()
+    }
+
+    /// The fan-out itself, and it holds no lock: [`Self::sessions`] copies the roster out first, so
+    /// a session that tears itself down mid-push cannot deadlock against the mint lock — its own
+    /// `push_nav_status` is already the no-op a stopped session answers with.
+    fn push(
+        &self,
+        config: &SwipeNavHostConfig,
+        frontmost_bundle_id: Option<&str>,
+        history: Option<NavHistoryFlags>,
+    ) {
+        for session in self.sessions() {
+            session.push_nav_status(config, frontmost_bundle_id, history);
+        }
+    }
+}
+
 impl LaneRetired for MuxSessionRegistry {
     fn lane_retired(&self, channel_id: u32) {
         self.retire(channel_id);
@@ -289,7 +326,10 @@ mod tests {
     use slopdesk_video::recovery_routing::VideoChannel;
     use slopdesk_video::video_control::VideoControlMessage;
 
-    use super::{LaneSession, MintRefused, MuxSessionRegistry, SessionMinter};
+    use super::{
+        LaneSession, MintRefused, MuxSessionRegistry, NavHistoryFlags, PushesStatus, SessionMinter,
+        SwipeNavHostConfig,
+    };
     use crate::mux_lane::{LaneControl, LaneRetired, MuxLaneTransport};
     use crate::mux_sink::MuxSinkTable;
 
@@ -336,11 +376,24 @@ mod tests {
     #[derive(Debug, Default)]
     struct Recorded {
         stops: AtomicUsize,
+        pushes: AtomicUsize,
     }
 
     impl LaneSession for Recorded {
         fn stop(&self) {
             let _prior = self.stops.fetch_add(1, Ordering::Relaxed);
+        }
+
+        /// Counted, not rendered: what a session makes of the beat is
+        /// [`crate::session::Session`]'s, and what the registry owes it is that every live lane
+        /// hears exactly one call per push.
+        fn push_nav_status(
+            &self,
+            _config: &SwipeNavHostConfig,
+            _frontmost_bundle_id: Option<&str>,
+            _history: Option<NavHistoryFlags>,
+        ) {
+            let _prior = self.pushes.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -462,6 +515,23 @@ mod tests {
         // One admit, whatever else was delivered to the live sink.
         assert_eq!(case.wire.acts(), vec!["admit 7".to_owned()]);
         assert_eq!(case.registry.sessions().len(), 1);
+    }
+
+    /// The daemon's beat is one truth for every lane, so a push reaches every live session exactly
+    /// once — and reaches nothing, without touching the roster, when there is no session to tell.
+    #[test]
+    fn a_status_push_reaches_every_live_session_and_no_more() {
+        let case = harness(true);
+        assert!(!case.registry.has_audience());
+        let config = SwipeNavHostConfig::default();
+        case.registry.push(&config, Some("com.apple.Safari"), None);
+        assert_eq!(case.session.pushes.load(Ordering::Relaxed), 0);
+
+        case.registry.dispatch(7, VideoChannel::Control, &hello());
+        settle(|| case.registry.has_sessions());
+        assert!(case.registry.has_audience());
+        case.registry.push(&config, Some("com.apple.Safari"), None);
+        assert_eq!(case.session.pushes.load(Ordering::Relaxed), 1);
     }
 
     /// A silent drop left the client re-driving a doomed mint forever.
