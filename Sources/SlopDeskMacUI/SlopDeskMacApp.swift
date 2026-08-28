@@ -487,28 +487,24 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
 
     /// Re-arm `body` whenever anything it reads changes, forever.
     ///
-    /// ⚠️ ONE CALL PER EDGE, never one call around all of them. `withObservationTracking` records the
-    /// union of everything the body touched, so a single mega-follow over all nine edges below would
-    /// re-run the Dock apply, the satellite diff and all seven panel syncs on every keystroke that
-    /// moves any of them — which is exactly the re-render storm ``RailRowsMemo`` exists to kill, moved
-    /// one floor up. Each edge reads the narrowest thing that answers it.
+    /// ⚠️ ONE CALL PER EDGE, never one call around all of them. A tracked block records the union of
+    /// everything the body touched, so a single mega-follow over all nine edges below would re-run the
+    /// Dock apply, the satellite diff and all seven panel syncs on every keystroke that moves any of
+    /// them — which is exactly the re-render storm ``RailRowsMemo`` exists to kill, moved one floor up.
+    /// Each edge reads the narrowest thing that answers it.
     ///
-    /// The re-arm is deferred to the next main-actor turn because `onChange` fires at `willSet`: the
-    /// value the body would read inside it is still the OLD one, so the body must run after the
-    /// mutation lands, not during it. This is the same idiom ``MacTitlebarBand/follow()`` uses.
+    /// The deferral this needs — the wake fires at `willSet`, so a body reading inside it would still
+    /// see the OLD value — is ``ObservationFollow``'s own beat, no longer spelled here.
     ///
-    /// The body is CALLED inside a fresh closure rather than passed as the `apply:` argument itself:
-    /// `withObservationTracking`'s first parameter is declared non-isolated, and an inline closure
-    /// inherits this method's `@MainActor` isolation where a stored function value does not.
+    /// The body is CALLED inside a fresh closure rather than passed as the `read:` argument itself:
+    /// that parameter is declared non-isolated, and an inline closure inherits this method's
+    /// `@MainActor` isolation where a stored function value does not.
+    ///
+    /// The body sits in `read` rather than in `apply`, against that type's usual shape: the body IS the
+    /// tracked block, so what it touches IS the dependency set. Moved to `apply` it would register no
+    /// dependency at all and the edge would fire exactly once. `apply` is empty for that reason.
     private func follow(_ body: @escaping @MainActor () -> Void) {
-        withObservationTracking { body() } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.follow(body)
-                }
-            }
-        }
+        ObservationFollow.arm(self) { _ in body() } apply: { _, _ in }
     }
 
     /// Every `@Observable` edge the scene used to spell as a `.onChange`. Each body runs ONCE at arm

@@ -15,7 +15,7 @@
 // A THIN VIEW over ``AppConnection``, which already owns the editable host/port strings, the parse, the
 // validation hint and the `connect()` lifecycle. Nothing here re-derives any of it: the fields write
 // through on every keystroke so `canConnect` gates the Connect button live, and everything drawn is read
-// back inside `withObservationTracking`, so a failed connect re-renders its own reason.
+// back inside an ``ObservationFollow``, so a failed connect re-renders its own reason.
 //
 // THE SHEET DOES NOT TEAR ITSELF DOWN. Cancel, Esc and a successful connect all flip
 // `coordinator.connectVisible`, and the scene edge that follows closes it — the same discipline every
@@ -187,14 +187,13 @@ final class MacConnectFormController: NSViewController, NSTextFieldDelegate {
     // MARK: The live parts
 
     /// Draws what the connection currently says, and re-arms itself on everything it read.
+    ///
+    /// The work sits inside `read` rather than in `apply`, against that type's usual shape: the tracked
+    /// block IS the draw, so the transitive reads of ``draw()`` ARE the dependency set. Split the two and
+    /// the set empties — the form would draw once and then follow nothing. `apply` is empty for that
+    /// reason, not by omission.
     private func render() {
-        withObservationTracking {
-            draw()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.render() }
-            }
-        }
+        ObservationFollow.arm(self) { $0.draw() } apply: { _, _ in }
     }
 
     private func draw() {

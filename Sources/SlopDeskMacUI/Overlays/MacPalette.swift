@@ -22,7 +22,7 @@
 //   2. IT REDRAWS OFF OBSERVATION, not off its own edits. Typing and stepping are this view's own
 //      events, but ⌘↩ RUNS a verb and keeps the card up — so the ✓ gutter of the row just toggled has
 //      to flip under the pointer, and the results have to re-rank against a store that moved.
-//      `withObservationTracking` re-arms on every render, so the card follows whatever it read.
+//      ``ObservationFollow`` re-arms on every render, so the card follows whatever it read.
 //   3. IT SIZES ITSELF TO ITS RESULTS. The card is fixed-width and variable-height: a query that
 //      narrows to two rows gets a two-row card, and the panel is told the new size rather than the
 //      list being padded out inside a fixed one.
@@ -167,16 +167,16 @@ final class MacPaletteView: NSView, NSTextFieldDelegate {
 
     /// Draws the current state, and re-arms itself on everything it read.
     ///
-    /// The `onChange` handler fires BEFORE the value it announces is stored, so the next render is
-    /// scheduled rather than run — reading inside the callback would answer with the old value.
+    /// ``ObservationFollow`` keeps the beat this needs: its wake is scheduled onto the next main turn
+    /// rather than run inside the change, which the card depends on because the callback fires BEFORE
+    /// the value it announces is stored.
+    ///
+    /// The work sits inside `read` rather than in `apply`, against that type's usual shape: the tracked
+    /// block IS the draw, so the transitive reads of ``drawRows()`` ARE the dependency set. Split the two
+    /// and the set empties — the card would draw once and then follow nothing. `apply` is empty for that
+    /// reason, not by omission.
     private func render() {
-        withObservationTracking {
-            drawRows()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.render() }
-            }
-        }
+        ObservationFollow.arm(self) { $0.drawRows() } apply: { _, _ in }
     }
 
     private func drawRows() {

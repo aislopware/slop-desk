@@ -493,16 +493,16 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
     /// an observation arm and not a one-shot draw: a command that finishes while the navigator is
     /// open flips its own gutter, and a command that STARTS while it is open appears.
     ///
-    /// The `onChange` handler fires BEFORE the value it announces is stored, so the next render is
-    /// scheduled rather than run — reading inside the callback would answer with the old value.
+    /// ``ObservationFollow`` keeps the beat this needs: its wake is scheduled onto the next main turn
+    /// rather than run inside the change, which the card depends on because the callback fires BEFORE
+    /// the value it announces is stored.
+    ///
+    /// The work sits inside `read` rather than in `apply`, against that type's usual shape: the tracked
+    /// block IS the draw, so the transitive reads of ``draw()`` ARE the dependency set. Split the two and
+    /// the set empties — the card would draw once and then follow nothing. `apply` is empty for that
+    /// reason, not by omission.
     private func render() {
-        withObservationTracking {
-            draw()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.render() }
-            }
-        }
+        ObservationFollow.arm(self) { $0.draw() } apply: { _, _ in }
     }
 
     private func draw() {

@@ -8,7 +8,7 @@
 // Three things follow from that, and they are what this file is:
 //
 //   1. IT REDRAWS OFF OBSERVATION. The target, the pane's `PeekContent`, its agent status and its
-//      inspector's pending call are all read inside `withObservationTracking`, so the card follows
+//      inspector's pending call are all read inside an ``ObservationFollow``, so the card follows
 //      the store rather than the card's own events. That is not an optimisation here — the advance
 //      is the coordinator's, and a card that only redrew on its own keystrokes would keep showing
 //      the pane it just answered.
@@ -73,6 +73,9 @@ final class MacPeekReplyView: NSView, NSTextFieldDelegate {
     private var pendingToolExpanded = false
     /// The height the card took at the last render, so the panel is only re-sized when it moved.
     private var cardHeight: Double = 0
+    /// The live follow behind ``render()``, held so the next render can REPLACE it rather than stack a
+    /// second one — see that method for the two doors that make the replace load-bearing.
+    private var renderFollow: ObservationFollow?
 
     /// Told the card's wanted size whenever its content changes height.
     var onResize: (NSSize) -> Void = { _ in }
@@ -201,16 +204,20 @@ final class MacPeekReplyView: NSView, NSTextFieldDelegate {
 
     /// Draws the current state, and re-arms itself on everything it read.
     ///
-    /// The `onChange` handler fires BEFORE the value it announces is stored, so the next render is
-    /// scheduled rather than run — reading inside the callback would answer with the old value.
+    /// ``ObservationFollow`` keeps the beat this needs: its wake is scheduled onto the next main turn
+    /// rather than run inside the change, which the card depends on because the callback fires BEFORE
+    /// the value it announces is stored.
+    ///
+    /// `replacing:` rather than a bare arm, because this card has a SECOND door into `render()` — the
+    /// pending-tool disclosure's `onToggle`. Arming is not idempotent, so without the replace every
+    /// expand/collapse would leave another live follow behind and the card would redraw N times a change.
+    ///
+    /// The work sits inside `read` rather than in `apply`, against that type's usual shape: the tracked
+    /// block IS the draw, so the transitive reads of ``draw()`` ARE the dependency set. Split the two and
+    /// the set empties — the card would draw once and then follow nothing. `apply` is empty for that
+    /// reason, not by omission.
     private func render() {
-        withObservationTracking {
-            draw()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.render() }
-            }
-        }
+        renderFollow = ObservationFollow.arm(self, replacing: renderFollow) { $0.draw() } apply: { _, _ in }
     }
 
     private func draw() {
