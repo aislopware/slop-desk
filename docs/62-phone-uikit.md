@@ -325,6 +325,32 @@ Four properties are load-bearing, each answering something SwiftUI did for free:
 
 **The phone changes nothing about this.** It is `Observation`, not AppKit.
 
+**The four properties are now a TYPE, not a prologue.**
+``SlopDeskClientCore/ObservationFollow`` is the shape above written once, and it is the canon for
+every new follower on both shells:
+
+```swift
+ObservationFollow.arm(self,
+    read: { $0.chrome.sidebarCollapsed },
+    apply: { shell, collapsed in shell.split.applyCollapse(sidebarCollapsed: collapsed) })
+```
+
+Three of the four properties stop being discipline and become signatures. `[weak self]` is not
+written at the call site because the owner is held weakly by construction. The generation counter is
+the owner's own lifetime — a wake that finds it gone does not re-arm — with `stop()` left for the one
+case a lifetime cannot cover, a shell detached but retained. And the hazard with no symptom, a
+tracked read that lands OUTSIDE the block or a work-only read that lands INSIDE it, is unspellable:
+`read` returns the value, `apply` receives it and runs outside the tracking block. The fourth — that
+`onChange` fires *before* the mutation, so the wake must hop a main turn — stays a mechanism, and now
+lives in exactly one place. `Tests/SlopDeskClientCoreTests/ObservationFollowTests.swift` asserts all
+four, which the eleven lines inside 88 private methods could not be.
+
+Converting the 88 existing sites is a mechanical pass held until the UIKit rebuild lands — a canon
+change made while those files are being written is churn, not consolidation. Until then the
+hand-written form is still correct and the invariant ledger carries the resulting
+`no-cross-target-clone` pairs as `known`, noted as dissolving when the conversion runs. **Write no new
+one.**
+
 **One conversion is genuinely delicate and has a test on it already.**
 `WorkspaceRootView.swift:154` is `.onChange(of: activeTabCount, initial: true)`, and
 `Apps/ClientApp-iOS/Tests/SidebarAutoHideWiringTests.swift:60` pins the `initial: true` semantics.

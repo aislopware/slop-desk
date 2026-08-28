@@ -63,7 +63,9 @@ pub fn one_navigator_per_platform(tree: &Tree) -> Report {
             message: "SlateTabRow is back under another path ({files}) — one row per platform, both reading \
                       SidebarRowReading",
         },
-        // The SwiftUI navigator is the PHONE's now. Without the platform gate the Mac would build two.
+        // The UIKit navigator is the PHONE's. Without the platform gate the Mac would build two.
+        // (It read "the SwiftUI navigator" until the demolition; the claim below never depended on
+        // which framework painted it, only on there being exactly one navigator per platform.)
         Claim::Names {
             path: PHONE_NAVIGATOR,
             needle: "#if os(iOS)",
