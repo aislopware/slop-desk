@@ -90,18 +90,25 @@ final class VideoPaneControls {
 public struct VideoPaneSpec {
     /// The remote window's title. Read once, at mount, for the container's `accessibilityLabel` — the
     /// pixels the Metal view draws have no structure to expose, so accessibility rides the container.
-    public var title: String
+    public let title: String
     /// The remote window's APP display name ("Xcode"/"Google Chrome" — the picker's `appName`).
     /// SIGNATURE PARITY WITH THE MAC ONLY: the smart-zoom ⌘0 gate this would feed
     /// (``PinchZeroPolicy``) is a TRACKPAD `smartMagnify` translation, and a phone has no two-finger
     /// double-tap on a trackpad to gate — `VideoSurfaceHost` accepts this field and never reads it,
     /// exactly as the deleted `VideoLayerRepresentable.targetAppName` did.
-    public var targetAppName: String
+    public let targetAppName: String
     /// `nil` ⇒ no live connection (chrome-only / placeholder mount, e.g. before the host is
     /// discovered). When set, the host brings up the full client pipeline — decoder, two UDP sockets,
     /// display link — on mount.
-    public var connection: VideoWindowConnection?
+    public let connection: VideoWindowConnection?
 
+    // THESE THREE ARE THE ONLY `var`s, and the Mac spells all three `let` — the difference is
+    // imperative-vs-declarative, not drift. SwiftUI rebuilt the Mac's spec every render, so a gate
+    // change arrived as a whole new value; a UIKit host is MOUNTED ONCE and holds one spec, so a gate
+    // change has to be written into the value it already has (`setPaneGates`). Everything else here,
+    // the sixteen sinks included, is wired at init and never reassigned, so it is `let` on both
+    // halves — which is also what `video-halves-agree` extracts. Reaching for `var` on a sink would
+    // read the phone side as EMPTY and quietly stop the two lists from being compared at all.
     /// Whether this pane is the workspace's active/focused pane AT MOUNT. Drives the KEYBOARD only:
     /// pointer traffic forwards from whichever pane a touch lands on, matching the Mac's
     /// never-`isActive`-gated `mouseDown` — only the first-responder claim is active-gated. Every
@@ -119,68 +126,68 @@ public struct VideoPaneSpec {
 
     /// Make this pane the workspace's active pane — fired on the first touch contact (the phone's
     /// click-to-activate). A read-only pane still fires this.
-    public var onActivate: () -> Void
+    public let onActivate: () -> Void
     /// SIGNATURE PARITY WITH THE MAC ONLY: ⌥-scroll-to-pan-the-canvas is a trackpad route with no
     /// phone equivalent (the canvas is navigated by its own gestures outside this surface), so
     /// `VideoSurfaceHost` accepts this and nothing ever calls it.
-    public var onCanvasScroll: (CGSize) -> Void
+    public let onCanvasScroll: (CGSize) -> Void
     /// 1:1 PANE SNAP: ask the surrounding canvas pane to resize its VIDEO CONTENT from `current` to
     /// `target` points so the stream renders pixel-for-pixel, fired on the first decoded frame and on
     /// host-side capture-size changes. `nil` ⇒ standalone (no pane to snap) — the session keeps the
     /// legacy connect-time host-follow negotiation instead.
-    public var onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)?
+    public let onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)?
     /// PASTE AS KEYSTROKES: the host publishes a key-injection closure here once its session exists
     /// (`nil` on teardown), routed to the same secure-input-aware path the hardware keyboard uses.
     /// `(keyCode, down, shift)`.
-    public var onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)?
+    public let onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)?
     /// RESIZE (numeric popover): the host publishes a resize-drive closure here once its session
     /// exists (`nil` on teardown), requesting an ABSOLUTE host-window POINT size.
-    public var onResizeInjectorReady: ((((_ width: Double, _ height: Double) -> Void)?) -> Void)?
+    public let onResizeInjectorReady: ((((_ width: Double, _ height: Double) -> Void)?) -> Void)?
     /// VIEWPORT CONTROLS: the host publishes a client-viewport command closure here once its session
     /// exists — fit / zoom-in / zoom-out / reset / pan-lock on/off, carrying a raw command byte
     /// (`RemoteWindowModel.ViewportCommand`). Pure CLIENT compositor ops (no host round-trip), so —
     /// unlike the sinks above — this one is never withheld while read-only.
-    public var onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)?
+    public let onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)?
     /// RELEASE STUCK INPUT: the host publishes a zero-arg release closure here (`nil` on teardown)
     /// that synthesizes a key-up for every held modifier plus a mouse-up for every button — the
     /// palette's chord-less escape hatch for a host left holding input.
-    public var onInputReleaseReady: (((() -> Void)?) -> Void)?
+    public let onInputReleaseReady: (((() -> Void)?) -> Void)?
     /// HOST-WINDOW GEOMETRY: the host pushes the window's current + MAX resizable POINT sizes here
     /// whenever either changes (first decoded frame / host `displayMax` report). A zero max means "not
     /// yet known". Informational (never reaches the host), so never withheld while read-only.
-    public var onWindowGeometryReady: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)?
+    public let onWindowGeometryReady: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)?
     /// CONNECTION STATS: the host pushes the host-announced stream CADENCE (frames/sec) here whenever
     /// the host's FPS governor announces a new value.
-    public var onStreamCadenceReady: ((_ fps: Int) -> Void)?
+    public let onStreamCadenceReady: ((_ fps: Int) -> Void)?
     /// CONNECTION STATS: the host pushes the client-measured video PAYLOAD bitrate (kilobits/sec,
     /// ~1 Hz) here.
-    public var onStreamBitrateReady: ((_ kbps: Int) -> Void)?
+    public let onStreamBitrateReady: ((_ kbps: Int) -> Void)?
     /// NETWORK-STATS MIRROR: the ~2 Hz client-local telemetry aggregate — received frames/sec, FEC
     /// recoveries/sec, unrecovered losses/sec, latest hold (ms), pacer depth, host-reported RTT/encode
     /// (ms) and client decode (ms) EWMAs (`0` = no reading yet). Primitives only (the seam is
     /// headless).
-    public var onNetworkStatsReady: ((
+    public let onNetworkStatsReady: ((
         _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
         _ rttMs: Double, _ encodeMs: Double, _ decodeMs: Double,
     ) -> Void)?
     /// STREAM SETTINGS (fps cap / bitrate ceiling): the host publishes a settings-drive closure here
     /// once its session exists (`nil` on teardown), `(fpsCap, bitrateCeilingBps)`, `0` = auto.
     /// Host-affecting — withheld while read-only, like the resize sink.
-    public var onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)?
+    public let onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)?
     /// HOST AUDIO: the footer speaker toggle's enable/disable drive, absolute (the session stores the
     /// wish and re-sends it after every re-hello). Host-affecting — withheld while read-only.
-    public var onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
+    public let onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
     /// PRIVACY BLANK: the desktop pane's shield toggle's enable/disable drive (blacks the host display
     /// + swallows local host input). Host-affecting — withheld while read-only.
-    public var onPrivacyInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
+    public let onPrivacyInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
     /// STALL SCRIM: the host pushes the stream's stall state here when it FLIPS — `true` ⇒ the host
     /// went silent past the stall threshold, `false` ⇒ traffic resumed. Informational, never
     /// read-only-gated.
-    public var onStreamStallChanged: ((_ stalled: Bool) -> Void)?
+    public let onStreamStallChanged: ((_ stalled: Bool) -> Void)?
     /// TERMINAL REFUSAL: fired once after the host REJECTED the session (`helloAck(accepted: false)`
     /// — window gone / version mismatch). The pipeline has already torn down with no auto-rebuild;
     /// this is what moves the pane off a dead surface and onto the picker/error state.
-    public var onSessionRejected: (() -> Void)?
+    public let onSessionRejected: (() -> Void)?
 
     public init(
         title: String,
