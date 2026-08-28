@@ -4,6 +4,17 @@
 //! floor under them, and each guards a copy that a test cannot catch parting from its twin: the
 //! copy a test holds is not the copy the other shell runs, the memo and the builder agree by
 //! construction, the two spellings of one setting sit a scroll apart on the same page.
+//!
+//! ⚠️ EVERY PHONE PATH IN THIS MODULE WAS RE-AIMED ON 2026-08-28, and the WHY matters more than the
+//! rename. `3f11c6e6` deleted the entire `SwiftUI` iOS client without touching this ledger, so
+//! every rule below spent a week reporting "… is gone" about a subject that had not been withdrawn
+//! — it had been REWRITTEN. That verdict is the worst kind a ratchet can give: it is red, so nobody
+//! reads it as vacuous, and it is wrong, so nobody can act on it. The `UIKit` twins landed in the
+//! same directories under the settled `Phone*` convention (`292e2548`, `8f738207`), carrying the
+//! same responsibility and, as it turns out, the same type names with the same prefix. The rules
+//! now name those. The break-test fixtures moved with them: a fixture still spelling the dead name
+//! proves the rule against a subject the tree does not have, which is how a rule goes green on
+//! nothing.
 
 use crate::claim::{Claim, Extract, View, check_all};
 use crate::report::Report;
@@ -51,8 +62,8 @@ const ANDROID_KEYCODE_RUST: &str = "rust/slopdesk-devicepanel/src/panel_key.rs";
 /// exactly the shape that rots.
 ///
 /// One thing worth recording about how it read while it was landing: the rule was RED for the
-/// length of the change, naming `SimulatorConsoleView.swift` while the four simulator-view edits
-/// were still pending, because the two UI targets belonged to other owners. A ban that spans
+/// length of the change, naming `PhoneSimulatorConsoleView.swift` while the four simulator-view
+/// edits were still pending, because the two UI targets belonged to other owners. A ban that spans
 /// targets one agent cannot edit reads as a false positive exactly once, at the half-applied
 /// moment, and is not one.
 #[must_use]
@@ -62,8 +73,8 @@ pub fn one_device_panel_predicate(tree: &Tree) -> Report {
         "Sources/SlopDeskDevicePanels/Android/AndroidPresentation.swift",
         "Sources/SlopDeskDevicePanels/Simulator/SimulatorPresentation.swift",
         ROW_FILTER,
-        "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift",
-        "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
         "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorConsoleView.swift",
         "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift",
     ];
@@ -257,8 +268,8 @@ mod tests {
         for path in [
             "Sources/SlopDeskDevicePanels/Android/AndroidPresentation.swift",
             "Sources/SlopDeskDevicePanels/Simulator/SimulatorPresentation.swift",
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift",
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
             "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorConsoleView.swift",
             "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift",
         ] {

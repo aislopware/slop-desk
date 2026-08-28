@@ -6,6 +6,17 @@
 //! sends touches in the fitted rect's space and the other in the video's own pixel grid, because
 //! `scrcpy` DROPS a mismatched pair. What they never differed in is the ARITHMETIC, and every rule
 //! here says so about one piece of it.
+//!
+//! ⚠️ EVERY PHONE PATH IN THIS MODULE WAS RE-AIMED ON 2026-08-28, and the WHY matters more than the
+//! rename. `3f11c6e6` deleted the entire `SwiftUI` iOS client without touching this ledger, so
+//! every rule below spent a week reporting "… is gone" about a subject that had not been withdrawn
+//! — it had been REWRITTEN. That verdict is the worst kind a ratchet can give: it is red, so nobody
+//! reads it as vacuous, and it is wrong, so nobody can act on it. The `UIKit` twins landed in the
+//! same directories under the settled `Phone*` convention (`292e2548`, `8f738207`), carrying the
+//! same responsibility and, as it turns out, the same type names with the same prefix. The rules
+//! now name those. The break-test fixtures moved with them: a fixture still spelling the dead name
+//! proves the rule against a subject the tree does not have, which is how a rule goes green on
+//! nothing.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -65,7 +76,7 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
             "SimulatorScreenLayout.clampedDevicePoint",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
             "SimulatorScreenLayout.clampedDevicePoint",
         ),
         (
@@ -73,23 +84,23 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
             "AndroidScreenLayout.clampedDevicePoint",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
             "AndroidScreenLayout.clampedDevicePoint",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidStageView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidStageView.swift",
             "DevicePanelChrome.veil",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorStageView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorStageView.swift",
             "DevicePanelChrome.veil",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
             "DevicePanelChrome.notice",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
             "DevicePanelChrome.notice",
         ),
         (
@@ -375,7 +386,7 @@ mod tests {
                 "SimulatorScreenLayout.clampedDevicePoint",
             ),
             (
-                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
                 "SimulatorScreenLayout.clampedDevicePoint",
             ),
             (
@@ -383,23 +394,23 @@ mod tests {
                 "AndroidScreenLayout.clampedDevicePoint",
             ),
             (
-                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
                 "AndroidScreenLayout.clampedDevicePoint",
             ),
             (
-                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidStageView.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidStageView.swift",
                 "DevicePanelChrome.veil",
             ),
             (
-                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorStageView.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorStageView.swift",
                 "DevicePanelChrome.veil",
             ),
             (
-                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
                 "DevicePanelChrome.notice",
             ),
             (
-                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
                 "DevicePanelChrome.notice",
             ),
             (
@@ -436,7 +447,7 @@ mod tests {
 
         // The live bug this was written for: a hand-rolled clamp, one point past the end.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
             "SimulatorScreenLayout.clampedDevicePoint(p)\nlet x = max(point.x - fitted.minX, 0)\n",
         );
         assert!(!super::one_device_panel_law(&fixture.tree()).is_clean());
@@ -452,7 +463,7 @@ mod tests {
         // The other half of the same bug: a view that stopped clamping at all.
         panels(&fixture);
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
             "send(point)\n",
         );
         assert!(!super::one_device_panel_law(&fixture.tree()).is_clean());
@@ -543,7 +554,7 @@ slopdesk_android_version_label(bytes, len, release != nil, level, apiLevel != ni
 
         // The grouping and the lifting, back beside a view that then owns its own reading of them.
         fixture.write(super::SIMULATOR_SECTIONS, simulator).write(
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
             "let families = Dictionary(grouping: devices) { $0.kind }\n",
         );
         let report = super::one_sectioning_for_both_panels(&fixture.tree());

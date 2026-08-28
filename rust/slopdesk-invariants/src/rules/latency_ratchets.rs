@@ -10,6 +10,17 @@
 //! a timing assertion in CI is a flake generator. Each rule states what was MEASURED, and each was
 //! break-tested against the real tree by editing the file, running the rule, and restoring from a
 //! `/tmp` copy — never `git checkout`, which would have discarded that file's own uncommitted work.
+//!
+//! ⚠️ EVERY PHONE PATH IN THIS MODULE WAS RE-AIMED ON 2026-08-28, and the WHY matters more than the
+//! rename. `3f11c6e6` deleted the entire `SwiftUI` iOS client without touching this ledger, so
+//! every rule below spent a week reporting "… is gone" about a subject that had not been withdrawn
+//! — it had been REWRITTEN. That verdict is the worst kind a ratchet can give: it is red, so nobody
+//! reads it as vacuous, and it is wrong, so nobody can act on it. The `UIKit` twins landed in the
+//! same directories under the settled `Phone*` convention (`292e2548`, `8f738207`), carrying the
+//! same responsibility and, as it turns out, the same type names with the same prefix. The rules
+//! now name those. The break-test fixtures moved with them: a fixture still spelling the dead name
+//! proves the rule against a subject the tree does not have, which is how a rule goes green on
+//! nothing.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -108,13 +119,13 @@ pub fn the_mirror_topology_is_projected_once(tree: &Tree) -> Report {
 pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
     /// The two device consoles, whose `visible` is a filter over 600 retained lines.
     const CONSOLES: &[&str] = &[
-        "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift",
-        "Sources/SlopDeskPhoneUI/Panel/Android/AndroidConsoleView.swift",
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
+        "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
     ];
     /// The two device lists, one register down.
     const LISTS: &[&str] = &[
-        "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
-        "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
+        "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
     ];
     /// The picker, whose `sections` ranks five sources per read.
     const PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift";
@@ -135,6 +146,18 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
                       derivation of `sections`",
         },
     ];
+    // ⚠️ THE SIX CLAIMS BELOW ARE SHAPE-STALE, NOT PATH-STALE, AND THAT IS A DIFFERENT DEBT. The
+    // 2026-08-28 re-aim moved them onto the live `Phone*` consoles and lists, and they went from
+    // "… is gone" to red on the real files — which is the honest verdict, but not yet the right
+    // one. `private func rows(_ shown:)` and `let shown = visible` are SwiftUI spellings: they pin
+    // "bind the projection once" by pinning the `@ViewBuilder` helper that took it as a parameter,
+    // because in a `body` there was nowhere else to put the binding. UIKit has somewhere else — the
+    // snapshot handed to a diffable data source — so the MEASUREMENT these rules protect
+    // (0.78–1.50 ms per reader over 600 rows) is still live while the shape it was pinned by is
+    // not. Re-aiming them means choosing the UIKit spelling of the same guarantee, which is a
+    // design call for whoever lands the console's data source, not a rename. The third claim in
+    // each loop, the `visible.isEmpty` ban, is framework-blind and PASSES on the UIKit halves
+    // already — proof that the guarantee survived the port and only its pin did not.
     for console in CONSOLES {
         claims.push(Claim::Matches {
             path: console,
@@ -408,8 +431,8 @@ mod tests {
     /// The three projections, each bound once.
     fn projections(fixture: &Fixture) {
         for console in [
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift",
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidConsoleView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
         ] {
             fixture.write(
                 console,
@@ -419,11 +442,11 @@ mod tests {
         }
         fixture
             .write(
-                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
                 "    private func list(_ shown: [SimulatorDevice]) -> some View {\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
                 "    private func list(_ shown: [AndroidDevice]) -> some View {\n",
             )
             .write(
@@ -440,7 +463,7 @@ mod tests {
 
         // The emptiness test, which runs the whole 600-row filter to answer a Bool.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidConsoleView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
             "        let shown = visible\n    private func rows(_ shown: [DeviceLogLine]) -> some View \
              {\nif visible.isEmpty { return empty }\n",
         );

@@ -5,6 +5,17 @@
 //! why they share a module: a `#if os(macOS)` wrapped around a whole file COMPILES on the phone —
 //! to nothing. Forty-one empty files build green, so a gate is not a warning here, it is a parity
 //! gap with a passing test suite over it.
+//!
+//! ⚠️ EVERY PHONE PATH IN THIS MODULE WAS RE-AIMED ON 2026-08-28, and the WHY matters more than the
+//! rename. `3f11c6e6` deleted the entire `SwiftUI` iOS client without touching this ledger, so
+//! every rule below spent a week reporting "… is gone" about a subject that had not been withdrawn
+//! — it had been REWRITTEN. That verdict is the worst kind a ratchet can give: it is red, so nobody
+//! reads it as vacuous, and it is wrong, so nobody can act on it. The `UIKit` twins landed in the
+//! same directories under the settled `Phone*` convention (`292e2548`, `8f738207`), carrying the
+//! same responsibility and, as it turns out, the same type names with the same prefix. The rules
+//! now name those. The break-test fixtures moved with them: a fixture still spelling the dead name
+//! proves the rule against a subject the tree does not have, which is how a rule goes green on
+//! nothing.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -75,8 +86,8 @@ pub fn the_device_panel_floor_builds_for_the_phone(tree: &Tree) -> Report {
 /// `UIKit` phone cannot write a representable AT ALL — the wrapper existed only to put a `UIView`
 /// inside a `SwiftUI` tree, and after docs/62 there is no `SwiftUI` tree — so the pin could only go
 /// red for the port succeeding. Worse, and this is the part that was true BEFORE the port:
-/// [`Claim::Names`] reads the file RAW, and `SimulatorScreenView.swift:11` carries the word
-/// "UIViewRepresentable" in its own prose. The claim was already satisfiable by a COMMENT, which
+/// [`Claim::Names`] reads the file RAW, and `PhoneSimulatorScreenView.swift:11` carries the word
+/// "`UIViewRepresentable`" in its own prose. The claim was already satisfiable by a COMMENT, which
 /// means it had stopped pinning the code some time ago and nothing said so (docs/62 §4.8 names both
 /// halves of this).
 ///
@@ -103,18 +114,18 @@ pub fn both_device_panels_draw_on_both_platforms(tree: &Tree) -> Report {
         },
         // RE-SPELLED 2026-08-28 — see the header's last paragraph for what these two used to say.
         Claim::Matches {
-            path: "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
+            path: "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
             pattern: r": UIView\b",
             view: View::Code,
-            message: "SimulatorScreenView lost its UIKit half — the phone's device stage is a UIView, which \
-                      is what makes the simulator mirror draw on the phone at all (docs/62 §4.8)",
+            message: "PhoneSimulatorScreenView lost its UIKit half — the phone's device stage is a UIView, \
+                      which is what makes the simulator mirror draw on the phone at all (docs/62 §4.8)",
         },
         Claim::Matches {
-            path: "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+            path: "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
             pattern: r": UIView\b",
             view: View::Code,
-            message: "AndroidScreenView lost its UIKit half — the phone's device stage is a UIView, which \
-                      is what makes the Android mirror draw on the phone at all (docs/62 §4.8)",
+            message: "PhoneAndroidScreenView lost its UIKit half — the phone's device stage is a UIView, \
+                      which is what makes the Android mirror draw on the phone at all (docs/62 §4.8)",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -322,12 +333,12 @@ mod tests {
     fn panels(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
                 "#if os(macOS)\nfinal class Stage: NSView {}\n#elseif os(iOS)\nfinal class Stage: UIView \
                  {}\n#endif\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
                 "#if os(macOS)\nfinal class Stage: NSView {}\n#elseif os(iOS)\nfinal class Stage: UIView \
                  {}\n#endif\n",
             )
@@ -361,7 +372,7 @@ mod tests {
 
         // The one shape a line-wise ban cannot see: a gate PRESENT and its phone half ABSENT.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
             "#if os(macOS)\nfinal class Stage: NSView {}\nfinal class Stage: UIView {}\n#endif\n",
         );
         assert!(!super::both_device_panels_draw_on_both_platforms(&fixture.tree()).is_clean());

@@ -13,6 +13,17 @@
 //! Where the shell guarded each check with `[[ -f … ]] &&`, these do not: an absent file here fails
 //! rather than passing quietly, because a renamed subject is the one bug a gate cannot notice by
 //! reading its own output.
+//!
+//! ⚠️ EVERY PHONE PATH IN THIS MODULE WAS RE-AIMED ON 2026-08-28, and the WHY matters more than the
+//! rename. `3f11c6e6` deleted the entire `SwiftUI` iOS client without touching this ledger, so
+//! every rule below spent a week reporting "… is gone" about a subject that had not been withdrawn
+//! — it had been REWRITTEN. That verdict is the worst kind a ratchet can give: it is red, so nobody
+//! reads it as vacuous, and it is wrong, so nobody can act on it. The `UIKit` twins landed in the
+//! same directories under the settled `Phone*` convention (`292e2548`, `8f738207`), carrying the
+//! same responsibility and, as it turns out, the same type names with the same prefix. The rules
+//! now name those. The break-test fixtures moved with them: a fixture still spelling the dead name
+//! proves the rule against a subject the tree does not have, which is how a rule goes green on
+//! nothing.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -26,7 +37,15 @@ const PHONE_APP: &str = "Sources/SlopDeskPhoneUI/PhoneAppDelegate.swift";
 /// The `@main` shell that hands the process to it.
 const PHONE_MAIN: &str = "Apps/ClientApp-iOS/AppMain.swift";
 /// The phone terminal pane's responder.
-const INPUT_HOST: &str = "Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift";
+///
+/// ⚠️ RE-AIMED 2026-08-28, and this one was NOT a rename. `TerminalInputHost.swift` is deleted
+/// outright — docs/62 §2.4 rules the `UIViewRepresentable` out and says the `UIResponder` "becomes
+/// the pane controller's own input surface", which it now is: `TerminalInputHostView: UIView,
+/// UIKeyInput` lives at `TerminalLeafView.swift:1099`, in the leaf it always served. So the TYPE
+/// survives under its old name and the FILE does not, which is exactly the case a path-keyed rule
+/// gets wrong in the direction that looks alarming: it reported "the phone's terminal cannot
+/// receive a keystroke" about a terminal that could.
+const INPUT_HOST: &str = "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift";
 /// The one resolve both shells' rungs share.
 const INTERCEPTOR: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Keybinding.swift";
 /// The code panel's shared model.
@@ -42,18 +61,18 @@ const PHONE_PANEL: &[&str] = &["Sources/SlopDeskPhoneUI/Panel/"];
 const PANEL_CHROME: &str = "Sources/SlopDeskPhoneUI/Panel/DevicePanelChrome.swift";
 /// The two device consoles.
 const CONSOLES: &[&str] = &[
-    "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift",
-    "Sources/SlopDeskPhoneUI/Panel/Android/AndroidConsoleView.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
 ];
 /// The two device mirrors.
 const MIRRORS: &[&str] = &[
-    "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
-    "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
 ];
 /// The two device stages.
 const STAGES: &[&str] = &[
-    "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorStageView.swift",
-    "Sources/SlopDeskPhoneUI/Panel/Android/AndroidStageView.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorStageView.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidStageView.swift",
 ];
 /// The terminal renderer both shells embed.
 const RENDERER: &str = "ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift";
@@ -336,8 +355,8 @@ pub fn the_panel_opens_on_a_named_surface(tree: &Tree) -> Report {
 /// not is the inconsistency this closed, and it is invisible until someone types in the console.
 ///
 /// BREAK-TEST: pasted the old inline `Button { query = "" } label: { Image(systemSymbol:
-/// .xmarkCircleFill) … }` back into SimulatorDeviceList.swift ⇒ FAIL naming that file. Restored
-/// from /tmp; PASS.
+/// .xmarkCircleFill) … }` back into PhoneSimulatorDeviceList.swift ⇒ FAIL naming that file.
+/// Restored from /tmp; PASS.
 ///
 /// ## ⚠️ FLOORED AND RE-SPELLED 2026-08-28
 /// [`Claim::NoneUnder`] naming every offender rather than the first is the fix for ONE of the two
@@ -408,9 +427,9 @@ pub fn one_clear_key_per_filter_field(tree: &Tree) -> Report {
 /// that used to drop the press, so a rule that only asked for the string would have passed the bug.
 ///
 /// BREAK-TEST: deleted the `DeviceSoftKeyboard.shared.register(self)` call ⇒ FAIL "cannot take
-/// typed text". Separately deleted the `keyboard` plate from `SimulatorStageView` ⇒ FAIL "has no
-/// way to raise the keyboard". Separately `super.pressesBegan(presses, with: event)` → `break` in
-/// the `.none` arm ⇒ FAIL "eats the chords it cannot use". All restored from /tmp; PASS.
+/// typed text". Separately deleted the `keyboard` plate from `PhoneSimulatorStageView` ⇒ FAIL "has
+/// no way to raise the keyboard". Separately `super.pressesBegan(presses, with: event)` → `break`
+/// in the `.none` arm ⇒ FAIL "eats the chords it cannot use". All restored from /tmp; PASS.
 #[must_use]
 pub fn a_mirrored_device_takes_typed_text(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -829,7 +848,7 @@ mod tests {
     /// A mirror with `forwards` calls to `super.pressesBegan`.
     fn mirror(fixture: &Fixture, forwards: usize) {
         let mut body = String::from(
-            "final class AndroidScreenView: UIView {\n\x20   func attach() { \
+            "final class PhoneAndroidScreenView: UIView {\n\x20   func attach() { \
              DeviceSoftKeyboard.shared.register(self) }\n",
         );
         for _ in 0..forwards {
@@ -958,7 +977,7 @@ mod tests {
                  Image(systemSymbol: .xmarkCircleFill)\n    }\n}\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
                 "SlateSearchField(text: $query) { DevicePanelChrome.clearKey() }\n",
             );
         for console in super::CONSOLES {
@@ -972,7 +991,7 @@ mod tests {
         // The copy that made two of the four go missing. The exemption is on the CORPUS, so the
         // chrome's own spelling cannot hide a leak behind it.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
             "Button { query = \"\" } label: { Image(systemSymbol: .xmarkCircleFill) }\n",
         );
         let found = super::one_clear_key_per_filter_field(&fixture.tree());
@@ -980,12 +999,12 @@ mod tests {
             found
                 .violations()
                 .iter()
-                .any(|line| line.contains("SimulatorDeviceList"))
+                .any(|line| line.contains("PhoneSimulatorDeviceList"))
         );
 
         // And the same copy in UIKit's spelling, which the old needle could not see.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
             "clear.setImage(UIImage(systemSymbol: .xmarkCircleFill), for: .normal)\n",
         );
         let found = super::one_clear_key_per_filter_field(&fixture.tree());
@@ -993,7 +1012,7 @@ mod tests {
             found
                 .violations()
                 .iter()
-                .any(|line| line.contains("SimulatorDeviceList"))
+                .any(|line| line.contains("PhoneSimulatorDeviceList"))
         );
     }
 

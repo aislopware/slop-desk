@@ -257,6 +257,18 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
             message: "MacPanelTabGroup stopped reading {entry} — the panel's four tabs are ClientCore's, \
                       cut once",
         },
+        // ⚠️ PARKED, NOT RE-AIMED — 2026-08-28, and the finding is the point. The 2026-08-28 sweep
+        // re-aimed every phone path whose subject had merely been RENAMED; this claim's subject was
+        // not renamed, it was SPLIT, so re-aiming it is a design call and not a rename. The three
+        // symbols are all live on the phone, in three sibling files rather than in the controller:
+        // `PanelTabs` in `Panel/PhonePanelBar.swift`, `Panel/PhonePanelTabGroup.swift` and
+        // `Panel/PhonePanelTabPlate.swift`; `AndroidMarkPath` in `Panel/PhonePanelTabPlate.swift`;
+        // and `CodePanelSurfaces` NOWHERE, because the phone's surface host is
+        // `Panel/PhonePanelSurfacesViewController.swift` and it reads `CodePanelPresentation`
+        // instead. The Mac half above is already spelled per-file (`MacPanelStrip`,
+        // `MacPanelTabGroup`), so mirroring that shape is the likely answer — but "which file must
+        // read which symbol" is the panel's own architecture, and a gate should not be the thing
+        // that decides it. Left red on purpose so the decision is owed rather than assumed.
         Claim::Mentions {
             path: PHONE_PANEL,
             names: &["PanelTabs", "CodePanelSurfaces", "AndroidMarkPath"],

@@ -6,6 +6,17 @@
 //! decisions that live one floor down, and only the drawing is per-half. The failure they guard
 //! against is never a build error: a second copy of a title, a shell or a caps recipe compiles,
 //! renders, and differs from its twin only on the screen nobody has open.
+//!
+//! ⚠️ EVERY PHONE PATH IN THIS MODULE WAS RE-AIMED ON 2026-08-28, and the WHY matters more than the
+//! rename. `3f11c6e6` deleted the entire `SwiftUI` iOS client without touching this ledger, so
+//! every rule below spent a week reporting "… is gone" about a subject that had not been withdrawn
+//! — it had been REWRITTEN. That verdict is the worst kind a ratchet can give: it is red, so nobody
+//! reads it as vacuous, and it is wrong, so nobody can act on it. The `UIKit` twins landed in the
+//! same directories under the settled `Phone*` convention (`292e2548`, `8f738207`), carrying the
+//! same responsibility and, as it turns out, the same type names with the same prefix. The rules
+//! now name those. The break-test fixtures moved with them: a fixture still spelling the dead name
+//! proves the rule against a subject the tree does not have, which is how a rule goes green on
+//! nothing.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -35,9 +46,9 @@ const KEY_EVENT: &str = "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift
 /// transition the poll itself caused. Three is the bug's signature; one is the fix.
 ///
 /// ⚠️ AND THAT CLAUSE IS NO LONGER CHECKED, which is worth more written down than quietly dropped.
-/// It was `Claim::Exactly { pattern: r"\.task\(id: pollKey\)", count: 1 }` — a pin on a SwiftUI
-/// MODIFIER, and the phone has no SwiftUI (docs/62). The LAW survives the spelling: one poll,
-/// started once, not restarted by the transitions it causes. Its UIKit spelling cannot be pinned
+/// It was `Claim::Exactly { pattern: r"\.task\(id: pollKey\)", count: 1 }` — a pin on a `SwiftUI`
+/// MODIFIER, and the phone has no `SwiftUI` (docs/62). The LAW survives the spelling: one poll,
+/// started once, not restarted by the transitions it causes. Its `UIKit` spelling cannot be pinned
 /// yet because the surface it would read has not been written — stage G — and a pattern guessed
 /// against a view controller nobody has typed would be a rule that fires on the first honest draft.
 /// So the clause is excised rather than re-aimed, and this paragraph is the debt: when
@@ -168,7 +179,7 @@ pub fn two_device_panels_drawn_twice(tree: &Tree) -> Report {
             "AndroidSidebarModel",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
             "SimulatorPresentation",
         ),
         (
@@ -176,7 +187,7 @@ pub fn two_device_panels_drawn_twice(tree: &Tree) -> Report {
             "SimulatorPresentation",
         ),
         (
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
             "AndroidPresentation",
         ),
         (
@@ -539,11 +550,11 @@ mod tests {
         }
         fixture
             .write(
-                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
                 "#if os(iOS)\nSimulatorPresentation\n#endif\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
                 "#if os(iOS)\nAndroidPresentation\n#endif\n",
             )
             .write(
@@ -565,7 +576,7 @@ mod tests {
 
         // A phone view that lost its gate is the AppKit half half-ported.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
             "AndroidPresentation\n",
         );
         assert!(!super::two_device_panels_drawn_twice(&fixture.tree()).is_clean());

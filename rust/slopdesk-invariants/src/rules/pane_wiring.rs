@@ -13,7 +13,15 @@ use crate::tree::Tree;
 
 const WIRING: &str = "Sources/SlopDeskClientCore/Pane/TerminalPaneWiring.swift";
 const ESCAPE_MONITOR: &str = "Sources/SlopDeskClientCore/Input/PaneMoveEscapeMonitorController.swift";
-const PHONE_HOST: &str = "Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift";
+/// The phone terminal pane's responder.
+///
+/// ⚠️ RE-AIMED 2026-08-28, and this one was NOT a rename. `TerminalInputHost.swift` is deleted
+/// outright — docs/62 §2.4 rules the `UIViewRepresentable` out and says the `UIResponder` "becomes
+/// the pane controller's own input surface", which it now is: `TerminalInputHostView: UIView,
+/// UIKeyInput` lives at `TerminalLeafView.swift:1099`, in the leaf it always served. The TYPE
+/// survives under its old name and the FILE does not, so the messages below still name
+/// `TerminalInputHost` where they mean the responder, and the file where they mean the file.
+const PHONE_HOST: &str = "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift";
 const PHONE_KEY: &str = "Sources/SlopDeskWorkspaceCore/iOS/PhoneKey.swift";
 
 /// One terminal wiring, and its teardown order is part of it
@@ -214,8 +222,8 @@ pub fn the_phone_key_path_is_rust(tree: &Tree) -> Report {
         },
         Claim::Exists {
             path: PHONE_HOST,
-            message: "TerminalInputHost.swift is gone — without it the phone's terminal cannot receive a \
-                      keystroke (docs/56 §16)",
+            message: "TerminalLeafView.swift is gone — without it the phone's terminal cannot receive a \
+                      keystroke (docs/56 §16, docs/62 §2.4)",
         },
         Claim::Lacks {
             path: PHONE_HOST,
