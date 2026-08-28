@@ -7,7 +7,7 @@
 # (docs/56 §2). It links no other UI product, and never the Mac's. It carries
 # the iOS UIKit native-feel table-stakes (KeyRepeater / IMEProxyTextView /
 # FloatingCursorController / KeyboardAccessoryBar — doc 17 §2.5). The `@main` entry is
-# `AppMain.swift` beside this spec → `SlopDeskPhoneApp`.
+# `AppMain.swift` beside this spec → `PhoneAppDelegate`.
 #
 # The libghostty `GhosttyTerminalView` is added once the xcframework exists; until then the
 # BUILD-STATUS placeholder renders (libghostty-only policy, no fallback VT engine).
@@ -47,7 +47,7 @@ targets:
       # app target so `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
       - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
-      # The iOS app shell: AppMain launches `SlopDeskPhoneApp` from this product, which transitively
+      # The iOS app shell: AppMain launches `PhoneAppDelegate` from this product, which transitively
       # pulls in the view layer, `SlopDeskClientCore` and `SlopDeskWorkspaceCore` (logic + seam types).
       - package: SlopDesk
         product: SlopDeskPhoneUI
@@ -87,7 +87,7 @@ targets:
     # (SlopDeskClient.pause()/resume()), so no persistent background mode is declared. No
     # custom entitlements needed for the standard client.
     #
-    # LOCAL NOTIFICATIONS (the three sinks `SlopDeskPhoneApp` installs) need NOTHING here, and that
+    # LOCAL NOTIFICATIONS (the three sinks `PhoneAppDelegate` installs) need NOTHING here, and that
     # is a fact about the platform rather than an omission: `UNUserNotificationCenter` gates on the
     # user's runtime GRANT, which `requestAuthorization` asks for lazily on the first event that
     # survives the toggles. There is no Info.plist usage-description key for it (unlike camera/mic)

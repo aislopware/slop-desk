@@ -19,6 +19,7 @@ it rather than guessing one. The one bootstrap this tree needs is `brew install 
 | `MuxChannelSession` or `HostServer` | `docs/59-hostd-projection.md` — the six handles, in the one order that lands |
 | hostd's socket, or any Swift you think must stay | `docs/60-hostd-in-rust.md` — the stages, and the one §6 floor that was not one |
 | client UI | `DESIGN.md` |
+| the iOS/iPadOS client, or a SwiftUI file on the phone | `docs/62-phone-uikit.md` — the nine stages, and why UIKit |
 | release, signing, brew | `docs/49-release-pipeline.md` |
 | why something was scoped out | `docs/DECISIONS.md` |
 
@@ -32,8 +33,11 @@ it rather than guessing one. The one bootstrap this tree needs is `brew install 
   re-runs it when the stamp itself is in doubt. A *touched-target* green never writes the pre-push
   green-tree marker — only a full suite on a clean tree does — so `quick` cannot make a push skip
   what it did not run.
-- **Rust is the default; perf parity is enough to move existing Swift.** Only SwiftUI/AppKit
-  justifies staying in Swift. A *measured* regression is the only veto.
+- **Rust is the default; perf parity is enough to move existing Swift.** Only AppKit/UIKit — the two
+  IMPERATIVE view frameworks — justifies staying in Swift, and SwiftUI only where a surface has not
+  crossed yet: the Mac shell is AppKit already and the phone is crossing to UIKit
+  (`docs/62-phone-uikit.md`), so a new SwiftUI file is a stage that has not landed rather than a
+  choice. A *measured* regression is the only veto.
 - **A port ships over a socket, or as a linked library — pick by lifetime.** A component that must
   outlive its caller, be `execve`d, or be dialled by two processes is a binary on a socket; one that
   is in-process by necessity and lifetime-coupled to its caller is an `.xcframework`, the way

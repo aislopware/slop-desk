@@ -64,7 +64,7 @@ public struct WorkspaceRootView: View {
         )
     }
 
-    // `package`, not `public`: constructed only by `SlopDeskPhoneApp`, and `chrome` is the package-level
+    // `package`, not `public`: constructed only by `PhoneSceneDelegate`, and `chrome` is the package-level
     // `WorkspaceChromeState`.
     package init(
         store: WorkspaceStore,

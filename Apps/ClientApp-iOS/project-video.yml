@@ -22,7 +22,7 @@ targets:
       - path: AppMain.swift
       - path: ../Shared/Assets.xcassets
     dependencies:
-      # The iOS app shell: AppMain launches `SlopDeskPhoneApp` from this product.
+      # The iOS app shell: AppMain launches `PhoneAppDelegate` from this product.
       - package: SlopDesk
         product: SlopDeskPhoneUI
       - package: SlopDesk

@@ -37,7 +37,7 @@ Two structural additions post-date the survey and shape every row below:
   (`ROWS`, 77 ids). A row the running half cannot execute is dropped *before* the chord table is built,
   so its chord falls through to the terminal rather than being stolen to do nothing.
 - **iOS dispatches chords.** Two rungs — the focused pane's `TerminalInputHost` and the responder
-  chain's tail `PhoneRootKeyResponder` — resolve the same override-aware table the Mac's NSEvent monitor
+  chain's tail `PhoneAppDelegate` — resolve the same override-aware table the Mac's NSEvent monitor
   does, through the same `WorkspaceBindingRegistry.route`.
 
 ---
@@ -56,11 +56,11 @@ Two structural additions post-date the survey and shape every row below:
 | Multi-key prefix sequence dispatch (⌃B→D) | **REMOVED by ruling** | `resolvedSequenceTable` / `KeySequenceRegistryTests` are gone; `WorkspaceBindingOverrides.swift` carries only the single-chord table |
 | Single-chord dispatch — macOS | done | `WorkspaceKeyDispatcher.swift:379` reads the override-aware `resolvedChordTable`; installed at `SlopDeskMacApp.swift:381` (`.task { keyDispatcher.install() }`) |
 | Single-chord dispatch — iOS, focused pane | done | `TerminalInputHost.swift:359–369` (`swallowsAsWorkspaceChord`) resolves through the pane's `TerminalKeyInterceptor`; the chord is swallowed and never repeats |
-| Single-chord dispatch — iOS, root rung | done | `PhoneRootKeyResponder.swift:85` (`pressesBegan` on the app delegate — the responder chain's tail) → :132 `swallowsAsWorkspaceChord`. So ⌘⇧P / ⌘T / ⌘D / ⌘1–9 / ⌘⇧O resolve over a video pane, with no pane focused, and under the code-panel cover |
+| Single-chord dispatch — iOS, root rung | done | `PhoneAppDelegate.swift:251` (`pressesBegan` on the app delegate — the responder chain's tail) → :297 `swallowsAsWorkspaceChord`. So ⌘⇧P / ⌘T / ⌘D / ⌘1–9 / ⌘⇧O resolve over a video pane, with no pane focused, and under the code-panel cover |
 | ⌃⇥ pane switcher (press-and-hold MRU) | done, both halves | Deliberately CHORD-LESS in the table (`WorkspaceBindingRegistry.swift:541`, id `pane.switcher`) — the gesture is responder-owned. macOS: `WorkspaceKeyDispatcher.consumePaneSwitcher` (:396). iOS: `PhoneKey.paneSwitcherKey(_:isOpen:)` (:226) spent by `WorkspaceStore.takePaneSwitcherKey` (:418). Both honour `unbind: ctrl+tab` (:418 / :237) |
 | `route()` action → store op | done | `WorkspaceBindingRouting.swift:59` (`route`) → :90 (`routeTree`) — every `WorkspaceAction` case → a `WorkspaceStore` op or a passed-in overlay closure. View-owned toggles are bundled in `RouteToggles` (:13, twelve closures). Tested by `TreeCommandRoutingTests`, `WorkspaceBindingRoutingTests`, `E1KeymapParityTests` |
 | Three callers, one dispatch | done | `WorkspaceKeyDispatcher.dispatch` (`:450`, macOS NSEvent), `WorkspaceStore.routeInterceptedKey` (`WorkspaceStore+Keybinding.swift:60`, the iOS interceptor path) and `OverlayCoordinator.routeBinding` (`OverlayCoordinator.swift:494`, the palette) all funnel into `WorkspaceBindingRegistry.route` |
-| Per-surface terminal key interceptor | done | `TerminalKeyInterceptor.swift`; minted by `WorkspaceStore.makeKeyInterceptor` (`WorkspaceStore+Keybinding.swift:99`) and hung on the pane by `wireKeyInterceptor` (:81, called from `WorkspaceStore.swift:2600`). The same factory serves the phone's root rung (`PhoneRootKeyResponder.swift:78`) with an `allowing:` filter |
+| Per-surface terminal key interceptor | done | `TerminalKeyInterceptor.swift`; minted by `WorkspaceStore.makeKeyInterceptor` (`WorkspaceStore+Keybinding.swift:99`) and hung on the pane by `wireKeyInterceptor` (:81, called from `WorkspaceStore.swift:2600`). The same factory serves the phone's root rung (`PhoneAppDelegate.swift:173`) with an `allowing:` filter |
 | User keybinding overrides (rebind) | done | `KeybindingPreferences.swift` (serialisable model, schema v3); `WorkspaceBindingOverrides.swift:59` (`resolvedChordTable`), :39 (`resolvedChord(for:)`); published by `PreferencesStore.swift:277` into `WorkspaceBindingRegistry.activeOverrides` |
 | `text:` / `csi:` / `esc:` literal-byte bindings | done, **both halves** | macOS: `WorkspaceKeyDispatcher.swift:368` resolves `textBinding(for:)` *before* the action table and swallows. iOS: `TerminalInputHost.swift:361` does the same on the PANE's rung (the root rung deliberately does not — literal bytes are terminal input). Resolution: `WorkspaceBindingOverrides.swift:102`. Pinned by `TextBindingResolutionTests` + `DispatcherTextBindingTests` |
 | `unbind:` suppression | done, **both halves** | macOS: `WorkspaceKeyDispatcher.swift:376`. iOS + the Mac's pane surface: `WorkspaceStore.makeKeyInterceptor`'s `resolveChord` closure checks `isUnbound` first (`WorkspaceStore+Keybinding.swift:111`) — its own comment records that the interceptor *used* to skip this, so one config file produced two behaviours. Plus the ⌃⇥ escape hatch on both (`WorkspaceKeyDispatcher.swift:418` / `PhoneKey.swift:237`) |
@@ -74,7 +74,7 @@ Two structural additions post-date the survey and shape every row below:
 | ⌘1…⌘9 select **PANE** (not tab) | done | `selectPaneBindings` at `WorkspaceBindingRegistry.swift:967`; `case let .selectPane(n): store.selectPaneNumber(n)` at `WorkspaceBindingRouting.swift:275`. The survey called this "select-tab"; `docs/DECISIONS.md:5902` ("The switcher's unit is the PANE, and so is the ⌘-digit") is the ruling. The nine chords collapse to one display row, `selectPaneRepresentative` (:1125) |
 | Alias chords (no display row) | done | `aliasChords` at `WorkspaceBindingRegistry.swift:1024` — ⌘⇧`+` and keypad `+` → increase font, ⌃⇧Space → Vi Mode. Folded into `chordTable`/`resolvedChordTable` but deliberately outside `allBindings`, so the uniqueness guard does not see them |
 | Modal yield — Open-Quickly picker | done (new since the survey) | `WorkspaceKeyDispatcher.swift:323` — the monitor preempts the responder chain, so without this ⌘1–9 would switch the tab *behind* the picker and ⌘W would destroy the pane behind it. Pinned by `DispatcherOverlayYieldTests` |
-| Modal yield — code panel webview | done (new since the survey) | `WorkspaceKeyDispatcher.swift:350` — while the embedded VS Code holds first responder every chord passes through except `survivesCodePanelYield` (:173, ⌘⇧R and ⌥⌘R). ⌃\` / ⌘\` become panel-local "take me to the terminal" (:192, `docs/DECISIONS.md:6929`). iOS twin: `CodePanelKeyYield.survives` via `PhoneRootKeyResponder.swift:79` |
+| Modal yield — code panel webview | done (new since the survey) | `WorkspaceKeyDispatcher.swift:350` — while the embedded VS Code holds first responder every chord passes through except `survivesCodePanelYield` (:173, ⌘⇧R and ⌥⌘R). ⌃\` / ⌘\` become panel-local "take me to the terminal" (:192, `docs/DECISIONS.md:6929`). iOS twin: `CodePanelKeyYield.survives` via `PhoneAppDelegate.swift:174` |
 | Key-window gate | done (new since the survey) | `WorkspaceKeyDispatcher.swift:302` — an app-wide monitor would otherwise resolve chords typed into the Settings window against the hidden workspace tree (and starve the keybindings recorder). Pinned by `DispatcherKeyWindowGateTests` |
 | ⌘-hold sidebar number hints | done, **macOS only** | `WorkspaceKeyDispatcher.swift:253` (`updateShortcutHint`) off `.flagsChanged`, with a stuck-hint self-heal at :291. iOS has no bare-modifier press to observe (`PhoneKey.swift:424` states the same limitation for the ⌃⇥ commit), so this is a platform capability gap with a stated physical cause, not an unexplained one |
 | Binding conflict uniqueness pinned by tests | done | `TreeCommandRoutingTests` (chord uniqueness + the ⌘/⌥-prefix rule with the named-key exemption for ⇧PageUp/⇧Home/⇧End), `E1KeymapParityTests` (the documented defaults, chord-less rows, the ⌘+ alias) |
@@ -108,7 +108,8 @@ Two structural additions post-date the survey and shape every row below:
 - `Sources/SlopDeskMacUI/SlopDeskMacApp.swift:241,381` — dispatcher construction (every closure supplied)
   and install
 - `Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift` — the phone's FOCUSED-PANE rung
-- `Sources/SlopDeskPhoneUI/Pane/PhoneRootKeyResponder.swift` — the phone's responder-chain TAIL rung
+- `Sources/SlopDeskPhoneUI/PhoneAppDelegate.swift` — the phone's responder-chain TAIL rung, which is
+  the app delegate itself (docs/62 stage A folded the separate responder into it)
 - `Sources/SlopDeskPhoneUI/WorkspaceRootView.swift:242` — `store.overlayKeyToggles` installation
 - `Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift` — the overlay state machine (palette /
   cheat sheet / connect / global search / open-quickly / peek-reply / toasts) and `routeBinding`
@@ -164,7 +165,7 @@ divergence below has a stated cause.
 - **Where a chord is resolved** differs by construction: the Mac PREEMPTS the responder chain with one
   NSEvent monitor and pays for it with a hand-written yield per surface it would otherwise steal from;
   the phone sits at the chain's TAIL and yields to everything by being last
-  (`PhoneRootKeyResponder.swift:18-22`). That is a layout difference, not a capability one.
+  (`PhoneAppDelegate.swift:36-44`). That is a layout difference, not a capability one.
 
 **No unexplained gap remains in this area.** The one this document previously flagged — `text:` bindings
 honoured only on macOS — is closed: `TerminalInputHost.swift:361` resolves `textBinding(for:)` on the

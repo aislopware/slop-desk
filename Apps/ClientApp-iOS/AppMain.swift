@@ -1,7 +1,11 @@
-// AppMain (iOS) — the `@main` shell for `ClientApp-iOS`, over the `SlopDeskPhoneApp` scene in the
+// AppMain (iOS) — the `@main` shell for `ClientApp-iOS`, over the `PhoneAppDelegate` in the
 // `SlopDeskPhoneUI` library (docs/56 §2: each app links exactly one UI target and neither imports the
 // other's). The macOS shell is its own file under `Apps/ClientApp-macOS`; the two were ONE file for as long
 // as one `@main` could serve both scenes, which stopped being true when the scene split.
+//
+// The iOS half stopped being a SCENE at all in docs/62 stage A: there is no `App` and no `WindowGroup`
+// here any more, only an app delegate and the scene delegate it names. What this file does is
+// unchanged — the seam registrations below, then hand off — because the seams were never the scene's.
 //
 // The SEAM types (`TerminalRendererFactory`,
 // `VideoWindowFactory`, `RemoteWindowDiscovery`, `RemoteWindowSummary`) live in
@@ -30,7 +34,7 @@ import SlopDeskVideoClientPhone
 
 /// The `@main` entry for the iOS Xcode app target.
 ///
-/// The whole scene lives in the `SlopDeskPhoneUI` SwiftPM library (`SlopDeskPhoneApp`); this
+/// The whole app object lives in the `SlopDeskPhoneUI` SwiftPM library (`PhoneAppDelegate`); this
 /// shell only attaches `@main` and, when the libghostty xcframework is present, registers the
 /// production terminal renderer with ``TerminalRendererFactory``. Until the xcframework is
 /// built, no factory is registered and the BUILD-STATUS placeholder shows (libghostty-only
@@ -49,8 +53,8 @@ import SlopDeskVideoClientPhone
 @main
 struct ClientAppMain {
     // `main()` performs the five seam registrations (the load-bearing wiring that injects the production
-    // renderer/video/discovery closures the cross-platform UI library cannot reference) and then launches
-    // the rebuilt `SlopDeskClientApp` scene. This app target is NOT in `swift build`.
+    // renderer/video/discovery closures the cross-platform UI library cannot reference) and then hands the
+    // process to ``PhoneAppDelegate``. This app target is NOT in `swift build`.
     static func main() {
         // PATH 1 (terminal, libghostty-only): register the production renderer. The
         // cross-platform `SlopDeskClientUI` view layer cannot reference `GhosttyTerminalView`
@@ -222,8 +226,11 @@ struct ClientAppMain {
         }
         #endif
 
-        // Launch the iOS scene. `App.main()` runs the app run loop and never returns.
-        SlopDeskPhoneApp.main()
+        // Launch the app. `UIApplicationDelegate.main()` names THIS class to `UIApplicationMain` and
+        // runs the run loop; it never returns. The scene delegate is not named in `Info.plist` —
+        // ``PhoneAppDelegate`` returns it from `configurationForConnecting`, so the class is a symbol
+        // rather than a module-qualified string XcodeGen would have to carry.
+        PhoneAppDelegate.main()
     }
 }
 

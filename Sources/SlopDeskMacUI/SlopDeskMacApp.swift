@@ -122,19 +122,11 @@ public struct SlopDeskMacApp: App {
         // resolve light or the navigator draws white-on-cream under an OS in dark mode. Armed here and
         // re-fired at didFinishLaunching, because `NSApp` does not exist yet inside `App.init`.
         SlateAppearancePin.install()
-        // The terminal CELLS adopt the app palette's flat colours: this hook hands the libghostty 6-hex
-        // background/foreground plus the 16-entry ANSI palette + selection colour to `PreferencesStore`
-        // when it (re)builds the terminal config. `WorkspaceCore` owns the `AppearanceApplier` seam but
-        // cannot import the view layer, so the closure lives on this side of the fence.
-        AppearanceApplier.resolveTerminalColors = {
-            let theme = SlateTheme.app
-            return ResolvedTerminalTheme(
-                background: theme.terminalBackgroundHex,
-                foreground: theme.terminalForegroundHex,
-                palette: theme.ansiPalette,
-                selectionBackground: theme.selectionBackgroundHex,
-            )
-        }
+        // The terminal CELLS adopt the app palette's flat colours — filled by
+        // ``ClientTerminalPalette``, below both shells. It was this closure, written out here and
+        // again in the phone's shell, until docs/62 stage A rewrote that file and the clone detector
+        // named the pair.
+        ClientTerminalPalette.install()
 
         let app = ClientComposition(deviceClass: .mac)
         _app = State(initialValue: app)

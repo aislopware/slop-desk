@@ -468,6 +468,10 @@ let package = Package(
                 // per-framework. Transitive via WorkspaceCore, but a direct `import` needs it declared
                 // here (same rationale as Protocol/Inspector/Transport).
                 "SlopDeskTerminal",
+                // `SlateTheme.app` — `ClientTerminalPalette` hands libghostty the app's flat palette,
+                // which is the same constant on both shells. Transitive via WorkspaceCore, but a
+                // direct `import` needs it declared here (same rationale as Terminal, above).
+                "SlopDeskSlate",
                 // The palette + the rail read host metadata (process / port / dir / git-file).
                 "SlopDeskProtocol",
                 // The rail's rows and the palette's agent entries are keyed by agent state.

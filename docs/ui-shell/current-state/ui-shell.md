@@ -182,7 +182,8 @@ platform is owed to the other, laid out for it. What is NOT owed is the same arr
 
 **iOS shell — `Sources/SlopDeskPhoneUI/`**
 
-- `SlopDeskPhoneApp.swift`, `WorkspaceRootView.swift` — scene + `NavigationSplitView` root
+- `PhoneAppDelegate.swift`, `PhoneSceneDelegate.swift`, `WorkspaceRootView.swift` — UIKit app +
+  scene delegate, and the `NavigationSplitView` root they still host (docs/62 stage A/D)
 - `Columns/NavigatorColumn.swift`, `Columns/ContentColumn.swift`
 - `Chrome/ConnectionPill.swift`, `Chrome/TabBadgeView.swift`, `Chrome/SidebarColumnVisibility.swift`
 - `Pane/SplitContainer.swift`, `Pane/PaneContainer.swift`, `Pane/PaneDivider.swift`,

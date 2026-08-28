@@ -307,7 +307,7 @@ final class AndroidScreenUIView: UIView, AndroidFrameRenderer {
             // `break` here every workspace chord died the moment the mirror took key focus: a touch
             // on the picture makes this view first responder, and from then on ⌘T, ⌘⇧P and ⌘1–9 hit a
             // `break`. Forwarded instead, so the press walks the chain to the root rung that owns
-            // those chords (``PhoneRootKeyResponder``) — which is what "the client keeps it" was
+            // those chords (``PhoneAppDelegate``) — which is what "the client keeps it" was
             // always supposed to mean.
             super.pressesBegan(presses, with: event)
         }

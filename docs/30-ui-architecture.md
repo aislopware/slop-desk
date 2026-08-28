@@ -187,9 +187,9 @@ Both symbols return **0 files**, and the rule today is the opposite one:
   the monitor. The glyph still SHOWS on each row as a trailing `Text`, so the menu stays a faithful cheat
   sheet without binding the chord.
 - **iOS: two responder rungs.** `TerminalInputHost` (the focused pane's responder) and
-  `PhoneRootKeyResponder` (the chain's LAST responder, mounted on the app delegate because it must be an
-  ancestor of every possible first responder) —
-  `Sources/SlopDeskPhoneUI/Pane/PhoneRootKeyResponder.swift:1-14`. Between them the phone answers ⌘⇧P,
+  `PhoneAppDelegate` itself (the chain's LAST responder — `UIApplicationDelegate` is a `UIResponder`
+  and sits behind every window, so it is an ancestor of every possible first responder) —
+  `Sources/SlopDeskPhoneUI/PhoneAppDelegate.swift:251`. Between them the phone answers ⌘⇧P,
   ⌘T, ⌘D, ⌘1–9, ⌃⇥ and ⌘⇧O wherever the keyboard happens to be.
 - **The `KeyChord` normalization is shared and headless** — `Sources/SlopDeskClientCore/Input/KeyChordNormalizer.swift`,
   AppKit-free so it is unit-tested without a window server.
@@ -222,7 +222,8 @@ default-ON.
 Two corrections to how this section pointed elsewhere:
 
 - **"The app scene" is two scenes now** — `Sources/SlopDeskMacUI/SlopDeskMacApp.swift` and
-  `Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift`. Neither reads the env directly: the composition root
+  `Sources/SlopDeskPhoneUI/PhoneAppDelegate.swift` (a `UIApplicationDelegate`, not a scene — docs/62
+  stage A). Neither reads the env directly: the composition root
   does, once, for both (`Sources/SlopDeskClientCore/App/ClientComposition.swift:1-12`, `:497`).
 - **The full flag table is NOT in `CLAUDE.md` any more.** `grep -n 'Runtime env flags' CLAUDE.md`
   returns nothing; `CLAUDE.md`'s read-first table sends `SLOPDESK_*` to

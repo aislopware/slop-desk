@@ -278,7 +278,7 @@ final class SimulatorScreenUIView: UIView, SimulatorFrameRenderer {
             // mirror cannot forward — the device's layout is not knowable from here) is not this
             // view's, so it is FORWARDED rather than dropped: the mirror takes first responder on
             // touch, so a swallowed ⌘T meant every workspace chord died the moment anyone tapped the
-            // picture. Up the chain it reaches ``PhoneRootKeyResponder``, which owns those chords.
+            // picture. Up the chain it reaches ``PhoneAppDelegate``, which owns those chords.
             let text = resolved.charactersIgnoringModifiers
             guard !text.isEmpty, !resolved.modifierFlags.contains(.command) else {
                 super.pressesBegan(presses, with: event)

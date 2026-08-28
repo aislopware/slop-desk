@@ -34,10 +34,17 @@ const BOTH: &[&str] = &[MAC, PHONE];
 /// the debt list are all [`Claim::NoCloneAcross`]'s, which is where the reasoning for each lives;
 /// what is here is the ledger itself.
 ///
-/// Two of the seven pairs — `CodePanelSurfaces`, `SlopDeskPhoneApp` — have their floor types
-/// written already, `CodeServerEnsure` and `ClientNotificationSinks`, and are waiting only on the
-/// phone-side edit. The rest are waiting on a floor file nobody has written yet, the GUI/video pane
-/// leaf being the largest and the next one worth doing.
+/// SIX pairs, and the seventh is how a row LEAVES this list. `SlopDeskMacApp` ↔ `SlopDeskPhoneApp`
+/// was annotated "waiting on `ClientNotificationSinks` being called from the phone half"; docs/62
+/// stage A rewrote that phone file into `PhoneAppDelegate` and had it call the floor, so the clone
+/// stopped existing and the row went with it. That is the only outcome that removes one — a pair
+/// that stops cloning is an unpaid ledger entry exactly as a new clone is a violation, so this rule
+/// fails in BOTH directions and every rewrite of a ledgered file settles its row in the same
+/// commit.
+///
+/// One of the six, `CodePanelSurfaces`, has its floor type written already (`CodeServerEnsure`) and
+/// waits only on the phone-side edit — docs/62 stage G. The rest are waiting on a floor file nobody
+/// has written yet, the GUI/video pane leaf being the largest and the next one worth doing.
 ///
 /// BREAK-TEST (2026-08-22): copied `KeybindingsEditorReading.swift`'s `conflictLines(_:)` body back
 /// into BOTH shells' editors as private methods — the exact shape the dedup removed. Rule FIRED,
@@ -132,11 +139,6 @@ pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
             (
                 "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift",
                 "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
-            ),
-            // Waiting on `ClientNotificationSinks` being called from the phone half.
-            (
-                "Sources/SlopDeskMacUI/SlopDeskMacApp.swift",
-                "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift",
             ),
         ],
         floor: 50,

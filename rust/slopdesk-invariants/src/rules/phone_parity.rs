@@ -19,10 +19,12 @@ use crate::report::Report;
 use crate::text;
 use crate::tree::Tree;
 
-/// The phone app's entry point.
-const PHONE_APP: &str = "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift";
-/// The rung at the end of the phone's responder chain.
-const ROOT_RUNG: &str = "Sources/SlopDeskPhoneUI/Pane/PhoneRootKeyResponder.swift";
+/// The phone app's object, which is also the rung at the end of its responder chain. ONE path since
+/// docs/62 stage A: the delegate that owns the composition IS the delegate the chain ends at, so
+/// the two constants this rule used to hold named the same file the moment the `App` struct went.
+const PHONE_APP: &str = "Sources/SlopDeskPhoneUI/PhoneAppDelegate.swift";
+/// The `@main` shell that hands the process to it.
+const PHONE_MAIN: &str = "Apps/ClientApp-iOS/AppMain.swift";
 /// The phone terminal pane's responder.
 const INPUT_HOST: &str = "Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift";
 /// The one resolve both shells' rungs share.
@@ -69,31 +71,46 @@ const RENDERERS: &[&str] = &[MAC_VIDEO, PHONE_VIDEO];
 /// application-wide. The rung that fixed it can only be at the END of the chain, and on this
 /// platform the app DELEGATE is the only object that is there for every window: a `UIView` mounted
 /// by a `SwiftUI` `.background` is a SIBLING of the content, absent from the chain a focused
-/// terminal walks. So the adaptor is the rule. Losing it is silent — no build error, no test
+/// terminal walks. So being the delegate is the rule. Losing it is silent — no build error, no test
 /// failure, just chords that stop working outside a terminal, which is exactly the state this
 /// replaced.
+///
+/// It used to be mounted by `@UIApplicationDelegateAdaptor`, which is the bridge a `SwiftUI` `App`
+/// needs to have a delegate at all. There is no `App` any more (docs/62 stage A), so the claim
+/// moved to the two halves the adaptor was standing in for: the `@main` shell names this class to
+/// `UIApplicationMain`, and this class is a `UIResponder` that overrides `pressesBegan`. Both are
+/// pinned, because either one alone is a delegate that never sees a key.
 ///
 /// Which rung a press lands on — workspace, panel-escape, yield — is a DECISION, and the split's
 /// rule is that a decision lives below the UI targets. `PhoneRootKeyPolicy` is that decision; the
 /// responder is allowed to know `UIKit` and nothing else.
 ///
-/// BREAK-TEST: `UIApplicationDelegateAdaptor(PhoneRootKeyResponder.self)` →
-/// `(SomeOtherDelegate.self)` ⇒ FAIL "the phone's root key rung is not mounted". Separately
-/// replaced the `PhoneRootKeyPolicy.rung(…)` call with an inline `if panelPresented …` chain ⇒ FAIL
-/// "the phone's root key rung re-spells its own precedence". Both restored; PASS.
+/// BREAK-TEST: `PhoneAppDelegate.main()` → `SomeOtherDelegate.main()` ⇒ FAIL "the phone's root key
+/// rung is not the app's delegate". Separately dropped the `override public func pressesBegan` ⇒
+/// FAIL "the phone's root key rung takes no key". Separately replaced the
+/// `PhoneRootKeyPolicy.rung(…)` call with an inline `if panelPresented …` chain ⇒ FAIL "the phone's
+/// root key rung re-spells its own precedence". All three restored; PASS.
 #[must_use]
 pub fn the_phone_dispatches_chords_at_the_root(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::Matches {
-            path: PHONE_APP,
-            pattern: r"UIApplicationDelegateAdaptor\(PhoneRootKeyResponder\.self\)",
+            path: PHONE_MAIN,
+            pattern: r"PhoneAppDelegate\.main\(\)",
             view: View::Code,
-            message: "the phone's root key rung is not mounted — SlopDeskPhoneApp must carry \
-                      @UIApplicationDelegateAdaptor(PhoneRootKeyResponder.self), or every workspace chord \
-                      dies outside a terminal pane (docs/56 §3)",
+            message: "the phone's root key rung is not the app's delegate — AppMain must hand the process \
+                      to PhoneAppDelegate.main(), or every workspace chord dies outside a terminal pane \
+                      (docs/62 stage A)",
         },
         Claim::Matches {
-            path: ROOT_RUNG,
+            path: PHONE_APP,
+            pattern: r"override public func pressesBegan",
+            view: View::Code,
+            message: "the phone's root key rung takes no key — PhoneAppDelegate must override pressesBegan, \
+                      which is the chain's tail and the only place every first responder walks past \
+                      (docs/62 stage A)",
+        },
+        Claim::Matches {
+            path: PHONE_APP,
             pattern: r"PhoneRootKeyPolicy\.rung",
             view: View::Code,
             message: "the phone's root key rung re-spells its own precedence — it must ask \

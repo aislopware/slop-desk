@@ -1,7 +1,7 @@
 // NotificationsOnIOSTests
 //
 // The phone shipped the whole Notification settings group over nothing: `CommandCompletionNotifier` and
-// `PaneNotificationRouter` were `#if os(macOS)`, so `SlopDeskPhoneApp` installed none of the
+// `PaneNotificationRouter` were `#if os(macOS)`, so the phone's shell installed none of the
 // composition's three OS sinks and a long build finishing, a non-zero exit and an agent awaiting input
 // all died at a nil closure. `UserNotifications` is one framework with one API on both triples, so the
 // guard is gone and the phone installs the same poster the Mac does.

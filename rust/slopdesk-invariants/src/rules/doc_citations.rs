@@ -48,7 +48,12 @@ const DOCC_EXTERNAL: [&str; 3] = ["SwiftUICore", "CGDisplayGammaTable", "CGEvent
 /// by walking both sides of it; repointing hostd's side at `slopdesk-superclient` where the
 /// sentence says "and Swift resolved it through `NSTemporaryDirectory()`" would make the doc claim
 /// a Rust crate did something it never did.
-const PATH_TOMBSTONES: [&str; 24] = [
+/// The fourth block is `docs/62`'s, and it is the smallest case of the same argument: stage A's
+/// "Moves" line names the `App` struct it replaced, by the path it was at, because the whole
+/// content of that line is which file each half of `PhoneAppDelegate`/`PhoneSceneDelegate` was cut
+/// out of. Repointing it at either successor would make the sentence claim the rewrite moved
+/// something that was already there.
+const PATH_TOMBSTONES: [&str; 25] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -73,6 +78,7 @@ const PATH_TOMBSTONES: [&str; 24] = [
     "Sources/SlopDeskScreen/ScreenClient.swift",
     "Sources/SlopDeskScreen/ScreenPaths.swift",
     "Sources/SlopDeskScreen/ScreenProtocol.swift",
+    "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift",
 ];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.

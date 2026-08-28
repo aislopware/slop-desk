@@ -1,9 +1,10 @@
 // SidebarColumnVisibility — the two-way map between the shared `chrome.sidebarCollapsed` flag and the
 // phone shell's `NavigationSplitView` column visibility.
 //
-// It reads as iOS-only and it is not: `NavigationSplitViewVisibility` exists on macOS too, so keeping
-// this pair OUT of the iOS-gated root view is what keeps the mapping inside the macOS `swift test`
-// gate rather than only inside the iOS compile. The DECISION on the setter side (recording a manual
+// It is a separate file from the root view so the mapping can be asserted on its own — by
+// `Apps/ClientApp-iOS/Tests/SidebarAutoHideWiringTests`, which is the ONLY thing that reaches it: this
+// file is `#if os(iOS)`, so `swift test` compiles none of it and `just check-ios-tests` is its whole
+// coverage. The DECISION on the setter side (recording a manual
 // override so the auto-hide policy stops fighting a swipe) is
 // ``WorkspaceChromePolicy/applySidebarCollapsed(_:chrome:)``; what lives here is the two-column
 // shell's own reading of a visibility value.

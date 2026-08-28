@@ -169,8 +169,9 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   `backgroundNoticeSink`, `longCommandSink` and `agentAttentionSink`, the Mac shell fills them with
   `UNUserNotificationCenter` + `NSSound`, and the phone leaves them nil because its in-app toast —
   pushed by the composition on both platforms — is its whole notification surface.
-- **C — fork the shell (DONE).** `SlopDeskMacApp` (`SlopDeskMacUI`) and `SlopDeskPhoneApp`
-  (`SlopDeskPhoneUI`) are two `@main` scenes with two app targets and no `#if os(...)` between them,
+- **C — fork the shell (DONE).** `SlopDeskMacApp` (`SlopDeskMacUI`) and — since docs/62 stage A
+  rewrote the phone's half as `PhoneAppDelegate` — `PhoneAppDelegate` (`SlopDeskPhoneUI`) are two
+  `@main` entry points with two app targets and no `#if os(...)` between them,
   where there used to be one scene with seventeen. The Mac's window actuators, termination drain,
   close gate and quit policy moved with it, and so did their tests (`Tests/SlopDeskMacUITests`).
 - **D — move the macOS surfaces (DONE, increment 61; the fold that ended it landed in 63).** The floor came first: every colour token now has ONE
