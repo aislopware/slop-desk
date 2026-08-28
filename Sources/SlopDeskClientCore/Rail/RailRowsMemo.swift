@@ -1,27 +1,34 @@
 // RailRowsMemo — the sidebar's row-model cache, memoizing `RailRowsBuilder.rows(for:)` against a
 // structural fingerprint.
 //
-// PROBLEM: if `NavigatorColumn`'s body called `RailRowsBuilder.rows(for:)` directly, that walk would read
-// every volatile per-pane store dictionary (`paneAgentStatus`, `panePendingCompletion`,
+// PROBLEM: if the navigator's tracked arm called `RailRowsBuilder.rows(for:)` directly, that walk would
+// read every volatile per-pane store dictionary (`paneAgentStatus`, `panePendingCompletion`,
 // `paneForegroundProcess`, progress, gates, read-only, `completionFlashTick`, …). Observation tracks at
 // PROPERTY granularity — reading `dict[oneKey]` depends on the WHOLE dict — so ANY pane's status tick
-// would invalidate the whole sidebar body: a full O(panes) row rebuild + `disambiguated()` + sectioning +
-// list diff on the main thread, keystroke-adjacent.
+// would invalidate the whole sidebar: a full O(panes) row rebuild + `disambiguated()` + sectioning +
+// a snapshot diff on the main thread, keystroke-adjacent.
 //
-// FIX SHAPE: the body asks THIS memo for the rows. The memo compares a STRUCTURAL fingerprint
+// ⚠️ THE UIKIT/APPKIT REBUILD DID NOT RETIRE THIS. The pressure came from Observation's property
+// granularity, NOT from SwiftUI's body evaluation, and `withObservationTracking` tracks identically —
+// a `follow()` arm that reads a volatile dict re-fires on every unrelated pane's tick exactly as a body
+// did. What changed is only the REPAIR the arm performs: `reconfigureItems` on one row instead of a
+// whole-body re-render.
+//
+// FIX SHAPE: the arm asks THIS memo for the rows. The memo compares a STRUCTURAL fingerprint
 // (`RailStructureKey` — tab/pane identity + specs + project keys + the A4 title-process fallback) and
-// returns the cached array on a match, WITHOUT calling the builder — so a settled body registers NO
+// returns the cached array on a match, WITHOUT calling the builder — so a settled arm registers NO
 // Observation dependency on the volatile dicts and a status tick no longer invalidates it at all. The
 // VOLATILE fields the cached rows carry (badge / git line / status / lock / rename mode) are stale by
-// design: each row VIEW re-reads its own pane's chrome fresh via `RailRowsBuilder.liveChrome(for:store:)`,
-// so a tick re-renders one cheap leaf row body instead of rebuilding the whole model.
+// design: each row CELL re-reads its own pane's chrome fresh via `RailRowsBuilder.liveChrome(for:store:)`,
+// so a tick reconfigures one cheap cell instead of rebuilding the whole model.
 //
-// Settling: the eval that MISSES (and the first eval ever) calls the builder and therefore registers
-// volatile deps — the NEXT volatile tick re-runs the body once, hits the cache while reading only the key's
-// structural inputs, and the body settles out of the volatile set. One extra cheap eval per structural
+// Settling: the pass that MISSES (and the first pass ever) calls the builder and therefore registers
+// volatile deps — the NEXT volatile tick re-runs the arm once, hits the cache while reading only the key's
+// structural inputs, and the arm settles out of the volatile set. One extra cheap pass per structural
 // change; zero per volatile tick thereafter.
 //
-// Headless (no SwiftUI import) so `RailRowsMemoTests` pins the hit/miss shape without a view.
+// Headless (no view framework imported at all) so `RailRowsMemoTests` pins the hit/miss shape without
+// mounting anything.
 
 import CSlopDeskFFI
 import Foundation
@@ -229,19 +236,24 @@ package struct RailStructureKey: Equatable {
     }
 }
 
-/// The cache itself: one instance lives in the navigator's `@State` (plain class, NOT `@Observable` — its
-/// mutation during a body eval must not re-invalidate anything). `@MainActor` like the store it reads.
+/// The cache itself: one instance is HELD by the navigator column controller (plain class, NOT
+/// `@Observable` — its mutation inside a tracked read must not re-invalidate the arm that took it).
+/// `@MainActor` like the store it reads.
 @MainActor
 package final class RailRowsMemo {
-    /// How many times the builder actually ran — the headless test seam for the hit/miss shape (SwiftUI
-    /// render counts are not testable; "`buildCount` did not move on a volatile tick" is the proxy).
+    /// How many times the builder actually ran — the headless test seam for the hit/miss shape (a
+    /// re-arm count is not observable from outside; "`buildCount` did not move on a volatile tick" is
+    /// the proxy).
     package private(set) var buildCount = 0
     private var key: RailStructureKey?
     private var cached: [RailRow] = []
 
-    /// `nonisolated` so a SwiftUI `@State` default value (evaluated in the view struct's nonisolated
-    /// memberwise init) can create the memo; all state is touched only via the `@MainActor` method below.
-    package nonisolated init() {}
+    /// Plain `@MainActor` init. It was `nonisolated` for exactly one reason — a SwiftUI `@State`
+    /// default value is evaluated in the view struct's nonisolated memberwise init — and that caller no
+    /// longer exists: a `UIViewController`/`NSViewController` builds this in its own `@MainActor` init.
+    /// Keeping the widening would leave the type constructible off the main actor for no caller,
+    /// which is the isolation hole this class's whole point is to not have.
+    package init() {}
 
     /// The rail rows for `store` — the cached snapshot when the structural fingerprint is unchanged
     /// (volatile tick ⇒ NO builder walk, NO volatile-dict read), a fresh `RailRowsBuilder.rows(for:)`
