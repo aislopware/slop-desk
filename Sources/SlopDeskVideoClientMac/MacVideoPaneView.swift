@@ -46,6 +46,7 @@ import SlopDeskVideoProtocol
 /// through the `ViewportCommand` byte, like every other footer verb — and fill is reachable from
 /// neither platform. The dead closure is gone; adding fill for real means a new command case and an
 /// arm in each `handleViewportCommand`, which is a feature rather than a repair.
+@preconcurrency
 @MainActor
 public final class MacVideoPaneControls {
     public var mode: VideoContentMode = .fit
@@ -353,10 +354,11 @@ final class MacSwipePeelOverlayView: NSView {
         // line, flush at commit) — reduce-motion renders in place, no tuck.
         let tuck = reduceMotion ? 0 : (1 - state.progress) * 12
         let y = bounds.midY - side / 2
-        let x: CGFloat = switch state.direction {
-        case .back: Self.edgeInset - tuck
-        case .forward: bounds.width - Self.edgeInset - side + tuck
-        }
+        let x: CGFloat =
+            switch state.direction {
+            case .back: Self.edgeInset - tuck
+            case .forward: bounds.width - Self.edgeInset - side + tuck
+            }
         return NSRect(x: x, y: y, width: side, height: side)
     }
 }

@@ -136,7 +136,6 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertFalse(keys[1].2)
     }
 
-
     // MARK: Read-only withholding at the seam (videoLeaf)
 
     /// **Read-only WITHHOLDS the stream-settings sink at the seam.** The settings drive changes

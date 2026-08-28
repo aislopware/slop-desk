@@ -38,7 +38,8 @@ targets:
         buildPhase: resources
       # PATH 1 (libghostty renderer): the gated renderer host + binding. This directory
       # carries BOTH GhosttySurface.swift (the @MainActor TerminalSurface binding over the
-      # CGhostty C ABI) and GhosttyTerminalView.swift (the TerminalRenderingView conformer).
+      # CGhostty C ABI) and GhosttyTerminalView.swift (the TerminalSurfaceHosting conformer —
+      # the file name is history, `GhosttyLayerBackedView` is what it holds).
       # They are NOT members of any Package.swift target — they join THIS app target so
       # `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
       - path: ../../ThirdParty/ghostty/integration/GhosttySurface

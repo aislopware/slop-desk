@@ -358,7 +358,7 @@ package enum StatusPresentation {
     /// ``TabBadgeReading/label(_:)`` — a nonisolated enum in `SlopDeskWorkspaceModel` — and touches
     /// nothing else. A caller assembling a VoiceOver string has no reason to be on the main actor,
     /// and making it hop for a switch over an enum would be isolation for the annotation's sake.
-    nonisolated package static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
+    package nonisolated static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
         TabBadgeReading.label(kind)
     }
 }
