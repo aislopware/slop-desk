@@ -52,14 +52,19 @@ const DOCC_EXTERNAL: [&str; 3] = ["SwiftUICore", "CGDisplayGammaTable", "CGEvent
 /// "Moves" line names the `App` struct it replaced, by the path it was at, because the whole
 /// content of that line is which file each half of `PhoneAppDelegate`/`PhoneSceneDelegate` was cut
 /// out of. Repointing it at either successor would make the sentence claim the rewrite moved
-/// something that was already there.
+/// something that was already there. The two phone files after it are that same line's argument at
+/// the scale of the whole document: §2.4's table has a column for what each representable BECAME,
+/// and two of its "Invariant rules re-aimed" paragraphs exist to say which path a claim used to
+/// name before the controller replaced it. Repointing either at its successor deletes the only fact
+/// the row carries — a before/after ledger whose "before" column has been rewritten to the "after"
+/// is not a ledger, and the rules those paragraphs re-aim are the ones a reader has to find.
 /// ⚠️ THIS LIST IS THIS RULE'S ALONE, and it does NOT exempt a Swift COMMENT.
 /// `repo_invariants::source_comments_cite_files_that_exist` is the other half of the same
 /// question and carries no list at all, on purpose — it is SHAPE, so it cannot decay. A comment
 /// recording a deleted file is not fixed by an entry here; it is fixed by not spelling a backticked
 /// PATH, which that rule's own doc says stays legal. Adding the name here instead silently does
 /// nothing.
-const PATH_TOMBSTONES: [&str; 25] = [
+const PATH_TOMBSTONES: [&str; 27] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -85,6 +90,8 @@ const PATH_TOMBSTONES: [&str; 25] = [
     "Sources/SlopDeskScreen/ScreenPaths.swift",
     "Sources/SlopDeskScreen/ScreenProtocol.swift",
     "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift",
+    "Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift",
+    "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
 ];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.
