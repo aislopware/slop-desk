@@ -6,8 +6,12 @@ import XCTest
 ///
 /// `TerminalLetterbox` is a pure value so its arithmetic can be tested anywhere, and
 /// `Tests/SlopDeskWorkspaceCoreTests/TerminalGridFitTests` does that. What only the iOS triple can say is
-/// that the numbers a PHONE actually feeds it produce a letterbox rather than a degenerate rect: the
-/// view that calls it, `TerminalLetterboxContainer`, is `#if os(iOS)` and is compiled by nothing else.
+/// that the numbers a PHONE actually feeds it produce a letterbox rather than a degenerate rect — the
+/// only caller is inside `#if os(iOS)` and is compiled by nothing else.
+///
+/// Deliberately named by PLATFORM rather than by caller: the SwiftUI `TerminalLetterboxContainer` this
+/// header used to name was deleted in the UIKit rebuild and the arithmetic did not move, so a header
+/// pinned to a view's name went stale while every assertion below stayed correct.
 final class TerminalLetterboxOnIOSTests: XCTestCase {
     /// An iPhone 17 Pro's pane, in POINTS, portrait, minus the status/home insets. The exact figure
     /// does not matter — that it is far narrower than a Mac's 120-column grid is the whole point.

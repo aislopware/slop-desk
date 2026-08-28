@@ -915,46 +915,88 @@ loudly if that is forgotten. This is the single most dangerous silent failure in
 same direction: ~19,300 lines of phone UI becoming ~28,000–33,000. The gain is not fewer lines; it is
 that every one of them is a line somebody chose.
 
-## 6. The staged plan
+## 6. The plan: ONE demolition, then a rebuild
 
-Nine stages. Each lands green on its own, is committed on its own, and leaves the tree able to build
-and run. The exit condition of every stage is the same triple: `just quick` green, `just check-ios-tests`
-green on a booted simulator (which `just check` will not run for you), and — for the stages §5 names —
-the measurement taken and written into the file it measures.
+> ⚠️ **THIS SECTION WAS REWRITTEN ON 2026-08-28. The nine-stage incremental plan it used to hold was
+> OVERRULED BY THE USER, twice in one session, the second time in as many words:**
+>
+> > *"Bỏ hết SwiftUI đi cho tôi, để không phải bridge phức tạp. Code thuần appkit/uikit theo cách sạch
+> > nhất."*
+> >
+> > *"Không cần phải giữ cái gì để build được code cả, cứ đập bỏ hết luôn trong 1 lượt rồi xây lại từ
+> > đầu những thứ đã đập. Chứ cái trò vừa đập vừa vá mất thời gian lắm."*
+>
+> — *delete every last piece of SwiftUI so there is no bridging at all; write plain UIKit the cleanest
+> way. Keep nothing merely to hold the build up: demolish the lot in ONE pass and rebuild what was
+> demolished. The demolish-and-patch dance wastes too much time.*
+>
+> The stage structure below survives ONLY as the rebuild's inventory and spec — what each cluster
+> contains, what it must do, and which hazards it hits. It is no longer a schedule of separately-green
+> commits, and the exit conditions it used to state per stage do not apply.
 
-### The carve-out, said out loud
+**§§1–5 and 7–8 are unaffected.** The correction, the inventory, the architecture, the eight hazards
+and the performance argument are all statements about UIKit and about this tree; none of them depended
+on the pacing. Only the pacing changed.
 
-`CLAUDE.md`: *"One implementation, never two languages. Porting means deleting the original in the same
-change: not a fallback, not a test fake, not a cross-language mirror fixture."*
+### What "one pass" means, precisely
 
-**Mounting an unported SwiftUI subtree in a `UIHostingController` is not a second implementation**, and
-that needs saying because it looks like one. It is one implementation of that surface, reached from a
-UIKit parent — the exact inverse of the `NSHostingView` mounts `docs/56` used throughout stage D and
-never called a carve-out (`docs/56:3915-3938` counts them as import edges, not as duplication). Each
-stage below replaces one hosting controller with a real controller and **deletes the SwiftUI it hosted
-in the same commit**. The hosting-controller count starts at 1 (stage A), rises as the tree is opened
-up, and ends at 0.
+**A red tree during the rebuild is expected and acceptable.** That is the whole content of the
+user's instruction, and it inverts this repo's usual reflex. There is no per-cluster green, no
+`UIHostingController` scaffolding, no coexisting second spelling and no compatibility shim — every one
+of those is a thing kept alive *to hold the build up*, which is exactly what was banned. The tree gates
+again at the first milestone where the app target compiles as pure UIKit, not before.
 
-**One thing genuinely IS a carve-out, and it is `DesignSystem/`.** For the duration of the campaign,
-`Sources/SlopDeskPhoneUI/DesignSystem/` may hold a SwiftUI spelling and a UIKit spelling of the same
-token adapter — `slatePaperCard` as a `ViewModifier` and `SlatePaperCardView: UIView`, and so on for
-sixteen files. Nothing else in the tree may. Three routes were checked and two fail on the repo's own
-terms:
+**Scope of the demolition — phone only:**
 
-- **Port the design system last, and let early UIKit surfaces draw with local values.** That produces
-  raw literals, which `design_ratchets.rs`'s `design-token-leaks` bans by name, and it produces exactly
-  the drift the adapters exist to prevent. Rejected.
-- **Wrap the UIKit adapters in `UIViewRepresentable`s for the surfaces still in SwiftUI.** Sixteen
-  throwaway wrappers, each of which is the "fallback" `CLAUDE.md` names. Rejected.
-- **Double the adapters, bound in time and ratcheted.** This is the one that works.
+| Deleted | Count | How |
+| --- | --- | --- |
+| `Sources/SlopDeskPhoneUI/` outside `DesignSystem/` | 66 files, ~15,400 lines | `git rm` — all committed, all recoverable |
+| `Apps/ClientApp-iOS/` SwiftUI files | 7 files | `git rm` |
+| `Sources/SlopDeskVideoClientPhone/` SwiftUI files | 2 files | `git rm` |
+| `Sources/SlopDeskPhoneUI/DesignSystem/` | 18 files | **edited, never `git rm`** — the SwiftUI half is cut, the hand-written UIKit half stays |
 
-**The bound:** the doubling is counted, the count may only fall, and the count is a stage exit
-condition. **The retirement condition:** the last SwiftUI surface crosses, and the SwiftUI spelling is
-deleted with it — so the file that survives is the UIKit one. If the campaign stalls, the correct move
-is to delete the unlanded UIKit adapters, not to keep two design systems. And, as `docs/56:3977-3980`
-insists about its own ledger: **the count measures the rename, never the port.**
+**Out of scope, deliberately.** `Sources/SlopDeskMacUI/` (8 SwiftUI files), `Sources/SlopDeskSlate/`
+(5) and `Sources/SlopDeskVideoClientMac/` (3) are a separate and much smaller crossing. `SlateDesign.swift`'s
+`Color` bridges feed the Mac's remaining SwiftUI, so deleting them here breaks the Mac shell for no phone
+benefit. The Mac is already at its AppKit floor (~65 files import AppKit against 14 representable
+wrappers); it is not what the user is describing.
 
-### Stage A — the process
+### The carve-out is CANCELLED
+
+The previous plan bought itself a bounded exception: `DesignSystem/` could hold both spellings of each
+token adapter, counted and ratcheted down. **That exception no longer exists**, and neither does the
+argument that supported it. It was reasoning from a premise — "each stage must leave the tree able to
+build and run" — that the user has now rejected. `CLAUDE.md`'s *"One implementation, never two
+languages… not a fallback"* applies here without the softening: the eighteen files keep exactly one
+spelling, the UIKit one, and the SwiftUI declarations are cut in the demolition commit along with
+everything that mounted them.
+
+The `UIHostingController` argument is cancelled with it. A hosting controller is precisely the "bridge
+phức tạp" the user named; there is no stage in which one is mounted, and the count that was to start at
+1 and fall to 0 starts at 0.
+
+`HostedRaster`'s hosted-SwiftUI overload — written earlier the same day, before the directive — is a
+casualty of the same rule and is deleted rather than kept for the tests. Its `UIView` overload,
+already proven on real pixels, is the whole rig.
+
+### The order
+
+1. **Demolish**, in one commit, with the ratchet ledger re-aimed or parked in that same commit — a
+   `slopdesk-invariants` that is red for the length of a rebuild has stopped being a ledger, so each
+   rule whose target just vanished is deleted (it asserted a SwiftUI shape), re-aimed (it asserts a
+   product law that survives, spelled differently), or parked against the cluster that restores it.
+   The `Populated` / `AtLeast` FLOORS need new numbers in the same pass: they fail on the deletion
+   alone, whatever else holds.
+2. **Rebuild in dependency order**, fanned out by cluster with strict file ownership: app entry →
+   `DesignSystem/` (already UIKit) → the shell → the canvas → the overlays → the panels → the
+   navigator → `CodeSidebar/`. The stage sections below are those clusters' specs.
+3. **Gate once**, at the first milestone that compiles: the closeout chain, then `just quick`, then
+   `just check-ios-tests` on a booted simulator — the one gate nothing else runs.
+4. **Flip the ratchet to a ban.** `import SwiftUI` under the phone tree goes from a count to zero and
+   then to a `NoFileUnder` prohibition, which is the user's sentence written as law: SwiftUI does not
+   come back.
+
+### Cluster A — the process
 
 **Moves.** `Apps/ClientApp-iOS/AppMain.swift` (235) and `Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift`
 (273). The `@main struct ClientAppMain` keeps its six seam registrations (`:72-222`) and stops calling
@@ -1012,13 +1054,20 @@ UIApplicationDelegate` and `PhoneSceneDelegate: UIResponder, UIWindowSceneDelega
 
 **Tests red→green.** None break. `PlatformDefaultsTests`, `NotificationsOnIOSTests` and
 `UnfollowingFocusOnIOSTests` must stay green through it, and — because `test-touched`'s pathspec does
-not include `Apps/` — a hand-run `just check-ios-tests` is the stage's **only** automated proof. That
-bundle is bigger than those three: **11 files, 49 declared tests**, and the gate asserts declared ==
-executed, so a suite that stops running is as loud as one that fails. The other eight are
-`SidebarAutoHideWiringTests` (16 — stage D's), `SlateSnapshotRender` (6 — the rig AND six of its own,
-stage C's), `ToastStateGalleryTests` (4), `OverlayKeyRepeatTests` (4), `GuiPastePlateRenderTests` (4),
-`ToastStackViewTests` (2), `TerminalLetterboxOnIOSTests` (2) and `ConnectionPillTests` (1). Every
-later stage in this document runs this gate for the same reason stage A did.
+not include `Apps/` — a hand-run `just check-ios-tests` is the stage's **only** automated proof. The
+gate DERIVES both numbers — `xcode::declared_tests` scans the directory, `xcode::executed_tests` reads
+the simulator's summary — and asserts declared == executed, so a suite that stops running is as loud
+as one that fails. **Do not restate the count here**: an earlier revision of this line pinned "11
+files, 49 declared tests", the SwiftUI demolition took six of those files, and the prose was wrong for
+as long as nobody re-ran the gate. The gate is the SSOT; this document names the mechanism only.
+
+The bundle shrank rather than broke. Six suites went with the views they photographed
+(`SidebarAutoHideWiringTests`, `SlateSnapshotRender`, `ToastStateGalleryTests`, `OverlayKeyRepeatTests`,
+`GuiPastePlateRenderTests`, `ToastStackViewTests`); `HostedRasterTests` replaced the `ImageRenderer`
+rig's self-proof; and `ConnectionPillTests` was RELOCATED, not dropped — its one assertion never
+touched the pill, so it now lives in `Tests/SlopDeskWorkspaceCoreTests/RemoteWindowModelTests.swift`
+where `swift test` runs it on every gate instead of only this one. Every later stage in this document
+runs this gate for the same reason stage A did.
 
 **Un-landable if:** the scene configuration cannot be supplied without an
 `Info.plist`/`project.yml` change that XcodeGen regenerates away. `project.yml` is the SSOT (`:2-4`),

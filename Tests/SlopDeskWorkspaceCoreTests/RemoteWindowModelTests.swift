@@ -302,6 +302,25 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertTrue(m.immersiveDesired, "the latch is the user's, fullscreen never rewrites it")
         XCTAssertTrue(m.immersiveEffective)
     }
+
+    /// The kbps dirty-guard behind the connection surface's bitrate reading.
+    ///
+    /// This lived in `Apps/ClientApp-iOS/Tests/ConnectionPillTests.swift` because the SwiftUI
+    /// `ConnectionPill` was iOS-only. The pill is gone and the assertion never touched it — it is
+    /// plain `SlopDeskWorkspaceCore` logic — so keeping it in the iOS bundle only meant it ran under
+    /// `slopdesk-gate ios-tests` and nowhere else. Here it runs on every `swift test`.
+    func testNoteStreamKbpsKeepsZeroAndDropsNegative() {
+        let m = RemoteWindowModel(target: { self.target })
+        XCTAssertNil(m.streamKbps)
+        m.noteStreamKbps(2400)
+        XCTAssertEqual(m.streamKbps, 2400)
+        // Idle-skip: a real 0 reading REPLACES the last value (the instrument shows the stream breathing).
+        m.noteStreamKbps(0)
+        XCTAssertEqual(m.streamKbps, 0)
+        // Nonsense negative is dropped — the last reading stands.
+        m.noteStreamKbps(-5)
+        XCTAssertEqual(m.streamKbps, 0)
+    }
 }
 
 // MARK: - Test support
