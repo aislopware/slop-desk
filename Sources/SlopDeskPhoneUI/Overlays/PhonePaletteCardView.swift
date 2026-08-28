@@ -143,10 +143,16 @@ final class PhonePaletteCardView: UIView {
 
         var ranked: [RankedRow] = []
         var selection = 0
+        var query = ""
         var badge: String?
         withObservationTracking {
             ranked = overlay.rankedResults
             selection = overlay.paletteSelection
+            // ⚠️ THE QUERY IS TWO-WAY, and the second direction is not decoration: the omnibar entry
+            // calls `openPalette(mode:query:)` with text, and `closePalette()` resets the query — both
+            // write the coordinator without going through the field, so a one-way binding would leave
+            // the field showing text the rows are no longer ranked for.
+            query = overlay.paletteQuery
             badge = PalettePresentation.workingDirectoryBadge(store: store)
         } onChange: { [weak self] in
             DispatchQueue.main.async {
@@ -156,6 +162,12 @@ final class PhonePaletteCardView: UIView {
                 }
             }
         }
+        // ⚠️ ONLY ON A REAL DIFFERENCE. Assigning `UITextField.text` moves the caret to the end and
+        // discards any marked text an IME is mid-composition on, so a blind write on every arm — and this
+        // block re-arms on a SELECTION move too — would fight the user's own typing. The write is
+        // otherwise loop-free: a programmatic `text` assignment does not fire `editingChanged`, so it
+        // cannot come back through `onTextChange`.
+        if search.text != query { search.text = query }
         reconcile(PalettePresentation.displayRows(ranked), selection: selection, badge: badge)
     }
 

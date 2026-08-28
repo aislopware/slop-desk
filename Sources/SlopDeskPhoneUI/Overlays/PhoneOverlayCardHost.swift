@@ -39,11 +39,20 @@ import SlopDeskWorkspaceCore
 import UIKit
 
 /// Which summoned surface is up, resolved from the coordinator's flags in a FIXED priority order.
+///
+/// ⚠️ CONNECT IS IN THIS ENUM WITHOUT BEING A CARD, and it is here to stop a LOCKUP rather than to draw
+/// anything. `connectVisible` is one of ``OverlayCoordinator/anyModalVisible``'s five, and
+/// ``ContentColumnViewController`` disables the whole canvas while that is true — so the empty state's
+/// "Connect" button (which routes to `openConnect()`) would set a flag with no surface behind it and
+/// leave the workspace permanently deaf, with no card and no floor to dismiss. It is listed so the host
+/// can see it and CLOSE it; the real Connect surface is a form the platform's own modal is for
+/// (user-directed 2026-08-08), and presenting one belongs to the shell that owns the presentation slot.
 enum PhoneOverlaySheet: CaseIterable {
     case palette
     case openQuickly
     case peekReply
     case globalSearch
+    case connect
 }
 
 @MainActor
@@ -114,11 +123,13 @@ final class PhoneOverlayCardHostView: UIView {
         var openQuickly = false
         var peekReply = false
         var globalSearch = false
+        var connect = false
         withObservationTracking {
             palette = overlay.paletteVisible
             openQuickly = overlay.openQuicklyVisible
             peekReply = overlay.peekReplyVisible
             globalSearch = overlay.globalSearchVisible
+            connect = overlay.connectVisible
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -133,6 +144,7 @@ final class PhoneOverlayCardHostView: UIView {
             else if openQuickly { .openQuickly }
             else if peekReply { .peekReply }
             else if globalSearch { .globalSearch }
+            else if connect { .connect }
             else { nil }
         reconcile(active)
     }
@@ -203,7 +215,8 @@ final class PhoneOverlayCardHostView: UIView {
         case .palette: PhonePaletteCardView(store: store, overlay: overlay, toggledState: toggledState)
         case .openQuickly,
              .peekReply,
-             .globalSearch: nil
+             .globalSearch,
+             .connect: nil
         }
     }
 
@@ -222,6 +235,9 @@ final class PhoneOverlayCardHostView: UIView {
         case .openQuickly: overlay.closeOpenQuickly()
         case .peekReply: overlay.closePeekReply()
         case .globalSearch: overlay.closeGlobalSearch()
+        // Closing also bumps `connectGeneration`, which invalidates any in-flight connect Task exactly
+        // as Cancel would — so this is the same exit the form's own Cancel takes, not a back door.
+        case .connect: overlay.closeConnect()
         }
     }
 }
