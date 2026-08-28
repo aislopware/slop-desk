@@ -39,7 +39,7 @@
 //     is THE GROUND behind the split (law 1): one opaque tone under all three columns, which
 //     backstops any transient gap (a mid-animation collapse) so no bare window colour ever shows. It
 //     is also what the window's own 16pt corners bite into.
-//   * `.onAppear` / three `.onChange`s → ``wireChromeToggles()`` at `windowDidLoad` time, and two
+//   * `.onAppear` / three `.onChange`s → ``wireChromeToggles()`` at ``mount()`` time, and two
 //     `withObservationTracking` follows. The FOCUS observer keeps its shape exactly: one observer for
 //     the tab and the pane together, because a tab switch changes the focused pane too and the two
 //     questions must not race each other from separate arms.
@@ -172,13 +172,24 @@ final class MacWorkspaceWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.contentViewController = split
         if seed == nil { window.center() }
+        mount()
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    override func windowDidLoad() {
-        super.windowDidLoad()
+    /// Everything that hangs off the window once it exists: the ground, the two window-level chrome
+    /// mounts, the late toggle wiring and the three follows.
+    ///
+    /// ⚠️ CALLED FROM `init`, NOT FROM `windowDidLoad()`, and the difference is not stylistic.
+    /// `windowDidLoad()` is the NIB path's hook — it runs after `loadWindow()` inflates a window from
+    /// a `windowNibName`. A controller built through `init(window:)` hands AppKit an already-made
+    /// window, so `loadWindow()` never runs and the hook never fires. Putting this body there would
+    /// have compiled, shown a window, and silently mounted no chrome, wired no toggle and armed no
+    /// follow — the exact failure mode a hidden titlebar makes hardest to see, because the window
+    /// still looks nearly right. The window is fully formed two lines above; this is simply the rest
+    /// of `init`, named so the reason survives.
+    private func mount() {
         guard let window, let root = window.contentView else { return }
 
         // THE GROUND behind the split (law 1) — one opaque tone under all three columns, which
@@ -414,7 +425,7 @@ final class MacWorkspaceWindowController: NSWindowController, NSWindowDelegate {
     // MARK: The late wiring
 
     /// Hand the app-level dispatcher the chrome toggles (sidebar ⌘⇧L), bound to the live chrome.
-    /// Called at `windowDidLoad` (the dispatcher predates this window, so the closures install late).
+    /// Called from ``mount()`` (the dispatcher predates this window, so the closures install late).
     /// `[chrome]` captures the same `@Observable` the split + titlebar read, so each NSEvent chord and
     /// the matching titlebar button flip ONE flag.
     private func wireChromeToggles() {

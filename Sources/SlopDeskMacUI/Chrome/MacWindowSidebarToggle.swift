@@ -1,9 +1,9 @@
 // MacWindowSidebarToggle — the navigator's show/hide button, in AppKit, and the ONE place it is
 // mounted.
 //
-// It hangs off the WINDOW ROOT (``MacWorkspaceRootView``'s overlay), not off either column. That is
-// the whole point: the navigator column and the content column both TRAVEL when the panel collapses
-// (the split animates the item's width on ``Slate/Anim/columnSlide``), so a button parked inside
+// It hangs off the WINDOW ROOT (``MacWorkspaceWindowController``'s content view), not off either
+// column. That is the whole point: the navigator column and the content column both TRAVEL when the
+// panel collapses (the split animates the item's width on ``Slate/Motion/columnSlide``), so a button parked inside
 // either one rides that slide — it crawled out from under the traffic lights on its way across,
 // which is the motion the user reported 2026-08-09. The button does not belong to a column; it
 // belongs to the window's top-left corner, beside the lights, at
@@ -16,7 +16,7 @@
 //
 // WHY IT IS HERE AND NOT ON THE DRAINING FLOOR (docs/56 §3.5, increment 56b). It was
 // `WindowSidebarToggle`, a `package` SwiftUI view in `SlopDeskClientUI`, and it was one of exactly
-// TWO things `MacWorkspaceRootView` still took from that target — the other being the
+// TWO things the Mac's window root still took from that target — the other being the
 // `\.preferencesStore` environment key, which is an init parameter now. The phone never drew it and
 // could not: it has no window corner, no traffic lights and no split item to collapse. So it was a
 // macOS-only control sitting on the shared floor, which is the arrangement stage D exists to end,
@@ -41,7 +41,7 @@
 //
 // ⚠️ THE TWO WRAPPERS THAT USED TO STAND HERE ARE GONE, AND THEY WERE ONLY EVER A HOSTING SEAM — no
 // state, no decision, only the PLACE. `MacWindowSidebarToggle` (a `View`) and `SidebarTogglePlate`
-// (an `NSViewRepresentable`) existed because ``MacWorkspaceRootView``'s overlay was SwiftUI; that
+// (an `NSViewRepresentable`) existed because the Mac root's overlay was SwiftUI; that
 // root is a window CONTROLLER now, so the view below is handed straight to the window's content and
 // both wrappers are deleted rather than ported. Their geometry came with them: ``leadingInset`` and
 // ``topInset`` below are the `.padding(.leading, …)` / `.padding(.top, …)` they carried, spelled
@@ -70,8 +70,9 @@ import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) sp
 /// and height to ``Slate/Metric/plate``. The container was originally what gave SwiftUI a
 /// frame-settable root while giving the plate the Auto Layout parent it expects; with the
 /// representable gone the second half is the whole reason, and it still stands: the window controller
-/// pins THIS view's leading and top edges and lets the plate's own constraints decide the size, so
-/// neither side restates a number the other owns.
+/// pins THIS view's leading and top edges to the window's corner and the plate is pinned to all four
+/// of THIS view's edges, so the plate's own size constraint is the single number that decides how big
+/// either view is — neither side restates it.
 @MainActor
 final class MacWindowSidebarToggleView: NSView {
     /// The distance from the window's leading edge — the traffic lights' own lane
@@ -93,12 +94,20 @@ final class MacWindowSidebarToggleView: NSView {
         // in the accessibility tree as a second, nameless element.
         setAccessibilityElement(false)
         addSubview(plate)
-        // Leading + top only. The plate's own constraints already fix its size, so pinning the
-        // remaining two edges would state that size a second time — and disagree with it the moment
-        // the seam above is handed a frame that is not exactly one plate.
+        // ALL FOUR EDGES, and the missing two are the difference between a live button and a drawn
+        // one. The plate's own width/height constraints are still the only place its size is stated —
+        // pinning trailing and bottom does not restate it, it PROPAGATES it, which is the only way an
+        // Auto Layout container with no `intrinsicContentSize` of its own ever gets a size. With
+        // leading + top alone this view is 0×0: the plate draws fine (nothing clips it) but
+        // `hitTest(_:)` walks by FRAME, so every click on the glyph falls through to the split
+        // beneath and the toggle is dead. The old comment here argued against the other two edges
+        // because the representable above might hand down a frame that was not exactly one plate;
+        // that seam is deleted, so there is no other frame to disagree with.
         NSLayoutConstraint.activate([
             plate.leadingAnchor.constraint(equalTo: leadingAnchor),
             plate.topAnchor.constraint(equalTo: topAnchor),
+            plate.trailingAnchor.constraint(equalTo: trailingAnchor),
+            plate.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 

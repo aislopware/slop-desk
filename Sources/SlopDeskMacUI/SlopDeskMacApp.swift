@@ -57,7 +57,7 @@ import UserNotifications // explicit OSC 9/777 child notifications → local UNU
 
 @preconcurrency
 @MainActor
-public final class SlopDeskMacApp: NSObject, NSApplicationDelegate {
+public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: The process entry point
 
     /// The one strong reference to the delegate. `NSApplication.delegate` is `weak`, and nothing else
@@ -180,7 +180,11 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate {
 
         // Pin the whole app to the LIGHT appearance — the ground is cream, so semantic chrome ink must
         // resolve light or the navigator draws white-on-cream under an OS in dark mode. Armed here and
-        // re-fired at didFinishLaunching, because `NSApp` has no delegate yet at this point.
+        // re-fired at didFinishLaunching — `install()` arms its own
+        // `NSApplication.didFinishLaunchingNotification` observer when it finds `NSApp == nil`, which
+        // is exactly the case here: ``main()`` constructs this delegate BEFORE it touches
+        // `NSApplication.shared`, so there is no application object to pin yet. Nothing has to call it
+        // a second time.
         SlateAppearancePin.install()
         // The terminal CELLS adopt the app palette's flat colours — filled by
         // ``ClientTerminalPalette``, below both shells. It was this closure, written out here and
@@ -483,8 +487,12 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate {
     /// The re-arm is deferred to the next main-actor turn because `onChange` fires at `willSet`: the
     /// value the body would read inside it is still the OLD one, so the body must run after the
     /// mutation lands, not during it. This is the same idiom ``MacTitlebarBand/follow()`` uses.
+    ///
+    /// The body is CALLED inside a fresh closure rather than passed as the `apply:` argument itself:
+    /// `withObservationTracking`'s first parameter is declared non-isolated, and an inline closure
+    /// inherits this method's `@MainActor` isolation where a stored function value does not.
     private func follow(_ body: @escaping @MainActor () -> Void) {
-        withObservationTracking(body) { [weak self] in
+        withObservationTracking { body() } onChange: { [weak self] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -653,6 +661,24 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate {
         store.saveImmediately()
     }
 
+    /// A Dock-icon click (or an `open -a`) with no window on screen puts the workspace back.
+    ///
+    /// ⚠️ THIS IS THE ONE THING `WindowGroup` DID FOR FREE THAT AN `NSWindowController` DOES NOT. A
+    /// scene re-instantiates its window on a reopen; a controller just sits there holding a closed
+    /// one, so without this method a confirmed ⌘W leaves the app alive as a menu bar with no route
+    /// back to itself — running, unquittable except through ⌘Q, and showing nothing. The window is
+    /// `isReleasedWhenClosed = false` and the controller is held by this delegate precisely so the
+    /// answer is to show the SAME window again rather than to build a second workspace over the same
+    /// store. Returning `false` tells AppKit the reopen is handled and suppresses its own
+    /// untitled-document attempt.
+    public func applicationShouldHandleReopen(
+        _: NSApplication, hasVisibleWindows: Bool,
+    ) -> Bool {
+        guard !hasVisibleWindows else { return true }
+        windowController?.showWindow(nil)
+        return false
+    }
+
     // MARK: Quit
 
     /// Associated state for the quit drain — set while a ⌘Q is in flight so a second one during the
@@ -773,7 +799,11 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate {
     ///   * View ▸ Pin Window draws its ✓ from the live `chrome.pinned` (the `Toggle` it was).
     ///
     /// Everything else validates by existing.
-    override public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    ///
+    /// ⚠️ NOT AN `override`. `validateMenuItem(_:)` is not an `NSObject` method — it is the sole
+    /// requirement of the `NSMenuItemValidation` protocol, which AppKit looks for on the TARGET of a
+    /// row's action by conformance, not by inheritance. Spelling `override` here does not compile.
+    public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard menuItem.action == #selector(performWorkspaceAction(_:)),
               let id = menuItem.representedObject as? String
         else { return true }
