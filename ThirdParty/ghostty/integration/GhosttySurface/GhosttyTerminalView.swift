@@ -1,12 +1,18 @@
 //
 //  GhosttyTerminalView.swift
-//  SlopDesk — the SwiftUI host for the ONLY terminal renderer (libghostty-only).
+//  SlopDesk — the layer-hosting view for the ONLY terminal renderer (libghostty-only).
+//
+//  THE FILE NAME IS HISTORY. `GhosttyTerminalView` was the SwiftUI struct that used to wrap the
+//  view below, and it is gone; `GhosttyLayerBackedView` is what this file is about. The PATH stays
+//  because four other things pin it — `rust/slopdesk-invariants` (`ui_seams.rs` GHOSTTY_SEAM,
+//  `phone_parity.rs` RENDERER), both `Apps/*/project.yml` source includes, and
+//  `slopdesk-ops enable-renderer` — so renaming it is a change to those, not a tidy-up.
 //
 //  ─────────────────────────────────────────────────────────────────────────────
 //  THIS FILE IS DELIBERATELY OUTSIDE THE DEFAULT `swift build` GRAPH.
 //  ─────────────────────────────────────────────────────────────────────────────
-//  It is the production `TerminalRenderingView` conformer named in
-//  `Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift` (the documented
+//  It is the production `TerminalSurfaceHosting` conformer named in
+//  `Sources/SlopDeskWorkspaceCore/Terminal/TerminalRendererSeam.swift` (the documented
 //  extension point). Like its sibling `GhosttySurface.swift` (same directory) it is
 //  NOT a member of any target in `/Package.swift`; it compiles only inside the
 //  macOS/iOS GUI app target (WF-8) which (a) links `libghostty.xcframework` and
@@ -62,18 +68,19 @@
 //  ─────────────────────────────────────────────────────────────────────────────
 //  THREADING (doc 18 §C — libghostty calls are main-thread-only)
 //  ─────────────────────────────────────────────────────────────────────────────
-//  `GhosttySurface` is `@MainActor`, and SwiftUI representable callbacks + the
-//  Metal layer view run on the main thread, so every surface call below is on main.
-//  We never `await` between write_output → refresh → draw (the binding keeps that
-//  trio synchronous inside `feed`).
+//  `GhosttySurface` is `@MainActor`, and every door into the view below is an AppKit/UIKit
+//  callback that arrives on the main thread — the seam's factory closure (`@MainActor` in its
+//  TYPE), `viewDidMoveToWindow`/`didMoveToWindow`, `layout()`/`layoutSubviews()`, the responder
+//  chain — so every surface call below is on main. We never `await` between
+//  write_output → refresh → draw (the binding keeps that trio synchronous inside `feed`).
 //
 
 #if canImport(CGhostty)
 
-import SwiftUI
+import Observation         // withObservationTracking — the live terminal-config follow's one need
 import QuartzCore          // CAMetalLayer
 import SlopDeskTerminal       // TerminalSurface protocol
-import SlopDeskWorkspaceCore  // TerminalRenderingView, TerminalViewModel, TerminalRendererFactory (L0 home)
+import SlopDeskWorkspaceCore  // TerminalSurfaceHosting, TerminalViewModel, TerminalRendererFactory (L0 home)
 import SlopDeskClientCore     // ClipboardConfirmPresentation — what the clipboard asks, on BOTH halves
 import CGhostty            // the clang module over ghostty.h (link "ghostty")
 
@@ -376,7 +383,7 @@ final class GhosttyApp {
             GhosttyApp.requestAppTick()
         }
         // action_cb returns whether the action was handled. The viewer handles none of the app-level
-        // window/split/tab actions (SlopDesk does its OWN tiling at the SwiftUI layer) — EXCEPT
+        // window/split/tab actions (SlopDesk's own canvas does the tiling) — EXCEPT
         // GHOSTTY_ACTION_OPEN_URL: libghostty owns OSC 8 hyperlink hit-testing + the click internally and
         // asks the embedder to OPEN the resolved URL (W14 #7). We hand it to the system opener (the
         // embedder's job upstream too) so a clicked OSC 8 link / hovered-URL click opens — no wire change,
@@ -650,12 +657,13 @@ final class GhosttyApp {
     /// grid tracks the new font metrics. Nothing else calls it; nothing tests it (the apply needs a real
     /// libghostty app handle), so losing it is silent — the font just stops changing.
     ///
-    /// It moved OFF the SwiftUI body because the body is no longer on every path to a surface. An AppKit
-    /// canvas mounts `GhosttyLayerBackedView` through `TerminalRendererFactory.nativeShared` and never
-    /// builds `GhosttyTerminalView` at all, so an observation living in that struct's `body` would apply on
-    /// the phone and in the SwiftUI canvas and silently not on the Mac's. Here it is armed exactly once per
-    /// process, by the object the apply is a method ON, and it covers every renderer shape there will ever
-    /// be. Lifetime is unchanged and needs none: `GhosttyApp.shared` is built lazily by the first surface,
+    /// It moved OFF the SwiftUI body because that body was not on every path to a surface: an AppKit canvas
+    /// mounted `GhosttyLayerBackedView` through the seam's platform slot and never built the SwiftUI struct
+    /// at all, so an observation living in that struct would have applied on the phone and silently not on
+    /// the Mac. The struct is deleted now and there is one path, which does not put the observation back —
+    /// a view's lifetime is the wrong lifetime for it either way. Here it is armed exactly once per
+    /// process, by the object the apply is a method ON, and it covers every mount there will ever be.
+    /// Lifetime is unchanged and needs none: `GhosttyApp.shared` is built lazily by the first surface,
     /// and until there is a surface there is no libghostty state to reflow — `init` loads whatever is
     /// published at that moment, and this follows every publish after it.
     ///
@@ -692,60 +700,30 @@ final class GhosttyApp {
     }
 }
 
-// MARK: - GhosttyTerminalView (the TerminalRenderingView conformer)
+// MARK: - What this file IS, now that the SwiftUI wrapper is gone
 
-/// libghostty-backed terminal renderer — SlopDesk's production `TerminalRenderingView`.
-///
-/// It hosts a Metal-backed platform view (`CAMetalLayer`) that owns a `GhosttySurface`
-/// configured for the EXTERNAL backend. The data flow:
-///
-///  * **IN** (host PTY output → pixels): the `TerminalViewModel` already calls
-///    `surface.feed(_:)` inside `ingestOutput(_:)`. This view just sets
-///    `model.surface = <the GhosttySurface>` so the model's existing feed path lands
-///    in libghostty. (`feed` → `ghostty_surface_write_output` + refresh + draw.)
-///  * **OUT** (keystrokes → host PTY stdin): the view forwards platform key/text
-///    events to `surface.key(_:)` / `surface.text(_:)`; libghostty encodes them and
-///    emits the bytes via `surface.onWrite`, which the connection layer bridges to
-///    `SlopDeskClient.sendInput` (documented seam — see file header + doc 21).
-///  * **Resize**: layout changes convert the view's pixel size → cols/rows and call
-///    `surface.setSize(cols:rows:)`; the surface mirrors the grid to the host via
-///    `surface.onResize`.
-///  * **Render cadence**: libghostty drives its own draw from `feed`/`redraw`; the
-///    view forces a `redraw()` on focus/occlusion/scale changes.
-///
-/// ⚠️ **GUI-ONLY:** needs a real screen + the libghostty xcframework. COMPILED +
-/// reviewed; not driven from tests (mirrors `VideoWindowView`). This is the view the
-/// app injects via `TerminalRendererFactory.shared`.
-public struct GhosttyTerminalView: TerminalRenderingView {
-    private let model: TerminalViewModel
-    /// The pane's workspace focus (active tab's `focusedPane`). Drives the macOS keyboard FIRST
-    /// RESPONDER — only the focused pane takes the keyboard — WITHOUT gating render-liveness (every
-    /// visible pane stays libghostty-focused so an unfocused split sibling keeps repainting its output).
-    private let isFocused: Bool
-
-    /// `TerminalRenderingView` conformance. Defaults `isFocused` to `true` (single-pane / preview).
-    public init(model: TerminalViewModel) {
-        self.model = model
-        self.isFocused = true
-    }
-
-    /// The workspace-aware initializer the app factory uses, carrying the pane's focus.
-    public init(model: TerminalViewModel, isFocused: Bool) {
-        self.model = model
-        self.isFocused = isFocused
-    }
-
-    /// ⚠️ NOTHING BUT THE SURFACE MAY LIVE HERE. This body is the SwiftUI shape of the seam, and the seam
-    /// now has two — an AppKit canvas mounts `GhosttyLayerBackedView` through
-    /// `TerminalRendererFactory.nativeShared` and never builds this struct. A `.onChange` / `.task` /
-    /// `@Environment` added here therefore applies on the phone and in the SwiftUI canvas, and silently not
-    /// on the Mac's. The W13 live terminal-config apply WAS such a modifier; it lives in
-    /// ``GhosttyApp/followTerminalConfig()`` now, armed once per process, so both shapes reflow.
-    public var body: some View {
-        GhosttyMetalLayerView(model: model, isFocused: isFocused)
-            .accessibilityLabel(Text("Terminal"))
-    }
-}
+// The libghostty-backed terminal renderer is `GhosttyLayerBackedView` — one per platform, both
+// below, both conforming to `TerminalSurfaceHosting`. A `public struct GhosttyTerminalView: View`
+// used to sit here and wrap it through an `NSViewRepresentable`/`UIViewRepresentable`; it is
+// deleted, along with both representables. The data flow it documented belongs to the view itself
+// and is stated there, once per platform:
+//
+//  * **IN** (host PTY output → pixels): `TerminalViewModel.ingestOutput(_:)` already calls
+//    `surface.feed(_:)`, so `attach(model:)` only has to hand the model its `GhosttySurface`
+//    (`model.attachSurface(_:)`). (`feed` → `ghostty_surface_write_output` + refresh + draw.)
+//  * **OUT** (keystrokes → host PTY stdin): the view forwards platform key/text events to
+//    `surface.key(_:)` / `surface.text(_:)`; libghostty encodes them and emits the bytes via
+//    `surface.onWrite`, which the connection layer bridges to `SlopDeskClient.sendInput`
+//    (documented seam — see file header + doc 21). On the phone the key half is
+//    `SlopDeskPhoneUI.TerminalInputHost`'s (doc 17 §2.5).
+//  * **Resize**: `layout()` / `layoutSubviews()` converts the view's pixel size → cols/rows and
+//    calls `surface.setSize(cols:rows:)`; the surface mirrors the grid to the host via
+//    `surface.onResize`.
+//  * **Render cadence**: libghostty drives its own draw from `feed`/`redraw`; the view presents on
+//    a gated display-link tick and forces a `redraw()` on focus/occlusion/scale changes.
+//
+// ⚠️ **GUI-ONLY:** needs a real screen + the libghostty xcframework. Compiled + reviewed; not
+// driven from tests.
 
 // MARK: - The link snapshot, and the one hit-test both halves run
 
@@ -824,43 +802,9 @@ struct GhosttyLinkSnapshot {
     }
 }
 
-// MARK: - Platform representable + Metal-backed view
+// MARK: - GhosttyLayerBackedView (the layer-hosting renderer view)
 
 #if os(macOS)
-
-/// `NSViewRepresentable` host backing the `CAMetalLayer` that owns the `GhosttySurface`.
-struct GhosttyMetalLayerView: NSViewRepresentable {
-    let model: TerminalViewModel
-    /// The pane's workspace focus — drives the keyboard first responder (see ``GhosttyLayerBackedView``).
-    var isFocused: Bool = true
-
-    func makeNSView(context: Context) -> GhosttyLayerBackedView {
-        let view = GhosttyLayerBackedView()
-        // Do NOT create the surface here. SwiftUI builds the representable for an off-window
-        // probe/sizing pass too; creating the libghostty surface in that throwaway view spawns a
-        // SECOND set of renderer/io threads (the 100%-CPU spin) and a duplicate surface
-        // (detach-clobber). Just remember the model — the surface is created lazily once the view
-        // enters a real window (`viewDidMoveToWindow`), so EXACTLY ONE surface exists per pane.
-        view.model = model
-        view.isFocusedPane = isFocused
-        return view
-    }
-
-    func updateNSView(_ nsView: GhosttyLayerBackedView, context: Context) {
-        nsView.model = model
-        // Attach only on-window (idempotent). The off-window probe view never reaches here with a
-        // window set, so it never calls `ghostty_surface_new`.
-        if nsView.window != nil { nsView.attach(model: model) }
-        // Apply the workspace focus: only the focused pane takes the keyboard first responder. A focus
-        // change (Cmd-arrow / palette / click→store.focus) re-renders this representable with the new
-        // value, so focus follows workspace intent reactively — no pane steals the keyboard on mount.
-        nsView.isFocusedPane = isFocused
-    }
-
-    static func dismantleNSView(_ nsView: GhosttyLayerBackedView, coordinator: ()) {
-        nsView.detach()
-    }
-}
 
 /// A LAYER-HOSTING `NSView` for libghostty's macOS renderer.
 ///
@@ -886,7 +830,8 @@ final class GhosttyLayerBackedView: NSView {
     private var surface: GhosttySurface?
     weak var model: TerminalViewModel?
 
-    /// Whether THIS pane is the workspace's focused pane (set by `GhosttyMetalLayerView`). Drives TWO things:
+    /// Whether THIS pane is the workspace's focused pane — seeded by the seam's factory at mount and
+    /// re-pushed by ``TerminalSurfaceHosting/setPaneFocused(_:)``. Drives TWO things:
     /// (1) the keyboard FIRST RESPONDER (only the focused pane takes the keyboard); and (2) libghostty's
     /// render FOCUS — an unfocused pane is `setFocus(false)` so ghostty draws its HOLLOW, non-blinking cursor
     /// (focused = the solid block) exactly like ghostty's own split panes. Forwarding unfocus does NOT freeze
@@ -913,9 +858,9 @@ final class GhosttyLayerBackedView: NSView {
     /// ASYNC cancel of the blink timer; if the refocus is processed before that cancel completes, the
     /// refocus's `if (cursor_c.state() != .active)` guard skips re-showing the cursor, then the cancel lands
     /// and leaves `cursor_blink_visible = false` with a DEAD timer — so the focused pane's blinking cursor is
-    /// stuck INVISIBLE until the next PTY byte resets it (`reset_cursor_blink`). A SwiftUI/AppKit focus
-    /// FLICKER — `isFocusedPane` false→true within one runloop (a tab switch, a popover open/close, the
-    /// mouse-move focus policy, or `becomeFirstResponder` racing the reactive update) — is exactly that
+    /// stuck INVISIBLE until the next PTY byte resets it (`reset_cursor_blink`). A focus FLICKER —
+    /// `isFocusedPane` false→true within one runloop (a tab switch, a popover open/close, the
+    /// mouse-move focus policy, or `becomeFirstResponder` racing the canvas's own push) — is exactly that
     /// two-message pattern. Deferring the forward collapses an in-runloop flicker to a SINGLE net forward, so
     /// the unfocus + refocus never co-occur. A genuine cross-runloop refocus is unaffected (by then the
     /// cancel completed and libghostty's own focus handler re-shows the cursor + restarts the blink timer).
@@ -943,10 +888,10 @@ final class GhosttyLayerBackedView: NSView {
     /// is driven SEPARATELY by the `isFocusedPane` didSet (forwarded to `surface.setFocus`), not here.
     private func applyKeyboardFocus() {
         guard isFocusedPane else { return }
-        // Defer off the SwiftUI update/commit pass: makeFirstResponder synchronously tears down + sets up
-        // the AppKit responder chain (and draws the focus ring), which stalls the main thread when it runs
-        // inside updateNSView during a tab/session switch. One runloop hop makes the switch a single CA
-        // commit; the keyboard first-responder transfer happens imperceptibly after.
+        // Defer off the caller's own commit pass: makeFirstResponder synchronously tears down + sets up
+        // the AppKit responder chain (and draws the focus ring), which stalled the main thread when it ran
+        // inside the canvas's focus push during a tab/session switch. One runloop hop makes the switch a
+        // single CA commit; the keyboard first-responder transfer happens imperceptibly after.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isFocusedPane,
                   let window = self.window,
@@ -1035,8 +980,9 @@ final class GhosttyLayerBackedView: NSView {
     }
 
     /// libghostty installs its layer + spawns its renderer/io threads inside `ghostty_surface_new`,
-    /// so the surface is created ONLY once the view is in a real window — never for SwiftUI's
-    /// off-window probe pass (which would spawn a duplicate surface + thread set that busy-spins).
+    /// so the surface is created ONLY once the view is in a real window — never in the window the
+    /// seam's factory hands one back from, which is nobody's yet (a surface built there would be a
+    /// duplicate surface + thread set that busy-spins if the canvas never mounts it).
     /// Observer token for the current window's ``NSWindow/didResignKeyNotification`` — clears the ⌘-hold
     /// link underline when the window loses key (⌘-Tab away / clicking another app) while ⌘ is held, since
     /// that path delivers NO ⌘-release `flagsChanged` and does NOT call `resignFirstResponder` (the view
@@ -1079,10 +1025,12 @@ final class GhosttyLayerBackedView: NSView {
     }
 
     /// Idempotent: builds the surface on first call (only when on-window), then attaches it to the
-    /// model. Safe to call repeatedly from `updateNSView` / `viewDidMoveToWindow`.
+    /// model. `viewDidMoveToWindow` is its ONLY caller now that no representable re-runs an update
+    /// pass, and it is still written to be safe called repeatedly — a view can leave and re-enter a
+    /// window.
     func attach(model: TerminalViewModel) {
         self.model = model
-        guard window != nil else { return }   // never spawn a surface for the off-window probe view
+        guard window != nil else { return }   // never spawn a surface for a view no window holds yet
         if surface == nil {
             let s = GhosttySurface(
                 app: GhosttyApp.shared.app,
@@ -1213,15 +1161,16 @@ final class GhosttyLayerBackedView: NSView {
         // Pass the detaching surface so the model clears its `surface` ONLY if this is the surface it
         // currently feeds. A stale duplicate view's detach must NOT nil the live (on-screen) surface
         // — that froze the visible terminal on its initial replay while new output was dropped.
-        // A surface-LESS view (an off-window probe that never attached) makes NO call at all:
+        // A surface-LESS view (one built by the factory and never mounted) makes NO call at all:
         // `detachSurface(nil)` takes the unconditional else-branch and clears the LIVE pane's surface,
-        // freezing the visible terminal until an unrelated SwiftUI pass re-attaches.
+        // freezing the visible terminal until some unrelated pass re-attaches.
         if let detaching { model?.detachSurface(detaching) }
     }
 
     deinit {
         // @MainActor not available in deinit; the surface's own deinit frees the
-        // ghostty_surface_t. We rely on detach() (dismantleNSView) as the explicit path.
+        // ghostty_surface_t. We rely on detach() — reached through
+        // ``TerminalSurfaceHosting/detachSurface()`` — as the explicit path.
         // The window-resign-key observer is NOT dropped here — a nonisolated deinit can't touch the
         // non-Sendable `(any NSObjectProtocol)?` token on this @MainActor view. It doesn't need to:
         // AppKit always calls `viewDidMoveToWindow` with a nil window BEFORE a view deallocates (a view
@@ -1232,7 +1181,7 @@ final class GhosttyLayerBackedView: NSView {
     // MARK: Resize → grid
 
     /// The last (bounds.size, scale) actually APPLIED to a live surface+layer by `layout()`.
-    /// Same-size SwiftUI/AppKit passes (focus re-render, canvas reshuffle) early-out: with
+    /// Same-size AppKit layout passes (focus change, canvas reshuffle) early-out: with
     /// patch 0001, `surface.redraw()` is a FULL synchronous updateFrame+drawFrame on MAIN,
     /// and every layout also arms presentTicks + a 5-item settle burst (≤10 more sync
     /// presents) — a spurious same-size pass cost a main-thread render ×~13. Cached ONLY
@@ -1718,8 +1667,9 @@ final class GhosttyLayerBackedView: NSView {
     /// (ES-E10-1) and the ⌘-hovered link's full path is resolved into the now-dormant `hoveredLinkFullPath`
     /// seam (ES-E10-4 — its status-bar preview was removed). Releasing ⌘ clears both. macOS only — iOS has no
     /// ⌘ modifier, so `linkHighlightActive` is never set there and the
-    /// overlay stays inert. Setting the OBSERVABLE model state from this NSEvent handler is safe (it is NOT an
-    /// `updateNSView`/AttributeGraph pass), so it cannot trigger the infinite-render loop `surface` documents.
+    /// overlay stays inert. Setting the OBSERVABLE model state from this NSEvent handler is safe — an
+    /// AppKit event callback is not inside anyone's view-update pass, so it cannot trigger the
+    /// infinite-render loop `surface` documents.
     override func flagsChanged(with event: NSEvent) {
         super.flagsChanged(with: event)
         guard let model else { return }
@@ -1890,8 +1840,8 @@ final class GhosttyLayerBackedView: NSView {
         // FOCUS-ON-CLICK: claim the pane BEFORE forwarding to the surface. Installing `mouseDown`
         // CONSUMES the click that `PaneTreeView`'s `.onTapGesture { store.focus(id) }` used to see,
         // so we must reproduce that focus transfer here — both the workspace focus (chrome/keyboard
-        // follow via the reactive `isFocused` → `isFocusedPane` path) AND the immediate first
-        // responder so typing works without waiting a SwiftUI render. `applyKeyboardFocus`/this guard
+        // follow when the canvas pushes `setPaneFocused` back down) AND the immediate first
+        // responder so typing works without waiting for that round trip. `applyKeyboardFocus`/this guard
         // are idempotent, so this does not fight the existing `isFocused` path (no double-focus).
         model?.onRequestFocus?()
         if let window, window.firstResponder !== self { window.makeFirstResponder(self) }
@@ -2084,7 +2034,7 @@ final class GhosttyLayerBackedView: NSView {
     /// E8 WI-8 (H6, ES-E8-6): MOUSE-OVER-TO-FOCUS. When `focus-follows-mouse` (`focusFollowsMouse`) is
     /// on, hovering a pane focuses it — but ONLY across slopdesk's OWN panes: libghostty's native
     /// `focus-follows-mouse` only relays focus inside ghostty's internal split tree, and each slopdesk pane
-    /// is a SEPARATE `GhosttySurface` tiled at the SwiftUI layer, so this cross-pane focus relay must be ours.
+    /// is a SEPARATE `GhosttySurface` the canvas tiles itself, so this cross-pane focus relay must be ours.
     ///
     /// The PURE, headless-tested ``FocusFollowsMousePolicy/shouldRequestFocus(focusFollowsMouse:isAlreadyFocused:)``
     /// makes the decision; this view is the thin actuator. The setting is read LIVE off `Defaults` (via
@@ -2711,8 +2661,8 @@ final class GhosttyLayerBackedView: NSView {
         // re-focused and ⌘ is tapped again (the reported bug). Clearing it on resign fixes that. (The OTHER
         // no-release path — the whole window resigning key on ⌘-Tab away, which does NOT call
         // `resignFirstResponder` — is covered separately by the `didResignKeyNotification` observer in
-        // `viewDidMoveToWindow`.) Mutating the `@Observable` model here is safe — a responder-chain callback,
-        // NOT an `updateNSView`/AttributeGraph pass (same as `flagsChanged`).
+        // `viewDidMoveToWindow`.) Mutating the `@Observable` model here is safe — a responder-chain callback
+        // is not inside a view-update pass (same as `flagsChanged`).
         clearLinkHighlight()
         // IME (keyboard audit): CANCEL any in-flight composition when this pane loses first responder (a
         // pane-focus move / ⌘T / a click into a sibling). Without this the marked text + the ghostty preedit
@@ -2732,8 +2682,8 @@ final class GhosttyLayerBackedView: NSView {
     /// Clears the ⌘-hold link underline state (``TerminalViewModel/linkHighlightActive`` + the resolved
     /// ``TerminalViewModel/hoveredLinkFullPath``). Called whenever this pane can no longer receive the ⌘
     /// release `flagsChanged` — losing first responder (`resignFirstResponder`) or its window resigning key
-    /// (⌘-Tab away). Idempotent + a no-op when nothing is highlighted; safe on the main actor off any
-    /// AttributeGraph/`updateNSView` pass.
+    /// (⌘-Tab away). Idempotent + a no-op when nothing is highlighted; safe on the main actor, since every
+    /// caller is an AppKit callback rather than a view-update pass.
     private func clearLinkHighlight() {
         guard let model else { return }
         if model.linkHighlightActive { model.linkHighlightActive = false }
@@ -2932,13 +2882,19 @@ extension GhosttyLayerBackedView: @MainActor NSTextInputClient {
     }
 }
 
-// MARK: - The native half of the terminal pixel seam (docs/56 stage F, risk 2)
+// MARK: - The terminal pixel seam (docs/56 stage F, risk 2)
 
-/// `GhosttyLayerBackedView` IS the terminal surface an AppKit canvas wants, so the seam's native half is
-/// a conformance and not a wrapper. All three members already existed for the representable — `isFocusedPane`
-/// is what `updateNSView` writes and `detach()` is what `dismantleNSView` calls — which is the point: the
-/// AppKit canvas and the SwiftUI representable drive the SAME view through the SAME two doors, so there is
-/// no second lifecycle to keep in step.
+/// `GhosttyLayerBackedView` IS the terminal surface an AppKit canvas wants, so the seam is a conformance
+/// and not a wrapper.
+///
+/// ⚠️ THIS USED TO BE "THE NATIVE HALF" OF TWO. The seam carried a second slot whose value was a SwiftUI
+/// `AnyView` wrapping this same view in an `NSViewRepresentable`, and the three members below were that
+/// representable's lifecycle re-spelled: `surfaceView` was `makeNSView`, `setPaneFocused` was what
+/// `updateNSView` wrote, `detachSurface` was what `dismantleNSView` called. The one premise that kept the
+/// SwiftUI slot alive — "the phone has no `NSView`, so iOS can only cross as a `View`" — died when the
+/// phone moved to UIKit and gained a `UIView`, so the slot went and these three are simply the seam. What
+/// the fold buys is not tidiness: the SwiftUI slot mounted an `NSHostingView` over the ONE surface that
+/// must take every keystroke, and a hosting view claims the hit-test.
 extension GhosttyLayerBackedView: TerminalSurfaceHosting {
     var surfaceView: NSView { self }
 
@@ -2948,40 +2904,6 @@ extension GhosttyLayerBackedView: TerminalSurfaceHosting {
 }
 
 #elseif os(iOS)
-
-/// `UIViewRepresentable` host backing the `CAMetalLayer` that owns the `GhosttySurface`.
-struct GhosttyMetalLayerView: UIViewRepresentable {
-    let model: TerminalViewModel
-    /// The pane's workspace focus. iOS keyboard focus is owned by `TerminalInputHost` (doc 17 §2.5), but this
-    /// now drives libghostty's render FOCUS so an unfocused pane shows ghostty's hollow non-blinking cursor —
-    /// parity with the macOS sibling.
-    var isFocused: Bool = true
-
-    func makeUIView(context: Context) -> GhosttyLayerBackedView {
-        let view = GhosttyLayerBackedView()
-        // Do NOT create the surface here (mirrors the macOS makeNSView). SwiftUI builds the representable
-        // for an off-window probe/sizing pass too; creating the libghostty surface in that throwaway view
-        // spawns a full renderer/io thread set, STEALS `model.surface` from the on-screen pane via
-        // `attachSurface`, and starts a 60Hz CADisplayLink that leaks if dismantle is never called. Just
-        // remember the model — the surface is created lazily once the view enters a real window
-        // (`didMoveToWindow`), so EXACTLY ONE surface exists per pane.
-        view.model = model
-        view.isFocusedPane = isFocused
-        return view
-    }
-
-    func updateUIView(_ uiView: GhosttyLayerBackedView, context: Context) {
-        uiView.model = model
-        // Attach only on-window (idempotent). The off-window probe view never reaches here with a
-        // window set, so it never calls `ghostty_surface_new`.
-        if uiView.window != nil { uiView.attach(model: model) }
-        uiView.isFocusedPane = isFocused
-    }
-
-    static func dismantleUIView(_ uiView: GhosttyLayerBackedView, coordinator: ()) {
-        uiView.detach()
-    }
-}
 
 /// A `UIView` whose `layerClass` is `CAMetalLayer`, owning the `GhosttySurface`.
 ///
@@ -2998,7 +2920,8 @@ final class GhosttyLayerBackedView: UIView {
 
     private var surface: GhosttySurface?
     weak var model: TerminalViewModel?   // set by the representable; read by the window-gated attach
-    /// Whether THIS pane is the workspace's focused pane (set by the representable). Drives libghostty's
+    /// Whether THIS pane is the workspace's focused pane — seeded by the seam's factory at mount and
+    /// re-pushed by ``TerminalSurfaceHosting/setPaneFocused(_:)``. Drives libghostty's
     /// render FOCUS so an unfocused pane shows ghostty's hollow non-blinking cursor (focused = solid block),
     /// matching the macOS sibling. Forwarding unfocus does NOT freeze the pane — output still presents via
     /// the content-driven `onContentChanged → requestPresent` path; only ghostty's internal blink/auto-draw
@@ -3100,9 +3023,9 @@ final class GhosttyLayerBackedView: UIView {
     private var tapRecognizer: UITapGestureRecognizer?
 
     /// Installs the pan-to-scroll recognizer on `self` (the renderer UIView). Idempotent —
-    /// guarded so the idempotent `attach()` (called from both `makeUIView` and `updateUIView`)
-    /// never stacks duplicate recognizers. The keyboard input bar (`TerminalInputHost`) is a
-    /// SEPARATE sibling view in the iOS `terminalComposite` VStack (PaneLeafView), so the pan
+    /// guarded so the idempotent `attach()` (re-run on every window entry) never stacks duplicate
+    /// recognizers. The keyboard input bar (`TerminalInputHost`) is a
+    /// SEPARATE sibling view the pane's leaf mounts beside this one, so the pan
     /// here cannot swallow its taps; and a `UIPanGestureRecognizer` only recognizes DRAGS, not
     /// taps, so a tap meant for focusing/keyboard passes straight through to other handlers.
     private func installPanToScrollIfNeeded() {
@@ -3182,8 +3105,8 @@ final class GhosttyLayerBackedView: UIView {
     }
 
     /// Installs the tap-to-mouse-button recognizer on `self` (the renderer UIView). Idempotent —
-    /// guarded like `installPanToScrollIfNeeded` so the idempotent `attach()` (called from both
-    /// `makeUIView` and `updateUIView`) never stacks duplicate recognizers.
+    /// guarded like `installPanToScrollIfNeeded` so the idempotent `attach()` (re-run on every window
+    /// entry) never stacks duplicate recognizers.
     ///
     /// COEXISTS with the pan recognizer above: a `UITapGestureRecognizer` recognizes a DISCRETE tap
     /// while the `UIPanGestureRecognizer` recognizes a DRAG, so they do not contend — UIKit's default
@@ -3601,7 +3524,7 @@ final class GhosttyLayerBackedView: UIView {
     }
 
     /// The nearest view controller up the responder chain — what UIKit needs to present anything from a
-    /// view that is hosted inside a SwiftUI tree and owns no controller of its own.
+    /// view the canvas adds as a subview, which owns no controller of its own.
     private func nearestViewController() -> UIViewController? {
         var responder: UIResponder? = next
         while let current = responder {
@@ -3650,11 +3573,12 @@ final class GhosttyLayerBackedView: UIView {
         return found
     }
 
-    /// The surface is created ONLY once the view is in a real window — never for SwiftUI's off-window
-    /// probe pass (mirrors the macOS `viewDidMoveToWindow`): `ghostty_surface_new` spawns libghostty's
-    /// renderer/io threads, and a probe-spawned duplicate also steals `model.surface` from the on-screen
-    /// pane. Leaving the window invalidates the display link so a detached view never keeps a 60Hz
-    /// main-runloop wakeup alive (dismantle is not guaranteed to run for every discarded view).
+    /// The surface is created ONLY once the view is in a real window — never in the window the seam's
+    /// factory hands one back from, which is nobody's yet (mirrors the macOS `viewDidMoveToWindow`):
+    /// `ghostty_surface_new` spawns libghostty's renderer/io threads, and a duplicate would also steal
+    /// `model.surface` from the on-screen pane. Leaving the window invalidates the display link so a
+    /// detached view never keeps a 60Hz main-runloop wakeup alive (`detachSurface()` is the explicit
+    /// teardown, but a discarded view is not guaranteed to get one).
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil {
@@ -3668,7 +3592,8 @@ final class GhosttyLayerBackedView: UIView {
     }
 
     /// Idempotent: builds the surface on first call (only when on-window), then attaches it to the
-    /// model. Safe to call repeatedly from `updateUIView` / `didMoveToWindow`.
+    /// model. `didMoveToWindow` is its ONLY caller now that no representable re-runs an update pass, and
+    /// it stays safe to call repeatedly — a view can leave and re-enter a window.
     func attach(model: TerminalViewModel) {
         self.model = model
         // The EDITING VERBS, reachable from something other than a long press. `TerminalInputHost`
@@ -3860,8 +3785,8 @@ final class GhosttyLayerBackedView: UIView {
             // The two sinks bound in `attach` come down under the SAME identity gate, one level further
             // on: `detachSurface` clears `model.surface` only when the surface it held was OURS, so a nil
             // surface here proves no newer view has taken this pane over and the closures are still this
-            // view's to clear. Clearing them unconditionally would strand a LIVE pane deaf whenever
-            // SwiftUI mounts the replacement before dismantling us — the same stale-duplicate hazard the
+            // view's to clear. Clearing them unconditionally would strand a LIVE pane deaf whenever the
+            // canvas mounts the replacement before detaching us — the same stale-duplicate hazard the
             // gate above exists for. (Both are `[weak self]`, so one left standing is inert either way.)
             if model?.surface == nil {
                 model?.onResizeSettled = nil
@@ -3878,7 +3803,7 @@ final class GhosttyLayerBackedView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let scale = window?.screen.scale ?? UIScreen.main.scale
-        // SAME-SIZE GUARD (mirrors macOS layout()): spurious same-size SwiftUI passes used
+        // SAME-SIZE GUARD (mirrors macOS layout()): spurious same-size UIKit layout passes used
         // to pay sublayer re-framing + setPixelSize + a full synchronous redraw.
         if let last = lastAppliedLayout, last.size == bounds.size, last.scale == scale,
            surface != nil {
@@ -3961,14 +3886,41 @@ extension GhosttyLayerBackedView: UIDocumentPickerDelegate {
     }
 }
 
+// MARK: - The terminal pixel seam (docs/56 stage F, risk 2)
+
+/// The phone's half of the seam, and the reason the seam has ONE slot instead of two.
+///
+/// The Mac's `GhosttyLayerBackedView` has conformed to ``TerminalSurfaceHosting`` since the seam grew its
+/// platform slot; this one could not, because the seam's other slot was a SwiftUI `AnyView` and the stated
+/// premise was that the phone had no view class to hand back — "iOS's ONLY shape". UIKit made that false
+/// (docs/62): the phone's canvas is a view controller adding subviews, so a `UIView` is exactly what it
+/// wants. Both platforms now cross the same way, through the same three members.
+extension GhosttyLayerBackedView: TerminalSurfaceHosting {
+    var surfaceView: UIView { self }
+
+    func setPaneFocused(_ isFocused: Bool) { isFocusedPane = isFocused }
+
+    func detachSurface() { detach() }
+}
+
 #endif  // os(macOS) / os(iOS)
 
 // MARK: - The one registration site
 
-/// Registers the production terminal renderer on BOTH shapes of the seam, so the app target has one call
-/// to make and cannot register half of it — a Mac that registered only `shared` would silently draw its
-/// terminal through an `NSHostingView`, and a Mac that registered only `nativeShared` would show the
-/// BUILD-STATUS placeholder anywhere the SwiftUI leaf still mounts (a satellite pane, a preview).
+/// Registers the production terminal renderer — ONE slot, one assignment, both platforms.
+///
+/// ⚠️ THIS USED TO REGISTER TWO SLOTS AND ARGUE FOR BOTH. `shared` handed back a SwiftUI `AnyView`
+/// wrapping `GhosttyTerminalView`, `nativeShared` handed back this same `GhosttyLayerBackedView`, and the
+/// installer existed so an app target could not register half of the pair. Both slots were justified by one
+/// premise — the phone had no `NSView`, so iOS could only ever cross the seam as a `View` — and the phone's
+/// move to UIKit (docs/62) falsified it: it has a `UIView`, and its canvas is a view controller that adds
+/// subviews. So the SwiftUI slot, the struct behind it and both representables are deleted rather than kept
+/// as a second way in. What the fold removes is not a wrapper type but a HOSTING VIEW over the one surface
+/// that must take every keystroke — the hit-claim docs/56 stage D spent five increments getting off the
+/// Mac, which the SwiftUI slot would have rebuilt verbatim on the phone.
+///
+/// The failure this installer guards has not changed, and is now impossible to half-do: REGISTERING
+/// NOTHING. An unregistered seam ships the BUILD-STATUS placeholder where the terminal should be.
 ///
 /// ⚠️ This file is compiled by NO `Package.swift` target — it joins the Xcode app target through
 /// `slopdesk-ops enable-renderer macos` / `… ios`, and the whole file
@@ -3979,27 +3931,23 @@ public enum GhosttyRendererSeam {
     /// Idempotent — safe to call more than once, and it must stay so: it is called from `main()` before the
     /// scene exists, which is the only ordering the seam guarantees.
     ///
-    /// `shared` is the SwiftUI shape (iOS's ONLY shape — the phone has no `NSView` — and the SwiftUI
-    /// canvas's). `nativeShared` is the AppKit shape, which hands the layer-hosting `NSView` straight to the
-    /// canvas rather than burying it under an `NSHostingView` that would claim the hit-test over the one
-    /// surface that must take every keystroke.
+    /// The closure hands the canvas the layer-hosting view itself (`GhosttyLayerBackedView`, an `NSView` on
+    /// the Mac and a `UIView` on the phone, both ``TerminalSurfaceHosting``). There is no `#if` here: one
+    /// spelling covers both platforms, which is the whole point of the fold.
     @MainActor
     public static func install() {
         TerminalRendererFactory.shared = { model, isFocused in
-            AnyView(GhosttyTerminalView(model: model, isFocused: isFocused))
-        }
-        #if os(macOS)
-        TerminalRendererFactory.nativeShared = { model, isFocused in
             let view = GhosttyLayerBackedView()
-            // Mirrors `makeNSView` EXACTLY, and for the same reason: do NOT create the surface here.
-            // `ghostty_surface_new` installs the IOSurfaceLayer and spawns the renderer/io thread pair, so
-            // a view that is built and then never put in a window would leave a second surface spinning.
-            // The surface is created lazily in `viewDidMoveToWindow`, so exactly one exists per pane.
+            // Do NOT create the surface here. `ghostty_surface_new` installs the IOSurfaceLayer and spawns
+            // the renderer/io thread pair, so a view that is built and then never put in a window would
+            // leave a second surface spinning. The surface is created lazily in
+            // `viewDidMoveToWindow`/`didMoveToWindow`, so exactly one exists per pane.
             view.model = model
+            // The pane's focus at MOUNT time; every later change arrives via `setPaneFocused(_:)`, since an
+            // imperative canvas has no update pass to carry it.
             view.isFocusedPane = isFocused
             return view
         }
-        #endif
     }
 }
 
