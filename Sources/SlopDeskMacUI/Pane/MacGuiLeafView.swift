@@ -283,7 +283,7 @@ final class MacGuiLeafView: NSView {
         mountedDescriptor = descriptor
 
         guard let descriptor else { return }
-        guard let host = VideoWindowFactory.makeNative(descriptor, context: paneContext()) else { return }
+        guard let host = VideoWindowFactory.make(descriptor, context: paneContext()) else { return }
         surfaceHost = host
         fillSurface(host.surfaceView)
     }

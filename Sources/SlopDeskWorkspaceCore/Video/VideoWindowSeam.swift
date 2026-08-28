@@ -1,34 +1,28 @@
-#if canImport(SwiftUI)
-#if canImport(AppKit)
-import AppKit
-#endif
-import SwiftUI
+#if canImport(AppKit) || canImport(UIKit)
 
-/// The **seam** between the cross-platform SwiftUI client and a remote GUI-window
-/// video view (PATH 2 / Phase 4, doc 17 §3).
+/// The **seam** between the client's canvas and a remote GUI-window video view (PATH 2 / Phase 4,
+/// doc 17 §3).
 ///
-/// Like ``TerminalRendererFactory``, the cross-platform library cannot reference
-/// a video view directly — that pulls VideoToolbox + Metal into the headless `swift build`, and those
-/// HANG without a window-server + TCC session in a test context. Instead the GUI app target registers a
-/// factory at launch; the library
+/// Like ``TerminalRendererFactory``, the cross-platform library cannot reference a video view
+/// directly — that pulls VideoToolbox + Metal into the headless `swift build`, and those HANG
+/// without a window-server + TCC session in a test context. Instead the GUI app target registers a
+/// factory at launch and the canvas calls it, mounting nothing when none was registered.
 ///
 /// The view it registers is `SlopDeskVideoClientMac.MacVideoWindowView` or
-/// `SlopDeskVideoClientPhone.VideoWindowView` — there are TWO now, one per shell. This comment named
-/// `SlopDeskVideoClient.VideoWindowView` until 2026-08-22, which was wrong in both halves: no view lives
-/// in `SlopDeskVideoClient` at all (it is the engine, views-free by a ratcheted rule), and the bare name
-/// belongs to the phone. The seam is unchanged by the split — that is the point of it being a seam.
-/// calls it, falling back to a labelled placeholder when none was registered (no host
-/// capturing a GUI window).
+/// `SlopDeskVideoClientPhone.VideoWindowView` — there are TWO, one per shell. This comment named
+/// `SlopDeskVideoClient.VideoWindowView` until 2026-08-22, which was wrong in both halves: no view
+/// lives in `SlopDeskVideoClient` at all (it is the engine, views-free by a ratcheted rule), and the
+/// bare name belongs to the phone. The seam is unchanged by the split — that is the point of it
+/// being a seam.
 ///
-/// **Gated**: the GUI video path is secondary to the terminal path. A remote GUI window
-/// appears only when (a) the app injects a factory AND (b) the host is actively capturing
-/// a window; until then the placeholder explains the state.
+/// **Gated**: the GUI video path is secondary to the terminal path. A remote GUI window appears only
+/// when (a) the app injects a factory AND (b) the host is actively capturing a window.
 ///
 /// Wiring (app target, once at launch):
 /// ```swift
 /// import SlopDeskVideoClientMac // or SlopDeskVideoClientPhone, in the phone's shell
 /// VideoWindowFactory.shared = { descriptor, context in
-///     AnyView(MacVideoWindowView(title: descriptor.title, context: context))
+///     MacVideoSurfaceHost(title: descriptor.title, context: context)
 /// }
 /// ```
 public struct RemoteWindowDescriptor: Sendable, Equatable {
@@ -345,55 +339,42 @@ public struct RemotePaneContext {
 @preconcurrency
 @MainActor
 public final class VideoWindowFactory {
-    /// App-registered factory (set once at launch). `nil` → use the placeholder. Receives the descriptor
-    /// + the per-render ``RemotePaneContext`` (active state + activate/canvas-scroll callbacks).
-    public static var shared: ((RemoteWindowDescriptor, RemotePaneContext) -> AnyView)?
-
-    /// Builds the remote-GUI-window view: the registered production renderer if
-    /// present (and a host is capturing), else an empty view (the headless build registers no
-    /// factory; the rebuilt `SlopDeskClientUI` provides the real placeholder body).
-    public static func make(_ descriptor: RemoteWindowDescriptor, context: RemotePaneContext = .standalone) -> AnyView {
-        if let factory = shared {
-            return factory(descriptor, context)
-        }
-        return AnyView(EmptyView())
-    }
-
-    #if canImport(AppKit)
-    /// The **native** half of the same seam — the app-registered factory that hands back the video pane's
-    /// `NSView` DIRECTLY instead of wrapping it in an `AnyView`. `nil` → no native video renderer.
+    /// App-registered factory (set once at launch). `nil` → nothing to mount: the headless build, the
+    /// tests, and every build before the app target calls its installer. Receives the descriptor + the
+    /// MOUNT-time ``RemotePaneContext`` (active state + activate/canvas-scroll callbacks).
     ///
-    /// Same reasoning as ``TerminalRendererFactory/nativeShared``: `MetalLayerBackedView` is ALREADY an
-    /// `NSView` and ``shared`` exists only because neither UI target may name it, so an AppKit canvas
-    /// mounting ``make(_:context:)`` would interpose an `NSHostingView` for nothing. It matters slightly
-    /// less here than on the terminal (a video pane takes pointer traffic, not every keystroke) and is
-    /// still the same needless layer between the canvas and a `CAMetalLayer`.
+    /// ⚠️ THIS SLOT USED TO RETURN AN `AnyView`, with a second `nativeShared` beside it returning the
+    /// `NSView`. The SwiftUI shape's doc comment called the pair "ADDITIVE, permanently — `shared`
+    /// stays the iOS shape", on the premise that the phone had no `NSView` to hand back. The SwiftUI
+    /// removal voided that: the phone draws in UIKit and has a `UIView`. So the two folded into this
+    /// one, and the "native" qualifier went with them — it only ever meant "not SwiftUI".
     ///
-    /// ADDITIVE, permanently — ``shared`` stays the iOS shape.
+    /// The fold is not cosmetic. `MetalLayerBackedView` is ALREADY a ``PlatformView``; the `AnyView`
+    /// slot existed only because neither UI target may NAME that type, so any canvas mounting it
+    /// interposed a hosting view between its own tree and a `CAMetalLayer` for nothing.
     ///
-    /// `@MainActor` on the closure TYPE, unlike ``shared``: this one builds and returns an `NSView`, which
-    /// is main-actor isolated, so the factory could not be written without it (as ``RemoteWindowDiscovery``
-    /// already is, in this file).
-    public static var nativeShared: (@MainActor (RemoteWindowDescriptor, RemotePaneContext)
+    /// `@MainActor` on the closure TYPE: this builds and returns a ``PlatformView``, which is
+    /// main-actor isolated, so the factory could not be written without it (as
+    /// ``RemoteWindowDiscovery`` already is, in this file).
+    public static var shared: (@MainActor (RemoteWindowDescriptor, RemotePaneContext)
         -> RemoteSurfaceHosting)?
 
-    /// Builds the native video surface host, or `nil` when no native renderer was registered. The
-    /// descriptor and context are the MOUNT-time values; every later render's gates go through
-    /// ``RemoteSurfaceHosting/setPaneGates(isActive:inputEnabled:backgroundPointer:)``, because an AppKit
-    /// canvas has no `updateNSView` being re-run to carry them.
-    public static func makeNative(
+    /// Builds the video surface host, or `nil` when no renderer was registered. The descriptor and
+    /// context are the MOUNT-time values; every later change to the gates goes through
+    /// ``RemoteSurfaceHosting/setPaneGates(isActive:inputEnabled:backgroundPointer:)``, because an
+    /// imperative canvas has no `updateNSView`/`updateUIView` being re-run to carry them.
+    public static func make(
         _ descriptor: RemoteWindowDescriptor,
         context: RemotePaneContext = .standalone,
     ) -> RemoteSurfaceHosting? {
-        guard let factory = nativeShared else { return nil }
+        guard let factory = shared else { return nil }
         return factory(descriptor, context)
     }
-    #endif
 }
 
-#if canImport(AppKit)
-/// What an AppKit canvas may ask of the remote-GUI surface it just mounted — the AppKit spellings of
-/// `makeNSView` / `updateNSView` / `dismantleNSView`.
+/// What a canvas may ask of the remote-GUI surface it just mounted — the imperative spellings of
+/// what a representable used to get from its lifecycle: `makeNSView` / `updateNSView` /
+/// `dismantleNSView`.
 ///
 /// The gates are passed as PRIMITIVES rather than as a ``RemotePaneContext``, and that is not a
 /// convenience: the only conformer lives in `SlopDeskVideoClient`, which deliberately never imports
@@ -405,7 +386,7 @@ public final class VideoWindowFactory {
 public protocol RemoteSurfaceHosting: AnyObject {
     /// The view to add as a subview. It is layer-backed by a `CAMetalLayer` with a cursor overlay layer
     /// on top, and it owns the client decode pipeline for its lifetime.
-    var surfaceView: NSView { get }
+    var surfaceView: PlatformView { get }
 
     /// Re-push the per-render pane gates. `isActive` is the workspace focus (only the active pane forwards
     /// pointer hover/clicks/pinch; scroll follows the pointer regardless), `inputEnabled` is the read-only
@@ -414,15 +395,16 @@ public protocol RemoteSurfaceHosting: AnyObject {
     /// `inputEnabled` re-publishes the injector sinks, so this is the ONLY way a lock reaches the host.
     func setPaneGates(isActive: Bool, inputEnabled: Bool, backgroundPointer: Bool)
 
-    /// Tear down the client session (the AppKit twin of `dismantleNSView`). Removing the view from its
-    /// superview is NOT enough: the session owns UDP sockets, a decoder and a display link.
+    /// Tear down the client session. Removing the view from its superview is NOT enough: the session
+    /// owns UDP sockets, a decoder and a display link.
     func detachSurface()
 }
-#endif
 
 /// One host-side window the Remote-Window PICKER lists (docs/31). The cross-platform mirror of the
 /// video protocol's `WindowSummary`, kept here so `SlopDeskClientUI` needn't depend on `SlopDeskVideoProtocol`.
-/// `Identifiable` (by `windowID`) so a SwiftUI `List`/`ForEach` can render it directly.
+/// `Identifiable` (by `windowID`) so a diffable data source can key rows on it without the picker
+/// inventing a second identity. The conformance is stdlib, not SwiftUI — it outlived the `ForEach`
+/// it was originally added for.
 public struct RemoteWindowSummary: Sendable, Equatable, Identifiable {
     public var windowID: UInt32
     public var appName: String
@@ -469,7 +451,7 @@ public final class RemoteWindowDiscovery {
 
 /// One host-side DISPLAY the desktop pane's display-switcher lists. The cross-platform mirror of the
 /// video protocol's `DisplaySummary` (kept here so `SlopDeskClientUI` needn't depend on
-/// `SlopDeskVideoProtocol`). `Identifiable` (by `displayID`) for direct `ForEach` rendering.
+/// `SlopDeskVideoProtocol`). `Identifiable` (by `displayID`) so a diffable data source can key on it.
 public struct RemoteDisplaySummary: Sendable, Equatable, Identifiable {
     public var displayID: UInt32
     /// Point size (the host's `CGDisplayBounds` size).

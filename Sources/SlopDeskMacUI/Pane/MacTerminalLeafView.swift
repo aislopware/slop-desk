@@ -1,7 +1,7 @@
 // MacTerminalLeafView — the terminal pane leaf's content, in AppKit (docs/56 wave R, batch R9).
 //
-// The Mac half of ``TerminalLeafView``. Like its SwiftUI twin it is minimal by design: the terminal
-// surface seam (``TerminalRendererFactory/makeNative(model:isFocused:)``, else the headless
+// The terminal pane leaf, and minimal by design: the terminal surface seam
+// (``TerminalRendererFactory/make(model:isFocused:)``, else the headless
 // ``MacBuildStatusPlaceholderView``), four decoration overlays coincident with it, one top-trailing
 // chip column and one bottom hint bar. No cwd chrome, no per-pane status strip, no mounted command
 // row — text delivery routes through `InputBarModel` headlessly on both platforms.
@@ -10,18 +10,18 @@
 // is ``TerminalPaneWiring``'s (`SlopDeskClientCore`, stage F batch P1). The five callback pairs, the
 // dial, the autotype seam, the secure-input reconcile and the chip `×` all live there precisely so
 // the retain-cycle discipline, the teardown ORDER and the `EnableSecureEventInput` reference balance
-// are written ONCE rather than hand-translated into a second language. The SwiftUI half keeps
-// `.task` / `.onChange` / `.onDisappear`; this half keeps `withObservationTracking` and the AppKit
-// lifecycle, and neither keeps a decision.
+// are written ONCE. This file keeps `withObservationTracking` and the AppKit lifecycle, and keeps no
+// decision.
 //
-// ## The seam takes the NSView, not an `AnyView`
+// ## The seam takes the NSView, and there is no longer another option
 //
-// ``TerminalRendererFactory/nativeShared`` hands back the layer-hosting `NSView` itself (docs/56
-// risk 2, landed increment 57d). The alternative — an `NSHostingView` around the SwiftUI
-// `make(model:isFocused:)` — would put a full-bleed hosting layer over the ONE surface in this app
-// that must take every keystroke, which is exactly the hit-claim stage D spent five increments
-// removing. Nothing here names `GhosttyLayerBackedView`; a headless `swift build` registers no native
-// factory at all and gets the placeholder.
+// ``TerminalRendererFactory/shared`` hands back the layer-hosting `NSView` itself (docs/56 risk 2,
+// landed increment 57d). It used to have a sibling slot returning a SwiftUI `AnyView`, and mounting
+// THAT would have put a full-bleed hosting layer over the ONE surface in this app that must take
+// every keystroke — exactly the hit-claim stage D spent five increments removing. The SwiftUI slot
+// is now deleted outright, so the trap is gone rather than merely avoided here. Nothing in this file
+// names `GhosttyLayerBackedView`; a headless `swift build` registers no factory at all and gets the
+// placeholder.
 //
 // ## RISK 3 — occlusion is not visibility, and the tracking areas are the reason
 //
@@ -380,7 +380,7 @@ final class MacTerminalLeafView: NSView {
 
     /// The pane's workspace focus moved. `updateNSView` is what SwiftUI would have re-run for this;
     /// an AppKit canvas has none, so the push is explicit (the seam says so at
-    /// ``TerminalRendererFactory/makeNative(model:isFocused:)``).
+    /// ``TerminalRendererFactory/make(model:isFocused:)``).
     func setFocused(_ isFocused: Bool) {
         guard isFocused != self.isFocused else { return }
         self.isFocused = isFocused
@@ -498,7 +498,7 @@ final class MacTerminalLeafView: NSView {
         guard let model = live?.terminalModel else { return }
 
         let pixels: NSView
-        if let host = TerminalRendererFactory.makeNative(model: model, isFocused: isFocused) {
+        if let host = TerminalRendererFactory.make(model: model, isFocused: isFocused) {
             surfaceHost = host
             pixels = host.surfaceView
         } else {
