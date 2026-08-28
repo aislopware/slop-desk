@@ -38,7 +38,7 @@
 // per-pane dicts, and reading the split's live column width touches a value that changes on every
 // frame of a divider drag. Both happen in ``RailStatusRollupMount/refresh()`` and nowhere above it —
 // which is the same rule the SwiftUI shape enforced by making the rollup a leaf VIEW, restated as
-// the AppKit one: one `withObservationTracking` block, scoped to exactly what this cluster draws by,
+// the AppKit one: one ``ObservationFollow``, scoped to exactly what this cluster draws by,
 // so nothing else in the window re-runs because a pane started thinking.
 //
 // WHY IT LIVES IN `SlopDeskMacUI` (docs/56 increment 36). It hangs off the TITLEBAR — beside the
@@ -390,8 +390,8 @@ private final class MacRailStatusMarkSlot: NSView {
 ///
 /// ⚠️ IT IS THE LEAF, and both of the volatile things it reads say why. ``WorkspaceChromeState/
 /// navigatorWidth`` changes on every frame of a divider drag; the per-pane readings behind the marks
-/// change on every agent tick. Both are read inside ``refresh()``'s one `withObservationTracking`
-/// block and nowhere else, so neither can wake anything above this view.
+/// change on every agent tick. Both are read inside ``refresh()``'s one ``ObservationFollow`` and
+/// nowhere else, so neither can wake anything above this view.
 @MainActor
 final class RailStatusRollupMount: NSView {
     /// THE COLUMN'S GUTTER, forwarded for the AppKit navigator (``MacNavigatorColumn``).

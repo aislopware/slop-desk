@@ -21,7 +21,7 @@
 //
 //   * `WorkspaceSplitRepresentable` itself. Its `makeNSViewController` is the `init` below and its
 //     `updateNSViewController` — which read the two `@Observable` collapse flags to tie the update to
-//     them — is ``followChrome()``, one `withObservationTracking` block reading the same two flags.
+//     them — is ``followChrome()``, one ``ObservationFollow`` reading the same two flags.
 //     A representable whose only job is to re-push two booleans into a controller it also created is
 //     a hosting seam, and there is nothing left to host it in.
 //   * `.overlay(alignment: .topLeading)` ×2 → two subviews of the window's content view, constrained
@@ -40,7 +40,7 @@
 //     backstops any transient gap (a mid-animation collapse) so no bare window colour ever shows. It
 //     is also what the window's own 16pt corners bite into.
 //   * `.onAppear` / three `.onChange`s → ``wireChromeToggles()`` at ``mount()`` time, and two
-//     `withObservationTracking` follows. The FOCUS observer keeps its shape exactly: one observer for
+//     ``ObservationFollow`` arms. The FOCUS observer keeps its shape exactly: one observer for
 //     the tab and the pane together, because a tab switch changes the focused pane too and the two
 //     questions must not race each other from separate arms.
 //
@@ -242,8 +242,8 @@ final class MacWorkspaceWindowController: NSWindowController, NSWindowDelegate {
     ///
     /// ⚠️ THIS IS `WorkspaceSplitRepresentable.updateNSViewController`, WITHOUT THE REPRESENTABLE. That
     /// method's comment said it out loud — "reading the @Observable flags here ties this update to
-    /// their changes" — which is a description of `withObservationTracking` written for a framework
-    /// that supplied one implicitly. It reads the same two flags and calls the same one method; what
+    /// their changes" — which is a description of an observation arm written for a framework that
+    /// supplied one implicitly. It reads the same two flags and calls the same one method; what
     /// is gone is the machinery that made a whole view tree the unit of re-evaluation.
     private func followChrome() {
         ObservationFollow.arm(self) { controller in
