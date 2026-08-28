@@ -115,7 +115,7 @@ const fn rollup_of(raw: u8, percent: u8) -> Option<Rollup> {
 /// The sidebar flags the chrome should hold after applying the auto-hide policy.
 ///
 /// The bare `desired_collapsed` rung is NOT exported beside this one. It was, and the near side
-/// wrapped it in a `SidebarAutoHidePolicy` that the SwiftUI wiring called; the imperative shells
+/// wrapped it in a `SidebarAutoHidePolicy` that the `SwiftUI` wiring called; the imperative shells
 /// actuate through this composed door instead, so the wrapper's last caller left with the view and
 /// the exported rung existed only to serve it. `chrome::desired_collapsed` is still the rule —
 /// `apply_auto_hide` calls it one line down, and `slopdesk-settings` tests it directly.
