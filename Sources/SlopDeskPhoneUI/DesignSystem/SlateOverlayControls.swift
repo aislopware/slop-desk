@@ -125,7 +125,8 @@ final class SlateLabeledFieldView: UIView, UITextFieldDelegate {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    @objc private func edited() { onTextChange(text) }
+    @objc
+    private func edited() { onTextChange(text) }
 }
 
 /// The card-top search input every list overlay opens with: a quiet magnifier, a plain field in the
@@ -237,7 +238,8 @@ final class SlateSearchBarView: UIView, UITextFieldDelegate {
         field.becomeFirstResponder()
     }
 
-    @objc private func edited() { onTextChange(text) }
+    @objc
+    private func edited() { onTextChange(text) }
 
     func textFieldShouldReturn(_: UITextField) -> Bool {
         onSubmit()
@@ -311,8 +313,11 @@ final class SlateCardFooterView: UIView {
     override var canBecomeFirstResponder: Bool { true }
 
     override var keyCommands: [UIKeyCommand]? {
-        let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [],
-                                  action: #selector(cancelled))
+        let escape = UIKeyCommand(
+            input: UIKeyCommand.inputEscape,
+            modifierFlags: [],
+            action: #selector(cancelled),
+        )
         let enter = UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(confirmed))
         // Off the discoverability sheet: these are the system's own two meanings, and naming them
         // there reads as an app-specific chord the user has to learn.
@@ -321,9 +326,11 @@ final class SlateCardFooterView: UIView {
         return confirmDisabled ? [escape] : [escape, enter]
     }
 
-    @objc private func cancelled() { onCancel() }
+    @objc
+    private func cancelled() { onCancel() }
 
-    @objc private func confirmed() {
+    @objc
+    private func confirmed() {
         guard !confirmDisabled else { return }
         onConfirm()
     }

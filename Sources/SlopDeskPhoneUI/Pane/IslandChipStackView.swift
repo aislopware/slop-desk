@@ -428,7 +428,8 @@ final class ConnectionAlertChipView: UIView {
         accessibilityLabel = "\(alert.label). Tap to focus the affected pane."
     }
 
-    @objc private func handleTap() {
+    @objc
+    private func handleTap() {
         onTap()
     }
 
@@ -462,11 +463,12 @@ private final class ConnectionAlertDotView: UIView {
     /// connection pill (`StatusPresentation`) uses. A dynamic `UIColor` on the view, so a theme flip needs
     /// no re-ink pass.
     func tint(for severity: WorkspaceConnectionAlert.Severity) {
-        backgroundColor = switch severity {
-        case .reconnecting: Slate.Native.Status.warn
-        case .failed,
-             .unreachable: Slate.Native.Status.err
-        }
+        backgroundColor =
+            switch severity {
+            case .reconnecting: Slate.Native.Status.warn
+            case .failed,
+                 .unreachable: Slate.Native.Status.err
+            }
     }
 }
 #endif

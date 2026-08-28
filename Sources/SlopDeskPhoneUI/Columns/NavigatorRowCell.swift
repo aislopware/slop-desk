@@ -240,11 +240,12 @@ final class NavigatorRowCell: UICollectionViewListCell, UITextFieldDelegate {
         // against the ISLAND's polarity: under a dark profile the selected row's label flips light
         // instead of drawing near-black on a dark plate. One style, and every semantic ink inside
         // resolves itself.
-        let polarity: UIUserInterfaceStyle = if reading.active {
-            Slate.glassColorScheme == .dark ? .dark : .light
-        } else {
-            .unspecified
-        }
+        let polarity: UIUserInterfaceStyle =
+            if reading.active {
+                Slate.glassColorScheme == .dark ? .dark : .light
+            } else {
+                .unspecified
+            }
         if overrideUserInterfaceStyle != polarity { overrideUserInterfaceStyle = polarity }
 
         var plate = UIBackgroundConfiguration.clear()

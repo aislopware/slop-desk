@@ -87,27 +87,28 @@ func phoneSimulatorDeviceMenu(
             sections.append([])
             continue
         }
-        let row: UIAction = switch verb {
-        case .openScreen:
-            slateMenuRow(title) { onOpen() }
-        // The panel can already put a capture on the pasteboard, and a running device's screen is
-        // often worth a picture without being worth opening.
-        case .copyScreenshot:
-            slateMenuRow(title) { Task { await model.copyScreenshot(of: device.udid) } }
-        case .shutdown:
-            slateMenuRow(title) { Task { await model.shutdown(device.udid) } }
-        case .boot:
-            slateMenuRow(title) { Task { await model.boot(device.udid) } }
-        // Through the ONE funnel, never a second `UIPasteboard.general` pair.
-        case .copyUDID:
-            slateMenuRow(title) { ClientPasteboard.write(device.udid) }
-        case .copyName:
-            slateMenuRow(title) { ClientPasteboard.write(device.name) }
-        case .separator:
-            // Unreachable — the `guard` above took it. Spelled so the switch stays exhaustive without
-            // a `default` that would swallow a verb added later.
-            slateMenuRow(title)
-        }
+        let row: UIAction =
+            switch verb {
+            case .openScreen:
+                slateMenuRow(title) { onOpen() }
+            // The panel can already put a capture on the pasteboard, and a running device's screen is
+            // often worth a picture without being worth opening.
+            case .copyScreenshot:
+                slateMenuRow(title) { Task { await model.copyScreenshot(of: device.udid) } }
+            case .shutdown:
+                slateMenuRow(title) { Task { await model.shutdown(device.udid) } }
+            case .boot:
+                slateMenuRow(title) { Task { await model.boot(device.udid) } }
+            // Through the ONE funnel, never a second `UIPasteboard.general` pair.
+            case .copyUDID:
+                slateMenuRow(title) { ClientPasteboard.write(device.udid) }
+            case .copyName:
+                slateMenuRow(title) { ClientPasteboard.write(device.name) }
+            case .separator:
+                // Unreachable — the `guard` above took it. Spelled so the switch stays exhaustive without
+                // a `default` that would swallow a verb added later.
+                slateMenuRow(title)
+            }
         sections[sections.count - 1].append(row)
     }
     return UIMenu(children: sections.filter { !$0.isEmpty }.map { slateMenuSection($0) })

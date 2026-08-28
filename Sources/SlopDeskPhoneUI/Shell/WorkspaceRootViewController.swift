@@ -43,6 +43,7 @@ import SlopDeskWorkspaceCore
 import UIKit
 
 /// The window's content: a two-column split, an overlay layer, and the chrome wiring both need.
+@preconcurrency
 @MainActor
 public final class WorkspaceRootViewController: UIViewController {
     private let store: WorkspaceStore

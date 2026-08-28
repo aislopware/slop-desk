@@ -194,10 +194,12 @@ final class SlateEmptyStateActionButton: UIControl {
 
     @objc
     private func hovered(_ recognizer: UIHoverGestureRecognizer) {
-        let inside: Bool = switch recognizer.state {
-        case .began, .changed: true
-        default: false
-        }
+        let inside =
+            switch recognizer.state {
+            case .began,
+                 .changed: true
+            default: false
+            }
         guard hovering != inside else { return }
         hovering = inside
         paint()

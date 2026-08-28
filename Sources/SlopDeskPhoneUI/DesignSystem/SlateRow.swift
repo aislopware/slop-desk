@@ -117,10 +117,12 @@ final class SlateListRowView: UIView {
 
     @objc
     private func hovered(_ recognizer: UIHoverGestureRecognizer) {
-        let inside: Bool = switch recognizer.state {
-        case .began, .changed: true
-        default: false
-        }
+        let inside =
+            switch recognizer.state {
+            case .began,
+                 .changed: true
+            default: false
+            }
         guard hovering != inside else { return }
         hovering = inside
         paint()
@@ -194,13 +196,14 @@ final class SlateListRowView: UIView {
     /// default, silent before the row is in a window — a row configured between `init()` and its
     /// `addSubview` must arrive already wearing its treatment, not animate into it.
     private func paint(animated: Bool? = nil) {
-        let fill: UIColor = if active {
-            Slate.Native.Surface.raised
-        } else if isHovering {
-            Slate.Native.State.hover
-        } else {
-            .clear
-        }
+        let fill: UIColor =
+            if active {
+                Slate.Native.Surface.raised
+            } else if isHovering {
+                Slate.Native.State.hover
+            } else {
+                .clear
+            }
         let border: UIColor = active ? Slate.Native.Line.card : .clear
         // ⚠️ `layer.opacity`, not `alpha`. `alpha` needs a `UIView.animate` block, which cannot carry
         // this token's bezier — only its duration. Setting the SUBLAYER's opacity from outside such a

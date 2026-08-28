@@ -155,7 +155,7 @@ extension PaneDropReceiverView: UIDropInteractionDelegate {
         // state is what it writes to — a `Task` holding the whole view for those milliseconds would
         // keep a pane's chrome alive past a close for no reason.
         Task { @MainActor [model] in
-            model.applyClassified(await bundle.classify(), generation: generation)
+            await model.applyClassified(bundle.classify(), generation: generation)
         }
     }
 

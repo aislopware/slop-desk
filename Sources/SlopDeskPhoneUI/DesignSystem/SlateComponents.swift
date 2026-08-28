@@ -181,7 +181,7 @@ extension UIView {
         // BORDER is a `CGColor`, and a `CGColor` is whatever appearance was current when it was taken.
         backgroundColor = Slate.Native.State.hover
         slateInkFieldEdge()
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: UIView, _: UITraitCollection) in
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _: UITraitCollection) in
             view.slateInkFieldEdge()
         }
     }

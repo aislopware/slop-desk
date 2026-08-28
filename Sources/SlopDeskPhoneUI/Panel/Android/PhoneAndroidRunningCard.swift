@@ -313,7 +313,8 @@ final class PhoneAndroidRunningCard: UIControl {
     @objc
     private func hovered(_ recogniser: UIHoverGestureRecognizer) {
         switch recogniser.state {
-        case .began, .changed: hovering = true
+        case .began,
+             .changed: hovering = true
         default: hovering = false
         }
     }

@@ -180,7 +180,8 @@ final class PaneDividerView: UIView {
     /// double-tap never spends a suspend/commit round trip on the way to ``onReset``. The translation
     /// is ZEROED at `.began` for the other half of that bargain — without it the first live frame would
     /// jump by the whole hysteresis and the seam would leap out from under the finger.
-    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+    @objc
+    private func handlePan(_ gesture: UIPanGestureRecognizer) {
         // The stable space, per the header. `superview` is the tab layer, which does not move while
         // the panes resize; falling back to `self` keeps a detached view's arithmetic finite rather
         // than correct, and a detached view is being released on the next line anyway.
@@ -197,7 +198,9 @@ final class PaneDividerView: UIView {
             onResizeChange(targetLeadingWeight(
                 translation: handle.axis == .horizontal ? translation.x : translation.y,
             ))
-        case .ended, .cancelled, .failed:
+        case .ended,
+             .cancelled,
+             .failed:
             releaseDrag()
         default:
             break
@@ -206,7 +209,8 @@ final class PaneDividerView: UIView {
 
     /// Evens THIS seam only. The tap that carried it began nothing (see the slop note), so there is no
     /// in-flight resize to unwind first.
-    @objc private func handleDoubleTap() {
+    @objc
+    private func handleDoubleTap() {
         onReset()
     }
 

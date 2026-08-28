@@ -130,7 +130,8 @@ final class SlatePlateVerbButton: UIButton {
     @objc
     private func hovered(_ recogniser: UIHoverGestureRecognizer) {
         switch recogniser.state {
-        case .began, .changed: hovering = true
+        case .began,
+             .changed: hovering = true
         default: hovering = false
         }
     }
@@ -168,13 +169,14 @@ final class SlatePlateVerbButton: UIButton {
     /// than `UIView.animate` because the property is the LAYER's — a background colour set on the view
     /// would fight the corner radius the plate is drawn with.
     private func refreshFill(animated: Bool = true) {
-        let fill: UIColor = if isHighlighted {
-            Slate.Native.State.selected
-        } else if hovering {
-            Slate.Native.State.hover
-        } else {
-            .clear
-        }
+        let fill: UIColor =
+            if isHighlighted {
+                Slate.Native.State.selected
+            } else if hovering {
+                Slate.Native.State.hover
+            } else {
+                .clear
+            }
         let resolved = fill.resolvedColor(with: traitCollection).cgColor
         CATransaction.begin()
         if animated {

@@ -97,7 +97,8 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
         self.field = field
         well = FindQueryWellView(field: field)
         pills = Dictionary(
-            uniqueKeysWithValues: FindModePill.inPaneFindBar.map { ($0, FindTogglePill($0, plate: CGFloat(rung.plate))) },
+            uniqueKeysWithValues: FindModePill.inPaneFindBar
+                .map { ($0, FindTogglePill($0, plate: CGFloat(rung.plate))) },
         )
         // The four trailing plates stand on this bar's rung, handed over rather than defaulted —
         // ``SlatePlateVerbButton``'s own defaults are the chrome ladder's, which agree with the POINTER
@@ -559,7 +560,8 @@ final class FindTogglePill: UIControl {
     @objc
     private func hovered(_ recogniser: UIHoverGestureRecognizer) {
         switch recogniser.state {
-        case .began, .changed: hovering = true
+        case .began,
+             .changed: hovering = true
         default: hovering = false
         }
     }
@@ -580,25 +582,28 @@ final class FindTogglePill: UIControl {
         )
         // Each chip carries its OWN resting plate (find.png / global-search.png): idle = a subtle
         // `Surface.face` plate, hover = a `State.hover` plate, on = the accent wash. No shared tray.
-        let fill: UIColor = switch appearance {
-        case .idle: Slate.Native.Surface.face
-        case .hovering: Slate.Native.State.hover
-        case .on: Slate.Native.State.accentMuted
-        }
+        let fill: UIColor =
+            switch appearance {
+            case .idle: Slate.Native.Surface.face
+            case .hovering: Slate.Native.State.hover
+            case .on: Slate.Native.State.accentMuted
+            }
         // Every chip is individually outlined: idle/hover wear a `Line.subtle` hairline so the chip is
         // delineated (never a bare glyph); the ON chip swaps in the accent ring. ``Slate/Opacity/accentRing``
         // — the SAME alpha the vi pill and both Mac halves spend, all four having been a raw `0.5` until
         // the value went to the floor.
-        let ring: UIColor = switch appearance {
-        case .idle,
-             .hovering: Slate.Native.Line.subtle
-        case .on: Slate.Native.accent.slateScalingAlpha(Slate.Opacity.accentRing)
-        }
-        let ink: UIColor = switch appearance {
-        case .idle,
-             .hovering: Slate.Native.Text.secondary
-        case .on: Slate.Native.accent
-        }
+        let ring: UIColor =
+            switch appearance {
+            case .idle,
+                 .hovering: Slate.Native.Line.subtle
+            case .on: Slate.Native.accent.slateScalingAlpha(Slate.Opacity.accentRing)
+            }
+        let ink: UIColor =
+            switch appearance {
+            case .idle,
+                 .hovering: Slate.Native.Text.secondary
+            case .on: Slate.Native.accent
+            }
 
         // The caption is REBUILT rather than re-tinted: `textColor` does not reliably reach a string that
         // already carries its own attributes, and this one carries the underline that IS the whole-word

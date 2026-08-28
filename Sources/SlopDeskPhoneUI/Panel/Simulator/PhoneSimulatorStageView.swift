@@ -58,8 +58,8 @@
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
-import UniformTypeIdentifiers
 import UIKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
@@ -269,7 +269,7 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
         )
         guard let header else {
             let band = PhoneSimulatorDeviceHeader(reading: reading) { [model] in model.select(nil) }
-            self.header = band
+            header = band
             headerHost.addSubview(band)
             NSLayoutConstraint.activate([
                 band.leadingAnchor.constraint(equalTo: headerHost.leadingAnchor),
