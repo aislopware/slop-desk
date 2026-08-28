@@ -2,8 +2,13 @@
 //! ink.
 //!
 //! Ported from the deleted `check-supervisor.sh`. This is the rule the macOS/iOS split rests on:
-//! the presentation logic is read by an `AppKit` renderer and a `SwiftUI` one, so a decision that
-//! arrives as a modifier instead of a function is a decision the other half has to re-spell.
+//! the presentation logic is read by an `AppKit` renderer and a `UIKit` one, so a decision that
+//! arrives as anything a view owns — a modifier, a subclass, a layer — is a decision the other half
+//! has to re-spell.
+//!
+//! ⚠️ THAT SENTENCE SAID "and a `SwiftUI` one" UNTIL 2026-08-28, and it was the rule's stated
+//! reason rather than a passing detail. The premise died when the phone crossed to UIKit; the rule
+//! did not, and is stronger for it. See [`presentation_logic_draws_nothing_both`].
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
@@ -11,41 +16,42 @@ use crate::tree::Tree;
 
 /// `SlopDeskClientCore` IS THE PRESENTATION LOGIC, AND IT DRAWS NOTHING.
 ///
-/// The whole point of the layer is that the two renderers can both read it: `SlopDeskMacUI` builds
-/// `AppKit` out of it and `SlopDeskPhoneUI` builds `SwiftUI` out of it, so a decision spelled here
-/// is spelled once for both. One `import SwiftUI` ends that — not because `SwiftUI` is unavailable
-/// on the Mac, but because the moment a `View`, a `@ViewBuilder` or a `Color` is reachable from
-/// this layer, the next decision lands as a modifier instead of a function and the `AppKit` half
-/// has to re-spell it. That is the exact shape of every pair docs/55 §8 lists. This rule was TRUE
-/// of the tree for the whole split and was never written down; three separate ports were told it
-/// was a ratchet when it was only a habit. It goes in green — the count below is 0 today, and the
-/// gate is what makes it stay 0.
+/// The whole point of the layer is that both renderers can read it: `SlopDeskMacUI` builds `AppKit`
+/// out of it and `SlopDeskPhoneUI` builds `UIKit` out of it, so a decision spelled here is spelled
+/// once for both. What ends that is any view VOCABULARY reaching this layer — the moment a `Color`,
+/// an `NSColor` or an opacity is expressible here, the next decision lands as ink instead of a
+/// value and the half that did not spell it has to re-derive it. That is the exact shape of every
+/// pair docs/55 §8 lists. This rule was TRUE of the tree for the whole split and was never written
+/// down; three separate ports were told it was a ratchet when it was only a habit.
+///
+/// ## ⚠️ THE PREMISE DIED AND THE `SwiftUI` HALF OF THE RULE MOVED, 2026-08-28
+///
+/// This was written as "an `AppKit` renderer and a `SwiftUI` one", and its first claim banned
+/// `import SwiftUI` from this one target — a per-target ban, because at the time the framework was
+/// still live on the phone and this layer was the boundary it must not cross. Both halves of that
+/// premise are gone: the phone is UIKit, and `SwiftUI` measures ZERO across `Sources`, `Apps` and
+/// `Tests` alike. So the ban was not narrowed or re-aimed, it was WIDENED out of this file into
+/// [`ui_split::no_declarative_framework_survives`](super::ui_split::no_declarative_framework_survives),
+/// which reads every Swift root. Keeping a copy here would leave a ban that can never be the one to
+/// fire.
+///
+/// The layer law is unaffected and, if anything, harder now: a boundary between two IMPERATIVE
+/// renderers cannot even express the "arrives as a modifier" failure, so what the ink ban below
+/// protects is the LAYER rather than an asymmetry between two frameworks. It goes on being green —
+/// the count is 0 today, and the gate is what makes it stay 0.
 #[must_use]
 pub fn presentation_logic_draws_nothing_both(tree: &Tree) -> Report {
-    let claims = [
-        Claim::NoneUnder {
-            roots: &["Sources/SlopDeskClientCore"],
-            extensions: &["swift"],
-            pattern: r"^\s*import SwiftUI",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "SlopDeskClientCore imported SwiftUI — it is the logic BOTH renderers read, so it \
-                      draws nothing (docs/56 §3)",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources/SlopDeskClientCore"],
-            extensions: &["swift"],
-            pattern: r"Color\(|\.opacity\(|NSColor\(|UIColor\(",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "SlopDeskClientCore spelled ink — the design floor is SlopDeskSlate, which sits ABOVE \
-                      it (DESIGN.md)",
-        },
-    ];
+    let claims = [Claim::NoneUnder {
+        roots: &["Sources/SlopDeskClientCore"],
+        extensions: &["swift"],
+        pattern: r"Color\(|\.opacity\(|NSColor\(|UIColor\(",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "SlopDeskClientCore spelled ink — the design floor is SlopDeskSlate, which sits ABOVE it \
+                  (DESIGN.md)",
+    }];
     check_all(tree, &claims)
 }
 
@@ -281,20 +287,18 @@ mod tests {
 
     const CORE: &str = "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift";
 
-    /// Both arms are BANS with nothing required alongside them, so the only way to know either one
-    /// reads anything at all is to make it fire.
+    /// A BAN with nothing required alongside it, so the only way to know it reads anything at all
+    /// is to make it fire.
+    ///
+    /// The `import SwiftUI` case that used to sit in the middle of this test went with the claim it
+    /// seeded — the ban is
+    /// [`ui_split::no_declarative_framework_survives`](super::super::ui_split::no_declarative_framework_survives)'s
+    /// now, and it is proved over there against every Swift root rather than this one target.
     #[test]
-    fn a_view_import_or_an_ink_literal_in_the_shared_layer_is_caught() {
+    fn an_ink_literal_in_the_shared_layer_is_caught() {
         let fixture = Fixture::new("client-core-draws-nothing");
         fixture.write(CORE, "import Foundation\nfunc rank() -> Int { 0 }\n");
         assert!(super::presentation_logic_draws_nothing_both(&fixture.tree()).is_clean());
-
-        fixture.append(CORE, "import SwiftUI\n");
-        let report = super::presentation_logic_draws_nothing_both(&fixture.tree());
-        assert!(
-            report.violations().iter().any(|v| v.contains("imported SwiftUI")),
-            "{report:?}"
-        );
 
         fixture.write(CORE, "import Foundation\nlet bed = NSColor(white: 0, alpha: 1)\n");
         let report = super::presentation_logic_draws_nothing_both(&fixture.tree());
@@ -327,7 +331,10 @@ mod tests {
         // A TENTH one is the whole point of the rule.
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceRail.swift",
-            "import SwiftUI\nstruct Rail: View { var body: some View { EmptyView() } }\n",
+            // UIKit rather than SwiftUI, which is not cosmetic: SwiftUI is banned from every Swift
+            // root now, so seeding it here would prove this rule against a shape that can no longer
+            // reach it.
+            "import UIKit\nfinal class Rail: UIView {}\n",
         );
         let report = super::domain_layers_hold_only_named_view_seams(&fixture.tree());
         assert!(

@@ -959,6 +959,11 @@ pub fn registry() -> Vec<Rule> {
             check: ui_split::the_ui_split_holds_its_shape,
         },
         Rule {
+            name: "no-swiftui-anywhere",
+            origin: "CLAUDE.md 'Rust is the default', docs/62",
+            check: ui_split::no_declarative_framework_survives,
+        },
+        Rule {
             name: "phone-root-key-rung",
             origin: "docs/56 §3",
             check: phone_parity::the_phone_dispatches_chords_at_the_root,

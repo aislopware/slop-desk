@@ -4,6 +4,12 @@
 //! than loudly if it slips: a frameworkless file in a UI target compiles, a dead platform arm
 //! compiles, and a seam sink wired on one half and forgotten on the other compiles. None of them is
 //! a build error, and all of them are the same failure — one implementation becoming two.
+//!
+//! A fourth boundary joined them once the client finished crossing, and it is the only one here
+//! that is not about the split at all: [`no_declarative_framework_survives`] bans `SwiftUI` from
+//! every Swift root at once. It lives beside these because the split is what it protects — two
+//! IMPERATIVE renderers can hold a decision in a stored property and pass it across the seam, and a
+//! declarative one re-derives it in a body where the other half cannot read it.
 
 use crate::claim::{Claim, Corpus, SWIFT, View, check_all};
 use crate::report::Report;
@@ -58,16 +64,16 @@ const PHONE_HALF: &str = "Sources/SlopDeskVideoClientPhone";
 /// sit well under the rebuild's floor instead — 15 and 1 say "the target still globs", which is all
 /// the directive shape below needs to be reading something (docs/62 stage A).
 ///
-/// ⚠️ AND THE PHONE HALF NAMES ONE FRAMEWORK, NOT TWO. The ban above lets a phone file pick any of
-/// the three; docs/62 narrows it to `UIKit`, and the tree is already there — `import SwiftUI` under
-/// either phone target measures ZERO. It is written as a BAN rather than the falling ceiling the
-/// campaign designed for, and the difference is worth recording because it decided the fate of a
-/// whole [`Claim`] variant. `Claim::CeilingUnder` existed to hold two migrations that were supposed
-/// to drain slowly — the phone's `SwiftUI` importers, and design-system files carrying both
-/// spellings — and its own docstring claimed "two rules use it" while ZERO ever constructed it.
-/// Then `3f11c6e6` and `32519299` drained both subjects to nought in two commits, and a ceiling of
-/// nought is a ban. So the variant is deleted and its one surviving law is the claim below: the
-/// migration finished before the ratchet for it was ever written.
+/// ⚠️ AND EACH HALF NAMES ONE FRAMEWORK, NOT THREE. The rescue above used to admit `SwiftUI` as a
+/// third; it no longer does, because there is no longer a file anywhere in `Sources` for it to
+/// rescue. That is [`no_declarative_framework_survives`]'s subject rather than this rule's, and the
+/// history is worth keeping here because it decided the fate of a whole [`Claim`] variant.
+/// `Claim::CeilingUnder` existed to hold two migrations that were supposed to drain slowly — the
+/// phone's `SwiftUI` importers, and design-system files carrying both spellings — and its own
+/// docstring claimed "two rules use it" while ZERO ever constructed it. Then `3f11c6e6` and
+/// `32519299` drained both subjects to nought in two commits, and a ceiling of nought is a ban. So
+/// the variant is deleted, and the ban that replaced it turned out to be a tree-wide law rather
+/// than a phone-shaped one: the migration finished before the ratchet for it was ever written.
 ///
 /// NEITHER HALF IMPORTS THE OTHER. `Package.swift` already makes that a link error; this catches
 /// the edit that would ADD the dependency there, which is the moment a shared view ancestor becomes
@@ -83,8 +89,20 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
             roots: UI_TARGETS,
             extensions: SWIFT,
             pattern: ".",
-            rescued_by: Some(r"^import (SwiftUI|AppKit|UIKit)$"),
-            view: View::Raw,
+            // TWO frameworks, not three. The alternation carried `SwiftUI` until the client finished
+            // crossing; leaving it would have let a rescued file name a framework that no longer
+            // exists anywhere in `Sources`, which is dead vocabulary in the position that decides
+            // whether a file is a view at all.
+            //
+            // ⚠️ `\b` RATHER THAN `$`, AND `Statements` RATHER THAN `Raw`, and both were live bugs.
+            // The end-anchor meant a DOCUMENTED import did not rescue: `RailStatusRollup.swift` says
+            // `import AppKit // the cluster and its slots are NSViews`, and this rule reported an
+            // AppKit view as holding no view framework. A rule that goes red on a correct file is one
+            // somebody eventually deletes. `Statements` blanks the trailing comment so the anchor
+            // reads the code, and it closes the other end at the same time — under `Raw` a file that
+            // merely NAMED the import in prose rescued itself.
+            rescued_by: Some(r"^import (AppKit|UIKit)\b"),
+            view: View::Statements,
             exempt: &[],
             message: "{files} holds no view framework — a UI target holds views only, and a frameworkless \
                       file belongs in SlopDeskClientCore (docs/56 §3)",
@@ -124,24 +142,14 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
             message: "only {found} files globbed under Sources/SlopDeskVideoClientPhone — the directive \
                       shape below would pass by reading nothing",
         },
-        // THE PHONE IS UIKit, AND THAT IS NOW A BAN RATHER THAN A CEILING. docs/62's endpoint is a
-        // phone with no `SwiftUI` in it at all, and `3f11c6e6` reached it in one commit rather than
-        // over the migration the campaign planned for: the live count under both phone targets is
-        // ZERO. A `Claim::CeilingUnder` was carried in `claim.rs` for exactly this pin — a count
-        // that may only fall — and it is deleted in the same change as this line, because a ceiling
-        // of nought is a ban and the variant had no other subject. The floors above stop the ban
-        // reading an empty tree.
-        Claim::NoneUnder {
-            roots: PHONE_VIEW_TARGETS,
-            extensions: SWIFT,
-            pattern: r"^import SwiftUI$",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "{files} imports SwiftUI in a phone UI target — the phone is UIKit, and a SwiftUI file \
-                      here is a stage that has not landed rather than a choice (docs/62)",
-        },
+        // ⚠️ THE PHONE'S `SwiftUI` BAN USED TO SIT HERE, AND IT WAS NARROWER THAN THE TRUTH. It read
+        // the two phone targets only, on the reading that the Mac had crossed to AppKit first and
+        // the phone was the half still migrating. Both halves have landed:
+        // `no_declarative_framework_survives` below bans the import across `Sources`, `Apps` and
+        // `Tests` at once, which strictly subsumes this claim, so a copy here would be a ban that
+        // can never be the one to fire — the dead weight a reader has to prove is dead before
+        // touching either. The floors above stay: they belong to the two directive claims around
+        // them, which ARE phone-only.
         Claim::PerFileCounts {
             roots: PHONE_VIEW_TARGETS,
             extensions: SWIFT,
@@ -179,6 +187,100 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
     ];
     check_all(tree, &claims)
 }
+
+/// NO DECLARATIVE FRAMEWORK SURVIVES ANYWHERE IN THE SWIFT TREE.
+///
+/// Measured 2026-08-28, and the measurement is the whole rule: `^\s*import SwiftUI` across
+/// `Sources`, `Apps` and `Tests` returns NOTHING, and `canImport(SwiftUI)` returns nothing in code
+/// either. The Mac entry point is a plain `NSObject, NSApplicationDelegate`
+/// (`Sources/SlopDeskMacUI/SlopDeskMacApp.swift`), not a `SwiftUI` `App`. So the ban goes in at the
+/// measured truth, which is zero — the same doctrine as the shared-vocabulary ceiling, from the
+/// clean end of it for once.
+///
+/// ## Why this is ONE rule and not the seven it replaces
+///
+/// Every ban on this import was scoped to the target somebody happened to be repairing:
+/// [`the_ui_split_holds_its_shape`] read the two phone targets,
+/// [`client_layers::presentation_logic_draws_nothing_both`](super::client_layers::presentation_logic_draws_nothing_both)
+/// read `SlopDeskClientCore` alone. Between them they covered three of the sixteen Swift targets,
+/// and everything else — `SlopDeskMacUI`, `SlopDeskWorkspaceCore`, `SlopDeskSlate`,
+/// `SlopDeskTerminal`, every sidecar face, both `Apps/` shells and all of `Tests` — was unpinned
+/// while the standing directive said the framework was gone from ALL of it. A per-target ban is the
+/// right shape for a MIGRATION, where one target crosses at a time; it is the wrong shape for a
+/// FINISHED one, because the next target to regress is by definition one nobody has repaired yet.
+///
+/// Both narrow claims are DELETED rather than left underneath this one. A subsumed ban cannot be
+/// the one that fires, so it reads as a second opinion when it is really dead weight — and the
+/// reader who eventually touches either rule has to prove the redundancy before they can move.
+/// Their doc comments now point here, which is the part that has to survive: this rule is the
+/// load-bearing one.
+///
+/// `Tests` is in scope though the directive named only `Sources` and `Apps`, because it measures
+/// zero as well and a test target is exactly where a re-entry gets excused as "only for the
+/// fixture".
+///
+/// ## ⚠️ THE VIEW IS `Statements`, AND `Code` WOULD NOT HAVE BEEN ENOUGH
+///
+/// Every surviving mention of this import in the tree is PROSE asserting that it is gone —
+/// `SlopDeskSplitViewController.swift`, `MacStatusMark.swift`, `PreferencesStore.swift`,
+/// `PaneImmersiveCapture.swift`. A `View::Raw` ban goes in RED against four files that are correct
+/// and gets disabled by whoever hits it first, which is how a rule dies. `View::Code` drops
+/// WHOLE-LINE comments and would clear all four today, but the `canImport` half of the pattern is
+/// not line-anchored, so a trailing `// … canImport(SwiftUI) …` after real code would fire it.
+/// [`View::Statements`] blanks every comment with a tokenizer while keeping the line structure the
+/// anchor needs, which is the only view that reads both halves correctly.
+///
+/// The `canImport` half is not decoration: `PaneImmersiveCapture.swift`'s own header records that a
+/// `#if canImport(SwiftUI)` was once added to satisfy a ratchet, which is the re-entry route this
+/// pattern exists to close.
+#[must_use]
+pub fn no_declarative_framework_survives(tree: &Tree) -> Report {
+    let claims = [
+        Claim::NoneUnder {
+            roots: SWIFT_TREE,
+            extensions: SWIFT,
+            pattern: r"^\s*import SwiftUI|canImport\(SwiftUI\)",
+            all: &[],
+            unless: &[],
+            view: View::Statements,
+            exempt: &[],
+            message: "{files} named SwiftUI — the client is AppKit and UIKit with no SwiftUI anywhere, and \
+                      the two IMPERATIVE view frameworks are the only ones a Swift file here may import. A \
+                      declarative surface is a stage that has not landed rather than a choice (CLAUDE.md \
+                      'Rust is the default', docs/62)",
+        },
+        // ⚠️ ONE FLOOR PER ROOT, and `3f11c6e6` is the argument every time: a ban with nothing
+        // required beside it is satisfied perfectly by a root that globbed to nothing. Summing them
+        // would hide `Apps` completely — eight files against six hundred. The numbers sit far under
+        // today's 642 / 8 / 567 because what they catch is a root that VANISHED or was RENAMED, not
+        // a tree that shrank.
+        Claim::Populated {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            minimum: 200,
+            message: "only {found} Swift files under Sources — the SwiftUI ban over it is reading almost \
+                      nothing, so check the root was not renamed or moved",
+        },
+        Claim::Populated {
+            roots: &["Apps"],
+            extensions: SWIFT,
+            minimum: 4,
+            message: "only {found} Swift files under Apps — the SwiftUI ban over it is reading almost \
+                      nothing, so check the root was not renamed or moved",
+        },
+        Claim::Populated {
+            roots: &["Tests"],
+            extensions: SWIFT,
+            minimum: 200,
+            message: "only {found} Swift files under Tests — the SwiftUI ban over it is reading almost \
+                      nothing, so check the root was not renamed or moved",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
+/// Every root that holds Swift, which is what makes the ban above a TREE-wide one.
+const SWIFT_TREE: &[&str] = &["Sources", "Apps", "Tests"];
 
 /// The video surface stays split, and the engine under it holds no views
 ///
@@ -257,17 +359,12 @@ pub fn the_video_surface_stays_split(tree: &Tree) -> Report {
             message: "only {found} files globbed under Sources/SlopDeskVideoClient — this gate would pass \
                       by reading nothing",
         },
-        Claim::NoneUnder {
-            roots: &[ENGINE],
-            extensions: SWIFT,
-            pattern: r"^import SwiftUI$",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "{files} imports SwiftUI in the video engine target — it belongs in \
-                      SlopDeskVideoClientMac or …Phone (docs/56 §3)",
-        },
+        // ⚠️ THE ENGINE'S `SwiftUI` BAN WAS THE THIRD COPY, and it is gone for the same reason as the
+        // phone's: `no_declarative_framework_survives` reads every Swift root, so this claim could
+        // never have been the one to fire. The DECLARATION ban below is what carries the engine's
+        // own law — a view type here belongs in one of the two shells — and it names `View` and both
+        // `…Representable` spellings, which are what a re-entry would have to declare even if the
+        // import somehow arrived by another route.
         Claim::NoneUnder {
             roots: &[ENGINE],
             extensions: SWIFT,
@@ -427,6 +524,17 @@ mod tests {
         split(&fixture);
         assert!(super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
 
+        // ⚠️ A DOCUMENTED IMPORT RESCUES, WHICH IS THE HALF THAT WAS BROKEN, and it goes here
+        // because every later case seeds a violation that `split()` does not undo. `RailStatusRollup`
+        // spells `import AppKit // the cluster and its slots are NSViews` and this rule reported it
+        // as holding no view framework, because the `$` anchor could not see past the comment. A rule
+        // that goes red on a correct file is one somebody eventually deletes.
+        fixture.write(
+            "Sources/SlopDeskMacUI/Views/MacView0.swift",
+            "import AppKit // the slots are NSViews\nfinal class V: NSView {}\n",
+        );
+        assert!(super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
+
         // Logic sitting where only one half can reach it is how a model gets written twice.
         fixture.write(
             "Sources/SlopDeskMacUI/Views/MacRanking.swift",
@@ -450,28 +558,38 @@ mod tests {
         );
         assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
 
-        // A SwiftUI file back in a phone target — the ban that replaced `Claim::CeilingUnder`.
+        // A file naming no view framework at all, which is what the narrowed rescue now decides. It
+        // imports the framework the phone half does NOT build with, so the only thing keeping it out
+        // is the alternation having dropped SwiftUI.
         split(&fixture);
         fixture.write(
             "Sources/SlopDeskPhoneUI/Views/View7.swift",
-            "#if os(iOS)\nimport SwiftUI\nstruct V: View { var body: some View { Text(\"\") } }\n#endif\n",
+            "#if os(iOS)\nimport SwiftUI\nfinal class V: UIView {}\n#endif\n",
         );
         let report = super::the_ui_split_holds_its_shape(&fixture.tree());
-        assert!(!report.is_clean());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|line| line.contains("imports SwiftUI in a phone UI target"))
+                .any(|line| line.contains("holds no view framework")),
+            "{report:?}"
         );
 
-        // And the same on the video half, which is the target a combined root would have hidden.
+        // The PROSE-ONLY direction of the same repair: naming the import in a comment must NOT
+        // rescue, or widening the anchor would open a hole where the anchor was.
         split(&fixture);
         fixture.write(
-            "Sources/SlopDeskVideoClientPhone/Half1.swift",
-            "#if os(iOS)\nimport SwiftUI\nstruct H: View { var body: some View { Text(\"\") } }\n#endif\n",
+            "Sources/SlopDeskMacUI/Views/MacView0.swift",
+            "// import AppKit went with the SwiftUI shell\nlet rung = 0\n",
         );
-        assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
+        let report = super::the_ui_split_holds_its_shape(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("MacView0.swift")),
+            "{report:?}"
+        );
 
         // And one half reaching for the other, which is where a shared view ancestor starts.
         split(&fixture);
@@ -480,6 +598,101 @@ mod tests {
             "import AppKit\nimport SlopDeskPhoneUI\nfinal class V: NSView {}\n",
         );
         assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
+    }
+
+    /// The tree-wide ban, in the four directions it can fail.
+    ///
+    /// The PROSE direction is the one that decides whether this rule survives contact: four live
+    /// files say `import SwiftUI` in a comment to record that it is gone, and a rule that goes red
+    /// against a correct file is a rule somebody deletes. Both a whole-line comment and a TRAILING
+    /// one are seeded, because only the second distinguishes [`View::Statements`] from `View::Code`
+    /// and only the second covers the un-anchored `canImport` half of the pattern.
+    #[test]
+    fn a_declarative_import_anywhere_in_the_swift_tree_is_caught_and_prose_is_not() {
+        let fixture = Fixture::new("no-swiftui-anywhere");
+        seed_swift_roots(&fixture);
+        assert!(super::no_declarative_framework_survives(&fixture.tree()).is_clean());
+
+        // A target nothing pinned before this rule: neither the phone ban nor the ClientCore one
+        // could see `SlopDeskWorkspaceCore`.
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Workspace/Store/Rail.swift",
+            "import SwiftUI\nstruct Rail: View { var body: some View { EmptyView() } }\n",
+        );
+        let report = super::no_declarative_framework_survives(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("Rail.swift")),
+            "{report:?}"
+        );
+
+        // The conditional-compilation route back in, which is how it arrived last time.
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Workspace/Store/Rail.swift",
+            "import Foundation\n#if canImport(SwiftUI)\nlet declarative = true\n#endif\n",
+        );
+        assert!(
+            !super::no_declarative_framework_survives(&fixture.tree()).is_clean(),
+            "the canImport half of the pattern is not reading anything",
+        );
+
+        // And an indented import inside a directive, which is why the anchor is `^\s*` and not `^`.
+        fixture.write(
+            "Tests/SlopDeskWorkspaceCoreTests/RailTests.swift",
+            "#if os(iOS)\n    import SwiftUI\n#endif\n",
+        );
+        let report = super::no_declarative_framework_survives(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("RailTests.swift")),
+            "Tests is in scope and the anchor tolerates leading space: {report:?}"
+        );
+
+        // ⚠️ PROSE IS NOT A REGRESSION, in either comment position. Four live files depend on this.
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Workspace/Store/Rail.swift",
+            "// `import SwiftUI` went with the SwiftUI phone, and `#if canImport(SwiftUI)` with it.\nlet \
+             rung = 0 // no canImport(SwiftUI) anywhere either\n",
+        );
+        fixture.write("Tests/SlopDeskWorkspaceCoreTests/RailTests.swift", "let ok = 1\n");
+        assert!(
+            super::no_declarative_framework_survives(&fixture.tree()).is_clean(),
+            "a header recording that the framework is gone must not read as the framework arriving",
+        );
+    }
+
+    /// A root that vanished satisfies the ban perfectly. Per root, because `Apps` holds eight files
+    /// against `Sources`' six hundred and would disappear under any combined count.
+    #[test]
+    fn a_swift_root_that_vanished_is_named_rather_than_passing() {
+        let fixture = Fixture::new("no-swiftui-floor-vacuity");
+        seed_swift_roots(&fixture);
+        for index in 0..4 {
+            fixture.remove(&format!("Apps/ClientApp-iOS/App{index}.swift"));
+        }
+        let report = super::no_declarative_framework_survives(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("only 0 Swift files under Apps")),
+            "{report:?}"
+        );
+    }
+
+    /// Enough plain files under each Swift root to clear all three floors.
+    fn seed_swift_roots(fixture: &Fixture) {
+        for index in 0..200 {
+            fixture.write(
+                &format!("Sources/SlopDeskWorkspaceCore/Filler{index}.swift"),
+                "import Foundation\n",
+            );
+            fixture.write(
+                &format!("Tests/SlopDeskWorkspaceCoreTests/Filler{index}.swift"),
+                "import XCTest\n",
+            );
+        }
+        for index in 0..4 {
+            fixture.write(&format!("Apps/ClientApp-iOS/App{index}.swift"), "import UIKit\n");
+        }
     }
 
     /// The per-target floor: one combined count would stay green on a drained video half.

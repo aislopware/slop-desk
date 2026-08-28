@@ -70,8 +70,19 @@ pub fn one_navigator_per_platform(tree: &Tree) -> Report {
             message: "NavigatorColumnViewController stopped being iOS-only — the Mac's navigator is \
                       MacNavigatorColumn",
         },
-        Claim::Mentions {
-            path: PHONE_NAVIGATOR,
+        // ⚠️ A DIRECTORY, NOT A FILE, AS OF 2026-08-28, and the Mac's claim below has read one for
+        // longer. This was `Mentions` on the controller alone, from when the phone's navigator WAS
+        // one SwiftUI file. docs/62 stage D split it into four — the controller in `Shell/`, plus
+        // `NavigatorRowCell`, `NavigatorSectionHeaderCell` and `SidebarGitLineView` in `Columns/` —
+        // and two of the three names went with the cells. The claim stayed green only because the
+        // agent that split it listed all five ClientCore owners in the controller's HEADER PROSE:
+        // `Mentions` reads `source.text` raw, so a comment satisfies it. That is a gate held green by
+        // a comment, which is the failure [`Claim::MentionsUnder`]'s own doc says it exists to
+        // prevent — "would make an ordinary split of a big view look like a regression". Reading the
+        // directory asks the question the law actually cares about: does the phone's navigator read
+        // these, wherever its author put them.
+        Claim::MentionsUnder {
+            root: "Sources/SlopDeskPhoneUI/Columns",
             names: &["SidebarRowPresentation", "SidebarRowMenu", "SidebarGitLine"],
             message: "the phone's navigator stopped reading {entry} — two rows, and the drift would be \
                       silent",
@@ -293,11 +304,22 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
+    /// The phone's navigator is FOUR files now, and the fixture is four files for that reason: a
+    /// seed that keeps all three readings in the controller would prove the claim against the shape
+    /// docs/62 stage D took apart, and would pass identically under the old per-file `Mentions`.
     fn navigator(fixture: &Fixture) {
         fixture
             .write(
                 super::PHONE_NAVIGATOR,
-                "#if os(iOS)\nSidebarRowPresentation\nSidebarRowMenu\nSidebarGitLine\n",
+                "#if os(iOS)\nfinal class C: UIViewController {}\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Columns/NavigatorRowCell.swift",
+                "SidebarRowPresentation\nSidebarRowMenu\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Columns/SidebarGitLineView.swift",
+                "SidebarGitLine\n",
             )
             .write(
                 "Sources/SlopDeskMacUI/Columns/MacNavigatorColumn.swift",
@@ -317,18 +339,40 @@ mod tests {
         navigator(&fixture);
         assert!(super::one_navigator_per_platform(&fixture.tree()).is_clean());
 
+        // ⚠️ AN ORDINARY SPLIT IS NOT A REGRESSION, and it goes FIRST because it is the only case
+        // here that asserts a clean tree — every later one seeds a violation that the next
+        // `navigator()` does not undo. Moving a reading from one file of the column to another is
+        // what the old per-file `Mentions` called a violation, and it is the whole reason this claim
+        // reads the directory.
+        fixture
+            .write(
+                "Sources/SlopDeskPhoneUI/Columns/NavigatorRowCell.swift",
+                "SidebarRowMenu\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Columns/NavigatorSectionHeaderCell.swift",
+                "SidebarRowPresentation\n",
+            );
+        assert!(super::one_navigator_per_platform(&fixture.tree()).is_clean());
+
         // The shared row, back under any path.
         fixture.write("Sources/SlopDeskSlate/Row.swift", "struct SlateTabRow: View {}\n");
         assert!(!super::one_navigator_per_platform(&fixture.tree()).is_clean());
 
         // A half that PORTED the git line and one that DELETED it look the same to the sigil ban —
-        // which is why the reader is asserted beside it.
+        // which is why the reader is asserted beside it. Deleting the CELL rather than editing the
+        // controller is the point: the reading has to be missing from the whole column, not from one
+        // file somebody split.
         navigator(&fixture);
-        fixture.write(
-            super::PHONE_NAVIGATOR,
-            "#if os(iOS)\nSidebarRowPresentation\nSidebarRowMenu\n",
+        fixture.remove("Sources/SlopDeskPhoneUI/Columns/SidebarGitLineView.swift");
+        let report = super::one_navigator_per_platform(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("the phone's navigator stopped reading SidebarGitLine")),
+            "{report:?}"
         );
-        assert!(!super::one_navigator_per_platform(&fixture.tree()).is_clean());
 
         // A sigil respelt in a half.
         navigator(&fixture);
