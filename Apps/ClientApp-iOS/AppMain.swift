@@ -15,7 +15,6 @@
 // `swift build`).
 import SlopDeskPhoneUI
 import SlopDeskWorkspaceCore
-import SwiftUI
 
 // TWO MODULES, ONE GATE (docs/56 §3, the video carve). `SlopDeskVideoClient` is the platform-free
 // engine — session, pipeline, connection, discovery — and `SlopDeskVideoClientPhone` is the UIKit
@@ -37,19 +36,18 @@ import SlopDeskVideoClientPhone
 /// The whole app object lives in the `SlopDeskPhoneUI` SwiftPM library (`PhoneAppDelegate`); this
 /// shell only attaches `@main` and, when the libghostty xcframework is present, registers the
 /// production terminal renderer with ``TerminalRendererFactory``. Until the xcframework is
-/// built, no factory is registered and the BUILD-STATUS placeholder shows (libghostty-only
-/// policy — there is NO fallback VT renderer).
+/// built, no factory is registered and the canvas mounts its own build-status surface
+/// (libghostty-only policy — there is NO fallback VT renderer).
 ///
 /// ## Wiring the production renderer (once the xcframework exists)
 /// 1. Build it: `ThirdParty/ghostty/build-libghostty.sh` → `libghostty.xcframework`.
 /// 2. Add the xcframework to this app target (project.yml `dependencies:` / Xcode "Frameworks").
 /// 3. Add `ThirdParty/ghostty/integration/GhosttySurface/GhosttySurface.swift` +
 ///    the `CGhostty` module map to this target's sources/headers.
-/// 4. Add a `GhosttyTerminalView: TerminalRenderingView` (a `UIViewRepresentable` /
-///    `NSViewRepresentable` hosting a Metal view that owns a `GhosttySurface`, attaching it to
-///    `model.surface` and feeding `model`'s output).
-/// 5. Register it in `init()` below:
-///        TerminalRendererFactory.shared = { model in AnyView(GhosttyTerminalView(model: model)) }
+/// 4. Add a `UIView` conforming to ``TerminalSurfaceHosting``, owning a `GhosttySurface` attached
+///    to `model.surface` and feeding `model`'s output.
+/// 5. Register it through `GhosttyRendererSeam.install()` below — never by assigning the factory
+///    here, which is what `one_seam_two_shapes_one_installer` bans.
 @main
 struct ClientAppMain {
     // `main()` performs the five seam registrations (the load-bearing wiring that injects the production
@@ -67,33 +65,39 @@ struct ClientAppMain {
         // shows the gated `BuildStatusPlaceholderView` (libghostty-only policy — no
         // fallback VT renderer).
         //
-        // ONE CALL, BOTH SHAPES OF THE SEAM (docs/56 stage F, risk 2). `shared` is the SwiftUI shape
-        // and iOS's ONLY shape — the phone has no `NSView` — and `nativeShared` is the AppKit one the
-        // Mac canvas adds as a subview rather than burying under an `NSHostingView` that would claim
-        // the hit-test over the one surface that must take every keystroke. Registering only half of
-        // it ships a renderer whose terminal is the BUILD-STATUS placeholder, which is why the two
-        // assignments live behind one installer in the embedder instead of being spelled here twice.
+        // ONE CALL, ONE SHAPE (docs/56 stage F, risk 2). The seam used to carry TWO slots and this
+        // comment used to explain why: `shared` returned an `AnyView` and was "iOS's ONLY shape — the
+        // phone has no `NSView`". The phone draws in UIKit now, both platforms hand back a
+        // ``PlatformView``, and the second slot is banned rather than required. The installer still
+        // lives in the embedder rather than here, because that is what keeps the registration in one
+        // place no app target can half-do.
         #if canImport(CGhostty)
         MainActor.assumeIsolated { GhosttyRendererSeam.install() }
         #endif
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
         // view. The cross-platform view layer cannot reference
-        // `SlopDeskVideoClientPhone.VideoWindowView` directly (it would pull VideoToolbox + Metal
+        // `SlopDeskVideoClientPhone.VideoSurfaceHost` directly (it would pull VideoToolbox + Metal
         // into the headless `swift build`/tests), so the GUI app target — which links
-        // `SlopDeskVideoClientPhone` — injects it here at launch. With no registration the seam
-        // shows the gated `RemoteWindowPlaceholderView`.
+        // `SlopDeskVideoClientPhone` — injects it here at launch. With no registration the canvas
+        // mounts its own unavailable surface.
+        //
+        // ONE REGISTRATION, and the builder below is why it is spelled as a function rather than
+        // inlined: the pane threads twenty-odd injector callbacks, and a second closure built beside
+        // the first is how most of them end up on one path and the rest on another.
         #if canImport(SlopDeskVideoClientPhone)
-        VideoWindowFactory.shared = { descriptor, paneContext in
+        func videoPane(
+            _ descriptor: RemoteWindowDescriptor, _ paneContext: RemotePaneContext,
+        ) -> VideoPaneSpec {
             // LIVE path when the descriptor carries a full endpoint (host + media/cursor
             // ports), entered via the Remote-window panel: build the VideoWindowConnection
-            // and the orchestrator-backed VideoWindowView(title:connection:). Otherwise the
-            // chrome-only initializer (no live decode) — the seam's preview/placeholder path.
+            // and the orchestrator-backed spec. Otherwise the chrome-only initializer (no live
+            // decode) — the seam's preview path.
             //
             // `paneContext` (active state + the read-only `inputEnabled` gate + activate/canvas-
             // scroll callbacks) is destructured into primitives here — `SlopDeskVideoClient` cannot import
-            // `SlopDeskClientUI` (the seam exists for exactly that reason), so the context type stays on the
-            // `SlopDeskClientUI` side and only its Bools + closures cross into `VideoWindowView`.
+            // `SlopDeskWorkspaceCore` (the seam exists for exactly that reason), so the context type stays
+            // on the WorkspaceCore side and only its Bools + closures cross into ``VideoPaneSpec``.
             if descriptor.hasEndpoint {
                 let connection = VideoWindowConnection(
                     host: descriptor.host,
@@ -102,7 +106,7 @@ struct ClientAppMain {
                     windowID: descriptor.windowID,
                     displayID: descriptor.displayID, // full-desktop pane → wire helloDisplay
                 )
-                return AnyView(VideoWindowView(
+                return VideoPaneSpec(
                     title: descriptor.title,
                     // Smart-zoom ⌘0 gate (`PinchZeroPolicy`): the pane's app display name rides
                     // the descriptor (client seam, not wire); empty (desktop pane) fails open.
@@ -127,8 +131,8 @@ struct ClientAppMain {
                     // dead — they must ride the factory like every other seam callback.
                     //
                     // `onSystemKeyInjectorReady` is the ONE the Mac shell threads and this one cannot:
-                    // `VideoWindowView`'s phone initializer does not take it, because the sink carries
-                    // raw `NSEvent.ModifierFlags` bits produced only by a `CGEventTap`, and iOS has
+                    // ``VideoPaneSpec`` does not declare it, because the sink carries raw
+                    // `NSEvent.ModifierFlags` bits produced only by a `CGEventTap`, and iOS has
                     // neither. `PaneImmersiveCapture.isSupported` is already `false` here, so the phone
                     // footer draws no immersive chip to feed it. Absent from the SIGNATURE rather than
                     // passed-and-swallowed, so this cannot rot into a sink someone believes is live.
@@ -140,9 +144,12 @@ struct ClientAppMain {
                     // TERMINAL REJECTION: host refused the session — the seam routes it to
                     // `RemoteWindowModel.noteSessionRejected()` (picker + error, no rebuild loop).
                     onSessionRejected: paneContext.onSessionRejected,
-                ))
+                )
             }
-            return AnyView(VideoWindowView(title: descriptor.title))
+            return VideoPaneSpec(title: descriptor.title)
+        }
+        VideoWindowFactory.shared = { descriptor, paneContext in
+            VideoSurfaceHost(videoPane(descriptor, paneContext))
         }
         // UDP-mux: install the per-host shared-flow registry on the video pipeline. Panes targeting the
         // same host share ONE UDP flow (one flow per host, N panes); the host's `slopdesk-videohostd`
@@ -239,4 +246,10 @@ struct ClientAppMain {
 /// `@MainActor` with matching shapes. The conformance lives HERE (retroactive) because the video
 /// module deliberately never imports `SlopDeskWorkspaceCore` (the seam-split discipline).
 extension WindowFeedChannel: @retroactive HostWindowFeedLink {}
+
+/// And the phone's video surface IS the seam's remote-surface host, for the same reason and by the
+/// same route: `VideoSurfaceHost` is a `UIView` exposing `surfaceView`, `setPaneGates` and
+/// `detachSurface`, which is the whole protocol — but the module that declares it cannot see
+/// `SlopDeskWorkspaceCore`, so the app target is the one place both names exist at once.
+extension VideoSurfaceHost: @retroactive RemoteSurfaceHosting {}
 #endif

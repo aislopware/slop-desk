@@ -582,6 +582,11 @@ let package = Package(
                 // (process / port / dir / git-file) directly. Transitive via WorkspaceCore, but a
                 // `swift build` import needs the module declared here (same as Transport below).
                 "SlopDeskProtocol",
+                // `ConfigRevision` — the ONE observable edge for "the config file moved". The shell's
+                // tracked read of `auto-hide-tabs-panel` arms on it, because `AppConfig` is a plain
+                // locked global and a settings flip is otherwise invisible to an observation tracker.
+                // The Mac root declares it for exactly the same reason.
+                "SlopDeskVideoProtocol",
                 // E4/WI-6: `AgentSessionHistoryView` parses the raw `readAgentSession` JSONL through
                 // `SlopDeskInspector.TranscriptParser`. Transitive via WorkspaceCore, but a direct
                 // `import` needs the module declared here (same rationale as Protocol/Transport).

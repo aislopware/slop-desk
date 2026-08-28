@@ -405,7 +405,13 @@ pub fn one_design_floor_two_renderers(tree: &Tree) -> Report {
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskSlate"],
             extensions: SWIFT,
-            pattern: ": View|some View|NSViewRepresentable|UIViewRepresentable|: Shape",
+            // ⚠️ The IMPERATIVE spellings are in this alternation too (docs/62 stage C). Every entry
+            // to the left of them is SwiftUI's, so a floor that grew a `UIView` subclass — the one
+            // shape the phone's port produces by the dozen — would have walked straight through a
+            // rule whose whole job is to keep this target values-only. `: UIView` also covers
+            // `: UIViewController`, and `: NSView` its controller, by prefix.
+            pattern: ": View|some View|NSViewRepresentable|UIViewRepresentable|: Shape|: UIView|: NSView|\
+                      : UIControl|: CALayer",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -644,6 +650,23 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskSlate/SlateStatusMark.swift",
             "var body: some View { Circle() }\n",
+        );
+        assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
+
+        // And one `UIView` subclass is the SAME collapse spelled imperatively — the shape the phone's
+        // port produces by the dozen, which is why it had to join the alternation before stage C put
+        // the first one in the tree.
+        floor(&fixture);
+        fixture.write(
+            "Sources/SlopDeskSlate/SlateStatusMarkView.swift",
+            "final class SlateStatusMarkView: UIView {}\n",
+        );
+        assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
+
+        floor(&fixture);
+        fixture.write(
+            "Sources/SlopDeskSlate/SlatePlateControl.swift",
+            "final class SlatePlateControl: UIControl {}\n",
         );
         assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
 

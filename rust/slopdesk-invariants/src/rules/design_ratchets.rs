@@ -21,7 +21,8 @@ const PHONE_UI: &str = "Sources/SlopDeskPhoneUI";
 /// The menu file, which is discoverability and nothing else.
 const MENU: &str = "Sources/SlopDeskMacUI/Commands/WorkspaceCommands.swift";
 
-/// The three banned literal shapes, as one alternation.
+/// The banned literal shapes, as one alternation — the SwiftUI three, and the UIKit three each of
+/// them acquires when a view is ported (docs/62 stage C).
 ///
 /// Both spellings of each, so a leak cannot dodge the pattern by dropping a space:
 ///
@@ -32,9 +33,23 @@ const MENU: &str = "Sources/SlopDeskMacUI/Commands/WorkspaceCommands.swift";
 /// * height — `.frame(height: N)`, anchored on `height` as the FIRST argument, because
 ///   `.frame(width: N, height: M)` is a square glyph box and not the vertical rhythm.
 ///
+/// ⚠️ The UIKit half is why this rule is §4.8's headline case: EVERY spelling above is SwiftUI-only,
+/// so the day the phone's design floor became `UIView` subclasses the ratchet would have gone
+/// silently vacuous — still green, still in `just lint`, and no longer able to see a single leak.
+/// The three that carry the same dimensions in UIKit are:
+///
+/// * font — `UIFont.systemFont(ofSize: N)` and its siblings (`monospacedSystemFont`,
+///   `boldSystemFont`, `italicSystemFont`), reached by `[A-Za-z]*[sS]ystemFont`;
+/// * radius — `layer.cornerRadius = N`, an ASSIGNMENT, which `cornerRadius[(:]` cannot match;
+/// * height/width — the Auto Layout constant, `constraint(equalToConstant: N)` and the
+///   `NSLayoutConstraint(…, constant: N)` argument, both reached by `[Cc]onstant: ?[0-9]`. This is
+///   the UIKit spelling of a fixed rhythm, and it covers the horizontal one the SwiftUI clause
+///   deliberately left out — Auto Layout has no square-glyph-box idiom to spare.
+///
 /// What is deliberately NOT matched is the token system itself: `.font(.system(size: size))` has no
-/// digit, and `static let radiusCard: CGFloat = 8` is not `cornerRadius`-prefixed.
-const RAW_LITERALS: &str = r"\.font\(\.system\(size: ?[0-9]|cornerRadius[(:] *[0-9]|\.frame\(height: ?[0-9]";
+/// digit, `UIFont.systemFont(ofSize: Slate.Typeface.body)` has no digit, and
+/// `static let radiusCard: CGFloat = 8` is not `cornerRadius`-prefixed.
+const RAW_LITERALS: &str = r"\.font\(\.system\(size: ?[0-9]|cornerRadius[(:] *[0-9]|\.frame\(height: ?[0-9]|UIFont\.[A-Za-z]*[sS]ystemFont\(ofSize: ?[0-9]|\.cornerRadius *= *[0-9]|[Cc]onstant: ?[0-9]";
 
 /// Every font size, corner radius and fixed height in the client UI rides the `Slate` scale.
 ///
@@ -131,7 +146,8 @@ mod tests {
         phone_tree(&fixture);
         assert!(super::design_tokens_are_not_bypassed(&fixture.tree()).is_clean());
 
-        // Each of the three shapes, one at a time, in both spellings where the shell had two.
+        // Each shape, one at a time, in both spellings where the shell had two — and each one's
+        // UIKit twin, because the ported floor is where the leaks will be written from now on.
         for leak in [
             ".font(.system(size: 13))",
             ".font(.system(size:13))",
@@ -139,6 +155,12 @@ mod tests {
             ".cornerRadius(8)",
             ".frame(height: 28)",
             ".frame(height:28)",
+            ".font = UIFont.systemFont(ofSize: 13)",
+            ".font = UIFont.monospacedSystemFont(ofSize:13, weight: .regular)",
+            ".layer.cornerRadius = 8",
+            ".layer.cornerRadius=8",
+            ".heightAnchor.constraint(equalToConstant: 28)",
+            ".heightAnchor.constraint(equalToConstant:28)",
         ] {
             fixture.write(
                 &format!("{}/View0.swift", super::PHONE_UI),
@@ -162,7 +184,8 @@ mod tests {
         fixture.write(
             &format!("{}/View0.swift", super::PHONE_UI),
             "// never write .font(.system(size: 13)) — use Slate.Typeface.body\n/// nor .cornerRadius(8), \
-             nor .frame(height: 28)\nText(\"x\").font(Slate.Typeface.body)\n",
+             nor .frame(height: 28)\n// nor UIFont.systemFont(ofSize: 13), nor .layer.cornerRadius = 8, \
+             nor .constraint(equalToConstant: 28)\nText(\"x\").font(Slate.Typeface.body)\n",
         );
         assert!(super::design_tokens_are_not_bypassed(&fixture.tree()).is_clean());
     }

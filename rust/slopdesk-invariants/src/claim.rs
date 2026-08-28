@@ -525,6 +525,38 @@ pub enum Claim {
         /// The sentence, with `{files}` where the offenders go.
         message: &'static str,
     },
+    /// At most `maximum` files under `roots` may match `pattern` — a RATCHET, not a ban.
+    ///
+    /// [`Claim::NoFileUnder`] with the ceiling raised off zero, and the difference is a migration.
+    /// A ban states a law the tree already satisfies. This states a law the tree is on its way to:
+    /// the shape is here today, it is going to zero, and the only thing that must never happen in
+    /// between is that it spreads. The count is the pin, so the rule is green the day it is written
+    /// and gets STRICTER for free — every file that crosses lowers the ceiling in the same commit
+    /// that earned it, and a rule left un-lowered is a rule that stopped meaning anything, so the
+    /// ceiling is checked from BOTH sides: an actual count below the pin fails too, naming the new
+    /// number to write down.
+    ///
+    /// Two rules use it, both from the phone's UIKit campaign (docs/62): the count of design-system
+    /// files carrying BOTH spellings, and the count of phone files that still `import SwiftUI`.
+    /// Neither can be a ban while a SwiftUI screen still mounts the component — deleting the half
+    /// early does not simplify anything, it stops the app compiling — and neither may be left to a
+    /// promise, because "we will delete it later" is the one claim a codebase cannot keep by itself.
+    CeilingUnder {
+        /// Path prefixes to scan.
+        roots: &'static [&'static str],
+        /// Only files with one of these extensions are read.
+        extensions: &'static [&'static str],
+        /// The pattern that makes a file count.
+        pattern: &'static str,
+        /// Which view to read.
+        view: View,
+        /// The pinned count: how many carry it today, and the number that may only fall.
+        maximum: usize,
+        /// The sentence for a RISE, with `{found}`, `{maximum}` and `{files}`.
+        message: &'static str,
+        /// The sentence for a FALL — the ceiling is stale and wants lowering. Same placeholders.
+        lowered: &'static str,
+    },
     /// No BODY may appear under both of two roots — a clone detector, with a debt list.
     ///
     /// Every other ban here forbids a shape somebody wrote down. This one forbids a coincidence: a
@@ -1276,6 +1308,48 @@ impl Claim {
                 if !offenders.is_empty() {
                     let named: Vec<&str> = offenders.iter().map(String::as_str).collect();
                     report.fail(fill(message, "files", &named.join(", ")));
+                }
+            },
+            Self::CeilingUnder {
+                roots,
+                extensions,
+                pattern,
+                view,
+                maximum,
+                message,
+                lowered,
+            } => {
+                let mut carriers = BTreeSet::new();
+                for root in *roots {
+                    for (path, source) in tree.under(root) {
+                        let matching_extension = path
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| extensions.contains(&ext));
+                        if !matching_extension {
+                            continue;
+                        }
+                        if text::matches(&view.of(source), pattern) {
+                            carriers.insert(path.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+                // Both directions, and the FALL is the one that earns the claim its name. A ratchet
+                // whose pin is never lowered is a ban on a number nobody re-reads; failing on the
+                // way down is what turns "delete one more" into a line somebody has to write.
+                let found = carriers.len();
+                if found != *maximum {
+                    let named: Vec<&str> = carriers.iter().map(String::as_str).collect();
+                    let sentence = if found > *maximum { message } else { lowered };
+                    report.fail(fill(
+                        &fill(
+                            &fill(sentence, "found", &found.to_string()),
+                            "maximum",
+                            &maximum.to_string(),
+                        ),
+                        "files",
+                        &named.join(", "),
+                    ));
                 }
             },
             Self::NoCloneAcross {

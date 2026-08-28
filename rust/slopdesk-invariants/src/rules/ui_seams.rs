@@ -10,11 +10,11 @@ use crate::report::Report;
 use crate::tree::Tree;
 
 const MAC_WINDOW_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift";
-const PHONE_WINDOW_ROOT: &str = "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift";
+const PHONE_WINDOW_ROOT: &str = "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift";
 const MAC_SIDEBAR_TOGGLE: &str = "Sources/SlopDeskMacUI/Chrome/MacWindowSidebarToggle.swift";
 const MAC_CONTENT_COLUMN: &str = "Sources/SlopDeskMacUI/Columns/MacContentColumn.swift";
 const GHOSTTY_SEAM: &str = "ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift";
-const TERMINAL_SEAM: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift";
+const TERMINAL_SEAM: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalRendererSeam.swift";
 const VIDEO_SEAM: &str = "Sources/SlopDeskWorkspaceCore/Video/VideoWindowSeam.swift";
 const MAC_APP_MAIN: &str = "Apps/ClientApp-macOS/AppMain.swift";
 const PHONE_APP_MAIN: &str = "Apps/ClientApp-iOS/AppMain.swift";
@@ -223,62 +223,59 @@ pub fn the_canvas_registers_itself_in_appkit(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// One seam, two shapes, and neither half registered alone (`docs/56` stage F, P4)
+/// One seam, ONE shape, and no second slot beside it (`docs/56` stage F, P4)
 ///
-/// Each leaf seam offers `shared` (`SwiftUI`, and iOS's ONLY shape — the phone has no `NSView`) and
-/// `nativeShared` (`AppKit`, the view the Mac canvas adds as a subview instead of burying under an
-/// `NSHostingView` that claims the hit-test over the one surface taking every keystroke). The
-/// failure this gate exists for is REGISTERING HALF: a build that sets only `shared` ships a
-/// terminal the Mac canvas cannot mount natively, and one that sets only `nativeShared` ships iOS
-/// the BUILD-STATUS placeholder. Neither is a compile error and neither has a test — the
-/// registration happens in an app target no `Package.swift` builds.
+/// ⚠️ THIS RULE USED TO ENFORCE THE EXACT OPPOSITE OF WHAT IT NOW ENFORCES, and the reversal is
+/// worth reading before anything here is edited. Each leaf seam carried TWO slots — `shared`
+/// returning an `AnyView` and `nativeShared` returning the platform view — and this rule demanded
+/// BOTH, on both seams, in the same words it now uses to forbid the second. Its doc said "`shared`
+/// is not deprecated by `nativeShared` and must never be: deleting it does not break the Mac, which
+/// is exactly why it would get deleted."
 ///
-/// ⚠️ THE CODE VIEW, NOT THE RAW ONE, and that is not a preference here: the embedder's doc
-/// comments name `TerminalRendererFactory.nativeShared` five times to explain the seam, so a raw
-/// census reports the prose as a registrar and this gate could never be written.
+/// That rested on ONE premise, stated in it: `shared` was "iOS's ONLY shape — the phone has no
+/// `NSView`". The phone draws in UIKit now and has a `UIView`, so the premise is false and the
+/// deletion the rule was written to prevent became the correct move. The seams return a
+/// ``PlatformView`` and nothing else.
 ///
-/// The embedder is compiled by NO `Package.swift` target — it joins the Xcode app through
-/// `slopdesk-ops enable-renderer macos` — so a rename that leaves its path dangling would silently
-/// empty the census rather than fail it. It is asked for first.
+/// WHAT SURVIVES UNCHANGED is the failure the rule actually exists for, which was never about
+/// SwiftUI: REGISTERING NOTHING. The registration happens in app targets no `Package.swift` builds
+/// and the embedder is compiled by no target at all — it joins the Xcode app through
+/// `slopdesk-ops enable-renderer macos` — so an unregistered seam is not a compile error, has no
+/// test, and ships the BUILD-STATUS placeholder where a terminal should be. Every `Matches` claim
+/// below is that check, and each is now STRONGER than before: one registration cannot be half-done.
 ///
-/// BOTH SHAPES SURVIVE ON BOTH SEAMS. `shared` is not deprecated by `nativeShared` and must never
-/// be: deleting it does not break the Mac, which is exactly why it would get deleted. And ONE
-/// INSTALLER SETS BOTH — the app target used to spell `TerminalRendererFactory.shared = …` itself,
-/// which is a shape it can only ever set one of.
+/// ⚠️ THE CODE VIEW, NOT THE RAW ONE, and that is not a preference here: the seams' own doc
+/// comments name these symbols repeatedly to explain the collapse — this paragraph included — so a
+/// raw census reports the prose as a registrar and this gate could never be written.
 ///
-/// THE VIDEO PAIR COMES FROM ONE BUILDER. Its two registrations DO live in the app target (the
-/// video module never imports `SlopDeskWorkspaceCore`, so the app is the only place both halves can
-/// be named), and they are fed by one `-> MacVideoWindowView` function on purpose: the pane threads
-/// twelve injector callbacks, and two closures built side by side is how eleven of them end up on
-/// one path. `AnyView(MacVideoWindowView(` is the shape of that re-inlining, so it is the thing
-/// banned.
+/// THE SECOND SLOT IS NOW BANNED RATHER THAN REQUIRED. `nativeShared`/`makeNative` were the
+/// PLATFORM half of the pair; with the SwiftUI half gone they were promoted to the bare names, and
+/// a re-appearing `nativeShared` means someone has re-introduced the two-slot shape — which is how
+/// a hosting view gets interposed over the one surface that takes every keystroke.
 ///
-/// ⚠️ THE TYPE IS `MacVideoWindowView` SINCE THE VIDEO CARVE. It was `VideoWindowView` while one
-/// two-armed file served both platforms; the Mac half took the `Mac` prefix and the phone kept the
-/// bare name, per the house convention. This gate is spelled against the MAC app main and so names
-/// the MAC type — a needle left reading `-> VideoWindowView` would match nothing here and go red
-/// for the rename rather than for the re-inlining it exists to catch.
-///
-/// AND BOTH APPS INSTALL THE TERMINAL SEAM THE ONE WAY. iOS registers only the `SwiftUI` half —
-/// that is `install()`'s own `#if os(macOS)` and not the app's business — but it must still go
-/// through it.
+/// THE VIDEO SEAM IS REGISTERED FROM THE APP TARGET on both platforms, because the video modules
+/// never import `SlopDeskWorkspaceCore` and the app is the only place both sides can be named. It
+/// is fed by one builder on purpose: the pane threads twelve injector callbacks, and a second
+/// closure built beside the first is how eleven of them end up on one path and one on another.
 #[must_use]
 pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
     let mut report = Report::new();
     for seam in [TERMINAL_SEAM, VIDEO_SEAM] {
-        for shape in [
-            "static var shared",
-            "static var nativeShared",
-            "static func makeNative",
-        ] {
-            Claim::Names {
-                path: seam,
-                needle: shape,
-                message: "a leaf seam stopped declaring one of its two shapes — one seam has two shapes, \
-                          picked by which framework is drawing (docs/56 stage F, P4)",
-            }
-            .check(tree, &mut report);
+        Claim::Names {
+            path: seam,
+            needle: "static var shared",
+            message: "a leaf seam stopped declaring its one slot — the seam hands back a PlatformView and \
+                      the canvas mounts it directly (docs/56 stage F, P4)",
         }
+        .check(tree, &mut report);
+        Claim::Lacks {
+            path: seam,
+            pattern: r"static (var nativeShared|func makeNative)",
+            view: View::Code,
+            message: "a leaf seam grew a second slot beside `shared` again — two slots is how a hosting \
+                      view gets interposed over the surface that takes every keystroke (docs/56 stage F, P4)",
+        }
+        .check(tree, &mut report);
     }
 
     let claims = [
@@ -291,15 +288,9 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
             path: GHOSTTY_SEAM,
             pattern: r"TerminalRendererFactory\.shared *=",
             view: View::Code,
-            message: "GhosttyRendererSeam.install() no longer sets TerminalRendererFactory.shared — half a \
-                      seam registered is a placeholder terminal on one platform (docs/56 stage F, P4)",
-        },
-        Claim::Matches {
-            path: GHOSTTY_SEAM,
-            pattern: r"TerminalRendererFactory\.nativeShared *=",
-            view: View::Code,
-            message: "GhosttyRendererSeam.install() no longer sets TerminalRendererFactory.nativeShared — \
-                      half a seam registered is a placeholder terminal on one platform (docs/56 stage F, P4)",
+            message: "GhosttyRendererSeam.install() no longer sets TerminalRendererFactory.shared — an \
+                      unregistered seam ships the BUILD-STATUS placeholder where the terminal should be, \
+                      and no compiler in `just check` opens this file (docs/56 stage F, P4)",
         },
         Claim::NoneUnder {
             roots: &["Sources", "Apps", "ThirdParty/ghostty/integration"],
@@ -309,33 +300,33 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &[GHOSTTY_SEAM],
-            message: "{files} registers the terminal seam outside GhosttyRendererSeam.install() — that is \
-                      how one half gets set and the other forgotten (docs/56 stage F, P4)",
+            message: "{files} registers the terminal seam outside GhosttyRendererSeam.install() — one seam \
+                      has one installer, and a second registrar resolves by mount order \
+                      (docs/56 stage F, P4)",
         },
+        // The video seam's builder, named by its RETURN TYPE rather than by the registration line: the
+        // point of the rule is that ONE value feeds the mount, and a builder that stopped returning a
+        // spec is the shape where callbacks start being threaded per-closure again.
         Claim::Names {
             path: MAC_APP_MAIN,
-            needle: "-> MacVideoWindowView",
-            message: "the Mac app main stopped spelling `-> MacVideoWindowView` — the video seam's two \
-                      mounts must be one builder's value (docs/56 stage F, P4)",
+            needle: "-> MacVideoPaneSpec",
+            message: "the Mac app main stopped spelling `-> MacVideoPaneSpec` — the video mount must be one \
+                      builder's value, or the pane's twelve injector callbacks get threaded per closure \
+                      (docs/56 stage F, P4)",
         },
         Claim::Names {
             path: MAC_APP_MAIN,
             needle: "VideoWindowFactory.shared =",
-            message: "the Mac app main stopped setting VideoWindowFactory.shared — the video seam's two \
-                      mounts must be one builder's value (docs/56 stage F, P4)",
-        },
-        Claim::Names {
-            path: MAC_APP_MAIN,
-            needle: "VideoWindowFactory.nativeShared =",
-            message: "the Mac app main stopped setting VideoWindowFactory.nativeShared — the video seam's \
-                      two mounts must be one builder's value (docs/56 stage F, P4)",
+            message: "the Mac app main stopped setting VideoWindowFactory.shared — the video seam is \
+                      registered from the app target or not at all (docs/56 stage F, P4)",
         },
         Claim::Lacks {
             path: MAC_APP_MAIN,
-            pattern: r"AnyView\(MacVideoWindowView\(",
+            pattern: r"VideoWindowFactory\.nativeShared *=",
             view: View::Code,
-            message: "the video pane is built inside the `shared` closure again — the AppKit mount then \
-                      carries whatever callbacks that copy happens to thread (docs/56 stage F, P4)",
+            message: "the Mac app main registers a `nativeShared` video slot again — the seam has ONE slot \
+                      since the phone gained a UIView, and a second one re-admits the hosting view over \
+                      the surface that takes every keystroke (docs/56 stage F, P4)",
         },
         Claim::Matches {
             path: MAC_APP_MAIN,
@@ -486,18 +477,17 @@ mod tests {
     }
 
     fn seams(fixture: &Fixture) -> &Fixture {
-        let shapes = "static var shared\nstatic var nativeShared\nstatic func makeNative\n";
+        // ONE slot per seam. The fixture used to seed three shapes here — `shared`, `nativeShared` and
+        // `makeNative` — because the rule REQUIRED all three; it now forbids the last two.
+        let shapes = "static var shared\n";
         fixture
             .write(super::TERMINAL_SEAM, shapes)
             .write(super::VIDEO_SEAM, shapes)
-            .write(
-                super::GHOSTTY_SEAM,
-                "TerminalRendererFactory.shared = { … }\nTerminalRendererFactory.nativeShared = { … }\n",
-            )
+            .write(super::GHOSTTY_SEAM, "TerminalRendererFactory.shared = { … }\n")
             .write(
                 super::MAC_APP_MAIN,
-                "func build() -> MacVideoWindowView { … }\nVideoWindowFactory.shared = { … }\n\
-                 VideoWindowFactory.nativeShared = { … }\nGhosttyRendererSeam.install()\n",
+                "func build() -> MacVideoPaneSpec { … }\nVideoWindowFactory.shared = { … }\n\
+                 GhosttyRendererSeam.install()\n",
             )
             .write(super::PHONE_APP_MAIN, "GhosttyRendererSeam.install()\n")
             // Rewritten with the rest, so a case starts from the clean tree rather than from the
@@ -512,11 +502,11 @@ mod tests {
         seams(&fixture);
         assert!(super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
-        // Half a seam registered is a placeholder terminal on one platform, and nothing goes red.
-        fixture.write(super::GHOSTTY_SEAM, "TerminalRendererFactory.shared = { … }\n");
+        // An unregistered seam ships the BUILD-STATUS placeholder, and no compiler opens this file.
+        fixture.write(super::GHOSTTY_SEAM, "enum GhosttyRendererSeam {}\n");
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
-        // A second registrar, which is how one half gets set and the other forgotten.
+        // A second registrar, which resolves by mount order rather than by anyone's intent.
         seams(&fixture);
         fixture.write(
             "Apps/ClientApp-macOS/SeamPatch.swift",
@@ -524,21 +514,30 @@ mod tests {
         );
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
-        // The prose that names the door is NOT a registrar — the reason this reads the code view.
+        // The prose that names the door is NOT a registrar — the reason this reads the code view, and
+        // the reason the rule's own doc comment can spell `nativeShared` while banning it.
         seams(&fixture);
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Terminal/SeamNotes.swift",
-            "// TerminalRendererFactory.nativeShared = the AppKit half\n",
+            "// TerminalRendererFactory.nativeShared = the slot that used to sit beside `shared`\n",
         );
         assert!(super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
-        // And the re-inlined video pane, which carries whatever callbacks that copy threads.
+        // ⚠️ THE CASE THIS RULE REVERSED ON. A seam that re-grows the second slot is now the FAILURE,
+        // where the same fixture was the rule's clean state before the phone gained a UIView.
+        seams(&fixture);
+        fixture.write(
+            super::VIDEO_SEAM,
+            "static var shared\nstatic var nativeShared\n",
+        );
+        assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
+
+        // And the app main re-registering the second slot, the other half of the same reversal.
         seams(&fixture);
         fixture.write(
             super::MAC_APP_MAIN,
-            "func build() -> MacVideoWindowView { … }\nVideoWindowFactory.shared = { \
-             AnyView(MacVideoWindowView(pane: pane)) }\nVideoWindowFactory.nativeShared = { … \
-             }\nGhosttyRendererSeam.install()\n",
+            "func build() -> MacVideoPaneSpec { … }\nVideoWindowFactory.shared = { … }\n\
+             VideoWindowFactory.nativeShared = { … }\nGhosttyRendererSeam.install()\n",
         );
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
     }

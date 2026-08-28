@@ -38,6 +38,7 @@
 import Observation
 import SlopDeskClientCore
 import SlopDeskSlate
+import SlopDeskVideoProtocol // ConfigRevision — the config-file edge the tracked read arms on
 import SlopDeskWorkspaceCore
 import UIKit
 
