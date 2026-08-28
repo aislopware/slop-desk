@@ -88,22 +88,72 @@ const OWNED: &[(&str, &str, &str)] = &[
 /// the debt list are all [`Claim::NoCloneAcross`]'s, which is where the reasoning for each lives;
 /// what is here is the ledger itself.
 ///
-/// ZERO pairs, and that is the demolition's doing rather than nine dedups landing at once. The
-/// ledger held six — `MacGuiLeafView`↔`GuiLeafView`, `MacPromptJumpFlashOverlay`↔
-/// `PromptJumpFlashOverlay`, `MacTerminalFindBar`↔`TerminalFindBar`, `MacTerminalLeafView`↔
-/// `TerminalLeafView`, `MacCodePanelSurfaces`↔`CodePanelSurfaces`, `MacWorkspaceRootView`↔
-/// `WorkspaceRootView` — and `3f11c6e6` deleted every phone side while the AppKit shell's own
-/// de-SwiftUI took `MacWorkspaceRootView` with it. An entry ASSERTS a clone exists today, so a row
-/// whose files are gone is not a debt in abeyance; it is a false claim, and the ledger fails on it
-/// exactly as it fails on an unledgered clone. Hence `known: &[]`.
+/// The ledger held six until `3f11c6e6` — `MacGuiLeafView`↔`GuiLeafView`,
+/// `MacPromptJumpFlashOverlay`↔`PromptJumpFlashOverlay`, `MacTerminalFindBar`↔`TerminalFindBar`,
+/// `MacTerminalLeafView`↔`TerminalLeafView`, `MacCodePanelSurfaces`↔`CodePanelSurfaces`,
+/// `MacWorkspaceRootView`↔`WorkspaceRootView` — and that commit deleted every phone side while the
+/// AppKit shell's own de-SwiftUI took `MacWorkspaceRootView` with it. An entry ASSERTS a clone
+/// exists today, so a row whose files are gone is not a debt in abeyance; it is a false claim, and
+/// the ledger fails on it exactly as it fails on an unledgered clone. The ledger went empty, and
+/// the note here said so.
 ///
-/// ⚠️ WHAT AN EMPTY LEDGER DOES NOT MEAN. The tree is not deduplicated — it is half-built. Every
-/// pair above returns the moment its UIKit twin is written against the same Mac source, and the
-/// right response then is to re-ledger it with the floor file it waits on, not to widen the window.
+/// ## THE TWIN CAME BACK, AND SO DID FIVE OF THE SIX ROWS — 2026-08-28
+///
+/// The paragraph above predicted this: "every pair returns the moment its UIKit twin is written
+/// against the same Mac source, and the right response then is to re-ledger it with the floor file
+/// it waits on, not to widen the window." The twins landed, and the prediction was RIGHT about the
+/// mechanism and WRONG about the scale. Thirty-five pairs, not six, and only some of them are the
+/// thing this rule was built to find. They sort into four kinds, and only two get a row.
+///
+/// ⚠️ TWO COUNTS OF THIS ARE IN CIRCULATION AND BOTH ARE RIGHT. A parallel measurement reported
+/// ~1,324 windows over 44 pairs where the numbers below say 839 over 35. The difference is
+/// `shingles`' `or_insert`: this rule keys a window by its BODY and keeps the first site, so one
+/// body spelled in three files is one pair, and a body a file repeats internally is one window. A
+/// count that tallies every occurrence sees more of both. The figures here are the ones this rule
+/// acts on. Every one of them is also a snapshot — four UIKit stages were landing files while it
+/// ran, and the pair count moved three times in one session.
+///
+/// 1. **Whole-file copies — RED, and the rule working.** `MacGuiLeafView`↔`GuiLeafView` shares 194
+///    windows, `MacCodePanelSurfaces`↔`PhonePanelSurfacesViewController` 121,
+///    `MacTerminalLeafView`↔ `TerminalLeafView` 90, `MacSplitCanvasView`↔`SplitCanvasView` 70. A
+///    file that shares two hundred windows was COPIED, and no ledger row should make that quiet.
+///    They are not re-ledgered from the old list: the debt is real, it is the port's method, and it
+///    is owed by the stage that typed it.
+/// 2. **One extracted surface — RED, addressed to stage F/H.** `MacSidebarHeader`↔
+///    `SidebarGitLineView`, 38 windows over eleven regions. Same subject, two renderers, and the
+///    fix deletes Mac code through the shared ladder. ⚠️ The Mac half has NO
+///    `MacGitLineView.swift`; the git line is still inside `MacSidebarHeader.swift`, so the dedup
+///    has to EXTRACT before it can delete, which is a bigger move than the phone half's name
+///    suggests.
+/// 3. **The mandated prologue — one row, and it dissolves rather than being paid.** See the ledger.
+/// 4. **Auto Layout scaffolding — RED, but small, and a first draft of this note got it badly
+///    wrong.** That draft said "about fifteen pairs share nothing but
+///    `translatesAutoresizingMaskIntoConstraints = false` / `addSubview` /
+///    `NSLayoutConstraint.activate([`", and proposed re-pinning `window` on the strength of it.
+///    Then the shared lines were CLASSIFIED instead of eyeballed, and the split across all 839
+///    shared windows is **9% scaffolding, 12% injection lists, 4% prologue, and 73% ordinary
+///    logic**. Only EIGHT pairs are scaffolding-dominated, none bigger than thirteen windows,
+///    together 6% of the total: `MacAndroidStageView`, `MacGuiPaneControls`, `MacGuiPaneOverlays`,
+///    `MacCodeWorkbenchView`, `MacHintModeOverlay`, `MacViModeOverlay`, `MacToastStack`,
+///    `MacSimulatorSurface`. So the `window: 8` premise is NOT expiring, and raising it would have
+///    hidden the 73% to be rid of the 9%. The eyeball read the FIRST window of each pair, which is
+///    disproportionately the `init` and the constraint block because that is where a Swift view
+///    file starts — a sampling artefact, and the exact mistake this rule exists to prevent someone
+///    making about the code itself.
+///
+/// ⚠️ AND THE 73% IS WHY "PRICE A PAIR ONCE, PER FLOOR" CANNOT WORK HERE. 34 of the 35 pairs
+/// already reference a `…Presentation` / `…Reading` / `…Geometry` / `Slate.` symbol somewhere in
+/// both halves, so "does a floor exist for these twins" does not discriminate anything — yet they
+/// still share 839 windows. The two facts are consistent, and their consistency is the finding: a
+/// body can only be SHARED here if it did not go through the floor, because a decision that reached
+/// a floor is one call line on each side and one line cannot fill an eight-line window. The shared
+/// body IS, by construction, the residue that stayed in the renderers. A ledger keyed on floors
+/// would price the part that is already fine and stay silent about the part that is not.
+///
 /// A row LEAVES honestly only one way: the clone stops existing because a shared floor absorbed it
 /// (`SlopDeskMacApp` ↔ `SlopDeskPhoneApp` left that way in stage A, once `PhoneAppDelegate` called
-/// `ClientNotificationSinks`). These six left the other way, and the doc records which so the next
-/// reader does not mistake an empty ledger for a paid one.
+/// `ClientNotificationSinks`). The six above left the other way — deleted, not deduplicated — and
+/// the doc records which so the next reader does not mistake an empty ledger for a paid one.
 ///
 /// BREAK-TEST (2026-08-22): copied `KeybindingsEditorReading.swift`'s `conflictLines(_:)` body back
 /// into BOTH shells' editors as private methods — the exact shape the dedup removed. Rule FIRED,
@@ -118,9 +168,32 @@ pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
         right: PHONE,
         extensions: SWIFT,
         window: 8,
-        // Empty on purpose, and only until the UIKit twins land — see the doc comment above for
-        // which six rows left and why an entry cannot be written ahead of its files.
-        known: &[],
+        // TWO rows, and each is a pair whose shared lines are ONE contiguous region — which is what
+        // separates them from the thirty-two pairs left red. A pair that shares seven scattered
+        // regions is not "the prologue"; it is a copy that happens to contain one.
+        known: &[
+            // The `withObservationTracking` re-arm and nothing else: five overlapping windows, all
+            // inside one ~12-line span. Dissolves when the shared `follow` helper lands — the
+            // duplicated lines are the mandated docs/62 §3.1 prologue, not duplicated behaviour, and
+            // that helper deletes them from every site at once. This row is therefore the FIRST in
+            // the ledger's history that is not expected to be PAID: it will go red as "the debt is
+            // PAID, drop the entry", and dropping it is the whole of the work.
+            (
+                "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
+                "Sources/SlopDeskPhoneUI/Columns/NavigatorSectionHeaderCell.swift",
+            ),
+            // A FALSE POSITIVE, ledgered because there is nowhere else to say so. Two windows, one
+            // span: a `switch` over `SidebarRowReading`'s weight rungs, and the
+            // `arrangedSubviews`/`removeArrangedSubview`/`removeFromSuperview` teardown loop. Two
+            // exhaustive switches over one enum are the LANGUAGE's shape for exhaustiveness — the
+            // named-ink family exists because that switch is supposed to be per-renderer — and the
+            // teardown is the framework's only spelling for emptying a stack view. Neither is a
+            // copied body, and there is no floor that could absorb either.
+            (
+                "Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift",
+                "Sources/SlopDeskPhoneUI/Columns/NavigatorRowCell.swift",
+            ),
+        ],
         floor: 15,
         message: "eight identical lines in both UI targets ({pairs}) — one implementation, never two \
                   (docs/56 §3, CLAUDE.md)",
@@ -321,12 +394,12 @@ mod tests {
 
     /// Whether the CLONE arm fired, as opposed to the ledger arm.
     ///
-    /// The ledger is empty during the UIKit rebuild, so today the two arms cannot be confused. They
-    /// could before — a fixture held none of the six ledgered pairs, so every run reported six paid
-    /// debts, which is the ledger working and noise to a test about the clone arm — and they will
-    /// again the moment a twin is re-ledgered. So the discrimination stays. The ledger's own
-    /// both-ways behaviour is exercised where it can be parameterised, on
-    /// [`crate::claim::Claim::NoCloneAcross`] directly.
+    /// The two arms are confusable again, exactly as this note predicted while the ledger was
+    /// empty: a fixture holds neither ledgered pair, so every run reports two paid debts, which is
+    /// the ledger working and noise to a test about the clone arm. Hence the discrimination. The
+    /// ledger's own both-ways behaviour is exercised where it can be parameterised, on
+    /// [`crate::claim::Claim::NoCloneAcross`] directly; what is exercised HERE is that the two rows
+    /// in this rule's ledger excuse the pairs they name and nothing else.
     fn cloned(report: &crate::report::Report) -> bool {
         report
             .violations()
@@ -349,6 +422,94 @@ mod tests {
             "import SwiftUI\nlet lines = KeybindingsEditorReading.conflictLines(rows)\n",
         );
         assert!(!cloned(&super::no_body_crosses_the_ui_split(&fixture.tree())));
+    }
+
+    /// The ledgered prologue is excused, and a SECOND clone one file over is not
+    ///
+    /// The pair-wise half of the ledger. A `known` entry is an exact `(left, right)` path pair, so
+    /// the interesting failure is not "does the row work" —
+    /// [`crate::claim::Claim::NoCloneAcross`]'s own tests cover that — but "does the row excuse
+    /// more than it names". It must not: the Mac half of the ledgered prologue row is
+    /// `MacSidebarHeader.swift`, which is ALSO the left half of the git-line clone this rule
+    /// deliberately leaves red, and a row that excused a path rather than a pair would have
+    /// silenced stage H's debt as a side effect of parking a re-arm.
+    ///
+    /// ⚠️ THE SECOND CLONE NEEDS ITS OWN BODY, and the first draft of this test did not give it one
+    /// — it wrote the SAME body into a third file and asserted red. It was green, and the rule was
+    /// right: `shingles` keeps the first site per distinct body (`or_insert`), so one body spelled
+    /// in three files is ONE pair, not two. That is worth knowing about the live tree too — the
+    /// git-line pair is red because it shares thirty-eight DIFFERENT bodies with the header, not
+    /// because one body appears twice.
+    #[test]
+    fn a_ledgered_pair_is_excused_and_a_second_clone_beside_it_is_not() {
+        let fixture = Fixture::new("ui-clone-ledger");
+        shells(&fixture, "struct Unused {}\n", "struct Unused {}\n");
+        let prologue = body("return []");
+        // A different eight lines, so this clone forms its own pair rather than folding into the
+        // one above. EIGHT SUBSTANTIVE ones: both closing braces normalise away as noise, which is
+        // the trap `body`'s own comment records, and a seven-line draft of this found nothing.
+        let git_line = "func rungs(_ ladder: GitLadder) -> [Rung] {\n    var out: [Rung] = []\n    let \
+                        source = ladder.rungs\n    for rung in source where rung.width > 0 {\n        \
+                        out.append(rung)\n    }\n    out.sort()\n    let trimmed = out.prefix(4)\n    \
+                        return Array(trimmed)\n}\n";
+
+        // The ledgered pair, spelled at the two paths the ledger names.
+        fixture.write("Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift", &prologue);
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Columns/NavigatorSectionHeaderCell.swift",
+            &prologue,
+        );
+        assert!(!cloned(&super::no_body_crosses_the_ui_split(&fixture.tree())));
+
+        // The same Mac file against a DIFFERENT phone file, sharing a DIFFERENT body — the git-line
+        // shape. The row above names a pair, so this one is a stranger and stays red.
+        fixture.write(
+            "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
+            &format!("{prologue}{git_line}"),
+        );
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Columns/SidebarGitLineView.swift",
+            git_line,
+        );
+        let found = super::no_body_crosses_the_ui_split(&fixture.tree());
+        assert!(cloned(&found), "expected a clone, got {:?}", found.violations());
+        assert!(
+            found
+                .violations()
+                .iter()
+                .any(|line| line.contains("SidebarGitLineView.swift")),
+            "the unledgered pair must be the one named, got {:?}",
+            found.violations(),
+        );
+    }
+
+    /// A ledger row whose clone dissolved says so
+    ///
+    /// The prologue row is the first entry here that is EXPECTED to dissolve rather than be paid —
+    /// the shared `follow` helper deletes the duplicated lines from every site at once. When it
+    /// lands, this rule must go red and name the row, so that dropping the entry is forced rather
+    /// than remembered. Seeded by writing the two ledgered files with no shared body at all.
+    #[test]
+    fn a_ledger_row_whose_prologue_dissolved_is_named() {
+        let fixture = Fixture::new("ui-clone-dissolved");
+        shells(&fixture, "struct Unused {}\n", "struct Unused {}\n");
+        fixture.write(
+            "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
+            "func follow() { self.follow(store) { $0.gitSummary } }\n",
+        );
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Columns/NavigatorSectionHeaderCell.swift",
+            "func follow() { self.follow(store) { $0.rollup } }\n",
+        );
+        let found = super::no_body_crosses_the_ui_split(&fixture.tree());
+        assert!(!cloned(&found));
+        assert!(
+            found.violations().iter().any(|line| {
+                line.contains("NavigatorSectionHeaderCell.swift") && line.contains("the debt is PAID")
+            }),
+            "a dissolved prologue row must name itself, got {:?}",
+            found.violations(),
+        );
     }
 
     #[test]
