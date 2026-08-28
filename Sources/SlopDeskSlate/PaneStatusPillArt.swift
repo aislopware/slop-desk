@@ -16,10 +16,9 @@
 //
 // The WEIGHT the mark is drawn at is not here, and that is the boundary rather than an omission. A
 // vivid chip carries a heavier glyph than a chrome one — but the thing that decides which is
-// ``PaneStatusPill/fill``, already a shared name, and the weight itself is `Font.Weight` on one side
-// and `NSFont.Weight` on the other. A name below and one line per framework is the
-// ``ToastPresentation`` deal; restating it here would only give the floor a type it cannot hold in
-// both spellings.
+// ``PaneStatusPill/fill``, already a shared name; the weight is each renderer's own
+// ``SlateNativeFont/Weight`` line, the ``ToastPresentation`` deal. Restating it here would give the
+// floor a rung nothing on it currently reads, ahead of the second renderer that would read it.
 
 import SFSafeSymbols
 import SlopDeskWorkspaceModel // PaneStatusPill — the STATE this file draws

@@ -31,16 +31,16 @@
 // THE OVERRIDE LANDS ON THE SCENE, NOT ON A WINDOW OR ON A VIEW, and that is what makes it reach the
 // three places this client actually needs it to reach:
 //
-//   * `.sheet` / `.fullScreenCover` — the settings sheet, the cheat sheet, the first-launch sheet,
+//   * every presented view controller — the settings sheet, the cheat sheet, the first-launch sheet,
 //     the code panel. Each is presented into the scene's own window, so each inherits the scene's
-//     traits. A `preferredColorScheme` at the root of the `WindowGroup` is a modifier on the
-//     presentation CONTAINING it, which is the one thing a summoned surface is outside of.
-//   * the `UIView`s hosted inside SwiftUI by `UIViewRepresentable` (the terminal input host, the
-//     search field, the device screens, the code panel's `WKWebView`). None of those read SwiftUI's
-//     `\.colorScheme`; all of them inherit the window's trait collection.
+//     trait collection through ordinary UIKit trait propagation; nothing at the presentation call
+//     site has to opt in.
+//   * every plain view anywhere in that hierarchy (the terminal input host, the search field, the
+//     device screens, the code panel's `WKWebView`). None of them read a per-view override; all of
+//     them inherit the window's trait collection the same way.
 //   * windows that DO NOT EXIST YET. `traitOverrides` is inherited by every window the scene owns,
-//     including ones SwiftUI has not created; `UIWindow.overrideUserInterfaceStyle` set in a loop is
-//     a snapshot of the windows that happened to exist when the loop ran, which is the same staleness
+//     including ones not yet created; `UIWindow.overrideUserInterfaceStyle` set in a loop is a
+//     snapshot of the windows that happened to exist when the loop ran, which is the same staleness
 //     the one-shot-versus-armed split above is about. One mechanism, not two.
 //
 // It also survives an OS appearance flip mid-session by construction, on both platforms: an override
@@ -51,9 +51,7 @@
 // a subtree climbing back OUT of the glass reads (``SlatePaperCapsule``); a pin holding its own copy
 // would be the one place in the app that did not follow if it ever moved.
 
-#if canImport(SwiftUI)
 import Foundation
-import SwiftUI // ColorScheme — `Slate.chromeColorScheme`, the one spelling of the polarity
 #if canImport(AppKit)
 import AppKit
 #elseif canImport(UIKit)
@@ -141,4 +139,3 @@ package enum SlateAppearancePin {
     }
     #endif
 }
-#endif

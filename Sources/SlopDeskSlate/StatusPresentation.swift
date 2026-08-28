@@ -2,24 +2,26 @@
 // weight a title takes, which silhouette a mark draws.
 //
 // It reads as a view file and is not one, which is why it sits on the design floor rather than in
-// either UI target: nothing here draws, and the Mac's `NSView` rows have called it through
-// `NSColor(...)` since the navigator crossed. The DECISIONS themselves live one floor further down
+// either UI target: nothing here draws, and every renderer — the Mac's `NSView` rows, the phone's own
+// views — reads the ``SlateNativeColor``/``SlateNativeFont/Weight`` values below directly, with no
+// bridge in between any more. The DECISIONS themselves live one floor further down
 // (`TabBadgeReading`, `AgentReadout`, `RailRowsBuilder`); what is added here is only the rung each one
-// lands on, resolved through ``Slate`` — and `Slate.Native` is the same lookup for a renderer that
-// cannot see a SwiftUI type.
+// lands on, resolved through ``Slate/Native``, the one lookup both platforms share.
 //
 // The CONNECTION's copy is not here any more: `ConnectionReading` (SlopDeskClientCore) owns the label,
-// the help text and the retry gate now that the Mac's island is AppKit and only the phone's
-// `ConnectionPill` is SwiftUI.
+// the help text and the retry gate now that both clients present the connection island natively.
 
-#if canImport(SwiftUI)
 import SFSafeSymbols
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
-import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
-// `@MainActor` because the colour mappers read the runtime ``Slate/theme`` (D3) — every call site is a
-// SwiftUI view body, all MainActor.
+// `@MainActor` because the colour mappers read the runtime ``Slate/theme`` (D3) — every call site is
+// a view's own body/draw method, all MainActor.
 @MainActor
 package enum StatusPresentation {
     // MARK: Agent (Claude Code)
@@ -40,13 +42,13 @@ package enum StatusPresentation {
     /// idle/none = muted (the resting state spends no colour).
     ///
     /// Neither half of the answer is spelled here any more: ``AgentReadout/ink(_:)`` decides which
-    /// RUNG a state lands on and ``Slate/agentInk(_:)`` resolves it, with ``Slate/Native/agentInk(_:)``
-    /// the same lookup for the Mac's `NSView` peek card (docs/56 stage D). `.working` reaches
+    /// RUNG a state lands on and ``Slate/Native/agentInk(_:)`` resolves it — the one lookup both the
+    /// iOS toolbar glyph and the Mac's `NSView` peek card call (docs/56 stage D). `.working` reaches
     /// ``thinkingMark``'s warm rung through that shared decision rather than by a second spelling
     /// agreeing with it — the compact surfaces mount the rail's OWN spinner for that reading, and the
     /// mark and its ink must not be able to come apart.
-    package static func agentTint(_ status: ClaudeStatus) -> Color {
-        Slate.agentInk(AgentReadout.ink(status))
+    package static func agentTint(_ status: ClaudeStatus) -> SlateNativeColor {
+        Slate.Native.agentInk(AgentReadout.ink(status))
     }
 
     /// The short agent label (the one source — `ClaudeStatus.displayLabel`).
@@ -75,8 +77,8 @@ package enum StatusPresentation {
     /// one written above, and the loudest case was the thinking cell: systemYellow lands at **1.46**
     /// on the cream, quieter than the DISABLED slot beside it. Do not re-propose it without a
     /// different ground under the marks.
-    package static func attentionInk(_ kind: TabBadgeKind) -> Color? {
-        TabBadgeReading.attention(kind).map(Slate.attentionInk)
+    package static func attentionInk(_ kind: TabBadgeKind) -> SlateNativeColor? {
+        TabBadgeReading.attention(kind).map(Slate.Native.attentionInk)
     }
 
     /// The TITLE's ink for an URGENT row — the subset of ``attentionInk(_:)`` that means *something is
@@ -95,22 +97,22 @@ package enum StatusPresentation {
     ///
     /// Derived from ``attentionInk(_:)`` rather than respelling the hues, so the title and the mark on
     /// one row can never disagree about which amber or which red.
-    package static func urgentInk(_ kind: TabBadgeKind) -> Color? {
-        TabBadgeReading.urgent(kind).map(Slate.attentionInk)
+    package static func urgentInk(_ kind: TabBadgeKind) -> SlateNativeColor? {
+        TabBadgeReading.urgent(kind).map(Slate.Native.attentionInk)
     }
 
     /// The WEIGHT a row's title reads at — the ATTENTION step. A state that waits on you (a question,
     /// a failure, an unread finish) reads bolder than the ACTIVE row's own `.medium`, so "needs you"
     /// outranks "you are here" on the one scale both spend. Everything else stays regular.
-    package static let attentionWeight: Font.Weight = .semibold
+    package static let attentionWeight: SlateNativeFont.Weight = .semibold
 
     /// The COLLAPSED group's roll-up ink: the strongest attention ink among the hidden rows' fused
     /// badges, in the resolver's own urgency order — a waiting question outranks an error outranks
     /// an unread finish — so the header count wears exactly the ink the loudest hidden row would.
     /// `nil` when nothing inside waits (the count keeps the muted metadata ink). Folding a group
     /// shut therefore never hides an agent that needs the eye.
-    package static func attentionRollupInk(_ badges: [TabBadgeKind?]) -> Color? {
-        TabBadgeReading.rollup(badges).map(Slate.attentionInk)
+    package static func attentionRollupInk(_ badges: [TabBadgeKind?]) -> SlateNativeColor? {
+        TabBadgeReading.rollup(badges).map(Slate.Native.attentionInk)
     }
 
     /// The row's trailing STATUS MARK — one column, one hue budget, and otty's own silhouettes
@@ -147,7 +149,7 @@ package enum StatusPresentation {
     ) -> StatusDotStyle? {
         if working { return thinkingMark }
         // The resting-agent ring — the floor every non-attention branch below falls back to.
-        let resting = agentIdle ? StatusDotStyle(ink: Slate.Text.secondary) : nil
+        let resting = agentIdle ? StatusDotStyle(ink: Slate.Native.Text.secondary) : nil
         guard let badge else { return resting }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
@@ -195,7 +197,7 @@ package enum StatusPresentation {
     /// blue at all — so a purple mark on an unselected row reads as a row half-selecting itself.
     @MainActor
     package static var thinkingMark: StatusDotStyle {
-        StatusDotStyle(ink: Slate.StatusInk.warn, mark: .working)
+        StatusDotStyle(ink: Slate.Native.StatusInk.warn, mark: .working)
     }
 
     /// WHICH mark an attention state draws — the silhouette that names what happened, the hue
@@ -265,10 +267,10 @@ package enum StatusPresentation {
     /// ⚠️ Round 26 (user-directed) changed WHAT this inks for a clean exit: the succeeded receipt no
     /// longer prints a name, so this is the TICK's ink now — the primary, inherited whole from the
     /// word it replaced. The failed answer is unchanged, because a failure still prints its name.
-    package static func outcomeInk(_ outcome: CommandOutcome) -> Color {
+    package static func outcomeInk(_ outcome: CommandOutcome) -> SlateNativeColor {
         switch outcome {
-        case .succeeded: Slate.Text.primary
-        case .failed: Slate.StatusInk.err
+        case .succeeded: Slate.Native.Text.primary
+        case .failed: Slate.Native.StatusInk.err
         }
     }
 
@@ -311,7 +313,7 @@ package enum StatusPresentation {
     /// that is what forced ``outcomeSymbol(_:)`` into existence: while the weight stepped up only at
     /// the end, WEIGHT WAS the completion signal, and a command that is bold the whole way through
     /// has to be given the news back some other way.
-    package static let slotNameWeight: Font.Weight = .bold
+    package static let slotNameWeight: SlateNativeFont.Weight = .bold
 
     /// The INK the trailing slot's resting label reads in, for a real program (`make`, `vim`) versus
     /// a bare login shell (`zsh`).
@@ -322,8 +324,8 @@ package enum StatusPresentation {
     /// pane that is running nothing, and bolding every idle `zsh` on the rail would spend the whole
     /// step this round is trying to reserve for work. The split is
     /// ``RailRowsBuilder/slotLabelIsCommand(_:)``'s.
-    package static func slotNameInk(isCommand: Bool) -> Color {
-        isCommand ? Slate.Text.primary : Slate.Text.tertiary
+    package static func slotNameInk(isCommand: Bool) -> SlateNativeColor {
+        isCommand ? Slate.Native.Text.primary : Slate.Native.Text.tertiary
     }
 
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers, drawn as
@@ -334,9 +336,9 @@ package enum StatusPresentation {
     package static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle? {
         switch kind {
         // otty's own: a Material duotone cup, its exact path data (``OttyIcon/coffee``).
-        case .caffeinate: TabBadgeStyle(art: .vector(OttyIcon.coffee), tint: Slate.Text.secondary)
+        case .caffeinate: TabBadgeStyle(art: .vector(OttyIcon.coffee), tint: Slate.Native.Text.secondary)
         // otty's own: `shield.fill` at the same 11pt Medium it configures every badge symbol with.
-        case .sudo: TabBadgeStyle(art: .symbol(.shieldFill), tint: Slate.Text.secondary)
+        case .sudo: TabBadgeStyle(art: .symbol(.shieldFill), tint: Slate.Native.Text.secondary)
         case .awaitingInput,
              .commandBusy,
              .commandRunning,
@@ -366,6 +368,5 @@ package struct TabBadgeStyle: Equatable {
     }
 
     package let art: Art
-    package let tint: Color
+    package let tint: SlateNativeColor
 }
-#endif

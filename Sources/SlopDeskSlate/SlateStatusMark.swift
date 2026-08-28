@@ -1,8 +1,8 @@
 // SlateStatusMark — what the sidebar row's trailing status mark IS: one fixed right-edge column,
-// one hue budget, one cadence. VALUES only — the mark is drawn twice, by `StatusDotView` in
-// SwiftUI and by `MacStatusMarkView` as an `NSView`, and a pane thinking in the rail and the same
-// pane thinking in a peek card land on the same hole of the same lap precisely because both
-// renderers read ``AgentSpinner``'s one integral off the same wall clock.
+// one hue budget, one cadence. VALUES only — the mark is drawn twice, once by the Mac's
+// `MacStatusMarkView` as an `NSView` and once by the phone's own UIKit view, and a pane thinking in
+// the rail and the same pane thinking in a peek card land on the same hole of the same lap precisely
+// because both renderers read ``AgentSpinner``'s one integral off the same wall clock.
 //
 // The HUE names the state — muted = a resting agent, green = an unread finish, amber = a question
 // waiting. The mark column is the agent's status voice for everything EXCEPT the two urgent states —
@@ -44,9 +44,12 @@
 // ONE state moves — the spinner — and everything settled holds absolutely still (round 19's lesson
 // survives: a settled rail must not twitch).
 
-#if canImport(SwiftUI)
 import SFSafeSymbols
-import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// The status mark's geometry — pure constants, unit-testable.
 package enum StatusDot {
@@ -76,10 +79,10 @@ package enum StatusDot {
     }
 
     /// One dot's frame on the agent-presence ring, in `rect`'s own coordinate space — the shared
-    /// geometry both renderers loop over (``DottedRing`` in SwiftUI, `MacStatusMarkView.drawRing` in
-    /// AppKit, docs/56 batch 3). The dots ride ON the circle and spill half their width outside it,
-    /// exactly as the stroke they replaced did, and `index` 0 sits at 12 o'clock with the rest running
-    /// clockwise.
+    /// geometry both renderers loop over (the phone's own dotted-ring view, `MacStatusMarkView
+    /// .drawRing` in AppKit, docs/56 batch 3). The dots ride ON the circle and spill half their width
+    /// outside it, exactly as the stroke they replaced did, and `index` 0 sits at 12 o'clock with the
+    /// rest running clockwise.
     ///
     /// The dot's diameter SCALES with `rect`'s own side relative to ``ringDiameter`` — a magnified
     /// rect (a preview zoom, a differently-sized mount) draws a true redraw rather than a blown-up
@@ -133,10 +136,10 @@ package enum StatusDot {
     /// The weight that check is stroked at. `.semibold`: a 10pt tick goes to smudge at `.regular`
     /// (the same floor ``symbolWeight`` exists for), and it stands in for a BOLD word — a hairline
     /// mark where the rail printed a bold name reads as a rendering artefact rather than a verdict.
-    package static let receiptCheckWeight: Font.Weight = .semibold
+    package static let receiptCheckWeight: SlateNativeFont.Weight = .semibold
     /// otty renders every badge at `NSFontWeightMedium`. Not `.regular`: at 11pt a regular-weight
     /// symbol goes thin enough on a muted ink to read as smudge rather than mark.
-    package static let symbolWeight: Font.Weight = .medium
+    package static let symbolWeight: SlateNativeFont.Weight = .medium
     /// The side lucide `hand` is drawn into — otty's badge box, undivided (an outlined glyph needs
     /// the whole box; a system symbol already carries its own margin inside one).
     package static let handSide: CGFloat = 14
@@ -328,7 +331,7 @@ package enum StatusMark: Equatable {
 /// view), so the resolver (``StatusPresentation/statusDot(working:badge:agentIdle:agentFinish:)``)
 /// unit-tests without rendering.
 package struct StatusDotStyle: Equatable {
-    package let ink: Color
+    package let ink: SlateNativeColor
     /// The silhouette. Defaults to the agent ring, the shape the resting-agent branch wants.
     package var mark: StatusMark = .agentRing
     /// Hold the ONE mark that moves at a fixed frame instead of running it. `false` everywhere a row
@@ -338,7 +341,7 @@ package struct StatusDotStyle: Equatable {
     /// moves is a claim that something is moving.
     package var frozen: Bool = false
 
-    package init(ink: Color, mark: StatusMark = .agentRing, frozen: Bool = false) {
+    package init(ink: SlateNativeColor, mark: StatusMark = .agentRing, frozen: Bool = false) {
         self.ink = ink
         self.mark = mark
         self.frozen = frozen
@@ -346,9 +349,9 @@ package struct StatusDotStyle: Equatable {
 }
 
 /// THE THINKING MARK'S CADENCE — the wander, as arithmetic. No view: the mark is drawn twice (the
-/// phone's ``AgentSpinnerView`` in SwiftUI, the Mac's `MacAgentSpinnerView` as an `NSView`), and a
-/// pane thinking in the sidebar and the same pane thinking in a peek card are the same hole at the
-/// same point of the same lap precisely because both read this one integral off the same wall clock.
+/// phone's own `AgentSpinnerView`, the Mac's `MacAgentSpinnerView` as an `NSView`), and a pane
+/// thinking in the sidebar and the same pane thinking in a peek card are the same hole at the same
+/// point of the same lap precisely because both read this one integral off the same wall clock.
 ///
 ///
 /// It starts from `⣾⣽⣻⢿⡿⣟⣯⣷`: a braille cell with every one of its eight dots lit and one switched
@@ -396,9 +399,12 @@ package struct StatusDotStyle: Equatable {
 ///    CURRENTLY at rather than restarting the wander too. This is the rule the typed pulse has
 ///    followed since MERIDIAN. ⚠️ Rows no longer turn in UNISON, which they did until the tempo
 ///    stopped being one shared number — see ``StatusDot/tempoSeedSpan`` for why that is deliberate.
-///  * **It is PURE SwiftUI**, so `ImageRenderer` can rasterize it. The platform indicator could not
-///    be rendered at all (``SlateSnapshotRender`` had to host an offscreen window to photograph the
-///    mark sheet), which meant the one mark that moved was also the one mark no test could look at.
+///  * **It is drawn, not delegated** — ``lit(_:hole:)``/``rate(at:seed:)``/``phase(at:seed:)`` are
+///    pure static functions over a `Date`, so a snapshot test rasterizes them directly at any given
+///    instant without animating anything or hosting a live window. The platform indicator it replaced
+///    could not be rendered at all (``SlateSnapshotRender`` had to host an offscreen window to
+///    photograph the mark sheet), which meant the one mark that moved was also the one mark no test
+///    could look at.
 ///  * **Reduce Motion freezes it** — the platform used to own that call; drawing it makes it ours. A
 ///    frozen cell is still a distinct silhouette (a lit block with one corner missing, which no other
 ///    mark in this column resembles), so the state is never lost, only the movement.
@@ -505,4 +511,3 @@ package enum BrailleCell {
         )
     }
 }
-#endif

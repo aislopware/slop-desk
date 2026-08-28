@@ -1,31 +1,32 @@
 // SlateVectorArt — icon artwork carried as its own PATH DATA rather than redrawn by eye, and the
-// reader that turns a `d` string into a `Path`.
+// reader that turns a `d` string into a `CGPath`.
 //
-// The artwork is a VALUE, so it sits on the design floor and each framework supplies its own
-// renderer over it — `VectorIconView` (a SwiftUI `Canvas`) and `MacVectorIconView` (a `CGContext`).
-// Both stroke and fill the same paths at the same widths; neither owns the drawing.
+// The artwork is a VALUE, so it sits on the design floor and each platform supplies its own renderer
+// over it, every one a `CGContext`/`CAShapeLayer` consumer now that this reader hands back a
+// `CGPath` directly — there is no view-framework path type left to bridge through.
 //
 // Two of the rail's marks are not SF Symbols: otty's awaiting-input badge is lucide `hand`, and its
 // caffeinate badge is a Material duotone cup, both shipped inside otty as literal `<svg>` strings.
 // A previous round approximated them with the nearest system symbol and the result read as a
 // different, worse icon — an approximation of a specific drawing is not the drawing. So the `d`
 // strings live here VERBATIM (see ``OttyIcon``) and this file is the reader that turns them into a
-// `Path`: the artwork is transcribed, never interpreted.
+// `CGPath`: the artwork is transcribed, never interpreted.
 //
 // The subset of the SVG path grammar implemented is the whole of it that matters — every command
 // (`M m L l H h V v C c S s Q q T t A a Z z`) including elliptical arcs, which lucide's rounded
 // finger joints are built from. Anything unrecognised is skipped rather than trapped: this parses
 // COMPILED-IN artwork, never untrusted input.
 
-#if canImport(SwiftUI)
-import SwiftUI
+import CoreGraphics
 
 /// A reader for SVG path data (`d`). Pure geometry — no view, no state — so a glyph's shape is
 /// unit-testable by its bounding box and segment count without rendering anything.
 package enum SVGPath {
-    /// The path `data` describes, in the icon's own viewBox coordinates (y DOWN, matching SwiftUI).
-    package static func path(_ data: String) -> Path {
-        var path = Path()
+    /// The path `data` describes, in the icon's own viewBox coordinates (y DOWN, the SVG convention).
+    /// This reader performs no axis flip; a caller drawing into a non-flipped `CGContext` is
+    /// responsible for its own transform, exactly as it was when this returned a SwiftUI `Path`.
+    package static func cgPath(_ data: String) -> CGPath {
+        let path = CGMutablePath()
         var scanner = PathScanner(data)
         var current = CGPoint.zero
         var subpathStart = CGPoint.zero
@@ -132,7 +133,7 @@ package enum SVGPath {
                 let sweep = scanner.flag()
                 let end = CGPoint(x: origin.x + scanner.number(), y: origin.y + scanner.number())
                 appendArc(
-                    to: &path, from: current, radii: radii, rotation: rotation,
+                    to: path, from: current, radii: radii, rotation: rotation,
                     largeArc: largeArc, sweep: sweep, end: end,
                 )
                 current = end
@@ -157,14 +158,15 @@ package enum SVGPath {
 
     /// `data` scaled to fill `rect`'s shorter side from a `viewBox`-square canvas, centred. Uniform
     /// so a glyph never stretches, and centred so every icon in the rail shares one optical centre.
-    package static func path(_ data: String, viewBox: CGFloat, in rect: CGRect) -> Path {
+    package static func cgPath(_ data: String, viewBox: CGFloat, in rect: CGRect) -> CGPath {
         let scale = CGFloat.minimum(rect.width, rect.height) / viewBox
         let side = viewBox * scale
-        let transform = CGAffineTransform(
+        var transform = CGAffineTransform(
             translationX: rect.midX - side / 2, y: rect.midY - side / 2,
         )
         .scaledBy(x: scale, y: scale)
-        return path(data).applying(transform)
+        let unscaled = cgPath(data)
+        return unscaled.copy(using: &transform) ?? unscaled
     }
 
     /// The mirror of `control` through `point` — the implicit first control point of a smooth curve.
@@ -182,10 +184,13 @@ package enum SVGPath {
     private static let arcSegmentLimit = CGFloat.pi / 2
 
     /// Append one SVG elliptical arc as cubic segments (W3C SVG 1.1 §F.6.5 endpoint → centre
-    /// parameterisation). `Path` has an arc primitive, but only for circles about a known centre —
+    /// parameterisation). `CGPath` has an arc primitive, but only for circles about a known centre —
     /// the endpoint form has to be converted before it can be drawn at all.
+    ///
+    /// `path` is a `CGMutablePath` (a class), so it is passed by reference like any other object —
+    /// unlike the `Path` struct this reader used to build, there is no `inout` needed to mutate it.
     private static func appendArc(
-        to path: inout Path, from start: CGPoint, radii: CGPoint, rotation: CGFloat,
+        to path: CGMutablePath, from start: CGPoint, radii: CGPoint, rotation: CGFloat,
         largeArc: Bool, sweep: Bool, end: CGPoint,
     ) {
         // A degenerate radius is a straight line by definition, not an error.
@@ -433,4 +438,3 @@ package enum OttyIcon {
         ],
     )
 }
-#endif

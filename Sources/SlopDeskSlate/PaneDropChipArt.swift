@@ -1,10 +1,11 @@
 // PaneDropChipArt — everything the drop chip's TWO drawings must agree on (docs/56 stage D,
 // increment 56e).
 //
-// There are two drop chips and there have to be. The canvas overlay draws a ghost chip anchored to the
-// drop zone it describes; a borderless `NSPanel` (``MacPaneDragChipPanel``) carries the same chip once
-// the cursor leaves the content column, because a SwiftUI overlay clips at its hosting view's edge and
-// this drag legitimately crosses into the sidebar, into another window, and onto bare desktop.
+// There are two drop chips and there have to be. The canvas draws a ghost chip (`MacPaneDragChip`)
+// anchored to the drop zone it describes; a borderless `NSPanel` (``MacPaneDragChipPanel``) carries
+// the same chip once the cursor leaves the content column, because the canvas chip clips at its
+// hosting view's edge and this drag legitimately crosses into the sidebar, into another window, and
+// onto bare desktop.
 //
 // ⚠️ BOTH CAN BE ON SCREEN IN ONE DRAG. That is what makes this file necessary rather than tidy. Drag a
 // pane to the canvas edge and the in-tree chip is showing; keep going and the panel takes over. A user
@@ -54,7 +55,8 @@ package extension PaneDropRegister.Mark {
 }
 
 package extension Slate {
-    /// The drop chip's capsule, as numbers — read by the SwiftUI ghost chip and by the AppKit panel.
+    /// The drop chip's capsule, as numbers — read by the canvas ghost chip (`MacPaneDragChip`) and by
+    /// the detached panel (``MacPaneDragChipPanel``), both AppKit.
     ///
     /// The type sizes are NOT here on purpose: they are ``Slate/Typeface/footnote`` (the glyph,
     /// semibold) and ``Slate/Typeface/base`` (the label, medium), which are ladder rungs both renderers

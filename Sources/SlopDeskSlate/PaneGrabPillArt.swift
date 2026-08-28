@@ -1,9 +1,9 @@
 // PaneGrabPillArt — everything the GRAB PILL's drawings must agree on (docs/56 stage F, batch P6).
 //
 // The grab pill is the `-` a pane reveals on hover at its top edge: grab it and the pane moves. There
-// is one gesture and there are already TWO drawings of it — ``PaneMoveHandle`` over a leaf of the
-// canvas, and the satellite window's own strip (`SatellitePaneContent`), which drags the same pane by
-// the same pill into the same four destinations. Wave R adds a third when the canvas becomes AppKit.
+// is one gesture and TWO drawings of it, both AppKit — `MacPaneMoveAffordance` over a leaf of the
+// canvas, and the satellite window's own strip (`MacSatellitePaneContent`), which drags the same pane
+// by the same pill into the same four destinations.
 //
 // ⚠️ TWO OF THEM ARE THE SAME DRAG. The satellite strip's whole purpose is merging back INTO the
 // canvas: the user grabs the pill in the detached window, crosses the main window, and releases on a
@@ -27,8 +27,9 @@
 import CoreGraphics // CGFloat — this file is points and a ratio, and never a view
 
 package extension Slate {
-    /// The pane's grab pill, as numbers — read by the SwiftUI canvas handle, by the satellite
-    /// window's strip, and by the AppKit canvas that joins them.
+    /// The pane's grab pill, as numbers — read by `MacPaneMoveAffordance` (the canvas leaf) and by
+    /// `MacSatellitePaneContent` (the satellite window's strip), both AppKit, both reading the same
+    /// values with no bridge in between.
     enum GrabPill {
         // MARK: The strip (the hit area)
 

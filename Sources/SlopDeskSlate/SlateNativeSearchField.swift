@@ -4,10 +4,11 @@
 // device panels' filter rows (``MacDevicePanelParts``) — and they are the same plate, so the
 // jump-free configuration below is minted once and neither of them re-spells it.
 //
-// It is now AppKit's alone. The phone's ``SlateSearchField`` used to be an `NSViewRepresentable` over
-// this very class; increment 63 made `SlopDeskPhoneUI` iOS-only and that wrapper went with the arm,
-// leaving a plain SwiftUI `TextField` there. The measurement below is a macOS text-path fact, so
-// nothing was lost in the split — but do not read this file as one half of a pair any more.
+// It is now AppKit's alone. The phone used to wrap this very class behind an `NSViewRepresentable`;
+// increment 63 made `SlopDeskPhoneUI` iOS-only and that wrapper went with the arm, and the
+// whole-codebase SwiftUI removal later replaced what stood in its place with the phone's own UIKit
+// search field. The measurement below is a macOS text-path fact, so nothing was lost in either split
+// — but do not read this file as one half of a pair any more.
 //
 // The macOS reason, in full. SwiftUI `TextField` is the wrong tool at this one size: at
 // `Slate.Typeface.footnote` (11pt) its text renders 1pt LOWER unfocused than focused, so
@@ -28,8 +29,8 @@ import AppKit
 /// clear affordance) — this is only the line, jump-free on focus.
 @MainActor
 package enum SlateNativeSearchField {
-    /// The jump-critical configuration, factored out so a headless test can pin it (a `Context`
-    /// cannot be constructed outside SwiftUI).
+    /// The jump-critical configuration, factored out so a headless test can pin it directly rather
+    /// than through whatever plate happens to mount the field.
     package static func makeConfiguredField(
         text: String, delegate: NSTextFieldDelegate?,
     ) -> NSTextField {
