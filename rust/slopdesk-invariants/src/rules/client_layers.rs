@@ -60,9 +60,15 @@ pub fn presentation_logic_draws_nothing_both(tree: &Tree) -> Report {
 /// The rule above bans view frameworks from `SlopDeskClientCore` outright. Below it the bar is
 /// deliberately weaker: a domain target may hold the SEAM a renderer mounts, because the
 /// alternative is a protocol whose only implementation lives one target up and a second copy of the
-/// domain types it reads. What it may not hold is a TENTH such file arriving unnoticed — every
+/// domain types it reads. What it may not hold is a further such file arriving unnoticed — every
 /// entry in [`DOMAIN_VIEW_FRAMEWORK_SEAMS`] was argued for in its own file's header, and an
 /// unlisted import is a file that skipped the argument.
+///
+/// ⚠️ THIS SAID "A TENTH" WHILE THE LIST HELD NINE, and the count went stale the first time the
+/// list grew. It is spelled without a number now for the same reason the rungs of an ink table are
+/// READ rather than listed: a doc that restates a length is a second place to update, and the one
+/// nobody does. The MESSAGE still counts, because a failure that says "the ten seams" tells a
+/// reader how big the list they are about to join is.
 ///
 /// A separate rule rather than a third claim on the one above, because the two have different
 /// SUBJECTS: that one is about a layer that draws nothing, this one is about a layer that draws
@@ -80,10 +86,10 @@ pub fn domain_layers_hold_only_named_view_seams(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: DOMAIN_VIEW_FRAMEWORK_SEAMS,
-            message: "{files} — a DOMAIN target imported a view framework and is not one of the nine seams \
+            message: "{files} — a DOMAIN target imported a view framework and is not one of the ten seams \
                       that already do. Either the file belongs up in SlopDeskMacUI / SlopDeskPhoneUI, or it \
-                      is a tenth seam and belongs in DOMAIN_VIEW_FRAMEWORK_SEAMS with the reason written \
-                      beside it (docs/56 §3, docs/00 'Core / shell split')",
+                      is an eleventh seam and belongs in DOMAIN_VIEW_FRAMEWORK_SEAMS with the reason \
+                      written beside it (docs/56 §3, docs/00 'Core / shell split')",
         },
         // ⚠️ THE FLOOR IS PER-TARGET, for `ui_split`'s reason and not for tidiness. The ban above is
         // a ban with nothing required alongside it, so a root that globbed to zero files would
@@ -279,6 +285,17 @@ const DOMAIN_VIEW_FRAMEWORK_SEAMS: &[&str] = &[
     "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift",
     "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
     "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
+    // THE TENTH, added 2026-08-28 by `416e0c74`, and it is a SUBSTITUTION rather than growth. The
+    // leaf seams hand a renderer's view back to a canvas that must add it as a subview, and that
+    // used to be phrased in `AnyView` — a SwiftUI type, so the seam forced every AppKit and UIKit
+    // canvas to interpose a hosting view over the one surface that must take every keystroke. With
+    // SwiftUI banned from the tree there is no framework-neutral view type left to phrase it in, so
+    // the seam is now a plain `NSView`/`UIView` alias. It is admitted on the same terms as the nine
+    // above: the argument is in the file's own header, and that header also carries the ⚠️ that
+    // keeps it from growing — it aliases a CLASS NAME and nothing else, no shared protocol, no
+    // wrapper, no `#if` cascade over `isFlipped` / `layer` / `setNeedsLayout`. The day it grows one,
+    // it is the cross-platform view layer this campaign deleted, rebuilt under a new name.
+    "Sources/SlopDeskWorkspaceCore/UI/PlatformView.swift",
 ];
 
 #[cfg(test)]
@@ -309,7 +326,7 @@ mod tests {
     }
 
     /// The domain ban has to be shown doing BOTH halves of its job, because they fail in opposite
-    /// directions: a new file that imports a framework must be caught, and one of the nine that
+    /// directions: a new file that imports a framework must be caught, and one of the ten that
     /// already do must NOT be — an exemption list nobody proves is honoured is a list that could be
     /// spelled wrong and would never say so.
     #[test]
@@ -328,7 +345,7 @@ mod tests {
             "the exemption list is not being honoured — check the paths in it",
         );
 
-        // A TENTH one is the whole point of the rule.
+        // AN ELEVENTH one is the whole point of the rule.
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceRail.swift",
             // UIKit rather than SwiftUI, which is not cosmetic: SwiftUI is banned from every Swift
