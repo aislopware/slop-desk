@@ -28,30 +28,6 @@ const PHONE: &str = "Sources/SlopDeskPhoneUI/";
 /// Both, as a ban's roots.
 const BOTH: &[&str] = &[MAC, PHONE];
 
-/// No body is written twice across the split
-///
-/// Eight consecutive substantive lines appearing in both shells. The normalisation, the window and
-/// the debt list are all [`Claim::NoCloneAcross`]'s, which is where the reasoning for each lives;
-/// what is here is the ledger itself.
-///
-/// SIX pairs, and the seventh is how a row LEAVES this list. `SlopDeskMacApp` ↔ `SlopDeskPhoneApp`
-/// was annotated "waiting on `ClientNotificationSinks` being called from the phone half"; docs/62
-/// stage A rewrote that phone file into `PhoneAppDelegate` and had it call the floor, so the clone
-/// stopped existing and the row went with it. That is the only outcome that removes one — a pair
-/// that stops cloning is an unpaid ledger entry exactly as a new clone is a violation, so this rule
-/// fails in BOTH directions and every rewrite of a ledgered file settles its row in the same
-/// commit.
-///
-/// One of the six, `CodePanelSurfaces`, has its floor type written already (`CodeServerEnsure`) and
-/// waits only on the phone-side edit — docs/62 stage G. The rest are waiting on a floor file nobody
-/// has written yet, the GUI/video pane leaf being the largest and the next one worth doing.
-///
-/// BREAK-TEST (2026-08-22): copied `KeybindingsEditorReading.swift`'s `conflictLines(_:)` body back
-/// into BOTH shells' editors as private methods — the exact shape the dedup removed. Rule FIRED,
-/// naming both sites. Restored both files by `cp` from /tmp; rule green. Also verified the inverse:
-/// with the tree as it stood the rule found exactly the seven ledgered pairs, i.e. it was not
-/// passing by finding nothing. That editor is gone with the rest of the settings GUI — a key
-/// binding is a `[keybind]` line now — so its nine sentences left the ledger with it.
 /// The connect form's own words. Rust, not Swift: the form's vocabulary crossed the FFI
 /// boundary with the rest of its reading, and the ban's paired claim has to follow the floor
 /// wherever it moved or it starts guarding an empty room — the same move `SEARCH` records.
@@ -106,6 +82,35 @@ const OWNED: &[(&str, &str, &str)] = &[
     ("Search for commands…", PALETTE, "PalettePresentation.queryPrompt"),
 ];
 
+/// No body is written twice across the split
+///
+/// Eight consecutive substantive lines appearing in both shells. The normalisation, the window and
+/// the debt list are all [`Claim::NoCloneAcross`]'s, which is where the reasoning for each lives;
+/// what is here is the ledger itself.
+///
+/// ZERO pairs, and that is the demolition's doing rather than nine dedups landing at once. The
+/// ledger held six — `MacGuiLeafView`↔`GuiLeafView`, `MacPromptJumpFlashOverlay`↔
+/// `PromptJumpFlashOverlay`, `MacTerminalFindBar`↔`TerminalFindBar`, `MacTerminalLeafView`↔
+/// `TerminalLeafView`, `MacCodePanelSurfaces`↔`CodePanelSurfaces`, `MacWorkspaceRootView`↔
+/// `WorkspaceRootView` — and `3f11c6e6` deleted every phone side while the AppKit shell's own
+/// de-SwiftUI took `MacWorkspaceRootView` with it. An entry ASSERTS a clone exists today, so a row
+/// whose files are gone is not a debt in abeyance; it is a false claim, and the ledger fails on it
+/// exactly as it fails on an unledgered clone. Hence `known: &[]`.
+///
+/// ⚠️ WHAT AN EMPTY LEDGER DOES NOT MEAN. The tree is not deduplicated — it is half-built. Every
+/// pair above returns the moment its UIKit twin is written against the same Mac source, and the
+/// right response then is to re-ledger it with the floor file it waits on, not to widen the window.
+/// A row LEAVES honestly only one way: the clone stops existing because a shared floor absorbed it
+/// (`SlopDeskMacApp` ↔ `SlopDeskPhoneApp` left that way in stage A, once `PhoneAppDelegate` called
+/// `ClientNotificationSinks`). These six left the other way, and the doc records which so the next
+/// reader does not mistake an empty ledger for a paid one.
+///
+/// BREAK-TEST (2026-08-22): copied `KeybindingsEditorReading.swift`'s `conflictLines(_:)` body back
+/// into BOTH shells' editors as private methods — the exact shape the dedup removed. Rule FIRED,
+/// naming both sites. Restored both files by `cp` from /tmp; rule green. Also verified the inverse:
+/// with the tree as it stood the rule found exactly the seven ledgered pairs, i.e. it was not
+/// passing by finding nothing. That editor is gone with the rest of the settings GUI — a key
+/// binding is a `[keybind]` line now — so its nine sentences left the ledger with it.
 #[must_use]
 pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
     check_all(tree, &[Claim::NoCloneAcross {
@@ -113,35 +118,10 @@ pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
         right: PHONE,
         extensions: SWIFT,
         window: 8,
-        known: &[
-            // GUI/video pane leaf — the largest remaining pair, and the next one worth a floor.
-            (
-                "Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift",
-                "Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift",
-            ),
-            (
-                "Sources/SlopDeskMacUI/Pane/MacPromptJumpFlashOverlay.swift",
-                "Sources/SlopDeskPhoneUI/Pane/PromptJumpFlashOverlay.swift",
-            ),
-            (
-                "Sources/SlopDeskMacUI/Pane/MacTerminalFindBar.swift",
-                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
-            ),
-            (
-                "Sources/SlopDeskMacUI/Pane/MacTerminalLeafView.swift",
-                "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift",
-            ),
-            // Waiting on `CodeServerEnsure` being called from the phone half.
-            (
-                "Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift",
-                "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift",
-            ),
-            (
-                "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift",
-                "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
-            ),
-        ],
-        floor: 50,
+        // Empty on purpose, and only until the UIKit twins land — see the doc comment above for
+        // which six rows left and why an entry cannot be written ahead of its files.
+        known: &[],
+        floor: 15,
         message: "eight identical lines in both UI targets ({pairs}) — one implementation, never two \
                   (docs/56 §3, CLAUDE.md)",
     }])
@@ -226,6 +206,39 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
 /// shared set from 33 to 28. The FLOOR moved with it — it exists so a pattern that has stopped
 /// matching cannot pass as a clean tree, and 40 was above the phone's entire vocabulary.
 ///
+/// RE-PINNED 2026-08-28, downward again and much harder: `3f11c6e6` deleted the SwiftUI phone
+/// whole, and the UIKit rebuild has not written its copy yet. The Mac still reads 63 phrases; the
+/// phone reads THREE — `Cancel`, the `SLOPDESK_AUTOCONNECT_HOST` gate name, and the ghostty
+/// headless-build hint — and all three are shared. Ceiling 3, floor 1.
+///
+/// ⚠️ WHAT THE OLD NUMBERS WERE DOING WHILE THE PHONE WAS EMPTY, and the reason this is the rule
+/// the demolition damaged worst. A ceiling of 28 over a shared set of 3 forbids nothing: the phone
+/// could re-spell twenty-five of the Mac's sentences and the gate would stay green. Only the FLOOR
+/// went red, and a floor's message says "this ceiling would hold by reading nothing" — which reads
+/// as a stale pattern, not as a ceiling that had quietly stopped biting. A ceiling pinned well
+/// above the live count is not a lenient ratchet; it is a rule that has expired without saying so.
+///
+/// So the pin is deliberately the tightest number the tree admits — every phrase the phone owns is
+/// already shared, so the ceiling is at the top of its own range and the very next phrase the
+/// rebuild spells on both sides is red. It read 3 when this paragraph was first written and 4 by
+/// the time the change landed, because the pane leaves arriving in the same hour added `"Copied"`
+/// to both sides. That churn is the point rather than a nuisance: 4 is a DEBT of four phrases, each
+/// of which belongs in `SlopDeskClientCore`, and re-measuring is the last act before every commit
+/// that touches either shell. That is the LAW, not an accident of timing: a stage that
+/// re-types a Mac sentence in UIKit must route it through `SlopDeskClientCore` instead. Expect this
+/// number to be re-pinned repeatedly as docs/62 lands — DOWNWARD as ClientCore absorbs a phrase,
+/// and upward only after a merge that is genuinely refused (the Done / Cancel / Close class).
+///
+/// ⚠️ AND IT WAS 14 BY THE TIME THIS COMMIT LANDED, WHICH IS THE RULE WORKING RATHER THAN A STALE
+/// PIN. The panel and settings stages typed ten more of the Mac's sentences into UIKit in the same
+/// hour — `"Stream quality"`, `"FPS cap"`, `"Bitrate ceiling"`, `"Clipboard Ring"`, `"Paste as
+/// Keystrokes"`, `"Refresh Displays"`, `"No display list from host"`, `"No recent clips"`,
+/// `"Dismiss"` and the two settings captions. The ceiling was NOT raised to 14 to absorb them, and
+/// the reason is the same one that forbids writing a `known` debt pair for a clone without arguing
+/// against deduplication first: every one of those ten is a sentence, not a platform verb, so the
+/// fix is `SlopDeskClientCore`, and a ceiling raised to fit them is the "expired without saying so"
+/// failure arriving from the other direction. The red is addressed to the stage that typed them.
+///
 /// BREAK-TEST (2026-08-22), both directions. UP: replaced `ConnectForm.videoPortsLabel` with the
 /// literal `"Advanced Transport Options"` in BOTH `MacConnectSheet.swift` and
 /// `ConnectHostView.swift` — a phrase the named ban has never heard of, so only the ceiling can see
@@ -253,12 +266,14 @@ pub fn the_shared_vocabulary_only_shrinks(tree: &Tree) -> Report {
         label: "phrases",
         left: phrases(MAC),
         right: phrases(PHONE),
-        ceiling: 28,
-        // Under the SMALLER side's reading. The two shells are deliberately asymmetric here —
-        // the Mac spells nearly twice the phrases the phone does, most of them menu-bar items
-        // that have no phone surface — so a floor set near the larger one would fail on an
-        // ordinary edit rather than on a pattern going stale.
-        floor: 34,
+        ceiling: 4,
+        // Under the SMALLER side's reading, and during the rebuild the smaller side is TINY. The
+        // two shells were always asymmetric — the Mac spells menu-bar items with no phone surface
+        // at all — and the UIKit port has taken the phone to three phrases, so a floor set anywhere
+        // near the Mac's 63 would fail on every ordinary edit instead of on a pattern going stale.
+        // One is the whole job here: it separates "the phone reads a little" from "the regex
+        // matches nothing", which is the only failure the count itself cannot show.
+        floor: 1,
         message: "{found} phrases are spelled in BOTH UI targets, ceiling {ceiling} — a new one belongs in \
                   SlopDeskClientCore (docs/56 §3): {shared}",
     }])
@@ -306,10 +321,11 @@ mod tests {
 
     /// Whether the CLONE arm fired, as opposed to the ledger arm.
     ///
-    /// A fixture holds none of the seven ledgered pairs, so every run of this rule against one
-    /// reports seven paid debts. That is the ledger working — it is checked both ways — and it is
-    /// noise to a test about the clone arm, so the two are told apart by their sentences. The
-    /// ledger's own both-ways behaviour is exercised where it can be parameterised, on
+    /// The ledger is empty during the UIKit rebuild, so today the two arms cannot be confused. They
+    /// could before — a fixture held none of the six ledgered pairs, so every run reported six paid
+    /// debts, which is the ledger working and noise to a test about the clone arm — and they will
+    /// again the moment a twin is re-ledgered. So the discrimination stays. The ledger's own
+    /// both-ways behaviour is exercised where it can be parameterised, on
     /// [`crate::claim::Claim::NoCloneAcross`] directly.
     fn cloned(report: &crate::report::Report) -> bool {
         report
@@ -446,17 +462,22 @@ mod tests {
     #[test]
     fn a_vocabulary_that_grew_is_red() {
         let fixture = Fixture::new("shared-vocabulary");
-        vocabulary(&fixture, 28);
+        // Re-aimed 2026-08-28 from 28/29/27 onto the ceiling the UIKit rebuild left, and re-pinned
+        // in the same session from 3 to 4 when the pane leaves landed `"Copied"` on both sides. The
+        // old numbers exercised the same arms, but a break-test written against a ceiling the rule
+        // no longer carries proves nothing about the rule that is registered — so this fixture
+        // tracks the pin rather than a number it once had.
+        vocabulary(&fixture, 4);
         assert!(super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
 
         // The break-test's UP direction: one phrase this rule's named sibling has never heard of,
         // typed on both sides. Only the ceiling can see it.
-        vocabulary(&fixture, 29);
+        vocabulary(&fixture, 5);
         assert!(!super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
 
         // And the DOWN direction, which stays green — it bites upward only, because the overlap
         // moves under every ordinary rename on one side.
-        vocabulary(&fixture, 27);
+        vocabulary(&fixture, 3);
         assert!(super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
     }
 
@@ -464,12 +485,24 @@ mod tests {
     fn a_drained_vocabulary_is_red() {
         // Below the floor on one side, which is a pattern that has gone stale rather than a split
         // that has been cleaned up; its own fixture, because writes accumulate.
+        //
+        // Re-aimed 2026-08-28 with the floor. At floor 34 a shell holding ONE phrase was already
+        // under it; at floor 1 the drain has to be total, so the phone half here spells no
+        // capitalised literal at all — which is exactly the tree `3f11c6e6` left and exactly what
+        // the floor now exists to catch.
         let fixture = Fixture::new("shared-vocabulary-drained");
         fixture.write("Sources/SlopDeskMacUI/Leaf.swift", "Text(\"Bitrate ceiling\")\n");
         fixture.write(
             "Sources/SlopDeskPhoneUI/Leaf.swift",
-            "Text(\"Bitrate ceiling\")\n",
+            "final class Leaf: UIView {}\n",
         );
         assert!(!super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
+
+        // And the tripwire is a tripwire, not a ratchet: one phrase per side clears it.
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Leaf.swift",
+            "Text(\"Bitrate ceiling\")\n",
+        );
+        assert!(super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
     }
 }

@@ -9,7 +9,11 @@ use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-const MAC_WINDOW_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift";
+/// The Mac's window root. RE-AIMED 2026-08-28 from `App/MacWorkspaceRootView.swift`: the Mac shell
+/// finished its own de-SwiftUI and the root is a window controller now, not a `View`. The phone's
+/// twin moved the same way one commit earlier (docs/62 stage D), so the pair below still reads two
+/// roots — both of them imperative, which is the arrangement `CLAUDE.md` says is the floor.
+const MAC_WINDOW_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceWindowController.swift";
 const PHONE_WINDOW_ROOT: &str = "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift";
 const MAC_SIDEBAR_TOGGLE: &str = "Sources/SlopDeskMacUI/Chrome/MacWindowSidebarToggle.swift";
 const MAC_CONTENT_COLUMN: &str = "Sources/SlopDeskMacUI/Columns/MacContentColumn.swift";
@@ -135,8 +139,8 @@ pub fn a_test_target_is_the_same_edge(tree: &Tree) -> Report {
             path: MAC_WINDOW_ROOT,
             pattern: "^import SlopDeskPhoneUI",
             view: View::Code,
-            message: "MacWorkspaceRootView imports the draining floor again — the window root came off it \
-                      (docs/56 §3.5)",
+            message: "MacWorkspaceWindowController imports the draining floor again — the window root came \
+                      off it (docs/56 §3.5)",
         },
         Claim::Exists {
             path: MAC_SIDEBAR_TOGGLE,
@@ -208,6 +212,17 @@ pub fn the_canvas_registers_itself_in_appkit(tree: &Tree) -> Report {
         // Through the code view: `SplitContainer`'s header names the moat to explain why its gate is
         // gone, and a gate that cannot tell code from its own post-mortem forbids writing the
         // post-mortem.
+        // The moat ban's own floor. It is the one claim in this rule with no named path — a `Sources`
+        // sweep and three `Names` cannot go quiet, but a ban ROOTED in the draining target passes the
+        // instant that target drains, which is precisely what `3f11c6e6` did to it. Pinned well under
+        // the live count on purpose: a tripwire against an empty root, not a ratchet on the rebuild.
+        Claim::Populated {
+            roots: &["Sources/SlopDeskPhoneUI"],
+            extensions: SWIFT,
+            minimum: 15,
+            message: "only {found} Swift files under Sources/SlopDeskPhoneUI — the moat ban below reads an \
+                      empty tree and passes (docs/56 stage F, P5)",
+        },
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskPhoneUI"],
             extensions: SWIFT,
@@ -301,8 +316,8 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
             view: View::Code,
             exempt: &[GHOSTTY_SEAM],
             message: "{files} registers the terminal seam outside GhosttyRendererSeam.install() — one seam \
-                      has one installer, and a second registrar resolves by mount order \
-                      (docs/56 stage F, P4)",
+                      has one installer, and a second registrar resolves by mount order (docs/56 stage F, \
+                      P4)",
         },
         // The video seam's builder, named by its RETURN TYPE rather than by the registration line: the
         // point of the rule is that ONE value feeds the mount, and a builder that stopped returning a
@@ -325,8 +340,8 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
             pattern: r"VideoWindowFactory\.nativeShared *=",
             view: View::Code,
             message: "the Mac app main registers a `nativeShared` video slot again — the seam has ONE slot \
-                      since the phone gained a UIView, and a second one re-admits the hosting view over \
-                      the surface that takes every keystroke (docs/56 stage F, P4)",
+                      since the phone gained a UIView, and a second one re-admits the hosting view over the \
+                      surface that takes every keystroke (docs/56 stage F, P4)",
         },
         Claim::Matches {
             path: MAC_APP_MAIN,
@@ -431,16 +446,26 @@ mod tests {
     }
 
     /// Both files each case may dirty are rewritten, so a case starts from the clean tree rather
-    /// than from the previous case's break.
+    /// than from the previous case's break — plus the filler that clears the moat ban's floor,
+    /// which is the same reason `design_ratchets`' fixture writes a phone tree rather than a file.
+    ///
+    /// The canvas file is `SplitCanvasView` since docs/62 stage E.0; it was `SplitContainer`, and a
+    /// fixture naming the deleted spelling reads as a live path to the next person here.
     fn canvas(fixture: &Fixture) -> &Fixture {
+        for index in 0..15 {
+            fixture.write(
+                &format!("Sources/SlopDeskPhoneUI/Pane/Filler{index}.swift"),
+                "import UIKit\nfinal class Filler: UIView {}\n",
+            );
+        }
         fixture
             .write(
                 super::MAC_CONTENT_COLUMN,
                 "dropTargets.register(.canvas) { mainWindowFrame }\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/SplitContainer.swift",
-                "struct SplitContainer: View {}\n",
+                "Sources/SlopDeskPhoneUI/Pane/SplitCanvasView.swift",
+                "final class SplitCanvasView: UIView {}\n",
             )
             .write(
                 "Sources/SlopDeskPhoneUI/DesignSystem/SlateProjectIsland.swift",
@@ -456,7 +481,7 @@ mod tests {
 
         // Two providers for one key resolve by mount order, which is not a failure anybody sees.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Pane/SplitContainer.swift",
+            "Sources/SlopDeskPhoneUI/Pane/SplitCanvasView.swift",
             "dropTargets.register(.canvas) { frame }\n",
         );
         assert!(!super::the_canvas_registers_itself_in_appkit(&fixture.tree()).is_clean());
@@ -474,6 +499,26 @@ mod tests {
             "let r = Slate.Metric.islandRadius\n",
         );
         assert!(!super::the_canvas_registers_itself_in_appkit(&fixture.tree()).is_clean());
+    }
+
+    /// The moat ban is ROOTED in the draining target, so a drained target satisfies it by holding
+    /// nothing — the failure `3f11c6e6` actually caused, and the one the count cannot show.
+    #[test]
+    fn a_drained_phone_target_fails_the_moat_ban_rather_than_satisfying_it() {
+        let fixture = Fixture::new("ui-seam-canvas-drained");
+        fixture.write(
+            super::MAC_CONTENT_COLUMN,
+            "dropTargets.register(.canvas) { mainWindowFrame }\n",
+        );
+        let report = super::the_canvas_registers_itself_in_appkit(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("reads an empty tree and passes")),
+            "the floor is what fires, not one of the named claims: {:?}",
+            report.violations()
+        );
     }
 
     fn seams(fixture: &Fixture) -> &Fixture {
@@ -526,18 +571,15 @@ mod tests {
         // ⚠️ THE CASE THIS RULE REVERSED ON. A seam that re-grows the second slot is now the FAILURE,
         // where the same fixture was the rule's clean state before the phone gained a UIView.
         seams(&fixture);
-        fixture.write(
-            super::VIDEO_SEAM,
-            "static var shared\nstatic var nativeShared\n",
-        );
+        fixture.write(super::VIDEO_SEAM, "static var shared\nstatic var nativeShared\n");
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
         // And the app main re-registering the second slot, the other half of the same reversal.
         seams(&fixture);
         fixture.write(
             super::MAC_APP_MAIN,
-            "func build() -> MacVideoPaneSpec { … }\nVideoWindowFactory.shared = { … }\n\
-             VideoWindowFactory.nativeShared = { … }\nGhosttyRendererSeam.install()\n",
+            "func build() -> MacVideoPaneSpec { … }\nVideoWindowFactory.shared = { … \
+             }\nVideoWindowFactory.nativeShared = { … }\nGhosttyRendererSeam.install()\n",
         );
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
     }

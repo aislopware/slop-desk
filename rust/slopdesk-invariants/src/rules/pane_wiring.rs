@@ -125,12 +125,25 @@ pub fn one_escape_monitor_installed_and_removed_once(tree: &Tree) -> Report {
             view: View::Raw,
             message: "PaneMoveEscapeMonitorController imported SwiftUI — it taps events, it draws nothing",
         },
+        // ⚠️ ONE FLOOR PER ROOT, and `3f11c6e6` is the whole argument. This was a single
+        // `Populated{ roots: PANE_VIEWS, minimum: 20 }`, and the demolition emptied
+        // `SlopDeskPhoneUI/Pane` to ZERO without moving it: the two Mac roots clear 20 between them,
+        // so the combined floor stayed green over a ban that had stopped reading the phone entirely.
+        // A floor that sums its roots cannot see one of them drain — the same finding `ui_split.rs`
+        // records about its own video half, arrived at twice independently (docs/62 stage E.0).
         Claim::Populated {
-            roots: PANE_VIEWS,
+            roots: &["Sources/SlopDeskPhoneUI/Pane"],
             extensions: SWIFT,
-            minimum: 20,
-            message: "the pane-view corpus came back nearly empty ({found} files) — this gate has gone \
-                      stale and is checking nothing",
+            minimum: 6,
+            message: "the phone's pane-view corpus came back nearly empty ({found} files) — the escape-tap \
+                      ban below has gone stale and is checking nothing on the phone",
+        },
+        Claim::Populated {
+            roots: &["Sources/SlopDeskMacUI/Terminal", "Sources/SlopDeskMacUI/Pane"],
+            extensions: SWIFT,
+            minimum: 14,
+            message: "the Mac's pane-view corpus came back nearly empty ({found} files) — this gate has \
+                      gone stale and is checking nothing",
         },
         // Comments stripped: the controller's header EXPLAINS where the monitor went and has to name
         // the call to be worth reading. The app-level `WorkspaceKeyDispatcher` and the keybinding
@@ -437,10 +450,18 @@ mod tests {
             "func arm(onCancel: @escaping () -> Void) { addLocalMonitorForEvents() }\nfunc disarm() { \
              removeMonitor(token) }\n",
         );
+        // Both floors, separately: the phone's pane target and the Mac's. A fixture that filled only
+        // one of them is exactly the state `3f11c6e6` left the real tree in.
         for index in 0..20 {
             fixture.write(
                 &format!("Sources/SlopDeskPhoneUI/Pane/View{index}.swift"),
-                "import SwiftUI\n",
+                "import UIKit\n",
+            );
+        }
+        for index in 0..20 {
+            fixture.write(
+                &format!("Sources/SlopDeskMacUI/Pane/MacView{index}.swift"),
+                "import AppKit\n",
             );
         }
     }
@@ -457,6 +478,22 @@ mod tests {
             "NSEvent.addLocalMonitorForEvents(matching: .keyDown) { _ in nil }\n",
         );
         assert!(!super::one_escape_monitor_installed_and_removed_once(&fixture.tree()).is_clean());
+
+        // ONE ROOT DRAINING, WHICH A SUMMED FLOOR CANNOT SEE. Empty the phone's pane target and
+        // leave the Mac's alone: the old combined `minimum: 20` was still satisfied by the Mac side
+        // and the ban read nothing on the phone. Per-root, this is red.
+        monitor(&fixture);
+        for index in 0..20 {
+            fixture.remove(&format!("Sources/SlopDeskPhoneUI/Pane/View{index}.swift"));
+        }
+        let report = super::one_escape_monitor_installed_and_removed_once(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("the phone's pane-view corpus came back nearly empty"))
+        );
 
         // And the failure the shell only found by break-testing: a scope that resolves to nothing.
         let empty = Fixture::new("pane-escape-monitor-drained");

@@ -104,6 +104,133 @@ pub fn domain_layers_hold_only_named_view_seams(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// A VIEW target reaches a door through a readout, not through the header.
+///
+/// `docs/55` §6, "What the imperative UI changed at this boundary, and what it did not": the client
+/// crossing to AppKit and UIKit changed nothing on the Rust side and exactly one thing on the Swift
+/// side — how OFTEN a door is called. Rule 2 of the three that follow is this one. A door reached
+/// from a view file is a door nobody can exercise without a window server, and it puts §4c's
+/// marshalling next to a `layout()` pass where the call rate is a drawing decision rather than a
+/// state change. The readouts in `SlopDeskClientCore` / `SlopDeskWorkspaceCore` are where a door is
+/// called once, stored, and tested headless.
+///
+/// This is a LAYER law, not a framework one, which is why it is registered here rather than beside
+/// the FFI-artifact rules: `SwiftUI` had the same rule and enforced it by accident, because a body
+/// that called a door re-ran per invalidation and the pain arrived as jank. An imperative view
+/// holds its answer in a stored property, so the same mistake is now SILENT — the call rate is fine
+/// and the layer is wrong.
+///
+/// ## The one exception, and the shape of a legitimate future one
+///
+/// A door whose ARGUMENT is a platform type the readout layer cannot name. Today that is one file
+/// and two doors: `MacMetalLayerBackedView` takes an `NSEvent.Phase`, so the call can only live
+/// where `AppKit` is visible. Both are scalar-in/scalar-out with no memory crossing (§4's "entry
+/// that takes no memory at all"), and they exist so a wire-stable CoreGraphics encoding is not
+/// spelled twice in two languages. A second entry has to clear the same two bars: the argument is
+/// unnameable below, and nothing crosses but scalars.
+///
+/// ## ⚠️ THE ALLOWLIST IS KEYED ON A PATH, SO THE PATH IS CLAIMED
+///
+/// An `exempt` entry naming a file that has been renamed does not fail — it silently stops
+/// exempting anything, and if the rename also moved the call out of the roots the ban goes quiet
+/// with nothing left to catch. That is the shape `command_surface`'s renderer loop was found in:
+/// `SplitContainer.swift` → `SplitCanvasView.swift` disarmed six verb bans and stayed green. So the
+/// exemption is paired with an `Exists` and a `Mentions` on the same path — a rename is red HERE,
+/// naming the file, instead of widening the ban to nothing.
+///
+/// The view is comment-stripped for the usual reason and a measured one: six of the eight files a
+/// naive grep matches are PROSE naming a door — a header explaining that the drop-zone fractions
+/// live in Rust — and a raw read would fire on all six and be disabled by whoever hit it first.
+#[must_use]
+pub fn view_targets_reach_doors_through_readouts(tree: &Tree) -> Report {
+    let claims = [
+        Claim::NoneUnder {
+            roots: VIEW_TARGETS,
+            extensions: &["swift"],
+            pattern: r"^\s*import CSlopDeskFFI|\bslopdesk_[a-z0-9_]+",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: PLATFORM_ARGUMENT_DOORS,
+            message: "{files} — a view file reached the FFI header directly. Doors are called from a \
+                      SlopDeskClientCore / SlopDeskWorkspaceCore readout, which is what keeps the view \
+                      layer thin and testable without a window server. The one exception is a door whose \
+                      ARGUMENT is a platform type the readout layer cannot name, and it is listed in \
+                      PLATFORM_ARGUMENT_DOORS with the reason beside it (docs/55 §6 'What the imperative UI \
+                      changed at this boundary')",
+        },
+        // ⚠️ THE EXEMPTION'S OWN TRIPWIRE. Rename the file and the entry below exempts nothing —
+        // which is not a failure, it is a WIDENING. These two claims make the rename red instead.
+        Claim::Exists {
+            path: PLATFORM_ARGUMENT_DOORS[0],
+            message: "the one view file allowed to call a door is gone — re-aim PLATFORM_ARGUMENT_DOORS at \
+                      the file that replaced it, because a stale allowlist entry stops exempting and stops \
+                      being noticed (docs/55 §6)",
+        },
+        Claim::Mentions {
+            path: PLATFORM_ARGUMENT_DOORS[0],
+            names: &["slopdesk_cg_scroll_phase_code", "slopdesk_cg_momentum_phase_code"],
+            message: "MacMetalLayerBackedView stopped calling {entry} — if the scroll-phase encoding moved \
+                      below the view, DELETE its allowlist entry rather than leaving an exemption that now \
+                      covers a file with no reason to be exempt (docs/55 §6)",
+        },
+        // The floors are per-target for `domain_layers_hold_only_named_view_seams`'s reason: this is
+        // a ban with nothing required beside it, so a root that globbed to nothing satisfies it
+        // perfectly. `3f11c6e6` drained `SlopDeskPhoneUI` to zero and no ban over it went red. The
+        // numbers sit well under today's 87 / 32 / 4 / 1 — a tripwire against a target that VANISHED,
+        // never a ratchet on a rebuild that is meant to shrink. `SlopDeskVideoClientPhone` holds ONE
+        // file, so 1 is the only honest floor it can carry, and that is still the whole job here.
+        Claim::Populated {
+            roots: &["Sources/SlopDeskMacUI"],
+            extensions: &["swift"],
+            minimum: 30,
+            message: "SlopDeskMacUI holds only {found} Swift files — the door ban over it is reading almost \
+                      nothing, so check the target was not renamed or moved",
+        },
+        Claim::Populated {
+            roots: &["Sources/SlopDeskPhoneUI"],
+            extensions: &["swift"],
+            minimum: 8,
+            message: "SlopDeskPhoneUI holds only {found} Swift files — the door ban over it is reading \
+                      almost nothing, so check the target was not renamed or moved",
+        },
+        Claim::Populated {
+            roots: &["Sources/SlopDeskVideoClientMac"],
+            extensions: &["swift"],
+            minimum: 2,
+            message: "SlopDeskVideoClientMac holds only {found} Swift files — the door ban over it is \
+                      reading almost nothing, so check the target was not renamed or moved",
+        },
+        Claim::Populated {
+            roots: &["Sources/SlopDeskVideoClientPhone"],
+            extensions: &["swift"],
+            minimum: 1,
+            message: "SlopDeskVideoClientPhone holds only {found} Swift files — the door ban over it is \
+                      reading nothing at all, so check the target was not renamed or moved",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
+/// The four targets ABOVE the presentation layer — the renderers, which call no door.
+const VIEW_TARGETS: &[&str] = &[
+    "Sources/SlopDeskMacUI",
+    "Sources/SlopDeskPhoneUI",
+    "Sources/SlopDeskVideoClientMac",
+    "Sources/SlopDeskVideoClientPhone",
+];
+
+/// The ONE view file that may call a door, because the argument is a type the layer below cannot
+/// name.
+///
+/// `slopdesk_cg_scroll_phase_code` and `slopdesk_cg_momentum_phase_code` take an `NSEvent.Phase`.
+/// Both are scalar-in/scalar-out with no memory crossing, and both exist so the wire-stable
+/// CoreGraphics phase encoding is spelled in Rust only (`docs/55` §6). The phone's
+/// `MetalLayerBackedView` is deliberately NOT here: it carried a dead `import CSlopDeskFFI` with no
+/// door behind it until `3391e574`, and an allowlist entry for a file that calls nothing is an
+/// exemption waiting to be used for something else.
+const PLATFORM_ARGUMENT_DOORS: &[&str] = &["Sources/SlopDeskVideoClientMac/MacMetalLayerBackedView.swift"];
+
 /// The two targets BELOW the presentation layer — the domain, shared by both renderers.
 ///
 /// `SlopDeskWorkspaceModel` is deliberately absent: it holds value types and imports no framework
@@ -234,6 +361,89 @@ mod tests {
                 .any(|v| v.contains("SlopDeskDevicePanels holds only 0 Swift files")),
             "the smaller half has to be counted on its own, or it can drain to nothing: {report:?}",
         );
+    }
+
+    /// Three directions, because the rule fails in three: a view file that calls a door must be
+    /// caught, the allowlisted file must NOT be, and the allowlist entry itself must be red when
+    /// the path under it moves — which is the failure that presents as green everywhere else.
+    #[test]
+    fn a_door_called_from_a_view_file_is_caught_unless_its_argument_is_a_platform_type() {
+        let fixture = Fixture::new("view-targets-call-no-door");
+        seed_view_floors(&fixture);
+        fixture.write(
+            super::PLATFORM_ARGUMENT_DOORS[0],
+            "import CSlopDeskFFI\nfunc code() -> UInt32 { slopdesk_cg_scroll_phase_code(0) + \
+             slopdesk_cg_momentum_phase_code(0) }\n",
+        );
+        assert!(
+            super::view_targets_reach_doors_through_readouts(&fixture.tree()).is_clean(),
+            "the exemption is not being honoured — check the path in PLATFORM_ARGUMENT_DOORS",
+        );
+
+        // A view file reaching the header is the ban's whole subject.
+        fixture.write(
+            "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
+            "import CSlopDeskFFI\nlet rung = slopdesk_git_line_rung(handle)\n",
+        );
+        let report = super::view_targets_reach_doors_through_readouts(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("MacSidebarHeader.swift")),
+            "{report:?}"
+        );
+
+        // PROSE naming a door is not a call, and six live headers do exactly this — a raw read would
+        // fire on all of them and the rule would be turned off by the first person it stopped.
+        fixture.write(
+            "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
+            "// The ladder is slopdesk_workspace::git_line's, asked for by rung.\nlet rung = 0\n",
+        );
+        assert!(super::view_targets_reach_doors_through_readouts(&fixture.tree()).is_clean());
+
+        // And the rename: the allowlist stops exempting, so the ban would go quiet with nothing to
+        // catch. It has to be red HERE, naming the path.
+        fixture.remove(super::PLATFORM_ARGUMENT_DOORS[0]);
+        let report = super::view_targets_reach_doors_through_readouts(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("the one view file allowed to call a door is gone")),
+            "{report:?}"
+        );
+    }
+
+    /// A drained view target satisfies the door ban perfectly. Per-target for the domain floors'
+    /// reason: `SlopDeskMacUI` alone clears any number the two video shells could contribute.
+    #[test]
+    fn a_view_target_that_vanished_is_named_rather_than_passing() {
+        let fixture = Fixture::new("view-target-floor-vacuity");
+        fixture.write(super::PLATFORM_ARGUMENT_DOORS[0], "let code = 0\n");
+        let report = super::view_targets_reach_doors_through_readouts(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("SlopDeskPhoneUI holds only 0 Swift files")),
+            "{report:?}"
+        );
+    }
+
+    /// Enough files under each view root to clear all four floors, plus the allowlisted file's own
+    /// content, so a test about the BAN is never really reporting a floor.
+    fn seed_view_floors(fixture: &Fixture) {
+        for (root, count) in [
+            ("Sources/SlopDeskMacUI", 30),
+            ("Sources/SlopDeskPhoneUI", 8),
+            ("Sources/SlopDeskVideoClientMac", 2),
+            ("Sources/SlopDeskVideoClientPhone", 1),
+        ] {
+            for file in 0..count {
+                fixture.write(&format!("{root}/Filler{file}.swift"), "import Foundation\n");
+            }
+        }
     }
 
     /// Enough plain, framework-free files under each domain root to clear both floors, so a test

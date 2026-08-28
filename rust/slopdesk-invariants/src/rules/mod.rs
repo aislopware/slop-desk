@@ -624,6 +624,11 @@ pub fn registry() -> Vec<Rule> {
             check: client_layers::domain_layers_hold_only_named_view_seams,
         },
         Rule {
+            name: "view-targets-call-no-door",
+            origin: "docs/55 §6 'What the imperative UI changed at this boundary'",
+            check: client_layers::view_targets_reach_doors_through_readouts,
+        },
+        Rule {
             name: "code-panel-font-pair",
             origin: "check-supervisor.sh (deleted)",
             check: code_panel::font_pair_agrees_across_the_seam,

@@ -69,6 +69,23 @@ pub fn the_device_panel_floor_builds_for_the_phone(tree: &Tree) -> Report {
 /// DELETED (a reappearance would compile and pass its own tests) and the two ENTRY POINTS that
 /// carry the iPad's numbering must stay reachable, because a port that quietly dropped the HID half
 /// would leave an iPad keyboard typing nothing.
+///
+/// ## ⚠️ THE TWO STAGE PINS WERE RE-SPELLED 2026-08-28, AND THEY WERE ALREADY LYING
+/// Both read `Claim::Names { needle: "UIViewRepresentable" }`. That premise died twice over. A
+/// `UIKit` phone cannot write a representable AT ALL — the wrapper existed only to put a `UIView`
+/// inside a `SwiftUI` tree, and after docs/62 there is no `SwiftUI` tree — so the pin could only go
+/// red for the port succeeding. Worse, and this is the part that was true BEFORE the port:
+/// [`Claim::Names`] reads the file RAW, and `SimulatorScreenView.swift:11` carries the word
+/// "UIViewRepresentable" in its own prose. The claim was already satisfiable by a COMMENT, which
+/// means it had stopped pinning the code some time ago and nothing said so (docs/62 §4.8 names both
+/// halves of this).
+///
+/// The LAW survives the spelling, and it is the rule's own title: the device stage draws on the
+/// phone. What makes that true in `UIKit` is that the stage IS a `UIView`, so the needle is `:
+/// UIView` read as CODE — comment-proof, and red for the thing worth being red about. This is the
+/// general lesson §4.8 draws: a rule that pins an ARRANGEMENT (which wrapper type hosts the view)
+/// expires silently when its premise dies, where a rule that pins a BEHAVIOUR (the phone has a
+/// drawable stage) survives the framework it was written against.
 #[must_use]
 pub fn both_device_panels_draw_on_both_platforms(tree: &Tree) -> Report {
     let claims = [
@@ -84,17 +101,20 @@ pub fn both_device_panels_draw_on_both_platforms(tree: &Tree) -> Report {
             exempt: &[],
             message: "{files} is macOS-only again — both device panels draw on the phone too",
         },
-        Claim::Names {
+        // RE-SPELLED 2026-08-28 — see the header's last paragraph for what these two used to say.
+        Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
-            needle: "UIViewRepresentable",
-            message: "SimulatorScreenView lost its UIKit half — the phone's device stage is a \
-                      UIViewRepresentable",
+            pattern: r": UIView\b",
+            view: View::Code,
+            message: "SimulatorScreenView lost its UIKit half — the phone's device stage is a UIView, which \
+                      is what makes the simulator mirror draw on the phone at all (docs/62 §4.8)",
         },
-        Claim::Names {
+        Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
-            needle: "UIViewRepresentable",
-            message: "AndroidScreenView lost its UIKit half — the phone's device stage is a \
-                      UIViewRepresentable",
+            pattern: r": UIView\b",
+            view: View::Code,
+            message: "AndroidScreenView lost its UIKit half — the phone's device stage is a UIView, which \
+                      is what makes the Android mirror draw on the phone at all (docs/62 §4.8)",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -175,11 +195,17 @@ pub fn both_device_panels_draw_on_both_platforms(tree: &Tree) -> Report {
 #[must_use]
 pub fn the_code_panel_crosses(tree: &Tree) -> Report {
     let claims = [
-        Claim::Names {
+        // RE-SPELLED 2026-08-28, for the reason the sibling rule's header gives in full: the needle
+        // was `UIViewRepresentable`, which a UIKit phone cannot write and which `Claim::Names` would
+        // have accepted from a comment anyway. What the phone's code mount must be is a WEB VIEW —
+        // the panel mounting on both platforms is the law, and `WKWebView` is how the phone keeps it
+        // (docs/56, docs/62 §4.8).
+        Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift",
-            needle: "UIViewRepresentable",
-            message: "the phone's code mount lost UIViewRepresentable — the code panel mounts on both \
-                      platforms (docs/56)",
+            pattern: r"WKWebView",
+            view: View::Code,
+            message: "the phone's code mount stopped hosting a WKWebView — the code panel mounts on both \
+                      platforms (docs/56, docs/62 §4.8)",
         },
         Claim::Names {
             path: "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift",
@@ -297,11 +323,13 @@ mod tests {
         fixture
             .write(
                 "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
-                "#if os(macOS)\nNSViewRepresentable\n#elseif os(iOS)\nUIViewRepresentable\n#endif\n",
+                "#if os(macOS)\nfinal class Stage: NSView {}\n#elseif os(iOS)\nfinal class Stage: UIView \
+                 {}\n#endif\n",
             )
             .write(
                 "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
-                "#if os(macOS)\nNSViewRepresentable\n#elseif os(iOS)\nUIViewRepresentable\n#endif\n",
+                "#if os(macOS)\nfinal class Stage: NSView {}\n#elseif os(iOS)\nfinal class Stage: UIView \
+                 {}\n#endif\n",
             )
             .write(
                 "Sources/SlopDeskDevicePanels/Simulator/SimulatorKeyMap.swift",
@@ -334,7 +362,7 @@ mod tests {
         // The one shape a line-wise ban cannot see: a gate PRESENT and its phone half ABSENT.
         fixture.write(
             "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
-            "#if os(macOS)\nNSViewRepresentable\nUIViewRepresentable\n#endif\n",
+            "#if os(macOS)\nfinal class Stage: NSView {}\nfinal class Stage: UIView {}\n#endif\n",
         );
         assert!(!super::both_device_panels_draw_on_both_platforms(&fixture.tree()).is_clean());
 
@@ -359,7 +387,7 @@ mod tests {
         fixture
             .write(
                 "Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift",
-                "struct CodeSidebarWebView: UIViewRepresentable {}\n",
+                "final class CodeSidebarWebView: UIView {\n    let web = WKWebView()\n}\n",
             )
             .write(
                 "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift",

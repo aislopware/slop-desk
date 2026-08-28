@@ -61,6 +61,14 @@ pub fn one_grammar_per_device_console(tree: &Tree) -> Report {
         },
         // The two structs are gone and must stay gone: they were one type spelled twice, and a
         // second one would immediately grow a second parse to fill it.
+        //
+        // ⚠️ NO `Populated` FLOOR HERE, AND THE REASON IS THE LAW'S DIRECTION. `3f11c6e6` emptied
+        // `SlopDeskPhoneUI/Panel` and every other phone-rooted ban in this crate went quietly
+        // vacuous — but a STAY-DELETED ban is the one shape an empty root satisfies HONESTLY: the
+        // claim is that the type is absent, and in an empty directory it demonstrably is. Compare a
+        // no-new-leak ban (`split-drop-zone`, `one-clear-key`), where an empty root means the leak
+        // could return unseen and a floor is mandatory. The other root here globs ~50 files besides,
+        // so the rule is reading something either way (docs/62 stage H).
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskDevicePanels", "Sources/SlopDeskPhoneUI/Panel"],
             extensions: &["swift"],

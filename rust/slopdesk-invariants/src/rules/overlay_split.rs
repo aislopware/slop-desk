@@ -17,7 +17,7 @@ use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-const PHONE_HOST: &str = "Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift";
+const PHONE_HOST: &str = "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift";
 const PHONE_SWITCHER: &str = "Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift";
 const MAC_SWITCHER: &str = "Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift";
 const MAC_PEEK: &str = "Sources/SlopDeskMacUI/Overlays/MacPeekReply.swift";
@@ -29,7 +29,12 @@ const PHONE_PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swi
 const JUMP_TO: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/JumpToModel.swift";
 const MAC_PALETTE: &str = "Sources/SlopDeskMacUI/Overlays/MacPalette.swift";
 const PHONE_PALETTE: &str = "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift";
-const MAC_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift";
+/// RE-AIMED 2026-08-28. This read `App/MacWorkspaceRootView.swift` until the Mac shell finished
+/// crossing to AppKit and the window root became `App/MacWorkspaceWindowController.swift`. The
+/// inventory of the demolition claimed "all six Mac sides survive"; this is one of the two places
+/// that was FALSE, and the rule below was red against a file nobody had noticed was gone. Same
+/// re-aim as `ui_seams.rs`'s `MAC_WINDOW_ROOT`, which is the other one.
+const MAC_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceWindowController.swift";
 
 /// The shared overlay host holds no AMBIENT layer, and the ⌃⇥ walk has two halves
 ///
@@ -50,6 +55,19 @@ const MAC_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift";
 /// Comment lines are stripped first: the file's header is where the history is RECORDED, and it has
 /// to be free to name what left (and what came back) without the gate reading prose as a
 /// regression.
+///
+/// ## ⚠️ THE PATH IS RE-AIMED; THE FIRST CLAUSE'S VOCABULARY IS NOT
+///
+/// `PHONE_HOST` now names `Shell/PhoneOverlayLayerView.swift`, a live UIKit file, so this rule
+/// reads a real subject again. The `allowsHitTesting` ban on it does NOT: that is a `SwiftUI`
+/// modifier, and a UIView spells the same hazard as a `hitTest(_:with:)` override or
+/// `isUserInteractionEnabled`. The needle can no longer see the thing it forbids, so that ONE
+/// clause is permanently green and checks nothing — the same expiry class as the `.task(id:)`
+/// `Exactly` that was excised from `panel_shells.rs`, except here it sits on a path that LOOKS
+/// repaired. It is left registered rather than deleted because the LAW is still true and `docs/62`
+/// §4.8 assigns the UIKit re-spell to stage F, which owns the overlay layer; inventing the needle
+/// from here would pin an arrangement the rebuild has not chosen yet. Every other clause below
+/// reads the file and bites today.
 #[must_use]
 pub fn the_overlay_host_holds_no_ambient_layer(tree: &Tree) -> Report {
     let claims = [
@@ -225,7 +243,7 @@ pub fn one_global_search_two_frameworks(tree: &Tree) -> Report {
                       GlobalSearchPresentation's",
         },
         Claim::Lacks {
-            path: "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+            path: "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
             pattern: r#""Case sensitive"|"Whole word"|"Regex \(ICU\)""#,
             view: View::Code,
             message: "TerminalFindBar respells a mode pill — the labels and help are FindModePill's, for \
@@ -345,7 +363,7 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
             path: MAC_ROOT,
             pattern: "OverlayHostView",
             view: View::Raw,
-            message: "MacWorkspaceRootView mounts the shared host again — an NSHostingView over the split \
+            message: "the Mac's window root mounts the shared host again — an NSHostingView over the split \
                       eats the clicks",
         },
         // The two surfaces that were never cards exist on the Mac and are DRIVEN. Each defaults to
@@ -523,7 +541,7 @@ mod tests {
                 .write(super::MAC_SEARCH, "GlobalSearchPresentation\nFindModePill\n")
                 .write(super::PHONE_SEARCH, "GlobalSearchPresentation\nFindModePill\n")
                 .write(
-                    "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+                    "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
                     "FindModePill\n",
                 );
         };
@@ -540,7 +558,7 @@ mod tests {
         // And the find bar respelling a pill.
         seed(&fixture);
         fixture.append(
-            "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+            "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
             "Toggle(\"Whole word\", isOn: $whole)\n",
         );
         assert!(!super::one_global_search_two_frameworks(&fixture.tree()).is_clean());

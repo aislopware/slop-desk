@@ -33,6 +33,16 @@ const BINDING_OVERRIDES: &str =
 /// The canvas has two drawings; each one CALLS this controller. A renderer naming a commit verb
 /// itself has re-derived the fork — and, on the tear-off, the ORDERING — by hand, which is the "one
 /// implementation, never two" failure a rewrite commits by accident.
+///
+/// ## ⚠️ A SKIPPED RENDERER IS NOT A SATISFIED ONE
+/// The loop below skips a renderer that does not exist, so a row may be written ahead of the
+/// drawing it names. That tolerance has a cost, and `3f11c6e6`/`bbb9845d` charged it: the phone
+/// canvas was renamed `SplitContainer.swift` → `SplitCanvasView.swift`, the `continue` swallowed
+/// the missing path, and all six verb bans stopped checking the phone WITHOUT ONE FAILURE. A
+/// `Claim::Exists` per renderer is therefore paired with the skip — the skip keeps the ban list
+/// well-formed while the `Exists` is what goes red, so a rename must re-aim this row instead of
+/// quietly disarming it. Same shape as a `Claim::Populated` beside a `NoneUnder`, at the per-path
+/// scale (docs/62 stage E.0).
 #[must_use]
 pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
     /// Where the drag's decisions are spelled.
@@ -53,8 +63,14 @@ pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
         ("updateContainerBounds", r"updateContainerBounds\("),
     ];
     /// The two drawings of the canvas, each of which must CALL rather than restate.
+    ///
+    /// RE-AIMED 2026-08-28. The phone row read `Pane/SplitContainer.swift` until `3f11c6e6`
+    /// demolished the SwiftUI phone and `bbb9845d` rebuilt the canvas as
+    /// `Pane/SplitCanvasView.swift` (docs/62 stage E.0). The rename did not turn this rule red
+    /// — the `continue` below skipped the absent path and all six verb bans went VACUOUS on the
+    /// phone half, which is why the `Claim::Exists` pair now sits beside the loop.
     const RENDERERS: &[&str] = &[
-        "Sources/SlopDeskPhoneUI/Pane/SplitContainer.swift",
+        "Sources/SlopDeskPhoneUI/Pane/SplitCanvasView.swift",
         "Sources/SlopDeskMacUI/Pane/MacSplitCanvasView.swift",
     ];
 
@@ -74,6 +90,14 @@ pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
                       cascade, and only sometimes (docs/56 §3)",
         },
     ];
+    for renderer in RENDERERS {
+        claims.push(Claim::Exists {
+            path: renderer,
+            message: "a canvas renderer named by the drag ban is gone — re-aim the row at the file that \
+                      replaced it, because the ban below SKIPS an absent renderer instead of failing \
+                      (docs/56 §3, docs/62 stage E.0)",
+        });
+    }
     for (verb, pattern) in VERBS {
         for renderer in RENDERERS {
             // A renderer that does not exist yet is skipped, so a row can be written ahead of the
@@ -337,7 +361,7 @@ mod tests {
                  store.detachPaneToWindow(source)\n}\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/SplitContainer.swift",
+                "Sources/SlopDeskPhoneUI/Pane/SplitCanvasView.swift",
                 "dragController.commit(destination)\n",
             )
             .write(
@@ -367,6 +391,29 @@ mod tests {
             "store.detachPaneToWindow(source)\n",
         );
         assert!(!super::the_canvas_drag_decides_once(&fixture.tree()).is_clean());
+    }
+
+    /// A renamed renderer must FAIL, not disarm its own bans.
+    ///
+    /// This is the break-test for `3f11c6e6`'s actual damage: the phone canvas moved to a new file
+    /// name, the ban loop's `continue` skipped it, and six verb bans went vacuous in silence.
+    /// Seeding the rename — write the Mac renderer, leave the phone one absent — must be RED.
+    #[test]
+    fn a_renamed_renderer_is_red_rather_than_skipped() {
+        let fixture = Fixture::new("surface-drag-rename");
+        drag(&fixture);
+        assert!(super::the_canvas_drag_decides_once(&fixture.tree()).is_clean());
+
+        // The rename, as it actually landed: the old path is gone and no row was re-aimed.
+        fixture.remove("Sources/SlopDeskPhoneUI/Pane/SplitCanvasView.swift");
+        let report = super::the_canvas_drag_decides_once(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("SKIPS an absent renderer"))
+        );
     }
 
     #[test]

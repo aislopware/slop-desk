@@ -805,7 +805,14 @@ const CITED_SUFFIXES: [&str; 9] = [
 ];
 
 /// The roots a source citation may be written against. A comment cites either the full repo path or
-/// the tail of one (`SlopDeskPhoneUI/Pane/TerminalLeafView.swift`), and both must resolve.
+/// the tail of one (`SlopDeskPhoneUI/Pane/SplitCanvasView.swift`), and both must resolve.
+///
+/// The example moved in 2026-08-28, and it moved because THIS RULE CAUGHT ITS OWN HEADER: it used
+/// to cite the phone's old terminal leaf, `3f11c6e6` deleted that file, and the rule named its own
+/// doc comment as a stale citation. That is the check working exactly as docs/62 §4.8 predicts — a
+/// rename campaign reds this rule once per stale citation, and each one is a real dangling
+/// reference rather than a false positive. The dead path is deliberately NOT backticked here, since
+/// a backticked one would be a citation this rule then has to fail.
 const CITED_ROOTS: [&str; 8] = [
     "Sources",
     "Tests",

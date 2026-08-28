@@ -34,11 +34,33 @@ const KEY_EVENT: &str = "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift
 /// `.task(id:)` on three of the four branches, which reads correctly and cancels the poll on every
 /// transition the poll itself caused. Three is the bug's signature; one is the fix.
 ///
+/// ⚠️ AND THAT CLAUSE IS NO LONGER CHECKED, which is worth more written down than quietly dropped.
+/// It was `Claim::Exactly { pattern: r"\.task\(id: pollKey\)", count: 1 }` — a pin on a SwiftUI
+/// MODIFIER, and the phone has no SwiftUI (docs/62). The LAW survives the spelling: one poll,
+/// started once, not restarted by the transitions it causes. Its UIKit spelling cannot be pinned
+/// yet because the surface it would read has not been written — stage G — and a pattern guessed
+/// against a view controller nobody has typed would be a rule that fires on the first honest draft.
+/// So the clause is excised rather than re-aimed, and this paragraph is the debt: when
+/// `CodePanelSurfaces` returns as a view controller, pin the single start site (one
+/// `Task`/`Timer`/`AsyncStream` per poll key, in one lifecycle callback rather than per branch)
+/// and delete this note. A rule that pins an ARRANGEMENT of one framework's modifiers expires the
+/// day the framework leaves; the sentence above is what it was FOR.
+///
 /// And the clip is measured once. Two `static let`s carrying one measurement is how the phone kept
 /// clipping 30pt after the workbench moved its title bar.
 #[must_use]
 pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
     let claims = [
+        // Per-root, and NOT on `Sources/SlopDeskPhoneUI` — the shell target globs thirty-odd files
+        // while this rule's whole phone half lives in one directory, so a floor on the parent is a
+        // floor that cannot see the drain it exists for.
+        Claim::Populated {
+            roots: &["Sources/SlopDeskPhoneUI/CodeSidebar"],
+            extensions: SWIFT,
+            minimum: 1,
+            message: "only {found} Swift files under Sources/SlopDeskPhoneUI/CodeSidebar — the \
+                      representable ban below reads an empty tree and passes (docs/56, increment 51)",
+        },
         Claim::Names {
             path: PHONE_SURFACES,
             needle: "CodePanelPresentation",
@@ -74,14 +96,6 @@ pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
             needle: "CodePanelPresentation.workbench(",
             message: "the Mac's code panel folds the workbench phase itself — the four states are one \
                       switch, one floor down",
-        },
-        Claim::Exactly {
-            path: PHONE_SURFACES,
-            pattern: r"\.task\(id: pollKey\)",
-            count: 1,
-            view: View::Code,
-            message: "the phone's code poll is attached {found} times — a task per branch restarts the loop \
-                      it caused",
         },
         // The macOS half of the webview mount stays deleted: it is `MacCodeWorkbenchView`, an `NSView`,
         // and a representable in the phone's target would be the second mount racing the same pooled
@@ -410,8 +424,8 @@ pub fn one_design_floor_two_renderers(tree: &Tree) -> Report {
             // shape the phone's port produces by the dozen — would have walked straight through a
             // rule whose whole job is to keep this target values-only. `: UIView` also covers
             // `: UIViewController`, and `: NSView` its controller, by prefix.
-            pattern: ": View|some View|NSViewRepresentable|UIViewRepresentable|: Shape|: UIView|: NSView|\
-                      : UIControl|: CALayer",
+            pattern: ": View|some View|NSViewRepresentable|UIViewRepresentable|: Shape|: UIView|: NSView|: \
+                      UIControl|: CALayer",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -469,13 +483,21 @@ mod tests {
         surfaces(&fixture);
         assert!(super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
 
-        // The bug's signature: a task per branch, restarting the loop it caused.
-        fixture.write(
-            super::PHONE_SURFACES,
-            "CodePanelPresentation CodeOpenGateReading\nCodePanelPresentation.workbench(state)\n.task(id: \
-             pollKey) { await poll() }\n.task(id: pollKey) { await poll() }\n",
+        // WHERE THE POLL CASE USED TO BE. It seeded `.task(id: pollKey)` twice — a task per branch,
+        // restarting the loop it caused — and that claim is excised, because `.task(id:)` has no
+        // UIKit spelling and the count would go to 0 for the port succeeding (see the header).
+        // What replaces it here is the failure the excision creates room for: a DRAINED
+        // `CodeSidebar/`, over which every claim below reads an absent file. That is the state the
+        // tree is in today, and it must be red rather than quiet.
+        fixture.remove(super::PHONE_SURFACES);
+        let report = super::one_panel_vocabulary_four_surfaces(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("reads an empty tree and passes"))
         );
-        assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
 
         // A second static let carrying one measurement.
         surfaces(&fixture);
@@ -489,7 +511,7 @@ mod tests {
         surfaces(&fixture);
         fixture.write(
             super::PHONE_SURFACES,
-            "CodePanelPresentation CodeOpenGateReading\n.task(id: pollKey) { await poll() }\n",
+            "CodePanelPresentation CodeOpenGateReading\nswitch phase { case .booting: break }\n",
         );
         assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
     }

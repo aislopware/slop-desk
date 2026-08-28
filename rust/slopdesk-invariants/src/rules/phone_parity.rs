@@ -32,7 +32,10 @@ const INTERCEPTOR: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/Workspa
 /// The code panel's shared model.
 const CODE_SIDEBAR: &str = "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarModel.swift";
 /// The phone's workspace root.
-const PHONE_ROOT: &str = "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift";
+///
+/// RE-AIMED 2026-08-28: `WorkspaceRootView.swift` went with `3f11c6e6`, and the root that replaced
+/// it is a `UISplitViewController` subclass under `Shell/` (docs/62 stage D).
+const PHONE_ROOT: &str = "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift";
 /// The phone's panel subtree, where the device surfaces live.
 const PHONE_PANEL: &[&str] = &["Sources/SlopDeskPhoneUI/Panel/"];
 /// The one file allowed to draw a clear key.
@@ -266,15 +269,38 @@ pub fn the_code_panel_settles_once(tree: &Tree) -> Report {
 /// ⇒ FAIL "the phone cannot open the panel on a named surface". Separately
 /// `.accessibilityLabel(tab.accessibilityLabel)` → `.accessibilityLabel(tab.help)` in
 /// PhonePanelSheet.swift ⇒ FAIL "a panel tab reads its help text as its name". Both restored; PASS.
+///
+/// ## ⚠️ RE-SPELLED AND FLOORED 2026-08-28
+/// The first claim was `ForEach\(PanelTabs\.all` on `WorkspaceRootView.swift`. Both halves of that
+/// died at once: `3f11c6e6` deleted the file, and `ForEach` is `SwiftUI` vocabulary with no `UIKit`
+/// spelling (docs/62 §4.8's list names this rule). Re-aiming the PATH while keeping the NEEDLE
+/// would have produced a claim that can never pass, so the needle drops to `PanelTabs.all` — which
+/// is what the law was about all along. The tab strip is MINTED from `PanelTabs`, not hand-listed;
+/// whether that minting is a `ForEach` or a `UIStackView` loop was never the invariant, and pinning
+/// the loop's spelling was pinning an ARRANGEMENT instead of a behaviour.
+///
+/// The second claim is a `NoneUnder` over `Panel/`, a directory the demolition emptied and stage H
+/// refills. It passed through the whole demolition without a word, so a `Populated` floor now runs
+/// first. That floor is RED today on purpose: the ban it guards is not checking anything until the
+/// panel comes back, and the honest report of that is a failure, not a silent pass.
 #[must_use]
 pub fn the_panel_opens_on_a_named_surface(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::Matches {
             path: PHONE_ROOT,
-            pattern: r"ForEach\(PanelTabs\.all",
+            pattern: r"PanelTabs\.all",
             view: View::Code,
             message: "the phone cannot open the panel on a named surface — the toolbar's panel control must \
                       offer PanelTabs.all, which is the Mac rail's capability on a device with no rail",
+        },
+        // ⚠️ THE FLOOR BEFORE THE BAN — see the header. `Panel/` is empty until docs/62 stage H,
+        // and a `NoneUnder` over an empty root passes while checking nothing.
+        Claim::Populated {
+            roots: PHONE_PANEL,
+            extensions: SWIFT,
+            minimum: 2,
+            message: "only {found} Swift files under Sources/SlopDeskPhoneUI/Panel — the help-text ban \
+                      below reads an empty tree and passes (docs/62 stage H)",
         },
         Claim::NoneUnder {
             roots: PHONE_PANEL,
@@ -312,19 +338,45 @@ pub fn the_panel_opens_on_a_named_surface(tree: &Tree) -> Report {
 /// BREAK-TEST: pasted the old inline `Button { query = "" } label: { Image(systemSymbol:
 /// .xmarkCircleFill) … }` back into SimulatorDeviceList.swift ⇒ FAIL naming that file. Restored
 /// from /tmp; PASS.
+///
+/// ## ⚠️ FLOORED AND RE-SPELLED 2026-08-28
+/// [`Claim::NoneUnder`] naming every offender rather than the first is the fix for ONE of the two
+/// ways this rule lies. The other is the corpus itself: `3f11c6e6` deleted `Panel/` outright, and a
+/// ban over a root with no files in it names no offenders and reports clean. The `Populated` floor
+/// above the ban is the tripwire for that, and it is RED until stage H refills the directory —
+/// which is the truth this rule owed and did not tell for one commit.
+///
+/// The needle grew a `(UI)?` prefix in the same pass. `Image(systemSymbol:)` is `SwiftUI`; the
+/// `UIKit` clear key is `UIImage(systemSymbol:)`, so the old needle would have been un-typeable
+/// drift the day the panel came back — vacuous a second time, over a corpus that was no longer
+/// empty. The law is "one clear affordance, spelled in `DevicePanelChrome`", and it is indifferent
+/// to which framework draws the glyph.
 #[must_use]
 pub fn one_clear_key_per_filter_field(tree: &Tree) -> Report {
-    let mut report = check_all(tree, &[Claim::NoneUnder {
-        roots: PHONE_PANEL,
-        extensions: SWIFT,
-        pattern: r"Image\(systemSymbol: \.xmarkCircleFill\)",
-        all: &[],
-        unless: &[],
-        view: View::Code,
-        exempt: &[PANEL_CHROME],
-        message: "a device panel spells its own clear key ({files}) — DevicePanelChrome.clearKey is the one \
-                  affordance, and four copies of it is how two of them ended up missing",
-    }]);
+    let mut report = check_all(tree, &[
+        // ⚠️ THE FLOOR BEFORE THE BAN. Two ways this rule went vacuous at once in `3f11c6e6`: the
+        // corpus emptied, and the needle is `SwiftUI`'s `Image(systemSymbol:)` where `UIKit` writes
+        // `UIImage(systemSymbol:)`. The floor fixes the first; the needle below carries BOTH
+        // spellings so the ban survives the framework change (docs/62 §4.8).
+        Claim::Populated {
+            roots: PHONE_PANEL,
+            extensions: SWIFT,
+            minimum: 2,
+            message: "only {found} Swift files under Sources/SlopDeskPhoneUI/Panel — the inline clear-key \
+                      ban below reads an empty tree and passes (docs/62 stage H)",
+        },
+        Claim::NoneUnder {
+            roots: PHONE_PANEL,
+            extensions: SWIFT,
+            pattern: r"(UI)?Image\(systemSymbol: \.xmarkCircleFill\)",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[PANEL_CHROME],
+            message: "a device panel spells its own clear key ({files}) — DevicePanelChrome.clearKey is the \
+                      one affordance, and four copies of it is how two of them ended up missing",
+        },
+    ]);
     for console in CONSOLES {
         report.absorb(check_all(tree, &[Claim::Matches {
             path: console,
@@ -848,6 +900,54 @@ mod tests {
         assert!(!super::the_paste_plate_asks_a_silent_question(&fixture.tree()).is_clean());
     }
 
+    /// The tab strip is minted from `PanelTabs`, in either framework, over a corpus that exists.
+    ///
+    /// The break-test for the 2026-08-28 re-aim. Three things it has to hold: the `UIKit` minting
+    /// passes where the old `ForEach` needle would have failed it, a hand-listed strip is still
+    /// red, and a DRAINED `Panel/` is red rather than silently unchecked.
+    #[test]
+    fn a_hand_listed_panel_strip_is_red_in_either_framework() {
+        let fixture = Fixture::new("panel-named-surface");
+        fixture
+            .write(
+                super::PHONE_ROOT,
+                "for tab in PanelTabs.all {\n    strip.addArrangedSubview(button(for: tab))\n}\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Panel/PhonePanelViewController.swift",
+                "label.accessibilityLabel = tab.accessibilityLabel\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Panel/DevicePanelChrome.swift",
+                "enum DevicePanelChrome {}\n",
+            );
+        assert!(super::the_panel_opens_on_a_named_surface(&fixture.tree()).is_clean());
+
+        // Hand-listed instead of minted — the capability the Mac rail has and the phone would lose.
+        fixture.write(
+            super::PHONE_ROOT,
+            "for tab in [PanelTab.code, PanelTab.simulator] {\n    strip.addArrangedSubview(button(for: \
+             tab))\n}\n",
+        );
+        assert!(!super::the_panel_opens_on_a_named_surface(&fixture.tree()).is_clean());
+
+        // The demolition's own shape: the ban's corpus drains and nothing is checked.
+        fixture.write(
+            super::PHONE_ROOT,
+            "for tab in PanelTabs.all {\n    strip.addArrangedSubview(button(for: tab))\n}\n",
+        );
+        fixture.remove("Sources/SlopDeskPhoneUI/Panel/PhonePanelViewController.swift");
+        fixture.remove("Sources/SlopDeskPhoneUI/Panel/DevicePanelChrome.swift");
+        let report = super::the_panel_opens_on_a_named_surface(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("reads an empty tree and passes"))
+        );
+    }
+
     #[test]
     fn an_inline_clear_key_is_red_and_the_chrome_is_not() {
         let fixture = Fixture::new("clear-key");
@@ -881,6 +981,49 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|line| line.contains("SimulatorDeviceList"))
+        );
+
+        // And the same copy in UIKit's spelling, which the old needle could not see.
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "clear.setImage(UIImage(systemSymbol: .xmarkCircleFill), for: .normal)\n",
+        );
+        let found = super::one_clear_key_per_filter_field(&fixture.tree());
+        assert!(
+            found
+                .violations()
+                .iter()
+                .any(|line| line.contains("SimulatorDeviceList"))
+        );
+    }
+
+    /// A drained panel target fails the clear-key ban rather than satisfying it.
+    ///
+    /// The break-test for the demolition: with `Panel/` empty, `NoneUnder` names no offender and
+    /// the rule reads clean while checking nothing.
+    #[test]
+    fn a_drained_panel_target_fails_the_clear_key_ban() {
+        let fixture = Fixture::new("clear-key-drained");
+        fixture.write(
+            super::PANEL_CHROME,
+            "enum DevicePanelChrome {\n    static func clearKey() {}\n}\n",
+        );
+        for console in super::CONSOLES {
+            fixture.write(console, "DevicePanelChrome.clearKey\n");
+        }
+        assert!(super::one_clear_key_per_filter_field(&fixture.tree()).is_clean());
+
+        fixture.remove(super::PANEL_CHROME);
+        for console in super::CONSOLES {
+            fixture.remove(console);
+        }
+        let report = super::one_clear_key_per_filter_field(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("reads an empty tree and passes"))
         );
     }
 

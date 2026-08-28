@@ -49,6 +49,17 @@ pub fn the_drop_overlay_draws_one_shape(tree: &Tree) -> Report {
             message: "DropZonePresentation stopped calling {entry} — the two renderers would word or ink \
                       the same blob differently",
         },
+        // ⚠️ THE FLOOR BEFORE THE BAN. `3f11c6e6` emptied `Sources/SlopDeskPhoneUI/Pane` entirely
+        // and the ban below did not go red — a `NoneUnder` over a directory with no files in it
+        // passes while checking nothing. 6 against a live 16 is a tripwire against an empty tree,
+        // not a ratchet on the rebuild (docs/62 stage E.0).
+        Claim::Populated {
+            roots: &["Sources/SlopDeskPhoneUI/Pane"],
+            extensions: &["swift"],
+            minimum: 6,
+            message: "only {found} Swift files under Sources/SlopDeskPhoneUI/Pane — the drop-zone \
+                      proportion ban below reads an empty tree and passes (docs/56 stage D)",
+        },
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskPhoneUI/Pane"],
             extensions: &["swift"],
@@ -88,15 +99,15 @@ pub fn one_cheat_sheet_two_layouts(tree: &Tree) -> Report {
             message: "MacCheatSheetPanel.swift stopped rendering {entry} — the cheat sheet has two tables",
         },
         Claim::Mentions {
-            path: "Sources/SlopDeskPhoneUI/Overlays/KeyboardCheatSheetView.swift",
+            path: "Sources/SlopDeskPhoneUI/Shell/KeyboardCheatSheetViewController.swift",
             names: &["CheatSheetContent"],
-            message: "KeyboardCheatSheetView.swift stopped rendering {entry} — the cheat sheet has two \
-                      tables",
+            message: "KeyboardCheatSheetViewController.swift stopped rendering {entry} — the cheat sheet \
+                      has two tables",
         },
         Claim::NoneOf {
             paths: &[
                 "Sources/SlopDeskMacUI/Overlays/MacCheatSheetPanel.swift",
-                "Sources/SlopDeskPhoneUI/Overlays/KeyboardCheatSheetView.swift",
+                "Sources/SlopDeskPhoneUI/Shell/KeyboardCheatSheetViewController.swift",
             ],
             pattern: "WorkspaceBindingRegistry",
             view: View::Code,
@@ -104,7 +115,7 @@ pub fn one_cheat_sheet_two_layouts(tree: &Tree) -> Report {
                       ONE place",
         },
         Claim::Lacks {
-            path: "Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift",
+            path: "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
             pattern: "KeyboardCheatSheetView",
             view: View::Code,
             message: "the shared overlay host mounts the cheat sheet again — the Mac would draw it over its \
@@ -125,6 +136,16 @@ pub fn one_cheat_sheet_two_layouts(tree: &Tree) -> Report {
 /// The third claim is the fusion bug `TabBadgeResolver` had, pinned before it can happen twice: a
 /// half that re-derives the phrase from the pair keys on flavour alone sooner or later, and
 /// announces a finished `just` as an agent turn.
+///
+/// ## ⚠️ THE LAST CLAUSE PINS A SwiftUI SPELLING, AND ONLY THE PATH WAS RE-AIMED
+///
+/// The mount ban reads `PhoneOverlayLayerView.swift`, which is live UIKit, but `ToastStackView\(`
+/// is a `SwiftUI` initializer call — a view controller mounts a child with `addChild` and
+/// `addSubview`, and that needle cannot see it. So the ban is permanently green until stage F
+/// re-spells it, and it is recorded here rather than re-spelled from this seat because the toast
+/// column itself has not landed: the phone rows above are WRITTEN AHEAD (`docs/62` §4.8) and red
+/// today for that reason, which is the honest state. The law — no always-mounted toast column on
+/// the shared host — is unchanged.
 #[must_use]
 pub fn one_notification_card_two_corners(tree: &Tree) -> Report {
     let claims = [
@@ -156,7 +177,7 @@ pub fn one_notification_card_two_corners(tree: &Tree) -> Report {
                       in Rust",
         },
         Claim::Lacks {
-            path: "Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift",
+            path: "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
             pattern: r"ToastStackView\(",
             view: View::Code,
             message: "the shared overlay host mounts the toast column again — that mount claims every hit \
@@ -233,9 +254,41 @@ mod tests {
                 "slopdesk_drop_zone_label\nslopdesk_drop_zone_marks\nslopdesk_drop_zone_wash\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
                 "kept so the ban has a haystack\n",
             );
+        // Enough of a pane target to clear the vacuity floor, so the assertions below read the ban
+        // rather than the floor.
+        for index in 0..6 {
+            fixture.write(
+                &format!("Sources/SlopDeskPhoneUI/Pane/Filler{index}.swift"),
+                "final class Filler: UIView {}\n",
+            );
+        }
+    }
+
+    /// A drained pane target fails the proportion ban rather than satisfying it.
+    ///
+    /// The break-test for `3f11c6e6`: with no files under the root, `NoneUnder` finds no offender
+    /// and reports clean while checking nothing at all.
+    #[test]
+    fn a_drained_pane_target_fails_the_proportion_ban() {
+        let fixture = Fixture::new("split-surfaces-drop-drained");
+        drop_overlay(&fixture);
+        assert!(super::the_drop_overlay_draws_one_shape(&fixture.tree()).is_clean());
+
+        for index in 0..6 {
+            fixture.remove(&format!("Sources/SlopDeskPhoneUI/Pane/Filler{index}.swift"));
+        }
+        fixture.remove("Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift");
+        let report = super::the_drop_overlay_draws_one_shape(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("reads an empty tree and passes"))
+        );
     }
 
     #[test]
@@ -262,7 +315,7 @@ mod tests {
         // And a proportion typed back into the overlay, where it drifts off the blob silently.
         drop_overlay(&fixture);
         fixture.append(
-            "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift",
+            "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
             "let edge = 0.26\n",
         );
         assert!(!super::the_drop_overlay_draws_one_shape(&fixture.tree()).is_clean());
@@ -279,11 +332,11 @@ mod tests {
                 "CheatSheetContent\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Overlays/KeyboardCheatSheetView.swift",
+                "Sources/SlopDeskPhoneUI/Shell/KeyboardCheatSheetViewController.swift",
                 "CheatSheetContent\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift",
+                "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
                 "kept so the ban has a haystack\n",
             );
     }
@@ -296,7 +349,7 @@ mod tests {
 
         // A half that stops reading the shared source is a second table.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Overlays/KeyboardCheatSheetView.swift",
+            "Sources/SlopDeskPhoneUI/Shell/KeyboardCheatSheetViewController.swift",
             "",
         );
         assert!(!super::one_cheat_sheet_two_layouts(&fixture.tree()).is_clean());
@@ -312,7 +365,7 @@ mod tests {
         // And the shared host mounting the card again, which the Mac would draw over its panel.
         cheat_sheet(&fixture);
         fixture.append(
-            "Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift",
+            "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
             "KeyboardCheatSheetView()\n",
         );
         assert!(!super::one_cheat_sheet_two_layouts(&fixture.tree()).is_clean());
@@ -333,7 +386,7 @@ mod tests {
                 "ToastPresentation\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift",
+                "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
                 "kept so the ban has a haystack\n",
             );
     }
@@ -359,7 +412,7 @@ mod tests {
         // And the shared host mounting the column, which claims every hit over the split.
         toast(&fixture);
         fixture.append(
-            "Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift",
+            "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
             "ToastStackView(store: store)\n",
         );
         assert!(!super::one_notification_card_two_corners(&fixture.tree()).is_clean());

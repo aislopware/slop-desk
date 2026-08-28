@@ -52,6 +52,23 @@ const PHONE_HALF: &str = "Sources/SlopDeskVideoClientPhone";
 /// `SlopDeskPhoneUI` alone clears it — a gate that passes by reading nothing. The video half's
 /// floor is small because the half IS small.
 ///
+/// ⚠️ AND BOTH FLOORS ARE TRIPWIRES, NOT RATCHETS. They were pinned at 50 and 2 against the SwiftUI
+/// phone; `3f11c6e6` deleted that phone whole and both went red without a single directive having
+/// drifted. A floor pinned just under the live count re-fails on every honest deletion, so these
+/// sit well under the rebuild's floor instead — 15 and 1 say "the target still globs", which is all
+/// the directive shape below needs to be reading something (docs/62 stage A).
+///
+/// ⚠️ AND THE PHONE HALF NAMES ONE FRAMEWORK, NOT TWO. The ban above lets a phone file pick any of
+/// the three; docs/62 narrows it to `UIKit`, and the tree is already there — `import SwiftUI` under
+/// either phone target measures ZERO. It is written as a BAN rather than the falling ceiling the
+/// campaign designed for, and the difference is worth recording because it decided the fate of a
+/// whole [`Claim`] variant. `Claim::CeilingUnder` existed to hold two migrations that were supposed
+/// to drain slowly — the phone's `SwiftUI` importers, and design-system files carrying both
+/// spellings — and its own docstring claimed "two rules use it" while ZERO ever constructed it.
+/// Then `3f11c6e6` and `32519299` drained both subjects to nought in two commits, and a ceiling of
+/// nought is a ban. So the variant is deleted and its one surviving law is the claim below: the
+/// migration finished before the ratchet for it was ever written.
+///
 /// NEITHER HALF IMPORTS THE OTHER. `Package.swift` already makes that a link error; this catches
 /// the edit that would ADD the dependency there, which is the moment a shared view ancestor becomes
 /// possible. Two halves, so exactly two edges — increment 63 collapsed four into two, because two
@@ -96,16 +113,34 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
         Claim::Populated {
             roots: &["Sources/SlopDeskPhoneUI"],
             extensions: SWIFT,
-            minimum: 50,
+            minimum: 15,
             message: "only {found} files globbed under Sources/SlopDeskPhoneUI — the directive shape below \
                       would pass by reading nothing",
         },
         Claim::Populated {
             roots: &["Sources/SlopDeskVideoClientPhone"],
             extensions: SWIFT,
-            minimum: 2,
+            minimum: 1,
             message: "only {found} files globbed under Sources/SlopDeskVideoClientPhone — the directive \
                       shape below would pass by reading nothing",
+        },
+        // THE PHONE IS UIKit, AND THAT IS NOW A BAN RATHER THAN A CEILING. docs/62's endpoint is a
+        // phone with no `SwiftUI` in it at all, and `3f11c6e6` reached it in one commit rather than
+        // over the migration the campaign planned for: the live count under both phone targets is
+        // ZERO. A `Claim::CeilingUnder` was carried in `claim.rs` for exactly this pin — a count
+        // that may only fall — and it is deleted in the same change as this line, because a ceiling
+        // of nought is a ban and the variant had no other subject. The floors above stop the ban
+        // reading an empty tree.
+        Claim::NoneUnder {
+            roots: PHONE_VIEW_TARGETS,
+            extensions: SWIFT,
+            pattern: r"^import SwiftUI$",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} imports SwiftUI in a phone UI target — the phone is UIKit, and a SwiftUI file \
+                      here is a stage that has not landed rather than a choice (docs/62)",
         },
         Claim::PerFileCounts {
             roots: PHONE_VIEW_TARGETS,
@@ -359,8 +394,7 @@ mod tests {
         for index in 0..count {
             fixture.write(
                 &format!("Sources/SlopDeskPhoneUI/Views/View{index}.swift"),
-                "#if os(iOS)\nimport SwiftUI\nstruct V: View { var body: some View { Text(\"\") } \
-                 }\n#endif\n",
+                "#if os(iOS)\nimport UIKit\nfinal class V: UIView {}\n#endif\n",
             );
         }
         for index in 0..3 {
@@ -404,7 +438,7 @@ mod tests {
         split(&fixture);
         fixture.write(
             "Sources/SlopDeskPhoneUI/Views/View3.swift",
-            "#if os(iOS)\nimport SwiftUI\n#if os(iOS)\nlet a = 1\n#endif\nstruct V: View {}\n#endif\n",
+            "#if os(iOS)\nimport UIKit\n#if os(iOS)\nlet a = 1\n#endif\nfinal class V: UIView {}\n#endif\n",
         );
         assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
 
@@ -413,6 +447,29 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskVideoClientMac/Half1.swift",
             "import AppKit\n#if os(macOS)\nfinal class H: NSView {}\n#endif\n",
+        );
+        assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
+
+        // A SwiftUI file back in a phone target — the ban that replaced `Claim::CeilingUnder`.
+        split(&fixture);
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Views/View7.swift",
+            "#if os(iOS)\nimport SwiftUI\nstruct V: View { var body: some View { Text(\"\") } }\n#endif\n",
+        );
+        let report = super::the_ui_split_holds_its_shape(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("imports SwiftUI in a phone UI target"))
+        );
+
+        // And the same on the video half, which is the target a combined root would have hidden.
+        split(&fixture);
+        fixture.write(
+            "Sources/SlopDeskVideoClientPhone/Half1.swift",
+            "#if os(iOS)\nimport SwiftUI\nstruct H: View { var body: some View { Text(\"\") } }\n#endif\n",
         );
         assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
 
@@ -432,7 +489,7 @@ mod tests {
         for index in 0..60 {
             fixture.write(
                 &format!("Sources/SlopDeskPhoneUI/Views/View{index}.swift"),
-                "#if os(iOS)\nimport SwiftUI\nstruct V: View {}\n#endif\n",
+                "#if os(iOS)\nimport UIKit\nfinal class V: UIView {}\n#endif\n",
             );
         }
         assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());

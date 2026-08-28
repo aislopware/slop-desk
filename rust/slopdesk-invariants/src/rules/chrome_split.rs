@@ -15,8 +15,17 @@ use crate::tree::Tree;
 
 const MAC_HEADER: &str = "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift";
 const MAC_ROW: &str = "Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift";
-const PHONE_NAVIGATOR: &str = "Sources/SlopDeskPhoneUI/Columns/NavigatorColumn.swift";
-const PHONE_PANEL: &str = "Sources/SlopDeskPhoneUI/Panel/PhonePanelSheet.swift";
+/// RE-AIMED 2026-08-28 at the `UIKit` twins `3f11c6e6` demolished and docs/62 stage D rebuilt:
+/// `Columns/NavigatorColumn.swift` → `Shell/NavigatorColumnViewController.swift`,
+/// `Panel/PhonePanelSheet.swift` → `Shell/PhonePanelViewController.swift`.
+///
+/// The `CodePanelSurfaces(` needle in `the_panel_is_one_reading` lost its trailing `(` in the same
+/// pass, for the reason docs/62 gives: the paren pinned a `SwiftUI` CONSTRUCTOR CALL, so the claim
+/// was green only while the type kept both its name and its initialiser, and would have gone red on
+/// `CodePanelSurfacesController` for a rename rather than for a drift. The law is that the phone's
+/// panel READS the shared surfaces, not how it spells the read.
+const PHONE_NAVIGATOR: &str = "Sources/SlopDeskPhoneUI/Shell/NavigatorColumnViewController.swift";
+const PHONE_PANEL: &str = "Sources/SlopDeskPhoneUI/Shell/PhonePanelViewController.swift";
 
 /// One navigator, one row reading, one git dialect
 ///
@@ -58,7 +67,8 @@ pub fn one_navigator_per_platform(tree: &Tree) -> Report {
         Claim::Names {
             path: PHONE_NAVIGATOR,
             needle: "#if os(iOS)",
-            message: "NavigatorColumn stopped being iOS-only — the Mac's navigator is MacNavigatorColumn",
+            message: "NavigatorColumnViewController stopped being iOS-only — the Mac's navigator is \
+                      MacNavigatorColumn",
         },
         Claim::Mentions {
             path: PHONE_NAVIGATOR,
@@ -236,12 +246,12 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
         },
         Claim::Mentions {
             path: PHONE_PANEL,
-            names: &["PanelTabs", "CodePanelSurfaces(", "AndroidMarkPath"],
-            message: "PhonePanelSheet stopped reading {entry} — the phone's panel is a LAYOUT, not a second \
-                      panel",
+            names: &["PanelTabs", "CodePanelSurfaces", "AndroidMarkPath"],
+            message: "PhonePanelViewController stopped reading {entry} — the phone's panel is a LAYOUT, not \
+                      a second panel",
         },
         Claim::Names {
-            path: "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
+            path: "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift",
             needle: "codeSidebarCollapsed",
             message: "the phone's root stopped reading codeSidebarCollapsed — revealCodeSidebar() would not \
                       reach the phone at all",
@@ -393,7 +403,7 @@ mod tests {
                 "PanelTabs\nCodePanelSurfaces(store: store)\nAndroidMarkPath\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
+                "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift",
                 "codeSidebarCollapsed\n",
             )
             .write(

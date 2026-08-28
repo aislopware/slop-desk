@@ -23,7 +23,7 @@ const SLATE_DESIGN: &str = "Sources/SlopDeskSlate/SlateDesign.swift";
 const MAC_APP: &str = "Sources/SlopDeskMacUI/SlopDeskMacApp.swift";
 /// The two halves of the pane status pill, both of which ship today.
 const PILL_HALVES: &[&str] = &[
-    "Sources/SlopDeskPhoneUI/Pane/PaneStatusPills.swift",
+    "Sources/SlopDeskPhoneUI/Pane/PaneStatusPillsView.swift",
     "Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift",
 ];
 /// Where the pill's ink cases are declared.
@@ -69,8 +69,8 @@ const fn rungs_of(path: &'static str, enumeration: &'static str) -> Extract {
 pub fn a_frameworkless_value_goes_to_the_floor(tree: &Tree) -> Report {
     /// The three files that draw the accent ring, in either framework.
     const RING_SITES: &[&str] = &[
-        "Sources/SlopDeskPhoneUI/Pane/ViModeOverlay.swift",
-        "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+        "Sources/SlopDeskPhoneUI/Pane/ViModeOverlayView.swift",
+        "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
         "Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift",
     ];
     /// The three files that draw the grab pill.
@@ -424,9 +424,40 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
 /// rule keys on the ENUM and the range is anchored to `^package enum <name>[:[:space:]{]`, so two
 /// ranges in one file are read independently and a name that is a prefix of the other still cannot
 /// capture it.
+///
+/// ## ⚠️ RE-AIMED 2026-08-28, AND FLOORED, BECAUSE THE SKIP IS ALSO THE HOLE
+/// The written-ahead row is this rule's best feature and its worst one, depending on which way the
+/// tree moves. `Claim::Resolved` skips an absent half BY DESIGN, so a half that has not been
+/// written yet costs nothing — and a half that gets DELETED costs nothing either. `3f11c6e6`
+/// deleted the SwiftUI phone wholesale and every phone half here went absent at once: five rows,
+/// ten halves, and the rule stayed green while checking exactly the Mac side. That is a rule that
+/// expired without saying so.
+///
+/// Two things fix it. The halves are re-aimed at the UIKit twins `bbb9845d` landed
+/// (`PaneDropOverlay` → `PaneDropOverlayView`, `PaneStatusPills` → `PaneStatusPillsView`,
+/// `TerminalFindBar` → `TerminalFindBarView`; `GuiLeafView` keeps its name, docs/62 stage E.1), and
+/// a `Claim::Populated` floor over the two `Pane` targets runs FIRST, so a drained renderer target
+/// fails loudly instead of letting every row skip in silence. The floor is a tripwire against an
+/// empty tree, not a ratchet: 6 against a live 16 says "the phone still draws panes", which is the
+/// only precondition the rows below need.
 #[must_use]
 pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
     check_all(tree, &[
+        Claim::Populated {
+            roots: &["Sources/SlopDeskPhoneUI/Pane"],
+            extensions: SWIFT,
+            minimum: 6,
+            message: "only {found} Swift files under Sources/SlopDeskPhoneUI/Pane — every ink row below \
+                      SKIPS an absent half, so a drained renderer target reads as agreement (docs/56 §3.5, \
+                      docs/62 stage E.1)",
+        },
+        Claim::Populated {
+            roots: &["Sources/SlopDeskMacUI/Pane"],
+            extensions: SWIFT,
+            minimum: 6,
+            message: "only {found} Swift files under Sources/SlopDeskMacUI/Pane — every ink row below SKIPS \
+                      an absent half, so a drained renderer target reads as agreement (docs/56 §3.5)",
+        },
         Claim::Resolved {
             label: "DropZoneInk",
             needles: rungs_of(
@@ -434,7 +465,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "^package enum DropZoneInk[:[:space:]{]",
             ),
             halves: &[
-                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
                 "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
             ],
             template: r"case \.{needle}\b",
@@ -464,7 +495,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "^package enum FindTogglePillAppearance[:[:space:]{]",
             ),
             halves: &[
-                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
                 "Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift",
             ],
             template: r"case \.{needle}\b",
@@ -493,7 +524,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "^package enum DropZoneLabelInk[:[:space:]{]",
             ),
             halves: &[
-                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
                 "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
             ],
             template: r"case \.{needle}\b",
@@ -547,11 +578,11 @@ mod tests {
                 "package static let accentRing = 0.5\npackage static let glyphPlate: CGFloat = 16\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/ViModeOverlay.swift",
+                "Sources/SlopDeskPhoneUI/Pane/ViModeOverlayView.swift",
                 "Slate.Opacity.accentRing\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
                 "Slate.Opacity.accentRing\n",
             )
             .write(
@@ -618,9 +649,55 @@ mod tests {
         assert!(!super::the_mac_injects_no_environment_it_does_not_read(&fixture.tree()).is_clean());
     }
 
+    /// Enough files under either `Pane` target to clear the ink rule's vacuity floors.
+    ///
+    /// The floors exist so a DRAINED renderer target cannot let every `Resolved` row skip in
+    /// silence, which is what `3f11c6e6` did to the phone half. Every fixture that asserts a row's
+    /// own verdict has to clear them first, or it is asserting the floor instead.
+    fn pane_fillers(fixture: &Fixture) {
+        for index in 0..6 {
+            fixture
+                .write(
+                    &format!("Sources/SlopDeskPhoneUI/Pane/Filler{index}.swift"),
+                    "final class Filler: UIView {}\n",
+                )
+                .write(
+                    &format!("Sources/SlopDeskMacUI/Pane/MacFiller{index}.swift"),
+                    "final class MacFiller: NSView {}\n",
+                );
+        }
+    }
+
+    /// A drained renderer target is RED, not unanimously inked.
+    ///
+    /// The break-test for the demolition itself: delete the phone's pane drawings and every ink row
+    /// skips its phone half, so without the floor the rule reads clean while checking one side.
+    #[test]
+    fn a_drained_renderer_target_fails_the_ink_rows_rather_than_skipping_them() {
+        let fixture = Fixture::new("ink-drained");
+        fixture
+            .write(
+                "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift",
+                "package enum DropZoneInk {\n    case ok\n}\n",
+            )
+            .write(
+                "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
+                "case .ok: break\n",
+            );
+        let report = super::a_named_ink_table_answers_every_renderer(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("Sources/SlopDeskPhoneUI/Pane"))
+        );
+    }
+
     #[test]
     fn a_renderer_that_drops_a_rung_is_red() {
         let fixture = Fixture::new("ink-tables");
+        pane_fillers(&fixture);
         fixture
             .write(
                 "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift",
@@ -641,7 +718,7 @@ mod tests {
                  {\n    case chrome\n    case fixed(PaneStatusPillInk)\n}\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
                 "case .ok: break\ncase .accent: break\ncase .accentMuted: break\ncase .primary: break\n",
             )
             .write(
@@ -657,7 +734,7 @@ mod tests {
                 "case .icon: break\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
                 "case .idle: break\n",
             )
             .write(
@@ -665,7 +742,7 @@ mod tests {
                 "case .idle: break\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/PaneStatusPills.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PaneStatusPillsView.swift",
                 "case .chrome: break\ncase .fixed(let ink): break\n",
             )
             .write(
@@ -687,13 +764,14 @@ mod tests {
         // The bounded anchor: an enum that is gone parses EMPTY, and an empty reading fails rather
         // than agreeing with everybody.
         let fixture = Fixture::new("ink-renamed");
+        pane_fillers(&fixture);
         fixture
             .write(
                 "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift",
                 "package enum DropZoneInkRung {\n    case ok\n}\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
                 "case .ok: break\n",
             );
         assert!(!super::a_named_ink_table_answers_every_renderer(&fixture.tree()).is_clean());
@@ -703,13 +781,13 @@ mod tests {
     fn the_dead_mirror_never_reaches_the_rewrite() {
         let fixture = Fixture::new("ink-mirror");
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Pane/SplitContainer.swift",
+            "Sources/SlopDeskPhoneUI/Pane/SplitCanvasView.swift",
             "// staticMirror was a dead branch\nlet body = content\n",
         );
         assert!(super::the_static_mirror_stays_deleted(&fixture.tree()).is_clean());
 
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Pane/SplitContainer.swift",
+            "Sources/SlopDeskPhoneUI/Pane/SplitCanvasView.swift",
             "let body = content(staticMirror: false)\n",
         );
         assert!(!super::the_static_mirror_stays_deleted(&fixture.tree()).is_clean());
