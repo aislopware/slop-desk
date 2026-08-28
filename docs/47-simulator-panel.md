@@ -848,7 +848,7 @@ Two `Slate` components were added for this panel and belong to the whole system,
 
 | File | Role |
 | --- | --- |
-| `DesignSystem/SlatePlateGroup.swift` | the tray that groups related plates into one instrument — a shared fill, which is a stronger grouping signal than a hairline. Sets `slateOnPlateTray`, which lifts a member plate's hover and latched fills a rung so they stay visible against it |
+| `DesignSystem/SlatePlateGroup.swift` | `SlatePlateTray`, the stack that groups related plates into one instrument — a shared fill, which is a stronger grouping signal than a hairline. Sets each member's `onTray`, which lifts that plate's hover and latched fills a rung so they stay visible against the tray's own fill |
 | `DesignSystem/SlateFactLine.swift` | a run of measured facts: a drawn grey label ahead of each value, figures in the instrument voice, named values in the system face, a middle dot between, and each fact separately hoverable and copyable |
 
 `PlateIconButton` also gained the `.medium` glyph weight `SlatePlateButton` already used — the two

@@ -19,6 +19,12 @@
 // They are raised by a remote PROGRAM rather than summoned, so they may not be covered by a card the
 // user opened, and the system's modal stack DECLINES a second presentation — a declined presentation
 // here would leave libghostty holding the request forever.
+//
+// ⚠️ AND NOTHING DRAINS THAT MAILBOX TODAY. `ClipboardConfirmRequests.shared` is filled by the
+// embedder's OSC 52 callback and was emptied by the deleted `ClipboardConfirmCard`; the demolition
+// took the only reader. Until the clipboard card lands here, a `clipboard-read = ask` profile on iOS
+// files a question nobody can answer — libghostty holds the request and the paste never completes.
+// This is a REBUILD OBLIGATION, not a pre-existing bug: the drain existed before `3f11c6e6`.
 
 #if os(iOS)
 import SlopDeskClientCore
