@@ -1516,9 +1516,10 @@ public final class WorkspaceStore {
         reconcileTree()
     }
 
-    /// Moves tree focus in `direction` — the keyboard / menu / command-palette entry point that has no
-    /// `GeometryReader` of its own. Resolves against ``treeGeometryBounds``: the view-reported layout when one
-    /// has landed (``updateSolvedLayout(_:)``, wired from `SplitContainer`'s layout pass), else a nominal rect
+    /// Moves tree focus in `direction` — the keyboard / menu / command-palette entry point, which fires
+    /// from a responder chain that never saw the canvas's geometry. Resolves against
+    /// ``treeGeometryBounds``: the view-reported layout when one has landed (``updateSolvedLayout(_:)``,
+    /// pushed by `PaneCanvasDragController` off the canvas's layout pass), else a nominal rect
     /// — direction is scale-invariant for the tiled tree (`moveFocusTree` re-solves into the bounds), so the
     /// ⌃⌘arrow chords are NEVER dead. Deliberately NOT gated on a layout report: a wait-for-a-report guard
     /// blocks forever if no mounted view happens to call `updateSolvedLayout`, silently no-opping every
@@ -1948,7 +1949,7 @@ public final class WorkspaceStore {
     @ObservationIgnored private var globalSearchSourceCache: [GlobalSearchSource]?
 
     /// Moves (swaps) the active pane with its geometric neighbour in `direction` (Zellij "move pane") —
-    /// the keyboard/menu/palette entry point that has no `GeometryReader` of its own. Mirrors
+    /// the keyboard/menu/palette entry point, which fires without the canvas's geometry in hand. Mirrors
     /// ``moveFocusTreeUsingReportedLayout(_:)``: resolves against ``treeGeometryBounds`` (the reported
     /// layout when available, else a nominal rect — the neighbour relation is scale-invariant), so the
     /// ⌥⌘⇧arrow chords are never dead; a no-op when there is no neighbour on the requested side. The moved

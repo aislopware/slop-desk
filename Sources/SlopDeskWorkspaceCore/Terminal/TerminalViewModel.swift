@@ -390,7 +390,16 @@ public final class TerminalViewModel {
     public private(set) var copyReceipt: CopyReceipt?
 
     /// Per-copy monotonic counter — gives each receipt a fresh identity so a rapid re-copy restarts
-    /// the chip's dwell timer (`.task(id: epoch)`) instead of expiring on the old timer.
+    /// the chip's dwell instead of expiring on the old timer. The dwell used to be a `.task(id:)` keyed
+    /// on this counter; it is now a one-shot `Timer` in `MacIslandChipStack` / `IslandChipStackView`,
+    /// restarted whenever the applied identity changes.
+    ///
+    /// ⚠️ THE MOUNT DOES NOT KEY ON THIS ALONE, and must not be "simplified" to. Two independent owners
+    /// publish receipts — this pane model and `OverlayCoordinator`, each with its OWN counter — so two
+    /// different copies can carry the same epoch, and a chip keyed on the number would inherit the dead
+    /// one's nearly-elapsed timer: the exact bug the epoch exists to prevent, arriving by a new door. The
+    /// chip therefore keys on the WHOLE ``CopyReceipt``; the epoch's job is only to keep two copies of
+    /// the SAME text distinguishable, which the text alone cannot do.
     @ObservationIgnored private var copyReceiptEpoch = 0
 
     /// Records that `text` just landed on the clipboard: publishes a fresh ``CopyReceipt``, which IS the

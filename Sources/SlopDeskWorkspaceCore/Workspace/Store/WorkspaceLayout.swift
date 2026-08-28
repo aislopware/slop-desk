@@ -14,8 +14,15 @@ public enum WorkspaceLayout {
     ///
     /// `horizontalSizeClassCompact` is the PRIMARY signal and short-circuits everything else; iOS
     /// decides on it alone and passes `windowWidth: nil`. macOS has no size class, so it passes the
-    /// outer window's width, which is authoritative where the detail `GeometryReader` can report a
-    /// half-laid-out width mid-resize.
+    /// outer window's width, which is authoritative where the detail area's own reported width can be
+    /// half-laid-out mid-resize — the reason the two geometries are read against different thresholds.
+    ///
+    /// ⚠️ NO PRODUCTION CALLER TODAY — only ``WorkspaceLayoutTests``. The one call was SwiftUI's, from a
+    /// body that read `@Environment(\.horizontalSizeClass)` and a detail `GeometryReader`; both shells
+    /// now pick their projection structurally instead (the Mac is `MacContentColumn`, the phone is its
+    /// carousel), so nobody asks this question at runtime. The RULE still lives in Rust
+    /// (`slopdesk_workspace::responsive`) and this is still its only Swift door, so deleting the door
+    /// would strand the rule rather than retire it — decide the two together, not this one alone.
     public static func isCompact(
         horizontalSizeClassCompact: Bool,
         detailWidth: CGFloat,
