@@ -39,82 +39,56 @@
 // fact the window is already shouting. What changes across the flip is the TOOLTIP — the only place
 // the direction of the verb has to be said, and the only place a pointer will ask.
 //
-// ⚠️ THE TWO WRAPPERS BELOW ARE A HOSTING SEAM AND NOTHING ELSE — no state, no decision, only the
-// PLACE. They exist because ``MacWorkspaceRootView``'s overlay is still SwiftUI; when that mount
-// becomes AppKit, ``MacWindowSidebarToggleView`` is handed straight to the window's band and both
-// disappear. Same arrangement and same reason as ``RailStatusMarks`` over
-// ``MacRailStatusMarksView``, one file over.
+// ⚠️ THE TWO WRAPPERS THAT USED TO STAND HERE ARE GONE, AND THEY WERE ONLY EVER A HOSTING SEAM — no
+// state, no decision, only the PLACE. `MacWindowSidebarToggle` (a `View`) and `SidebarTogglePlate`
+// (an `NSViewRepresentable`) existed because ``MacWorkspaceRootView``'s overlay was SwiftUI; that
+// root is a window CONTROLLER now, so the view below is handed straight to the window's content and
+// both wrappers are deleted rather than ported. Their geometry came with them: ``leadingInset`` and
+// ``topInset`` below are the `.padding(.leading, …)` / `.padding(.top, …)` they carried, spelled
+// once here so the window controller's constraints and this view agree by construction.
+//
+// Two of the SwiftUI numbers did NOT survive, because what they were correcting for is gone:
+//   * `.frame(width: plate, height: plate)` was there because an `NSView` reports `noIntrinsicMetric`
+//     on both axes, so a representable with no frame is handed the whole proposal and stretches. Auto
+//     Layout does not propose: the plate's own width/height constraints (``MacPlateIconButton``) are
+//     what size this container, and stating them again would be a second source for one number.
+//   * `.frame(height: titlebarHeight, alignment: .top)` was there because a SwiftUI overlay is laid
+//     out against its parent's whole height and had to be pushed back up to the band. A constraint to
+//     the content view's `topAnchor` says that directly.
 
 import AppKit
 import SFSafeSymbols // the glyph name, spelled once and checked by the compiler
 import SlopDeskClientCore // WorkspaceChromeState — the ONE collapse flag, owned by the composition
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
-import SwiftUI
-
-/// WHERE the toggle stands — the window-level mount, and the ONE place the button is hosted.
-///
-/// Pinned to the window's own top-left corner by ``MacWorkspaceRootView``'s `.overlay(alignment:
-/// .topLeading)`, INSIDE that root's `.ignoresSafeArea()`. The window is `.hiddenTitleBar` but
-/// SwiftUI still hands its content a top safe-area inset the height of the titlebar, so an overlay
-/// attached outside the modifier is laid out in the inset content and parks this button one whole
-/// band low — on top of the navigator's search field (measured 2026-08-09). The root owns that
-/// ordering; this type owns the offsets within it.
-struct MacWindowSidebarToggle: View {
-    let chrome: WorkspaceChromeState
-
-    var body: some View {
-        SidebarTogglePlate(
-            collapsed: chrome.sidebarCollapsed,
-            // `[chrome]`, so the click flips the SAME `@Observable` the split representable, ⌘⇧L and
-            // the palette row drive. One flag, four entry points.
-            toggle: { [chrome] in chrome.toggleSidebar() },
-        )
-        // ⚠️ THE PLATE'S FOOTPRINT, SPELLED ON THE SWIFTUI SIDE. An `NSView` reports
-        // `noIntrinsicMetric` on both axes, so an `NSViewRepresentable` with no frame is handed the
-        // whole proposal and stretches — ``RailStatusMarks`` pins its cluster for exactly this
-        // reason. The number is the plate's own, not a second one.
-        .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
-        .padding(.leading, Slate.Metric.windowControlsLead)
-        // Hung so its CENTRE lands on the traffic lights' centre — the plate is taller than a light
-        // disc, so one shared TOP edge would leave the discs riding high beside it
-        // (`SlopDeskMacApp.lowerTrafficLightsToTheTopLine` puts them on that centre).
-        .padding(.top, Slate.Metric.bandControlInset)
-        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
-    }
-}
-
-/// THE HOSTING SEAM. It carries the collapse flag down and the click back up, and it does both in
-/// ONE call — the tooltip and the verb are the same button's two halves, and applying them from
-/// separate setters leaves a window, one `updateNSView` wide, in which the plate offers to "Show"
-/// a panel that is already up.
-private struct SidebarTogglePlate: NSViewRepresentable {
-    let collapsed: Bool
-    let toggle: () -> Void
-
-    func makeNSView(context _: Context) -> MacWindowSidebarToggleView { MacWindowSidebarToggleView() }
-
-    func updateNSView(_ view: MacWindowSidebarToggleView, context _: Context) {
-        view.apply(collapsed: collapsed, toggle: toggle)
-    }
-}
 
 // MARK: - The button, in AppKit
 
 /// The toggle itself: one ``MacPlateIconButton`` and the words that go with it.
 ///
 /// ⚠️ IT IS A CONTAINER AROUND THE PLATE, NOT THE PLATE. ``MacPlateIconButton`` is built for an Auto
-/// Layout parent — it clears `translatesAutoresizingMaskIntoConstraints` and constrains its own
-/// width and height to ``Slate/Metric/plate`` — and SwiftUI is not one: a representable's root view
-/// gets its `frame` assigned directly, which on a view that has opted out of the autoresizing
-/// bridge is at best ignored and at worst a constraint conflict. One plain `NSView` in between gives
-/// the plate the parent it expects and gives SwiftUI the frame-settable root it expects, and it is
-/// the whole reason this class is not just a `typealias`.
+/// Layout parent — it clears `translatesAutoresizingMaskIntoConstraints` and constrains its own width
+/// and height to ``Slate/Metric/plate``. The container was originally what gave SwiftUI a
+/// frame-settable root while giving the plate the Auto Layout parent it expects; with the
+/// representable gone the second half is the whole reason, and it still stands: the window controller
+/// pins THIS view's leading and top edges and lets the plate's own constraints decide the size, so
+/// neither side restates a number the other owns.
 @MainActor
 final class MacWindowSidebarToggleView: NSView {
+    /// The distance from the window's leading edge — the traffic lights' own lane
+    /// (``Slate/Metric/windowControlsLead``), so the plate stands immediately after them rather than
+    /// at a second inset that would have to be kept in step with theirs.
+    static let leadingInset = Slate.Metric.windowControlsLead
+
+    /// Hung so the plate's CENTRE lands on the traffic lights' centre — the plate is taller than a
+    /// light disc, so one shared TOP edge would leave the discs riding high beside it
+    /// (``SlopDeskMacApp/lowerTrafficLightsToTheTopLine(on:)`` puts them on that centre).
+    static let topInset = Slate.Metric.bandControlInset
+
     private let plate = MacPlateIconButton(symbolName: SFSymbol.sidebarLeft.rawValue)
 
     init() {
         super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
         // The plate speaks for this view; the container is scaffolding and must not appear beside it
         // in the accessibility tree as a second, nameless element.
         setAccessibilityElement(false)

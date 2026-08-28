@@ -20,13 +20,19 @@
 // surface is painted by both halves any more, so a hue or a silhouette can no longer be corrected in
 // one renderer and left stale in the other on the same screen.
 //
+// ⚠️ `import SwiftUI` IS GONE, AND IT WAS NEVER DRAWING ANYTHING. This file has been AppKit since it
+// was written; the import bought exactly two BRIDGES out of the token layer's SwiftUI spelling — an
+// `NSColor(style.ink)` because ``StatusDotStyle/ink`` was a `Color`, and a `.cgPath` because
+// `SVGPath` returned a `Path`. Both spellings were deleted from `SlopDeskSlate` in the same pass:
+// `ink` is a ``SlateNativeColor`` and the vector door is ``SVGPath/cgPath(_:viewBox:in:)``. Two
+// conversions vanished with the import rather than moving.
+//
 // The display link runs only while a spinner is actually on screen — a resting rail costs no frames.
 
 import AppKit
 import QuartzCore // the spinner's display link
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
-import SwiftUI // `SVGPath` returns a `Path`; its `cgPath` is what the hand is stroked from
 
 /// One resolved mark in the rail's fixed 14pt column. `style == nil` draws nothing and the column
 /// still holds its width, so a row that gains a mark never shifts the label beside it.
@@ -88,7 +94,7 @@ final class MacStatusMarkView: NSView {
 
     override func draw(_: NSRect) {
         guard let style else { return }
-        let ink = NSColor(style.ink)
+        let ink = style.ink
         switch style.mark {
         case .working:
             drawSpinner(ink: ink, frozen: style.frozen)
@@ -158,7 +164,7 @@ final class MacStatusMarkView: NSView {
         context.setLineCap(.round)
         context.setLineJoin(.round)
         for outline in icon.outlines {
-            context.addPath(SVGPath.path(outline, viewBox: icon.viewBox, in: rect).cgPath)
+            context.addPath(SVGPath.cgPath(outline, viewBox: icon.viewBox, in: rect))
             context.strokePath()
         }
         context.restoreGState()

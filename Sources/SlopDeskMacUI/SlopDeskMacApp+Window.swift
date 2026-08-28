@@ -2,10 +2,29 @@
 //
 // The workspace window's close gate, its once-per-open geometry (remember / grid / frame), the
 // traffic-light line, and the automation bring-to-front. Each is a `static` over an explicit
-// `NSWindow` rather than a method on the scene, because the only caller is the blessed
-// `.introspect(.window)` closure and each has to stay IDEMPOTENT: that closure re-fires on every scene
-// re-render (terminal and video output mutate `@Observable` state continuously), so anything that
-// activates a window, sizes it, or installs a delegate carries its own associated-object one-shot.
+// `NSWindow` rather than a method on the delegate, because each is a pure actuator over a window it
+// does not own — which is what makes the geometry ones testable against a plain window and keeps the
+// delegate's launch path a list of calls rather than a second place window policy lives.
+//
+// ⚠️ THREE OF THE FOUR USED TO CARRY AN `objc_setAssociatedObject` ONE-SHOT, AND THE ONE-SHOTS ARE
+// GONE WITH THE HOOK THAT NEEDED THEM. The only caller used to be SwiftUI's `.introspect(.window)`
+// closure, which RE-FIRES on every scene re-render — and terminal and video output mutate
+// `@Observable` state continuously, so "on every re-render" meant tens of times a second. Anything
+// that activated a window, installed a delegate or declared a toolbar therefore had to detect that it
+// had already run. ``MacWorkspaceWindowController`` creates the window once and the delegate calls
+// each of these once, at `applicationDidFinishLaunching`, so:
+//
+//   * the close gate no longer asks whether it is already the delegate,
+//   * the automation activate no longer marks the window it activated,
+//   * the toolbar declaration no longer asks whether a toolbar is already there.
+//
+// ⚠️ ONE GUARD SURVIVES, WITH A DIFFERENT REASON. ``applyInitialWindowSize(to:store:chrome:
+// fontPointSize:)`` is still called TWICE — once at launch and once more if the first call landed on
+// a `grid` window whose terminal had not reported its true cell advance yet (see
+// ``MacWorkspaceWindowController/retryGridSizeWhenCellMetricsArrive(_:)``). Its guard is what makes
+// the second call a no-op once the first has committed, so a user's later manual resize is never
+// re-fought. It is now guarding against a second call rather than against a hundred, and it is the
+// reason the retry can be offered unconditionally.
 //
 // The math itself is not here. `WindowSizeMath` (`SlopDeskWorkspaceCore`) resolves every content size
 // and clamps every input; this file is the actuator that hands it real cell metrics and a real screen.
@@ -16,20 +35,19 @@ import ObjectiveC
 import SlopDeskClientCore
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
-import SwiftUI
 
 extension SlopDeskMacApp {
     /// The keybinding dispatcher's key-window gate, as a PURE identity predicate so it is unit-pinnable
     /// without an `NSWindow` (`AnyObject` — tests inject plain fakes): the workspace owns the keyboard ONLY
-    /// when the window captured by the `.introspect(.window)` hook IS the application's current key window.
-    /// A `nil` capture (pre-introspect, or the weak ``WeakWindowBox`` going stale after the workspace window
+    /// when the window the delegate captured IS the application's current key window.
+    /// A `nil` capture (pre-launch, or the weak ``WeakWindowBox`` going stale after the workspace window
     /// closed) NEVER claims the keyboard — a `window.map(\.isKeyWindow) ?? true` form would default a nil
-    /// capture to "workspace is key", letting a stale box swallow chords while the Settings window (or any
-    /// other window) is frontmost. Identity against `NSApp.keyWindow` also stays truthful if the box ever
+    /// capture to "workspace is key", letting a stale box swallow chords while another window is frontmost.
+    /// Identity against `NSApp.keyWindow` also stays truthful if the box ever
     /// held a non-workspace window: that window being key is exactly the state where yielding is wrong only
-    /// for the REAL workspace window — and only the ONE workspace window can land in the box: File ▸ New
-    /// Window is removed, and the detach-pane satellites (``SatellitePaneWindow``) are plain-AppKit windows
-    /// that never mount the `.introspect` hook. A key SATELLITE therefore correctly yields the chord
+    /// for the REAL workspace window — and only the ONE workspace window can land in the box: there is no
+    /// New Window item, and the detach-pane satellites (``SatellitePaneWindow``) are separate windows the
+    /// delegate never puts in the box. A key SATELLITE therefore correctly yields the chord
     /// keyboard (workspace chords act on the main window; satellites take plain first-responder input).
     static func workspaceWindowIsKey(captured: AnyObject?, keyWindow: AnyObject?) -> Bool {
         guard let captured else { return false }
@@ -42,39 +60,30 @@ extension SlopDeskMacApp {
     /// (unsafe) because an address-only key carries no shared mutable state to race on.
     private nonisolated(unsafe) static var windowCloseDelegateKey: UInt8 = 0
 
-    /// Installs the window-close confirmation gate on `window` exactly once. SwiftUI installs its own
-    /// `NSWindowDelegate`; a transparent shim (``WindowCloseConfirmationDelegate``) wraps it — implementing
-    /// only `windowShouldClose(_:)` and forwarding every other selector to SwiftUI's delegate — so SwiftUI's
-    /// window bookkeeping is preserved while the close attempt routes through the store. The `.introspect`
-    /// closure can re-fire, so it no-ops when our shim already owns the delegate (and self-heals if SwiftUI
-    /// re-installs a delegate, by wrapping the new one).
+    /// Installs the window-close confirmation gate on `window`. ``MacWorkspaceWindowController`` is its
+    /// own window's delegate; a transparent shim (``WindowCloseConfirmationDelegate``) wraps it —
+    /// implementing only `windowShouldClose(_:)` and forwarding every other selector to the controller —
+    /// so the controller's window bookkeeping is preserved while the close attempt routes through the
+    /// store.
     @MainActor
     static func installWindowCloseGate(on window: NSWindow, store: WorkspaceStore) {
-        guard !(window.delegate is WindowCloseConfirmationDelegate) else { return }
         let shim = WindowCloseConfirmationDelegate(store: store, next: window.delegate)
         window.delegate = shim
         objc_setAssociatedObject(window, &windowCloseDelegateKey, shim, .OBJC_ASSOCIATION_RETAIN)
     }
 
-    /// Associated-object key marking a window whose once-per-open initial size has been applied (so
-    /// a later manual resize is never re-fought by the re-firing introspect callback). Only its ADDRESS is
-    /// used as the key, never its value — `nonisolated(unsafe)` like ``windowCloseDelegateKey``.
+    /// Associated-object key marking a window whose initial size has been applied, so the deferred
+    /// grid re-measure cannot re-fight a manual resize. Only its ADDRESS is used as the key, never its
+    /// value — `nonisolated(unsafe)` like ``windowCloseDelegateKey``.
     private nonisolated(unsafe) static var windowSizeAppliedKey: UInt8 = 0
-    /// One-shot gate for the automation bring-to-front (see the `.introspect(.window)` closure): the
-    /// introspect callback re-fires on every scene re-render, so the activate must run at most once per
-    /// window or it steals focus back whenever the user switches to another app.
-    private nonisolated(unsafe) static var windowActivatedKey: UInt8 = 0
 
-    /// AUTOMATION ONLY: bring the workspace window to front + make it key ONCE per window open, so an
-    /// autoconnect launch goes live without a manual click. Gated by the same associated-object one-shot as
-    /// `applyInitialWindowSize` — the `.introspect(.window)` closure RE-FIRES on every scene re-render
-    /// (terminal/video output mutates @Observable state continuously), and an un-gated re-activate would yank
-    /// focus straight back the moment the user switched to another app. A non-automation launch is a no-op.
+    /// AUTOMATION ONLY: bring the workspace window to front + make it key, so an autoconnect launch goes
+    /// live without a manual click. A non-automation launch is a no-op — `showWindow(_:)` has already
+    /// ordered the window front by then, and a plain launch has no reason to steal activation from
+    /// whatever the user was doing.
     @MainActor
-    static func automationBringToFrontOnce(_ window: NSWindow) {
-        guard ClientComposition.hasAutomationEnvironment(),
-              objc_getAssociatedObject(window, &windowActivatedKey) == nil else { return }
-        objc_setAssociatedObject(window, &windowActivatedKey, true, .OBJC_ASSOCIATION_RETAIN)
+    static func automationBringToFront(_ window: NSWindow) {
+        guard ClientComposition.hasAutomationEnvironment() else { return }
         NSApplication.shared.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
@@ -102,8 +111,6 @@ extension SlopDeskMacApp {
     /// window's own `titlebarAppearsTransparent` keeps it from painting anything.
     @MainActor
     static func lowerTrafficLightsToTheTopLine(on window: NSWindow) {
-        // The introspect hook re-fires on every scene re-render; this must stay idempotent.
-        guard window.toolbar == nil else { return }
         window.toolbar = NSToolbar(identifier: "SlopDeskBandHeight")
         window.toolbarStyle = .unifiedCompact
     }
@@ -123,8 +130,9 @@ extension SlopDeskMacApp {
     ///      an OVERLAY (no layout height) and there is no horizontal tab bar, so the vertical overhead is 0.
     ///   2. Real cell metrics: `grid` uses the LIVE per-cell advance of the active terminal surface; before it
     ///      lays out we use a font-DERIVED fallback (`WindowSizeMath.fallbackCell`) instead of a wrong hard
-    ///      8×16, and DEFER the once-per-open commit until real metrics exist — so the window recomputes to the
-    ///      exact cols×rows once libghostty reports its true cell advance (a later introspect fire), rather than
+    ///      8×16, and DEFER the commit until real metrics exist — so the window recomputes to the
+    ///      exact cols×rows once libghostty reports its true cell advance, on the ONE deferred re-measure
+    ///      ``MacWorkspaceWindowController/retryGridSizeWhenCellMetricsArrive(_:)`` offers, rather than
     ///      permanently committing the approximation.
     ///
     /// All numeric inputs are clamped inside ``WindowSizeMath`` (never 0×0 / off-screen-gigantic).
@@ -174,19 +182,19 @@ extension SlopDeskMacApp {
         ) else { return }
         window.setContentSize(size)
 
-        // Commit the once-per-open guard EXCEPT for a `grid` window still on the font-derived fallback (no real
-        // metrics yet): leave it UNSET so a later introspect fire recomputes to the exact cols×rows once the
+        // Commit the guard EXCEPT for a `grid` window still on the font-derived fallback (no real
+        // metrics yet): leave it UNSET so the deferred re-measure recomputes to the exact cols×rows once the
         // terminal surface has laid out. `.frame` (no cell dependency) and grid-with-real-metrics commit now.
         if mode == .frame || liveCell != nil {
             objc_setAssociatedObject(window, &windowSizeAppliedKey, true, .OBJC_ASSOCIATION_RETAIN)
         }
     }
 
-    /// The scene-creation seed for ``WindowSizeMode/remember`` — the parsed saved frame, or `nil`
-    /// (other modes / nothing saved / malformed descriptor / automation). Consumed by the scene's
-    /// `.defaultSize` / `.defaultPosition` so the window is CREATED at the remembered geometry and the
-    /// first paint is already right; ``applyRememberedFrame(to:)`` then reconciles exactly via
-    /// `setFrame(from:)` (screen topology changes — `defaultPosition` is proportional, not absolute).
+    /// The window-CREATION seed for ``WindowSizeMode/remember`` — the parsed saved frame, or `nil`
+    /// (other modes / nothing saved / malformed descriptor / automation). Consumed by
+    /// ``MacWorkspaceWindowController``'s `init` so the window is CREATED at the remembered geometry and
+    /// the first paint is already right; ``applyRememberedFrame(to:)`` then reconciles exactly via
+    /// `setFrame(from:)` (screen topology changes — the created size is proportional-safe, not absolute).
     /// Automation launches opt out (matching ``applyRememberedFrame(to:)``): the odiff reference
     /// geometry must stay the deterministic 1280×800.
     static var rememberedFrameSeed: (frame: CGRect, screen: CGRect)? {
@@ -201,13 +209,15 @@ extension SlopDeskMacApp {
 
     /// ``WindowSizeMode/remember``: restore the frame persisted under the app's OWN Defaults key
     /// (``SettingsKey/savedWindowFrame``) and install the save-on-change observers.
-    /// `setFrameAutosaveName` is deliberately NOT used — SwiftUI asserts its own type-derived autosave
-    /// name on the scene window (containing a per-launch `(unknown context at $…)` address), so AppKit's
-    /// autosave machinery saves under a key that changes every launch and can never restore. Both halves
-    /// are owned here instead: `NSWindow.frameDescriptor` (screen-aware) is written at end-of-gesture
-    /// granularity (`didEndLiveResize` / `didMove` — not per-tick `didResize`) plus the scene's
-    /// `willTerminateNotification` save, and re-applied via `setFrame(from:)` — which itself constrains
-    /// an off-screen / stale-display frame back onto a live screen — on the next window open.
+    ///
+    /// ⚠️ `setFrameAutosaveName` IS STILL NOT USED, AND THE REASON CHANGED. It was excluded because
+    /// SwiftUI asserted its own type-derived autosave name on the scene window (containing a
+    /// per-launch `(unknown context at $…)` address), so AppKit's autosave machinery saved under a key
+    /// that changed every launch and could never restore. Nothing asserts a name now — but AppKit's
+    /// autosave writes on EVERY frame change, where both halves owned here are deliberately
+    /// end-of-gesture (`didEndLiveResize` / `didMove` — not per-tick `didResize`) plus the delegate's
+    /// `applicationWillTerminate` save, and re-applied via `setFrame(from:)`, which itself constrains
+    /// an off-screen / stale-display frame back onto a live screen on the next window open.
     @MainActor
     private static func applyRememberedFrame(to window: NSWindow) {
         let saved = SettingsKey.savedWindowFrame

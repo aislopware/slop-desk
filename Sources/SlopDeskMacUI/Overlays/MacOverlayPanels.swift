@@ -68,9 +68,11 @@ final class MacOverlayPanels {
 
     /// Reconciles the ⌘/ cheat sheet against `visible`.
     ///
-    /// `host` is the workspace window captured in the blessed `.introspect(.window)` closure — with
-    /// no window there is nothing to hang a card on, so the call is a silent no-op rather than a
-    /// card that opens somewhere the user cannot see.
+    /// `host` is the workspace window, out of the delegate's ``WeakWindowBox`` — with no window there
+    /// is nothing to hang a card on, so the call is a silent no-op rather than a card that opens
+    /// somewhere the user cannot see. (It read "captured in the blessed `.introspect(.window)`
+    /// closure" while the shell was a SwiftUI scene and that hook was the only way to get the window;
+    /// the box is filled by ``MacWorkspaceWindowController`` now, and `nil` means the same thing.)
     func setCheatSheet(
         _ visible: Bool, host: NSWindow?, store: WorkspaceStore, coordinator: OverlayCoordinator,
     ) {

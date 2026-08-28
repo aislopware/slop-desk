@@ -4,19 +4,28 @@
 // whole, with the gate deleted rather than moved: this target is macOS, so saying so again in the file
 // is noise (docs/56 §3).
 //
-// What they have in common is that each is an AppKit obligation the SwiftUI scene cannot express — a
-// termination reply that must be deferred until an async drain finishes, a `windowShouldClose` that
-// must ask the store and then answer synchronously — so each one is a shim between AppKit's protocol
-// and the store's decision.
+// What they have in common is that each is an AppKit obligation the app shell cannot express
+// declaratively — a termination reply that must be deferred until an async drain finishes, a
+// `windowShouldClose` that must ask the store and then answer synchronously — so each one is a shim
+// between AppKit's protocol and the store's decision.
 //
 // The `openSettings` binder used to live here too. It went with the settings scene: ⌘, opens
 // `config.toml` now, which needs no environment action and no shim.
+//
+// ⚠️ `SlopDeskAppTerminationDelegate` USED TO LIVE HERE AND IS DELETED, not moved. It was a SECOND
+// `NSApplicationDelegate` that existed for one reason: a SwiftUI `App` is a value type and cannot BE
+// the application delegate, so `@NSApplicationDelegateAdaptor` had to instantiate a class for it —
+// which is also why the store reached that class through a `weak static var` instead of an
+// initialiser, and why its `applicationShouldTerminate` had to open with a `guard let store` for a
+// case that never happened in production. ``SlopDeskMacApp`` is the delegate now and owns the store
+// outright, so the drain is a method on it. What is left here is what was always genuinely shared:
+// the pure ``QuitConfirmPolicy`` decision, the bounded ``TerminationDrain``, and the two pieces of
+// GUI the drain needs — parked in an extension on the real delegate below.
 
 import AppKit
 import SlopDeskClientCore
 import SlopDeskVideoProtocol // `EnvConfig` — the env → settings-overlay resolver the quit gate reads through
 import SlopDeskWorkspaceCore
-import SwiftUI
 
 /// QUIT-DRAIN (orphaned-session leak — the clean-quit twin of the wifi-flap host detach/reattach fix): closing a
 /// busy pane (⌘W) drops it from the tree + registry SYNCHRONOUSLY, but the actual host disconnect
@@ -24,60 +33,26 @@ import SwiftUI
 /// process before the bye reaches the wire: the host soft-detaches the just-closed session into
 /// `DetachedSessionStore` (default TTL: NEVER) while the client's persisted workspace no longer
 /// references it — a permanently orphaned session whose agent keeps running with no owner.
-/// ``WorkspaceStore/quiesce()`` exists exactly for this drain, wired here at its call site.
-///
-/// `applicationShouldTerminate` parks the quit (`.terminateLater`), saves the tree immediately (the
-/// termination is async — the existing `willTerminateNotification` flush still runs after the reply
-/// and stays the last word), drains via ``TerminationDrain`` (bounded — quit must NEVER hang on a wedged
-/// teardown), then replies so AppKit finishes terminating.
-///
-/// The store rides a static seam because SwiftUI's `@NSApplicationDelegateAdaptor` instantiates the
-/// delegate itself (`SlopDeskClientApp.init` cannot hand it instance state); weak — the App's `@State`
-/// owns the store. With no store (never happens in production) the quit proceeds untouched.
-@MainActor
-final class SlopDeskAppTerminationDelegate: NSObject, NSApplicationDelegate {
-    /// The single live store, injected by `SlopDeskClientApp.init()`.
-    weak static var store: WorkspaceStore?
+/// ``WorkspaceStore/quiesce()`` exists exactly for this drain, wired at its call site in
+/// ``SlopDeskMacApp/applicationShouldTerminate(_:)``.
+extension SlopDeskMacApp {
     /// The teardown-drain budget: generous for the in-flight bye/channelClose round trips, short enough
     /// that quit never feels hung (the losing quiesce keeps draining until the process exits anyway).
-    static let drainTimeout: Duration = .seconds(2)
-    /// One-shot: a second ⌘Q while the drain is pending must not spawn a second drain (each
-    /// `.terminateLater` expects exactly one `reply`; the in-flight drain resolves the first request).
-    private var draining = false
-
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let store = Self.store else { return .terminateNow }
-        guard !draining else { return .terminateCancel } // drain in flight — its reply resolves the quit
-        // QUIT-CONFIRM: guards against a stray ⌘Q reaching the app while the user is working the Host
-        // Windows rail — `performKeyEquivalent: → terminate:` can fire with no real intent (a vanished
-        // window reads as a CRASH; rcmd/XKey event-tap leaks are prime suspects). With any
-        // tab open, an interactive quit asks first. Apple-Event quits (osascript, logout/shutdown)
-        // skip the dialog — blocking automation or logout is worse than a stray quit.
-        // The knob resolves through `EnvConfig` (real env FIRST, then the settings overlay), not off
-        // `ProcessInfo` directly: the policy's own truth table is untouched, but a `SLOPDESK_QUIT_CONFIRM`
-        // written into `config.toml`'s `[env]` table used to land in the overlay and then be read past.
-        if QuitConfirmPolicy.requiresConfirmation(
-            hasOpenTabs: store.tree.sessions.contains { !$0.tabs.isEmpty },
-            isAppleEventQuit: NSAppleEventManager.shared().currentAppleEvent != nil,
-            envValue: EnvConfig.string("SLOPDESK_QUIT_CONFIRM"),
-        ), !Self.confirmQuit() {
-            return .terminateCancel
-        }
-        draining = true
-        // Persist BEFORE the async drain so even an interrupted drain window keeps the layout; the
-        // willTerminate flush re-saves after the reply (idempotent, and the authoritative last word).
-        store.saveImmediately()
-        Task { @MainActor in
-            await TerminationDrain.drain(timeout: Self.drainTimeout) { await store.quiesce() }
-            sender.reply(toApplicationShouldTerminate: true)
-        }
-        return .terminateLater
-    }
+    static var drainTimeout: Duration { .seconds(2) }
 
     /// The confirm dialog itself (GUI — the decision lives in ``QuitConfirmPolicy``). Return = Quit,
     /// Esc = Cancel: an intentional quit costs one keystroke; a stray one becomes a visible dialog
     /// instead of a vanished window.
-    private static func confirmQuit() -> Bool {
+    ///
+    /// QUIT-CONFIRM guards against a stray ⌘Q reaching the app while the user is working the Host
+    /// Windows rail — `performKeyEquivalent: → terminate:` can fire with no real intent (a vanished
+    /// window reads as a CRASH; rcmd/XKey event-tap leaks are prime suspects). With any tab open, an
+    /// interactive quit asks first. Apple-Event quits (osascript, logout/shutdown) skip the dialog —
+    /// blocking automation or logout is worse than a stray quit. The knob resolves through `EnvConfig`
+    /// (real env FIRST, then the settings overlay), not off `ProcessInfo` directly: the policy's own
+    /// truth table is untouched, but a `SLOPDESK_QUIT_CONFIRM` written into `config.toml`'s `[env]`
+    /// table used to land in the overlay and then be read past.
+    static func confirmQuit() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Quit SlopDesk?"
         alert.informativeText = "Host sessions keep running; your workspace reattaches on the next launch."
@@ -137,10 +112,17 @@ enum TerminationDrain {
     }
 }
 
-/// A tiny WEAK holder for THIS scene's `NSWindow`, captured in the blessed `.introspect(.window)`
-/// closure so the `.onChange(of: chrome.pinned)` pin actuator can re-level the live window without the
-/// forbidden `NSApplication.windows` scan. Deliberately NOT `@Observable` — mutating `window` must not trigger
-/// a re-render; it is a pure capture slot the scene's `@State` storage keeps alive for the window's lifetime.
+/// A tiny WEAK holder for the workspace `NSWindow`, filled by ``SlopDeskMacApp`` once its window
+/// controller has made one, so the pin actuator (`chrome.pinned` → `NSWindow.level`) and the three
+/// `performClose` entries can reach the live window without the forbidden `NSApplication.windows` scan.
+///
+/// ⚠️ IT SURVIVED THE DE-SWIFTUI PASS, AND THE REASON IT EXISTS CHANGED. It was a capture slot for the
+/// `.introspect(.window)` closure — the only place a `WindowGroup`'s `NSWindow` was reachable — held
+/// alive by the scene's `@State`. The delegate holds a window CONTROLLER now and could read
+/// `controller.window` directly; the box stays because the WEAKNESS is the point:
+/// ``SlopDeskMacApp/workspaceWindowIsKey(captured:keyWindow:)`` must read "no workspace window" once
+/// the window has closed, and a strong path through the controller would keep answering with a dead
+/// one. Deliberately NOT `@Observable` — nothing should re-render because a window pointer moved.
 @MainActor
 final class WeakWindowBox {
     weak var window: NSWindow?
@@ -180,8 +162,15 @@ enum WindowCloseGate {
 }
 
 /// A transparent `NSWindowDelegate` shim that adds the window-close confirmation gate WITHOUT
-/// displacing SwiftUI's own window delegate. It implements ONLY `windowShouldClose(_:)` and forwards every
-/// other selector to the delegate SwiftUI installed (`next`), so SwiftUI's window bookkeeping is untouched.
+/// displacing whatever delegate the window already had. It implements ONLY `windowShouldClose(_:)` and
+/// forwards every other selector to that delegate (`next`), so its window bookkeeping is untouched.
+///
+/// ⚠️ THE FORWARDING IS NOT DEAD CODE NOW THAT SwiftUI IS GONE, though the delegate it forwards to has
+/// changed hands: it used to be SwiftUI's own scene delegate, and it is
+/// ``MacWorkspaceWindowController``, which sets itself as its window's delegate the way an
+/// `NSWindowController` is expected to — that is what AppKit's own window bookkeeping (cascading,
+/// state restoration, the Window menu) resolves against. Wrapping rather than replacing keeps the
+/// gate ONE concern instead of a controller that also has an opinion about closing.
 ///
 /// On a close attempt it routes through ``WindowCloseGate/resolve(store:confirm:)`` (the window → active
 /// ``Session`` map). When the configured ``CloseConfirmationPolicy`` says confirm, it presents a SYNCHRONOUS
@@ -191,8 +180,8 @@ enum WindowCloseGate {
 @MainActor
 final class WindowCloseConfirmationDelegate: NSObject, NSWindowDelegate {
     private let store: WorkspaceStore
-    /// The delegate SwiftUI had installed; held strongly (NSWindow holds delegates weakly) so every
-    /// non-`windowShouldClose` message keeps reaching SwiftUI's own delegate via forwarding. `nonisolated`
+    /// The delegate the window already had; held strongly (NSWindow holds delegates weakly) so every
+    /// non-`windowShouldClose` message keeps reaching it via forwarding. `nonisolated`
     /// so the `NSObject` runtime-forwarding overrides (themselves `nonisolated`) can read it — AppKit only
     /// touches a window delegate on the main thread, so the access is single-threaded in practice.
     private nonisolated(unsafe) let next: NSWindowDelegate?
@@ -219,7 +208,7 @@ final class WindowCloseConfirmationDelegate: NSObject, NSWindowDelegate {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    // Forward every selector this shim does not implement to SwiftUI's original delegate, so its window
+    // Forward every selector this shim does not implement to the window's original delegate, so its
     // bookkeeping (key/main/resize/restoration) is preserved.
     override nonisolated func responds(to aSelector: Selector?) -> Bool {
         if super.responds(to: aSelector) { return true }

@@ -8,10 +8,12 @@
 // never dies. The content is ``MacSatellitePaneRootView`` — AppKit, in this target, since docs/56's
 // R11; the `SatellitePaneHost` seam that used to carry it across a target boundary is gone with it.
 //
-// Deliberately PURE AppKit (never a second SwiftUI `WindowGroup`): the app's chord dispatcher /
-// close-gate / pin actuator are single-window singletons keyed to the ONE workspace window captured via
-// `.introspect(.window)` — a scene-created sibling would be re-captured and corrupt them. A plain
-// `NSWindowController` is invisible to that machinery; ``SatellitePaneWindow`` is the marker class the
+// Deliberately its OWN window controller, never a second workspace window: the app's chord dispatcher
+// / close-gate / pin actuator are single-window singletons keyed to the ONE window in the delegate's
+// ``WeakWindowBox``, and a second window built by the same machinery would overwrite that capture. (It
+// read "captured via `.introspect(.window)`" while the shell was a SwiftUI scene, where the danger was
+// specifically a sibling `WindowGroup` window mounting the same hook.) A satellite is invisible to
+// that machinery because nothing puts it in the box; ``SatellitePaneWindow`` is the marker class the
 // few key-window-sensitive actuators (menu Close Window) check so they act on "the window I'm looking
 // at" instead of the hidden main window.
 //

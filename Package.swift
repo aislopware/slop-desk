@@ -142,7 +142,8 @@ let package = Package(
     // `KeyboardShortcuts` left with the settings GUI (docs/58): its only caller was the chord
     // recorder, and a config file has no recorder.
     dependencies: [
-        .package(url: "https://github.com/siteline/swiftui-introspect.git", from: "26.0.1"),
+        // `SwiftUIIntrospect` left with the SwiftUI app scene: it existed to reach the `NSWindow` a
+        // `WindowGroup` creates and hides, and an `NSWindowController` HAS its window.
         .package(url: "https://github.com/SFSafeSymbols/SFSafeSymbols.git", from: "7.0.0"),
         // Type-safe UserDefaults for the global `SettingsKey` namespace. Depend ONLY on the `Defaults`
         // product — the macro/swift-syntax targets (`DefaultsMacros`) are not linked. Exempt from the
@@ -598,10 +599,10 @@ let package = Package(
                 "SlopDeskTransport",
                 // The bundled nerd face, for `Text.nerdAware`'s SwiftUI splice.
                 "SlopDeskFontFaces",
-                // L8: external UI libraries (chrome). Cross-platform: SwiftUIIntrospect (reach AppKit
-                // under SwiftUI), SFSafeSymbols (type-safe SF Symbols). (Pow was dropped with the last
-                // `changeEffect` — MERIDIAN L3: status dots hard-cut, nothing glows at rest.)
-                .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),
+                // L8: external UI libraries (chrome) — SFSafeSymbols (type-safe SF Symbols). (Pow was
+                // dropped with the last `changeEffect` — MERIDIAN L3: status dots hard-cut, nothing
+                // glows at rest. SwiftUIIntrospect went with the SwiftUI app scene: it reached AppKit
+                // out from under SwiftUI, and there is no SwiftUI to reach out of.)
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
                 // PATH 4: the client-side file-transfer driver (`FileTransferClient`) the desktop
                 // pane's dragging destination fires on a real file drop. Foundation+Network leaf, no
@@ -654,9 +655,6 @@ let package = Package(
                 "SlopDeskAgentDetect",
                 // `MetadataClient` — the host RPC behind Open Quickly's Agents source.
                 "SlopDeskProtocol",
-                // Reach THIS scene's `NSWindow` from the SwiftUI `WindowGroup` (never an
-                // `NSApplication.windows` scan).
-                .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),
                 // Fire-time reads of the Code Agent sound toggles in the attention sink.
                 .product(name: "Defaults", package: "Defaults"),
                 // The status marks and slot glyphs the navigator's rows draw are named as
