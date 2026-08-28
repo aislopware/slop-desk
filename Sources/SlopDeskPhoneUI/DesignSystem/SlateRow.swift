@@ -7,8 +7,9 @@
 //   height    → `heightRow` — every row, always; a row never grows a second line, so the list's
 //               rhythm is a constant beat and state changes swap TEXT, not geometry
 //   padding   → horizontal `space3`
-//   idle      → transparent;  hover → `Slate.State.hover` flat plate
-//   active    → a RAISED card: `Slate.Surface.raised` fill + 1px `Slate.Line.card` hairline.
+//   idle      → transparent;  hover → `Slate.Native.State.hover` flat plate
+//   active    → a RAISED card: `Slate.Native.Surface.raised` fill + 1px `Slate.Native.Line.card`
+//               hairline.
 //               NO shadow — at-rest depth is the surface ladder, never a cast shadow (MERIDIAN L5).
 // Generic list surfaces (keybindings editor, popover rows) build on this shell. The sidebar TAB row
 // (`SlateTabRow`) does NOT — it is the standalone otty `TabsPanelRowView` port with its own measured

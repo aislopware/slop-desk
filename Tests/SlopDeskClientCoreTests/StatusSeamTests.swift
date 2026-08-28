@@ -36,7 +36,7 @@ final class StatusSeamTests: XCTestCase {
         )
         // A bare login shell is the one slot label that stays quiet — bolding every idle `zsh` on
         // the rail spends exactly the step this round reserves for work.
-        XCTAssertEqual(StatusPresentation.slotNameInk(isCommand: false), Slate.Text.tertiary)
+        XCTAssertEqual(StatusPresentation.slotNameInk(isCommand: false), Slate.Native.Text.tertiary)
         XCTAssertNotEqual(
             StatusPresentation.slotNameInk(isCommand: true),
             StatusPresentation.slotNameInk(isCommand: false),

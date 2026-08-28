@@ -12,7 +12,7 @@
 // in the trailing SLOT instead, as the command's own name in the outcome's ink — pinned here as the
 // PARTITION (a badge is either a mark or a receipt, never both, never neither).
 // Headless VALUE assertions — no render. Ink identity is asserted SELF-consistently against the
-// presentation maps (never absolute colour values — `Color` equality is provider-fragile).
+// presentation maps (never absolute colour values — `SlateNativeColor` equality is provider-fragile).
 
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
@@ -72,7 +72,7 @@ final class StatusDotTests: XCTestCase {
             )
             XCTAssertNotNil(dot, "a resting agent mounts the muted ring")
             XCTAssertNotEqual(dot?.ink, working?.ink, "resting must not borrow the thinking ink")
-            XCTAssertEqual(dot?.ink, Slate.Text.secondary, "resting spends no hue")
+            XCTAssertEqual(dot?.ink, Slate.Native.Text.secondary, "resting spends no hue")
             XCTAssertEqual(dot?.mark, .agentRing, "presence is the ring, whatever the shell is doing")
         }
     }
@@ -112,7 +112,7 @@ final class StatusDotTests: XCTestCase {
                 working: false, badge: kind, agentIdle: true, agentFinish: false,
             )
             XCTAssertEqual(dot?.mark, .agentRing, "\(kind) leaves the mark column to the agent")
-            XCTAssertEqual(dot?.ink, Slate.Text.secondary, "and the ring keeps spending no hue")
+            XCTAssertEqual(dot?.ink, Slate.Native.Text.secondary, "and the ring keeps spending no hue")
         }
     }
 
@@ -242,10 +242,10 @@ final class StatusDotTests: XCTestCase {
         // took hues back per role on `07da1f5d` and this slot deliberately did not follow — a
         // command has two outcomes, not seven states.) The red is the INK cut, `StatusInk`, since a
         // 10pt mono run is the case the system palette read faintest in.
-        XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Text.primary)
-        XCTAssertEqual(StatusPresentation.outcomeInk(.failed), Slate.StatusInk.err)
+        XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Native.Text.primary)
+        XCTAssertEqual(StatusPresentation.outcomeInk(.failed), Slate.Native.StatusInk.err)
         XCTAssertNotEqual(
-            StatusPresentation.outcomeInk(.succeeded), Slate.StatusInk.ok,
+            StatusPresentation.outcomeInk(.succeeded), Slate.Native.StatusInk.ok,
             "green was the mark's answer; 'it worked' is the expected case and buys no hue",
         )
         XCTAssertEqual(StatusPresentation.slotNameWeight, .bold)
@@ -311,9 +311,9 @@ final class StatusDotTests: XCTestCase {
         // The tick inherits the register the word left: the outcome's own ink, primary, NOT the
         // tertiary metadata grey it wore while a bold name stood beside it. A shorter slot must not
         // be a fainter one.
-        XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Text.primary)
+        XCTAssertEqual(StatusPresentation.outcomeInk(.succeeded), Slate.Native.Text.primary)
         XCTAssertNotEqual(
-            StatusPresentation.outcomeInk(.succeeded), Slate.Text.tertiary,
+            StatusPresentation.outcomeInk(.succeeded), Slate.Native.Text.tertiary,
             "the grey was punctuation ink; alone in the slot the tick reads at the name's rung",
         )
     }
@@ -366,7 +366,7 @@ final class StatusDotTests: XCTestCase {
         XCTAssertEqual(StatusPresentation.tabBadge(.caffeinate)?.art, .vector(OttyIcon.coffee))
         for kind: TabBadgeKind in [.sudo, .caffeinate] {
             XCTAssertEqual(
-                StatusPresentation.tabBadge(kind)?.tint, Slate.Text.secondary,
+                StatusPresentation.tabBadge(kind)?.tint, Slate.Native.Text.secondary,
                 "a modifier is metadata, not a state — it spends no hue",
             )
         }
@@ -483,7 +483,7 @@ final class StatusDotTests: XCTestCase {
         let thinking = StatusPresentation.statusDot(working: true, badge: nil)
         XCTAssertEqual(thinking?.mark, .working, "otty's answer for this state, and ours")
         XCTAssertNotEqual(
-            thinking?.ink, Slate.State.accent, "the accent is no longer the rail's busy voice",
+            thinking?.ink, Slate.Native.State.accent, "the accent is no longer the rail's busy voice",
         )
         XCTAssertNotEqual(
             thinking?.mark,

@@ -18,9 +18,9 @@
 // because `PaneStatusPillView.fillColor` and `MacPaneStatusPillView.fillColor` were two independently
 // maintained tables and nothing but a cross-renderer colour comparison could prove they agreed (which
 // a UI half's own tests may not run, docs/56 §3.5 step 5). Docs/56 batch 3 removed the question rather
-// than answering it here: `Slate.paneStatusPillFill(_:)` / `Slate.Native.paneStatusPillFill(_:)` are
-// now the ONE switch both chips call (`SlateSharedInkTests`, `SlopDeskSlateTests`), so there is no
-// second table left to drift from the first.
+// than answering it here: `Slate.Native.paneStatusPillFill(_:)` is now the ONE switch both chips call
+// (`SlateSharedInkTests`, `SlopDeskSlateTests`), so there is no second table left to drift from the
+// first.
 //
 // Headless: an `NSView`'s layer, its accessibility attributes and `accessibilityPerformPress()` need
 // no window (the hang-safety rule forbids an `NSWindow` in a test), so nothing here mounts one.

@@ -11,8 +11,8 @@
 // render. The frame is therefore mounted in an `NSHostingView` and photographed off the layer, which
 // is ``MacChromeSnapshotRender``'s recipe.
 //
-// ⚠️ THE GROUND is ``Slate/Surface/field`` — the authored cream `#FFFBEB` (ONE ISLAND law 4), never
-// `Surface.ground`, which on macOS is the semantic aux-window backdrop (`underPageBackgroundColor`,
+// ⚠️ THE GROUND is ``Slate/Native/Surface/field`` — the authored cream `#FFFBEB` (ONE ISLAND law 4),
+// never `Native.Surface.ground`, which on macOS is the semantic aux-window backdrop (`underPageBackgroundColor`,
 // measured `#A1A09F`): a mid grey that appears NOWHERE in the shipping chrome and is the EASIER
 // ground. An ink judged against a grey it will never be drawn on is not judged at all. It is PAINTED
 // ON THE WINDOW'S OWN CONTENT VIEW here, not left to the window backing — that omission is what made
@@ -80,7 +80,7 @@ final class MacRailStatusRollupRender: XCTestCase {
         // `.frame` adds beyond the content stays unpainted by the SHEET. It is the same cream the
         // rig paints on the ground view beneath — belt and braces, and the two must never diverge:
         // a seam between them would read as a panel edge that no surface actually draws.
-        .background(Slate.Surface.field) // THE GROUND — see the file header's ⚠️
+        .background(Color(nsColor: Slate.Native.Surface.field)) // THE GROUND — see the header's ⚠️
         try render(sheet, size: size, to: dir, named: "rail-status-rollup.png")
     }
 
@@ -90,8 +90,11 @@ final class MacRailStatusRollupRender: XCTestCase {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 HStack(spacing: Slate.Metric.space2) {
-                    ForEach([Slate.Status.err, Slate.Status.warn, Slate.Status.ok], id: \.self) {
-                        Circle().fill($0).frame(width: 14, height: 14)
+                    ForEach(
+                        [Slate.Native.Status.err, Slate.Native.Status.warn, Slate.Native.Status.ok],
+                        id: \.self,
+                    ) {
+                        Circle().fill(Color(nsColor: $0)).frame(width: 14, height: 14)
                     }
                 }
                 .padding(.leading, 13) // AppKit's measured light inset (docs: windowControlsInset)
@@ -167,7 +170,7 @@ final class MacRailStatusRollupRender: XCTestCase {
         HStack(spacing: Slate.Metric.space1) {
             Text(title)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.primary)
+                .foregroundStyle(Color(nsColor: Slate.Native.Text.primary))
                 .lineLimit(1)
             Spacer(minLength: 0)
             if let mark {
@@ -196,15 +199,18 @@ final class MacRailStatusRollupRender: XCTestCase {
     private var collapsedBandPanel: some View {
         ZStack(alignment: .topLeading) {
             HStack(spacing: Slate.Metric.space2) {
-                ForEach([Slate.Status.err, Slate.Status.warn, Slate.Status.ok], id: \.self) {
-                    Circle().fill($0).frame(width: 14, height: 14)
+                ForEach(
+                    [Slate.Native.Status.err, Slate.Native.Status.warn, Slate.Native.Status.ok],
+                    id: \.self,
+                ) {
+                    Circle().fill(Color(nsColor: $0)).frame(width: 14, height: 14)
                 }
             }
             .padding(.leading, 13)
             .padding(.top, 13)
             Image(systemSymbol: .sidebarLeft)
                 .font(.system(size: Slate.Typeface.body, weight: .medium))
-                .foregroundStyle(Slate.Text.icon)
+                .foregroundStyle(Color(nsColor: Slate.Native.Text.icon))
                 // The plate's FILL is `.clear` at rest (``SlatePlateStyle``) — only its footprint
                 // is in play here, and that is what the collapsed lead is measured from.
                 .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
@@ -218,12 +224,12 @@ final class MacRailStatusRollupRender: XCTestCase {
             // — and a collision between two positions is only ever settled by looking.
             Text("Kiểm tra và lên kế h…")
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.primary)
+                .foregroundStyle(Color(nsColor: Slate.Native.Text.primary))
                 .padding(.horizontal, Slate.Metric.space2)
                 .frame(height: Slate.Metric.heightControl)
                 .background(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                        .fill(Slate.ProjectTint.register[0].opacity(Slate.Opacity.bed)),
+                        .fill(Color(nsColor: Slate.Native.ProjectTint.bed(at: 0))),
                 )
                 .padding(.leading, RailStatusRollupMount.collapsedTrailingEdge)
                 .padding(.top, Slate.Metric.bandControlInset)
@@ -241,10 +247,10 @@ final class MacRailStatusRollupRender: XCTestCase {
         HStack(spacing: Slate.Metric.space1) {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.icon)
+                .foregroundStyle(Color(nsColor: Slate.Native.Text.icon))
             Text("Search tabs")
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(Color(nsColor: Slate.Native.Text.tertiary))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Slate.Metric.space2)
@@ -282,7 +288,7 @@ final class MacRailStatusRollupRender: XCTestCase {
         VStack(alignment: .leading, spacing: 6) {
             Text(caption)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(Color(nsColor: Slate.Native.Text.tertiary))
             content()
         }
     }
@@ -309,7 +315,8 @@ final class MacRailStatusRollupRender: XCTestCase {
         // ⚠️ `.aqua`, and NOT `Slate.glassColorScheme` — the app pins LIGHT app-wide
         // (``SlateAppearancePin``) because the ground is the cream; `glassColorScheme` is the
         // TERMINAL GLASS's local opt-out. A harness that followed it resolves every dynamic
-        // `Slate.Text.*` near-white on that cream, which is the failure the app-level pin prevents.
+        // `Slate.Native.Text.*` near-white on that cream, which is the failure the app-level pin
+        // prevents.
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = ground
         window.orderFront(nil)

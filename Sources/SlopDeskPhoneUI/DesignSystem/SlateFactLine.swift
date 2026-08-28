@@ -32,10 +32,6 @@
 #if os(iOS)
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
-// ⚠️ THE LAST SwiftUI IN THIS FILE, and it is one type: ``SlateFact/tint`` is still a `Color`, so the
-// draw bridges it with `UIColor(_:)`. Nothing here builds a `View`. The import goes when the Slate
-// token collapses to its native spelling.
-import SwiftUI
 import UIKit
 
 /// One measured fact in a ``SlateFactLineView``.
@@ -48,8 +44,8 @@ struct SlateFact: Identifiable {
     /// What Copy hands over — the WHOLE value, never the abbreviation. The reason the short form is
     /// safe to draw at all is that the full one is one right-click away.
     var copies: String
-    /// ⚠️ Still SwiftUI-typed — see the note on the imports. The renderer bridges it at the draw.
-    var tint: Color
+    /// The value's ink — a Slate rung, so a dynamic colour UIKit re-resolves on its own.
+    var tint: UIColor
     /// Whether this fact was MEASURED. Measured facts render mono; named ones render in the system
     /// face. Not a styling flag with a technical name — the distinction is what rule 1 is about.
     var isMeasured = false
@@ -60,7 +56,7 @@ struct SlateFact: Identifiable {
     var id: String { label }
 
     init(
-        _ label: String, _ text: String, copies: String? = nil, tint: Color,
+        _ label: String, _ text: String, copies: String? = nil, tint: UIColor,
         isMeasured: Bool = false, showsLabel: Bool = true,
     ) {
         self.label = label
@@ -193,15 +189,10 @@ private final class SlateFactView: UIView, UIContextMenuInteractionDelegate {
         isAccessibilityElement = true
         accessibilityLabel = fact.showsLabel ? "\(fact.label) \(fact.text)" : fact.text
 
+        // Set ONCE, and that is the whole of it: both inks are dynamic `UIColor`s assigned to a
+        // `UILabel.textColor`, which UIKit re-resolves against the live trait collection on its own.
+        // There is no `CGColor` here to go stale, so there is no trait registration to keep matched.
         ink()
-        // ⚠️ `UIColor(_: Color)` is a BRIDGE — ``SlateFact/tint`` is still SwiftUI-typed, which is
-        // the last SwiftUI thing in this file and the reason `import SwiftUI` survives it. A bridged
-        // dynamic colour is only as dynamic as what it wrapped, so re-taking it on the one trait that
-        // decides the answer costs nothing and removes the question; the bridge itself goes when the
-        // token collapses to `UIColor`.
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _: UITraitCollection) in
-            view.ink()
-        }
     }
 
     @available(*, unavailable)
@@ -214,7 +205,7 @@ private final class SlateFactView: UIView, UIContextMenuInteractionDelegate {
 
     private func ink() {
         labelText.textColor = Slate.Native.Text.tertiary
-        valueText.textColor = UIColor(fact.tint)
+        valueText.textColor = fact.tint
     }
 
     func contextMenuInteraction(

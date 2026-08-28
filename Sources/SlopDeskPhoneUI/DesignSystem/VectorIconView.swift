@@ -108,12 +108,12 @@ final class SlateVectorIconView: UIView {
         var index = 0
         for fill in icon.fills {
             shapes[index].frame = bounds
-            shapes[index].path = SVGPath.path(fill.data, viewBox: icon.viewBox, in: bounds).cgPath
+            shapes[index].path = SVGPath.cgPath(fill.data, viewBox: icon.viewBox, in: bounds)
             index += 1
         }
         for outline in icon.outlines {
             shapes[index].frame = bounds
-            shapes[index].path = SVGPath.path(outline, viewBox: icon.viewBox, in: bounds).cgPath
+            shapes[index].path = SVGPath.cgPath(outline, viewBox: icon.viewBox, in: bounds)
             shapes[index].lineWidth = icon.strokeWidth * scale
             index += 1
         }

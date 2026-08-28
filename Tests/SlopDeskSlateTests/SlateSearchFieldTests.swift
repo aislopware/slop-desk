@@ -8,7 +8,6 @@
 // 1.0) and holds as long as this configuration does.
 
 import AppKit
-import SwiftUI
 import XCTest
 @testable import SlopDeskSlate
 

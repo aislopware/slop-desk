@@ -1,7 +1,7 @@
 // PeekReplyPresentation — the near-side FACE of `slopdesk_agent::readout` and the words half of
 // `slopdesk_workspace::peek_reply`.
 //
-// The peek card is the fifth surface off the shared SwiftUI floor (docs/56 stage D): the Mac draws it
+// The peek card is the fifth surface off the shared design floor (docs/56 stage D): the Mac draws it
 // as an `NSPanel` (``SlopDeskMacUI/MacPeekReplyView``), the phone as a paper card inside
 // ``OverlayHostView``. Every string a reader of the card actually reads is decided on the far side —
 // the header's caption, the queue counter, the note that stands in for a missing question — because a
@@ -15,10 +15,10 @@
 // ## The agent readout
 //
 // ``AgentReadout`` is the wider half of this file, and it reads a KIND rather than artwork for the
-// reason ``Slate/Native`` exists: an agent's status has to become a GLYPH and an INK, the Mac resolves
-// those to an `NSColor` and the phone to a `Color`, and the mapping from status to MEANING must be one
-// value with two views rather than two agreements. What each half keeps is the ladder lookup —
-// `Slate.agentInk` and `Slate.Native.agentInk`, two spellings of one rung.
+// reason ``Slate/Native`` exists: an agent's status has to become a GLYPH and an INK, and the mapping
+// from status to MEANING must be one value with two views rather than two agreements. What each half
+// keeps is the ladder lookup — `Slate.Native.agentInk`, one rung, resolving to an `NSColor` on the Mac
+// and a `UIColor` on the phone through the same spelling.
 //
 // The glyph and the ink cross as SEPARATE scalars on purpose: they are two questions about the same
 // status — what shape is drawn, and what tone it wears — and a caller tinting a row's chrome needs

@@ -1,16 +1,15 @@
-// SlateNativeTokenTests — the token layer has ONE value per rung, and the two frameworks see it.
+// SlateNativeTokenTests — the token layer has ONE value per rung, and it is the native one.
 //
-// `Slate.Native` is the value floor (an `NSColor`); every SwiftUI rung is `Color(slateNative:)` over
-// it (docs/56 stage D — an `NSView` fills with an `NSColor`, so the AppKit surfaces cannot read the
-// `Color` form and a second AppKit palette would be the duplicate implementation `CLAUDE.md` bans).
-// These pin that the derivation is lossless, and that the ONE rung whose native form is not a literal
-// — `Line/subtle`, the separator at a fraction of its own alpha — kept SwiftUI's `.opacity(_:)`
-// meaning (SCALE the alpha) rather than `withAlphaComponent`'s (REPLACE it), which would have turned
-// a whisper of a hairline into a solid rule.
+// ``Slate/Native`` is the whole floor now: an `NSColor` on the Mac, a `UIColor` on the phone, and no
+// third spelling above either (the `Color`-typed mirror it used to carry was the duplicate
+// implementation `CLAUDE.md` bans, and it is gone — with it went the bridge test that pinned the two
+// halves against each other, which had nothing left to compare). What is still worth pinning is what
+// the values themselves DERIVE: the ONE rung whose native form is not a literal — `Line/subtle`, the
+// separator at a fraction of its own alpha — SCALES the alpha rather than REPLACING it
+// (`withAlphaComponent`'s meaning), which would have turned a whisper of a hairline into a solid rule.
 
 #if os(macOS)
 import AppKit
-import SwiftUI
 import XCTest
 @testable import SlopDeskSlate
 
@@ -35,37 +34,6 @@ final class SlateNativeTokenTests: XCTestCase {
         XCTAssertEqual(a.g, b.g, accuracy: 0.001, message, file: file, line: line)
         XCTAssertEqual(a.b, b.b, accuracy: 0.001, message, file: file, line: line)
         XCTAssertEqual(a.a, b.a, accuracy: 0.001, message, file: file, line: line)
-    }
-
-    // MARK: The bridge
-
-    /// A SwiftUI rung is the native rung — the wrap and the unwrap cancel, in BOTH appearances, for a
-    /// semantic system colour, a light-pinned ink and a dynamic pair alike.
-    func testEverySwiftUIRungResolvesToItsNativeValue() {
-        for dark in [false, true] {
-            assertSame(NSColor(Slate.Surface.face), Slate.Native.Surface.face, dark: dark, "surface/face")
-            assertSame(NSColor(Slate.Text.secondary), Slate.Native.Text.secondary, dark: dark, "text/secondary")
-            assertSame(NSColor(Slate.Text.tertiary), Slate.Native.Text.tertiary, dark: dark, "text/tertiary")
-            assertSame(NSColor(Slate.StatusInk.err), Slate.Native.StatusInk.err, dark: dark, "statusInk/err")
-            assertSame(NSColor(Slate.Line.overlayRim), Slate.Native.Line.overlayRim, dark: dark, "line/overlayRim")
-            // The two PANE STATUS PILL fills. `PaneStatusPillInk` used to be resolved by two
-            // independently-maintained tables, one per renderer, which is why this pinned them against
-            // each other from inside the floor — a cross-half test naming both UI halves at once is the
-            // one thing a UI half's own tests may not do. Docs/56 batch 3 collapsed the pair into one
-            // switch (``Slate/paneStatusPillFill(_:)`` / ``Slate/Native/paneStatusPillFill(_:)``), so
-            // `NSColor(Slate.Status.secureInput)` and `Slate.Native.Status.secureInput` are no longer
-            // two tables' answers to compare — they are the same literal token, wrapped and unwrapped.
-            // Kept here anyway: it is still the rung `Slate.paneStatusPillFill` and
-            // `Slate.Native.paneStatusPillFill` both resolve to, and this is where every rung's bridge
-            // is pinned.
-            assertSame(
-                NSColor(Slate.Status.secureInput),
-                Slate.Native.Status.secureInput,
-                dark: dark,
-                "status/secureInput",
-            )
-            assertSame(NSColor(Slate.Status.syncInput), Slate.Native.Status.syncInput, dark: dark, "status/syncInput")
-        }
     }
 
     // MARK: The one derived rung
@@ -122,11 +90,11 @@ final class SlateNativeTokenTests: XCTestCase {
 
     // MARK: The motion rungs
 
-    /// A named motion is ONE curve: the SwiftUI rung and the CoreAnimation rung are built from the
-    /// same control points, so the split shell's column slide and the titlebar strip that lands with
-    /// it cannot drift apart. (The `emphasizedControlPoints` constant that used to name that curve a
-    /// second time for AppKit is gone with this.)
-    func testTheColumnSlideIsOneCurveForBothFrameworks() {
+    /// A named motion is ONE curve: ``SlateCurve``'s stored control points and the
+    /// `CAMediaTimingFunction` it hands a `CAAnimation` are the same four numbers, so the split
+    /// shell's column slide and the titlebar strip that lands with it cannot drift apart. (The
+    /// `emphasizedControlPoints` constant that used to name that curve a second time is gone.)
+    func testTheColumnSlideIsOneCurve() {
         let curve = Slate.Motion.columnSlide
         XCTAssertEqual(curve.duration, Slate.Anim.columnSlideDuration, "the delay token reads the rung")
         var points = [Float](repeating: 0, count: 2)
@@ -138,8 +106,8 @@ final class SlateNativeTokenTests: XCTestCase {
         XCTAssertEqual(Double(points[1]), curve.y2, accuracy: 0.0001)
     }
 
-    /// The AppKit instrument voice is the SAME face the SwiftUI chrome sets — JetBrains Mono where
-    /// it is installed, SF Mono where it is not, never the proportional system face.
+    /// The instrument voice is the ONE face every chrome reading wears — JetBrains Mono where it is
+    /// installed, SF Mono where it is not, never the proportional system face.
     func testTheNativeInstrumentVoiceIsAMonoFaceAtTheAskedSize() {
         let font = Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .semibold)
         XCTAssertEqual(font.pointSize, Slate.Typeface.small, "the size ladder is the same ladder")

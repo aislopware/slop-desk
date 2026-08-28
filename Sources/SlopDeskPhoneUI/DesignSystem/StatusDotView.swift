@@ -16,11 +16,6 @@
 import QuartzCore // the spinners' display link
 import SFSafeSymbols
 import SlopDeskSlate
-// ⚠️ THE ONE SwiftUI IMPORT LEFT IN THIS FILE, and it is not a view — `StatusDotStyle.ink` is a
-// `Color` (SlopDeskSlate/SlateStatusMark.swift), so `UIColor(_:)`'s bridging initializer is what turns
-// a resolved mark into ink a `CGContext` can fill with. It goes when that token becomes native; nothing
-// below draws with SwiftUI.
-import SwiftUI
 import UIKit
 
 /// One resolved mark in the fixed ``StatusDot/footprint`` column. `style == nil` draws nothing and the
@@ -96,7 +91,7 @@ final class SlateStatusMarkView: UIView {
 
     override func draw(_: CGRect) {
         guard let style else { return }
-        let ink = UIColor(style.ink)
+        let ink = style.ink
         switch style.mark {
         case .working: drawSpinner(ink: ink, frozen: style.frozen)
         case .agentRing: drawRing(ink: ink)
@@ -108,10 +103,11 @@ final class SlateStatusMarkView: UIView {
     /// A system symbol at otty's own configuration for it — the artwork is Apple's, so this mounts the
     /// EXACT drawing rather than a redraw of it.
     ///
-    /// ⚠️ `.medium` IS ``StatusDot/symbolWeight``, spelled again. The token is a `Font.Weight` and the
-    /// platform weight enums do not bridge, so each renderer names its own value and the two must be
-    /// kept in step by eye — the AppKit twin has the same seam at `MacStatusMarkView.drawSymbol`. The
-    /// INK rides the image rather than a tint: this view has no cell to hand a template one.
+    /// ⚠️ `.medium` IS ``StatusDot/symbolWeight``, spelled again, and only on THIS side: the token is a
+    /// `UIFont.Weight` while `UIImage.SymbolConfiguration(pointSize:weight:)` asks for
+    /// `UIImage.SymbolWeight`, a third enum with no conversion. So the phone names its own value and the
+    /// two must be kept in step by eye. (AppKit's twin takes an `NSFont.Weight` and has no such seam.)
+    /// The INK rides the image rather than a tint: this view has no cell to hand a template one.
     private func drawSymbol(_ mark: StatusMark, ink: UIColor) {
         guard let system = mark.systemSymbol,
               let image = UIImage(
@@ -159,7 +155,7 @@ final class SlateStatusMarkView: UIView {
         context.setLineCap(.round)
         context.setLineJoin(.round)
         for outline in icon.outlines {
-            context.addPath(SVGPath.path(outline, viewBox: icon.viewBox, in: rect).cgPath)
+            context.addPath(SVGPath.cgPath(outline, viewBox: icon.viewBox, in: rect))
             context.strokePath()
         }
         context.restoreGState()

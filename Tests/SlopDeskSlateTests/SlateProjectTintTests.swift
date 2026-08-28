@@ -123,7 +123,7 @@ final class SlateProjectTintTests: XCTestCase {
     /// count, so a single probe can never land back where it started.
     @MainActor
     func testRegisterCountMatchesTheRegisterAndIsPrime() {
-        XCTAssertEqual(Slate.ProjectTint.registerCount, Slate.ProjectTint.register.count)
+        XCTAssertEqual(Slate.ProjectTint.registerCount, Slate.ProjectTint.registerHexes.count)
         let count = Slate.ProjectTint.registerCount
         XCTAssertTrue(count > 2 && !(2..<count).contains { count.isMultiple(of: $0) }, "\(count) must be prime")
     }
