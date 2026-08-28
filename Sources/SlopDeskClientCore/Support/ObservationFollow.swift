@@ -45,7 +45,16 @@ import Foundation
 /// ordering; here the order is not a call site's to get wrong.)
 ///
 /// The result is discardable: the armed subscription keeps itself alive, and the owner going away
-/// ends it. Keep it only to call ``stop()`` — a following that must end while its owner lives on.
+/// ends it. Keep it only for the two cases that need a handle — ``stop()``, a following that must end
+/// while its owner lives on, and ``arm(_:replacing:read:apply:)``, a site that arms the SAME following
+/// more than once.
+///
+/// ⚠️ ARMING IS NOT IDEMPOTENT. Two `arm` calls for one logical following leave TWO live chains, both
+/// applying on every change, and the second does not displace the first. The hand-written prologue hid
+/// this: its generation counter was bumped on re-entry, so calling the follow method again killed the
+/// old arm as a side effect of the guard. Nothing here bumps anything, so a site that re-invokes must
+/// say so — see ``arm(_:replacing:read:apply:)``.
+@preconcurrency
 @MainActor
 public final class ObservationFollow {
     /// Cleared by ``stop()`` and checked by every wake. Not merely an optimisation: a wake already
@@ -57,7 +66,7 @@ public final class ObservationFollow {
     /// re-arm allocates nothing.
     private var cycle: (() -> Void)?
 
-    fileprivate init() {}
+    private init() {}
 
     /// Arms an observation that re-arms itself on every change, and takes the first reading now.
     ///
@@ -88,20 +97,52 @@ public final class ObservationFollow {
         // closure holding it up in a ring.
         follow.cycle = { [weak owner, weak follow] in
             guard let follow, follow.live, let owner else { return }
-            var value: Value?
-            withObservationTracking {
-                value = read(owner)
+            // `withObservationTracking` RETURNS its tracked closure's value, which is why nothing here
+            // is optional. Every hand-written site instead declares a `var` per field, assigns inside
+            // the block and reads after it — the shape that forces either a force-unwrap or a `guard`
+            // that compiles into a silent "stop following". Returning a tuple from `read` deletes the
+            // question: `value` cannot be un-set, because it is never separately declared.
+            let value = withObservationTracking {
+                read(owner)
             } onChange: {
                 follow.rearm()
             }
-            // Force-unwrap over a `guard`: `withObservationTracking` runs its `apply` closure
-            // synchronously and exactly once, so `value` is written before this line by the same
-            // contract that makes the whole idiom work. A `guard` here would compile into a silent
-            // "stop following" for a case that cannot occur.
-            apply(owner, value!)
+            apply(owner, value)
         }
         follow.cycle?()
         return follow
+    }
+
+    /// Arms a following that REPLACES an earlier arm of the same following — the shape a site needs
+    /// when the thing it follows can change under it, and the one case plain ``arm(_:read:apply:)``
+    /// gets silently wrong.
+    ///
+    /// The canonical site re-follows because its SUBJECT moved, not because its owner did: a leaf that
+    /// re-arms against a newly focused pane, a card that re-arms against a newly selected device. Each
+    /// such call must END the previous chain — otherwise the shell keeps applying on behalf of the pane
+    /// the user just left, and the chains multiply once per switch. That bug has already been written
+    /// and fixed once in this tree (`PhoneSimulatorDeviceList`), under the hand-written form.
+    ///
+    /// Store the returned handle in the property you passed as `previous`:
+    ///
+    /// ```swift
+    /// focusFollow = ObservationFollow.arm(self, replacing: focusFollow) { … } apply: { … }
+    /// ```
+    ///
+    /// `previous` is taken BY VALUE, not `inout`, and the caller does the assignment. That is not a
+    /// stylistic choice: ``arm(_:read:apply:)`` runs the first `apply` SYNCHRONOUSLY, so an `inout`
+    /// parameter would still be exclusively borrowed if that first apply re-entered and wrote the same
+    /// stored property — an exclusivity trap at exactly the re-entrant sites this overload exists for.
+    /// Returning the handle puts the write after the borrow ends.
+    @discardableResult
+    public static func arm<Owner: AnyObject, Value>(
+        _ owner: Owner,
+        replacing previous: ObservationFollow?,
+        read: @escaping (Owner) -> Value,
+        apply: @escaping (Owner, Value) -> Void,
+    ) -> ObservationFollow {
+        previous?.stop()
+        return arm(owner, read: read, apply: apply)
     }
 
     /// Ends the following. Idempotent, and safe from inside `apply`.

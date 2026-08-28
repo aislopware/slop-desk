@@ -30,6 +30,7 @@
 
 import AppKit
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — this stage re-follows, so it needs the replacing arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
@@ -53,6 +54,9 @@ final class MacAndroidStageView: NSView {
     /// (``AndroidPresentation/veilDelay``), and the loop that delays it.
     private var showsLoading = false
     private let veilLoop = MacDevicePanelLoop()
+    /// The live arm, held because ``follow()`` has two entry points and the second must DISPLACE the
+    /// first rather than add to it. Nothing else reads it.
+    private var stageFollow: ObservationFollow?
     private var veil: NSView?
     private var reading: AndroidStageReading = .streaming
 
@@ -98,6 +102,13 @@ final class MacAndroidStageView: NSView {
 
     /// The mirror is going away — a device switch, or the panel closing. The contacts are forgotten
     /// rather than lifted: an `up` has nowhere to go once the socket for it is gone.
+    ///
+    /// ⚠️ THIS MUST NOT `stop()` THE FOLLOW, and the phone's same-named method must. They are not the
+    /// same method: the phone's is teardown only, while this one is ALSO the mid-flight screen swap —
+    /// ``mountScreen(for:videoSize:)`` calls it whenever the device key changes, which happens from
+    /// inside `apply`. Ending the arm here would leave the stage permanently dead after the first
+    /// device switch. The panel-closing case is covered by the view going away, which is what makes
+    /// ``ObservationFollow``'s weak owner the whole teardown story here.
     func unmount() {
         veilLoop.cancel()
         screen?.abandonGestures()
@@ -107,39 +118,40 @@ final class MacAndroidStageView: NSView {
     // MARK: Following the model
 
     /// The one observation. ⚠️ Everything this surface draws is read INSIDE the tracked block, and the
-    /// callback re-arms by calling this again on the next main-queue turn — `withObservationTracking`
-    /// fires once per registration, so a read left outside is a band that stops updating for one
-    /// reason only, which is the failure mode that survives every test.
+    /// callback re-arms — `withObservationTracking` fires once per registration, so a read left
+    /// outside is a band that stops updating for one reason only, which is the failure mode that
+    /// survives every test.
+    ///
+    /// ⚠️ THIS IS CALLED TWICE, which is why it goes through ``ObservationFollow/arm(_:replacing:read:apply:)``
+    /// and stores its handle. ``waitOutVeil()`` re-follows to push a `showsLoading` that the tracked
+    /// block cannot see (it is this view's own state, not the model's), and under the hand-written
+    /// form that second call ARMED A SECOND CHAIN while the first stayed live: every veil timeout left
+    /// one more permanent arm, so a model change ran `mountScreen`/`rebuildHeader`/`setConsole` once
+    /// per timeout the stage had ever survived. `replacing:` ends the previous arm, which is what the
+    /// generation counter did at the sites that kept one — this file never had it.
     private func follow() {
-        var device: AndroidDevice?
-        var selection: String?
-        var awaiting = false
-        var hasVideo = false
-        var size: CGSize?
-        var consoleOpen = false
-        withObservationTracking {
-            device = self.model.selectedDevice
-            selection = self.model.selection
-            awaiting = self.model.isAwaitingStream
-            hasVideo = self.model.hasVideo
-            size = self.model.streamSize
-            consoleOpen = self.model.isConsoleOpen
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        stageFollow = ObservationFollow.arm(self, replacing: stageFollow) { view in
+            (
+                device: view.model.selectedDevice,
+                selection: view.model.selection,
+                awaiting: view.model.isAwaitingStream,
+                hasVideo: view.model.hasVideo,
+                size: view.model.streamSize,
+                consoleOpen: view.model.isConsoleOpen,
+            )
+        } apply: { view, reading in
+            view.mountScreen(for: reading.selection, videoSize: reading.size)
+            view.rebuildHeader(reading.device)
+            view.setConsole(open: reading.consoleOpen)
+            view.armVeil(selection: reading.selection, awaiting: reading.awaiting)
+            view.applyReading(AndroidPresentation.stage(
+                showsLoading: view.showsLoading,
+                hasSelection: reading.selection != nil,
+                isAwaitingStream: reading.awaiting,
+                hasVideo: reading.hasVideo,
+                deviceIsRunning: reading.device?.isRunning,
+            ))
         }
-        mountScreen(for: selection, videoSize: size)
-        rebuildHeader(device)
-        setConsole(open: consoleOpen)
-        armVeil(selection: selection, awaiting: awaiting)
-        applyReading(AndroidPresentation.stage(
-            showsLoading: showsLoading,
-            hasSelection: selection != nil,
-            isAwaitingStream: awaiting,
-            hasVideo: hasVideo,
-            deviceIsRunning: device?.isRunning,
-        ))
     }
 
     // MARK: The device

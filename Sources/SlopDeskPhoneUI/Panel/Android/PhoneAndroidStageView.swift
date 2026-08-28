@@ -36,8 +36,8 @@
 // empty rectangle is.
 
 #if os(iOS)
-import Observation
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — this stage re-follows, so it needs the replacing arm
 import SlopDeskDevicePanels
 import SlopDeskSlate
 import UIKit
@@ -84,8 +84,9 @@ final class PhoneAndroidStageView: UIView {
     private var veilTask: Task<Void, Never>?
     private var veilKey: Bool?
 
-    /// ⚠️ Hazard 2's counter.
-    private var generation = 0
+    /// The live arm. Held because ``follow()`` has two entry points and the second must DISPLACE the
+    /// first; ``unmount()`` ends it outright, which is hazard 2's counter in its explicit spelling.
+    private var stageFollow: ObservationFollow?
 
     init(model: AndroidSidebarModel, onBack: @escaping () -> Void) {
         self.model = model
@@ -130,7 +131,7 @@ final class PhoneAndroidStageView: UIView {
     /// the veil holds a sleeping `Task`. Both are torn down here rather than in `deinit`, because a
     /// view that is animating out is still alive and must already be inert.
     func unmount() {
-        generation &+= 1
+        stageFollow?.stop()
         veilTask?.cancel()
         veilTask = nil
         screen?.unmount()
@@ -138,51 +139,44 @@ final class PhoneAndroidStageView: UIView {
 
     // MARK: Following the model
 
-    /// ⚠️ `withObservationTracking` fires ONCE per registration, so the callback re-arms by calling
-    /// this again on the next main-queue turn. Every tracked read is INSIDE the block and none is
-    /// conditional — a `hasVideo` read that only happened while a device was selected would stop
-    /// observing the frame that ends the wait.
+    /// The re-arm is ``ObservationFollow``'s now, not this file's. What stays this file's obligation is
+    /// the `read` block's CONTENT: every tracked read is inside it and none is conditional — a
+    /// `hasVideo` read that only happened while a device was selected would stop observing the frame
+    /// that ends the wait.
     ///
     /// ``DeviceSoftKeyboard/isTyping`` is read here for the same reason the model's flags are: the
     /// keyboard can go down by the system's own gesture, and a plate lit against a keyboard that is not
     /// there is worse than no plate.
+    ///
+    /// ⚠️ CALLED TWICE — from `init` and from ``waitOutVeil()`` — so it goes through
+    /// ``ObservationFollow/arm(_:replacing:read:apply:)``. The generation counter this replaced was
+    /// doing exactly that displacement by hand, and the Mac twin
+    /// (`MacAndroidStageView`) is the proof it was load-bearing rather than ceremonial: that file has
+    /// the same two entry points, never had the counter, and was arming a second permanent chain on
+    /// every veil timeout until this conversion.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var device: AndroidDevice?
-        var selection: String?
-        var isAwaiting = false
-        var hasVideo = false
-        var streamSize: CGSize?
-        var isConsoleOpen = false
-        var isTyping = false
-        withObservationTracking {
-            device = self.model.selectedDevice
-            selection = self.model.selection
-            isAwaiting = self.model.isAwaitingStream
-            hasVideo = self.model.hasVideo
-            streamSize = self.model.streamSize
-            isConsoleOpen = self.model.isConsoleOpen
-            isTyping = DeviceSoftKeyboard.shared.isTyping
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        stageFollow = ObservationFollow.arm(self, replacing: stageFollow) { view in
+            (
+                device: view.model.selectedDevice,
+                selection: view.model.selection,
+                isAwaiting: view.model.isAwaitingStream,
+                hasVideo: view.model.hasVideo,
+                streamSize: view.model.streamSize,
+                isConsoleOpen: view.model.isConsoleOpen,
+                isTyping: DeviceSoftKeyboard.shared.isTyping,
+            )
+        } apply: { view, reading in
+            view.mountScreen(selection: reading.selection, streamSize: reading.streamSize)
+            view.rebuildHeader(reading.device)
+            view.setConsole(open: reading.isConsoleOpen)
+            view.armVeil(isAwaiting: reading.isAwaiting)
+            view.relight(isTyping: reading.isTyping)
+            view.applyReading(AndroidPresentation.stage(
+                showsLoading: view.showsLoading, hasSelection: reading.selection != nil,
+                isAwaitingStream: reading.isAwaiting, hasVideo: reading.hasVideo,
+                deviceIsRunning: reading.device?.isRunning,
+            ))
         }
-
-        mountScreen(selection: selection, streamSize: streamSize)
-        rebuildHeader(device)
-        setConsole(open: isConsoleOpen)
-        armVeil(isAwaiting: isAwaiting)
-        relight(isTyping: isTyping)
-        applyReading(AndroidPresentation.stage(
-            showsLoading: showsLoading, hasSelection: selection != nil,
-            isAwaitingStream: isAwaiting, hasVideo: hasVideo, deviceIsRunning: device?.isRunning,
-        ))
     }
 
     // MARK: The device

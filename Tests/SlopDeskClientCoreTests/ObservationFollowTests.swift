@@ -15,8 +15,8 @@
 // hops to the next main turn, so the settling point is a main-queue turn, not a duration.
 
 import Observation
-@testable import SlopDeskClientCore
 import XCTest
+@testable import SlopDeskClientCore
 
 /// The observed model. Two independent properties so a test can prove that reading one does not
 /// subscribe to the other — property granularity is the whole reason ``read`` is kept narrow.
@@ -148,7 +148,7 @@ final class ObservationFollowTests: XCTestCase {
     /// for as long as the observed model lives, and these models are app-lifetime. A call site cannot
     /// capture the owner strongly here because it never writes the capture list — so a released shell
     /// must actually release.
-    func testTheFollowDoesNotRetainItsOwner() async {
+    func testTheFollowDoesNotRetainItsOwner() {
         let model = Model()
         weak var weakShell: Shell?
         do {
@@ -196,6 +196,42 @@ final class ObservationFollowTests: XCTestCase {
         await settle()
         XCTAssertEqual(shell.applied, [0, 5])
         XCTAssertEqual(second, [0], "the `unrelated` follow did not wake on `followed`")
+    }
+
+    /// The hazard the plain `arm` cannot see, asserted as the behaviour rather than as a warning:
+    /// arming twice for one logical following leaves TWO chains and every change applies twice. This
+    /// test exists so the next reader learns it from a green assertion instead of from a doubled
+    /// update at a call site.
+    func testArmingTwiceLeavesTwoLiveChains() async {
+        let model = Model()
+        let shell = Shell(model: model)
+        ObservationFollow.arm(shell, read: { $0.model.followed }, apply: { $0.applied.append($1) })
+        ObservationFollow.arm(shell, read: { $0.model.followed }, apply: { $0.applied.append($1) })
+
+        model.followed = 1
+        await settle()
+        XCTAssertEqual(shell.applied, [0, 0, 1, 1], "both arms applied — this is why `replacing:` exists")
+    }
+
+    /// ``ObservationFollow/arm(_:replacing:read:apply:)`` is the generation counter's other half: the
+    /// hand-written prologue killed the old arm by bumping its guard on re-entry, and this restores
+    /// that displacement explicitly. One apply per change, however many times the site re-follows.
+    func testReplacingDisplacesTheEarlierArm() async {
+        let model = Model()
+        let shell = Shell(model: model)
+        var follow: ObservationFollow?
+        for _ in 0..<3 {
+            follow = ObservationFollow.arm(
+                shell, replacing: follow, read: { $0.model.followed },
+                apply: { $0.applied.append($1) },
+            )
+        }
+        XCTAssertEqual(shell.applied, [0, 0, 0], "each arm still took its own initial reading")
+
+        shell.applied = []
+        model.followed = 1
+        await settle()
+        XCTAssertEqual(shell.applied, [1], "one apply, not three — the first two arms are dead")
     }
 
     /// Lets the wake's `DispatchQueue.main.async` hop run. Two turns rather than one: the callback

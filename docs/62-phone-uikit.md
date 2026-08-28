@@ -345,6 +345,47 @@ tracked read that lands OUTSIDE the block or a work-only read that lands INSIDE 
 lives in exactly one place. `Tests/SlopDeskClientCoreTests/ObservationFollowTests.swift` asserts all
 four, which the eleven lines inside 88 private methods could not be.
 
+**⚠️ THE ONE PROPERTY THE TYPE DOES NOT INHERIT: arming is not idempotent.** The prologue's generation
+counter had a second job nobody wrote down — bumping it on re-entry KILLED the previous arm, so a
+method that re-followed simply displaced itself. `arm` bumps nothing, so two calls leave two live
+chains and every change applies twice. A site that re-follows because its SUBJECT moved (a leaf
+re-arming on the newly focused pane, a card on the newly selected device — the bug already written and
+fixed once in `PhoneSimulatorDeviceList`) stores its handle and uses the replacing overload:
+
+```swift
+focusFollow = ObservationFollow.arm(self, replacing: focusFollow,
+    read: { $0.pane.title },
+    apply: { shell, title in shell.titleLabel.stringValue = title })
+```
+
+`previous` is by value rather than `inout` because the first `apply` runs synchronously: an `inout`
+would still be exclusively borrowed if that apply re-entered and wrote the same property, trapping at
+exactly the re-entrant sites the overload is for. **The conversion pass must classify each of the 88
+sites as one-shot or re-arming; a re-arming site converted with the plain `arm` reintroduces the
+multiplying chain silently.**
+
+**The classification, audited 2026-08-28.** A follow method's real call sites are its own recursive
+re-arm plus its entry points, so *two* means one-shot and *three or more* means it re-arms. Thirteen
+sites re-arm, and every one of them carries a hand-written generation counter — except the fourteenth,
+which did not:
+
+| Re-arming site | Mac | Phone |
+| --- | --- | --- |
+| `GuiLeafView` (7 calls) · `SplitCanvasView` ×2 (4) · `PaneContainerView` (3) · `TerminalLeafView` (3–4) | ✅ | ✅ |
+| `NavigatorColumnViewController` (4) · `PhoneSimulatorConsoleView` (3) | — | ✅ |
+| `AndroidStageView` (3) | ❌ **was unguarded — fixed** | ✅ |
+
+`MacAndroidStageView` had the same two entry points as its phone twin (`init` and `waitOutVeil()`) and
+never had the counter, so every veil timeout armed a second permanent chain: one model change then ran
+`mountScreen`/`rebuildHeader`/`setConsole` once per timeout the stage had survived. Both halves of that
+pair are converted to `replacing:` ahead of the general pass — the Mac one because it was a live bug,
+the phone one so the clone pair keeps one shape. **Everything else is still held.**
+
+⚠️ That pair also carries a trap for whoever converts the rest: `unmount()` means different things on
+the two shells. The phone's is teardown and correctly calls `stop()`; the Mac's is *also* the
+mid-flight screen swap (`mountScreen` calls it on every device-key change, from inside `apply`), so a
+`stop()` there would leave the stage dead after the first device switch. Match the ROLE, not the name.
+
 Converting the 88 existing sites is a mechanical pass held until the UIKit rebuild lands — a canon
 change made while those files are being written is churn, not consolidation. Until then the
 hand-written form is still correct and the invariant ledger carries the resulting
