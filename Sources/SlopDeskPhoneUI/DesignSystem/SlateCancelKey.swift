@@ -38,7 +38,7 @@ package extension UIKeyCommand {
     /// Esc is the SECOND exit, exactly as the file header says; it should lose a race it is second in.
     @MainActor
     static func slateCancel(action: Selector) -> UIKeyCommand {
-        UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: action)
+        UIKeyCommand(input: inputEscape, modifierFlags: [], action: action)
     }
 }
 #endif

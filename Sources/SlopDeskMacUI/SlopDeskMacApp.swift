@@ -37,9 +37,12 @@
 //      set in `init()` rather than through an initialiser. This class IS the delegate, so
 //      ``applicationShouldTerminate(_:)`` below reads the store it already owns, the second object is
 //      deleted, and the static seam with it.
-//   3. **The `swiftlint:disable unused_declaration` region** around that adaptor property. The
+//   3. **The disable region for SwiftLint's `unused_declaration`** around that adaptor property. The
 //      property wrapper INSTALLED a delegate whose instance was unreachable by design, so the
 //      declaration looked dead to the linter and had to be silenced. Nothing is silenced here.
+//      (Written in prose rather than as the literal directive on purpose: SwiftLint scans COMMENTS
+//      for its own commands, so naming the region the way it was spelled makes this header a real
+//      blanket disable — seven of them, one per word after it.)
 //
 // The menu bar came back the same way. A SwiftUI `App` supplies the standard App/Edit/Window menus
 // for free and `.commands` only amends them; an `NSApplication` launched without a MainMenu.nib (this
@@ -158,10 +161,15 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
     /// reference.
     private var loops: [Task<Void, Never>] = []
 
-    /// The `withObservationTracking` re-arm chain has no handle to cancel, so it is stopped the only
-    /// way an observation chain can be: by the observer going away. Nothing here ever does — this
-    /// object outlives every other object in the process — so the follows below capture `[weak self]`
-    /// purely as the discipline the rest of the target keeps, not as a live teardown path.
+    // A section note, not a doc comment: it describes the follows below rather than any one
+    // declaration, and `///` on a line that declares nothing is an orphaned doc comment.
+    //
+    // The hand-written re-arm chain has no handle to cancel, so it is stopped the only way an
+    // observation chain can be: by the observer going away. Nothing here ever does — this object
+    // outlives every other object in the process — so the follows below capture `[weak self]` purely
+    // as the discipline the rest of the target keeps, not as a live teardown path. That is also why
+    // these are LAST in line for the ``ObservationFollow`` conversion: the handle it returns buys
+    // this file nothing, and its weak owner is a teardown path this owner never takes.
 
     // MARK: The composition's parts, read straight through
 
@@ -743,7 +751,8 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
 
     /// ⌘, — the app menu's own item. It opens `config.toml`; there is no settings window to raise, and
     /// the file IS the settings surface (docs/58 — there is NO settings GUI).
-    @objc func openConfiguration(_: Any?) {
+    @objc
+    func openConfiguration(_: Any?) {
         ConfigFile.openInEditor()
     }
 
@@ -754,7 +763,8 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
     /// `windowShouldClose` → the ``WindowCloseConfirmationDelegate`` gate, preserving the
     /// close-confirmation policy, rather than routing to `store.requestCloseWindow()`, which only parks
     /// a flag nothing observes.
-    @objc func closeWorkspaceWindow(_: Any?) {
+    @objc
+    func closeWorkspaceWindow(_: Any?) {
         if let satellite = NSApp.keyWindow as? SatellitePaneWindow {
             satellite.performClose(nil)
         } else {
@@ -766,7 +776,8 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
     /// `NSMenuItem.representedObject`. Dispatch is ``WorkspaceCommands/perform(id:…)``'s, which routes
     /// through the SAME ``WorkspaceBindingRegistry`` the `NSEvent` monitor reads — the menu is a second
     /// ENTRY, never a second dispatcher.
-    @objc func performWorkspaceAction(_ sender: Any?) {
+    @objc
+    func performWorkspaceAction(_ sender: Any?) {
         guard let item = sender as? NSMenuItem, let id = item.representedObject as? String else { return }
         WorkspaceCommands.perform(
             id: id,
