@@ -72,9 +72,6 @@ public final class InputBoxModel {
         state.mode == UInt32(SLOPDESK_TERMINAL_MODE_ALT_SCREEN) ? .altScreen : .shellPrompt
     }
 
-    /// Optional sink the UI can observe for every tracker event (mode + command marks).
-    public var onEvent: ((TerminalModeEvent) -> Void)?
-
     public init() {
         guard let created = slopdesk_input_box_new() else {
             preconditionFailure("slopdesk_input_box_new returned null — allocation failed")
@@ -91,22 +88,17 @@ public final class InputBoxModel {
     /// bytes to actually render.
     @discardableResult
     public func ingestOutput(_ output: Data) -> Data {
-        let counts = output.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+        let renderedLen = output.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             slopdesk_input_box_ingest(handle, raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count)
         }
         state = slopdesk_input_box_state(handle)
 
-        // The marks first, and the whole run before any byte is handed back: an observer that flips
-        // a UI mode on `enteredAltScreen` must have done so before the chunk that carried the flip
-        // is rendered under it.
-        if counts.event_count > 0, let sink = onEvent {
-            for index in 0..<counts.event_count {
-                if let event = TerminalModeEvent(slopdesk_input_box_event(handle, index)) { sink(event) }
-            }
-        }
-
-        guard counts.rendered_len > 0 else { return Data() }
-        var rendered = Data(count: counts.rendered_len)
+        // The marks this chunk carried are NOT surfaced here. Every one of them has already landed
+        // in the state read above — the affordance, the running flag, the exit code — and that is
+        // the whole of what a view binds. ``TerminalModeTracker/consume(_:)`` is the one way to ask
+        // for the events themselves, and nothing in the box needs them.
+        guard renderedLen > 0 else { return Data() }
+        var rendered = Data(count: renderedLen)
         let written = rendered.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
             slopdesk_input_box_take_rendered(
                 handle,
@@ -116,7 +108,7 @@ public final class InputBoxModel {
         }
         // The door answers the size it parked; a short read would mean the two calls disagreed
         // about one slot, which is a broken artifact rather than a runtime condition.
-        precondition(written == counts.rendered_len, "the render slot answered a size it would not fill")
+        precondition(written == renderedLen, "the render slot answered a size it would not fill")
         return rendered
     }
 

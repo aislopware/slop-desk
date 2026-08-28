@@ -46,14 +46,6 @@ final class InputBoxModelTests: XCTestCase {
         XCTAssertEqual(m.lastExitCode, 0)
     }
 
-    func testEventSinkObservesTrackerEvents() {
-        let m = InputBoxModel()
-        var seen: [TerminalModeEvent] = []
-        m.onEvent = { seen.append($0) }
-        m.ingestOutput(Array("\(ESC)]133;A\(BEL)\(ESC)[?1049h".utf8))
-        XCTAssertEqual(seen, [.promptStart, .enteredAltScreen])
-    }
-
     // MARK: Dedup is active ONLY in B1 compose mode
 
     func testEchoDedupAppliedInB1ComposeMode() {
