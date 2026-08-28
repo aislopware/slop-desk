@@ -15,7 +15,7 @@ import SlopDeskWorkspaceModel
 // LEARNED, not things the user chose, and writing them back is the whole point. Four keys, all
 // written by the app, none of them offered to the user as a preference.
 //
-// No SwiftUI import — headless.
+// No view framework imported — headless.
 public enum SettingsKey {
     /// The ONE `UserDefaults` suite backing the four state keys below.
     ///
@@ -143,10 +143,15 @@ public enum SettingsKey {
     /// The last window frame — an `NSWindow.frameDescriptor` string the macOS glue writes on
     /// resize-end / move / quit and re-applies via `setFrame(from:)` once per window open.
     ///
-    /// App-owned persistence, NOT `setFrameAutosaveName`: SwiftUI asserts its own type-derived
-    /// autosave name on the scene window — a name containing a per-launch `(unknown context at $…)`
-    /// address — so AppKit's autosave machinery saves under a key that changes every launch and can
-    /// never restore.
+    /// App-owned persistence, NOT `setFrameAutosaveName`.
+    ///
+    /// ⚠️ THE ORIGINAL REASON WAS SWIFTUI'S, AND IT IS GONE. SwiftUI asserted its own type-derived autosave
+    /// name on the scene window — a name containing a per-launch `(unknown context at $…)` address — so
+    /// AppKit's autosave machinery saved under a key that changed every launch and could never restore.
+    /// The AppKit shell owns its `NSWindow` outright and no longer has that collision, so the ban on
+    /// `setFrameAutosaveName` is now a preference, not a constraint. It was NOT re-litigated during the
+    /// rebuild: this key already restores correctly and the glue that writes it is three lines, so the
+    /// swap would be churn for churn's sake — but a reader should not be told a dead framework forbids it.
     public static let windowSavedFrameKey = "window.savedFrame"
 
     /// The persisted window frame. The one settable accessor in this file, and state rather than a

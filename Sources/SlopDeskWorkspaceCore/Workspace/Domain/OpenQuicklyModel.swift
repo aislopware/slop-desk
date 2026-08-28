@@ -172,8 +172,8 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
 }
 
 /// One row in the Open-Quickly picker: a typed display value (title / subtitle / badge / icon / optional
-/// relative-timestamp) plus the ACTION that firing it (`↩` or `⌘1–9`) performs. A pure value (no SwiftUI /
-/// store) so the merge/rank/section/select logic is headlessly unit-tested; the view turns ``act`` into a
+/// relative-timestamp) plus the ACTION that firing it (`↩` or `⌘1–9`) performs. A pure value (no view
+/// framework, no store) so the merge/rank/section/select logic is headlessly unit-tested; the view turns ``act`` into a
 /// store op / `LinkActionActuator` call via a thin switch.
 public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
     /// What firing the row does. Carrying the typed source keeps routing decisions in the model (a thin view
@@ -193,7 +193,8 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
         case jumpTo(JumpToItem.Act)
     }
 
-    /// A stable, unique id (the `ForEach` key). Prefixed by source: `pane:` / `folder:` / `agent:` /
+    /// A stable, unique id — the row-identity key the picker addresses a row by. Prefixed by source:
+    /// `pane:` / `folder:` / `agent:` /
     /// `recent:` / `current:`.
     public let id: String
     public let kind: OpenQuicklyKind
@@ -274,7 +275,7 @@ public struct OpenQuicklySection: Identifiable, Equatable, Sendable {
 }
 
 /// The PURE merge / rank / section / cycle / quick-pick logic + the source builders for the Open-Quickly
-/// picker. No SwiftUI, no store — every source is handed in pre-built (the view assembles them from
+/// picker. No view framework, no store — every source is handed in pre-built (the overlay assembles them from
 /// `WorkspaceStore` / `MetadataClient` / `JumpToModel`), so the ordering + selection contract is headlessly
 /// testable.
 ///

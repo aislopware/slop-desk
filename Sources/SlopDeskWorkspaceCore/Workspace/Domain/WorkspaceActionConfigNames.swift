@@ -21,7 +21,7 @@ import SlopDeskWorkspaceModel
 /// terminal's own responder owns them) all return `nil`. The resolver NEVER force-unwraps, NEVER invents
 /// an id, and NEVER traps on hostile input — a malformed binding is simply dropped.
 ///
-/// **iOS.** Pure `String → String?`, no SwiftUI / view / platform API; it compiles into the iOS slice
+/// **iOS.** Pure `String → String?`, no view framework, no platform API; it compiles into the iOS slice
 /// of `SlopDeskWorkspaceCore` (macOS `swift build` won't type-check that slice — run
 /// `slopdesk-gate ios`). Names taken from `spec/reference__keybindings.md` "Config keys" +
 /// `spec/customization__custom-keybindings.md`.

@@ -98,8 +98,8 @@ extension WorkspaceStore {
         guard next != paneDialGate else { return }
         paneDialGate = next
         // The release is a STORE-level fan-out, not something only a mounted leaf can do. The leaf's
-        // connect task re-fires on this same edge (its key moves off `nil`), but a pane in a satellite
-        // window — or any leaf SwiftUI has not got to yet — would otherwise wait for an unrelated
+        // own arm re-fires on this same edge (its connect key moves off `nil`), but a pane in a satellite
+        // window — or any leaf the canvas has not mounted yet — would otherwise wait for an unrelated
         // event to nudge it. `connectIfNeeded()` no-ops on a healthy channel, so the overlap is free.
         if next { redialDisconnectedPanes() }
     }

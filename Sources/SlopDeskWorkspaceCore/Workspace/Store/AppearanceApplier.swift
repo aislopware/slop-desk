@@ -1,7 +1,8 @@
 /// The seam by which the headless ``PreferencesStore`` (in `SlopDeskWorkspaceCore`) reads the GUI's
-/// terminal-cell palette without depending on `SlopDeskClientUI` (the SwiftUI/AppKit layer that
-/// `WorkspaceCore` must not import). Mirrors the `TerminalRenderingView.shared` /
-/// `VideoWindowFactory.shared` injected-closure pattern.
+/// terminal-cell palette without depending on either UI shell (`SlopDeskMacUI` / `SlopDeskPhoneUI`),
+/// which `WorkspaceCore` must not import. Mirrors the ``TerminalRendererFactory/shared`` /
+/// `VideoWindowFactory.shared` injected-closure pattern: the app target sets it at launch and the
+/// headless build simply never has one.
 ///
 /// Headless / no-store (the golden + ImageRenderer paths): the hook is `nil`, so the terminal keeps the
 /// ``TerminalPreferences`` colours and headless renders stay byte-identical to today.

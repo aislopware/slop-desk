@@ -25,8 +25,8 @@ public final class WorkspaceMirrorBox {
     /// with nothing.
     private nonisolated(unsafe) let handle: OpaquePointer
 
-    /// Fired after any change a view should repaint for. A callback rather than `@Observable` so
-    /// this stays headless and testable without SwiftUI.
+    /// Fired after any change a view should repaint for. A plain callback rather than `@Observable` so this
+    /// stays headless: a test drives it without arming an observation, and nothing here has to be woken.
     public var onChange: (@MainActor () -> Void)?
 
     /// The last presence roster the host broadcast.

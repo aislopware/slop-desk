@@ -40,7 +40,8 @@ public struct PaneMaterialization: Sendable {
 ///
 /// `@MainActor` because every conformer owns `@Observable` UI state bound on the main actor; `AnyObject`
 /// because the registry stores it by reference (1:1 with a ``PaneID``, never copied, never shared).
-/// `Identifiable` by ``PaneID`` so a handle drops straight into SwiftUI `ForEach` / identity diffing.
+/// `Identifiable` by ``PaneID``: a handle's identity is the pane it backs — never its position in
+/// ``WorkspaceStore/allSessionHandles`` — which is what the registry's `PaneID` keying already assumes.
 @preconcurrency
 @MainActor
 public protocol PaneSessionHandle: AnyObject, Identifiable {
@@ -65,17 +66,18 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     /// VTDecompression / CVDisplayLink stack). Always `false` for non-video kinds.
     ///
     /// This is the single hook the store reads to count concurrent live video panes against
-    /// ``WorkspaceStore/liveVideoCap``. Activation itself is driven by the view layer's
-    /// `.onAppear/.onDisappear` (decode only on-screen panes) via ``setVideoActive(_:)`` — the store
-    /// only *reads* the flag to decide whether a newly-appearing video pane is allowed to activate.
+    /// ``WorkspaceStore/liveVideoCap``. Activation itself is driven by the GUI leaf's visibility branch
+    /// (`MacGuiLeafView` / `GuiLeafView`'s `applyActivation` — decode only on-screen panes) via
+    /// ``setVideoActive(_:)`` — the store only *reads* the flag to decide whether a newly-appearing video
+    /// pane is allowed to activate.
     var isVideoActive: Bool { get }
 
     /// Requests this session activate (`true`) or deactivate (`false`) its live video stack. A no-op
-    /// for non-video kinds. Idempotent. STORE-INTERNAL in practice: the view layer routes
-    /// appear/disappear through ``WorkspaceStore/activateVideo(_:)`` / ``WorkspaceStore/deactivateVideo(_:)``
-    /// so `liveVideoCap` is consulted — the store is the admit/evict authority against the cap. (It
-    /// cannot be made fully private: it is part of this protocol and the store + pause/resume call it;
-    /// but the view no longer calls it directly except on the no-store preview fallback.)
+    /// for non-video kinds. Idempotent. STORE-INTERNAL in practice: both GUI leaves route their
+    /// on-screen/off-screen edge through ``WorkspaceStore/activateVideo(_:)`` /
+    /// ``WorkspaceStore/deactivateVideo(_:)`` so `liveVideoCap` is consulted — the store is the admit/evict
+    /// authority against the cap. (It cannot be made fully private: it is part of this protocol and the
+    /// store + pause/resume call it. No shell calls it directly, and both say so in their own headers.)
     func setVideoActive(_ active: Bool)
 
     // MARK: Lifecycle (the single fan-out points)

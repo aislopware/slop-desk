@@ -48,7 +48,8 @@ public final class WorkspaceStore {
     /// phase removes.
     ///
     /// Memoized against ``workspaceMirrorRevision`` because a projection walks every cell in the
-    /// document, and a view body reads `tree` dozens of times per frame.
+    /// document, and `tree` is read dozens of times per pass: every tracked arm in both shells reads it,
+    /// and each canvas re-walks it while laying out.
     public var tree: TreeWorkspace {
         observeWorkspaceMirror()
         if let cached = treeProjection, cached.revision == workspaceMirrorRevision { return cached.tree }
@@ -158,9 +159,9 @@ public final class WorkspaceStore {
     ///
     /// STORED and observed, recomputed by ``refreshPaneDialGate()`` at each of the four points that
     /// can move it. It has to be stored: the inputs are `@ObservationIgnored` launch state and the
-    /// channel's own state (a plain class), so a computed property reading them would never
-    /// invalidate the SwiftUI body whose connect task keys on it — the release edge would repaint
-    /// nothing and the panes would stay dark.
+    /// channel's own state (a plain class), so a computed property reading them would register NOTHING
+    /// with Observation and never wake the arm whose connect keys on it — the release edge would reach
+    /// no one and the panes would stay dark.
     ///
     /// Written by ``refreshPaneDialGate()`` and nowhere else; read through ``panesMayDial``.
     var paneDialGate = true
@@ -257,12 +258,17 @@ public final class WorkspaceStore {
     /// more conservative, never wrong — a per-host socket count would loosen admission for no headroom gain.
     public let liveVideoCap: Int
 
-    /// A monotonic nudge the view layer observes to RE-ATTEMPT video admission for gated panes.
-    /// The store can't flip a pane's liveness itself — admission is **view-driven**: only an on-screen pane
-    /// decodes, via `RemoteGUIPaneView`'s `.onAppear` → ``activateVideo(_:)``. So when a slot frees (a
-    /// video pane deactivated, or an active-video pane closed), no one promotes a queued-but-still-on-screen
-    /// gated pane. Gated leaves observe it via `.onChange` and re-call `activateVideo` (still cap-gated, so
-    /// the ceiling holds).
+    /// A monotonic nudge the GUI leaves track to RE-ATTEMPT video admission for gated panes.
+    /// The store can't flip a pane's liveness itself — admission is **leaf-driven**: only an on-screen pane
+    /// decodes, via `MacGuiLeafView` / `GuiLeafView`'s `applyActivation` → ``activateVideo(_:)``. So when a
+    /// slot frees (a video pane deactivated, or an active-video pane closed), no one promotes a
+    /// queued-but-still-on-screen gated pane.
+    ///
+    /// This is what closes that. Each GUI leaf folds this generation into its
+    /// `GuiPaneReadout.activationKey(paneHash:promotionGeneration:isVisible:)` INSIDE its
+    /// `withObservationTracking` closure, so a bump wakes the arm, the key changes, and `applyActivation`
+    /// re-calls `activateVideo` (still cap-gated, so the ceiling holds). The key is what makes the retry
+    /// idempotent: an arm that re-fires for some unrelated reason recomputes the SAME key and returns early.
     ///
     /// A PROJECTION of ``VideoSlotLedger/generation``, written only by ``publishVideoSlots(_:)`` from a
     /// door result. The guard that keeps a no-op deactivate or a non-video close from churning the view is
@@ -368,14 +374,15 @@ public final class WorkspaceStore {
     private let saveDebounce: Duration
 
     /// How long to let a closed video pane's stack ACTUALLY release before the store frees its
-    /// ``liveVideoCap`` slot. `teardown()` sets `RemoteWindowModel.active = nil`, which only triggers the
-    /// SwiftUI dismantle → `VideoWindowPipeline.deactivate()` → detached `session.stop()` closing the two UDP
-    /// `NWConnection`s + `VTDecompressionSession` + display link — completing a few runloop turns AFTER
-    /// `teardown()` returns. Freeing the slot immediately could admit a sibling while the outgoing stack is
-    /// still up (cap+1 — no crash/leak, just a momentary over-commit). `stop()` is one ordered task
-    /// (`VideoWindowPipeline.awaitStopped()`), but it lives in the SwiftUI-owned AppKit view, unreachable for
-    /// a direct store `await`; so the store holds the slot for this bounded settle past `teardown()` to cover
-    /// the dismantle→stop lag. Injectable; DEFAULT `.zero` frees the slot immediately, so the OFF /
+    /// ``liveVideoCap`` slot. `teardown()` sets `RemoteWindowModel.active = nil`, which only ARMS the
+    /// release: the GUI leaf's tracked arm wakes, hops to the next main-loop turn, unmounts the surface →
+    /// `VideoWindowPipeline.deactivate()` → detached `session.stop()` closing the two UDP `NWConnection`s +
+    /// `VTDecompressionSession` + display link — completing a few runloop turns AFTER `teardown()` returns.
+    /// Freeing the slot immediately could admit a sibling while the outgoing stack is still up (cap+1 — no
+    /// crash/leak, just a momentary over-commit). `stop()` is one ordered task
+    /// (`VideoWindowPipeline.awaitStopped()`), but it lives inside the platform video view the store cannot
+    /// name, unreachable for a direct store `await`; so the store holds the slot for this bounded settle past
+    /// `teardown()` to cover the unmount→stop lag. Injectable; DEFAULT `.zero` frees the slot immediately, so the OFF /
     /// terminal-only paths never enter this gate. The PRODUCTION app opts in with a small window
     /// (``ClientComposition``, the composition root). The real dismantle→stop lag is not
     /// hardware-measured.
@@ -578,9 +585,9 @@ public final class WorkspaceStore {
 
     /// Whether pane `id`'s shell currently reports a running foreground command (the live
     /// ``PaneSessionHandle/isShellBusy`` bit), or `false` for an unmaterialized pane. Exposes the busy
-    /// signal to the ClientUI rail (the ``TabBadgeResolver`` "running" input) WITHOUT leaking the
-    /// private `registry` handle — reading it inside a SwiftUI body registers observation on the handle,
-    /// exactly like ``PanePresentation/busy(handle:)``.
+    /// signal to the rail (the ``TabBadgeResolver`` "running" input) WITHOUT leaking the
+    /// private `registry` handle — calling it inside a `withObservationTracking` closure registers the arm
+    /// on the handle, exactly like ``PanePresentation/busy(handle:)``.
     public func paneIsBusy(_ id: PaneID) -> Bool { registry[id]?.isShellBusy ?? false }
 
     /// Whether pane `id`'s plain BUSY DOT (``TabBadgeKind/commandBusy``) should render: the shell is
@@ -602,9 +609,11 @@ public final class WorkspaceStore {
     /// Folds every live pane's PATH-1 connection status into a compact ``WorkspaceConnectionAlert``
     /// for the collapsed-sidebar connection indicator, or `nil` when all panes are healthy. Iterates the tree
     /// in DFS order (a STABLE worst-pane tie-break) and reads each materialized ``LivePaneSession``'s channel
-    /// status; a video pane / faked handle contributes a `nil` status (never an alarm). Reading it inside a
-    /// SwiftUI body registers observation on each ``ConnectionViewModel/status``, so the chip re-renders as
-    /// panes drop / recover — the same observation seam ``PanePresentation/connectionStatus(_:)`` relies on.
+    /// status; a video pane / faked handle contributes a `nil` status (never an alarm). Calling it inside a
+    /// `withObservationTracking` closure registers the arm on EVERY pane's ``ConnectionViewModel/status``, so
+    /// the chip redraws as panes drop / recover — the same observation seam
+    /// ``PanePresentation/connectionStatus(_:)`` relies on. The breadth is the point AND the cost: one arm
+    /// depends on every live pane's status, so it must sit in a chrome-scoped arm rather than a per-pane one.
     public func connectionAlert() -> WorkspaceConnectionAlert? {
         // Union in the DETACHED (satellite) panes — they left the tree but their handles are live
         // (reconcile's widened desired set), and a satellite's dropped connection must still trip the
@@ -855,7 +864,7 @@ public final class WorkspaceStore {
     /// gate (every keystroke typed in this pane is mirrored into the tab's other panes, and theirs into
     /// this one). Armed state MUST be visible: an invisibly-armed tab is a cross-pane input leak the
     /// user cannot explain (field report: two same-project panes "leaking into each other"). Reading
-    /// this in a view body registers observation of `syncInputTabs`, so the pill lights/clears live.
+    /// this inside a tracked arm registers it on `syncInputTabs`, so the pill lights/clears live.
     public func syncInputArmed(for paneID: PaneID) -> Bool {
         guard let (_, tabID) = tree.tab(containing: paneID) else { return false }
         return syncInputTabs.contains(tabID)
@@ -950,8 +959,9 @@ public final class WorkspaceStore {
     /// store stays platform-free. `nil` (the headless / test default) ⇒ ``localClipboardHasText()``
     /// answers from the ``clipboardRing`` head alone, exactly as ``currentLocalClipboard()`` does.
     ///
-    /// It exists because a renderer may not call the other one. On iOS a content read from a SwiftUI
-    /// `body` raises the modal "Allow Paste?" alert, so an affordance that greys itself out by asking
+    /// It exists because a renderer may not call the other one. On iOS a content read raises the modal
+    /// "Allow Paste?" alert, and a redraw path may run many times per interaction — so an affordance that
+    /// greys itself out by asking
     /// "is there anything to paste?" needs a question that discloses nothing
     /// (``SystemPasteboard/hasPlainText``).
     @ObservationIgnored public var clipboardHasTextProbe: (() -> Bool)?
@@ -1005,7 +1015,8 @@ public final class WorkspaceStore {
     /// Whether a paste-the-current-clipboard affordance has anything to type — WITHOUT reading the
     /// clipboard. The ENABLEMENT sibling of ``currentLocalClipboard()``, and the only one of the pair a
     /// renderer may call: on iOS the content read raises the modal "Allow Paste?" alert, so asking it
-    /// from a SwiftUI `body` puts that alert on screen once per render, unprompted.
+    /// from a redraw or a tracked arm's handler puts that alert on screen once per pass, unprompted —
+    /// and a tracked arm re-fires on inputs that have nothing to do with the clipboard.
     ///
     /// It mirrors its sibling's FALLBACK, which is the whole difficulty: `currentLocalClipboard()` is
     /// `clipboardTextProvider?() ?? clipboardRing.first`, so a probe that consulted only the board would
@@ -1204,11 +1215,12 @@ public final class WorkspaceStore {
         return videoSlots.admits(id)
     }
 
-    /// Deactivates live video for pane `id` (the view's `.onDisappear`), freeing a cap slot.
+    /// Deactivates live video for pane `id` — the GUI leaf's off-screen branch (`applyActivation` with
+    /// `isVisible == false`) and its `teardown()` — freeing a cap slot.
     ///
     /// `wasActive` is the reading taken BEFORE the pane is stood down, and it is what the ledger's guard
     /// reads: a no-op deactivate (an already-idle / unknown / non-video pane) freed nothing, so
-    /// ``videoPromotionGeneration`` must not move — otherwise an `.onDisappear` of a never-admitted pane
+    /// ``videoPromotionGeneration`` must not move — otherwise standing down a never-admitted pane
     /// would spuriously re-trigger every gated sibling's retry for no gained slot.
     public func deactivateVideo(_ id: PaneID) {
         let wasActive = registry[id]?.isVideoActive == true
@@ -2302,8 +2314,9 @@ public final class WorkspaceStore {
     @ObservationIgnored
     public var doneSettleScheduler = WorkspaceStore.mainRunLoopFlashDecay
 
-    /// Whether the app is foregrounded/active — fed from the SwiftUI `scenePhase` by the app shell
-    /// (`.active → true`, else `false`). Defaults `true` so a headless store (tests) treats the active
+    /// Whether the app is foregrounded/active — fed by each shell from its own framework's signal:
+    /// `NSApplication.shared.isActive` plus the did-become/resign-active notifications on the Mac, the
+    /// scene delegate's foreground/background callbacks on the phone. Defaults `true` so a headless store (tests) treats the active
     /// leaf as focused. Combined with the active-leaf identity it forms the "is this pane focused" gate
     /// used by both the badge and the long-command notification.
     public var isAppActive: Bool = true {
@@ -2824,8 +2837,9 @@ public final class WorkspaceStore {
                     await orphan.teardown()
                     // For a video orphan that was holding a live stack, `teardown()` only KICKS OFF
                     // the release — it sets `RemoteWindowModel.active = nil`, and the actual
-                    // UDP/VTDecompression/display-link teardown happens a few runloop turns later inside the
-                    // SwiftUI dismantle → `VideoWindowPipeline.deactivate()` → detached `session.stop()`.
+                    // UDP/VTDecompression/display-link teardown happens a few runloop turns later, when the
+                    // GUI leaf's woken arm unmounts the surface → `VideoWindowPipeline.deactivate()` →
+                    // detached `session.stop()`.
                     // Hold the cap slot for `videoTeardownSettle` past `teardown()` so a same-tick sibling
                     // cannot be admitted while the outgoing stack is still up (transient cap+1). Only
                     // entered for an orphan the ledger actually booked (a video pane that was live) and
@@ -2980,7 +2994,7 @@ public final class WorkspaceStore {
     /// The cwd-visit sink: fired with the pane's NEW working directory whenever ``setLastKnownCwd(_:for:)``
     /// records a CHANGED cwd (passes the dirty guard). The app wires this to ``FolderFrecencyStore/record(cwd:)``
     /// so the Open-Quickly **Folders** filter learns the directories you visit — but the store stays
-    /// SwiftUI-/Folders-agnostic: a plain `(String) -> Void`, not a dependency on the Folders module. `nil` in
+    /// shell- and Folders-agnostic: a plain `(String) -> Void`, not a dependency on the Folders module. `nil` in
     /// tests / headless ⇒ no frecency side effect. Dirty-guarded, so a re-focus / unchanged refresh never
     /// records a phantom visit.
     public var onCwdVisited: ((String) -> Void)?
@@ -3109,8 +3123,9 @@ public extension WorkspaceStore {
     /// content from re-rendering per drag step (the same commit-on-release rule as the pane divider). The
     /// non-terminal handles (`.desktop`) have no `terminalModel`, so they are skipped.
     func setTerminalResizeSuspended(_ suspended: Bool) {
-        // The interactive-resize bracket for BOTH dividers (the SwiftUI pane divider's begin/end and the
-        // AppKit sidebar divider's drag-active/settle). Drives the pane scrim's "drag in progress" hold so
+        // The interactive-resize bracket for BOTH dividers (the pane divider's own begin/end —
+        // `MacPaneDivider` / `PaneDividerView` — and the AppKit sidebar divider's drag-active/settle).
+        // Drives the pane scrim's "drag in progress" hold so
         // a PAUSED drag keeps the overlay up (see ``isInteractiveResizeActive``).
         isInteractiveResizeActive = suspended
         for handle in allSessions {
@@ -3120,7 +3135,7 @@ public extension WorkspaceStore {
 
     /// LIVE pane-divider drag: set the leading child's ABSOLUTE flex weight (clamped) and re-solve the layout,
     /// WITHOUT reconciling the registry or persisting. A divider drag changes only weights, not the SET of
-    /// panes, so each frame is a pure tree assign + SwiftUI re-layout (the panes resize live). The shell
+    /// panes, so each frame is a pure tree assign + a canvas re-layout (the panes resize live). The shell
     /// brackets the drag with ``setTerminalResizeSuspended(_:)`` — holding the host grid-resize send until
     /// release, the "update the layout live but defer the server event to drag-end" rule — and commits once on
     /// release via ``commitDividerResize()``.

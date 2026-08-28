@@ -126,7 +126,7 @@ extension WorkspaceStore {
     ///
     /// Both halves matter, and the split is the whole point. The app shell calls this inside its own
     /// `init`, before a window exists and long before the workspace channel is `.live` — so the
-    /// upload has to wait. The SHAPE does not: the instant that initializer returns, SwiftUI mounts
+    /// upload has to wait. The SHAPE does not: the instant that initializer returns, the shell mounts
     /// the window and every leaf in it dials a PTY. A bootstrap that only armed itself would leave
     /// the store projecting the launch default it was called to replace, the window would give that
     /// default's pane a shell, and the adopt would then land a DIFFERENT pane id on top — abandoning

@@ -10,7 +10,7 @@ import SlopDeskWorkspaceModel
 /// each update on the CONTROL channel (wire type 32); the client validates the discriminant at its boundary
 /// (``ProgressState/init(wire:)``) so only a known state reaches here as a ``PaneProgress``. This file is the
 /// single per-pane store mirror the sidebar tab badge (via ``TabBadgeResolver`` → ``RailRowsBuilder``) and the
-/// macOS Dock aggregate both read — headless, UN-free, no SwiftUI.
+/// macOS Dock aggregate both read — headless, UN-free, no view framework.
 public extension WorkspaceStore {
     /// The current OSC 9;4 progress for pane `id` (`nil` when there is no active indicator).
     func progress(for id: PaneID) -> PaneProgress? {

@@ -8,8 +8,8 @@ import SlopDeskWorkspaceModel
 /// §W6). The `Session → Tab → Pane` redesign's command vocabulary, and the ONLY one — the flat canvas
 /// command enum it replaced is deleted, along with the canvas model itself.
 ///
-/// A pure value enum (no SwiftUI / store import) so the chord → action mapping is unit-testable with no
-/// view.
+/// A pure value enum (no view framework, no store import) so the chord → action mapping is unit-testable
+/// with no view.
 public enum WorkspaceAction: Hashable, Sendable {
     // Panes
     case splitRight // ⌘D  — split the active pane into a side-by-side column
@@ -779,8 +779,9 @@ public enum WorkspaceBindingRegistry {
         // panel | ⌘⇧L"; line 201 "⌘⇧L … map to sidebar … toggles"). Deliberately NOT ⌘B: that chord only
         // reaches `store.toggleSidebarCollapsed()`, a flag the native split shell never reads (macOS collapse
         // is driven by `WorkspaceChromeState.sidebarCollapsed`) — binding ⌘B here would be a dead chord. ⌘⇧L
-        // routes through a `toggleSidebar` view-closure onto the live chrome flag; the titlebar keeps no
-        // separate SwiftUI ⌘⇧L shortcut of its own (single owner). ⌘⇧L is FREE (no other `l` chord; ⌃⌘L is
+        // routes through a `toggleSidebar` shell closure onto the live chrome flag; the titlebar's own
+        // toggle button actuates that SAME closure rather than binding ⌘⇧L a second time (single owner).
+        // ⌘⇧L is FREE (no other `l` chord; ⌃⌘L is
         // Cycle Layout). Pinned by E1KeymapParityTests.
         WorkspaceBinding(
             id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",

@@ -116,9 +116,10 @@ public enum WindowSizeMath {
     /// the first 8 whitespace-separated tokens are all finite numbers with positive, in-band
     /// window + screen extents. Extra trailing tokens are ignored (AppKit's format has grown before).
     ///
-    /// Consumed by the macOS scene glue to SEED `.defaultSize` / `.defaultPosition` so a `remember`
-    /// window is CREATED at the persisted geometry — the post-first-paint `setFrame(from:)` then
-    /// reconciles exactly (screen topology changes) without a visible wrong-size first frame.
+    /// Consumed by `SlopDeskMacApp.rememberedFrameSeed`, which `MacWorkspaceWindowController` reads to
+    /// pick the `NSWindow`'s CREATION `contentRect`, so a `remember` window is built at the persisted
+    /// geometry — the post-first-paint `setFrame(from:)` then reconciles exactly (screen topology
+    /// changes) without a visible wrong-size first frame.
     public static func parseFrameDescriptor(_ descriptor: String) -> (frame: CGRect, screen: CGRect)? {
         var bytes = Array(descriptor.utf8)
         let parsed = bytes.withUnsafeMutableBufferPointer {
@@ -137,12 +138,17 @@ public enum WindowSizeMath {
         )
     }
 
-    /// The `defaultPosition` unit point that reproduces `frame` on `screen`: per axis, the origin
-    /// offset over the FREE extent (screen − window), so 0 = flush leading/top edge and 1 = flush
-    /// trailing/bottom edge — exactly SwiftUI's `UnitPoint` placement model. The y-axis flips
-    /// (`UnitPoint` grows DOWN from the top edge; AppKit frames grow UP from the bottom), which is
-    /// why the two `maxY` edges cross rather than the origins. A window as large as the screen (free
-    /// ≤ 0) centres at 0.5 — position is irrelevant there.
+    /// The PROPORTIONAL position that reproduces `frame` on `screen`: per axis, the origin offset over
+    /// the FREE extent (screen − window), so 0 = flush leading/top edge and 1 = flush trailing/bottom
+    /// edge. The y-axis flips (this unit point grows DOWN from the top edge; AppKit frames grow UP from
+    /// the bottom), which is why the two `maxY` edges cross rather than the origins. A window as large as
+    /// the screen (free ≤ 0) centres at 0.5 — position is irrelevant there.
+    ///
+    /// ⚠️ NO PRODUCTION CALLER TODAY, only ``WindowSizeMathTests``. It existed to seed SwiftUI's
+    /// `.defaultPosition(_: UnitPoint)`, and the AppKit shell places its window by absolute
+    /// `contentRect` instead (see ``parseFrameDescriptor(_:)``'s consumer). Kept because the proportional
+    /// reading is the only one that survives a screen-topology change, and it is the shape any future
+    /// multi-display restore wants — but a reader should know nothing calls it.
     public static func unitPosition(frame: CGRect, screen: CGRect) -> CGPoint {
         let unit = slopdesk_window_size_unit_position(
             Double(frame.minX), Double(frame.maxY), Double(frame.width), Double(frame.height),

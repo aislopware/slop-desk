@@ -6,9 +6,9 @@ import SlopDeskWorkspaceModel
 /// The presentation metadata for a single ``PaneKind``: everything the UI needs to *name*, *icon*,
 /// and *offer* a kind without re-deriving it per call site.
 ///
-/// A pure value type filled from `slopdesk_workspace::pane_chooser` — no SwiftUI/AppKit. The `symbol`
-/// is an **SF Symbol name string** (e.g. `"apple.terminal"`) so this file stays import-free; the ClientUI
-/// layer wraps it in a type-safe `SFSymbol` at the use site.
+/// A pure value type filled from `slopdesk_workspace::pane_chooser` — no view framework, on either
+/// platform. The `symbol` is an **SF Symbol name string** (e.g. `"apple.terminal"`) so this file stays
+/// import-free; each shell wraps it in a type-safe `SFSymbol` at the use site.
 ///
 /// The in-pane kind CHOOSER itself is retired (every new-pane gesture mints a terminal directly;
 /// non-terminal kinds have their own explicit shortcuts), but this metadata registry remains the one

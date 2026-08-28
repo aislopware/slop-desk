@@ -15,9 +15,10 @@
 //     at the call site, because a renderer that decided it for itself would be a second copy of the
 //     zoom verdict, sitting where nobody would look for it when the first copy changed.
 //
-// The value types stay here — `Layout` / `PlacedLeaf` / `CompositorLeaf` are what the SwiftUI
-// compositor diffs, and `MacSplitCanvasView`, `SplitContainer`, `PaneDivider` and the drop geometry
-// all key on them. The tree crosses as its PRE-ORDER walk, the same one the solver already takes:
+// The value types stay here — `Layout` / `PlacedLeaf` / `CompositorLeaf` are what each shell's canvas
+// reconciles its mounted pane views against (`MacSplitCanvasView.applyPanes` and the phone's
+// `SplitCanvasView`), and the dividers (`MacPaneDivider` / `PaneDividerView`) and the drop geometry key on
+// them too. The tree crosses as its PRE-ORDER walk, the same one the solver already takes:
 // this runs on every layout pass, and a parse plus an allocation per frame is the regression
 // `CLAUDE.md` says vetoes a port.
 
@@ -40,22 +41,25 @@ public enum SplitTreeRenderModel {
     /// verbatim. See ``SplitDividerHandle``.
     public typealias DividerHandle = SplitDividerHandle
 
-    /// One placed leaf tagged with its zoom-visibility — the unit the SINGLE-`ForEach` compositor iterates
-    /// so a pane's SwiftUI identity (and its hosted terminal / video surface) survives the
-    /// zoom hidden↔visible flip within ONE keyed collection (`.id` dedups only within one `ForEach`).
+    /// One placed leaf tagged with its zoom-visibility — the unit the canvas's SINGLE reconcile pass
+    /// iterates, so a pane's mounted view (and its hosted terminal / video surface) survives the zoom
+    /// hidden↔visible flip. The canvas keeps a `[PaneID: view]` map and tears down exactly the ids that
+    /// LEFT the list, so a pane that merely changed visibility must never leave it.
     public struct CompositorLeaf: Equatable, Sendable {
         public let leaf: PlacedLeaf
-        /// ZOOM-hidden: the pane is a sibling of the zoomed leaf, kept MOUNTED (the view renders it at
-        /// `opacity 0`, no hit-testing) at its un-zoomed rect so its surface survives the zoom toggle —
-        /// exactly the keep-all-tabs-mounted trick, applied per pane. `false` for every visible leaf.
+        /// ZOOM-hidden: the pane is a sibling of the zoomed leaf, kept MOUNTED at its un-zoomed rect so its
+        /// surface survives the zoom toggle — exactly the keep-all-tabs-mounted trick, applied per pane.
+        /// The canvas honors it as `alphaValue = 0` plus an accessibility-hidden flag, deliberately NOT
+        /// AppKit's own `isHidden`: a layer-hosting leaf sizes its surface from its own layout pass, and a
+        /// truly hidden view stops getting one. `false` for every visible leaf.
         public let isHidden: Bool
         public init(leaf: PlacedLeaf, isHidden: Bool = false) {
             self.leaf = leaf
             self.isHidden = isHidden
         }
 
-        /// The pane identity the compositor `ForEach` keys on — STABLE across the zoom hidden↔visible flip
-        /// (one keyed collection, no teardown).
+        /// The pane identity the canvas's reconcile keys its mounted-view map on — STABLE across the zoom
+        /// hidden↔visible flip (one list, one map, no teardown).
         public var id: PaneID { leaf.id }
     }
 
@@ -66,7 +70,7 @@ public enum SplitTreeRenderModel {
         public let dividers: [DividerHandle]
         /// The ZOOM-hidden leaves: while a zoom is active, every non-zoomed pane lands here at its
         /// un-zoomed rect, flagged `isHidden` — so ``compositorLeaves`` still carries the FULL pane set and
-        /// the view keeps the siblings mounted at `opacity 0` (never unmounted → the libghostty surface /
+        /// the canvas keeps the siblings mounted at zero alpha (never unmounted → the libghostty surface /
         /// video stream survives the zoom toggle, and un-zoom is a pure visibility flip, no lossy
         /// ring-replay). Empty while un-zoomed, so the tiled path is byte-identical.
         public let hiddenLeaves: [CompositorLeaf]
@@ -83,10 +87,10 @@ public enum SplitTreeRenderModel {
         public static let empty = Self(leaves: [], dividers: [])
 
         /// The tiled (+ zoom-hidden) leaves as ONE ordered, `PaneID`-keyed sequence (visible leaves first;
-        /// hidden leaves trail — their order is irrelevant at `opacity 0`). The compositor renders EVERY
-        /// pane from this single `ForEach` so the zoom hidden↔visible flip stays within one keyed
-        /// collection and the pane's hosted surface is never torn down. A pane is in
-        /// EXACTLY one of `leaves` / `hiddenLeaves`, so each `PaneID` appears exactly once here.
+        /// hidden leaves trail — their order is irrelevant at zero alpha). The canvas reconciles EVERY pane
+        /// from this ONE list, so the zoom hidden↔visible flip never removes an id from the wanted set and
+        /// the pane's hosted surface is never torn down. A pane is in EXACTLY one of `leaves` /
+        /// `hiddenLeaves`, so each `PaneID` appears exactly once here.
         public var compositorLeaves: [CompositorLeaf] {
             leaves.map { CompositorLeaf(leaf: $0) } + hiddenLeaves
         }

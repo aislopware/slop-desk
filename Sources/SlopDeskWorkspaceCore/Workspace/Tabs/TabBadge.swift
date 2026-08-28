@@ -25,7 +25,7 @@ import SlopDeskWorkspaceModel // TabBadgeKind — the KIND descended, the RESOLV
 /// busy for its whole lifetime — a finished turn must not be shadowed); a COMMAND's clean exit sits
 /// BELOW them (a newly-running command supersedes the previous exit).
 ///
-/// Headless + deterministic: no SwiftUI, no clock, no I/O. The only inputs are the agent verdict, the
+/// Headless + deterministic: no view framework, no clock, no I/O. The only inputs are the agent verdict, the
 /// stored completion badge, the busy bit, and the (untrusted) foreground-process string — which is
 /// classified by an **allow-set on its lowercased basename**, never `contains`, and defaults to "no
 /// privilege badge" for anything unknown / `nil` (validate-then-default; no force-unwrap).

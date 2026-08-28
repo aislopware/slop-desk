@@ -3,13 +3,13 @@
 // Split out of the canvas `CommandInterpreter` when that command layer was deleted (docs/56): the
 // chord OUTLIVED the interpreter, because the live binding registry (``WorkspaceBindingRegistry``),
 // its user overrides, the terminal key interceptor and the iOS input router all key on it. It names
-// no framework — platform adapters translate `NSEvent` / SwiftUI `KeyPress` into this shape — so it
-// stays `Hashable` and testable with no view in scope.
+// no framework — platform adapters translate `NSEvent` on the Mac and `UIKeyCommand` on the phone into
+// this shape — so it stays `Hashable` and testable with no view in scope.
 
 /// A keyboard chord: a normalized key token plus its modifier set. The join key of the bindings
-/// table (``WorkspaceBindingRegistry``). Framework-neutral (no SwiftUI `KeyEquivalent` /
-/// `EventModifiers`) so it stays pure and `Hashable`-keyable in tests; platform adapters translate
-/// native events into this shape.
+/// table (``WorkspaceBindingRegistry``). Framework-neutral — it names no `NSEvent.ModifierFlags`, no
+/// `UIKeyModifierFlags`, nothing from any view framework — so it stays pure and `Hashable`-keyable in
+/// tests; platform adapters translate native events into this shape.
 public struct KeyChord: Hashable, Sendable {
     /// The modifier flags carried by a chord. An `OptionSet` so combinations (⇧⌘, ⌥⌘) compose.
     public struct Modifiers: OptionSet, Hashable, Sendable {

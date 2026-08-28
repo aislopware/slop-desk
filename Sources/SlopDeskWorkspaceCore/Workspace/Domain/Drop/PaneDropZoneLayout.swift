@@ -33,7 +33,9 @@ public enum DropZone: String, CaseIterable, Sendable, Equatable {
 // MARK: - One zone's drawn shape
 
 /// A single zone's geometry as an axis-aligned ellipse (a circle is `radiusX == radiusY`) in pane-local
-/// coordinates (origin top-left, y down — SwiftUI/CG convention).
+/// coordinates (origin top-left, y DOWN — the UIKit / CoreGraphics-image convention, NOT AppKit's
+/// bottom-left y-up: `MacPaneDropOverlay` overrides `isFlipped` to `true` for exactly this reason, and
+/// says so in its own header).
 public struct DropZoneShape: Equatable, Sendable {
     public var center: CGPoint
     public var radiusX: CGFloat

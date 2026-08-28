@@ -46,15 +46,15 @@ struct RouteToggles {
     /// firing the native `windowShouldClose` → the existing `WindowCloseGate` confirmation (preserving the
     /// configured ``CloseConfirmationPolicy``). `nil` (headless / test default) falls back to
     /// ``WorkspaceStore/requestCloseWindow()`` — parks the confirmation rather than trapping, never a dead
-    /// chord. A bare park has no SwiftUI observer on it, so without this closure ⌘⇧W would silently fail to
-    /// close the window.
+    /// chord. A bare park is not an actuation: nothing arms on it to send the window a close, so without this
+    /// closure ⌘⇧W would silently fail to close the window.
     var closeWindow: (() -> Void)?
 }
 
 public extension WorkspaceBindingRegistry {
     /// Routes `action` to its store op against `store`. The overlay toggles (`togglePalette` /
-    /// `toggleCheatSheet`) are the view-owned `@State` switches the root view passes; `nil` (test / headless
-    /// default) makes those actions a no-op.
+    /// `toggleCheatSheet`) are switches the shell owns — flags on its overlay coordinator, not on this store
+    /// — passed in as closures; `nil` (test / headless default) makes those actions a no-op.
     @MainActor
     static func route(
         _ action: WorkspaceAction,
@@ -213,8 +213,9 @@ public extension WorkspaceBindingRegistry {
         // host window (paced per-key CGEvents). A graceful no-op for a terminal / empty / read-only pane, or
         // when the local clipboard is empty. The store reads the live clipboard via `currentLocalClipboard()`.
         case .pasteAsKeystrokes: store.pasteAsKeystrokesInActivePane()
-        // Toggle Tabs Panel (⌘⇧L): the LEFT sidebar collapse on the macOS shell is VIEW @State
-        // (`WorkspaceChromeState.sidebarCollapsed`, read by the native split controller) — NOT the legacy
+        // Toggle Tabs Panel (⌘⇧L): the LEFT sidebar collapse on the macOS shell is SHELL chrome
+        // (`WorkspaceChromeState.sidebarCollapsed`, an `@Observable` the split controller's arm reads
+        // and actuates a `preferredDisplayMode` from) — NOT the legacy
         // `store.sidebarCollapsed`, which nothing reads on macOS. So it is a passed-in closure; when none is
         // supplied (headless / test / iOS) fall back to the store flag — a non-trapping graceful op (and any
         // store-flag reader still toggles).
@@ -229,7 +230,7 @@ public extension WorkspaceBindingRegistry {
         // pool, which no store flag can stand in for.
         case .focusCodePanel: toggles.focusCodePanel?()
         // Pin Window: float the window above all other apps. A macOS NSWindow.level
-        // concern (VIEW @State `WorkspaceChromeState.pinned`), passed in as a closure like `.toggleSidebar`;
+        // concern (shell chrome — `WorkspaceChromeState.pinned`), passed in as a closure like `.toggleSidebar`;
         // `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
         case .pinWindow: toggles.pinWindow?()
         // Blocks (WB2): the navigator toggle + jump-to-block both target the active terminal pane via the store.
@@ -282,8 +283,8 @@ public extension WorkspaceBindingRegistry {
         // native `windowShouldClose` → the existing ``WindowCloseGate`` confirmation (preserving the
         // configured ``CloseConfirmationPolicy``). When NO closure is supplied (headless / test / iOS) fall
         // back to ``WorkspaceStore/requestCloseWindow()`` — still PARKS the confirmation, never a dead chord.
-        // A bare park has no SwiftUI observer on it — under the default `.process` policy with an idle shell
-        // it parks `nil` and nothing closes — so without this closure ⌘⇧W would be a dead control.
+        // A bare park is not an actuation — under the default `.process` policy with an idle shell it parks
+        // `nil` and nothing closes — so without this closure ⌘⇧W would be a dead control.
         case .closeWindow:
             if let close = toggles.closeWindow { close() } else { store.requestCloseWindow() }
         // Reopen the most recently closed TAB: pops the tree shell's
@@ -295,7 +296,7 @@ public extension WorkspaceBindingRegistry {
             if let tabID = store.tree.activeSession?.activeTab?.id { store.toggleSyncInput(tabID: tabID) }
         // Supervision: focus the oldest pane needing attention across all tabs/sessions.
         case .jumpToAttention: store.jumpToOldestAttentionPane()
-        // Supervision: open the Peek & Reply overlay (a VIEW @State toggle, like the palette) over the
+        // Supervision: open the Peek & Reply overlay (a shell-owned toggle, like the palette) over the
         // oldest pane needing attention. The toggle closure no-ops when nothing needs attention. When no
         // overlay closure is supplied, the chord must not be DEAD — fall back to focusing the oldest attention
         // pane (mirrors the `.find` fallback to `requestFindInActivePane()`), so ⌘⇧J does something useful.

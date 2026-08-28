@@ -4,7 +4,7 @@ import Foundation
 
 /// What an external drag is carrying, once the platform pasteboard has been inspected and reduced to a
 /// single semantic value (see `docs/ui-shell/spec/user-interface__drag-and-drop.md`). This is the PURE value the
-/// drop policy reasons over — the AppKit / SwiftUI drop layer extracts the raw pasteboard,
+/// drop policy reasons over — each shell's drop layer (AppKit on the Mac, UIKit on the phone) extracts the raw pasteboard,
 /// hands it to ``DropPayloadClassifier``, and gets one of these back (or `nil` for an unsupported /
 /// empty drag — validate-then-drop).
 ///

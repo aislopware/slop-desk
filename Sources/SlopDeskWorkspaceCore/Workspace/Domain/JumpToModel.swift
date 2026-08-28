@@ -65,7 +65,8 @@ public struct BlockSummary: Equatable, Hashable, Sendable {
 
 /// One row in the Jump-To panel: a detected link (path / URL) or an indexed command / prompt, with the
 /// display text, type badge + icon, an optional relative-timestamp source, and the ACTION that firing the
-/// row performs. A pure value (no SwiftUI / store) so assembly + filtering are headlessly unit-tested.
+/// row performs. A pure value (no view framework, no store) so assembly + filtering are headlessly
+/// unit-tested.
 public struct JumpToItem: Identifiable, Equatable, Hashable, Sendable {
     /// What firing the row does — resolved by the view against the pure ``LinkActionPolicy`` (a link) or the
     /// store's scrollback jump (a block). Carrying the source value keeps the view's actuator a thin switch.
@@ -76,7 +77,8 @@ public struct JumpToItem: Identifiable, Equatable, Hashable, Sendable {
         case block(index: UInt32)
     }
 
-    /// A stable, unique id (the `ForEach` key + the fuzzy-dedup key). `link:<kind>:<raw>` / `block:<index>`.
+    /// A stable, unique id — the row-identity key the panel addresses a row by, and the fuzzy-dedup key.
+    /// `link:<kind>:<raw>` / `block:<index>`.
     public let id: String
     public let kind: JumpToItemKind
     /// The primary display text — the path / URL `raw`, or the command / prompt text.

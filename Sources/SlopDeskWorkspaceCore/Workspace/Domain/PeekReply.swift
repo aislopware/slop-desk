@@ -6,7 +6,7 @@ import SlopDeskWorkspaceModel
 
 /// The cheap, headless display payload the P4 "Peek & Reply" overlay shows for the target pane (P4 piece
 /// 2): its display name, its blocking question (the host type-27 label, or `nil`), and a few "recent
-/// output" lines. A PURE value type (no SwiftUI / store) so the overlay's text is unit-testable without the
+/// output" lines. A PURE value type (no view framework, no store) so the overlay's text is unit-testable without the
 /// renderer — the recent lines come from the per-pane block mirror, NOT `GhosttySurface`/`scrollbackText…`,
 /// so it compiles + tests under headless `swift build`.
 public struct PeekContent: Equatable, Sendable {
