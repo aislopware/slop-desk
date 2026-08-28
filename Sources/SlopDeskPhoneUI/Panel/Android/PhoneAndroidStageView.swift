@@ -50,7 +50,7 @@ final class PhoneAndroidStageView: UIView {
     private let headerSlot = UIView()
     private let bed = UIView()
     private let consoleSlot = UIView()
-    private var consoleHeight: NSLayoutConstraint!
+    private var consoleHeight: NSLayoutConstraint?
 
     private var header: PhoneAndroidDeviceHeader?
     private var screen: PhoneAndroidScreenView?
@@ -102,7 +102,8 @@ final class PhoneAndroidStageView: UIView {
         // The drawer is CLIPPED, so the console slides out of a band that is already zero-height rather
         // than drawing over the picture on its way in.
         consoleSlot.clipsToBounds = true
-        consoleHeight = consoleSlot.heightAnchor.constraint(equalToConstant: 0)
+        let height = consoleSlot.heightAnchor.constraint(equalToConstant: 0)
+        consoleHeight = height
 
         NSLayoutConstraint.activate([
             headerSlot.topAnchor.constraint(equalTo: topAnchor),
@@ -117,7 +118,7 @@ final class PhoneAndroidStageView: UIView {
             consoleSlot.leadingAnchor.constraint(equalTo: leadingAnchor),
             consoleSlot.trailingAnchor.constraint(equalTo: trailingAnchor),
             consoleSlot.bottomAnchor.constraint(equalTo: bottomAnchor),
-            consoleHeight,
+            height,
         ])
 
         follow()
@@ -375,7 +376,7 @@ final class PhoneAndroidStageView: UIView {
         let outgoing = open ? nil : console
         if !open { console = nil }
 
-        consoleHeight.constant = open ? Slate.Metric.heightDrawer : 0
+        consoleHeight?.constant = open ? Slate.Metric.heightDrawer : 0
         // The drawer's open/close is a LAYOUT change, so it rides the standard transaction the way
         // every other drill in this panel does.
         UIView.animate(withDuration: Slate.Motion.standard.duration) { [weak self] in

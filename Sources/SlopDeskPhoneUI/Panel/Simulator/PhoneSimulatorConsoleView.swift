@@ -52,7 +52,7 @@ final class PhoneSimulatorConsoleView: UIView, UICollectionViewDelegate {
     private let clear: UIControl
     private let followPlate: SlatePlateIconButton
     private let collection: UICollectionView
-    private var source: UICollectionViewDiffableDataSource<Int, UInt64>!
+    private var source: UICollectionViewDiffableDataSource<Int, UInt64>?
     private let empty = UILabel()
 
     /// The lines as last drawn, by identity — the diffable source deals in `UInt64`s and the cell, the
@@ -310,7 +310,7 @@ final class PhoneSimulatorConsoleView: UIView, UICollectionViewDelegate {
         snapshot.appendItems(order, toSection: 0)
         // NEVER animated. A console at full tilt appends dozens of lines a second, and an animated
         // append is a drawer that spends its whole life mid-transition.
-        source.apply(snapshot, animatingDifferences: false) { [weak self] in
+        source?.apply(snapshot, animatingDifferences: false) { [weak self] in
             self?.scrollToBottom()
         }
 
@@ -377,7 +377,7 @@ final class PhoneSimulatorConsoleView: UIView, UICollectionViewDelegate {
         point _: CGPoint,
     ) -> UIContextMenuConfiguration? {
         guard let indexPath = indexPaths.first,
-              let identity = source.itemIdentifier(for: indexPath),
+              let identity = source?.itemIdentifier(for: indexPath),
               let line = lines[identity] else { return nil }
         // ⚠️ Only the STRINGS are captured, never `self` or the line: the menu outlives the gesture.
         let one = SimulatorPresentation.Console.plain(line)

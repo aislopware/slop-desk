@@ -55,10 +55,17 @@ final class PhoneAndroidDeviceList: UIView {
 
     private let field = UIView()
     private let line: SlateSearchLine
-    private var clear: UIControl!
-    private var grid: UICollectionView!
-    private var source: UICollectionViewDiffableDataSource<String, String>!
+    private let clear: UIControl
+    /// Minted with a PLACEHOLDER layout, because the real one (``layout()``) reads `self` for the
+    /// section it is asked about and phase 1 cannot. ``buildGrid()`` swaps it in before the first pass.
+    private let grid = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewLayout())
+    private var source: UICollectionViewDiffableDataSource<String, String>?
     private let notice = UIView()
+
+    /// The two registrations, named because the generic pair is the whole of each one's opening line —
+    /// spelled inline it leaves no room for the closure's parameters beside the brace.
+    private typealias CardRegistration = UICollectionView.CellRegistration<PhoneAndroidCardCell, String>
+    private typealias RowRegistration = UICollectionView.CellRegistration<PhoneAndroidRowCell, String>
 
     /// The sections as last drawn. Read by the layout's section provider and by the header provider,
     /// which are handed an INDEX and nothing else.
@@ -78,7 +85,21 @@ final class PhoneAndroidDeviceList: UIView {
         self.model = model
         self.enter = enter
         line = SlateSearchLine(placeholder: AndroidPresentation.searchPlaceholder)
+        // The key is minted WITH its action and the action is `self`'s, which phase 1 cannot read — so
+        // it is built against a box phase 2 fills. ``PhoneSimulatorConsoleView``'s trampoline exactly.
+        var clearAction: (() -> Void)?
+        clear = PhoneDevicePanelChrome.clearKey(ink: PhoneAndroidInk.color(.icon)) { clearAction?() }
         super.init(frame: .zero)
+        clearAction = { [weak self] in
+            guard let self else { return }
+            line.text = ""
+            // A programmatic write does not echo back through `.editingChanged`, so the field's own
+            // change path has to be run by hand — which is the whole reason the key is not simply a
+            // `clearButtonMode`.
+            query = ""
+            revealClear()
+            rebuild()
+        }
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = Slate.Native.Surface.field
 
@@ -135,19 +156,9 @@ final class PhoneAndroidDeviceList: UIView {
             rebuild()
         }
 
-        clear = PhoneDevicePanelChrome.clearKey(ink: PhoneAndroidInk.color(.icon)) { [weak self] in
-            guard let self else { return }
-            line.text = ""
-            // A programmatic write does not echo back through `.editingChanged`, so the field's own
-            // change path has to be run by hand — which is the whole reason the key is not simply a
-            // `clearButtonMode`.
-            query = ""
-            revealClear()
-            rebuild()
-        }
         clear.alpha = 0
 
-        for view in [magnifier, line, clear!] { field.addSubview(view) }
+        for view in [magnifier, line, clear] { field.addSubview(view) }
         NSLayoutConstraint.activate([
             magnifier.leadingAnchor.constraint(
                 equalTo: field.leadingAnchor, constant: Slate.Metric.space2,
@@ -177,7 +188,7 @@ final class PhoneAndroidDeviceList: UIView {
     // MARK: The grid
 
     private func buildGrid() {
-        grid = UICollectionView(frame: .zero, collectionViewLayout: layout())
+        grid.setCollectionViewLayout(layout(), animated: false)
         grid.translatesAutoresizingMaskIntoConstraints = false
         grid.backgroundColor = .clear
         grid.alwaysBounceVertical = true
@@ -193,21 +204,20 @@ final class PhoneAndroidDeviceList: UIView {
         // move this list is built around — hands the card registration a cell whose `contentView`
         // still holds a mounted row, constraints and pending arm and all. Two classes make that
         // impossible rather than guarded against.
-        let card = UICollectionView.CellRegistration<PhoneAndroidCardCell, String> {
-            [weak self] cell, _, identity in
+        let card = CardRegistration { [weak self] cell, _, identity in
             guard let self, let device = rows[identity] else { return }
             cell.card(model: model) { [weak self] opened in self?.enter(opened) }
                 .configure(device: device)
         }
-        let row = UICollectionView.CellRegistration<PhoneAndroidRowCell, String> {
-            [weak self] cell, _, identity in
+        let row = RowRegistration { [weak self] cell, _, identity in
             guard let self, let device = rows[identity] else { return }
             cell.row(model: model)
                 .configure(device: device, showsVersion: showsVersion(device, identity: identity))
         }
 
-        source = UICollectionViewDiffableDataSource<String, String>(collectionView: grid) {
-            [weak self] view, indexPath, identity in
+        source = UICollectionViewDiffableDataSource<String, String>(
+            collectionView: grid,
+        ) { [weak self] view, indexPath, identity in
             let isShelf = self?.section(at: indexPath.section)?.isRunning ?? false
             return isShelf
                 ? view.dequeueConfiguredReusableCell(using: card, for: indexPath, item: identity)
@@ -223,7 +233,7 @@ final class PhoneAndroidDeviceList: UIView {
                 Task { await self.model.shutdownAll() }
             }
         }
-        source.supplementaryViewProvider = { view, _, indexPath in
+        source?.supplementaryViewProvider = { view, _, indexPath in
             view.dequeueConfiguredReusableSupplementary(using: heading, for: indexPath)
         }
     }
@@ -329,13 +339,14 @@ final class PhoneAndroidDeviceList: UIView {
         // A FAILED POLL DRAWS NOTHING HERE. The last-known devices are still the best information
         // available, the report goes to the window's notification card like every other report this
         // panel makes, and two bespoke alert shapes in one panel was the thing being fixed.
-        let message: String? = if devices.isEmpty {
-            AndroidPresentation.noDevices
-        } else if shown.isEmpty {
-            AndroidPresentation.noMatches(query)
-        } else {
-            nil
-        }
+        let message: String? =
+            if devices.isEmpty {
+                AndroidPresentation.noDevices
+            } else if shown.isEmpty {
+                AndroidPresentation.noMatches(query)
+            } else {
+                nil
+            }
         setNotice(message)
 
         let signature = [query] + built.flatMap(\.rowIdentities)
@@ -356,7 +367,7 @@ final class PhoneAndroidDeviceList: UIView {
         }
         // THE REFLOW, and the first pass is not one: a list arriving into an empty panel has nothing
         // to move from, and animating it would read as the whole SDK sliding in.
-        source.apply(snapshot, animatingDifferences: !isFirst)
+        source?.apply(snapshot, animatingDifferences: !isFirst)
     }
 
     private func setNotice(_ text: String?) {
@@ -392,7 +403,7 @@ extension PhoneAndroidDeviceList: UICollectionViewDelegate {
         point _: CGPoint,
     ) -> UIContextMenuConfiguration? {
         guard let indexPath = indexPaths.first,
-              let identity = source.itemIdentifier(for: indexPath),
+              let identity = source?.itemIdentifier(for: indexPath),
               let device = rows[identity]
         else { return nil }
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in

@@ -94,8 +94,18 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
     private let clear = UIButton(type: .system)
     private let add = UIButton(type: .system)
     private let empty = UILabel()
-    private var collection: UICollectionView!
-    private var dataSource: UICollectionViewDiffableDataSource<String, NavigatorItem>!
+    /// Minted with a PLACEHOLDER layout: the list configuration is assembled in ``buildList()``, which
+    /// swaps the real one in before the first pass.
+    private let collection = UICollectionView(
+        frame: .zero, collectionViewLayout: UICollectionViewLayout(),
+    )
+    private var dataSource: UICollectionViewDiffableDataSource<String, NavigatorItem>?
+
+    /// The two registrations, named because the generic pair is the whole of each one's opening line —
+    /// spelled inline it leaves no room for the closure's parameters beside the brace.
+    private typealias RowRegistration = UICollectionView.CellRegistration<NavigatorRowCell, PaneID>
+    private typealias HeaderRegistration =
+        UICollectionView.CellRegistration<NavigatorSectionHeaderCell, String>
 
     /// ⚠️ `chrome` and `overlay` ARE THE SHELL'S CONTRACT, NOT THIS COLUMN'S BUSINESS, and they are
     /// taken and dropped rather than stored so that stays legible. `WorkspaceChromeState` owns whether
@@ -122,8 +132,8 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         // A `CGColor` is FLAT — it does not follow a theme flip on its own, and the search plate keeps
         // two of them. `registerForTraitChanges`, never `traitCollectionDidChange`: the override is
         // deprecated on this deployment target and banned in this tree.
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
-            (column: Self, _: UITraitCollection) in column.paint()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (column: Self, _: UITraitCollection) in
+            column.paint()
         }
         paint()
         follow()
@@ -194,7 +204,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         }
         let layout = UICollectionViewCompositionalLayout.list(using: configuration)
 
-        collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collection.setCollectionViewLayout(layout, animated: false)
         collection.backgroundColor = .clear
         collection.delegate = self
         collection.alwaysBounceVertical = true
@@ -202,16 +212,14 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         collection.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(collection)
 
-        let rowCell = UICollectionView.CellRegistration<NavigatorRowCell, PaneID> {
-            [weak self] cell, _, id in
+        let rowCell = RowRegistration { [weak self] cell, _, id in
             guard let self, let row = rowsByID[id] else { return }
             cell.configure(
                 row: row, store: store,
                 fallbackTitle: PaneChooserRegistry.option(for: row.kind).title,
             )
         }
-        let headerCell = UICollectionView.CellRegistration<NavigatorSectionHeaderCell, String> {
-            [weak self] cell, _, key in
+        let headerCell = HeaderRegistration { [weak self] cell, _, key in
             guard let self, let section = sectionsByKey[key] else { return }
             cell.configure(
                 title: section.header ?? "", projectKey: section.projectKey, rows: section.rows,
@@ -231,11 +239,11 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         // The user's own fold, recorded where it outlives every cell. The handlers fire for the
         // GESTURE only, so the set and the applied snapshot cannot drift: a programmatic collapse goes
         // through ``collapsed`` first and the snapshot follows it.
-        dataSource.sectionSnapshotHandlers.willCollapseItem = { [weak self] item in
+        dataSource?.sectionSnapshotHandlers.willCollapseItem = { [weak self] item in
             guard case let .header(key) = item else { return }
             self?.fold(key, collapsed: true)
         }
-        dataSource.sectionSnapshotHandlers.willExpandItem = { [weak self] item in
+        dataSource?.sectionSnapshotHandlers.willExpandItem = { [weak self] item in
             guard case let .header(key) = item else { return }
             self?.fold(key, collapsed: false)
         }
@@ -370,7 +378,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         }
 
         let keys = sections.map { SidebarSections.collapseKey($0.projectKey) }
-        let animate = dataSource.snapshot().numberOfItems > 0
+        let animate = (dataSource?.snapshot().numberOfItems ?? 0) > 0
         alignSections(to: keys)
 
         for section in sections {
@@ -387,7 +395,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
                 snapshot.append(items, to: header)
                 if !collapsed.contains(key) { snapshot.expand([header]) }
             }
-            dataSource.apply(snapshot, to: key, animatingDifferences: animate)
+            dataSource?.apply(snapshot, to: key, animatingDifferences: animate)
         }
     }
 
@@ -404,7 +412,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
     /// hierarchy is only ever written by ``NSDiffableDataSourceSectionSnapshot``, and this pays a
     /// rebuild on the rare edge rather than corrupting the common one.
     private func alignSections(to keys: [String]) {
-        guard dataSource.snapshot().sectionIdentifiers != keys else { return }
+        guard let dataSource, dataSource.snapshot().sectionIdentifiers != keys else { return }
         var top = NSDiffableDataSourceSnapshot<String, NavigatorItem>()
         top.appendSections(keys)
         dataSource.apply(top, animatingDifferences: false)
@@ -427,7 +435,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
             MainActor.assumeIsolated {
                 guard let self,
                       let section = sectionsByKey[key],
-                      let path = dataSource.indexPath(for: .header(key)),
+                      let path = dataSource?.indexPath(for: .header(key)),
                       let cell = collection.cellForItem(at: path) as? NavigatorSectionHeaderCell
                 else { return }
                 cell.configure(
@@ -453,7 +461,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
     /// and irreversible, and a full swipe fires it on a gesture the user cannot take back mid-flight.
     private func closeSwipe(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         // Hazard 3: resolve through the data source, never `indexPath.item` into a stored array.
-        guard let item = dataSource.itemIdentifier(for: indexPath), case let .row(id) = item else {
+        guard let item = dataSource?.itemIdentifier(for: indexPath), case let .row(id) = item else {
             return nil
         }
         let close = UIContextualAction(style: .destructive, title: "Close") { [weak self] _, _, done in
@@ -470,14 +478,14 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
     func collectionView(
         _: UICollectionView, shouldSelectItemAt indexPath: IndexPath,
     ) -> Bool {
-        guard let item = dataSource.itemIdentifier(for: indexPath) else { return false }
+        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
         // A header's tap is its DISCLOSURE's, not a selection — the whole cell is the fold toggle.
         if case .header = item { return false }
         return true
     }
 
     func collectionView(_ view: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard let item = dataSource.itemIdentifier(for: indexPath), case let .row(id) = item else {
+        guard let item = dataSource?.itemIdentifier(for: indexPath), case let .row(id) = item else {
             return
         }
         // The collection's own selection is DROPPED: the row reads `active` off the store itself
@@ -493,7 +501,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         _: UICollectionView, contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
         point _: CGPoint,
     ) -> UIContextMenuConfiguration? {
-        guard indexPaths.count == 1, let item = dataSource.itemIdentifier(for: indexPaths[0]) else {
+        guard indexPaths.count == 1, let item = dataSource?.itemIdentifier(for: indexPaths[0]) else {
             return nil
         }
         // ⚠️ THE MENU IS BUILT HERE AND THE PROVIDER ONLY HANDS IT OVER. The provider runs later, when

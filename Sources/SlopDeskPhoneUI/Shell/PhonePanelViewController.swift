@@ -253,7 +253,7 @@ final class PhonePanelViewController: UIViewController {
     ///
     /// It fires AFTER the controller is off screen, so there is nothing left to tear down here beyond
     /// the flag — ``viewDidDisappear(_:)`` has already stopped the loops.
-    fileprivate func systemDidDismiss() {
+    private func systemDidDismiss() {
         reportClose()
     }
 

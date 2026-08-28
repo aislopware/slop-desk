@@ -54,11 +54,17 @@ final class PhoneAndroidConsoleView: UIView {
     private let level = UIButton(type: .system)
     private let field = UIView()
     private let line: SlateSearchLine
-    private var clear: UIControl!
+    private let clear: UIControl
     private let followPlate: SlatePlateIconButton
-    private var rows: UICollectionView!
-    private var source: UICollectionViewDiffableDataSource<Int, UInt64>!
+    /// Minted with a PLACEHOLDER layout: the list configuration is assembled in ``buildRows()``, which
+    /// swaps the real one in before the first pass.
+    private let rows = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewLayout())
+    private var source: UICollectionViewDiffableDataSource<Int, UInt64>?
     private let empty = UILabel()
+
+    /// Named because the generic pair is the whole of the registration's opening line — spelled inline
+    /// it leaves no room for the closure's parameters beside the brace.
+    private typealias LogRegistration = UICollectionView.CellRegistration<PhoneAndroidLogCell, UInt64>
 
     /// The rows as last derived, by id. The cell provider's only source — see the header's note on
     /// eviction.
@@ -74,7 +80,12 @@ final class PhoneAndroidConsoleView: UIView {
         self.model = model
         line = SlateSearchLine(placeholder: AndroidPresentation.consoleFilterPlaceholder)
         followPlate = SlatePlateIconButton(symbol: AndroidPresentation.consoleFollowSymbol)
+        // The key is minted WITH its action and the action is `self`'s, which phase 1 cannot read — so
+        // it is built against a box phase 2 fills. ``PhoneSimulatorConsoleView``'s trampoline exactly.
+        var clearAction: (() -> Void)?
+        clear = PhoneDevicePanelChrome.clearKey(ink: PhoneAndroidInk.color(.icon)) { clearAction?() }
         super.init(frame: .zero)
+        clearAction = { [weak self] in self?.setFilter("") }
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = Slate.Native.Surface.field
 
@@ -154,14 +165,13 @@ final class PhoneAndroidConsoleView: UIView {
         followPlate.slateHelp(AndroidPresentation.consoleFollowHelp(isFollowing: isFollowing))
         followPlate.addAction(UIAction { [weak self] _ in self?.toggleFollowing() }, for: .touchUpInside)
 
-        let tray = SlatePlateTray([
-            plate(AndroidPresentation.consoleClearSymbol, help: AndroidPresentation.consoleClearHelp) {
-                [weak self] in self?.model.clearLog()
-            },
-            plate(AndroidPresentation.consoleHideSymbol, help: AndroidPresentation.consoleHideHelp) {
-                [weak self] in self?.model.toggleConsole()
-            },
-        ])
+        let clearPlate = plate(
+            AndroidPresentation.consoleClearSymbol, help: AndroidPresentation.consoleClearHelp,
+        ) { [weak self] in self?.model.clearLog() }
+        let hidePlate = plate(
+            AndroidPresentation.consoleHideSymbol, help: AndroidPresentation.consoleHideHelp,
+        ) { [weak self] in self?.model.toggleConsole() }
+        let tray = SlatePlateTray([clearPlate, hidePlate])
 
         let run = UIStackView(arrangedSubviews: [title, level, field, followPlate, tray])
         run.translatesAutoresizingMaskIntoConstraints = false
@@ -241,12 +251,9 @@ final class PhoneAndroidConsoleView: UIView {
             revealClear()
             redraw()
         }
-        clear = PhoneDevicePanelChrome.clearKey(ink: PhoneAndroidInk.color(.icon)) { [weak self] in
-            self?.setFilter("")
-        }
         clear.alpha = 0
 
-        for view in [line, clear!] { field.addSubview(view) }
+        for view in [line, clear] { field.addSubview(view) }
         NSLayoutConstraint.activate([
             field.heightAnchor.constraint(equalToConstant: Slate.Metric.heightControl),
             line.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: Slate.Metric.space2),
@@ -288,17 +295,15 @@ final class PhoneAndroidConsoleView: UIView {
         var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
         configuration.backgroundColor = .clear
         configuration.showsSeparators = false
-        rows = UICollectionView(
-            frame: .zero,
-            collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration),
+        rows.setCollectionViewLayout(
+            UICollectionViewCompositionalLayout.list(using: configuration), animated: false,
         )
         rows.translatesAutoresizingMaskIntoConstraints = false
         rows.backgroundColor = .clear
         rows.delegate = self
         addSubview(rows)
 
-        let cell = UICollectionView.CellRegistration<PhoneAndroidLogCell, UInt64> {
-            [weak self] cell, _, id in
+        let cell = LogRegistration { [weak self] cell, _, id in
             guard let self, let line = lines[id] else { return }
             cell.row().configure(line)
         }
@@ -365,7 +370,7 @@ final class PhoneAndroidConsoleView: UIView {
         snapshot.appendItems(ids, toSection: 0)
         // UNANIMATED. A log is a river: a row arriving is not a state change to narrate, and an
         // insertion animation at logcat's rate is a console that shimmers instead of scrolling.
-        source.apply(snapshot, animatingDifferences: false) { [weak self] in
+        source?.apply(snapshot, animatingDifferences: false) { [weak self] in
             self?.scrollToEnd()
         }
     }
@@ -394,7 +399,7 @@ extension PhoneAndroidConsoleView: UICollectionViewDelegate {
         point _: CGPoint,
     ) -> UIContextMenuConfiguration? {
         guard let indexPath = indexPaths.first,
-              let id = source.itemIdentifier(for: indexPath),
+              let id = source?.itemIdentifier(for: indexPath),
               let line = lines[id]
         else { return nil }
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in

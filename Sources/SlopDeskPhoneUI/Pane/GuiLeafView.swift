@@ -603,7 +603,7 @@ final class GuiLeafView: UIView {
 
     /// Whether this pane accepts an upload at all, from the same pure gate: a LIVE DESKTOP pane only. A
     /// window or dialog pane must never flash the border for a drag it will refuse.
-    fileprivate var isDesktopUploadTarget: Bool {
+    private var isDesktopUploadTarget: Bool {
         GuiPaneReadout.isDesktopUploadTarget(
             kind: paneKind, hasLiveDescriptor: model?.active != nil,
         )
@@ -628,7 +628,7 @@ final class GuiLeafView: UIView {
 
     private var cachedPaneKind: PaneKind?
 
-    fileprivate func setDropTargeted(_ targeted: Bool) {
+    private func setDropTargeted(_ targeted: Bool) {
         let wanted = targeted && isDesktopUploadTarget
         guard wanted != isDropTargeted else { return }
         isDropTargeted = wanted
@@ -637,7 +637,7 @@ final class GuiLeafView: UIView {
 
     /// Hand the dropped file urls to ``GuiPaneUploads/handleDrop(_:isUploadTarget:model:)``, which owns
     /// the routing and the dedicated PATH-4 connection.
-    fileprivate func commitDrop(_ urls: [URL]) {
+    private func commitDrop(_ urls: [URL]) {
         _ = GuiPaneUploads.handleDrop(
             urls, isUploadTarget: isDesktopUploadTarget, model: model,
         )
@@ -654,7 +654,7 @@ final class GuiLeafView: UIView {
 /// session-owned and outlive the callback, which is also why nothing is copied out first.
 extension GuiLeafView: UIDropInteractionDelegate {
     func dropInteraction(_: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
-        isDesktopUploadTarget && session.canLoadObjects(ofClass: NSURL.self)
+        isDesktopUploadTarget && session.canLoadObjects(ofClass: URL.self)
     }
 
     func dropInteraction(_: UIDropInteraction, sessionDidEnter _: UIDropSession) {
@@ -677,13 +677,14 @@ extension GuiLeafView: UIDropInteractionDelegate {
 
     func dropInteraction(_: UIDropInteraction, performDrop session: UIDropSession) {
         setDropTargeted(false)
-        // The Objective-C class is the API's, not a preference: `loadObjects(ofClass:)` takes an
-        // `NSItemProviderReading` conformer and `URL` does not conform. Swift bridges what comes BACK,
-        // which is why the read goes out through the class and returns value types — the same shape and
-        // the same reason as `MacGuiLeafView`'s `slateDroppedFileURLs()`.
-        // swiftlint:disable:next legacy_objc_type
-        session.loadObjects(ofClass: NSURL.self) { [weak self] objects in
-            let urls = objects.compactMap { ($0 as? NSURL) as URL? }.filter(\.isFileURL)
+        // `URL.self`, and the AppKit half's `NSURL.self` is not a divergence to fix: `UIDropSession`
+        // carries a BRIDGED overload of both `canLoadObjects` and `loadObjects` — one taking the value
+        // type whose `_ObjectiveCType` conforms to `NSItemProviderReading` — so the urls arrive already
+        // bridged and nothing goes out through the class. `NSPasteboard.readObjects(forClasses:)`, which
+        // is what `MacGuiLeafView`'s `slateDroppedFileURLs()` calls, has no such overload. The spelling
+        // matches ``PhoneSimulatorStageView``'s build drop, which reads dropped files the same way.
+        session.loadObjects(ofClass: URL.self) { [weak self] objects in
+            let urls = objects.filter(\.isFileURL)
             // `loadObjects` calls back on the main queue, which UIKit documents and the type does not say.
             MainActor.assumeIsolated { self?.commitDrop(urls) }
         }
@@ -1497,7 +1498,7 @@ private final class StreamStallCaption: UIView {
         guard ticker == nil else { return }
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                guard (try? await Task.sleep(for: .seconds(1))) != nil else { return }
+                guard await (try? Task.sleep(for: .seconds(1))) != nil else { return }
                 guard let self else { return }
                 refresh()
             }

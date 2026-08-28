@@ -129,8 +129,8 @@ final class PhonePanelTabPlate: UIControl {
     /// Ceiled, so a fractional measure cannot land back on the same edge the ladder just refused.
     private var textWidth: CGFloat {
         let font = UIFont.systemFont(ofSize: Slate.Typeface.footnote, weight: .medium)
-        return (tab.label as NSString)
-            .size(withAttributes: [.font: font]).width.rounded(.up)
+        return NSAttributedString(string: tab.label, attributes: [.font: font])
+            .size().width.rounded(.up)
     }
 
     /// The mark's CELL, which each kind reports for itself.

@@ -61,7 +61,7 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
     private let search: SlateSearchLine
     private let clear: UIControl
     private let collection: UICollectionView
-    private var source: UICollectionViewDiffableDataSource<String, String>!
+    private var source: UICollectionViewDiffableDataSource<String, String>?
 
     /// The sections as last drawn, and the device behind each row identity. Held because a diffable
     /// data source deals in identifiers and every callback — the cell, the menu, the tap — has to get
@@ -202,7 +202,7 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
         ) { [weak self] view, indexPath, identity in
             self?.cell(in: view, at: indexPath, for: identity) ?? UICollectionViewCell()
         }
-        source.supplementaryViewProvider = { [weak self] view, kind, indexPath in
+        source?.supplementaryViewProvider = { [weak self] view, kind, indexPath in
             self?.header(in: view, kind: kind, at: indexPath)
         }
     }
@@ -340,7 +340,7 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
         }
         for cell in collection.visibleCells {
             guard let indexPath = collection.indexPath(for: cell),
-                  let identity = source.itemIdentifier(for: indexPath),
+                  let identity = source?.itemIdentifier(for: indexPath),
                   let device = devices[identity] else { continue }
             let isPending = pending.contains(device.udid)
             (cell as? PhoneSimulatorRunningCard)?.showPending(isPending)
@@ -381,7 +381,7 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
         // appears above it, and everything under the cut shifts — the one structural change this list
         // ever makes. Animated because the identities carry it; a poll that returns the same devices
         // produces the same identities and animates nothing.
-        source.apply(snapshot, animatingDifferences: true)
+        source?.apply(snapshot, animatingDifferences: true)
     }
 
     /// Rebuilt rather than re-labelled, because the two sentences are not the same view's text: "no
@@ -400,7 +400,7 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
         sections = []
         devices = [:]
         showsRuntime = [:]
-        source.apply(NSDiffableDataSourceSnapshot<String, String>(), animatingDifferences: false)
+        source?.apply(NSDiffableDataSourceSnapshot<String, String>(), animatingDifferences: false)
         let view = PhoneDevicePanelChrome.notice(text)
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
@@ -434,7 +434,7 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
         point _: CGPoint,
     ) -> UIContextMenuConfiguration? {
         guard let indexPath = indexPaths.first,
-              let identity = source.itemIdentifier(for: indexPath),
+              let identity = source?.itemIdentifier(for: indexPath),
               let device = devices[identity] else { return nil }
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             guard let self else { return nil }
