@@ -65,7 +65,7 @@ pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
     /// The two drawings of the canvas, each of which must CALL rather than restate.
     ///
     /// RE-AIMED 2026-08-28. The phone row read `Pane/SplitContainer.swift` until `3f11c6e6`
-    /// demolished the SwiftUI phone and `bbb9845d` rebuilt the canvas as
+    /// demolished the `SwiftUI` phone and `bbb9845d` rebuilt the canvas as
     /// `Pane/SplitCanvasView.swift` (docs/62 stage E.0). The rename did not turn this rule red
     /// — the `continue` below skipped the absent path and all six verb bans went VACUOUS on the
     /// phone half, which is why the `Claim::Exists` pair now sits beside the loop.

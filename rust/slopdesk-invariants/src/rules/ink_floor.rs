@@ -429,11 +429,11 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
 /// The written-ahead row is this rule's best feature and its worst one, depending on which way the
 /// tree moves. `Claim::Resolved` skips an absent half BY DESIGN, so a half that has not been
 /// written yet costs nothing — and a half that gets DELETED costs nothing either. `3f11c6e6`
-/// deleted the SwiftUI phone wholesale and every phone half here went absent at once: five rows,
+/// deleted the `SwiftUI` phone wholesale and every phone half here went absent at once: five rows,
 /// ten halves, and the rule stayed green while checking exactly the Mac side. That is a rule that
 /// expired without saying so.
 ///
-/// Two things fix it. The halves are re-aimed at the UIKit twins `bbb9845d` landed
+/// Two things fix it. The halves are re-aimed at the `UIKit` twins `bbb9845d` landed
 /// (`PaneDropOverlay` → `PaneDropOverlayView`, `PaneStatusPills` → `PaneStatusPillsView`,
 /// `TerminalFindBar` → `TerminalFindBarView`; `GuiLeafView` keeps its name, docs/62 stage E.1), and
 /// a `Claim::Populated` floor over the two `Pane` targets runs FIRST, so a drained renderer target

@@ -92,14 +92,14 @@ const OWNED: &[(&str, &str, &str)] = &[
 /// `MacPromptJumpFlashOverlay`↔`PromptJumpFlashOverlay`, `MacTerminalFindBar`↔`TerminalFindBar`,
 /// `MacTerminalLeafView`↔`TerminalLeafView`, `MacCodePanelSurfaces`↔`CodePanelSurfaces`,
 /// `MacWorkspaceRootView`↔`WorkspaceRootView` — and that commit deleted every phone side while the
-/// AppKit shell's own de-SwiftUI took `MacWorkspaceRootView` with it. An entry ASSERTS a clone
+/// `AppKit` shell's own de-SwiftUI took `MacWorkspaceRootView` with it. An entry ASSERTS a clone
 /// exists today, so a row whose files are gone is not a debt in abeyance; it is a false claim, and
 /// the ledger fails on it exactly as it fails on an unledgered clone. The ledger went empty, and
 /// the note here said so.
 ///
 /// ## THE TWIN CAME BACK, AND SO DID FIVE OF THE SIX ROWS — 2026-08-28
 ///
-/// The paragraph above predicted this: "every pair returns the moment its UIKit twin is written
+/// The paragraph above predicted this: "every pair returns the moment its `UIKit` twin is written
 /// against the same Mac source, and the right response then is to re-ledger it with the floor file
 /// it waits on, not to widen the window." The twins landed, and the prediction was RIGHT about the
 /// mechanism and WRONG about the scale. Thirty-five pairs, not six, and only some of them are the
@@ -110,7 +110,7 @@ const OWNED: &[(&str, &str, &str)] = &[
 /// `shingles`' `or_insert`: this rule keys a window by its BODY and keeps the first site, so one
 /// body spelled in three files is one pair, and a body a file repeats internally is one window. A
 /// count that tallies every occurrence sees more of both. The figures here are the ones this rule
-/// acts on. Every one of them is also a snapshot — four UIKit stages were landing files while it
+/// acts on. Every one of them is also a snapshot — four `UIKit` stages were landing files while it
 /// ran, and the pair count moved three times in one session.
 ///
 /// 1. **Whole-file copies — RED, and the rule working.** `MacGuiLeafView`↔`GuiLeafView` shares 194
@@ -279,8 +279,8 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
 /// shared set from 33 to 28. The FLOOR moved with it — it exists so a pattern that has stopped
 /// matching cannot pass as a clean tree, and 40 was above the phone's entire vocabulary.
 ///
-/// RE-PINNED 2026-08-28, downward again and much harder: `3f11c6e6` deleted the SwiftUI phone
-/// whole, and the UIKit rebuild has not written its copy yet. The Mac still reads 63 phrases; the
+/// RE-PINNED 2026-08-28, downward again and much harder: `3f11c6e6` deleted the `SwiftUI` phone
+/// whole, and the `UIKit` rebuild has not written its copy yet. The Mac still reads 63 phrases; the
 /// phone reads THREE — `Cancel`, the `SLOPDESK_AUTOCONNECT_HOST` gate name, and the ghostty
 /// headless-build hint — and all three are shared. Ceiling 3, floor 1.
 ///
@@ -298,13 +298,14 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
 /// to both sides. That churn is the point rather than a nuisance: 4 is a DEBT of four phrases, each
 /// of which belongs in `SlopDeskClientCore`, and re-measuring is the last act before every commit
 /// that touches either shell. That is the LAW, not an accident of timing: a stage that
-/// re-types a Mac sentence in UIKit must route it through `SlopDeskClientCore` instead. Expect this
-/// number to be re-pinned repeatedly as docs/62 lands — DOWNWARD as ClientCore absorbs a phrase,
-/// and upward only after a merge that is genuinely refused (the Done / Cancel / Close class).
+/// re-types a Mac sentence in `UIKit` must route it through `SlopDeskClientCore` instead. Expect
+/// this number to be re-pinned repeatedly as docs/62 lands — DOWNWARD as `ClientCore` absorbs a
+/// phrase, and upward only after a merge that is genuinely refused (the Done / Cancel / Close
+/// class).
 ///
 /// ⚠️ AND IT WAS 14 BY THE TIME THIS COMMIT LANDED, WHICH IS THE RULE WORKING RATHER THAN A STALE
-/// PIN. The panel and settings stages typed ten more of the Mac's sentences into UIKit in the same
-/// hour — `"Stream quality"`, `"FPS cap"`, `"Bitrate ceiling"`, `"Clipboard Ring"`, `"Paste as
+/// PIN. The panel and settings stages typed ten more of the Mac's sentences into `UIKit` in the
+/// same hour — `"Stream quality"`, `"FPS cap"`, `"Bitrate ceiling"`, `"Clipboard Ring"`, `"Paste as
 /// Keystrokes"`, `"Refresh Displays"`, `"No display list from host"`, `"No recent clips"`,
 /// `"Dismiss"` and the two settings captions. The ceiling was NOT raised to 14 to absorb them, and
 /// the reason is the same one that forbids writing a `known` debt pair for a clone without arguing

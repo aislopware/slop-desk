@@ -21,8 +21,8 @@ const PHONE_UI: &str = "Sources/SlopDeskPhoneUI";
 /// The menu file, which is discoverability and nothing else.
 const MENU: &str = "Sources/SlopDeskMacUI/Commands/WorkspaceCommands.swift";
 
-/// The banned literal shapes, as one alternation — the SwiftUI three, and the UIKit three each of
-/// them acquires when a view is ported (docs/62 stage C).
+/// The banned literal shapes, as one alternation — the `SwiftUI` three, and the `UIKit` three each
+/// of them acquires when a view is ported (docs/62 stage C).
 ///
 /// Both spellings of each, so a leak cannot dodge the pattern by dropping a space:
 ///
@@ -33,17 +33,17 @@ const MENU: &str = "Sources/SlopDeskMacUI/Commands/WorkspaceCommands.swift";
 /// * height — `.frame(height: N)`, anchored on `height` as the FIRST argument, because
 ///   `.frame(width: N, height: M)` is a square glyph box and not the vertical rhythm.
 ///
-/// ⚠️ The UIKit half is why this rule is §4.8's headline case: EVERY spelling above is
+/// ⚠️ The `UIKit` half is why this rule is §4.8's headline case: EVERY spelling above is
 /// SwiftUI-only, so the day the phone's design floor became `UIView` subclasses the ratchet would
 /// have gone silently vacuous — still green, still in `just lint`, and no longer able to see a
-/// single leak. The three that carry the same dimensions in UIKit are:
+/// single leak. The three that carry the same dimensions in `UIKit` are:
 ///
 /// * font — `UIFont.systemFont(ofSize: N)` and its siblings (`monospacedSystemFont`,
 ///   `boldSystemFont`, `italicSystemFont`), reached by `[A-Za-z]*[sS]ystemFont`;
 /// * radius — `layer.cornerRadius = N`, an ASSIGNMENT, which `cornerRadius[(:]` cannot match;
 /// * height/width — the Auto Layout constant, `constraint(equalToConstant: N)` and the
 ///   `NSLayoutConstraint(…, constant: N)` argument, both reached by `[Cc]onstant: ?[0-9]`. This is
-///   the UIKit spelling of a fixed rhythm, and it covers the horizontal one the SwiftUI clause
+///   the `UIKit` spelling of a fixed rhythm, and it covers the horizontal one the `SwiftUI` clause
 ///   deliberately left out — Auto Layout has no square-glyph-box idiom to spare.
 ///
 /// What is deliberately NOT matched is the token system itself: `.font(.system(size: size))` has no
@@ -67,11 +67,11 @@ const RAW_LITERALS: &str = r"\.font\(\.system\(size: ?[0-9]|cornerRadius[(:] *[0
 /// its target directory was unreachable, which is the one failure a gate's output cannot show you.
 ///
 /// ⚠️ THE FLOOR IS A TRIPWIRE, NOT A RATCHET, and `3f11c6e6` is why the distinction had to be
-/// written down. It was pinned at 60 against the SwiftUI phone; the UIKit demolition took the tree
-/// to 24 and the floor went red for a reason that was not a leak and not an unreachable directory.
-/// A floor set just under the live count re-fails on every legitimate deletion, so it is pinned
-/// WELL under instead: 15 says "the design system is still here", which is the only thing the ban
-/// below needs to be true (docs/62 stage C).
+/// written down. It was pinned at 60 against the `SwiftUI` phone; the `UIKit` demolition took the
+/// tree to 24 and the floor went red for a reason that was not a leak and not an unreachable
+/// directory. A floor set just under the live count re-fails on every legitimate deletion, so it is
+/// pinned WELL under instead: 15 says "the design system is still here", which is the only thing
+/// the ban below needs to be true (docs/62 stage C).
 #[must_use]
 pub fn design_tokens_are_not_bypassed(tree: &Tree) -> Report {
     check_all(tree, &[

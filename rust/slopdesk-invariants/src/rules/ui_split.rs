@@ -58,11 +58,11 @@ const PHONE_HALF: &str = "Sources/SlopDeskVideoClientPhone";
 /// `SlopDeskPhoneUI` alone clears it — a gate that passes by reading nothing. The video half's
 /// floor is small because the half IS small.
 ///
-/// ⚠️ AND BOTH FLOORS ARE TRIPWIRES, NOT RATCHETS. They were pinned at 50 and 2 against the SwiftUI
-/// phone; `3f11c6e6` deleted that phone whole and both went red without a single directive having
-/// drifted. A floor pinned just under the live count re-fails on every honest deletion, so these
-/// sit well under the rebuild's floor instead — 15 and 1 say "the target still globs", which is all
-/// the directive shape below needs to be reading something (docs/62 stage A).
+/// ⚠️ AND BOTH FLOORS ARE TRIPWIRES, NOT RATCHETS. They were pinned at 50 and 2 against the
+/// `SwiftUI` phone; `3f11c6e6` deleted that phone whole and both went red without a single
+/// directive having drifted. A floor pinned just under the live count re-fails on every honest
+/// deletion, so these sit well under the rebuild's floor instead — 15 and 1 say "the target still
+/// globs", which is all the directive shape below needs to be reading something (docs/62 stage A).
 ///
 /// ⚠️ AND EACH HALF NAMES ONE FRAMEWORK, NOT THREE. The rescue above used to admit `SwiftUI` as a
 /// third; it no longer does, because there is no longer a file anywhere in `Sources` for it to

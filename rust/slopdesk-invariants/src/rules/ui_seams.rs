@@ -248,13 +248,13 @@ pub fn the_canvas_registers_itself_in_appkit(tree: &Tree) -> Report {
 /// is exactly why it would get deleted."
 ///
 /// That rested on ONE premise, stated in it: `shared` was "iOS's ONLY shape — the phone has no
-/// `NSView`". The phone draws in UIKit now and has a `UIView`, so the premise is false and the
+/// `NSView`". The phone draws in `UIKit` now and has a `UIView`, so the premise is false and the
 /// deletion the rule was written to prevent became the correct move. The seams return a
 /// ``PlatformView`` and nothing else.
 ///
 /// WHAT SURVIVES UNCHANGED is the failure the rule actually exists for, which was never about
-/// SwiftUI: REGISTERING NOTHING. The registration happens in app targets no `Package.swift` builds
-/// and the embedder is compiled by no target at all — it joins the Xcode app through
+/// `SwiftUI`: REGISTERING NOTHING. The registration happens in app targets no `Package.swift`
+/// builds and the embedder is compiled by no target at all — it joins the Xcode app through
 /// `slopdesk-ops enable-renderer macos` — so an unregistered seam is not a compile error, has no
 /// test, and ships the BUILD-STATUS placeholder where a terminal should be. Every `Matches` claim
 /// below is that check, and each is now STRONGER than before: one registration cannot be half-done.
@@ -264,9 +264,9 @@ pub fn the_canvas_registers_itself_in_appkit(tree: &Tree) -> Report {
 /// raw census reports the prose as a registrar and this gate could never be written.
 ///
 /// THE SECOND SLOT IS NOW BANNED RATHER THAN REQUIRED. `nativeShared`/`makeNative` were the
-/// PLATFORM half of the pair; with the SwiftUI half gone they were promoted to the bare names, and
-/// a re-appearing `nativeShared` means someone has re-introduced the two-slot shape — which is how
-/// a hosting view gets interposed over the one surface that takes every keystroke.
+/// PLATFORM half of the pair; with the `SwiftUI` half gone they were promoted to the bare names,
+/// and a re-appearing `nativeShared` means someone has re-introduced the two-slot shape — which is
+/// how a hosting view gets interposed over the one surface that takes every keystroke.
 ///
 /// THE VIDEO SEAM IS REGISTERED FROM THE APP TARGET on both platforms, because the video modules
 /// never import `SlopDeskWorkspaceCore` and the app is the only place both sides can be named. It

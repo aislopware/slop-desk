@@ -7,8 +7,8 @@
 //! has to re-spell.
 //!
 //! ⚠️ THAT SENTENCE SAID "and a `SwiftUI` one" UNTIL 2026-08-28, and it was the rule's stated
-//! reason rather than a passing detail. The premise died when the phone crossed to UIKit; the rule
-//! did not, and is stronger for it. See [`presentation_logic_draws_nothing_both`].
+//! reason rather than a passing detail. The premise died when the phone crossed to `UIKit`; the
+//! rule did not, and is stronger for it. See [`presentation_logic_draws_nothing_both`].
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
@@ -29,7 +29,7 @@ use crate::tree::Tree;
 /// This was written as "an `AppKit` renderer and a `SwiftUI` one", and its first claim banned
 /// `import SwiftUI` from this one target — a per-target ban, because at the time the framework was
 /// still live on the phone and this layer was the boundary it must not cross. Both halves of that
-/// premise are gone: the phone is UIKit, and `SwiftUI` measures ZERO across `Sources`, `Apps` and
+/// premise are gone: the phone is `UIKit`, and `SwiftUI` measures ZERO across `Sources`, `Apps` and
 /// `Tests` alike. So the ban was not narrowed or re-aimed, it was WIDENED out of this file into
 /// [`ui_split::no_declarative_framework_survives`](super::ui_split::no_declarative_framework_survives),
 /// which reads every Swift root. Keeping a copy here would leave a ban that can never be the one to
@@ -119,12 +119,12 @@ pub fn domain_layers_hold_only_named_view_seams(tree: &Tree) -> Report {
 /// A VIEW target reaches a door through a readout, not through the header.
 ///
 /// `docs/55` §6, "What the imperative UI changed at this boundary, and what it did not": the client
-/// crossing to AppKit and UIKit changed nothing on the Rust side and exactly one thing on the Swift
-/// side — how OFTEN a door is called. Rule 2 of the three that follow is this one. A door reached
-/// from a view file is a door nobody can exercise without a window server, and it puts §4c's
-/// marshalling next to a `layout()` pass where the call rate is a drawing decision rather than a
-/// state change. The readouts in `SlopDeskClientCore` / `SlopDeskWorkspaceCore` are where a door is
-/// called once, stored, and tested headless.
+/// crossing to `AppKit` and `UIKit` changed nothing on the Rust side and exactly one thing on the
+/// Swift side — how OFTEN a door is called. Rule 2 of the three that follow is this one. A door
+/// reached from a view file is a door nobody can exercise without a window server, and it puts
+/// §4c's marshalling next to a `layout()` pass where the call rate is a drawing decision rather
+/// than a state change. The readouts in `SlopDeskClientCore` / `SlopDeskWorkspaceCore` are where a
+/// door is called once, stored, and tested headless.
 ///
 /// This is a LAYER law, not a framework one, which is why it is registered here rather than beside
 /// the FFI-artifact rules: `SwiftUI` had the same rule and enforced it by accident, because a body

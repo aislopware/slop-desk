@@ -137,9 +137,9 @@ pub fn one_cheat_sheet_two_layouts(tree: &Tree) -> Report {
 /// half that re-derives the phrase from the pair keys on flavour alone sooner or later, and
 /// announces a finished `just` as an agent turn.
 ///
-/// ## ⚠️ THE LAST CLAUSE PINS A SwiftUI SPELLING, AND ONLY THE PATH WAS RE-AIMED
+/// ## ⚠️ THE LAST CLAUSE PINS A `SwiftUI` SPELLING, AND ONLY THE PATH WAS RE-AIMED
 ///
-/// The mount ban reads `PhoneOverlayLayerView.swift`, which is live UIKit, but `ToastStackView\(`
+/// The mount ban reads `PhoneOverlayLayerView.swift`, which is live `UIKit`, but `ToastStackView\(`
 /// is a `SwiftUI` initializer call — a view controller mounts a child with `addChild` and
 /// `addSubview`, and that needle cannot see it. So the ban is permanently green until stage F
 /// re-spells it, and it is recorded here rather than re-spelled from this seat because the toast

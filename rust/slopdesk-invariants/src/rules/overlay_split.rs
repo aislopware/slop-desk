@@ -30,7 +30,7 @@ const JUMP_TO: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/JumpToMode
 const MAC_PALETTE: &str = "Sources/SlopDeskMacUI/Overlays/MacPalette.swift";
 const PHONE_PALETTE: &str = "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift";
 /// RE-AIMED 2026-08-28. This read `App/MacWorkspaceRootView.swift` until the Mac shell finished
-/// crossing to AppKit and the window root became `App/MacWorkspaceWindowController.swift`. The
+/// crossing to `AppKit` and the window root became `App/MacWorkspaceWindowController.swift`. The
 /// inventory of the demolition claimed "all six Mac sides survive"; this is one of the two places
 /// that was FALSE, and the rule below was red against a file nobody had noticed was gone. Same
 /// re-aim as `ui_seams.rs`'s `MAC_WINDOW_ROOT`, which is the other one.
@@ -58,14 +58,14 @@ const MAC_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceWindowController.s
 ///
 /// ## ⚠️ THE PATH IS RE-AIMED; THE FIRST CLAUSE'S VOCABULARY IS NOT
 ///
-/// `PHONE_HOST` now names `Shell/PhoneOverlayLayerView.swift`, a live UIKit file, so this rule
+/// `PHONE_HOST` now names `Shell/PhoneOverlayLayerView.swift`, a live `UIKit` file, so this rule
 /// reads a real subject again. The `allowsHitTesting` ban on it does NOT: that is a `SwiftUI`
-/// modifier, and a UIView spells the same hazard as a `hitTest(_:with:)` override or
+/// modifier, and a `UIView` spells the same hazard as a `hitTest(_:with:)` override or
 /// `isUserInteractionEnabled`. The needle can no longer see the thing it forbids, so that ONE
 /// clause is permanently green and checks nothing — the same expiry class as the `.task(id:)`
 /// `Exactly` that was excised from `panel_shells.rs`, except here it sits on a path that LOOKS
 /// repaired. It is left registered rather than deleted because the LAW is still true and `docs/62`
-/// §4.8 assigns the UIKit re-spell to stage F, which owns the overlay layer; inventing the needle
+/// §4.8 assigns the `UIKit` re-spell to stage F, which owns the overlay layer; inventing the needle
 /// from here would pin an arrangement the rebuild has not chosen yet. Every other clause below
 /// reads the file and bites today.
 #[must_use]
