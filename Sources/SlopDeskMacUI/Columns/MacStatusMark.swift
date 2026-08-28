@@ -107,17 +107,21 @@ final class MacStatusMarkView: NSView {
         }
     }
 
-    /// A system symbol at otty's own configuration for it — the artwork is Apple's, so this is the
-    /// EXACT drawing the SwiftUI half mounts rather than a redraw of it. The ink rides a PALETTE
-    /// configuration rather than a template tint: a template only takes the ink a cell hands it, and
-    /// this view has no cell.
+    /// A system symbol at otty's own configuration for it — the artwork is Apple's, so this mounts the
+    /// EXACT drawing rather than a redraw of it. The ink rides a PALETTE configuration rather than a
+    /// template tint: a template only takes the ink a cell hands it, and this view has no cell.
+    ///
+    /// The weight is ``StatusDot/symbolWeight`` itself, not a hand-copy of it: on macOS
+    /// `NSImage.SymbolConfiguration(pointSize:weight:)` takes an `NSFont.Weight`, which is exactly what
+    /// the token already is, so there is no seam here to keep in step. (UIKit's twin has one — its
+    /// configuration asks for a distinct `UIImage.SymbolWeight` — and says so at its own call site.)
     private func drawSymbol(_ mark: StatusMark, ink: NSColor) {
         guard let system = mark.systemSymbol,
               let image = NSImage(
                   systemSymbolName: system.symbol.rawValue, accessibilityDescription: nil,
               ),
               let drawn = image.withSymbolConfiguration(
-                  NSImage.SymbolConfiguration(pointSize: system.size, weight: .medium)
+                  NSImage.SymbolConfiguration(pointSize: system.size, weight: StatusDot.symbolWeight)
                       .applying(NSImage.SymbolConfiguration(paletteColors: [ink])),
               )
         else { return }
