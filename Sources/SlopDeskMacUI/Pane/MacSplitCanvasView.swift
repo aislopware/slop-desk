@@ -52,7 +52,9 @@ final class MacSplitCanvasView: NSView {
 
     private var layers: [TabID: MacTabLayer] = [:]
     private var lastReportedBounds: CGRect = .zero
-    private var generation = 0
+    /// The live follow. Stored so ``teardown()`` can END it while this view lives on, and armed with
+    /// `replacing:` because a teardown clears `isWired` — a re-attach re-enters ``follow()``.
+    private var canvasFollow: ObservationFollow?
     private var isWired = false
 
     init(
@@ -112,32 +114,21 @@ final class MacSplitCanvasView: NSView {
     /// this one only answers which tabs are mounted and which is revealed, so a keystroke inside one
     /// pane does not re-run the whole canvas's reconcile.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var tabs: [SlopDeskWorkspaceModel.Tab] = []
-        var activeTabID: TabID?
-
-        withObservationTracking {
-            // EVERY tab of every RETAINED session (the active one plus the LRU-retained previous ones),
-            // in session-then-tab-bar order. Rendering all of them is what makes an A→B→A session
-            // switch a visibility flip rather than a teardown of every outgoing surface.
-            tabs = PaneCanvasMounting.mountedTabs(
-                sessions: store.tree.sessions,
-                retained: store.retainedSessionIDs,
-                activeID: store.tree.activeSessionID,
+        canvasFollow = ObservationFollow.arm(self, replacing: canvasFollow) { canvas in
+            (
+                // EVERY tab of every RETAINED session (the active one plus the LRU-retained previous
+                // ones), in session-then-tab-bar order. Rendering all of them is what makes an A→B→A
+                // session switch a visibility flip rather than a teardown of every outgoing surface.
+                tabs: PaneCanvasMounting.mountedTabs(
+                    sessions: canvas.store.tree.sessions,
+                    retained: canvas.store.retainedSessionIDs,
+                    activeID: canvas.store.tree.activeSessionID,
+                ),
+                activeTabID: canvas.store.tree.activeSession?.activeTab?.id,
             )
-            activeTabID = store.tree.activeSession?.activeTab?.id
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        } apply: { canvas, reading in
+            canvas.reconcile(tabs: reading.tabs, activeTabID: reading.activeTabID)
         }
-
-        reconcile(tabs: tabs, activeTabID: activeTabID)
     }
 
     private func reconcile(tabs: [SlopDeskWorkspaceModel.Tab], activeTabID: TabID?) {
@@ -183,7 +174,8 @@ final class MacSplitCanvasView: NSView {
     /// The whole canvas is closing. Forwarded so every leaf's renderer comes down — see the reconcile
     /// above for why this is not something a mere unmount may do.
     func teardown() {
-        generation &+= 1
+        canvasFollow?.stop()
+        canvasFollow = nil
         isWired = false
         for layer in layers.values {
             layer.teardown()
@@ -233,7 +225,9 @@ private final class MacTabLayer: NSView {
     private var leaves: [SplitTreeRenderModel.PlacedLeaf] = []
     private var frames: [PaneID: CGRect] = [:]
     private var container: CGRect = .zero
-    private var generation = 0
+    /// The live follow. Stored because ``apply(tab:isActive:in:)`` re-enters ``follow()`` on every
+    /// reconcile of this layer, and ``teardown()`` must end it while the layer lives on.
+    private var layerFollow: ObservationFollow?
 
     init(
         store: WorkspaceStore,
@@ -271,7 +265,10 @@ private final class MacTabLayer: NSView {
         self.isActive = isActive
         alphaValue = isActive ? 1 : 0
         setAccessibilityHidden(!isActive)
-        relayout(in: bounds)
+        // `container` first, then the arm: ``ObservationFollow/arm(_:replacing:read:apply:)`` runs its
+        // first apply SYNCHRONOUSLY, and that apply is the relayout — so this method no longer places
+        // the layer itself and then follows, it places it BY following.
+        container = bounds
         follow()
     }
 
@@ -495,25 +492,18 @@ private final class MacTabLayer: NSView {
     /// What this LAYER draws on, apart from geometry: the drag the coordinator publishes, and the
     /// keyboard-ownership flag both focus arms read.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        withObservationTracking {
-            _ = drag.move
-            _ = paneDrag?.drag
+        layerFollow = ObservationFollow.arm(self, replacing: layerFollow) { layer in
+            _ = layer.drag.move
+            _ = layer.paneDrag?.drag
             _ = CodeSidebarKeyboardState.shared.ownsKeyboard
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.relayout(in: self.container)
-                    self.follow()
-                }
-            }
+        } apply: { layer, _ in
+            layer.relayout(in: layer.container)
         }
     }
 
     func teardown() {
-        generation &+= 1
+        layerFollow?.stop()
+        layerFollow = nil
         for pane in panes.values {
             pane.teardown()
             pane.removeFromSuperview()

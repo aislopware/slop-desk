@@ -62,7 +62,10 @@ final class MacPaneContainer: NSView {
     private var scrim = PaneResizeScrimState()
     private var settleTask: Task<Void, Never>?
     private var lastSize: CGSize = .zero
-    private var generation = 0
+    /// The live follow. Stored for BOTH reasons the handle exists: ``follow()`` is re-entered on every
+    /// focus push, so each arm must displace the last, and ``detach()`` ends the following while this
+    /// container lives on waiting to be re-attached.
+    private var paneFollow: ObservationFollow?
     private var isWired = false
 
     // MARK: - Life
@@ -162,7 +165,8 @@ final class MacPaneContainer: NSView {
     private func detach() {
         guard isWired else { return }
         isWired = false
-        generation &+= 1
+        paneFollow?.stop()
+        paneFollow = nil
         settleTask?.cancel()
         settleTask = nil
     }
@@ -272,58 +276,46 @@ final class MacPaneContainer: NSView {
     // MARK: - The live read
 
     /// ONE tracked read of everything this container draws on. Same rule as either leaf: one arm, not
-    /// one per concern, superseded by generation because an arm cannot be cancelled.
+    /// one per concern — and `replacing:` because a focus push re-enters this method, where a plain
+    /// arm would leave the previous chain live and applying alongside the new one.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var showsCorner = false
-        var recedes = false
-        var cwd: String?
-        var live: LivePaneSession?
-        var kind: PaneKind = .terminal
-
-        withObservationTracking {
-            // THE PANE'S SESSION, READ INSIDE THE ARM. The registry it comes out of is `@Observable`
+        paneFollow = ObservationFollow.arm(self, replacing: paneFollow) { pane in
+            // THE PANE'S SESSION, READ INSIDE `read`. The registry it comes out of is `@Observable`
             // state on the store, so reading it here is what makes a session MINTED OR SWAPPED under
-            // a stable pane id reach the leaf. Read outside the arm it registers no dependency: the
-            // leaf then keeps whatever handle happened to be current at mount, and on the ordinary
-            // launch — where `reconcileTree()` has already run — nothing ever says otherwise, so the
-            // miss is silent. Same reason the drop receiver takes a CLOSURE rather than a value (see
-            // `init`).
-            live = store.handle(for: paneID) as? LivePaneSession
-            // Routed by KIND, and the fallback reads the spec, so a `.desktop` pane that arrives with
-            // the document rebuilds into the video leaf instead of staying a terminal.
-            kind = live?.kind ?? store.tree.activeSession?.specs[paneID]?.kind ?? .terminal
+            // a stable pane id reach the leaf. Read in `apply` it registers no dependency: the leaf
+            // then keeps whatever handle happened to be current at mount, and on the ordinary launch
+            // — where `reconcileTree()` has already run — nothing ever says otherwise, so the miss is
+            // silent. Same reason the drop receiver takes a CLOSURE rather than a value (see `init`).
+            let live = pane.store.handle(for: pane.paneID) as? LivePaneSession
             // Registers the resize veil's third signal. `applyScrim()` re-reads it — this read is what
             // makes a change to it INVALIDATE, which nothing else in this view was doing.
             _ = live?.awaitingResizeReflow
-            // A hidden tab's pane is not the subject of anything, so both marks read from the SAME
-            // `isFocused` this container was pushed rather than from the store — the canvas already
-            // resolved the zoom-hidden and sidebar-owns-keyboard arms before pushing it.
-            showsCorner = PaneFocusPolicy.showsFocusCorner(
-                isFocused: isFocused, tabPaneCount: tabPaneCount,
+            return (
+                live: live,
+                // Routed by KIND, and the fallback reads the spec, so a `.desktop` pane that arrives
+                // with the document rebuilds into the video leaf instead of staying a terminal.
+                kind: live?.kind
+                    ?? pane.store.tree.activeSession?.specs[pane.paneID]?.kind ?? .terminal,
+                // A hidden tab's pane is not the subject of anything, so both marks read from the SAME
+                // `isFocused` this container was pushed rather than from the store — the canvas already
+                // resolved the zoom-hidden and sidebar-owns-keyboard arms before pushing it.
+                showsCorner: PaneFocusPolicy.showsFocusCorner(
+                    isFocused: pane.isFocused, tabPaneCount: pane.tabPaneCount,
+                ),
+                // Observing the switcher HERE is what repaints the veil on every ⇥ tap. It costs
+                // nothing at rest, where the switcher is nil and the branch is a compare.
+                recedes: PaneFocusPolicy.showsSwitcherRecede(
+                    switcherIsOpen: pane.store.paneSwitcher != nil, isFocused: pane.isFocused,
+                ),
+                cwd: pane.store.paneCwd(for: pane.paneID),
             )
-            // Observing the switcher HERE is what repaints the veil on every ⇥ tap. It costs nothing
-            // at rest, where the switcher is nil and the branch is a compare.
-            recedes = PaneFocusPolicy.showsSwitcherRecede(
-                switcherIsOpen: store.paneSwitcher != nil, isFocused: isFocused,
-            )
-            cwd = store.paneCwd(for: paneID)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        } apply: { pane, reading in
+            pane.mountLeaf(live: reading.live, kind: reading.kind)
+            (pane.leaf as? MacTerminalLeafView)?.setCwd(reading.cwd)
+            MacPaneFade.set(pane.focusCorner, shown: reading.showsCorner)
+            MacPaneFade.set(pane.recedeVeil, shown: reading.recedes, curve: Slate.Motion.smallFade)
+            pane.applyScrim()
         }
-
-        mountLeaf(live: live, kind: kind)
-        (leaf as? MacTerminalLeafView)?.setCwd(cwd)
-        MacPaneFade.set(focusCorner, shown: showsCorner)
-        MacPaneFade.set(recedeVeil, shown: recedes, curve: Slate.Motion.smallFade)
-        applyScrim()
     }
 
     /// How many panes the tab CONTAINING this pane holds — 1 for an unsplit tab, where the corner

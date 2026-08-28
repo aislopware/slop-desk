@@ -149,12 +149,12 @@ final class MacTerminalLeafView: NSView {
 
     // MARK: The live reads
 
-    /// The observation generation. `withObservationTracking` has no cancel, so an arm that has been
-    /// superseded — by a live-session swap, by a settings flip, by a re-attach — must DROP its
-    /// callback rather than re-arm from it. Without this the arms DOUBLE on every swap and quadruple
-    /// on the next, which reads as the pane getting slower the longer it is open and has no crash to
-    /// find it by.
-    private var generation = 0
+    /// The live follow. An arm that has been superseded — by a live-session swap, by a settings flip,
+    /// by a re-attach — must END rather than keep applying beside its replacement. Without that the
+    /// chains DOUBLE on every swap and quadruple on the next, which reads as the pane getting slower
+    /// the longer it is open and has no crash to find it by. Hence `replacing:` on every arm, and
+    /// ``stop()`` in ``detach()``.
+    private var leafFollow: ObservationFollow?
     /// `controls.auto-secure-input`, as last ACTED on. Kept because the lock is reconciled on the
     /// EDGE, not on the reading: a config edit to an unrelated key re-runs ``follow()`` and must not
     /// re-engage a process-global lock the user turned off.
@@ -320,9 +320,10 @@ final class MacTerminalLeafView: NSView {
     private func detach() {
         guard isWired else { return }
         isWired = false
-        // Supersede every armed observation FIRST: a callback that lands after the wiring is cleared
-        // would re-arm against a model this leaf no longer drives.
-        generation &+= 1
+        // End the armed observation FIRST: a callback that lands after the wiring is cleared would
+        // re-arm against a model this leaf no longer drives.
+        leafFollow?.stop()
+        leafFollow = nil
         dialTask?.cancel()
         dialTask = nil
         autotypeTask?.cancel()
@@ -550,67 +551,62 @@ final class MacTerminalLeafView: NSView {
 
     // MARK: - The live read
 
-    /// ONE tracked read of everything this leaf draws or triggers on, re-armed by its own `onChange`.
+    /// ONE tracked read of everything this leaf draws or triggers on.
     ///
-    /// It is one arm rather than one per concern deliberately. `withObservationTracking` fires on the
-    /// FIRST change to anything it read, so N arms cost N callbacks for one edit and give nothing
-    /// back — every read below is a property access on an object this leaf already holds.
+    /// It is one arm rather than one per concern deliberately. The tracking fires on the FIRST change
+    /// to anything `read` touched, so N arms cost N callbacks for one edit and give nothing back —
+    /// every read below is a property access on an object this leaf already holds.
     ///
-    /// The generation check is the file's other observation rule: this method is called from the
-    /// callback AND from ``attach()`` and ``setLive(_:)``, and an arm cannot be cancelled. A superseded arm must therefore drop its callback instead of re-arming from it.
+    /// `replacing:` because this method is also called from ``attach()`` and ``setLive(_:)``: a plain
+    /// arm would leave the superseded chain live beside the new one. See ``leafFollow``.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var conditions = PaneStatusConditions()
-        var hintsToggled = false
-        var findVisible = false
-        var navigatorVisible = false
-        var dial: PaneID?
-        var autotype: PaneID?
-        var auto = autoSecureInput
-
-        withObservationTracking {
+        leafFollow = ObservationFollow.arm(self, replacing: leafFollow) { leaf in
             // The config-file edge. `AppConfig` is a plain locked global, so the two settings below
             // are not observable on their own — the REVISION is, and reading it here is what makes
             // a saved config file reconcile every open pane. See ``ConfigRevision``.
             _ = ConfigRevision.shared.generation
-            auto = SettingsKey.autoSecureInputEnabled
-            secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
-            conditions = pillConditions()
-            hintsToggled = live?.terminalModel?.showViKeyHints ?? false
-            findVisible = wiring.findBar.visible && live?.terminalModel != nil
-            // ⌃⌘O toggles the chrome flag through `onRequestBlockNavigator`; THIS read is what makes
-            // the chord actuate. Gated on a live model for the find bar's reason — the card's whole
-            // data source is that model's block store, and a pane with no session has none.
-            navigatorVisible = wiring.navigatorChrome.isVisible && live?.terminalModel != nil
-            dial = TerminalLeafPolicy.dialTaskKey(pane: live?.id, mayDial: store.panesMayDial)
-            autotype = TerminalLeafPolicy.autotypeTaskKey(
-                pane: live?.id,
-                isTarget: live?.isAutotypeTarget ?? false,
-                status: live?.connection?.status,
+            // Stored rather than returned because ``pillConditions()`` reads it off `self` on the
+            // very next line — the one write in this block, and it must land before that call.
+            leaf.secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
+            return (
+                auto: SettingsKey.autoSecureInputEnabled,
+                conditions: leaf.pillConditions(),
+                hintsToggled: leaf.live?.terminalModel?.showViKeyHints ?? false,
+                findVisible: leaf.wiring.findBar.visible && leaf.live?.terminalModel != nil,
+                // ⌃⌘O toggles the chrome flag through `onRequestBlockNavigator`; THIS read is what
+                // makes the chord actuate. Gated on a live model for the find bar's reason — the
+                // card's whole data source is that model's block store, and a pane with no session
+                // has none.
+                navigatorVisible: leaf.wiring.navigatorChrome.isVisible
+                    && leaf.live?.terminalModel != nil,
+                dial: TerminalLeafPolicy.dialTaskKey(
+                    pane: leaf.live?.id, mayDial: leaf.store.panesMayDial,
+                ),
+                autotype: TerminalLeafPolicy.autotypeTaskKey(
+                    pane: leaf.live?.id,
+                    isTarget: leaf.live?.isAutotypeTarget ?? false,
+                    status: leaf.live?.connection?.status,
+                ),
             )
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
+        } apply: { leaf, reading in
+            var conditions = reading.conditions
+            // The lock is reconciled only on the AUTO edge: the wiring re-syncs on a pane swap, so
+            // without this an engaged process-global lock would linger past the user turning
+            // `controls.auto-secure-input` off.
+            if reading.auto != leaf.autoSecureInput {
+                leaf.autoSecureInput = reading.auto
+                leaf.wiring.reconcileSecureInput(live: leaf.live, autoSecureInput: reading.auto)
+                // Re-asked OUTSIDE the tracking block on purpose: this is the post-reconcile reading,
+                // and the dependency it would register was already registered by the one in `read`.
+                conditions = leaf.pillConditions()
             }
+            leaf.applyChrome(
+                conditions: conditions, hintsToggled: reading.hintsToggled,
+                findVisible: reading.findVisible,
+            )
+            leaf.applyNavigator(reading.navigatorVisible)
+            leaf.applyTriggers(dial: reading.dial, autotype: reading.autotype)
         }
-
-        // The lock is reconciled only on the AUTO edge: the wiring re-syncs on a pane swap, so
-        // without this an engaged process-global lock would linger past the user turning
-        // `controls.auto-secure-input` off. Inline rather than a callback, because this method IS the
-        // observation callback — a hop back through it would recurse.
-        if auto != autoSecureInput {
-            autoSecureInput = auto
-            wiring.reconcileSecureInput(live: live, autoSecureInput: auto)
-            conditions = pillConditions()
-        }
-        applyChrome(conditions: conditions, hintsToggled: hintsToggled, findVisible: findVisible)
-        applyNavigator(navigatorVisible)
-        applyTriggers(dial: dial, autotype: autotype)
     }
 
     /// Everything the pill gates read, taken once per pass.

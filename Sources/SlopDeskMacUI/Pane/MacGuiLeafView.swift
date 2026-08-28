@@ -83,8 +83,10 @@ final class MacGuiLeafView: NSView {
 
     // MARK: The live reads
 
-    /// Supersedes an armed observation. An arm cannot be cancelled, so a stale callback drops itself.
-    private var generation = 0
+    /// The live follow. Stored for BOTH reasons the handle exists: ``follow()`` is re-entered from
+    /// four pushes, so each arm must displace the last, and ``detach()`` ends the following while
+    /// this leaf lives on waiting to be re-attached.
+    private var leafFollow: ObservationFollow?
     private var isWired = false
     /// `desktop.satellite-background-pointer`, re-read by ``follow()`` off ``ConfigRevision`` — it
     /// re-pushes the GATE rather than remounting, which is the whole point of `setPaneGates`.
@@ -219,7 +221,8 @@ final class MacGuiLeafView: NSView {
     private func detach() {
         guard isWired else { return }
         isWired = false
-        generation &+= 1
+        leafFollow?.stop()
+        leafFollow = nil
     }
 
     /// The pane is closed for good.
@@ -365,51 +368,42 @@ final class MacGuiLeafView: NSView {
     // MARK: - The live read
 
     /// ONE tracked read of everything this leaf draws, activates on, or triggers an immersive edge
-    /// from — re-armed by its own `onChange`, superseded by generation.
+    /// from.
     ///
-    /// One arm rather than one per concern for the same reason the terminal leaf gives:
-    /// `withObservationTracking` fires on the FIRST change to anything it read, so N arms cost N
-    /// callbacks for one edit and give nothing back.
+    /// One arm rather than one per concern for the same reason the terminal leaf gives: the tracking
+    /// fires on the FIRST change to anything `read` touched, so N arms cost N callbacks for one edit
+    /// and give nothing back. `replacing:` because four pushes re-enter this method — see
+    /// ``leafFollow``.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var display = RemoteGUIDisplay.entryForm
-        var activationKey = ""
-        var injectable = false
-        var immersiveWish = false
-        var chrome = Chrome()
-
-        withObservationTracking {
+        leafFollow = ObservationFollow.arm(self, replacing: leafFollow) { leaf in
             // The config-file edge — `AppConfig` is a plain locked global, so the setting below is
             // observable only through the revision. See ``ConfigRevision``.
             _ = ConfigRevision.shared.generation
-            satelliteBackgroundPointer = SettingsKey.satelliteBackgroundPointerEnabled
-            display = self.display
-            activationKey = GuiPaneReadout.activationKey(
-                paneHash: live?.id.hashValue ?? 0,
-                promotionGeneration: store.videoPromotionGeneration,
-                isVisible: isVisible,
+            // Stored rather than returned: ``readChrome()`` and ``push()`` both read the gate off
+            // `self`, so it must land before the reads below rather than travel in the tuple.
+            leaf.satelliteBackgroundPointer = SettingsKey.satelliteBackgroundPointerEnabled
+            return (
+                display: leaf.display,
+                activationKey: GuiPaneReadout.activationKey(
+                    paneHash: leaf.live?.id.hashValue ?? 0,
+                    promotionGeneration: leaf.store.videoPromotionGeneration,
+                    isVisible: leaf.isVisible,
+                ),
+                injectable: leaf.model?.canInjectSystemKeys ?? false,
+                immersiveWish: leaf.model?.immersiveEffective ?? false,
+                chrome: leaf.readChrome(),
             )
-            injectable = model?.canInjectSystemKeys ?? false
-            immersiveWish = model?.immersiveEffective ?? false
-            chrome = readChrome()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
+        } apply: { leaf, reading in
+            // ORDER MATTERS. Admission first (it can flip `model.active`, which the surface mounts
+            // on), then the pixels, then the gates, then the chrome that describes them.
+            leaf.applyActivation(key: reading.activationKey)
+            if reading.display == .live { leaf.mountSurface() } else {
+                leaf.unmountSurface(reading.display)
             }
+            leaf.push()
+            leaf.applyImmersiveEdges(injectable: reading.injectable, wish: reading.immersiveWish)
+            leaf.applyChrome(reading.chrome)
         }
-
-        // ORDER MATTERS. Admission first (it can flip `model.active`, which the surface mounts on),
-        // then the pixels, then the gates, then the chrome that describes them.
-        applyActivation(key: activationKey)
-        if display == .live { mountSurface() } else { unmountSurface(display) }
-        push()
-        applyImmersiveEdges(injectable: injectable, wish: immersiveWish)
-        applyChrome(chrome)
     }
 
     /// The pure three-state display decision, unchanged from the SwiftUI half.
