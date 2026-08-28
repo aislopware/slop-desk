@@ -1,5 +1,12 @@
 #if canImport(AppKit) || canImport(UIKit)
 
+// `CGSize` and nothing else. It arrived TRANSITIVELY through `import SwiftUI` until that line was
+// folded away with the leaf slots, and the file then referenced a type it no longer imported — 55
+// errors across this module, all of them this one absence. CoreGraphics rather than Foundation or a
+// view framework: the seam's whole point is that it names no view type, and a geometry struct is the
+// most this file may depend on.
+import CoreGraphics
+
 /// The **seam** between the client's canvas and a remote GUI-window video view (PATH 2 / Phase 4,
 /// doc 17 §3).
 ///
