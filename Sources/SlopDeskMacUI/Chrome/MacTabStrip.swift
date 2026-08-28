@@ -94,20 +94,14 @@ final class MacTabStrip: NSView {
 
     // MARK: The live rebuild
 
-    /// Re-derive the sections and reconcile the mounted islands against them, re-arming for the next
+    /// Re-derive the sections and reconcile the mounted islands against them, following the next
     /// STRUCTURAL change. Volatile chrome never reaches here: the chips read their own.
     private func refresh() {
-        var rows: [RailRow] = []
-        var order: [TabID] = []
-        withObservationTracking {
-            rows = rowsMemo.rows(for: store)
-            order = store.flatOrderedTabIDs()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
-            }
+        ObservationFollow.arm(self) { strip in
+            (rows: strip.rowsMemo.rows(for: strip.store), order: strip.store.flatOrderedTabIDs())
+        } apply: { strip, reading in
+            strip.reconcile(rows: reading.rows, tabOrder: reading.order)
         }
-        reconcile(rows: rows, tabOrder: order)
     }
 
     private func reconcile(rows: [RailRow], tabOrder: [TabID]) {
@@ -161,6 +155,9 @@ private final class MacTabIslandView: NSView {
     private let selection = CALayer()
     private var selected: PaneID?
     private var bed: Int?
+    /// See ``trackSelection()``: this island is REUSED across reconciles, so each arm must displace
+    /// the last.
+    private var selectionFollow: ObservationFollow?
 
     init(store: WorkspaceStore) {
         self.store = store
@@ -222,20 +219,20 @@ private final class MacTabIslandView: NSView {
     }
 
     /// Follow the focused pane and move — or ignite — the plate.
+    ///
+    /// `replacing:` although this method has ONE caller: that caller is ``apply(section:bed:)``, which
+    /// the strip re-runs against this REUSED island on every reconcile. A plain arm would leave one
+    /// live chain per reconcile, all of them moving the same plate.
     private func trackSelection() {
-        var focused: PaneID?
-        withObservationTracking {
-            focused = store.tree.activeSession?.activeTab?.activePane
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.trackSelection() }
-            }
+        selectionFollow = ObservationFollow.arm(self, replacing: selectionFollow) { island in
+            island.store.tree.activeSession?.activeTab?.activePane
+        } apply: { island, focused in
+            let next = focused.flatMap { island.chips[$0] == nil ? nil : $0 }
+            guard next != island.selected else { return }
+            let arriving = island.selected == nil
+            island.selected = next
+            island.moveSelection(igniting: arriving)
         }
-        let next = focused.flatMap { chips[$0] == nil ? nil : $0 }
-        guard next != selected else { return }
-        let arriving = selected == nil
-        selected = next
-        moveSelection(igniting: arriving)
     }
 
     /// The plate's travel. Arriving from ANOTHER island there is no plate here to move, so it IGNITES:
@@ -326,6 +323,9 @@ private final class MacTabChipView: NSView {
     private let mark = MacStatusMarkView()
 
     private var reading: SidebarRowReading
+    /// See ``refresh()``: the island re-runs it on this REUSED chip every reconcile, so each arm must
+    /// displace the last.
+    private var chipFollow: ObservationFollow?
     private var hovering = false
     private var tracking: NSTrackingArea?
 
@@ -374,21 +374,20 @@ private final class MacTabChipView: NSView {
         ])
     }
 
-    /// Re-resolve this chip against the store and repaint, re-arming the tracking for the next change.
+    /// Re-resolve this chip against the store and repaint.
+    ///
+    /// `replacing:` although nothing in this file calls it twice: the island calls `refresh()` on this
+    /// REUSED chip on every reconcile, so a plain arm would leave one live chain per reconcile.
     func refresh() {
-        var next: SidebarRowReading?
-        withObservationTracking {
-            next = SidebarRowPresentation.reading(
-                for: row, store: store, fallbackTitle: fallbackTitle,
+        chipFollow = ObservationFollow.arm(self, replacing: chipFollow) { chip in
+            SidebarRowPresentation.reading(
+                for: chip.row, store: chip.store, fallbackTitle: chip.fallbackTitle,
             )
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
-            }
+        } apply: { chip, next in
+            guard next != chip.reading else { return }
+            chip.reading = next
+            chip.apply(next)
         }
-        guard let next, next != reading else { return }
-        reading = next
-        apply(next)
     }
 
     private func apply(_ reading: SidebarRowReading) {
