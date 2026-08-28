@@ -67,8 +67,11 @@ final class PhonePaneSwitcherView: UIView {
     )
     /// The card's two live measurements, both taken against THIS view — which is the window, since the
     /// layer is full-bleed. The same relationship the Mac's panel has to its host window.
-    private var cardWidth: NSLayoutConstraint!
-    private var listHeight: NSLayoutConstraint!
+    ///
+    /// `lazy`, not implicitly-unwrapped: each one hangs off a stored view, so it cannot be built at the
+    /// declaration, but neither is ever absent once `build()` has run.
+    private lazy var cardWidth = card.widthAnchor.constraint(equalToConstant: .zero)
+    private lazy var listHeight = scroll.heightAnchor.constraint(equalToConstant: .zero)
 
     /// The rows currently drawn, so a step can find the highlighted one without re-resolving.
     private var drawn: [PaneSwitcherRow] = []
@@ -140,9 +143,6 @@ final class PhonePaneSwitcherView: UIView {
         column.spacing = 0
         column.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(column)
-
-        listHeight = scroll.heightAnchor.constraint(equalToConstant: 0)
-        cardWidth = card.widthAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
             floor.topAnchor.constraint(equalTo: topAnchor),
@@ -366,7 +366,7 @@ final class PhonePaneSwitcherRowView: SlateRowButton {
 
         isAccessibilityElement = true
         accessibilityLabel = [model.title, Self.placeLine(model)?.string]
-            .compactMap { $0 }
+            .compactMap(\.self)
             .joined(separator: ", ")
         accessibilityTraits = model.isHighlighted ? [.button, .selected] : .button
     }

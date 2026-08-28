@@ -123,7 +123,8 @@ final class KeyboardCheatSheetViewController: UIViewController {
     /// exactly the responder ``UIKeyCommand/slateCancel(action:)`` says to attach it to.
     override var keyCommands: [UIKeyCommand]? { [.slateCancel(action: #selector(closeSheet))] }
 
-    @objc private func closeSheet() { coordinator.closeCheatSheet() }
+    @objc
+    private func closeSheet() { coordinator.closeCheatSheet() }
 
     // MARK: - The rows
 

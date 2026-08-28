@@ -43,7 +43,9 @@ final class PhonePaletteCardView: UIView {
     private let search = SlateSearchBarView(prompt: PalettePresentation.queryPrompt)
     private let table = UITableView(frame: .zero, style: .plain)
     private lazy var dataSource = makeDataSource()
-    private var tableHeight: NSLayoutConstraint!
+    /// The viewport's height. `lazy` rather than an implicitly-unwrapped optional — it is minted from
+    /// a stored view, so it cannot be built at the declaration, but it is never absent either.
+    private lazy var tableHeight = table.heightAnchor.constraint(equalToConstant: .zero)
 
     /// The rows in draw order, and the same rows by id — the table hands back an ID and the cell needs
     /// the row.
@@ -120,7 +122,6 @@ final class PhonePaletteCardView: UIView {
         // The viewport stops at ``PaletteMetrics/resultsMaxHeight``; past that the LIST scrolls instead
         // of the card growing to the height of the window. Below it the card hugs its rows, so a
         // three-result query is a small card rather than a tall one with empty paper under the rows.
-        tableHeight = table.heightAnchor.constraint(equalToConstant: 0)
         tableHeight.isActive = true
 
         NSLayoutConstraint.activate([
@@ -266,6 +267,14 @@ final class PhonePaletteCardView: UIView {
     /// ⌘↩ chains — it runs the row and LEAVES the card up — while a plain ↩ runs and closes, and the two
     /// cannot both live here: plain Return is the field's own submit (see ``build()``), so only the
     /// modified form is declared as a command and the pair can never double-fire.
+    ///
+    /// ⚠️ A HELD ARROW STEPS ONCE, and that is a HOLE rather than a choice — the same one
+    /// ``PhoneCommandNavigator`` records, for the same reason. The deleted card ran held keys through
+    /// `OverlayKeyRepeat`, a whitelist typed on `KeyEquivalent` and `KeyPress.Phases`, and docs/62 §7
+    /// item 1 does not port it: it MERGES into `rust/slopdesk-workspace::key_repeat`, so the overlays
+    /// become a second consumer of the hardware latch the terminal already drives rather than a second
+    /// repeat policy with the same name. Until that stage lands, a private clock here would be exactly
+    /// the parallel the merge exists to end.
     override var keyCommands: [UIKeyCommand]? {
         [
             command(UIKeyCommand.inputUpArrow, #selector(moveUp)),
@@ -300,14 +309,22 @@ final class PhonePaletteCardView: UIView {
         PaletteMetrics.pageStride(rowHeight: Double(Slate.Metric.heightRowTall))
     }
 
-    @objc private func moveUp() { overlay.moveSelection(-1) }
-    @objc private func moveDown() { overlay.moveSelection(1) }
-    @objc private func moveToFirst() { overlay.moveSelectionToFirst() }
-    @objc private func moveToLast() { overlay.moveSelectionToLast() }
-    @objc private func pageUp() { overlay.moveSelection(-pageStride) }
-    @objc private func pageDown() { overlay.moveSelection(pageStride) }
-    @objc private func acceptKeepingOpen() { overlay.acceptSelectedKeepingOpen() }
-    @objc private func cancel() { overlay.closePalette() }
+    @objc
+    private func moveUp() { overlay.moveSelection(-1) }
+    @objc
+    private func moveDown() { overlay.moveSelection(1) }
+    @objc
+    private func moveToFirst() { overlay.moveSelectionToFirst() }
+    @objc
+    private func moveToLast() { overlay.moveSelectionToLast() }
+    @objc
+    private func pageUp() { overlay.moveSelection(-pageStride) }
+    @objc
+    private func pageDown() { overlay.moveSelection(pageStride) }
+    @objc
+    private func acceptKeepingOpen() { overlay.acceptSelectedKeepingOpen() }
+    @objc
+    private func cancel() { overlay.closePalette() }
 }
 
 // MARK: - Tapping a row
@@ -588,19 +605,23 @@ final class PhonePaletteRowCell: UITableViewCell {
             if let cap = keycap, cap.text == shortcut {
                 cap.lit = selected
             } else {
-                keycap.map { trailing.removeArrangedSubview($0); $0.removeFromSuperview() }
+                keycap.map { trailing.removeArrangedSubview($0)
+                    $0.removeFromSuperview()
+                }
                 let cap = SlateKeycapView(label: shortcut, lit: selected)
                 keycap = cap
                 trailing.addArrangedSubview(cap)
             }
         } else {
-            keycap.map { trailing.removeArrangedSubview($0); $0.removeFromSuperview() }
+            keycap.map { trailing.removeArrangedSubview($0)
+                $0.removeFromSuperview()
+            }
             keycap = nil
         }
 
         isAccessibilityElement = true
         accessibilityLabel = [item.title, item.subtitle, item.shortcut]
-            .compactMap { $0 }
+            .compactMap(\.self)
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
         accessibilityTraits = .button

@@ -63,6 +63,15 @@ enum PhoneOverlaySheet: CaseIterable {
     case peekReply
     case globalSearch
     case connect
+
+    /// Whether the card takes the WHOLE sheet rather than hugging its content.
+    ///
+    /// Global search alone, and ``GlobalSearchMetrics`` is where that is decided rather than here: the
+    /// Mac's panel is a fixed size because the workspace behind it is the context every hit jumps into,
+    /// and the phone "takes the whole sheet instead" because on a screen with no *behind* there is
+    /// nothing to leave uncovered. It is also the only one of the five whose content cannot answer a
+    /// height question — see ``PhoneOverlayCardHostView/fill(_:)``.
+    var fills: Bool { self == .globalSearch }
 }
 
 @MainActor
@@ -176,8 +185,9 @@ final class PhoneOverlayCardHostView: UIView {
         }
         guard let made = make(active) else {
             // ⚠️ A FLAG WITH NOTHING TO DRAW IS CLOSED AT ONCE, and this is a safety valve rather than a
-            // feature. Three of the four surfaces have not been rebuilt in UIKit yet, and leaving one of
-            // their flags SET would be far worse than doing nothing: `anyModalVisible` is what
+            // feature. One surface — Connect, which has a CONTROLLER of its own and is waiting only on
+            // the shell to present it — is not drawn here, and leaving its flag SET would be far worse
+            // than doing nothing: `anyModalVisible` is what
             // ``ContentColumnViewController`` shields the canvas on, so a ⌘⇧O with no picker behind it
             // would disable the whole workspace with no card and no floor to dismiss. Closing turns "not
             // ported" into a chord that does nothing, which is recoverable.
@@ -192,42 +202,106 @@ final class PhoneOverlayCardHostView: UIView {
         card = made
         made.translatesAutoresizingMaskIntoConstraints = false
         addSubview(made)
-        // Centred, on the margin the card must never run out of, and capped at the family's own panel
-        // width so an iPad does not stretch the keycap column a screen away from the titles.
-        let width = made.widthAnchor.constraint(
-            lessThanOrEqualToConstant: CGFloat(PaletteMetrics.panelWidth),
-        )
-        let full = made.widthAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.widthAnchor, constant: -2 * Slate.Metric.space4,
-        )
-        full.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            made.centerXAnchor.constraint(equalTo: centerXAnchor),
-            made.centerYAnchor.constraint(equalTo: centerYAnchor),
-            width, full,
-            made.topAnchor.constraint(
-                greaterThanOrEqualTo: safeAreaLayoutGuide.topAnchor, constant: Slate.Metric.space4,
-            ),
-            made.bottomAnchor.constraint(
-                lessThanOrEqualTo: safeAreaLayoutGuide.bottomAnchor, constant: -Slate.Metric.space4,
-            ),
-        ])
+        NSLayoutConstraint.activate(active.fills ? fill(made) : hug(made))
         // The card arrives by fading in. Seeded at zero FIRST — ``PaneFade`` guards on the opacity it
         // finds, so an already-opaque view would simply never animate.
         made.layer.opacity = 0
         PaneFade.set(made, shown: true, curve: Slate.Motion.smallFade)
     }
 
-    /// Builds the card for `sheet`, or `nil` while that surface is still SwiftUI-shaped — see the
+    /// Builds the card for `sheet`, or `nil` for the one surface this layer does not draw — see the
     /// safety valve above for what `nil` costs.
+    ///
+    /// ⚠️ `.connect` IS THE `nil`, AND THIS CASE MUST GO when the shell wires it up. It is a
+    /// ``ConnectHostViewController``, a real presentation with system chrome, so it belongs to whatever
+    /// PRESENTS the panel/cheat-sheet pair and must queue behind them — not to an in-window layer that
+    /// would draw it a second time.
     private func make(_ sheet: PhoneOverlaySheet) -> UIView? {
         switch sheet {
         case .palette: PhonePaletteCardView(store: store, overlay: overlay, toggledState: toggledState)
-        case .openQuickly,
-             .peekReply,
-             .globalSearch,
-             .connect: nil
+        case .globalSearch: PhoneGlobalSearchCardView(store: store, overlay: overlay)
+        case .openQuickly: PhoneOpenQuicklyCardView(store: store, overlay: overlay)
+        case .peekReply: PhonePeekReplyCardView(store: store, overlay: overlay)
+        case .connect: nil
         }
+    }
+
+    // MARK: - The two sizings
+
+    /// The family's own: CENTRED, on the margin the card must never run out of, and capped at the panel
+    /// width so an iPad does not stretch the keycap column a screen away from the titles. A card sized
+    /// this way HUGS — it is as tall as its content, and its content is what decides.
+    ///
+    /// The CENTRE is only a preference here (``UILayoutPriority/defaultHigh``), and that is the software
+    /// keyboard's doing: every surface in this family opens by taking first responder, so the keyboard is
+    /// up before the card has drawn once, and a REQUIRED centre plus a keyboard-aware floor is
+    /// unsatisfiable for any card taller than the half-screen that leaves. Broken deliberately, the
+    /// solver parks the card as near centred as the two caps permit — which is against the keyboard.
+    private func hug(_ card: UIView) -> [NSLayoutConstraint] {
+        let width = card.widthAnchor.constraint(
+            lessThanOrEqualToConstant: CGFloat(PaletteMetrics.panelWidth),
+        )
+        let full = card.widthAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.widthAnchor, constant: -2 * Slate.Metric.space4,
+        )
+        full.priority = .defaultHigh
+        let centre = card.centerYAnchor.constraint(equalTo: centerYAnchor)
+        centre.priority = .defaultHigh
+        return [
+            card.centerXAnchor.constraint(equalTo: centerXAnchor),
+            centre,
+            width, full,
+            card.topAnchor.constraint(
+                greaterThanOrEqualTo: safeAreaLayoutGuide.topAnchor, constant: Slate.Metric.space4,
+            ),
+        ] + floors(card)
+    }
+
+    /// The whole sheet, on the same margin. Four sides PINNED, where the recipe above has two caps and a
+    /// hug — which is the difference, not a tweak to it: a filling card is told its height instead of
+    /// being asked for one, and a table view (which has no intrinsic size at all) can only be given one
+    /// that way. Asked, it answers zero, and the card would collapse to its query bar.
+    ///
+    /// The bottom is the ONE exception to "pinned", for the reason in ``floors(_:)``: it is the two caps
+    /// plus a low-priority reach for the safe area, so the card is as tall as the space it is left rather
+    /// than a fixed height that the keyboard then covers.
+    private func fill(_ card: UIView) -> [NSLayoutConstraint] {
+        let tall = card.bottomAnchor.constraint(
+            equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -Slate.Metric.space4,
+        )
+        tall.priority = .defaultLow
+        return [
+            card.topAnchor.constraint(
+                equalTo: safeAreaLayoutGuide.topAnchor, constant: Slate.Metric.space4,
+            ),
+            tall,
+            card.leadingAnchor.constraint(
+                equalTo: safeAreaLayoutGuide.leadingAnchor, constant: Slate.Metric.space4,
+            ),
+            card.trailingAnchor.constraint(
+                equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -Slate.Metric.space4,
+            ),
+        ] + floors(card)
+    }
+
+    /// The bottom edge, for BOTH sizings, and it is two caps rather than one because the two guides
+    /// answer different questions and neither subsumes the other. `safeAreaLayoutGuide` knows about the
+    /// home indicator and nothing about the keyboard; `keyboardLayoutGuide` tracks the keyboard and, when
+    /// it is down, sits flush with the view's bottom EDGE — under the indicator. Taking the lower of the
+    /// two is the only spelling that is right in both states.
+    ///
+    /// ⚠️ THIS IS NOT DECORATION — the card opens with the keyboard already up. Without the keyboard cap
+    /// a filling card's last rows sit BEHIND it and can never be scrolled out from under it, since the
+    /// table's own insets know nothing about a view the card is not inside.
+    private func floors(_ card: UIView) -> [NSLayoutConstraint] {
+        [
+            card.bottomAnchor.constraint(
+                lessThanOrEqualTo: safeAreaLayoutGuide.bottomAnchor, constant: -Slate.Metric.space4,
+            ),
+            card.bottomAnchor.constraint(
+                lessThanOrEqualTo: keyboardLayoutGuide.topAnchor, constant: -Slate.Metric.space4,
+            ),
+        ]
     }
 
     // MARK: - Closing

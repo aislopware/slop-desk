@@ -407,7 +407,7 @@ final class ClipboardConfirmCard: UIView {
         // preview a one-line plate, and the required cap is what stops a long one from pushing the
         // buttons off the screen. The cap breaks the equality rather than the layout.
         let natural = plate.heightAnchor.constraint(
-            equalTo: text.heightAnchor, constant: 2 * SlateFieldPlateSurface.verticalInset,
+            equalTo: text.heightAnchor, constant: SlateFieldPlateSurface.verticalInset * 2,
         )
         natural.priority = .defaultHigh
         NSLayoutConstraint.activate([

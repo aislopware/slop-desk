@@ -324,7 +324,8 @@ final class ConnectHostViewController: UIViewController {
     /// pill is a silent failure. The close is DOUBLE-guarded — the Task is stored and cancelled on
     /// Cancel/teardown, AND the completion only closes if the coordinator's generation still matches the
     /// presentation this Task started under.
-    @objc private func runConnect() {
+    @objc
+    private func runConnect() {
         guard connection.canConnect else { return }
         connectTask?.cancel()
         let generation = coordinator.connectGeneration
@@ -338,7 +339,8 @@ final class ConnectHostViewController: UIViewController {
 
     /// Cancel: kill the in-flight connect Task (its completion must never fire) and flip the flag. The
     /// shell's reconcile is what actually dismisses the sheet.
-    @objc private func runCancel() {
+    @objc
+    private func runCancel() {
         connectTask?.cancel()
         connectTask = nil
         coordinator.closeConnect()
