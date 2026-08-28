@@ -2,7 +2,7 @@
 // chip that ride with it (docs/56 §3, the video carve).
 //
 // THIS FILE IS ONE HALF OF A DELIBERATE DUPLICATION. Its phone twin is
-// `SlopDeskVideoClientPhone/VideoPaneView.swift`, and the two are not meant to converge: the
+// `SlopDeskVideoClientPhone/VideoSurfaceHost.swift`, and the two are not meant to converge: the
 // user's standing directive is two separate implementations, and docs/56 §3 draws the line this
 // obeys — LAYOUT diverges, CAPABILITY does not. What is duplicated here is arrangement (a closure
 // list, a controls object's fields, a chip's geometry). What is NOT duplicated, and must never be,

@@ -3633,7 +3633,7 @@ final class GhosttyLayerBackedView: UIView {
             // feed's content signal was dropped and only the free-running tick presented).
             s.onContentChanged = { [weak self] in self?.requestPresent() }
             // A landed Copy / OSC-52 STANDARD-clipboard write → the pane's transient `COPIED · N` receipt
-            // chip, which the phone draws in its island (`SlopDeskPhoneUI/Overlays/IslandChipStack.swift`)
+            // chip, which the phone draws in its island (`SlopDeskPhoneUI/Pane/IslandChipStackView.swift`)
             // and which stayed dark on this half only because nothing observed the write. libghostty owns
             // the write; this is the one point that sees the text.
             s.onClipboardWrite = { [weak model] text in model?.noteClipboardCopy(text) }
@@ -3684,7 +3684,7 @@ final class GhosttyLayerBackedView: UIView {
         model.onResizeSettled = { [weak self] in self?.requestPresent(8) }
         // The find bar / an overlay closing tears down a focused field WITHOUT a workspace-focus change,
         // so none of the pane's own focus paths fire and the pane stays deaf. Its two live callers are
-        // `SlopDeskPhoneUI/Overlays/OverlayHostView.swift` and
+        // `SlopDeskPhoneUI/Overlays/PhoneOverlayCardHost.swift` and
         // `SlopDeskClientCore/Pane/TerminalFindBarModel.swift`, both of which reach `reclaimKeyboardFocus()`
         // on the model; on this half the responder is the input host beside us, not this view.
         model.onReclaimKeyboardFocus = { [weak self] in self?.reclaimPaneKeyboardFocus() }

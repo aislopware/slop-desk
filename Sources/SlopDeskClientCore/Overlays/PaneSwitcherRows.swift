@@ -19,7 +19,7 @@
 //
 // TWO HALVES READ THIS FILE, and the second one arrived late. The Mac draws the rows in an `NSPanel`
 // (`Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift`), the phone in a paper card
-// (`Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift`) — and for a while the phone drew
+// (`Sources/SlopDeskPhoneUI/Overlays/PhonePaneSwitcherView.swift`) — and for a while the phone drew
 // NOTHING, while the binding row that opens the gesture said `Platform::Both`. ⌃⇥ on an iPad therefore
 // veiled every pane (``PaneFocusPolicy/showsSwitcherRecede(switcherIsOpen:isFocused:)`` reads the same
 // store flag) behind a card that did not exist, with no way to step, commit or cancel. Everything the

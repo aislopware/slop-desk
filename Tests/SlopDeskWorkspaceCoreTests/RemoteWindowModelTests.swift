@@ -305,7 +305,7 @@ final class RemoteWindowModelTests: XCTestCase {
 
     /// The kbps dirty-guard behind the connection surface's bitrate reading.
     ///
-    /// This lived in `Apps/ClientApp-iOS/Tests/ConnectionPillTests.swift` because the SwiftUI
+    /// This lived in the iOS bundle's `ConnectionPillTests` because the SwiftUI
     /// `ConnectionPill` was iOS-only. The pill is gone and the assertion never touched it — it is
     /// plain `SlopDeskWorkspaceCore` logic — so keeping it in the iOS bundle only meant it ran under
     /// `slopdesk-gate ios-tests` and nowhere else. Here it runs on every `swift test`.

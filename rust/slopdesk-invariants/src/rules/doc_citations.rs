@@ -53,6 +53,12 @@ const DOCC_EXTERNAL: [&str; 3] = ["SwiftUICore", "CGDisplayGammaTable", "CGEvent
 /// content of that line is which file each half of `PhoneAppDelegate`/`PhoneSceneDelegate` was cut
 /// out of. Repointing it at either successor would make the sentence claim the rewrite moved
 /// something that was already there.
+/// ⚠️ THIS LIST IS THIS RULE'S ALONE, and it does NOT exempt a Swift COMMENT.
+/// `repo_invariants::source_comments_cite_files_that_exist` is the other half of the same
+/// question and carries no list at all, on purpose — it is SHAPE, so it cannot decay. A comment
+/// recording a deleted file is not fixed by an entry here; it is fixed by not spelling a backticked
+/// PATH, which that rule's own doc says stays legal. Adding the name here instead silently does
+/// nothing.
 const PATH_TOMBSTONES: [&str; 25] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",

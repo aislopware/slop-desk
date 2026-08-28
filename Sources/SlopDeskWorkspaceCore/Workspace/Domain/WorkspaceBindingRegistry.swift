@@ -100,9 +100,9 @@ public enum WorkspaceAction: Hashable, Sendable {
     // VS Code (code-server in a WKWebView — every pane of one project shares the ONE instance opened
     // at that project's root). ⌘⇧R, mirroring ⌘⇧L on the left panel. Window-scope chrome → needs no
     // active pane. iOS HAS the code panel — the old note here said it did not, which stopped being
-    // true: `SlopDeskPhoneUI/WorkspaceRootView.swift` mounts the same `CodePanelSurfaces` as a
-    // `.fullScreenCover` and installs this closure. A sidebar on the Mac, a cover on the phone, is
-    // the layout difference the split exists for; the capability is on both.
+    // true: `SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift` mounts the same
+    // `CodePanelSurfaces` full-screen and installs this closure. A sidebar on the Mac, a cover on
+    // the phone, is the layout difference the split exists for; the capability is on both.
     case toggleCodeSidebar
     // View → Switch Editor / Terminal Focus: move the KEYBOARD between the terminal and the embedded
     // editor, and back. ⌥⌘R, the sibling of ⌘⇧R (that one shows/hides the panel; this one decides who types
