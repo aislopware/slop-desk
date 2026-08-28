@@ -104,8 +104,9 @@ package final class PaneMoveEscapeMonitorController {
     ///
     /// A refused install (AppKit returns `nil`) leaves the controller disarmed rather than half-armed, and the
     /// next call simply tries again. That was `PaneMoveEscapeResponder`'s rule on the other platform too, and
-    /// it survives that type: docs/62 stage E.2 dissolves it into ``UIKeyCommand/slateCancel(action:)``, which
-    /// a responder either publishes or does not. A half-taken grab is what strands a keyboard.
+    /// it survives that type: docs/62 stage E.2 dissolves it into the canvas controller's `pressesBegan`
+    /// (``SlopDeskPhoneUI/SplitCanvasView``'s header names the same move), where a press is either claimed or
+    /// passed to `super`. A half-taken grab is what strands a keyboard.
     package func arm(onCancel: @escaping () -> Void) {
         self.onCancel = onCancel
         guard monitor == nil else { return }
