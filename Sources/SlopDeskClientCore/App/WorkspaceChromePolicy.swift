@@ -45,13 +45,18 @@ package enum WorkspaceChromePolicy {
 
     /// A user swipe of the iPad's leading TABS column — the SECOND manual entry point besides
     /// ``WorkspaceChromeState/toggleSidebar`` — writes the shared `chrome.sidebarCollapsed` flag AND,
-    /// when it GENUINELY flips it (a real collapse/reveal, not a SwiftUI echo of the value the
-    /// auto-hide policy just set), records `manualSidebarOverride` so ``applyAutoHide(mode:tabCount:chrome:)``
+    /// when it GENUINELY flips it, records `manualSidebarOverride` so ``applyAutoHide(mode:tabCount:chrome:)``
     /// honors the swipe like ⌘⇧L. Without this an iPad user who swipes the panel away at >1 tabs
     /// would have it forcibly REVEALED on the next within-regime tab open/close (policy sees no
-    /// override → re-asserts `desired=false`). The `!=` guard distinguishes a genuine swipe from the
-    /// binding echo SwiftUI fires when the getter-derived value is written back unchanged, so a
-    /// policy-driven change is never mis-recorded as manual.
+    /// override → re-asserts `desired=false`).
+    ///
+    /// The `!=` guard is what keeps an ECHO from being read as a choice. It was written against
+    /// SwiftUI's binding write-back and outlived it unchanged: `splitViewController(_:willChangeTo:)`
+    /// fires whether the display mode moved because of the user's finger or because the shell assigned
+    /// `preferredDisplayMode`, so the callback the auto-hide policy's OWN actuation provokes arrives
+    /// here indistinguishable from a swipe. Recording that as manual would freeze the policy out of the
+    /// next regime edge it legitimately owns. The phone shell pairs this with an `isActuating` flag for
+    /// the ordering the value guard cannot see — a callback that lands mid-assignment.
     package static func applySidebarCollapsed(_ collapsed: Bool, chrome: WorkspaceChromeState) {
         guard collapsed != chrome.sidebarCollapsed else { return }
         chrome.manualSidebarOverride = true

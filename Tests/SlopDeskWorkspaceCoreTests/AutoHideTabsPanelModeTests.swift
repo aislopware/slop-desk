@@ -4,25 +4,18 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the auto-hide CROSSING (``SidebarAutoHidePolicy``) plus the ``AutoHideTabsPanelMode`` enum's
-/// round-trip and repair out of the config file, which stay on this side because they are what the
-/// file's token decodes through. No `NSWindow`/view instantiation.
+/// Pins the ``AutoHideTabsPanelMode`` enum's round-trip and its repair out of the config file — what
+/// the file's token decodes THROUGH. Deliberately nothing about the auto-hide DECISION: that is
+/// `slopdesk_settings::chrome`, tested there, and the `SidebarAutoHidePolicy` wrapper this file used to
+/// exercise was deleted with the SwiftUI wiring that was its only caller. A Swift assertion re-stating a
+/// Rust one is the cross-language mirror the one-implementation rule forbids; what belongs on this side
+/// is the `Defaults`/`AppConfig` bridging below, which has no Rust twin.
+///
+/// The Swift MARSHALLING of the surviving door — the `nil`↔`(value, present)` trip and its guarded
+/// writes — is pinned by `Tests/SlopDeskClientCoreTests/ChromeAutoHideTests.swift`, beside the type that
+/// performs it. No `NSWindow`/view instantiation here or there.
 @MainActor
-final class SidebarAutoHidePolicyTests: XCTestCase {
-    /// Each mode reaches its own case index, and the door's `-1` — the no-opinion rung the two
-    /// non-`auto` modes answer with — reads back as `nil` rather than as either boolean. The rule is
-    /// `slopdesk_workspace::chrome::desired_collapsed`'s.
-    func testTheNoOpinionRungReadsBackAsNilForBothNonAutoModes() {
-        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 1), true)
-        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 2), false)
-        for count in [0, 1, 2, 99] {
-            XCTAssertNil(SidebarAutoHidePolicy.desiredCollapsed(mode: .default, tabCount: count))
-            XCTAssertNil(SidebarAutoHidePolicy.desiredCollapsed(mode: .always, tabCount: count))
-        }
-    }
-
-    // MARK: AutoHideTabsPanelMode raw values + Defaults round-trip / repair
-
+final class AutoHideTabsPanelModeTests: XCTestCase {
     /// The enum raw values are the `auto-hide-tabs-panel` config tokens and round-trip exactly.
     func testAutoHideTabsPanelModeRawRoundTrip() {
         XCTAssertEqual(AutoHideTabsPanelMode.allCases, [.default, .always, .auto])

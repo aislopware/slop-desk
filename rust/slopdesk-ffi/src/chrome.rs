@@ -6,10 +6,16 @@
 //!
 //! ## The three-valued answers
 //!
-//! Two of these have a rung that means "no opinion", and each says so in the way its own answer
-//! allows: the sidebar's returns `-1` beside the two booleans `0` and `1`, and the Dock's carries a
-//! `present` flag beside its fraction. Both are §4's rule read at the scale of one value: the
-//! refusal must be outside the range of every real answer, or a caller will one day read it as one.
+//! Several values here have a rung that means "absent", and C has no optional to spell it with, so
+//! each carries a `present` flag beside the value it qualifies: `last_auto_present` on the sidebar
+//! state, `fraction_present` on the Dock tile. That is §4's rule read at the scale of one value —
+//! the refusal must be outside the range of every real answer, or a caller will one day read it as
+//! one, and `false` is a perfectly good answer to "was the panel last driven collapsed?".
+//!
+//! A door whose whole answer is three-valued can say it in the return instead, the way
+//! `desired_collapsed` once returned `-1` beside `0` and `1`. That door is gone (see
+//! [`slopdesk_ws_sidebar_apply_auto_hide`]); the `present`-flag spelling is what survives, because
+//! it composes — a struct can carry several absences, a sentinel return can carry one.
 
 use slopdesk_settings::chrome::{
     self, AutoHideMode, CloseConfirm, DockTile, DwellGate, DwellPhase, Rollup, SidebarState,
@@ -106,21 +112,13 @@ const fn rollup_of(raw: u8, percent: u8) -> Option<Rollup> {
     }
 }
 
-/// Whether the sidebar should be collapsed: `1` collapse · `0` reveal · `-1` no opinion.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_sidebar_desired_collapsed(mode: u8, tab_count: usize) -> i32 {
-    match chrome::desired_collapsed(mode_of(mode), tab_count) {
-        Some(true) => 1,
-        Some(false) => 0,
-        None => -1,
-    }
-}
-
 /// The sidebar flags the chrome should hold after applying the auto-hide policy.
+///
+/// The bare `desired_collapsed` rung is NOT exported beside this one. It was, and the near side
+/// wrapped it in a `SidebarAutoHidePolicy` that the SwiftUI wiring called; the imperative shells
+/// actuate through this composed door instead, so the wrapper's last caller left with the view and
+/// the exported rung existed only to serve it. `chrome::desired_collapsed` is still the rule —
+/// `apply_auto_hide` calls it one line down, and `slopdesk-settings` tests it directly.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -291,20 +289,25 @@ mod tests {
         CSidebarState, SLOPDESK_WS_DWELL_ARMING, SLOPDESK_WS_DWELL_HIDDEN, SLOPDESK_WS_DWELL_REVEALED,
         slopdesk_ws_close_should_confirm, slopdesk_ws_dock_tile, slopdesk_ws_dwell_deadline,
         slopdesk_ws_dwell_gate, slopdesk_ws_dwell_update, slopdesk_ws_sidebar_apply_auto_hide,
-        slopdesk_ws_sidebar_desired_collapsed,
     };
 
+    /// A mode byte no case spells stays QUIET rather than picking a rung. This survived the
+    /// deletion of the bare `desired_collapsed` door, which is where it used to be asserted:
+    /// `mode_of` is the arm that repairs it, and the composed door is now the only way to reach
+    /// it from outside.
     #[test]
-    fn the_no_opinion_answer_is_outside_both_booleans() {
-        assert_eq!(slopdesk_ws_sidebar_desired_collapsed(2, 1), 1);
-        assert_eq!(slopdesk_ws_sidebar_desired_collapsed(2, 2), 0);
-        assert_eq!(slopdesk_ws_sidebar_desired_collapsed(0, 1), -1);
-        assert_eq!(slopdesk_ws_sidebar_desired_collapsed(1, 1), -1);
-        assert_eq!(
-            slopdesk_ws_sidebar_desired_collapsed(200, 1),
-            -1,
-            "an unknown mode is quiet"
-        );
+    fn an_unknown_mode_byte_actuates_nothing() {
+        let held = CSidebarState {
+            collapsed: true,
+            manual_override: true,
+            last_auto: false,
+            last_auto_present: true,
+        };
+        let after = slopdesk_ws_sidebar_apply_auto_hide(200, 5, held);
+        assert!(after.collapsed, "an unknown mode repairs to one with no opinion");
+        assert!(after.manual_override, "…so every flag is handed straight back");
+        assert!(after.last_auto_present);
+        assert!(!after.last_auto);
     }
 
     #[test]

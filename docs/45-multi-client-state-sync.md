@@ -249,7 +249,7 @@ this document is false.
 | All of `PreferencesStore` (`PreferencesStore.swift:37-138`) — font, theme, cursor, scrollback depth, keybindings, appearance/density | A 27″ Studio and an iPhone must not share a font size. The one-way `video-prefs.json` sidecar hostd reads at *its* next launch is config drop, not sync; unchanged. |
 | `FolderFrecencyStore` | Per-device Open-Quickly MRU, shell-history-shaped. |
 | `recentCommands` (`:1465`), `clipboardRing` (`:1483`) | Per-device rings. Clipboard **sync** (verbs 15/16) is a separate shipped feature and stays as-is — the *ring* is local. |
-| `WindowSizeMode`, `SidebarAutoHidePolicy`, `NewTabPosition`, `AutoHideTabsPanelMode` | How **this window** behaves. |
+| `WindowSizeMode`, `NewTabPosition`, `AutoHideTabsPanelMode` (actuated by `WorkspaceChromePolicy.applyAutoHide`) | How **this window** behaves. |
 | NSWindow frame, sidebar width, rail collapsed | Ditto. |
 | `Session.connection: ConnectionTarget?` (`Tree/Session.swift:49`) | "Which host am I talking to" is definitionally a client concept. `project()` joins host topology with a client-side connection identity keyed by `hostKey` — the same key that validates `workspace-cache.json` (§7.3). |
 | `TreeWorkspace.videoModesByTarget` | Binding precedent, [DECISIONS.md](DECISIONS.md):1312-1321 — see §12 Entry 2 for the full three-leg quote and which leg this design obsoletes. |

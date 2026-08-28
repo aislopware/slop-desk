@@ -1,11 +1,15 @@
 // WorkspaceChromeState — the small @Observable chrome model the toolbar toggles drive.
 //
 // Owns the sidebar collapse flag the sidebar's own toggle (and the titlebar's collapsed-state reopen
-// button) flips. The macOS
-// `WorkspaceSplitRepresentable.updateNSViewController` reads it each update and animates the matching
-// `NSSplitViewItem.isCollapsed`. Kept separate from `WorkspaceStore` (whose legacy `sidebarCollapsed`
-// predates the native rebuild and isn't read by the new navigator) so the chrome flags live in one
-// place and reading them in the SwiftUI body re-invalidates the representable.
+// button) flips. Each shell's tracked arm — `MacWorkspaceWindowController` / `WorkspaceRootViewController`
+// — reads it and actuates its own split: `NSSplitViewItem.isCollapsed` on the Mac,
+// `UISplitViewController.preferredDisplayMode` on the phone. Kept separate from `WorkspaceStore` (whose
+// legacy `sidebarCollapsed` predates the native rebuild and isn't read by the new navigator) so the
+// chrome flags live in one place and one `withObservationTracking` read covers them all.
+//
+// Every write here is GUARDED — see `WorkspaceChromePolicy.applyAutoHide`. Under the imperative shells
+// that is not a nicety: an arm re-fires on any tracked field, so a flag reassigned to the value it
+// already held costs a whole re-arm plus whatever the arm actuates. `ChromeAutoHideTests` pins it.
 
 import Defaults
 import Foundation
@@ -58,9 +62,9 @@ package final class WorkspaceChromeState {
 
     /// Auto-hide-tabs-panel: set whenever the user MANUALLY toggles the TABS panel — on macOS ⌘⇧L,
     /// the titlebar button, and the palette row all flip the flag through ``toggleSidebar()``; on iPad a swipe of
-    /// the leading column routes through `SidebarColumnVisibility.apply`, the SECOND manual entry
-    /// point (both record this override; the auto-hide policy writes `sidebarCollapsed` DIRECTLY, never via
-    /// either, so it never sets this). While set, ``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)`` must NOT fight the manual choice on an
+    /// the leading column routes through ``WorkspaceChromePolicy/applySidebarCollapsed(_:chrome:)``, the SECOND
+    /// manual entry point (both record this override; the auto-hide policy writes `sidebarCollapsed` DIRECTLY,
+    /// never via either, so it never sets this). While set, ``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)`` must NOT fight the manual choice on an
     /// UNRELATED tab open/close (a tab-count change that does not cross the 1↔>1 regime edge). Cleared when the
     /// policy crosses that edge — there the default-state opinion ("hidden when only one tab") legitimately
     /// re-asserts. Pure view state; not persisted.
@@ -73,7 +77,7 @@ package final class WorkspaceChromeState {
     package var lastAutoHideCollapsed: Bool?
 
     /// Manual entry point for the TABS-panel toggle (⌘⇧L / titlebar / palette; the iPad column swipe is the other,
-    /// via `SidebarColumnVisibility.apply`). Records the manual override so the auto-hide policy won't
+    /// via ``WorkspaceChromePolicy/applySidebarCollapsed(_:chrome:)``). Records the manual override so the auto-hide policy won't
     /// revert it on an unrelated tab open/close ("do NOT fight a manual ⌘⇧L").
     package func toggleSidebar() {
         sidebarCollapsed.toggle()

@@ -341,7 +341,7 @@ public enum SettingsKey {
 
     /// When the vertical TABS panel is shown (`shell.auto-hide-tabs-panel`), default `.default`
     /// (always). Only `.auto` auto-hides when the active session has a single tab — the decision
-    /// lives in ``SidebarAutoHidePolicy/desiredCollapsed(mode:tabCount:)``.
+    /// lives in `slopdesk_settings::chrome`, reached through `WorkspaceChromePolicy.applyAutoHide`.
     public static var autoHideTabsPanel: AutoHideTabsPanelMode {
         AppConfig.current.choice("shell.auto-hide-tabs-panel", AutoHideTabsPanelMode.default)
     }

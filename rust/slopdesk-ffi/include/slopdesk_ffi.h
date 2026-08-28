@@ -819,8 +819,7 @@ typedef struct {
     bool   fraction_present; // false is the indeterminate spinner
 } SlopDeskWsDockTile;
 
-// `mode` is 0 never auto-hide · 1 always shown · 2 auto. 1 collapse · 0 reveal · -1 no opinion.
-int32_t slopdesk_ws_sidebar_desired_collapsed(uint8_t mode, size_t tab_count);
+// `mode` is 0 never auto-hide · 1 always shown · 2 auto; anything else is quiet.
 // The flags the chrome should hold afterwards. Actuation is gated on the 1↔>1 tab-count EDGE, so a
 // manual collapse survives an unrelated tab opening within the same regime.
 SlopDeskWsSidebarState slopdesk_ws_sidebar_apply_auto_hide(uint8_t mode, size_t tab_count,
