@@ -1,9 +1,5 @@
 // PhoneOverlayLayerView — the always-mounted passthrough layer over both columns.
 //
-// ⚠️ SKELETON. This file carries the CONTRACT ``WorkspaceRootViewController`` mounts (the initializer
-// and ``onJumpToPane``) so the shell's layering is real while the cards themselves are rebuilt. The
-// body is owned by the overlays cluster.
-//
 // It replaces FOUR SwiftUI `.overlay` modifiers, in the order they stacked — the palette host, the
 // toast corner, and the clipboard questions — and it is mounted for the reason each of them was:
 // ALWAYS PRESENT, rendering nothing when there is nothing to render, so an arriving card animates in
@@ -20,11 +16,12 @@
 // user opened, and the system's modal stack DECLINES a second presentation — a declined presentation
 // here would leave libghostty holding the request forever.
 //
-// ⚠️ AND NOTHING DRAINS THAT MAILBOX TODAY. `ClipboardConfirmRequests.shared` is filled by the
-// embedder's OSC 52 callback and was emptied by the deleted `ClipboardConfirmCard`; the demolition
-// took the only reader. Until the clipboard card lands here, a `clipboard-read = ask` profile on iOS
-// files a question nobody can answer — libghostty holds the request and the paste never completes.
-// This is a REBUILD OBLIGATION, not a pre-existing bug: the drain existed before `3f11c6e6`.
+// ⚠️ THE MAILBOX DRAIN LIVES IN ``ClipboardConfirmCardView`` AND IS MOUNTED HERE, which is what makes
+// it real: `ClipboardConfirmRequests.shared` is filled by the embedder's OSC 52 callback and was
+// emptied by the deleted `ClipboardConfirmCard`, so between `3f11c6e6` and this mount a
+// `clipboard-read = ask` profile on iOS filed a question nobody could answer — libghostty held the
+// request and the paste never completed. The card arms its reader in `init`, so CONSTRUCTING it is
+// the fix; a card that is built but never added to a window is the same hang with more code.
 
 #if os(iOS)
 import SlopDeskClientCore
@@ -40,6 +37,9 @@ final class PhoneOverlayLayerView: UIView {
     private let connection: AppConnection
     private let overlay: OverlayCoordinator
 
+    /// The remote program's question. Full-bleed, TOPMOST, and deaf until a question exists.
+    private let clipboard = ClipboardConfirmCardView()
+
     init(store: WorkspaceStore, connection: AppConnection, overlay: OverlayCoordinator) {
         self.store = store
         self.connection = connection
@@ -47,6 +47,25 @@ final class PhoneOverlayLayerView: UIView {
         super.init(frame: .zero)
         backgroundColor = .clear
         isOpaque = false
+        mount(clipboard)
+        // The card took the keyboard while it was up (its footer holds the Esc/↩ chords), so the pane
+        // underneath has to be handed it back — the deleted SwiftUI host spent an `.onDisappear` on
+        // exactly this, and every card mounted here owes the same debt.
+        clipboard.onDrained = { [store] in store.reclaimKeyboardFocusInActivePane() }
+    }
+
+    /// Add one full-bleed child. Every overlay in this layer covers the whole layer and decides for
+    /// itself where inside that rectangle it draws — which is what lets each of them own its own
+    /// dismiss floor, and what makes the stacking order simply the mount order.
+    private func mount(_ child: UIView) {
+        child.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(child)
+        NSLayoutConstraint.activate([
+            child.topAnchor.constraint(equalTo: topAnchor),
+            child.bottomAnchor.constraint(equalTo: bottomAnchor),
+            child.leadingAnchor.constraint(equalTo: leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
     }
 
     @available(*, unavailable)
