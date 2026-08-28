@@ -705,7 +705,13 @@ extension GuiLeafView: UIDropInteractionDelegate {
 private final class GuiPastePlateMenu {
     let plate: SlatePlateVerbButton
 
-    private let model: RemoteWindowModel
+    /// ⚠️ WEAK, AND RE-POINTED BY ``GuiPaneControlBar/present(model:store:paneID:showStats:immersiveOn:)``.
+    /// A pane OUTLIVES its session: `setLive(_:)` exists on the leaf's seam precisely because a reconnect
+    /// or a host restart hands the same pane a NEW ``RemoteWindowModel``. A plate built once and holding
+    /// the first one strongly would keep typing into the dead session — silently, since the menu still
+    /// opens and the rows still enable. The Mac has no equivalent hazard because every one of its rows
+    /// reads `self?.model` through the bar at click time.
+    weak var model: RemoteWindowModel?
     private let store: WorkspaceStore
 
     init(model: RemoteWindowModel, store: WorkspaceStore) {
@@ -736,7 +742,8 @@ private final class GuiPastePlateMenu {
     /// is the one moment iOS permits the read without ambushing anyone. `slopdesk-invariants`'
     /// `phone_parity::the_paste_plate_asks_a_silent_question` pins the shape.
     var canPasteCurrent: Bool {
-        ClipboardPasteMenu.canPaste(
+        guard let model else { return false }
+        return ClipboardPasteMenu.canPaste(
             canPasteKeystrokes: model.canPasteKeystrokes, clipboardHasText: store.localClipboardHasText(),
         )
     }
@@ -747,7 +754,7 @@ private final class GuiPastePlateMenu {
             guard let self else { return }
             // The CONTENT read lives HERE, inside the action. It is also the read that fills the ring —
             // `currentLocalClipboard()` records what it returns.
-            guard let text = store.currentLocalClipboard(),
+            guard let model, let text = store.currentLocalClipboard(),
                   ClipboardPasteMenu.isPastable(text) else { return }
             model.pasteAsKeystrokes(text)
         }
@@ -758,8 +765,8 @@ private final class GuiPastePlateMenu {
         let ring = clips.map { row in
             // The LABEL is the masked / truncated preview; the full clip is what gets typed and is never
             // shown anywhere.
-            slateMenuRow(row.label, enabled: model.canPasteKeystrokes) { [weak self] in
-                self?.model.pasteAsKeystrokes(row.text)
+            slateMenuRow(row.label, enabled: model?.canPasteKeystrokes ?? false) { [weak self] in
+                self?.model?.pasteAsKeystrokes(row.text)
             }
         }
         return [paste, UIMenu(title: "Clipboard Ring", children: ring)]
@@ -780,7 +787,18 @@ private final class GuiPastePlateMenu {
 private final class GuiDisplaySwitcherPlate {
     let plate: SlatePlateVerbButton
 
-    private let model: RemoteWindowModel
+    /// ⚠️ WEAK, AND RE-POINTED BY THE BAR, for the reason ``GuiPastePlateMenu/model`` records: a pane
+    /// outlives its session, so a plate holding the first model strongly would keep switching a display
+    /// on a session nobody is watching.
+    weak var model: RemoteWindowModel? {
+        didSet {
+            guard model !== oldValue, model != nil else { return }
+            // A NEW session has its own display roster, and the plate is already on screen — so the
+            // discovery that ``init`` kicked for the first one has to be kicked again for this one.
+            refresh()
+        }
+    }
+
     private var discovery: Task<Void, Never>?
 
     init(model: RemoteWindowModel) {
@@ -794,7 +812,7 @@ private final class GuiDisplaySwitcherPlate {
                 MainActor.assumeIsolated { complete(self?.rows() ?? []) }
             },
         ])
-        discovery = Task { [weak self] in await self?.model.refreshDisplays() }
+        refresh()
     }
 
     func teardown() {
@@ -802,16 +820,23 @@ private final class GuiDisplaySwitcherPlate {
         discovery = nil
     }
 
+    /// Ask the host for its displays, superseding any ask still in flight.
+    private func refresh() {
+        discovery?.cancel()
+        discovery = Task { [weak self] in await self?.model?.refreshDisplays() }
+    }
+
     private func rows() -> [UIMenuElement] {
         var listed: [UIMenuElement] = []
-        if model.availableDisplays.isEmpty {
+        let displays = model?.availableDisplays ?? []
+        if displays.isEmpty {
             listed.append(slateMenuRow("No display list from host", enabled: false))
         } else {
-            for (index, display) in model.availableDisplays.enumerated() {
+            for (index, display) in displays.enumerated() {
                 listed.append(slateMenuRow(
                     display.displayLabel(ordinal: index + 1),
-                    checked: display.displayID == model.desktopDisplayID,
-                ) { [weak self] in self?.model.switchDisplay(to: display.displayID) })
+                    checked: display.displayID == model?.desktopDisplayID,
+                ) { [weak self] in self?.model?.switchDisplay(to: display.displayID) })
             }
         }
         // A run fenced off from its neighbours, which UIKit spells as an inline section rather than as a
@@ -819,9 +844,7 @@ private final class GuiDisplaySwitcherPlate {
         return [
             slateMenuSection(listed),
             slateMenuSection([slateMenuRow("Refresh Displays") { [weak self] in
-                guard let self else { return }
-                discovery?.cancel()
-                discovery = Task { [weak self] in await self?.model.refreshDisplays() }
+                self?.refresh()
             }]),
         ]
     }
@@ -1126,6 +1149,13 @@ private final class GuiPaneControlBar: UIView {
 
     /// The two menu plates need a model to hold, so they are built on the first pass that has one and
     /// inserted at the head of the command group in the deleted half's order (paste, then display).
+    ///
+    /// ⚠️ AND RE-POINTED ON EVERY PASS AFTERWARDS. The plates are built once — that is this bar's whole
+    /// rule — but the MODEL under them is not the pane's for life: `setLive(_:)` hands the same pane a
+    /// fresh ``RemoteWindowModel`` on a reconnect or a host restart. The plain verbs re-read `self.model`
+    /// at press, so they follow by themselves; a menu built at open reads what its own plate holds, which
+    /// is why these two need saying. Both sides are weak, so a session that goes away takes its menu's
+    /// reference with it rather than being kept alive by a plate.
     private func adoptMenus(model: RemoteWindowModel?, store: WorkspaceStore) {
         guard let model else { return }
         if pasteMenu == nil {
@@ -1138,6 +1168,8 @@ private final class GuiPaneControlBar: UIView {
             displayMenu = menu
             commands.insertArrangedSubview(menu.plate, at: pasteMenu == nil ? 0 : 1)
         }
+        pasteMenu?.model = model
+        displayMenu?.model = model
     }
 }
 
