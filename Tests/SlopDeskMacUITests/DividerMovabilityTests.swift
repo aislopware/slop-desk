@@ -4,7 +4,7 @@
 // toggles only), so a divider pinned at a limit shows the one-way arrow at BOTH ends — AppKit
 // kept the two-way arrow at the minimum beside a `canCollapse` item.
 
-#if canImport(SwiftUI) && canImport(AppKit)
+#if canImport(AppKit)
 import XCTest
 @testable import SlopDeskMacUI
 
