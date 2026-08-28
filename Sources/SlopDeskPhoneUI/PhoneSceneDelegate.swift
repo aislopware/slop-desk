@@ -52,19 +52,15 @@ public final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
         options _: UIScene.ConnectionOptions,
     ) {
         guard let windowScene = scene as? UIWindowScene, let app else { return }
+        // EVERY app-lifetime value the tree reads arrives here, as arguments. There is no custom
+        // environment left to inject (docs/62 stage B): a `UIViewController` inherits none, and even in
+        // SwiftUI a `.sheet` / `.fullScreenCover` did not inherit the presenter's — so the two `@Entry`
+        // keys this scene used to seed had to be re-injected at every presentation anyway.
         let root = WorkspaceRootView(
             store: app.store, connection: app.connection, overlay: app.overlayCoordinator,
-            chrome: app.chrome,
+            chrome: app.chrome, preferences: app.preferences,
         )
-        // Hand the single live PreferencesStore to deep views (the agent footer's notification
-        // dismissal/enable persistence reads it via `\.preferencesStore`), and the single overlay
-        // coordinator, so deep views reach it via `\.overlayCoordinator`. Both entries die in stage B,
-        // where every consumer takes the value as an `init` parameter instead.
-        let host = UIHostingController(
-            rootView: root
-                .preferencesStore(app.preferences)
-                .overlayCoordinator(app.overlayCoordinator),
-        )
+        let host = UIHostingController(rootView: root)
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = host
         self.window = window

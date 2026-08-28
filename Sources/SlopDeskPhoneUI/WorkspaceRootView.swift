@@ -31,10 +31,14 @@ public struct WorkspaceRootView: View {
     /// The two split-collapse flags + the window-pin flag, owned by the composition. The leading column's
     /// visibility is a two-way mapping onto `sidebarCollapsed` (see ``sidebarColumnVisibility``).
     let chrome: WorkspaceChromeState
-    /// The single live preferences store, injected once at the WindowGroup root (`\.preferencesStore`) and
-    /// RE-injected below, because a sheet does not inherit its presenter's custom environment values and
-    /// ``PhonePanelSheet`` reads this key. `nil` in a preview / pre-scene state.
-    @Environment(\.preferencesStore) private var preferencesStore
+    /// The single live preferences store, handed straight on to ``PhonePanelSheet`` (the workbench's
+    /// host-side font push is its only reader). `nil` in a preview / pre-scene state.
+    ///
+    /// A PARAMETER, not `@Environment(\.preferencesStore)` (docs/62 stage B). The key existed so deep
+    /// views could reach the store without threading, and then had to be RE-injected on the cover
+    /// anyway, because a presentation does not inherit its presenter's custom environment — the same
+    /// hole a `UIViewController` has, one level up. Threading it was always the shorter road.
+    let preferences: PreferencesStore?
     /// The live `auto-hide-tabs-panel` mode. COMPUTED, and it reads ``ConfigRevision/generation``
     /// first: `AppConfig` is a plain locked global, so the bare ``SettingsKey/autoHideTabsPanel``
     /// accessor registers no dependency and the body would never re-evaluate. Reading the revision
@@ -71,11 +75,13 @@ public struct WorkspaceRootView: View {
         connection: AppConnection,
         overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState,
+        preferences: PreferencesStore?,
     ) {
         self.store = store
         self.connection = connection
         self.overlay = overlay
         self.chrome = chrome
+        self.preferences = preferences
     }
 
     /// The active tab's active pane's live session, if materialized — the source of the active pane's ping
@@ -100,12 +106,14 @@ public struct WorkspaceRootView: View {
         ) {
             NavigatorColumn(store: store)
         } detail: {
-            ContentColumn(store: store, connection: connection, chrome: chrome)
+            // The content column takes the coordinator and passes it down its canvas — the island's
+            // chip stack reads it here, every pane below reads it there. It was ONE `.overlayCoordinator`
+            // injection at this root until docs/62 stage B: a controller inherits no environment, so
+            // the value that reaches the deepest leaf travels by parameter on both renderers.
+            ContentColumn(
+                store: store, connection: connection, chrome: chrome, overlayCoordinator: overlay,
+            )
         }
-        // The columns read the reducer from the environment (the island's chip stack does, and macOS's
-        // split host injects it per hosting controller for the same reason) — one tree here, so
-        // one injection at the root covers both columns.
-        .overlayCoordinator(overlay)
         .toolbar { iosToolbar }
         // The floating-overlay layer (palette / connect / remote-window picker / toasts — a ZStack overlay on
         // both platforms). The ✓ gutter tracks the live chrome + the active pane's read-only / secure-entry
@@ -167,14 +175,14 @@ public struct WorkspaceRootView: View {
         // full-screen cover (``PhonePanelSheet`` — docs/56 stage D). Driven by the SAME
         // `codeSidebarCollapsed` flag the Mac's split item reads, which is what makes
         // `revealCodeSidebar()` — the open-this-file-in-the-workbench actuation — work here for free.
-        // A cover does not inherit the presenter's custom environment, so the two values the surfaces
-        // read are threaded back in explicitly.
+        // A cover does not inherit the presenter's custom environment — which is why both values the
+        // surfaces read are `init` parameters now rather than a re-injection here (docs/62 stage B).
         .fullScreenCover(isPresented: codePanelBinding) {
             PhonePanelSheet(
                 store: store, connection: connection, chrome: chrome, models: panelModels,
-                overlay: overlay, onClose: { chrome.collapseCodeSidebar() },
+                overlay: overlay, preferences: preferences,
+                onClose: { chrome.collapseCodeSidebar() },
             )
-            .preferencesStore(preferencesStore)
         }
     }
 

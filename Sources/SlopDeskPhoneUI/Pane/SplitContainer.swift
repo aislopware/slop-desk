@@ -58,6 +58,12 @@ struct SplitContainer: View {
     /// destinations once the cursor leaves this hosting view, and lets a satellite-origin drag preview
     /// its canvas landing here. `nil` (previews / iOS) keeps the drag canvas-only.
     var paneDrag: PaneDragCoordinator?
+    /// The scene's overlay coordinator and chrome model, in transit: nothing here reads either, and
+    /// both are handed to every ``PaneContainer`` this canvas mounts. They used to arrive at the leaf
+    /// through `\.overlayCoordinator` and `.environment(chrome)`; a `UIViewController` inherits no
+    /// environment, so docs/62 stage B made the whole pane tree take them as parameters.
+    var overlay: OverlayCoordinator?
+    var chrome: WorkspaceChromeState?
 
     /// The live pane-move drag (grab handle) and every decision it turns on — where the cursor would
     /// land, what a release commits, and the two geometry reports the chords resolve against. It is
@@ -71,9 +77,16 @@ struct SplitContainer: View {
     /// appear hook, which is where the first solved-layout report comes from.
     @State private var drag: PaneCanvasDragController
 
-    init(store: WorkspaceStore, paneDrag: PaneDragCoordinator? = nil) {
+    init(
+        store: WorkspaceStore,
+        paneDrag: PaneDragCoordinator? = nil,
+        overlay: OverlayCoordinator? = nil,
+        chrome: WorkspaceChromeState? = nil,
+    ) {
         self.store = store
         self.paneDrag = paneDrag
+        self.overlay = overlay
+        self.chrome = chrome
         _drag = State(initialValue: PaneCanvasDragController(store: store, coordinator: paneDrag))
     }
 
@@ -157,6 +170,8 @@ struct SplitContainer: View {
                     isVisible: isActive && !entry.isHidden,
                     // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
                     size: entry.leaf.rect.size,
+                    overlayCoordinator: overlay,
+                    workspaceChrome: chrome,
                 )
                 .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
                 .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)

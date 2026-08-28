@@ -84,8 +84,11 @@ prefix that has never existed in this checkout.)
   `Sources/SlopDeskClientCore/Overlays/CommandNavigatorPresentation.swift`
 - `Sources/SlopDeskClientCore/Pane/FindBarPresentation.swift`,
   `Sources/SlopDeskClientCore/Pane/TerminalPaneWiring.swift` — the find / navigator seam ASSIGNMENTS
-- `Sources/SlopDeskPhoneUI/Overlays/OverlayEnvironment.swift` — the `\.overlayCoordinator` key, injected at
-  `WorkspaceRootView.swift:113`
+- the coordinator reaches a surface as an `init` PARAMETER — `PhoneSceneDelegate` hands it to
+  `WorkspaceRootView`, which hands it down the canvas to every pane. The `\.overlayCoordinator`
+  `@Entry` key it used to ride is deleted (docs/62 stage B): a `UIViewController` inherits no
+  environment, and neither does a `.sheet`, which is why the key had to be re-injected at every
+  presentation anyway
 - `Sources/SlopDeskPhoneUI/Overlays/` — `PaletteView.swift`, `OpenQuicklyView.swift`,
   `GlobalSearchView.swift`, `CommandNavigatorView.swift`, `KeyboardCheatSheetView.swift`,
   `OverlayHostView.swift`

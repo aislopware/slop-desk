@@ -49,21 +49,25 @@ package struct PhonePanelSheet: View {
     /// does not inherit the presenter's, and the surfaces under this bar need it twice over: to file a
     /// report, and to have that report drawn (see the stack below).
     let overlay: OverlayCoordinator
+    /// The single live preferences store — the terminal font prefs the workbench pushes host-side, so
+    /// the editor reads like the terminal beside it. Handed in for the reason `overlay` is (docs/62
+    /// stage B): the `\.preferencesStore` key it used to arrive on is gone.
+    let preferences: PreferencesStore?
     /// Dismisses the cover. Passed in rather than taken from `\.dismiss` so the presenter can also
     /// re-collapse the shared chrome flag in the same gesture.
     let onClose: () -> Void
 
-    @Environment(\.preferencesStore) private var preferencesStore
-
     package init(
         store: WorkspaceStore, connection: AppConnection, chrome: WorkspaceChromeState,
-        models: PhonePanelModels, overlay: OverlayCoordinator, onClose: @escaping () -> Void,
+        models: PhonePanelModels, overlay: OverlayCoordinator, preferences: PreferencesStore?,
+        onClose: @escaping () -> Void,
     ) {
         self.store = store
         self.connection = connection
         self.chrome = chrome
         self.models = models
         self.overlay = overlay
+        self.preferences = preferences
         self.onClose = onClose
     }
 
@@ -77,8 +81,9 @@ package struct PhonePanelSheet: View {
             )
             CodePanelSurfaces(
                 store: store, connection: connection, chrome: chrome,
-                preferences: preferencesStore, model: models.code,
+                preferences: preferences, model: models.code,
                 simulatorModel: models.simulator, androidModel: models.android,
+                overlayCoordinator: overlay,
             )
         }
         .background(Slate.Surface.field)
@@ -95,7 +100,6 @@ package struct PhonePanelSheet: View {
             ToastStackView(coordinator: overlay, onJump: store.jumpToPaneNamedByNotification)
                 .allowsHitTesting(!overlay.toasts.isEmpty)
         }
-        .overlayCoordinator(overlay)
     }
 
     /// The active pane's project root — the HOST-pushed `projectKey` only, never the cwd fallback.

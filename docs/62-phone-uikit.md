@@ -1081,20 +1081,32 @@ reader check did.
 
 ### Stage B — injection replaces the environment
 
-**Moves.** `Sources/SlopDeskPhoneUI/PreferencesEnvironment.swift` (23) and
-`Overlays/OverlayEnvironment.swift` (20) — the two `@Entry` keys — plus every consumer
-(`WorkspaceRootView.swift:36,108`, `TerminalLeafView.swift:86`, `PaneContainer.swift:62`,
-`ContentColumn.swift:49`, `CodePanelSurfaces.swift:76`, `PhonePanelSheet.swift:56`). Each takes the
-value as an `init` parameter.
+**Moved.** The two `@Entry` key files are deleted, and every consumer takes the value as an `init`
+parameter: `WorkspaceRootView`, `ContentColumn`, `PaneContainer`, `TerminalLeafView`,
+`CodePanelSurfaces`, `PhonePanelSheet`, plus `SplitContainer`, which reads neither and carries both
+down the canvas to every pane.
 
-**This lands entirely in SwiftUI and is still required**, because a `UIViewController` has no
+**This lands entirely in SwiftUI and was still required**, because a `UIViewController` has no
 environment to inherit and every ported surface would otherwise need both paths. It is stage B rather
-than stage A only because stage A must be the smallest possible commit.
+than stage A only because stage A had to be the smallest possible commit.
 
-**Tests.** No change. **Un-landable if:** a consumer is reached only through a `.sheet` or
-`.fullScreenCover` that cannot be handed the value — which is exactly the workaround
-`WorkspaceRootView.swift:171,177` already documents, so the injection is the fix rather than the
-problem.
+**LANDED WIDER THAN PLANNED: three environment dependencies died, not two.** The survey counted the
+two `@Entry` keys and missed `.environment(chrome)` — `ContentColumn` injecting the
+`WorkspaceChromeState` that `TerminalLeafView` reads back as
+`@Environment(WorkspaceChromeState.self)`, for the open-in-code-panel reveal. It is an `@Observable`
+in the environment rather than an `@Entry` key, which is why a grep for `@Entry` did not see it, and
+it fails in UIKit for the identical reason: a controller inherits no environment either. It travels
+the SAME four-view chain the coordinator does, so threading it here cost one parameter per view and
+saved re-opening all four files in stage E.
+
+**And the "un-landable if" was already the argument FOR the change.** A consumer reached only through
+a `.sheet`/`.fullScreenCover` cannot inherit the presenter's custom environment — which is why
+`WorkspaceRootView` re-injected both keys on the cover and `PhonePanelSheet` re-injected one of them
+again underneath. SwiftUI's presentation boundary has the hole a `UIViewController` has; the
+workaround was the mechanism all along, and deleting the keys deleted three re-injections with them.
+
+**Tests.** No change — every one of these files is `#if os(iOS)`, so `swift test` compiles none of it
+and `just check-ios` + `just check-ios-tests` are the whole verdict (§ stage A's finding).
 
 ### Stage C — the design floor, in UIKit
 

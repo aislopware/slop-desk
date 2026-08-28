@@ -56,11 +56,19 @@ package struct CodePanelSurfaces: View {
     let model: CodeSidebarModel
     let simulatorModel: SimulatorSidebarModel
     let androidModel: AndroidSidebarModel
+    /// Where the device surfaces' reports go — the panel's own notification stack, so this surface
+    /// speaks in the same card as everything else that has something to say. `nil` in previews.
+    ///
+    /// A PARAMETER, not `@Environment(\.overlayCoordinator)` (docs/62 stage B). The presenter used to
+    /// re-inject the key on the cover because a cover inherits no custom environment; a
+    /// `UIViewController` inherits none either, so the workaround became the mechanism.
+    let overlayCoordinator: OverlayCoordinator?
 
     package init(
         store: WorkspaceStore, connection: AppConnection, chrome: WorkspaceChromeState,
         preferences: PreferencesStore?, model: CodeSidebarModel,
         simulatorModel: SimulatorSidebarModel, androidModel: AndroidSidebarModel,
+        overlayCoordinator: OverlayCoordinator?,
     ) {
         self.store = store
         self.connection = connection
@@ -69,11 +77,8 @@ package struct CodePanelSurfaces: View {
         self.model = model
         self.simulatorModel = simulatorModel
         self.androidModel = androidModel
+        self.overlayCoordinator = overlayCoordinator
     }
-
-    /// Where the device surfaces' reports go — the panel's own notification stack, so this surface
-    /// speaks in the same card as everything else that has something to say.
-    @Environment(\.overlayCoordinator) private var overlayCoordinator
 
     private var activePane: PaneID? { store.tree.activeSession?.activeTab?.activePane }
 

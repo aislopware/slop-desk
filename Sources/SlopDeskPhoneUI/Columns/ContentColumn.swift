@@ -43,19 +43,18 @@ struct ContentColumn: View {
     /// island's GLASS — the two tones the one-island law is spent keeping apart.
     var ground: Color? = Slate.Surface.field
 
-    /// The scene overlay reducer, re-injected by the split host (the hosted column does not inherit
-    /// the WindowGroup environment). Read for the modal pointer shield below; `nil` (previews /
-    /// tests) reads as "no modal up".
-    @Environment(\.overlayCoordinator) private var overlayCoordinator
+    /// The scene overlay reducer. Read for the modal pointer shield and the island's chip stack below,
+    /// and handed on to the canvas, which hands it to every pane. `nil` (previews / tests) reads as
+    /// "no modal up" and draws no chip stack.
+    ///
+    /// A PARAMETER, not `@Environment(\.overlayCoordinator)` (docs/62 stage B): a `UIViewController`
+    /// inherits no environment, so the value travels one road on both renderers.
+    var overlayCoordinator: OverlayCoordinator?
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
     var body: some View {
         paneArea
-            // The chrome model rides the environment so DEEP descendants (a terminal leaf actuating
-            // open-in-code-panel) can reveal the code sidebar without threading the reference
-            // through every pane-tree layer. The leaf reads it OPTIONALLY (nil in previews/tests).
-            .environment(chrome)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Whatever this column stands on where the canvas does not reach — the phone's own
             // ground, and NOTHING on the Mac, where the island under it is the ground (see ``ground``).
@@ -77,11 +76,18 @@ struct ContentColumn: View {
     private var paneArea: some View {
         Group {
             if hasActiveTab {
+                // The canvas carries the coordinator and the chrome model down to every pane: a leaf
+                // reports a failed host open through the one and reveals the code panel through the
+                // other, and neither can be inherited by the controller this becomes (docs/62 §B).
+                SplitContainer(
+                    store: store, paneDrag: paneDrag, overlay: overlayCoordinator, chrome: chrome,
+                )
                 // The forced colour scheme stays with the pane grid across the layout revert:
                 // everything drawn ON the glass resolves its semantic colours against the
-                // profile's polarity, not the OS.
-                SplitContainer(store: store, paneDrag: paneDrag)
-                    .environment(\.colorScheme, Slate.glassColorScheme)
+                // profile's polarity, not the OS. A SYSTEM environment key — the ones a
+                // `UIHostingController` does propagate, and the reason stage B took only the three
+                // custom ones.
+                .environment(\.colorScheme, Slate.glassColorScheme)
             } else {
                 // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty
                 // (not-connected vs link-down vs no-tabs) and carries the one next action.

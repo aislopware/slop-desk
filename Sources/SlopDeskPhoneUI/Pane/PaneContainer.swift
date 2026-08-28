@@ -57,9 +57,17 @@ struct PaneContainer: View {
     @State private var dropModel = PaneDropOverlayModel()
 
     /// The scene-root overlay coordinator: the receiver pushes the host-resolved advisory toast
-    /// for a folder → New-Tab `cd` into it. `nil` outside the scene root (tests), where the toast is
-    /// a no-op.
-    @Environment(\.overlayCoordinator) private var overlayCoordinator
+    /// for a folder → New-Tab `cd` into it, and the terminal leaf below reports a failed host
+    /// open/reveal through it. `nil` in tests, where the toast is a no-op.
+    ///
+    /// A PARAMETER, not `@Environment(\.overlayCoordinator)` (docs/62 stage B) — see
+    /// ``TerminalLeafView/overlayCoordinator``.
+    var overlayCoordinator: OverlayCoordinator?
+
+    /// The shared chrome model, threaded to the terminal leaf's open-in-code-panel reveal. It used to
+    /// ride `.environment(chrome)` from ``ContentColumn``; a `UIViewController` inherits neither
+    /// environment, so it takes the same road as ``overlayCoordinator``.
+    var workspaceChrome: WorkspaceChromeState?
 
     /// The pane content model's "resized but not re-rendered yet" signal (terminal host-reflow wait OR
     /// remote-GUI host-re-capture wait), `false` for a pane with no live model. HOLDS the scrim past the
@@ -127,6 +135,8 @@ struct PaneContainer: View {
                 host: store.committedConnectionTarget?.host ?? "",
                 // The Command Navigator (⌃⌘O) jumps the scrollback through the store.
                 store: store,
+                overlayCoordinator: overlayCoordinator,
+                workspaceChrome: workspaceChrome,
             )
         }
     }

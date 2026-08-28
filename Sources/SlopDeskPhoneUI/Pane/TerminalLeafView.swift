@@ -53,6 +53,21 @@ struct TerminalLeafView: View {
     /// re-anchor engine, which resolves the ACTIVE pane = the pane the navigator is over). Passed from ``PaneContainer``.
     let store: WorkspaceStore
 
+    /// The single overlay coordinator, used ONLY to surface a transient error toast when a host
+    /// open/reveal RPC fails — so the action is never a SILENT no-op. `nil` in tests/previews ⇒ the
+    /// failure is swallowed there, never a crash.
+    ///
+    /// A PARAMETER, not `@Environment(\.overlayCoordinator)` (docs/62 stage B): a `UIViewController`
+    /// inherits no environment, so a value every ported surface would otherwise need TWO paths to
+    /// reach is handed down the pane tree the way the Mac's ``SlopDeskMacUI/MacPaneContainer``
+    /// already hands it down.
+    let overlayCoordinator: OverlayCoordinator?
+
+    /// The shared chrome model, used ONLY to reveal the RIGHT code panel when an open-in-code-panel
+    /// action lands in the workbench. `nil` in previews/tests ⇒ the file still opens (host-side),
+    /// the panel just isn't auto-revealed. Threaded for the same reason as ``overlayCoordinator``.
+    let workspaceChrome: WorkspaceChromeState?
+
     /// This pane's wiring — the find bar, the Secure Keyboard Entry actuator and the Command Navigator
     /// chrome, plus every callback they are driven by. Per-pane `@State` (the leaf is `.id(PaneID)`-keyed,
     /// so no cross-pane bleed) and BELOW the view layer, because none of it is a drawing: an AppKit canvas
@@ -79,16 +94,6 @@ struct TerminalLeafView: View {
         _ = ConfigRevision.shared.generation
         return SettingsKey.secureInputIndicatorEnabled
     }
-
-    /// The single overlay coordinator, used ONLY to surface a transient error
-    /// toast when a host open/reveal RPC fails — so the action is never a SILENT no-op. `nil` outside the app
-    /// scene root (tests/previews) ⇒ the failure is swallowed there, never a crash.
-    @Environment(\.overlayCoordinator) private var overlayCoordinator
-
-    /// The shared chrome model (injected by ``ContentColumn``), used ONLY to reveal the RIGHT code
-    /// panel when an open-in-code-panel action lands in the workbench. `nil` in previews/tests ⇒
-    /// the file still opens (host-side), the panel just isn't auto-revealed.
-    @Environment(WorkspaceChromeState.self) private var workspaceChrome: WorkspaceChromeState?
 
     var body: some View {
         VStack(spacing: 0) {
