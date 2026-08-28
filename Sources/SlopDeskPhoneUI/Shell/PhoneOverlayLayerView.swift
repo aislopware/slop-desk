@@ -5,6 +5,11 @@
 // ALWAYS PRESENT, rendering nothing when there is nothing to render, so an arriving card animates in
 // without a re-mount.
 //
+// THE STACKING ORDER IS THE MOUNT ORDER, bottom to top: the summoned cards, then the notification
+// corner, then the clipboard questions. Each child is FULL-BLEED and decides for itself where inside
+// that rectangle it draws, which is what lets the summoned host and the pane switcher own separate
+// dismiss floors that mean different things — one closes a card, the other CANCELS a walk.
+//
 // ⚠️ THE HIT-TESTING IS THE WHOLE POINT, and it is the one thing this skeleton already implements.
 // A layer that swallowed touches everywhere would take every keystroke away from the terminal
 // underneath it; the SwiftUI half spelled this `.allowsHitTesting(!overlay.toasts.isEmpty)` per
@@ -31,12 +36,25 @@ import UIKit
 @MainActor
 final class PhoneOverlayLayerView: UIView {
     /// Jump to the pane a notification card names. Wired by the shell to the store's own jump.
-    var onJumpToPane: ((String) -> Void)?
+    var onJumpToPane: ((String) -> Void)? {
+        didSet { toasts.onJump = onJumpToPane }
+    }
+
+    /// Whether a palette row shows its ✓ gutter. Forwarded to the summoned host — see its own note for
+    /// why this arrives from the shell rather than from the initializer.
+    var paletteToggledState: (@MainActor (PaletteItem) -> Bool)? {
+        didSet { cards.toggledState = paletteToggledState ?? { _ in false } }
+    }
 
     private let store: WorkspaceStore
     private let connection: AppConnection
     private let overlay: OverlayCoordinator
 
+    /// The four SUMMONED cards, on their own dismiss floor. Bottom of the stack: a notification arriving
+    /// over a palette must be readable, and a clipboard question must cover both.
+    private let cards: PhoneOverlayCardHostView
+    /// The notification corner. Deaf everywhere a card is not.
+    private let toasts: PhoneToastStackView
     /// The remote program's question. Full-bleed, TOPMOST, and deaf until a question exists.
     private let clipboard = ClipboardConfirmCardView()
 
@@ -44,9 +62,13 @@ final class PhoneOverlayLayerView: UIView {
         self.store = store
         self.connection = connection
         self.overlay = overlay
+        cards = PhoneOverlayCardHostView(store: store, overlay: overlay)
+        toasts = PhoneToastStackView(overlay: overlay)
         super.init(frame: .zero)
         backgroundColor = .clear
         isOpaque = false
+        mount(cards)
+        mount(toasts)
         mount(clipboard)
         // The card took the keyboard while it was up (its footer holds the Esc/↩ chords), so the pane
         // underneath has to be handed it back — the deleted SwiftUI host spent an `.onDisappear` on
