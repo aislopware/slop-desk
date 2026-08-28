@@ -71,6 +71,13 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
     /// (and keeps its plate, its hover and its scroll position) instead of being rebuilt.
     private var mounted: [String: MacSidebarIslandView] = [:]
 
+    /// ``refresh()`` is re-entered from the search field, the clear button and every group toggle, and
+    /// ``syncNewTabSlot()`` runs on every reconcile — so each must DISPLACE its previous arm. Under
+    /// the hand-written form neither carried a generation counter, which left one live chain per
+    /// keystroke typed into the search field, all of them still reconciling the column.
+    private var rowsFollow: ObservationFollow?
+    private var slotFollow: ObservationFollow?
+
     init(
         store: WorkspaceStore, connection: AppConnection, onConnect: @escaping () -> Void,
         paneDrag: PaneDragCoordinator?, overlay: OverlayCoordinator?,
@@ -290,20 +297,14 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
 
     // MARK: The live rebuild
 
-    /// Re-derive the sections and reconcile the mounted islands against them, re-arming for the next
+    /// Re-derive the sections and reconcile the mounted islands against them, following the next
     /// STRUCTURAL change. Volatile chrome never reaches here: the rows and headers read their own.
     private func refresh() {
-        var rows: [RailRow] = []
-        var order: [TabID] = []
-        withObservationTracking {
-            rows = rowsMemo.rows(for: store)
-            order = store.flatOrderedTabIDs()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
-            }
+        rowsFollow = ObservationFollow.arm(self, replacing: rowsFollow) { column in
+            (rows: column.rowsMemo.rows(for: column.store), order: column.store.flatOrderedTabIDs())
+        } apply: { column, reading in
+            column.reconcile(rows: reading.rows, tabOrder: reading.order)
         }
-        reconcile(rows: rows, tabOrder: order)
     }
 
     private func reconcile(rows: [RailRow], tabOrder: [TabID]) {
@@ -363,23 +364,22 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
     /// pinned ABOVE the footer so it never needs scrolling into view.
     private func syncNewTabSlot() {
         guard let paneDrag else { return }
-        var live = false
-        withObservationTracking {
-            live = paneDrag.drag != nil
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.syncNewTabSlot() }
+        // Read through the OWNER rather than the guard's binding: the arm escapes, and capturing the
+        // coordinator directly would hold it for the follow's life instead of the column's.
+        slotFollow = ObservationFollow.arm(self, replacing: slotFollow) { column in
+            column.paneDrag?.drag != nil
+        } apply: { column, live in
+            guard let paneDrag = column.paneDrag else { return }
+            if live, column.newTabSlot == nil {
+                let slot = MacNewTabDropSlot(coordinator: paneDrag)
+                column.foot.insertArrangedSubview(slot, at: 0)
+                slot.widthAnchor.constraint(equalTo: column.foot.widthAnchor).isActive = true
+                column.newTabSlot = slot
+            } else if !live, let slot = column.newTabSlot {
+                column.foot.removeArrangedSubview(slot)
+                slot.removeFromSuperview()
+                column.newTabSlot = nil
             }
-        }
-        if live, newTabSlot == nil {
-            let slot = MacNewTabDropSlot(coordinator: paneDrag)
-            foot.insertArrangedSubview(slot, at: 0)
-            slot.widthAnchor.constraint(equalTo: foot.widthAnchor).isActive = true
-            newTabSlot = slot
-        } else if !live, let slot = newTabSlot {
-            foot.removeArrangedSubview(slot)
-            slot.removeFromSuperview()
-            newTabSlot = nil
         }
     }
 
@@ -433,6 +433,9 @@ final class MacSidebarIslandView: NSView {
     private let selection = CALayer()
     private var selected: PaneID?
     private var bed: Int?
+    /// See ``trackSelection()``: this island is REUSED across reconciles, so each arm must displace
+    /// the last.
+    private var selectionFollow: ObservationFollow?
 
     var onToggle: () -> Void = {}
 
@@ -527,20 +530,20 @@ final class MacSidebarIslandView: NSView {
     }
 
     /// Follow the focused pane and move — or ignite — the plate.
+    ///
+    /// `replacing:` although this method has ONE caller: that caller is ``apply(section:bed:collapsed:)``,
+    /// which the column re-runs against this REUSED island on every reconcile. A plain arm would leave
+    /// one live chain per reconcile, all of them moving the same plate.
     private func trackSelection() {
-        var focused: PaneID?
-        withObservationTracking {
-            focused = store.tree.activeSession?.activeTab?.activePane
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.trackSelection() }
-            }
+        selectionFollow = ObservationFollow.arm(self, replacing: selectionFollow) { island in
+            island.store.tree.activeSession?.activeTab?.activePane
+        } apply: { island, focused in
+            let next = focused.flatMap { island.rows[$0] == nil ? nil : $0 }
+            guard next != island.selected else { return }
+            let arriving = island.selected == nil
+            island.selected = next
+            island.moveSelection(igniting: arriving)
         }
-        let next = focused.flatMap { rows[$0] == nil ? nil : $0 }
-        guard next != selected else { return }
-        let arriving = selected == nil
-        selected = next
-        moveSelection(igniting: arriving)
     }
 
     /// The plate's travel. Arriving from ANOTHER island there is no plate here to move, so it IGNITES:
@@ -675,18 +678,14 @@ final class MacNewTabDropSlot: NSView {
     }
 
     private func follow() {
-        var next = false
-        withObservationTracking {
-            next = coordinator.drag?.destination == .newTab
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { slot in
+            slot.coordinator.drag?.destination == .newTab
+        } apply: { slot, next in
+            guard next != slot.active else { return }
+            slot.active = next
+            slot.needsDisplay = true
+            slot.updateLayer()
         }
-        guard next != active else { return }
-        active = next
-        needsDisplay = true
-        updateLayer()
     }
 
     override var wantsUpdateLayer: Bool { true }

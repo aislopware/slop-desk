@@ -42,6 +42,11 @@ final class MacSidebarHeaderView: NSView {
     /// Whether the FOCUSED pane lives in this group — the header's ink steps up for it.
     private var current = false
 
+    /// ``refresh()`` is re-entered from ``setCollapsed(_:animated:)`` and ``update(rows:)``, both of
+    /// which the island calls on this REUSED header every reconcile — so each arm must displace the
+    /// last rather than pile a second chain onto the same header.
+    private var headerFollow: ObservationFollow?
+
     var onToggle: () -> Void = {}
 
     init(store: WorkspaceStore, title: String, projectKey: String?, rows: [RailRow], collapsed: Bool) {
@@ -149,52 +154,59 @@ final class MacSidebarHeaderView: NSView {
     }
 
     /// Re-resolve the header's volatile chrome — the git summary, whose group holds focus, the
-    /// collapsed count's roll-up — and re-arm for the next store tick. Leaf-scoped for the reason
-    /// ``MacSidebarRowView/refresh()`` is: a git or status tick repaints this header, never the list.
+    /// collapsed count's roll-up. Leaf-scoped for the reason ``MacSidebarRowView/refresh()`` is: a git
+    /// or status tick repaints this header, never the list.
     func refresh() {
-        var summary: PaneGitSummary?
-        var focused = false
-        var rollup: AttentionRole?
-        withObservationTracking {
-            summary = projectKey.flatMap { store.projectGitSummary[$0] }
-            focused = SidebarSections.holdsFocus(rows: rows, store: store)
-            rollup = collapsed
-                ? TabBadgeReading.rollup(
-                    RailRowsBuilder.liveChrome(for: rows, store: store).map(\.badge),
-                )
-                : nil
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
-            }
-        }
-        current = focused
-        toolTip = SidebarGitLine.tooltip(projectKey: projectKey, summary: summary)
-
-        let ink = headerInk
-        folder.image = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(
-                NSImage.SymbolConfiguration(pointSize: Slate.Typeface.small, weight: .regular)
-                    .applying(NSImage.SymbolConfiguration(paletteColors: [ink])),
+        headerFollow = ObservationFollow.arm(self, replacing: headerFollow) { header in
+            (
+                summary: header.projectKey.flatMap { header.store.projectGitSummary[$0] },
+                focused: SidebarSections.holdsFocus(rows: header.rows, store: header.store),
+                rollup: header.collapsed
+                    ? TabBadgeReading.rollup(
+                        RailRowsBuilder.liveChrome(for: header.rows, store: header.store)
+                            .map(\.badge),
+                    )
+                    : nil,
             )
-        // `slateNerdAware` — a project folder named with a nerd-font glyph draws it from the bundled
-        // symbols face instead of a notdef box.
-        name.attributedStringValue = .slateNerdAware(
-            title,
-            font: .systemFont(ofSize: Slate.Typeface.footnote, weight: .semibold),
-            color: ink,
-        )
-        git.summary = SidebarGitLine.detailSummary(collapsed: collapsed, summary: summary)
-        git.isHidden = git.segments.isEmpty
+        } apply: { header, reading in
+            header.current = reading.focused
+            header.toolTip = SidebarGitLine.tooltip(
+                projectKey: header.projectKey, summary: reading.summary,
+            )
 
-        if let trailing = SidebarGitLine.trailingCount(collapsed: collapsed, count: rows.count) {
-            count.stringValue = trailing
-            count.textColor = rollup.map(Slate.Native.attentionInk) ?? Slate.Native.Text.tertiary
-            count.isHidden = false
-        } else {
-            count.isHidden = true
+            // Read AFTER `current` lands — the ink is a step on that flag.
+            let ink = header.headerInk
+            header.folder.image = NSImage(
+                systemSymbolName: "folder.fill", accessibilityDescription: nil,
+            )?
+                .withSymbolConfiguration(
+                    NSImage.SymbolConfiguration(pointSize: Slate.Typeface.small, weight: .regular)
+                        .applying(NSImage.SymbolConfiguration(paletteColors: [ink])),
+                )
+            // `slateNerdAware` — a project folder named with a nerd-font glyph draws it from the
+            // bundled symbols face instead of a notdef box.
+            header.name.attributedStringValue = .slateNerdAware(
+                header.title,
+                font: .systemFont(ofSize: Slate.Typeface.footnote, weight: .semibold),
+                color: ink,
+            )
+            header.git.summary = SidebarGitLine.detailSummary(
+                collapsed: header.collapsed, summary: reading.summary,
+            )
+            header.git.isHidden = header.git.segments.isEmpty
+
+            if let trailing = SidebarGitLine.trailingCount(
+                collapsed: header.collapsed, count: header.rows.count,
+            ) {
+                header.count.stringValue = trailing
+                header.count.textColor = reading.rollup.map(Slate.Native.attentionInk)
+                    ?? Slate.Native.Text.tertiary
+                header.count.isHidden = false
+            } else {
+                header.count.isHidden = true
+            }
+            header.chevron.contentTintColor = Slate.Native.State.header
         }
-        chevron.contentTintColor = Slate.Native.State.header
     }
 
     /// WHICH project is open, said on the ink ladder the sidebar already has: the focused group's

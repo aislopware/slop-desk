@@ -168,19 +168,15 @@ final class MacContentColumn: NSViewController {
     /// `animated` is false only for the first read, which is the launch state rather than a gesture: a
     /// window that opens with the navigator or the panel already collapsed should not play the arrival.
     private func followChrome() {
-        var clearingBand = false
-        var railed = false
-        withObservationTracking {
-            clearingBand = chrome.sidebarCollapsed
-            railed = chrome.codeSidebarCollapsed
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followChrome() }
-            }
+        ObservationFollow.arm(self) { column in
+            (clearingBand: column.chrome.sidebarCollapsed, railed: column.chrome.codeSidebarCollapsed)
+        } apply: { column, reading in
+            column.moveMoat(
+                clearingBand: reading.clearingBand, railed: reading.railed, animated: column.settled,
+            )
+            column.rail.travel(railed: reading.railed, animated: column.settled)
+            column.settled = true
         }
-        moveMoat(clearingBand: clearingBand, railed: railed, animated: settled)
-        rail.travel(railed: railed, animated: settled)
-        settled = true
     }
 
     private var settled = false

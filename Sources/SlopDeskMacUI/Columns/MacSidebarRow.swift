@@ -6,7 +6,7 @@
 //
 // WHAT THIS VIEW OWNS is the four things a framework has to answer for itself:
 //
-//   1. THE LIVE READ. The row re-resolves its own ``SidebarRowReading`` under `withObservationTracking`,
+//   1. THE LIVE READ. The row re-resolves its own ``SidebarRowReading`` through ``ObservationFollow``,
 //      so a pane's status tick repaints this leaf and never the list. That is the same leaf-scope
 //      contract the SwiftUI rows kept — and the reason SELECTION is read here rather than passed in:
 //      a parameter-carried `active` strands the previously selected row lit.
@@ -61,6 +61,10 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
 
     /// Whether this row is the live pane drag's resolved destination — the accent ring.
     private var isDropTarget = false
+
+    /// See ``refresh()``: the island re-runs it on this REUSED row every reconcile, so each arm must
+    /// displace the last.
+    private var rowFollow: ObservationFollow?
 
     var onSelect: () -> Void = {}
 
@@ -167,27 +171,23 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
 
     // MARK: The live read
 
-    /// Re-resolve this row against the store and repaint, re-arming the tracking for the next change.
+    /// Re-resolve this row against the store and repaint.
+    ///
+    /// `replacing:` although nothing in this file calls it twice: the island calls `refresh()` on this
+    /// REUSED row on every reconcile, so a plain arm would leave one live chain per reconcile.
     func refresh() {
-        var next: SidebarRowReading?
-        var target = false
-        withObservationTracking {
-            next = SidebarRowPresentation.reading(
-                for: row, store: store, fallbackTitle: fallbackTitle,
+        rowFollow = ObservationFollow.arm(self, replacing: rowFollow) { view in
+            (
+                next: SidebarRowPresentation.reading(
+                    for: view.row, store: view.store, fallbackTitle: view.fallbackTitle,
+                ),
+                target: view.paneDrag?.drag?.destination == .sidebarRow(view.row.id),
             )
-            target = paneDrag?.drag?.destination == .sidebarRow(row.id)
-        } onChange: { [weak self] in
-            // ⚠️ `onChange` fires BEFORE the store's write lands, so the next read is SCHEDULED
-            // rather than run inline — a read inside the callback sees the OLD value and paints one
-            // frame stale. One hop per arming: the tracking is one-shot, so this cannot pile up.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
-            }
-        }
-        if let next, next != reading || target != isDropTarget {
-            reading = next
-            isDropTarget = target
-            apply(next)
+        } apply: { view, reading in
+            guard reading.next != view.reading || reading.target != view.isDropTarget else { return }
+            view.reading = reading.next
+            view.isDropTarget = reading.target
+            view.apply(reading.next)
         }
     }
 
