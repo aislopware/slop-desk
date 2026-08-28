@@ -168,20 +168,18 @@ pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
         right: PHONE,
         extensions: SWIFT,
         window: 8,
-        // TWO rows, and each is a pair whose shared lines are ONE contiguous region — which is what
-        // separates them from the thirty-two pairs left red. A pair that shares seven scattered
+        // ONE row now, and it is a pair whose shared lines are ONE contiguous region — which is what
+        // separates it from the thirty-two pairs left red. A pair that shares seven scattered
         // regions is not "the prologue"; it is a copy that happens to contain one.
+        //
+        // THE SIDEBAR-HEADER ROW WAS DROPPED 2026-08-28, exactly as its own note said it would be.
+        // It ledgered five overlapping windows of `withObservationTracking` re-arm — the mandated
+        // docs/62 §3.1 prologue rather than duplicated behaviour — and predicted that the shared
+        // `follow` helper would delete them from every site at once, turning the row red as "the debt
+        // is PAID". `ObservationFollow` landed across both shells and it did. The row is gone rather
+        // than kept as history, because an entry that no longer describes a clone is an entry that
+        // would excuse the clone growing back.
         known: &[
-            // The `withObservationTracking` re-arm and nothing else: five overlapping windows, all
-            // inside one ~12-line span. Dissolves when the shared `follow` helper lands — the
-            // duplicated lines are the mandated docs/62 §3.1 prologue, not duplicated behaviour, and
-            // that helper deletes them from every site at once. This row is therefore the FIRST in
-            // the ledger's history that is not expected to be PAID: it will go red as "the debt is
-            // PAID, drop the entry", and dropping it is the whole of the work.
-            (
-                "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
-                "Sources/SlopDeskPhoneUI/Columns/NavigatorSectionHeaderCell.swift",
-            ),
             // A FALSE POSITIVE, ledgered because there is nowhere else to say so. Two windows, one
             // span: a `switch` over `SidebarRowReading`'s weight rungs, and the
             // `arrangedSubviews`/`removeArrangedSubview`/`removeFromSuperview` teardown loop. Two
@@ -430,10 +428,15 @@ mod tests {
     /// The pair-wise half of the ledger. A `known` entry is an exact `(left, right)` path pair, so
     /// the interesting failure is not "does the row work" —
     /// [`crate::claim::Claim::NoCloneAcross`]'s own tests cover that — but "does the row excuse
-    /// more than it names". It must not: the Mac half of the ledgered prologue row is
-    /// `MacSidebarHeader.swift`, which is ALSO the left half of the git-line clone this rule
-    /// deliberately leaves red, and a row that excused a path rather than a pair would have
-    /// silenced stage H's debt as a side effect of parking a re-arm.
+    /// more than it names". It must not: the Mac half of the surviving row is
+    /// `MacSidebarRow.swift`, and a row that excused a PATH rather than a pair would silence
+    /// every other clone that file takes part in as a side effect of parking one false
+    /// positive.
+    ///
+    /// RE-POINTED 2026-08-28 from the sidebar-header row, which was dropped when
+    /// `ObservationFollow` dissolved its prologue. The mechanic under test is the ledger's
+    /// pair-vs-path scope, not that particular pair, so it moved to the row that is still there
+    /// rather than being deleted with it.
     ///
     /// ⚠️ THE SECOND CLONE NEEDS ITS OWN BODY, and the first draft of this test did not give it one
     /// — it wrote the SAME body into a third file and asserted red. It was green, and the rule was
@@ -455,9 +458,9 @@ mod tests {
                         return Array(trimmed)\n}\n";
 
         // The ledgered pair, spelled at the two paths the ledger names.
-        fixture.write("Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift", &prologue);
+        fixture.write("Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift", &prologue);
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Columns/NavigatorSectionHeaderCell.swift",
+            "Sources/SlopDeskPhoneUI/Columns/NavigatorRowCell.swift",
             &prologue,
         );
         assert!(!cloned(&super::no_body_crosses_the_ui_split(&fixture.tree())));
@@ -465,7 +468,7 @@ mod tests {
         // The same Mac file against a DIFFERENT phone file, sharing a DIFFERENT body — the git-line
         // shape. The row above names a pair, so this one is a stranger and stays red.
         fixture.write(
-            "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
+            "Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift",
             &format!("{prologue}{git_line}"),
         );
         fixture.write(
@@ -484,34 +487,13 @@ mod tests {
         );
     }
 
-    /// A ledger row whose clone dissolved says so
-    ///
-    /// The prologue row is the first entry here that is EXPECTED to dissolve rather than be paid —
-    /// the shared `follow` helper deletes the duplicated lines from every site at once. When it
-    /// lands, this rule must go red and name the row, so that dropping the entry is forced rather
-    /// than remembered. Seeded by writing the two ledgered files with no shared body at all.
-    #[test]
-    fn a_ledger_row_whose_prologue_dissolved_is_named() {
-        let fixture = Fixture::new("ui-clone-dissolved");
-        shells(&fixture, "struct Unused {}\n", "struct Unused {}\n");
-        fixture.write(
-            "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
-            "func follow() { self.follow(store) { $0.gitSummary } }\n",
-        );
-        fixture.write(
-            "Sources/SlopDeskPhoneUI/Columns/NavigatorSectionHeaderCell.swift",
-            "func follow() { self.follow(store) { $0.rollup } }\n",
-        );
-        let found = super::no_body_crosses_the_ui_split(&fixture.tree());
-        assert!(!cloned(&found));
-        assert!(
-            found.violations().iter().any(|line| {
-                line.contains("NavigatorSectionHeaderCell.swift") && line.contains("the debt is PAID")
-            }),
-            "a dissolved prologue row must name itself, got {:?}",
-            found.violations(),
-        );
-    }
+    // THE `a_ledger_row_whose_prologue_dissolved_is_named` TEST WAS DELETED 2026-08-28, with the row
+    // it guarded. It seeded the two sidebar-header files with no shared body and asserted the rule
+    // said "the debt is PAID, drop the entry" — the forcing function that made dropping the row
+    // mandatory rather than remembered. It did its job: `ObservationFollow` dissolved the prologue,
+    // the rule went red in exactly those words, and the row is gone. Rewriting it against a
+    // different row would assert the same mechanic `Claim::NoCloneAcross`'s own tests already cover,
+    // about a row nobody expects to dissolve, so it is not replaced.
 
     #[test]
     fn a_drained_shell_is_red() {
