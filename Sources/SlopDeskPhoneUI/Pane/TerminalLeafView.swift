@@ -41,19 +41,21 @@
 // AppKit half spends an `isFlipped` override per decoration to get there; here there is nothing to say,
 // and the one place the y-axis DOES bite is the chip travel — see ``LeafChipReveal/offset(_:edge:)``.
 //
-// ⚠️ THE COMMAND NAVIGATOR CARD (⌃⌘O) HAS NO READER ON THIS PLATFORM YET. ``TerminalPaneWiring`` toggles
-// ``CommandNavigatorChrome/isVisible`` for this pane — that is what `onRequestBlockNavigator` is bound to
-// — and the Mac mounts ``MacCommandNavigatorView`` off its `follow()` arm. The phone's card was deleted
-// with the rest of the SwiftUI half and has not been rebuilt, so the chord currently takes ⌃⌘O away from
-// the PTY to flip a `Bool` nobody draws. That is the precise defect the Mac's own header records having
-// fixed; it is NOT resolved here, and the flag is deliberately left UNREAD rather than read-and-dropped,
-// so the hole stays one mount away instead of hiding behind a live-looking read. When the card lands it
-// goes here, off ``follow()``, covering the whole surface area (the column and the hint slot included).
+// TWO THINGS THIS LEAF MOUNTS THAT ARE NOT THE PIXELS OR THE CHIPS, and each was a hole this header
+// used to record rather than fill:
 //
-// ⚠️ SO DOES THE SEND-A-FILE PLATE. The deleted leaf mounted `PaneFileImportButton` at the head of the
-// chip column on the FOCUSED pane — the iPhone's only door for sending a file, since it has no second app
-// to drag out of and ``PaneDropReceiverView`` therefore has nothing to receive. It has no Mac twin and no
-// UIKit port; it belongs first in ``desiredSlots(_:findVisible:)``'s column, focused-pane only.
+//   • THE COMMAND NAVIGATOR CARD (⌃⌘O). ``TerminalPaneWiring`` toggles ``CommandNavigatorChrome/isVisible``
+//     for this pane — that is what `onRequestBlockNavigator` is bound to — and the flag went UNREAD here
+//     while the chord took ⌃⌘O away from the PTY to flip a `Bool` nobody drew. It is read inside
+//     ``follow()``'s arm now and mounted by ``applyNavigator(_:)`` as ``PhoneCommandNavigatorView``,
+//     covering the whole surface area (the column and the hint slot included) because it is added after
+//     them. Its Mac twin is ``SlopDeskMacUI/MacCommandNavigatorView`` and the divergences are written on
+//     the card, not here.
+//   • THE SEND-A-FILE PLATE, at the HEAD of the chip column on the FOCUSED pane — the iPhone's only door
+//     for sending a file, since it has no second app to drag out of and ``PaneDropReceiverView`` therefore
+//     has nothing to receive. It has no Mac twin. ``PaneFileImportPlateView`` presents the picker;
+//     ``PaneFileImportPolicy`` decides what a picked file DOES, and this file resolves the pane at fire
+//     time so a tap after a session swap cannot send to the pane that is gone.
 
 #if os(iOS)
 import Foundation
@@ -150,6 +152,11 @@ final class TerminalLeafView: UIView {
     private var mounted: [LeafChipSlot: UIView] = [:]
     /// The vi key-hint bar, when it is up. Separate from ``mounted`` because it lives in the bottom slot.
     private var hintBar: ViKeyHintBarView?
+
+    /// The Command Navigator card, while it is up. Held so the leaf can forget it BEFORE the fade
+    /// starts — a second ⌃⌘O during the retirement must build a fresh card rather than find this one on
+    /// its way out.
+    private var navigator: PhoneCommandNavigatorView?
 
     // MARK: The live reads
 
@@ -331,6 +338,10 @@ final class TerminalLeafView: UIView {
         autotypeTask = nil
         dialKey = nil
         autotypeKey = nil
+        // The card carries an observation arm of its own against this pane's block model, and an arm
+        // cannot be cancelled — so it is dropped HERE rather than left to fade off a tree the leaf has
+        // stopped driving.
+        dropNavigator()
         wiring.clear(live: live)
     }
 
@@ -396,6 +407,12 @@ final class TerminalLeafView: UIView {
         guard isFocused != self.isFocused else { return }
         self.isFocused = isFocused
         surfaceHost?.setPaneFocused(isFocused)
+        // ⚠️ AND THE CHROME IS RECONCILED, because one chip is focus-gated. `isFocused` is a PUSHED
+        // property, not an observable one, so nothing wakes ``follow()``'s arm for it — and the
+        // send-a-file plate would then appear on whichever pane happened to be focused when the leaf
+        // last drew and stay there. Re-running the arm is the supersede pattern the method already
+        // documents, not a second one.
+        if isWired { follow() }
     }
 
     /// The host reported a new cwd (OSC 7). It changes independently of the session id, which is why it
@@ -578,6 +595,7 @@ final class TerminalLeafView: UIView {
         var conditions = PaneStatusConditions()
         var hintsToggled = false
         var findVisible = false
+        var navigatorVisible = false
         var dial: PaneID?
         var autotype: PaneID?
         var auto = autoSecureInput
@@ -593,6 +611,9 @@ final class TerminalLeafView: UIView {
             conditions = pillConditions()
             hintsToggled = live?.terminalModel?.showViKeyHints ?? false
             findVisible = wiring.findBar.visible && live?.terminalModel != nil
+            // ⌃⌘O. The model guard is the card's own precondition — it reads a live block store — and
+            // it is the same pairing the find bar's read above uses.
+            navigatorVisible = wiring.navigatorChrome.isVisible && live?.terminalModel != nil
             // THE LETTERBOX'S TWO STORE READS, INSIDE THE ARM. The resolved grid is the host's answer for
             // this pane and moves when ANOTHER client joins or leaves the fold; read outside the arm this
             // pane would keep the grid it happened to have at mount and never re-place, on a device that
@@ -628,6 +649,7 @@ final class TerminalLeafView: UIView {
         }
         place()
         applyChrome(conditions: conditions, hintsToggled: hintsToggled, findVisible: findVisible)
+        applyNavigator(navigatorVisible)
         applyTriggers(dial: dial, autotype: autotype)
     }
 
@@ -666,12 +688,16 @@ final class TerminalLeafView: UIView {
     /// rather than re-deriving "read-only hides under vi, secure input hides under read-only, sync input
     /// hides under nothing" from the same prose and being right by luck.
     ///
-    /// ⚠️ The send-a-file plate belongs at the HEAD of this list on the focused pane — see the file
-    /// header. It is absent, not omitted.
+    /// ⚠️ THE ONE TENANT THAT IS NOT A READING OF THE PANE'S STATE is the send-a-file plate at the head:
+    /// it is a VERB, always available, and it is gated on FOCUS rather than on a condition because the
+    /// column belongs to every pane while the picker sends to exactly one. A chooser pane has no
+    /// terminal model and still takes a file — ``PaneFileImportPolicy`` says so by taking the model as
+    /// an optional — so the gate is the session, not the model.
     private func desiredSlots(
         _ conditions: PaneStatusConditions, findVisible: Bool,
     ) -> [LeafChipSlot] {
         var slots: [LeafChipSlot] = []
+        if isFocused, live != nil { slots.append(.fileImport) }
         if PaneStatusPillPresentation.showsViModePill(conditions), live?.terminalModel != nil {
             slots.append(.viMode)
         }
@@ -702,6 +728,18 @@ final class TerminalLeafView: UIView {
 
     private func makeChip(_ slot: LeafChipSlot) -> UIView? {
         switch slot {
+        case .fileImport:
+            // EVERY INPUT RESOLVED AT FIRE TIME, none at build time. The chip outlives a session swap
+            // under a stable pane id (that is what ``setLive(_:)`` is for), so a plate that had captured
+            // `live` would send the file to a pane that is gone. The decision itself is the policy's and
+            // is not touched here.
+            return PaneFileImportPlateView { [weak self] urls in
+                guard let self, let live else { return }
+                PaneFileImportPolicy.actuate(
+                    picked: urls, store: store, terminalModel: live.terminalModel,
+                    overlay: overlay, paneID: live.id,
+                )
+            }
         case .viMode:
             guard let model = live?.terminalModel else { return nil }
             // `exitCopyMode()` is the SINGLE exit seam — it also resets the count, the visual mode and the
@@ -730,6 +768,53 @@ final class TerminalLeafView: UIView {
             hintBar = nil
             LeafChipReveal.dismiss(bar, towards: .bottom)
         }
+    }
+
+    // MARK: - The Command Navigator card
+
+    /// Mounts or retires the ⌃⌘O card over this pane's whole surface area.
+    ///
+    /// It is added LAST, so it covers the chip column and the hint slot as well as the pixels — the
+    /// card is modal over the pane, and a chip standing on top of it would be the one thing on screen
+    /// that still took a touch.
+    ///
+    /// THE ORDER ON THE WAY OUT IS THE MAC'S, with one line UIKit adds. The leaf forgets the card
+    /// first, so a second ⌃⌘O during the fade builds a fresh one; then ``PhoneCommandNavigatorView/teardown()``
+    /// supersedes the card's observation arm, which the Mac's twin has no counterpart for because the
+    /// generation guard is this platform's rule (docs/62 §3.1); then the fade runs; then the pane takes
+    /// its keyboard back. There is no ``SlopDeskMacUI/MacPaneCardShield`` half — the card's own header
+    /// says why a tracking-area shield has nothing to guard against here.
+    private func applyNavigator(_ wanted: Bool) {
+        if wanted, navigator == nil {
+            guard let model = live?.terminalModel else { return }
+            let card = PhoneCommandNavigatorView(model: model, store: store) { [weak self] in
+                self?.wiring.navigatorChrome.isVisible = false
+            }
+            navigator = card
+            card.translatesAutoresizingMaskIntoConstraints = false
+            surfaceArea.addSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: surfaceArea.leadingAnchor),
+                card.trailingAnchor.constraint(equalTo: surfaceArea.trailingAnchor),
+                card.topAnchor.constraint(equalTo: surfaceArea.topAnchor),
+                card.bottomAnchor.constraint(equalTo: surfaceArea.bottomAnchor),
+            ])
+            card.reveal()
+        } else if !wanted, let card = navigator {
+            navigator = nil
+            card.teardown()
+            card.retire()
+            store.reclaimKeyboardFocusInActivePane()
+        }
+    }
+
+    /// The card goes NOW, with no fade — the leaf is being detached or torn down, so there is nothing
+    /// left for it to fade over.
+    private func dropNavigator() {
+        guard let card = navigator else { return }
+        navigator = nil
+        card.teardown()
+        card.removeFromSuperview()
     }
 
     // MARK: - The two triggers
@@ -854,6 +939,9 @@ private final class GridReadoutCaptionView: UIView {
 /// it the insertion point and any in-flight IME composition — every time an unrelated chip appears beside
 /// it.
 private enum LeafChipSlot: Hashable {
+    /// The send-a-file plate. No payload: there is one per leaf and it is the same plate whatever the
+    /// pane is showing — the pane it acts on is resolved when it is tapped, not when it is keyed.
+    case fileImport
     case viMode
     case pill(PaneStatusPill)
     case find
