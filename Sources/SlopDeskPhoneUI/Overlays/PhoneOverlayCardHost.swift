@@ -45,8 +45,13 @@ import UIKit
 /// ``ContentColumnViewController`` disables the whole canvas while that is true — so the empty state's
 /// "Connect" button (which routes to `openConnect()`) would set a flag with no surface behind it and
 /// leave the workspace permanently deaf, with no card and no floor to dismiss. It is listed so the host
-/// can see it and CLOSE it; the real Connect surface is a form the platform's own modal is for
-/// (user-directed 2026-08-08), and presenting one belongs to the shell that owns the presentation slot.
+/// can see it and CLOSE it; the real Connect surface is ``ConnectHostViewController``, a form the
+/// platform's own modal is for (user-directed 2026-08-08), and presenting one belongs to the shell that
+/// owns the presentation slot.
+///
+/// ⚠️ DELETE THIS CASE in the same change that wires that controller into ``WorkspaceRootViewController``.
+/// Two readers of one flag is a race with an obvious winner: this valve closes on the frame the flag is
+/// set, so the sheet would be slammed shut in the frame it opened and Connect would never appear.
 enum PhoneOverlaySheet: CaseIterable {
     case palette
     case openQuickly

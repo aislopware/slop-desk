@@ -69,6 +69,21 @@ final class SlateLabeledFieldView: UIView, UITextFieldDelegate {
         set { field.text = newValue }
     }
 
+    /// Writing `true` grabs the keyboard; writing `false` gives it up. Reading asks the field, so a tap
+    /// into a sibling field is reflected without anything having to publish it.
+    ///
+    /// The same spelling as ``SlateSearchBarView/isTakingInput`` — and NOT `isFocused`, which is already
+    /// `UIView`'s and is the focus ENGINE's property rather than the responder chain's.
+    ///
+    /// ⚠️ NO OPENING GRAB HERE, unlike the search bar. That component opens a picker and is the only
+    /// input on its card, so it can take the keyboard on `didMoveToWindow` unasked; a FORM has four of
+    /// these and only the form knows which one leads. So the grab is the caller's, at the callback where
+    /// the view is on screen — `becomeFirstResponder()` fails silently before that.
+    var isTakingInput: Bool {
+        get { field.isFirstResponder }
+        set { _ = newValue ? field.becomeFirstResponder() : field.resignFirstResponder() }
+    }
+
     private let caption = UILabel()
     private let field = UITextField()
 
