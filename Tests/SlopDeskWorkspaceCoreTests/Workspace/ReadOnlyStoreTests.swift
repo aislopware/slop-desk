@@ -150,7 +150,6 @@ final class ReadOnlyStoreTests: XCTestCase {
 
     // MARK: - Read-only DRIVES the `.desktop` video-input gate (the load-bearing one)
 
-    #if canImport(SwiftUI)
     /// **The read-only INPUT gate on the video seam.** A `.desktop` pane has no live terminal
     /// model, so `setPaneReadOnly` lands purely in the convergent ``WorkspaceStore/paneReadOnly`` set (the
     /// set-only path). The pure ``RemotePaneContext/videoLeaf(isActive:readOnly:...)`` derivation `GuiLeafView`
@@ -231,5 +230,4 @@ final class ReadOnlyStoreTests: XCTestCase {
         XCTAssertNil(model.inputReleaseInjector, "read-only: the seam clears the release sink")
         XCTAssertFalse(model.canReleaseStuckInput, "read-only: a locked pane cannot inject releases")
     }
-    #endif
 }

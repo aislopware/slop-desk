@@ -136,7 +136,6 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertFalse(keys[1].2)
     }
 
-    #if canImport(SwiftUI)
 
     // MARK: Read-only withholding at the seam (videoLeaf)
 
@@ -213,7 +212,6 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertEqual(m.statsEncodeMs, 4.2)
         XCTAssertEqual(m.statsDecodeMs, 1.1)
     }
-    #endif
 
     /// **Latency-axis zeros mean "no reading yet" → nil (dash), never a fake 0.0 ms.** The rate
     /// axes keep their zeros-are-real semantics (an idle stream receives nothing); only the
@@ -580,7 +578,6 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertEqual(settings[0].1, 10_000_000)
     }
 
-    #if canImport(SwiftUI)
     /// **Read-only WITHHOLDS the audio sink at the seam.** Enabling audio changes HOST capture
     /// behaviour, so — exactly like the stream-settings sink — the `.videoLeaf` derivation binds
     /// `nil` while read-only: the speaker is inert on a locked pane.
@@ -603,5 +600,4 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertNil(m.audioInjector, "read-only: the seam clears the audio sink")
         XCTAssertFalse(m.canToggleAudio, "read-only: a locked pane cannot start host audio")
     }
-    #endif
 }

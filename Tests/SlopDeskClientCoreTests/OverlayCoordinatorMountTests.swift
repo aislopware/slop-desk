@@ -962,7 +962,6 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - The host's toggled-state predicate reflects live chrome
 
-    #if canImport(SwiftUI)
     /// `PalettePresentation.toggledState(chrome:store:)` is the pure predicate the host hands the palette so the ✓ gutter
     /// tracks the real panel visibility. Pin that the Toggle-Tabs-Panel row shows ✓ exactly when the sidebar is
     /// visible (`!sidebarCollapsed`), and a non-toggle row never does — test the predicate, not the view.
@@ -1019,5 +1018,4 @@ final class OverlayCoordinatorMountTests: XCTestCase {
             "the dead `store.sidebarCollapsed` is NOT touched (the row no longer fires the legacy flag)",
         )
     }
-    #endif
 }
