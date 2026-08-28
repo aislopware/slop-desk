@@ -28,7 +28,12 @@ const SCANNED_ROOTS: [&str; 2] = ["Sources", "Tests"];
 /// Framework symbols `DocC` resolves through an import, which this repo therefore never declares.
 ///
 /// Keep it short, and add to it only for a symbol Apple actually ships.
-const DOCC_EXTERNAL: [&str; 3] = ["SwiftUICore", "CGDisplayGammaTable", "CGEventTap"];
+const DOCC_EXTERNAL: [&str; 4] = [
+    "SwiftUICore",
+    "CGDisplayGammaTable",
+    "CGEventTap",
+    "UILayoutPriority",
+];
 
 /// A doc may name a file it is telling you was DELETED.
 ///

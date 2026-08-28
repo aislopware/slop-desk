@@ -10,7 +10,9 @@
 // The four moves, which is all "the switcher's style" actually is:
 //
 //   1. The SURFACE is PAPER: the ground's own cream, opaque, cut at the FAMILY's own corner
-//      (``Slate/Metric/radiusPanel`` — not the island's; see ``SlatePaperCard/shape``), edged by a
+//      (``Slate/Metric/radiusPanel`` — not the island's; ``SlatePaperCardSurface/apply(to:)`` is where
+//      the corner is cut, the SwiftUI `shape` having been a property of a view that no longer exists),
+//      edged by a
 //      hairline and dropped on a real shadow. It was Liquid Glass until 2026-08-08, and ONE
 //      ISLAND took that material's reason away. Glass earns its keep by refracting what varies behind
 //      it; behind these cards now lie exactly two flat opaque tones, so the effect degraded to a grey
