@@ -10,7 +10,7 @@
 // is ``TerminalPaneWiring``'s (`SlopDeskClientCore`, stage F batch P1). The five callback pairs, the
 // dial, the autotype seam, the secure-input reconcile and the chip `×` all live there precisely so
 // the retain-cycle discipline, the teardown ORDER and the `EnableSecureEventInput` reference balance
-// are written ONCE. This file keeps `withObservationTracking` and the AppKit lifecycle, and keeps no
+// are written ONCE. This file keeps its ``ObservationFollow`` and the AppKit lifecycle, and keeps no
 // decision.
 //
 // ## The seam takes the NSView, and there is no longer another option
