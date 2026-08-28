@@ -35,6 +35,7 @@
 
 import AppKit
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
@@ -120,19 +121,15 @@ final class MacAndroidDeviceList: NSView {
 
     // MARK: Following the model
 
-    /// ⚠️ `withObservationTracking` fires ONCE per registration, so the callback re-arms by calling
-    /// this again on the next main-queue turn. Only what is READ inside the tracked block is observed —
-    /// the device list is the whole of it, because everything else this surface draws is derived from
-    /// it and a row's own spinner does its own tracking (``MacAndroidDeviceRow``).
+    /// ⚠️ Only what is READ inside `read` is observed — the device list is the whole of it, because
+    /// everything else this surface draws is derived from it and a row's own spinner does its own
+    /// tracking (``MacAndroidDeviceRow``).
     private func follow() {
-        withObservationTracking {
-            _ = self.model.devices
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { list in
+            list.model.devices
+        } apply: { list, _ in
+            list.rebuild()
         }
-        rebuild()
     }
 
     private func rebuild() {
@@ -385,15 +382,11 @@ final class MacAndroidDeviceRow: MacDevicePanelRowShell {
     /// The row's own live reading, tracked here rather than by the list: a boot in flight is one
     /// device changing, and re-arming the whole list for it would rebuild every other row.
     private func followPending() {
-        var pending = false
-        withObservationTracking {
-            pending = self.model.pending.contains(self.device.key)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followPending() }
-            }
+        ObservationFollow.arm(self) { row in
+            row.model.pending.contains(row.device.key)
+        } apply: { row, pending in
+            row.spinner.isHidden = !pending
+            row.start?.isHidden = pending
         }
-        spinner.isHidden = !pending
-        start?.isHidden = pending
     }
 }

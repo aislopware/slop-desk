@@ -27,6 +27,7 @@
 
 import AppKit
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
@@ -210,16 +211,12 @@ final class MacSimulatorRunningCard: NSView {
     /// because a glyph becoming a spinner in one frame reads as a redraw rather than as the click being
     /// accepted — and accepting the click is the whole of what the spinner is there to say.
     private func followPending() {
-        var pending = false
-        withObservationTracking {
-            pending = self.model.pending.contains(self.device.udid)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followPending() }
-            }
+        ObservationFollow.arm(self) { card in
+            card.model.pending.contains(card.device.udid)
+        } apply: { card, pending in
+            card.spinner.isHidden = !pending
+            card.stop.isHidden = pending
         }
-        spinner.isHidden = !pending
-        stop.isHidden = pending
     }
 
     // MARK: The picture

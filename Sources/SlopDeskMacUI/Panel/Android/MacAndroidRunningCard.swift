@@ -28,6 +28,7 @@
 
 import AppKit
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
@@ -219,21 +220,15 @@ final class MacAndroidRunningCard: NSView {
 
     /// The card's one live reading: whether a lifecycle verb is in flight for this device.
     ///
-    /// The re-arm is the AppKit idiom this target already uses everywhere — `withObservationTracking`
-    /// fires ONCE per registration, so the callback must hop to the main queue and call this again or
-    /// the card freezes on its first answer. ⚠️ Only the properties READ inside the tracked block are
-    /// observed, so adding a reading here means reading it inside the closure, not after it.
+    /// ⚠️ Only the properties READ inside `read` are observed, so adding a reading here means reading
+    /// it there rather than in `apply`.
     private func followPending() {
-        var pending = false
-        withObservationTracking {
-            pending = self.model.pending.contains(self.device.key)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followPending() }
-            }
+        ObservationFollow.arm(self) { card in
+            card.model.pending.contains(card.device.key)
+        } apply: { card, pending in
+            card.spinner.isHidden = !pending
+            card.stop?.isHidden = pending
         }
-        spinner.isHidden = !pending
-        stop?.isHidden = pending
     }
 
     // MARK: The pointer

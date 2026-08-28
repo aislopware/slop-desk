@@ -21,6 +21,7 @@
 // found. See ``MacAndroidParts`` for the one place that judgement was worth writing down at length.
 
 import AppKit
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
@@ -63,20 +64,15 @@ final class MacAndroidSurface: NSViewController {
 
     // MARK: Following the model
 
-    /// ⚠️ `withObservationTracking` fires ONCE per registration, so the callback re-arms by calling
-    /// this again on the next main-queue turn. Only the SELECTION is read here: everything else either
-    /// depth draws is tracked by the depth itself, which is what keeps a log line arriving from
-    /// rebuilding the surface that contains the console.
+    /// ⚠️ Only the SELECTION is read here: everything else either depth draws is tracked by the depth
+    /// itself, which is what keeps a log line arriving from rebuilding the surface that contains the
+    /// console.
     private func follow() {
-        var hasSelection = false
-        withObservationTracking {
-            hasSelection = self.model.selection != nil
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { surface in
+            surface.model.selection != nil
+        } apply: { surface, hasSelection in
+            surface.drill(to: hasSelection)
         }
-        drill(to: hasSelection)
     }
 
     // MARK: The drill

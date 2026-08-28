@@ -81,16 +81,12 @@ final class MacPanelStrip: NSView {
     // MARK: The live read
 
     private func follow() {
-        var surface: PanelSurface = .code
-        withObservationTracking {
-            surface = chrome.panelSurface
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { strip in
+            strip.chrome.panelSurface
+        } apply: { strip, surface in
+            strip.tabs.select(surface, labelling: strip.labelling)
+            strip.applyActions()
         }
-        tabs.select(surface, labelling: labelling)
-        applyActions()
     }
 
     /// A tab click animates through ONE transaction: the plate's TRAVEL, the reload plate's arrival and

@@ -116,22 +116,18 @@ final class MacCodePanelSurfaces: NSViewController {
 
     // MARK: - Which surface is up
 
-    /// The one observation that decides what is mounted, re-arming itself on every read it took.
+    /// The one observation that decides what is mounted.
     ///
-    /// Everything the four surfaces switch on is read INSIDE the tracking block — the selected tab, the
+    /// Everything the four surfaces switch on is read INSIDE `read` — the selected tab, the
     /// workbench's phase, the two device phases, the active pane and its project key, the admitted-
     /// projects set. A read left outside is a surface that stops updating for one reason only, which is
     /// the failure mode that survives every test.
     private func follow() {
-        var plan = SurfacePlan.empty
-        withObservationTracking {
-            plan = self.plan()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { surfaces in
+            surfaces.plan()
+        } apply: { surfaces, plan in
+            surfaces.apply(plan)
         }
-        apply(plan)
     }
 
     /// What should be on screen and which loops should be running, as ONE value.
@@ -323,29 +319,25 @@ final class MacCodePanelSurfaces: NSViewController {
     /// rides the rest of the slide out, and coming back it is the mirror, arriving as the column lands.
     /// One gesture, one clock — the same contract the titlebar strip and the rail keep.
     private func followCollapse() {
-        var collapsed = false
-        withObservationTracking {
-            collapsed = chrome.codeSidebarCollapsed
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followCollapse() }
-            }
-        }
-        // Leaving does not wait at all; ARRIVING waits out most of the column's slide, so the content
-        // lands on a column that has already arrived rather than being dragged in with it. SwiftUI
-        // spelled that as `.delay(columnSlideDuration * 0.55)` on the reveal curve; AppKit has no delay
-        // on an animation group, so the wait is the schedule.
-        guard collapsed else {
-            let delay = Slate.Motion.columnSlide.duration * Self.revealShare
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, !self.chrome.codeSidebarCollapsed else { return }
-                    self.animateAlpha(to: 1, on: Slate.Motion.reveal)
+        ObservationFollow.arm(self) { surfaces in
+            surfaces.chrome.codeSidebarCollapsed
+        } apply: { surfaces, collapsed in
+            // Leaving does not wait at all; ARRIVING waits out most of the column's slide, so the
+            // content lands on a column that has already arrived rather than being dragged in with it.
+            // SwiftUI spelled that as `.delay(columnSlideDuration * 0.55)` on the reveal curve; AppKit
+            // has no delay on an animation group, so the wait is the schedule.
+            guard collapsed else {
+                let delay = Slate.Motion.columnSlide.duration * Self.revealShare
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak surfaces] in
+                    MainActor.assumeIsolated {
+                        guard let surfaces, !surfaces.chrome.codeSidebarCollapsed else { return }
+                        surfaces.animateAlpha(to: 1, on: Slate.Motion.reveal)
+                    }
                 }
+                return
             }
-            return
+            surfaces.animateAlpha(to: 0, on: Slate.Motion.fadeOut)
         }
-        animateAlpha(to: 0, on: Slate.Motion.fadeOut)
     }
 
     /// How much of the column's slide the arriving content sits out.
@@ -369,50 +361,53 @@ final class MacCodePanelSurfaces: NSViewController {
     /// longer running" verdict sets the text and clears the selection in one write, so a listener on
     /// the stage would be torn down in the same transaction that fired it.
     private func followReports() {
-        var simulator: (String?, String?) = (nil, nil)
-        var android: (String?, String?) = (nil, nil)
-        withObservationTracking {
-            simulator = (self.simulatorModel.failure, self.simulatorModel.notice)
-            android = (self.androidModel.failure, self.androidModel.notice)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followReports() }
+        ObservationFollow.arm(self) { surfaces in
+            (
+                simulator: (
+                    failure: surfaces.simulatorModel.failure,
+                    notice: surfaces.simulatorModel.notice,
+                ),
+                android: (
+                    failure: surfaces.androidModel.failure,
+                    notice: surfaces.androidModel.notice,
+                ),
+            )
+        } apply: { surfaces, reading in
+            if reading.simulator.failure != surfaces.lastSimulatorReport.failure {
+                surfaces.announce(
+                    reading.simulator.failure,
+                    isFailure: true,
+                    id: CodePanelPresentation.simulatorToastID,
+                    subject: surfaces.simulatorSubject,
+                )
             }
+            if reading.simulator.notice != surfaces.lastSimulatorReport.notice {
+                surfaces.announce(
+                    reading.simulator.notice,
+                    isFailure: false,
+                    id: CodePanelPresentation.simulatorToastID,
+                    subject: surfaces.simulatorSubject,
+                )
+            }
+            if reading.android.failure != surfaces.lastAndroidReport.failure {
+                surfaces.announce(
+                    reading.android.failure,
+                    isFailure: true,
+                    id: CodePanelPresentation.androidToastID,
+                    subject: surfaces.androidSubject,
+                )
+            }
+            if reading.android.notice != surfaces.lastAndroidReport.notice {
+                surfaces.announce(
+                    reading.android.notice,
+                    isFailure: false,
+                    id: CodePanelPresentation.androidToastID,
+                    subject: surfaces.androidSubject,
+                )
+            }
+            surfaces.lastSimulatorReport = reading.simulator
+            surfaces.lastAndroidReport = reading.android
         }
-        if simulator.0 != lastSimulatorReport.failure {
-            announce(
-                simulator.0,
-                isFailure: true,
-                id: CodePanelPresentation.simulatorToastID,
-                subject: simulatorSubject,
-            )
-        }
-        if simulator.1 != lastSimulatorReport.notice {
-            announce(
-                simulator.1,
-                isFailure: false,
-                id: CodePanelPresentation.simulatorToastID,
-                subject: simulatorSubject,
-            )
-        }
-        if android.0 != lastAndroidReport.failure {
-            announce(
-                android.0,
-                isFailure: true,
-                id: CodePanelPresentation.androidToastID,
-                subject: androidSubject,
-            )
-        }
-        if android.1 != lastAndroidReport.notice {
-            announce(
-                android.1,
-                isFailure: false,
-                id: CodePanelPresentation.androidToastID,
-                subject: androidSubject,
-            )
-        }
-        lastSimulatorReport = simulator
-        lastAndroidReport = android
     }
 
     /// The device is the SUBJECT and the sentence is the detail, not the other way round. A headline is
@@ -449,20 +444,16 @@ final class MacCodePanelSurfaces: NSViewController {
     /// watcher applies it without a reload). The ensure round below covers the panel-open path; this
     /// covers Settings edits mid-session. Best-effort, reply ignored.
     private func followFontSpec() {
-        var spec: MetadataCodec.CodeFontSpec?
-        withObservationTracking {
-            spec = self.preferences.map { CodeFontSync.spec(terminal: $0.terminal) }
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followFontSpec() }
-            }
+        ObservationFollow.arm(self) { surfaces -> MetadataCodec.CodeFontSpec? in
+            surfaces.preferences.map { CodeFontSync.spec(terminal: $0.terminal) }
+        } apply: { surfaces, spec in
+            guard let spec, spec != CodeServerEnsure.lastPushedFontSpec,
+                  let client = surfaces.store.firstConnectedMetadataClient
+            else { return }
+            // Records the push too, so the next ensure round does not re-send what just landed.
+            CodeServerEnsure.recordPushed(spec)
+            Task { await client.syncCodeFont(spec) }
         }
-        guard let spec, spec != CodeServerEnsure.lastPushedFontSpec,
-              let client = store.firstConnectedMetadataClient
-        else { return }
-        // Records the push too, so the next ensure round does not re-send what just landed.
-        CodeServerEnsure.recordPushed(spec)
-        Task { await client.syncCodeFont(spec) }
     }
 
     // MARK: - What the panel resolves the focus to

@@ -30,6 +30,7 @@
 // scannable), the three inks, the per-line Copy and the whole-console Copy.
 
 import AppKit
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
@@ -220,26 +221,24 @@ final class MacSimulatorConsoleView: NSView {
         scroller.documentView = text
     }
 
-    /// The one observation: everything the drawer draws is read INSIDE the tracking block, and it
-    /// re-arms itself on every read it took. A read left outside is a console that stops updating for
-    /// one reason only, which is the failure mode that survives every test.
+    /// The one observation: everything the drawer draws is read INSIDE `read`. A read left outside is
+    /// a console that stops updating for one reason only, which is the failure mode that survives
+    /// every test.
     private func follow() {
-        var lines: [DeviceLogLine] = []
-        var started = false
-        var chosen = SimulatorLogLevel.info
-        withObservationTracking {
-            lines = self.model.logLines
-            started = self.model.isLogStarted
-            chosen = self.model.logLevel
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
+        ObservationFollow.arm(self) { view in
+            (
+                lines: view.model.logLines,
+                started: view.model.isLogStarted,
+                chosen: view.model.logLevel,
+            )
+        } apply: { view, reading in
+            view.rows = reading.lines
+            view.isStarted = reading.started
+            if view.level.titleOfSelectedItem != reading.chosen.title {
+                view.level.selectItem(withTitle: reading.chosen.title)
             }
+            view.refill()
         }
-        rows = lines
-        isStarted = started
-        if level.titleOfSelectedItem != chosen.title { level.selectItem(withTitle: chosen.title) }
-        refill()
     }
 
     private var rows: [DeviceLogLine] = []

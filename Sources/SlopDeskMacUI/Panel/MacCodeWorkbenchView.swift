@@ -1,10 +1,11 @@
 // MacCodeWorkbenchView — mounting the pooled workbench, in AppKit (docs/56 stage D, increment 51).
 //
-// It came from the macOS half of what is now `Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift`, which is
-// phone's file alone. The move is smaller than it looks, and that is the point: the representable was
-// never doing SwiftUI work. It made a clipping container, put the pooled `WKWebView` in it, wrote a
-// colour and told the pool it had remounted — four AppKit calls wearing an `NSViewRepresentable`
-// because the thing above it happened to be a `View`.
+// It came from the macOS half of the deleted `CodeSidebarWebView`, whose phone half is now
+// `Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift` — this file's twin, one framework
+// later. The move is smaller than it looks, and that is the point: the representable was never doing
+// SwiftUI work. It made a clipping container, put the pooled `WKWebView` in it, wrote a colour and
+// told the pool it had remounted — four AppKit calls wearing an `NSViewRepresentable` because the
+// thing above it happened to be a `View`.
 //
 // THE MOUNT IS A CLIPPING CONTAINER, NEVER THE WEBVIEW ITSELF. Under SwiftUI that was because a
 // representable's product is destroyed on structural identity changes; here it is because a surface
@@ -113,26 +114,24 @@ final class MacCodeWorkbenchView: NSView {
 
     /// Follow the pooled load state until it lifts.
     ///
-    /// The observation re-arms itself the way every other AppKit surface in this target does. It stops
-    /// arming once the veil is down, because the state only ever falls: a page that finished loading
-    /// does not go back to loading, and the reload path mints a fresh state with a fresh observer.
+    /// The following goes quiet once the veil is down, because the state only ever falls: a page that
+    /// finished loading does not go back to loading, and the reload path mints a fresh state with a
+    /// fresh observer.
     private func followVeil() {
+        // The pooled state is resolved OUT here, as it was outside the tracked block before: `read`
+        // observes the flag on this one state, never the pool's own bookkeeping.
         let state = CodeSidebarWebViewPool.shared.loadState(for: projectRoot)
-        var veiled = true
-        withObservationTracking {
-            veiled = state.veiled
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followVeil() }
+        ObservationFollow.arm(self) { _ in
+            state.veiled
+        } apply: { view, veiled in
+            guard view.veil.isHidden != !veiled else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Slate.Motion.smallFade.duration
+                context.timingFunction = Slate.Motion.smallFade.timingFunction
+                view.veil.animator().alphaValue = veiled ? 1 : 0
+            } completionHandler: { [weak view] in
+                view?.veil.isHidden = !veiled
             }
-        }
-        guard veil.isHidden != !veiled else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Slate.Motion.smallFade.duration
-            context.timingFunction = Slate.Motion.smallFade.timingFunction
-            veil.animator().alphaValue = veiled ? 1 : 0
-        } completionHandler: { [weak self] in
-            self?.veil.isHidden = !veiled
         }
     }
 }

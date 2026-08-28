@@ -114,15 +114,11 @@ final class MacCodePanelColumn: NSViewController {
     /// Whether the workbench is MOUNTED — behind the open gate there is nothing to reload, and a bump
     /// of the poll generation would boot the very thing the gate exists to defer.
     private func followReloadable() {
-        var reloadable = false
-        withObservationTracking {
-            reloadable = activeProjectRoot.map(chrome.openedCodeProjects.contains) ?? false
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followReloadable() }
-            }
+        ObservationFollow.arm(self) { column in
+            column.activeProjectRoot.map(column.chrome.openedCodeProjects.contains) ?? false
+        } apply: { column, reloadable in
+            column.strip.codeReloadable = reloadable
         }
-        strip.codeReloadable = reloadable
     }
 
     /// The active pane's project root — the HOST-pushed `projectKey` (wire type 34) ONLY, never the cwd

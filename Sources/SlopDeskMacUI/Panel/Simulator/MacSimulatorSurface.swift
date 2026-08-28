@@ -21,6 +21,7 @@
 // makes the two agree without either one asking the other.
 
 import AppKit
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
@@ -67,25 +68,23 @@ final class MacSimulatorSurface: NSViewController {
 
     /// The one observation: which depth, for which device.
     private func follow() {
-        var selection: String?
-        withObservationTracking {
-            selection = self.model.selection
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { controller in
+            controller.model.selection
+        } apply: { controller, selection in
+            let wanted = selection.map { "stage:\($0)" } ?? "list"
+            guard wanted != controller.mounted else { return }
+            let isEntering = selection != nil
+            controller.mounted = wanted
+            // ENTERING: the stage arrives from the trailing edge. LEAVING: the list arrives from the
+            // leading one. The same two numbers, negated, which is what makes the pair read as one
+            // movement.
+            let shift = isEntering ? Slate.Metric.space4 : -Slate.Metric.space4
+            let model = controller.model
+            let surface: NSView = isEntering
+                ? MacSimulatorStageView(model: model)
+                : MacSimulatorDeviceList(model: model) { [model] udid in model.select(udid) }
+            controller.swap(to: surface, from: shift)
         }
-        let wanted = selection.map { "stage:\($0)" } ?? "list"
-        guard wanted != mounted else { return }
-        let isEntering = selection != nil
-        mounted = wanted
-        // ENTERING: the stage arrives from the trailing edge. LEAVING: the list arrives from the leading
-        // one. The same two numbers, negated, which is what makes the pair read as one movement.
-        let shift = isEntering ? Slate.Metric.space4 : -Slate.Metric.space4
-        let surface: NSView = isEntering
-            ? MacSimulatorStageView(model: model)
-            : MacSimulatorDeviceList(model: model) { [model] udid in model.select(udid) }
-        swap(to: surface, from: shift)
     }
 
     /// Mount `surface` offset by `shift` and slide it home, sliding whatever was there out the other

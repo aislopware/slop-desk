@@ -49,6 +49,7 @@
 
 import AppKit
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the re-arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
@@ -138,16 +139,12 @@ final class MacSimulatorDeviceList: NSView {
     /// The one observation. The DEVICE SET is read here and a row's own pending flag is read by the row,
     /// which is what keeps a boot from rebuilding the whole column every second while nothing moves.
     private func follow() {
-        var set: [SimulatorDevice] = []
-        withObservationTracking {
-            set = model.devices
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { list in
+            list.model.devices
+        } apply: { list, set in
+            list.devices = set
+            list.refill()
         }
-        devices = set
-        refill()
     }
 
     private var matches: [SimulatorDevice] {
@@ -373,16 +370,12 @@ final class MacSimulatorDeviceRow: MacDevicePanelRowShell {
     /// The verb and the spinner share the slot and swap — see ``MacSimulatorRunningCard`` for why the
     /// swap is same-size rather than a reflow.
     private func followPending() {
-        var pending = false
-        withObservationTracking {
-            pending = self.model.pending.contains(self.device.udid)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.followPending() }
-            }
+        ObservationFollow.arm(self) { row in
+            row.model.pending.contains(row.device.udid)
+        } apply: { row, pending in
+            row.spinner.isHidden = !pending
+            row.boot.isHidden = pending
         }
-        spinner.isHidden = !pending
-        boot.isHidden = pending
     }
 }
 

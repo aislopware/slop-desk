@@ -142,19 +142,15 @@ final class MacPanelRail: NSView {
     }
 
     private func follow() {
-        var surface: PanelSurface = .code
-        withObservationTracking {
-            surface = chrome.panelSurface
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
+        ObservationFollow.arm(self) { rail in
+            rail.chrome.panelSurface
+        } apply: { rail, surface in
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Slate.Motion.selectionMorph.duration
+                context.timingFunction = Slate.Motion.selectionMorph.timingFunction
+                context.allowsImplicitAnimation = true
+                rail.tabs.select(surface, labelling: .all)
             }
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Slate.Motion.selectionMorph.duration
-            context.timingFunction = Slate.Motion.selectionMorph.timingFunction
-            context.allowsImplicitAnimation = true
-            tabs.select(surface, labelling: .all)
         }
     }
 }
