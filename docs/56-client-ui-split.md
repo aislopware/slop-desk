@@ -138,6 +138,18 @@ secondary windows, a 40-row rail under a mouse — are macOS-shaped problems.
   have made both halves carry the same three seams.
 - **A UI target holds views only.** Anything that would compile without a view framework belongs in
   the shared logic target. This is what keeps feature parity from becoming duplicate code.
+
+  ⚠️ ASCENDING IS ONE OF TWO FIXES, AND THE WRONG ONE FOR A SEAM'S PAYLOAD. The rule catches a
+  frameworkless FILE, which is not the same claim as "this type is shared logic". A per-platform
+  seam's payload — the plain value one half's mount takes — is frameworkless and yet deliberately
+  NOT shared: `VideoPaneSpec` omits `onSystemKeyInjectorReady` because its producer is a `CGEventTap`
+  that does not exist on iOS, so hoisting it into the shared target would force one signature onto
+  two platforms that genuinely disagree, which is the duplication this rule exists to prevent
+  wearing the shape of the fix for it. The second fix is to put the value in the file that MOUNTS it,
+  under that file's view-framework import: `MacVideoPaneSpec` sits in `MacVideoPaneView.swift` beside
+  `MacVideoPaneControls`, and `VideoPaneSpec` sits in `VideoSurfaceHost.swift` beside
+  `VideoPaneControls`, for the same reason. Ascend when the type would be spelled IDENTICALLY in both
+  halves; fold when the halves are asymmetric on purpose.
 - **`#if os(...)` inside a UI target is a smell, not a tool.** A platform gate in a
   platform-specific target means the file is in the wrong target. The one allowed use is the
   whole-file guard that declares `SlopDeskPhoneUI`'s iOS-only nature to `swift build`, which
