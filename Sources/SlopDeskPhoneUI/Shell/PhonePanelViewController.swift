@@ -257,13 +257,21 @@ final class PhonePanelViewController: UIViewController {
         reportClose()
     }
 
-    /// Every departure, whatever caused it.
+    /// Every departure that is really a DISMISSAL, and no other.
+    ///
+    /// ⚠️ `isBeingDismissed` IS THE WHOLE GUARD, and `parent == nil` is not a second half of it — a
+    /// PRESENTED controller always has a `nil` parent, because `parent` is containment and this is
+    /// presentation, so an `||` with it is a guard that never refuses anything. What it would then let
+    /// through is every disappearance the panel causes ITSELF: the simulator's location popover adapts
+    /// to a sheet in compact width, and a full-screen sheet over this panel fires this method with
+    /// nothing being dismissed. The panel would park both streams, cancel five loops and write the
+    /// workstyle flag — closing itself under a sheet the reader just opened.
     ///
     /// ``teardown()`` before the report, and that order matters: parking a device stream releases a host
     /// encoder and two websockets, and the shell may mint a new panel the moment the flag settles.
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        guard isBeingDismissed || parent == nil else { return }
+        guard isBeingDismissed else { return }
         teardown()
         reportClose()
     }
