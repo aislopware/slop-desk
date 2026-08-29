@@ -1027,6 +1027,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-clientdriver"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-clientnet",
+ "slopdesk-clientsession",
+ "slopdesk-muxnet",
+ "slopdesk-wire",
+]
+
+[[package]]
 name = "slopdesk-clientnet"
 version = "0.1.0"
 dependencies = [
@@ -1085,6 +1095,7 @@ dependencies = [
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
  "slopdesk-clientctl",
+ "slopdesk-clientdriver",
  "slopdesk-clientnet",
  "slopdesk-clientsession",
  "slopdesk-codepanel",

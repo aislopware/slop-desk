@@ -514,7 +514,7 @@ struct Campaign {
 fn supervise(shared: &Arc<Shared>, inbox: &Receiver<Command>) {
     // Published before the first command is read, so no command this thread runs — and therefore no
     // observer call it makes — can observe an unpublished id and mistake itself for the near side.
-    drop(shared.supervisor.set(thread::current().id()));
+    let _published = shared.supervisor.set(thread::current().id());
     let mut campaign: Option<Campaign> = None;
     let mut next_ack = Instant::now() + shared.config.ack_interval;
     let mut next_ping = Instant::now() + shared.config.ping_interval;

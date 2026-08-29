@@ -200,7 +200,10 @@ type Served = Arc<Mutex<Vec<(Arc<MuxConnection>, ConnectionThreads)>>>;
 /// PATH-1 exists for. The `served` list is why `free` is a real quiescence point — see there.
 #[derive(Debug)]
 pub struct SlopDeskMuxPool {
-    registry: Arc<ConnectionRegistry>,
+    /// Reachable from [`crate::pane_driver`], which opens its channels on this same pool rather
+    /// than minting a second one: every pane to one host and the workspace document ride ONE mux,
+    /// and two registries would be two TCP pairs and two client identities at the host.
+    pub(crate) registry: Arc<ConnectionRegistry>,
     served: Served,
 }
 

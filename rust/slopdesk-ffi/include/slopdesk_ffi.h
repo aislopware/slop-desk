@@ -5959,6 +5959,210 @@ int slopdesk_mux_transport_send(const SlopDeskMuxTransport *handle,
 void slopdesk_mux_transport_note_consumed(const SlopDeskMuxTransport *handle, size_t bytes);
 
 // ---------------------------------------------------------------------------
+// ONE PANE'S CLIENT SESSION (rust/slopdesk-ffi/src/pane_driver.rs).
+//
+// One handle over the whole of what SlopDeskClient.swift, ReconnectManager.swift
+// and EventBroadcaster.swift decided between them: a supervisor thread, the dedup
+// fold, the ack and ping tickers, the resume verdict and the retry campaign.
+//
+// THE POOL IS PASSED IN. _new takes a SlopDeskMuxPool rather than minting one:
+// every pane to one host and the workspace document ride ONE mux, so a private
+// pool would be a second TCP pair and a second client identity at the host. Make
+// one pool per app and hand it to every driver. The pool must outlive them all.
+//
+// THREE CALLBACKS, because `event` carries two unlike things. A message crosses
+// as the SlopDeskWireMessage pair above; the session's own lifecycle — a drop, a
+// resume, an RTT reading, a campaign's progress — is not on the wire and crosses
+// as SlopDeskPaneEvent. A wake carries NOTHING: it says the inbox is non-empty,
+// and _take_output collects the bytes when the renderer is ready, which is what
+// makes credit-at-consumption mean consumption.
+//
+// THE CALLBACK CONTRACT:
+//   1. `context` stays valid until _free RETURNS. _free stops the supervisor and
+//      joins every forwarder, so a callback may still be running when it is
+//      entered, and none is once it answers.
+//   2. All three run on a Rust thread and MAY OVERLAP — unlike the mux door's
+//      pair above. Lifecycle events come from the supervisor, messages and wakes
+//      from a forwarder, and the lock that would serialise them would sit on the
+//      inbound byte path. Synchronise anything a callback shares.
+//   3. No callback may re-enter _free: it joins the thread the callback runs on.
+//      EVERYTHING ELSE IS ALLOWED and cannot deadlock. A connect or resume made
+//      from inside a callback answers SLOPDESK_PANE_CONNECT_REENTRANT rather than
+//      parking; a pause or close is queued and applied on the next turn of the
+//      loop. Sends, readouts and drains are ordinary calls from anywhere.
+//   4. Every pointer in every callback is LENT for that call. Keep nothing.
+//
+// _free vs _close, which is the whole detach story: _close retires the session at
+// the HOST — a final ack, a clean bye — while _free leaves the host's shell and
+// its replay buffer standing, which is what a client going away and coming back
+// needs. Freeing without closing is DETACH, not a leak.
+// ---------------------------------------------------------------------------
+
+// Which lifecycle event a SlopDeskPaneEvent is. Every field but `kind` belongs to
+// exactly one of these and is zero for the rest.
+#define SLOPDESK_PANE_EVENT_ROUND_TRIP 0u   /* round_trip_ms */
+#define SLOPDESK_PANE_EVENT_DISCONNECTED 1u /* the lent text */
+#define SLOPDESK_PANE_EVENT_RECONNECTED 2u  /* session_id, resume_from_seq */
+#define SLOPDESK_PANE_EVENT_RETRY 3u        /* attempt, delay_ms */
+#define SLOPDESK_PANE_EVENT_GAVE_UP 4u      /* attempt = how many it made */
+#define SLOPDESK_PANE_EVENT_LOG 5u          /* the lent text */
+
+// What a connect or a resume did. Each is a different thing for the caller to do.
+#define SLOPDESK_PANE_CONNECT_OK 0
+#define SLOPDESK_PANE_CONNECT_REFUSED 1      /* closed, or the child exited. Permanent */
+#define SLOPDESK_PANE_CONNECT_NO_ENDPOINT 2  /* a resume before the first connect */
+#define SLOPDESK_PANE_CONNECT_OPEN 3         /* the dial failed. Retryable */
+#define SLOPDESK_PANE_CONNECT_NO_VERDICT 4   /* refused, died, or timed out. Retryable */
+#define SLOPDESK_PANE_CONNECT_SUPERSEDED 5   /* a close or pause landed mid-dial. STOP */
+#define SLOPDESK_PANE_CONNECT_GONE 6         /* null handle, or the driver is being freed */
+#define SLOPDESK_PANE_CONNECT_REENTRANT 7    /* called from inside a callback. Your bug */
+
+// What a send did.
+#define SLOPDESK_PANE_SEND_OK 0
+#define SLOPDESK_PANE_SEND_CLOSED 1   /* nothing connected, or the session is finished */
+#define SLOPDESK_PANE_SEND_LINK 2     /* the write failed; the link is dying */
+#define SLOPDESK_PANE_SEND_REFUSED 3  /* null handle, unknown record, or an input on CONTROL */
+
+typedef struct SlopDeskPaneDriver SlopDeskPaneDriver;
+
+// One session-lifecycle event, flattened. `attempt` serves both RETRY and GAVE_UP
+// because it is the same counter in both.
+typedef struct {
+    uint32_t kind;
+    uint32_t attempt;
+    uint64_t delay_ms;
+    double round_trip_ms;
+    uint8_t session_id[16];
+    int64_t resume_from_seq;
+} SlopDeskPaneEvent;
+
+// How one driver is configured, fixed for its life. Both OPTIONAL parts carry an
+// absence flag rather than a sentinel, because both have a legal zero: a backoff
+// of zero nanoseconds is a legal schedule, and resume_last_seq == 0 is exactly
+// what a cold launch presents in order to be replayed the WHOLE scrollback ring.
+typedef struct {
+    unsigned char channel_class;
+    bool reconnects;
+    bool has_resume_seed;
+    uint64_t ack_interval_ms;
+    uint64_t ping_interval_ms;
+    uint64_t retry_initial_ns;
+    uint64_t retry_maximum_ns;
+    double retry_multiplier;
+    uint8_t resume_session_id[16];
+    int64_t resume_last_seq;
+} SlopDeskPaneConfig;
+
+// `blob_offset` in the record is always 0 here. Read the run through `blob`.
+typedef void (*SlopDeskPaneMessageFn)(void *context, const SlopDeskWireMessage *message,
+                                      const uint8_t *arena, size_t arena_len, const uint8_t *blob,
+                                      size_t blob_len);
+
+// `text_len` is 0 for every kind but DISCONNECTED and LOG. Check the LENGTH —
+// the pointer is non-null even when there is nothing behind it.
+typedef void (*SlopDeskPaneEventFn)(void *context, const SlopDeskPaneEvent *event,
+                                    const uint8_t *text, size_t text_len);
+
+// Output is waiting. LEVEL-triggered, not edge: it fires once per accepted
+// `output`, so ten in a burst are ten calls whether or not you drained between
+// them. Coalesce on your side — a one-slot wake whose pending value is REPLACED,
+// never queued. Only that side can see whether a consumer is parked.
+typedef void (*SlopDeskPaneWakeFn)(void *context);
+
+typedef void (*SlopDeskPaneChunkFn)(void *context, const uint8_t *bytes, size_t len);
+
+// Starts the supervisor thread. Dials nothing until _connect asks it to, so no
+// callback can run for a session that has not connected.
+//
+// NULL if `pool` or `config` was NULL, or the thread could not start. On NULL no
+// callback has run or ever will, so `context` may be freed at once.
+SlopDeskPaneDriver *slopdesk_pane_driver_new(const SlopDeskMuxPool *pool,
+                                             const SlopDeskPaneConfig *config, void *context,
+                                             SlopDeskPaneMessageFn on_message,
+                                             SlopDeskPaneEventFn on_event,
+                                             SlopDeskPaneWakeFn on_wake);
+
+// Stops the supervisor, joins every forwarder, frees the handle. `context` may be
+// released once this RETURNS, never before. Never call it from inside a callback.
+// Does NOT close the session at the host — see _close, and the detach note above.
+void slopdesk_pane_driver_free(SlopDeskPaneDriver *handle);
+
+// The cwd a FRESH host shell starts in, re-sent on every open. A host-side
+// reattach ignores it; only a respawn reads it. NULL/0 clears it.
+void slopdesk_pane_driver_set_initial_cwd(const SlopDeskPaneDriver *handle, const uint8_t *cwd,
+                                          size_t cwd_len);
+
+// BLOCKS until the dial and the handshake resolve, bounded by handshake_timeout_ms.
+int slopdesk_pane_driver_connect(const SlopDeskPaneDriver *handle, const uint8_t *host,
+                                 size_t host_len, uint16_t port, uint64_t handshake_timeout_ms);
+
+// Backgrounded: acks what is held, says a clean bye, tears the transport down. The
+// host KEEPS the shell and its replay buffer. Idempotent.
+void slopdesk_pane_driver_pause(const SlopDeskPaneDriver *handle);
+
+// Foregrounded: reconnects with the preserved session id and seq. A no-op unless
+// paused. Answers as _connect, plus NO_ENDPOINT if nothing was ever connected.
+int slopdesk_pane_driver_resume(const SlopDeskPaneDriver *handle, uint64_t handshake_timeout_ms);
+
+// Permanently retires the session: a final ack, a clean bye, a teardown. Idempotent.
+void slopdesk_pane_driver_close(const SlopDeskPaneDriver *handle);
+
+// PTY input on DATA, split across frames at the flow-control cap. BLOCKS while the
+// credit window is empty — that IS the backpressure, and it is why a stdin reader
+// needs no queue of its own.
+int slopdesk_pane_driver_send_input(const SlopDeskPaneDriver *handle, const uint8_t *bytes,
+                                    size_t len);
+
+// REMEMBERED, so every later connection re-asserts it — including when the send
+// itself fails, which is exactly the resize the next connection must assert.
+int slopdesk_pane_driver_send_resize(const SlopDeskPaneDriver *handle, uint16_t cols, uint16_t rows,
+                                     uint16_t px_width, uint16_t px_height);
+
+// One message on CONTROL. REFUSES an input: CONTROL is unwindowed, and a paste on
+// it would put a 16 MiB frame on the lane a Ctrl-C needs.
+int slopdesk_pane_driver_send_control(const SlopDeskPaneDriver *handle,
+                                      const SlopDeskWireMessage *message, const uint8_t *arena,
+                                      size_t arena_len, const uint8_t *blob, size_t blob_len);
+
+void slopdesk_pane_driver_flush_ack(const SlopDeskPaneDriver *handle);
+
+// Takes the WHOLE backlog in order and credits its wire bytes back. Answers how
+// many payloads were handed over. A NULL on_chunk still drains and still credits.
+size_t slopdesk_pane_driver_take_output(const SlopDeskPaneDriver *handle, void *context,
+                                        SlopDeskPaneChunkFn on_chunk);
+
+// Writes 16 bytes into `out`; false before the first handshake, leaving it untouched.
+bool slopdesk_pane_driver_session_id(const SlopDeskPaneDriver *handle, uint8_t *out);
+
+// What is acked, and what the next open presents.
+int64_t slopdesk_pane_driver_highest_contiguous_seq(const SlopDeskPaneDriver *handle);
+
+// One of the SLOPDESK_WS_RESUME_* bytes declared further down — the same three
+// values, not a second spelling, because this readout feeds straight into
+// slopdesk_ws_toast_session_resume. It gates a surface WIPE, so UNDETERMINED must
+// not be read as "fresh": a stream that has produced nothing has established
+// nothing.
+unsigned char slopdesk_pane_driver_resume_outcome(const SlopDeskPaneDriver *handle);
+
+// False before the first pong, leaving `out` untouched.
+bool slopdesk_pane_driver_smoothed_rtt_ms(const SlopDeskPaneDriver *handle, double *out);
+
+bool slopdesk_pane_driver_is_connected(const SlopDeskPaneDriver *handle);
+bool slopdesk_pane_driver_is_paused(const SlopDeskPaneDriver *handle);
+
+// A NULL handle reads as CLOSED — the safe reading, since a caller holding
+// nothing holds nothing live.
+bool slopdesk_pane_driver_is_closed(const SlopDeskPaneDriver *handle);
+
+// The remote child exited. Terminal: a later connect is REFUSED.
+bool slopdesk_pane_driver_is_exited(const SlopDeskPaneDriver *handle);
+
+// Why the HOST closed this pane's channel, as its raw byte. The gate above asks
+// only WHETHER, but the reason decides what may be built next: Retired says the
+// pane is gone, SubscriberEvicted says only this attachment was.
+bool slopdesk_pane_driver_host_close_reason(const SlopDeskPaneDriver *handle, uint8_t *out);
+
+// ---------------------------------------------------------------------------
 // The host metadata RPC's payloads (rust/slopdesk-ffi/src/metadata.rs).
 //
 // Each payload crosses as a record — a LIST of them where the payload is a

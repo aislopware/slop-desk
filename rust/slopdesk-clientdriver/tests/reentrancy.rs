@@ -8,13 +8,12 @@
 //! The hazard is narrow and entirely mechanical. `Retry`, `GaveUp`, `Disconnected`, `Reconnected`
 //! and `Log` are emitted BY the supervisor, so a consumer that reacts to one by calling a method
 //! that waits on the supervisor would be waiting on the thread it is standing in. That the near
-//! side here is the FFI door, and the consumer some AppKit controller reacting to a drop, is
+//! side here is the FFI door, and the consumer a view controller reacting to a drop, is
 //! exactly why it must not be a documented rule: a rule that is only written down fails as a frozen
 //! pane in the field, with no diagnostic and no way back.
 
 #![expect(
     clippy::expect_used,
-    clippy::panic,
     reason = "a panic in a test is the failure report, not a fault"
 )]
 
