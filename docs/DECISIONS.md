@@ -17314,3 +17314,54 @@ one directory as permitted. *`takeUnretainedValue()` on the returned sample* —
 at +1 (the Create rule, pointed outwards), so an unretained take renders correct pixels, passes
 every test, and leaks one sample buffer per frame at sixty a second; the invariant pins the retained
 spelling by name and bans the unretained one.
+
+## PATH 4's driver was eight doors and a Swift socket; it is one door now (2026-08-30)
+
+The 2026-08-13 entry moved dropd's LAYOUTS to Rust and kept "the transport and the driving loop" in
+Swift, on the reading that `NWConnection` plus `AsyncThrowingStream` was runtime glue. That reading
+held for the socket and not for the SEQUENCE. What `FileTransferClient` actually owned was the law:
+`hello` before any offer, an `offer` answered before a chunk goes out, a `finish` before a
+`complete` is waited on, a `cancel` on a link fault, a reply about another transfer skipped rather
+than mistaken for this one, and a batch that fails every file by name rather than returning silent.
+None of that is Network.framework's; all of it is the protocol's, and it sat in the one language
+where nothing tested it against the daemon that answers.
+
+**`rust/slopdesk-dropd/src/upload.rs` is that law, and it is a module of the crate that already had
+both ends.** `to_host` dials with `TcpStream::connect_timeout` (a `TcpStream::connect` to a host
+that is asleep parks the caller until the kernel gives up); `over_link` takes any `Read + Write`, so
+the suite drives a scripted peer through the frame order, the version refusal, the unreadable file,
+the non-accept, the reply about another id, the host's own failure words and a link that dies
+mid-body — plus one real loopback socket asserting a byte-identical body. Progress is a borrowed
+`Progress<'_>` handed to an `FnMut`, so nothing allocates to report a chunk.
+
+**The eight doors collapsed to one, which is the point and not a tidy-up.** `slopdesk_drop_upload`
+blocks for the whole batch and reports through `docs/55` §4b's inversion: no handle, no `_free`, no
+lifetime for a caller to get wrong, and the three obligations are the usual ones. Eight small doors
+with a driver above them is the shape §4b records the audio stage earning — *a handle with a large
+surface is a law you moved without moving its sequencing*. Every one of those eight answers was
+right alone; nothing could check the order they were assembled in.
+
+**The Swift target is one file and no longer imports `Network` or `Foundation`'s socket at all.**
+`FileTransferProtocol.swift`, `FileTransferCodec.swift`, `FileTransferFrameDecoder.swift` and
+`FileTransferChannel.swift` are deleted, with the two suites whose subjects they were.
+`SlopDeskFileTransfer` dropped its `SlopDeskNet` and `SlopDeskArena` edges — the first went with the
+`NWConnection`, the second with the last reply record to decode — and `docs/63` §6's `import
+Network` list is eight files, not nine. `FileUploadCoordinator` did not change: the face keeps
+`upload(files:host:port:onEvent:)` and `FileUploadEvent` exactly, because a caller that only ever
+wanted "URLs in, progress out" was never the thing that needed porting.
+
+**The batch crosses NUL-separated, not length-prefixed.** `push_text`'s four-byte prefix is the
+tree's usual framing for N strings, and using it here would have put a big-endian write back inside
+the one target whose invariant is *holds no layout*. A POSIX path may contain every byte except
+`0`, so `find -print0`'s separator makes the face's whole marshalling
+`Data(paths.joined(separator: "\0").utf8)` — nothing this side of the door could spell differently
+from that side.
+
+**Rejected.** *A `Task.detached` around the blocking door* — it blocks a cooperative-pool thread for
+the length of a multi-GiB upload, which is a thread the whole app no longer has; the call goes on a
+global dispatch queue and reaches the caller through an `AsyncStream`, which also preserves the
+awaited-in-emission-order guarantee `FileUploadCoordinator` documents. *Keeping the eight doors and
+adding a ninth for the sequence* — two ways to drive the same protocol is the drift the
+one-implementation rule names, and the eight had no caller left. *Retiring `DropdE2ETests`* — the
+codec and splitter suites lost their subjects and went, but the E2E is now the only test that
+crosses the FFI boundary into a real daemon, which is the one thing no Rust test can see.

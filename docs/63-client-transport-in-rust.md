@@ -699,8 +699,9 @@ WebKit, CoreGraphics drawing art, and the runtime half of the document/runtime s
 
 **The `import Network` half is stated as a list rather than a description, because the description
 was wrong.** §5 names the PATH-4, inspector and video lanes, but the grep answers ten files today and
-three of them are lanes §5 never mentioned. The nine it may name after G.5 are: `NWByteChannel` and
-`FileTransferClient` (PATH-4 + the inspector's byte channel), `WorkspaceStore` (which dials that
+three of them are lanes §5 never mentioned. The eight it may name after G.5 are: `NWByteChannel`
+(the inspector's byte channel — PATH-4 left `Network` entirely when its socket became
+`slopdesk-dropd`'s, reached through one door), `WorkspaceStore` (which dials that
 inspector channel — the `NWConnection` at `:3439` is its only `Network` use), `NWVideoMuxClientFlow`
 (PATH 2), `CodeSidebarProxy` (the code-server proxy), `AndroidBridgeSocket`, `SimulatorWebSocketLane`,
 `SimulatorLogConnection` and `SimulatorStreamConnection` (the device panels' own lanes, `docs/47`/`48`),

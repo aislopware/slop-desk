@@ -106,7 +106,7 @@ public enum ArenaText {
     }
 
     /// The BYTES a pair names, for the arenas whose payload is not text — a keybind's literal, a
-    /// retransmit ring's packet, a client effect's run.
+    /// client effect's run.
     ///
     /// Same guard as the text reads, and the reason to share it is that the four copies this
     /// replaces did NOT share it: one checked `start >= 0, end <= count, start <= end`, one checked
@@ -117,13 +117,6 @@ public enum ArenaText {
     ) -> [UInt8] where Arena.Element == UInt8, Arena.Index == Int {
         guard let range = range(in: arena, offset: offset, length: length) else { return [] }
         return Array(arena[range])
-    }
-
-    /// ``bytes(_:offset:length:)`` answered as `Data`, for a caller handing the run straight back to
-    /// something that wants one — no second copy on the way.
-    public static func data(_ arena: Data, offset: Int, length: Int) -> Data {
-        guard let range = range(in: arena, offset: offset, length: length) else { return Data() }
-        return Data(arena[range])
     }
 
     /// The in-bounds range a `(offset, length)` pair names, or `nil` when it names bytes that are

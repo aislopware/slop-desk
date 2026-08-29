@@ -1165,9 +1165,10 @@ loss is the normal case PATH 2 is built to tolerate.
 
 > **STATUS: CURRENT.** A file dragged from Finder onto the remote **desktop window** uploads to the
 > host over a DEDICATED reliable TCP connection. Since 2026-08-12 the two ends are in two languages
-> and two processes: the client is `SlopDeskFileTransfer` (`FileTransferClient`, the codec's
-> encoder, the frame decoder) and the RECEIVER is `slopdesk-dropd`, a Rust daemon under superd that
-> the client dials directly — hostd is not in the byte path (`docs/53`). It is
+> and two processes — and since 2026-08-30 BOTH ends of the protocol are Rust: the initiating end
+> is `rust/slopdesk-dropd`'s `upload` + `client` modules, reached from Swift through the single
+> `slopdesk_drop_upload` door, and the RECEIVER is `slopdesk-dropd` itself, a daemon under superd
+> that the client dials directly — hostd is not in the byte path (`docs/53`). It is
 > **independent of PATH 1** (a bulk body must never share the terminal mux's data channel — it would
 > stall keystrokes/resizes) and of PATH 2 (lossy UDP + FEC recovers *frames*, not files). No
 > `WireMessage`, no `MuxFrame`, no `VideoControlMessage` — a genuinely separate path, per the
@@ -1194,8 +1195,8 @@ loss is the normal case PATH 2 is built to tolerate.
 ### 10.1 Message table (`FileTransferRequest` / `FileTransferReply`, `Request` / `Reply` in Rust)
 
 Each end is written ONCE and the halves are gated against each other by `slopdesk-invariants`:
-`FileTransferCodec` encodes 1–5 and decodes 6–9, `rust/slopdesk-dropd/src/protocol.rs` does the
-mirror. A 1–5 arriving at the client is refused as unknown (the peer is not a dropd); a 6–9 arriving
+`rust/slopdesk-dropd/src/client.rs` encodes 1–5 and decodes 6–9, `rust/slopdesk-dropd/src/protocol.rs`
+does the mirror. A 1–5 arriving at the client is refused as unknown (the peer is not a dropd); a 6–9 arriving
 at dropd is decoded strictly and then ignored (a confused client, not a hostile one — hanging up
 would turn a stray frame into a lost upload).
 
@@ -1226,8 +1227,8 @@ owned by that connection's thread — no shared state and therefore no lock.
 
 | Case | Meaning |
 |------|---------|
-| `FileTransferCodec.DecodeError` (Swift) / `DecodeError` (Rust) | `empty` / `unknownType` / `truncated` / `badUTF8` — a malformed payload. Same four cases at both ends, by design. |
-| `FileTransferFrameDecoderError.frameTooLarge` | A length prefix over the 16 MiB cap — rejected before allocating. dropd's `read_frame` refuses the same length the same way, with an `InvalidData` io error. |
+| `client::FrameError` (initiating end) / `DecodeError` (daemon end) | `empty` / `unknownType` / `truncated` / `badUtf8` — a malformed payload. Same four cases at both ends, by design. |
+| `client::FrameError::FrameTooLarge` | A length prefix over the 16 MiB cap — rejected before allocating. dropd's `read_frame` refuses the same length the same way, with an `InvalidData` io error. |
 | `SinkError` | `NotOpen` / `Io` — a disk failure surfaces as a per-transfer `failed`, never a connection teardown; the id is remembered so a later `accept`/`complete` for it is suppressed rather than contradicting the failure the client already has. |
 
 ---

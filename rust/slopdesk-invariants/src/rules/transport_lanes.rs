@@ -272,11 +272,6 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
             message: "it crosses §4c's convention and must not spell it",
         },
         Claim::Depends {
-            target: "SlopDeskFileTransfer",
-            dependency: "SlopDeskArena",
-            message: "it crosses §4c's convention and must not spell it",
-        },
-        Claim::Depends {
             target: "SlopDeskWorkspaceCore",
             dependency: "SlopDeskArena",
             message: "it crosses §4c's convention and must not spell it",
@@ -290,12 +285,16 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// One `NWConnection` byte channel, for both lanes that need one
+/// One `NWConnection` byte channel, for the one lane that still needs one
 ///
 /// The inspector's event lane and PATH-4's file transfer each spelled the SAME actor — the
 /// `onTermination` cancel, the `cancel()` beside every `finish()`, the idempotent `start()`. Three
 /// separate fd-leak fixes, each of which had to be made twice or the copies drift. `SlopDeskNet` is
 /// the actor; a lane keeps its own protocol (its vocabulary) and one conformance line.
+///
+/// PATH 4 has since left entirely: its socket is `rust/slopdesk-dropd`'s, reached through one door,
+/// so `SlopDeskFileTransfer` no longer dials anything. The inspector's lane is the last one, and
+/// the `NoneUnder` claim is what keeps a second actor from growing beside it anyway.
 #[must_use]
 pub fn one_nwconnection_byte_channel(tree: &Tree) -> Report {
     let claims = [
@@ -312,11 +311,6 @@ pub fn one_nwconnection_byte_channel(tree: &Tree) -> Report {
         },
         Claim::Depends {
             target: "SlopDeskInspector",
-            dependency: "SlopDeskNet",
-            message: "it dials a byte channel and must not spell one",
-        },
-        Claim::Depends {
-            target: "SlopDeskFileTransfer",
             dependency: "SlopDeskNet",
             message: "it dials a byte channel and must not spell one",
         },
@@ -527,7 +521,6 @@ mod tests {
         ("SlopDeskProtocol", &["SlopDeskArena"]),
         ("SlopDeskVideoProtocol", &["SlopDeskArena"]),
         ("SlopDeskWorkspaceModel", &["SlopDeskArena"]),
-        ("SlopDeskFileTransfer", &["SlopDeskArena", "SlopDeskNet"]),
         ("SlopDeskWorkspaceCore", &["SlopDeskArena"]),
         ("SlopDeskVideoClient", &["SlopDeskArena"]),
         ("SlopDeskInspector", &["SlopDeskNet"]),

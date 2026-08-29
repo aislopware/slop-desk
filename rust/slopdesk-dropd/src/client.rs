@@ -7,9 +7,9 @@
 //! same capability twice is not, which is why there is no request decoder or reply encoder here.
 //!
 //! ## Why it lives in dropd's crate
-//! Because then the round-trip is a TEST. In Swift the client end was
-//! `Sources/SlopDeskFileTransfer/FileTransferCodec.swift`, a module away from the receiver, and
-//! nothing asserted that what one wrote the other would read — the two agreed by review. Here
+//! Because then the round-trip is a TEST. While the client end was Swift it lived in its own
+//! module, a module away from the receiver, and nothing asserted that what one wrote the other
+//! would read — the two agreed by review. Here
 //! `encode_request_payload` and `decode_request` sit in one crate and a test walks every frame type
 //! through both.
 

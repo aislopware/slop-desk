@@ -625,8 +625,8 @@ let package = Package(
                 // glows at rest. SwiftUIIntrospect went with the SwiftUI app scene: it reached AppKit
                 // out from under SwiftUI, and there is no SwiftUI to reach out of.)
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
-                // PATH 4: the client-side file-transfer driver (`FileTransferClient`) the desktop
-                // pane's dragging destination fires on a real file drop. Foundation+Network leaf, no
+                // PATH 4: the face over `slopdesk_drop_upload` (`FileTransferClient`) the desktop
+                // pane's dragging destination fires on a real file drop. Foundation + the shim, no
                 // HW deps — does not widen the headless graph.
                 "SlopDeskFileTransfer",
                 // Type-safe UserDefaults — the `@Default(.key)` SwiftUI bindings over the four STATE
@@ -762,16 +762,17 @@ let package = Package(
 
         // Drag-and-drop file upload over its OWN reliable TCP connection — NOT the terminal mux (a
         // bulk body would stall the PTY data channel) and NOT the lossy UDP video path. A 4th path
-        // that shares nothing with the other three (the "do not merge" rule): its own frame decoder,
-        // codec, receive FSM, name-sanitizer, disk sink, listener, and client. Foundation + Network
-        // leaf (no other SlopDesk module). The NWListener server + NWConnection client are COMPILED +
-        // reviewed; the pure core (codec/decoder/FSM/sanitizer/disk-sink) is exercised over a loopback
-        // channel + fake sink (hang-safety: no live socket / real disk in XCTest for the serve path).
-        // PATH 4's codec is `rust/slopdesk-dropd`'s `client` module through the FFI door, so the
-        // one dependency this leaf has is the shim.
+        // that shares nothing with the other three (the "do not merge" rule).
+        //
+        // ONE FILE, and one door. The socket, the frame reader, every layout and the ORDER the
+        // frames go in are `rust/slopdesk-dropd` — the `upload` module drives, `client` lays out,
+        // `protocol` decodes — reached through `slopdesk_drop_upload`. What is left here turns
+        // `URL`s into bytes the door reads and its progress reports back into a Swift enum, so the
+        // only dependency is the shim: `SlopDeskNet` went with the `NWConnection` (there is no Swift
+        // socket on this path any more) and `SlopDeskArena` with the last reply record to decode.
         .target(
             name: "SlopDeskFileTransfer",
-            dependencies: ["SlopDeskArena", "SlopDeskNet", "CSlopDeskFFI"],
+            dependencies: ["CSlopDeskFFI"],
             linkerSettings: ffiCLibraries,
         ),
 
@@ -1073,11 +1074,10 @@ let package = Package(
             name: "SlopDeskVideoClientTests",
             dependencies: ["SlopDeskVideoClient", "SlopDeskVideoProtocol"],
         ),
-        // PATH 4: the PURE file-transfer core — codec round-trip, streaming frame-decoder split/
-        // partial/oversize/poison, the receive FSM (offer→chunk→finish happy path + chunk-before
-        // -offer, byte overrun, over-cap, duplicate id, bad-name rejections), the path-traversal
-        // name sanitizer, the collision-avoiding disk sink (in a temp dir), and the full serve↔client
-        // upload over a LoopbackFileTransferChannel + fake sink. NO NWListener / live socket.
+        // PATH 4 END TO END, and nothing else: the face here, the door, the Rust driver, and a real
+        // `slopdesk-dropd` spawned on an OS-chosen port. The codec, the frame splitter and the
+        // sequence are all `rust/slopdesk-dropd` now and tested there, so the one thing left that no
+        // Rust test can see is the crossing itself. SKIPS by name when the daemon is not built.
         .testTarget(name: "SlopDeskFileTransferTests", dependencies: ["SlopDeskFileTransfer"]),
         // The supervisor contract. A `socketpair(2)` is NOT a live listener — no bind, no accept, no
         // spawned daemon — so the hang-safety rule is satisfied while the load-bearing part (an fd

@@ -7,8 +7,9 @@
 //! mismatch is refused outright rather than renegotiated.
 //!
 //! dropd DECODES the client→host types (1–5) and ENCODES the host→client types (6–9). The mirror
-//! image of this file is `Sources/SlopDeskFileTransfer/FileTransferCodec.swift`, which encodes 1–5
-//! and decodes 6–9 — the two ends of one protocol, which is the only duplication the tree allows.
+//! image of this file is [`client`](crate::client), which encodes 1–5 and decodes 6–9. It was a
+//! Swift module a whole package away until this port; both ends now sit in one crate, which is what
+//! lets a test walk every frame type through both instead of the two agreeing by review.
 
 use std::fmt;
 

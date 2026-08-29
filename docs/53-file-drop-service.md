@@ -40,9 +40,11 @@ workspace-global, and this one wants `opt-level = 3` and `panic = "unwind"` wher
 `"z"` and `"abort"`.
 
 ```
-Sources/SlopDeskFileTransfer/   the CLIENT end: request encoder, reply decoder, frame reader, driver
+Sources/SlopDeskFileTransfer/   ONE file: the face over the one door (URLs in, progress out)
 Sources/SlopDeskHost/FileDropServiceManager.swift   spawn-or-adopt + port re-learn (no bytes)
 rust/slopdesk-dropd/
+  src/upload.rs     the CLIENT end's sequence: which frame follows which, and what a fault does
+  src/client.rs     encode requests (1–5), decode replies (6–9) — the initiating end's layouts
   src/protocol.rs   decode requests (1–5), encode replies (6–9)
   src/name.rs       untrusted filename → safe leaf, or refusal
   src/receive.rs    the state machine: requests in, effects out — no socket, no filesystem
@@ -110,11 +112,16 @@ everything.
 Each end is written ONCE, and both are Rust. `client.rs` encodes 1–5 and decodes 6–9; `protocol.rs`
 does the mirror, and a test in the same crate walks every type through both — the two-ENDS exemption
 to the one-implementation rule, kept honest by a test rather than by review. `SlopDeskFileTransfer`
-is the Swift face of `client.rs`, reaching it through `rust/slopdesk-ffi`'s `file_transfer` door; it
-holds no byte layout and no constant of its own. §10 of `slopdesk-invariants` pins that: the door's
-eight entries exist on both sides, no reader or writer has grown back under
-`Sources/SlopDeskFileTransfer`, and the four numbers are read from `slopdesk_drop_constant` rather
-than respelled.
+is the Swift face, reaching all of it through `rust/slopdesk-ffi`'s ONE `slopdesk_drop_upload`
+door; it holds no byte layout, no constant and no socket of its own.
+
+That door used to be eight — encode a request, decode a reply, feed a splitter, read a constant —
+with a Swift driver above them holding the `NWConnection` and the ORDER. Every answer was right
+alone and nothing could check the order they were assembled in, which is the fault `docs/55` §4b
+records the audio stage earning: *a law moved without its sequencing*. `upload.rs` is that
+sequencing, and with the socket beside it there is no order left on the Swift side to get wrong.
+§10 of `slopdesk-invariants` pins what remains: the door exists on both sides, and no reader or
+writer has grown back under `Sources/SlopDeskFileTransfer`.
 
 Types 6–9 arriving at dropd are decoded strictly and then **ignored** — a client spelling one is
 confused rather than hostile, and hanging up would turn a stray frame into a lost upload. Types 1–5
@@ -166,15 +173,16 @@ what the tests use.
 | `just dropd-test` | 28 Rust tests: 3 name, 8 protocol, 8 receive, 5 sink, 4 framing |
 | `just lint-rust` | clippy `-D warnings` + `rustfmt --check`, fourth workspace |
 | `rust/slopdesk-invariants` | §10 — type bytes both ways, version, both caps, the announce line, no Swift receiver |
-| `swift test --filter SlopDeskFileTransferTests` | 13 codec + 5 decoder + 5 end-to-end |
+| `swift test --filter SlopDeskFileTransferTests` | 5 end-to-end, and nothing else — the codec and splitter tests went with their subjects |
 | `swift test --filter FileDropServiceManagerTests` | 7 — argv, the announce parse, a missing binary, a survivor on the wrong port, a child that never announces, relinquish vs shutdown |
 | `just test` / `just test-touched` | all of it, and they BUILD dropd first |
 
-`DropdE2ETests` spawns the **real** daemon on `--port 0`, uploads through the real
-`FileTransferClient`, and asserts the bytes on disk, the monotonic progress, two files down one
+`DropdE2ETests` spawns the **real** daemon on `--port 0`, uploads through the face, the door and
+`upload.rs`, and asserts the bytes on disk, the monotonic progress, two files down one
 connection with the collision counter, the empty-file case and the absence of any `.part` leftover. It is a true cross-language end-to-end test: an in-process
 Swift fake standing in for dropd would be precisely the mirror this whole change deleted.
 
-The protocol RULES are pinned in Rust and only in Rust — the state machine, the sanitiser, the sink.
-The Swift suite pins the client END: the bytes it emits, the replies it decodes, and what it does
-when the daemon is not there. That is what a client end is answerable for.
+The protocol RULES are pinned in Rust and only in Rust — the state machine, the sanitiser, the sink
+— and so is the client end now: `upload.rs`'s own suite drives a scripted peer through the frame
+order, the refusals and a dying link. What the Swift suite is left answerable for is the CROSSING,
+which is the one thing no Rust test can see.

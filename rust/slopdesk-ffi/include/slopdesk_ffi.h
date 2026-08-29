@@ -6597,64 +6597,46 @@ int64_t slopdesk_workspace_constant(uint32_t index);
 // suspension. An empty diff and a dead link are then the same thing: no commit,
 // so nothing moved.
 // ---------------------------------------------------------------------------
-// PATH 4's CLIENT end — requests out, replies in. rust/slopdesk-dropd's
-// `client` module owns every layout; the round trip is a test in that crate,
-// which is the whole reason the client end lives there.
+// PATH 4's CLIENT end — the whole upload, behind ONE door.
+// rust/slopdesk-dropd's `upload` module owns the sequence and its `client`
+// module owns every layout, so the round trip is a test in that crate.
 //
-// A request crosses as its type byte plus the scalars any frame could carry and
-// ONE borrowed blob: a name for an offer, a body for a chunk, nothing else. A
-// chunk's 256 KiB body is borrowed all the way to the frame.
+// It used to be eight doors with a Swift driver above them holding the socket
+// and the ORDER. Every answer was right alone and nothing could check the order
+// they were assembled in; with the socket in Rust there is no order left on
+// this side to get wrong.
 //
-// The reply splitter is a HANDLE, because half a length prefix in one recv and
-// the rest in the next is the normal case.
+// slopdesk_drop_upload BLOCKS for the whole batch and reports through a
+// callback — docs/55 §4b's inversion, with nothing outliving the call, so there
+// is no handle and no _free. Three obligations: `context` stays valid until the
+// call RETURNS; the callback runs on the CALLING thread, never concurrently and
+// never afterwards; `text` is lent for one callback and a keeper copies it.
 // ---------------------------------------------------------------------------
 
-#define SLOPDESK_DROP_OK 0u
-#define SLOPDESK_DROP_PENDING 1u
-#define SLOPDESK_DROP_EMPTY 2u
-#define SLOPDESK_DROP_UNKNOWN_TYPE 3u
-#define SLOPDESK_DROP_TRUNCATED 4u
-#define SLOPDESK_DROP_BAD_UTF8 5u
-#define SLOPDESK_DROP_FRAME_TOO_LARGE 6u
+// The file was opened and offered: total_bytes is its size, text its name.
+#define SLOPDESK_DROP_PROGRESS_STARTED   0u
+// A chunk went out: sent_bytes and total_bytes carry it, text is empty.
+#define SLOPDESK_DROP_PROGRESS_ADVANCED  1u
+// The host wrote the whole body and moved it into place.
+#define SLOPDESK_DROP_PROGRESS_COMPLETED 2u
+// This transfer is over and the file did not land; text says why.
+#define SLOPDESK_DROP_PROGRESS_FAILED    3u
 
-typedef struct {
-    uint32_t offset;
-    uint32_t length;
-} SlopDeskDropText;
+typedef void (*SlopDeskDropProgressFn)(void *context, uint32_t kind, uint32_t transfer_id,
+                                       uint64_t sent_bytes, uint64_t total_bytes,
+                                       const unsigned char *text, size_t text_len);
 
-typedef struct {
-    uint32_t transfer_id;
-    SlopDeskDropText reason;
-    // The wire type byte: 6 helloAck, 7 accept, 8 complete, 9 failed.
-    uint8_t kind;
-    bool accepted;
-    // The offending type byte, or a frame length over the cap.
-    uint64_t detail;
-} SlopDeskDropReply;
-
-typedef struct SlopDeskDropDecoder SlopDeskDropDecoder;
-
-// kind: 1 hello (file_size carries the version), 2 offer (blob is the name),
-// 3 chunk (blob is the body), 4 finish, 5 cancel. Unknown kinds answer 0.
-size_t slopdesk_drop_encode_request(uint8_t kind, uint32_t transfer_id, uint64_t file_size,
-                                    const unsigned char *blob, size_t blob_len,
-                                    unsigned char *out, size_t cap);
-
-uint32_t slopdesk_drop_decode_reply(const unsigned char *payload, size_t payload_len,
-                                    SlopDeskDropReply *out,
-                                    unsigned char *arena, size_t arena_cap);
-
-SlopDeskDropDecoder *slopdesk_drop_decoder_new(void);
-void slopdesk_drop_decoder_free(SlopDeskDropDecoder *handle);
-void slopdesk_drop_decoder_append(SlopDeskDropDecoder *handle,
-                                  const unsigned char *chunk, size_t chunk_len);
-uint32_t slopdesk_drop_decoder_next(SlopDeskDropDecoder *handle, SlopDeskDropReply *out,
-                                    unsigned char *arena, size_t arena_cap);
-size_t slopdesk_drop_decoder_buffered(SlopDeskDropDecoder *handle);
-
-// 0 the only supported version, 1 the per-frame payload cap, 2 the body chunk
-// size a client sends, 3 the hard ceiling on one offered file. Unknown: -1.
-int64_t slopdesk_drop_constant(uint32_t index);
+// `paths` is one NUL-separated run of UTF-8 paths — `find -print0`'s separator,
+// for its reason: a POSIX path holds every byte but 0, so the face needs no
+// length prefix and writes no framing of its own. A file is offered under its
+// INDEX, which is the transfer_id every report carries. Answers how many files
+// the batch named; 0 when it named none or a path was not UTF-8, in which case
+// nothing was dialled. The batch is never silent: an unreachable host fails
+// every file by name.
+size_t slopdesk_drop_upload(const unsigned char *host, size_t host_len, uint16_t port,
+                            const unsigned char *paths, size_t paths_len,
+                            uint64_t connect_timeout_ms,
+                            void *context, SlopDeskDropProgressFn on_progress);
 
 
 // ---------------------------------------------------------------------------

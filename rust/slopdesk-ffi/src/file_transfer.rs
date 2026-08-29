@@ -1,582 +1,288 @@
-//! PATH 4's CLIENT end — requests out, replies in.
+//! PATH 4's CLIENT end — one door over the whole upload.
 //!
-//! `rust/slopdesk-dropd`'s `client` module owns every layout. This is the door.
+//! `rust/slopdesk-dropd`'s `upload` module owns the sequence and its `client` module owns every
+//! layout. This is the door, and it decides nothing.
 //!
-//! ## Why the client end lives in the daemon's crate
-//! Because there the round trip is a TEST: `encode_request_*` and `decode_request` sit beside each
-//! other and one test walks every frame type through both. While the client end was Swift the two
-//! agreed by review, and this door is what makes the Rust one the only one.
+//! ## Why ONE door and not eight
+//! It used to be eight — encode a request, decode a reply, feed a splitter, read a constant — with
+//! a Swift driver above them holding the socket and the ORDER. Every one of those answers was right
+//! on its own, and nothing could check the order they were put together in, which is exactly the
+//! fault `docs/55` §4b records the audio stage earning: *a handle with a large surface is a law you
+//! moved without moving its sequencing*. With the socket in Rust there is no order left on this
+//! side to get wrong, so the door has one verb.
 //!
-//! ## Two shapes
-//! A request crosses as its type byte plus the three scalars any frame could carry and ONE borrowed
-//! blob — a name for an offer, a body for a chunk, nothing for the rest. A reply crosses as a
-//! record plus a small arena for the one string it can hold.
+//! ## The inverted convention
+//! [`slopdesk_drop_upload`] BLOCKS for the whole batch and reports through a callback, which is
+//! `docs/55` §4b's inversion at its simplest: nothing outlives the call, so there is no handle, no
+//! `_free`, and no lifetime for a caller to get wrong. Three obligations, and they are the
+//! inversion's usual ones:
 //!
-//! The frame splitter is a HANDLE, for [`crate::frame_decoder`]'s reason: half a length prefix in
-//! one `recv` and the rest in the next is the normal case, so the buffer has to outlive the call.
+//! 1. `context` must stay valid until this call RETURNS. Nothing retains it.
+//! 2. The callback runs on the CALLING thread, never concurrently with itself, and never after the
+//!    call has returned. A caller that hops it to an actor is hopping by choice, not by rule.
+//! 3. `text` is LENT for the duration of one callback. A caller that keeps it copies it.
 //!
-//! ## The verdicts
-//! Its own, because this protocol's faults are its own: a reply type the client does not know is
-//! not the same answer as a body that ran short, and the Swift error enum names both.
+//! ## What crosses
+//! The batch is one NUL-separated blob, which is what `find -print0` and `xargs -0` have always
+//! used and for the same reason: a POSIX path may hold every byte except `0`, so the separator
+//! cannot occur inside a field and the face needs no length prefix — no big-endian write, no
+//! framing, nothing this side of the door could spell differently from that side. Progress crosses
+//! as scalars plus at most one borrowed string, which is all any of the four kinds carries.
 
-use core::ffi::c_uchar;
+use core::ffi::{c_uchar, c_void};
+use std::path::Path;
+use std::time::Duration;
 
-use slopdesk_dropd::client::{
-    CHUNK_BYTE_COUNT, FrameError, ReplyFrameDecoder, chunk_frame_len, decode_reply_payload,
-    encode_request_frame, write_chunk_frame,
-};
-use slopdesk_dropd::protocol::{DecodeError, MAX_FRAME_PAYLOAD, MAX_TRANSFER_BYTES, Reply, Request, VERSION};
+use slopdesk_dropd::upload::{Progress, to_host};
 
-use crate::{TextArena, borrow, deliver};
+use crate::borrow;
 
-/// The answer decoded cleanly.
-pub const DROP_OK: u32 = 0;
-/// No whole frame is buffered yet. Not an error — the splitter's `Ok(None)`.
-pub const DROP_PENDING: u32 = 1;
-/// The payload held no type byte at all.
-pub const DROP_EMPTY: u32 = 2;
-/// A type byte this end does not answer to; the byte itself is in `detail`.
-pub const DROP_UNKNOWN_TYPE: u32 = 3;
-/// The body ran short of what its type needs.
-pub const DROP_TRUNCATED: u32 = 4;
-/// A string field was not valid UTF-8.
-pub const DROP_BAD_UTF8: u32 = 5;
-/// A length prefix over the frame cap; the length is in `detail`.
-pub const DROP_FRAME_TOO_LARGE: u32 = 6;
+/// The file was opened and offered; `total_bytes` is its size and `text` its name.
+pub const DROP_PROGRESS_STARTED: u32 = 0;
+/// A chunk went out; `sent_bytes` and `total_bytes` carry it and `text` is empty.
+pub const DROP_PROGRESS_ADVANCED: u32 = 1;
+/// The host wrote the whole body and moved it into place. Every other field is 0 or empty.
+pub const DROP_PROGRESS_COMPLETED: u32 = 2;
+/// This transfer is over and the file did not land; `text` says why.
+pub const DROP_PROGRESS_FAILED: u32 = 3;
 
-/// A text field, as an `(offset, length)` pair into the call's arena.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SlopDeskDropText {
-    /// Where the field starts in the arena.
-    pub offset: u32,
-    /// How long it is, in bytes.
-    pub length: u32,
-}
-
-/// One host→client reply, flattened.
+/// One progress report, lent for the duration of the call.
 ///
-/// `kind` is the wire type byte — 6 `helloAck`, 7 `accept`, 8 `complete`, 9 `failed` — so a caller
-/// switches on the same number the protocol does rather than on an ordinal invented here.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SlopDeskDropReply {
-    /// Whichever transfer the reply names; 0 for `helloAck`.
-    pub transfer_id: u32,
-    /// The failure reason, into the arena. Empty for every other kind.
-    pub reason: SlopDeskDropText,
-    /// The wire type byte.
-    pub kind: u8,
-    /// `helloAck`'s answer; false for every other kind.
-    pub accepted: bool,
-    /// The verdict's detail: the offending type byte, or a frame length over the cap.
-    pub detail: u64,
-}
+/// Flat scalars rather than a `#[repr(C)]` record, because there are only four of them and every
+/// kind reads a different three: a record would be a struct the near side has to size and a field
+/// it has to remember not to read. `text` is a name for [`DROP_PROGRESS_STARTED`] and a reason for
+/// [`DROP_PROGRESS_FAILED`]; `text_len` is 0 for the other two, and the pointer is then a dangling
+/// non-null Rust reads as an empty string. Check the LENGTH, never the pointer.
+pub type SlopDeskDropProgressFn = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        kind: u32,
+        transfer_id: u32,
+        sent_bytes: u64,
+        total_bytes: u64,
+        text: *const c_uchar,
+        text_len: usize,
+    ),
+>;
 
-/// The verdict a decode error names, and the detail that goes with it.
-const fn fault(error: DecodeError) -> (u32, u64) {
-    match error {
-        DecodeError::Empty => (DROP_EMPTY, 0),
-        DecodeError::UnknownType(byte) => (DROP_UNKNOWN_TYPE, byte as u64),
-        DecodeError::Truncated => (DROP_TRUNCATED, 0),
-        DecodeError::BadUtf8 => (DROP_BAD_UTF8, 0),
-    }
-}
-
-/// Flattens a reply into the caller's record, interning its one string.
-fn flatten(reply: &Reply, pool: &mut TextArena) -> SlopDeskDropReply {
-    let mut record = SlopDeskDropReply::default();
-    match *reply {
-        Reply::HelloAck { accepted } => {
-            record.kind = 6;
-            record.accepted = accepted;
-        },
-        Reply::Accept { transfer_id } => {
-            record.kind = 7;
-            record.transfer_id = transfer_id;
-        },
-        Reply::Complete { transfer_id } => {
-            record.kind = 8;
-            record.transfer_id = transfer_id;
-        },
-        Reply::Failed {
-            transfer_id,
-            ref reason,
-        } => {
-            let (offset, length) = pool.intern(reason.as_bytes());
-            record.kind = 9;
-            record.transfer_id = transfer_id;
-            record.reason = SlopDeskDropText { offset, length };
-        },
-    }
-    record
-}
-
-/// Writes a flattened reply and its arena into the caller's buffers.
+/// Uploads every path in `paths` to `host:port` over ONE connection, reporting as it goes.
+///
+/// `paths` is one NUL-separated run of UTF-8 paths. Blocks until every file has completed or failed
+/// and the socket is closed. Answers how many files the batch named — `0` when it named none, or
+/// when `host` or a path is not UTF-8, in which case nothing was dialled and no callback ran.
+///
+/// A file is offered under its INDEX in `paths`, which is the `transfer_id` every report carries.
+/// The batch is never silent: a host that cannot be dialled, or that refuses the version, fails
+/// every file rather than returning with nothing said.
 ///
 /// # Safety
-/// `out` must be null or writable for one record; `arena` must be null or writable for `arena_cap`.
-#[expect(
-    unsafe_code,
-    reason = "writing the caller's record and arena IS the boundary this module documents"
-)]
-unsafe fn hand_over(
-    record: SlopDeskDropReply,
-    pool: &TextArena,
-    out: *mut SlopDeskDropReply,
-    arena: *mut c_uchar,
-    arena_cap: usize,
-) -> u32 {
-    if out.is_null() || pool.0.len() > arena_cap {
-        return DROP_TRUNCATED;
-    }
-    // SAFETY: non-null and, by the caller's obligation, writable for one record for this call.
-    unsafe {
-        out.write(record);
-        deliver(&pool.0, arena, arena_cap);
-    }
-    DROP_OK
-}
-
-/// The full framed bytes for one client→host request.
-///
-/// `kind` is the wire type byte: 1 `hello` (`file_size` carries the version), 2 `offer` (`blob` is
-/// the name), 3 `chunk` (`blob` is the body), 4 `finish`, 5 `cancel`. An unknown kind answers 0.
-///
-/// # Safety
-/// `blob` must describe live memory for the call; `out` must be null or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_drop_encode_request(
-    kind: u8,
-    transfer_id: u32,
-    file_size: u64,
-    blob: *const c_uchar,
-    blob_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let blob = borrow(blob, blob_len);
-        // A chunk's body is 256 KiB and is BORROWED all the way to the frame, and the sizing call
-        // that precedes every write answers from arithmetic rather than by building the frame and
-        // throwing it away. That is the difference between one copy of the body per chunk and three,
-        // paid four thousand times per gigabyte. The four small frames build a `Request`, whose
-        // largest body is a filename.
-        if kind == 3 {
-            let needed = chunk_frame_len(blob.len());
-            if out.is_null() || cap < needed {
-                return needed;
-            }
-            // SAFETY: `out` is non-null and writable for `cap >= needed` bytes by the caller's
-            // obligation, and nothing else aliases it for the duration of this call.
-            let room = std::slice::from_raw_parts_mut(out, needed);
-            return if write_chunk_frame(room, transfer_id, blob) {
-                needed
-            } else {
-                0
-            };
-        }
-        let request = match kind {
-            1 => {
-                Request::Hello {
-                    version: u8::try_from(file_size).unwrap_or(VERSION),
-                }
-            },
-            2 => {
-                Request::Offer {
-                    transfer_id,
-                    file_size,
-                    name: String::from_utf8_lossy(blob).into_owned(),
-                }
-            },
-            4 => Request::Finish { transfer_id },
-            5 => Request::Cancel { transfer_id },
-            _ => return 0,
-        };
-        deliver(&encode_request_frame(&request), out, cap)
-    }
-}
-
-/// Decodes one reply payload (`[u8 type][body]`).
-///
-/// # Safety
-/// `payload` must describe live memory for the call; `out` must point to one writable record;
-/// `arena` must be null or writable for `arena_cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_drop_decode_reply(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut SlopDeskDropReply,
-    arena: *mut c_uchar,
-    arena_cap: usize,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let reply = match decode_reply_payload(borrow(payload, payload_len)) {
-            Ok(reply) => reply,
-            Err(error) => {
-                let (verdict, detail) = fault(error);
-                if !out.is_null() {
-                    out.write(SlopDeskDropReply {
-                        detail,
-                        ..SlopDeskDropReply::default()
-                    });
-                }
-                return verdict;
-            },
-        };
-        let mut pool = TextArena::default();
-        let record = flatten(&reply, &mut pool);
-        hand_over(record, &pool, out, arena, arena_cap)
-    }
-}
-
-/// Turns a caller's handle pointer into a reference for the duration of one call.
-///
-/// # Safety
-/// `handle` must be a live pointer from [`slopdesk_drop_decoder_new`] that has not been freed, and
-/// no other call on it may overlap this one.
-#[expect(
-    unsafe_code,
-    reason = "reconstituting the handle IS the boundary this module documents"
-)]
-unsafe fn held<'a>(handle: *mut ReplyFrameDecoder) -> Option<&'a mut ReplyFrameDecoder> {
-    if handle.is_null() {
-        return None;
-    }
-    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call — the
-    // Swift owner is one decoder per connection, driven by one receive loop.
-    Some(unsafe { &mut *handle })
-}
-
-/// Builds a reply splitter with an empty buffer.
-///
-/// # Safety
-/// Nothing is borrowed. The function is `unsafe` only because an exported C entry point is, in
-/// edition 2024.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_drop_decoder_new() -> *mut ReplyFrameDecoder {
-    Box::into_raw(Box::new(ReplyFrameDecoder::new()))
-}
-
-/// Frees a splitter. Null is a no-op; anything else must come from exactly one
-/// [`slopdesk_drop_decoder_new`] and be freed exactly once.
-///
-/// # Safety
-/// `handle` must be null, or a live pointer from [`slopdesk_drop_decoder_new`] not yet freed, with
-/// no other call on it in flight.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_drop_decoder_free(handle: *mut ReplyFrameDecoder) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: by the caller's obligation this came from one `new` and has not been freed.
-    drop(unsafe { Box::from_raw(handle) });
-}
-
-/// Appends a freshly received chunk. A no-op once poisoned.
-///
-/// # Safety
-/// `handle` must be live per [`held`]; `chunk` must describe live memory for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_drop_decoder_append(
-    handle: *mut ReplyFrameDecoder,
-    chunk: *const c_uchar,
-    chunk_len: usize,
-) {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        if let Some(decoder) = held(handle) {
-            decoder.append(borrow(chunk, chunk_len));
-        }
-    }
-}
-
-/// The next complete reply, or [`DROP_PENDING`] when a whole frame is not yet buffered.
-///
-/// A fault poisons the splitter, and every later call re-reports it: the byte boundary for the
-/// stream is lost, so resynchronising onto a peer's bytes is never the answer.
-///
-/// # Safety
-/// `handle` must be live per [`held`]; `out` must point to one writable record; `arena` must be
-/// null or writable for `arena_cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_drop_decoder_next(
-    handle: *mut ReplyFrameDecoder,
-    out: *mut SlopDeskDropReply,
-    arena: *mut c_uchar,
-    arena_cap: usize,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let Some(decoder) = held(handle) else {
-            return DROP_EMPTY;
-        };
-        match decoder.next_reply() {
-            Ok(None) => DROP_PENDING,
-            Ok(Some(reply)) => {
-                let mut pool = TextArena::default();
-                let record = flatten(&reply, &mut pool);
-                hand_over(record, &pool, out, arena, arena_cap)
-            },
-            Err(error) => {
-                let (verdict, detail) = match error {
-                    FrameError::FrameTooLarge(bytes) => (DROP_FRAME_TOO_LARGE, bytes as u64),
-                    FrameError::Decode(inner) => fault(inner),
-                };
-                if !out.is_null() {
-                    out.write(SlopDeskDropReply {
-                        detail,
-                        ..SlopDeskDropReply::default()
-                    });
-                }
-                verdict
-            },
-        }
-    }
-}
-
-/// How many bytes the splitter is holding — the assertion that a poisoned one cannot be grown.
-///
-/// # Safety
-/// `handle` must be live per [`held`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_drop_decoder_buffered(handle: *mut ReplyFrameDecoder) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe { held(handle).map_or(0, |decoder| decoder.buffered_len()) }
-}
-
-/// One PATH-4 constant by index, so no caller respells a wire number.
-///
-/// | index | constant |
-/// | --- | --- |
-/// | 0 | the only supported version |
-/// | 1 | the per-frame payload cap |
-/// | 2 | the body chunk size a client sends |
-/// | 3 | the hard ceiling on one offered file |
-///
-/// An unknown index answers `-1`, which is not a value any of these could be.
+/// `(host, host_len)` and `(paths, paths_len)` must each be null-with-zero-length or that many
+/// readable bytes for the duration of the call; `host` must be UTF-8. `on_progress` must be null or
+/// a valid function pointer, and `context` must stay valid until this returns — see the module
+/// header's three obligations.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
 #[must_use]
-pub extern "C" fn slopdesk_drop_constant(index: u32) -> i64 {
-    match index {
-        0 => i64::from(VERSION),
-        1 => i64::try_from(MAX_FRAME_PAYLOAD).unwrap_or(i64::MAX),
-        2 => i64::try_from(CHUNK_BYTE_COUNT).unwrap_or(i64::MAX),
-        3 => i64::try_from(MAX_TRANSFER_BYTES).unwrap_or(i64::MAX),
-        _ => -1,
+pub unsafe extern "C" fn slopdesk_drop_upload(
+    host: *const c_uchar,
+    host_len: usize,
+    port: u16,
+    paths: *const c_uchar,
+    paths_len: usize,
+    connect_timeout_ms: u64,
+    context: *mut c_void,
+    on_progress: SlopDeskDropProgressFn,
+) -> usize {
+    // SAFETY: the caller's obligations, above — two borrows, neither outliving the call.
+    let (host, paths) = unsafe { (borrow(host, host_len), borrow(paths, paths_len)) };
+    // An empty blob has to answer before the split: splitting nothing yields ONE empty field, and
+    // an empty batch offered as one nameless file is the wrong answer twice over.
+    if paths.is_empty() {
+        return 0;
+    }
+    let (Ok(host), Ok(files)) = (
+        core::str::from_utf8(host),
+        paths
+            .split(|byte| *byte == 0)
+            .map(|field| core::str::from_utf8(field).map(Path::new))
+            .collect::<Result<Vec<&Path>, _>>(),
+    ) else {
+        return 0;
+    };
+    let mut report = |progress: Progress<'_>| {
+        let Some(deliver) = on_progress else {
+            return;
+        };
+        let (kind, transfer_id, sent_bytes, total_bytes, text) = flatten(progress);
+        // SAFETY: the context is live by the door's documented term, and `text` borrows a string
+        // owned by the frame reporting it, so it outlives this call.
+        unsafe {
+            deliver(
+                context,
+                kind,
+                transfer_id,
+                sent_bytes,
+                total_bytes,
+                text.as_ptr(),
+                text.len(),
+            );
+        }
+    };
+    to_host(
+        host,
+        port,
+        Duration::from_millis(connect_timeout_ms),
+        &files,
+        &mut report,
+    );
+    files.len()
+}
+
+/// One report as the five scalars and the one borrowed string the callback takes.
+const fn flatten(progress: Progress<'_>) -> (u32, u32, u64, u64, &str) {
+    match progress {
+        Progress::Started {
+            transfer_id,
+            name,
+            total_bytes,
+        } => (DROP_PROGRESS_STARTED, transfer_id, 0, total_bytes, name),
+        Progress::Advanced {
+            transfer_id,
+            sent_bytes,
+            total_bytes,
+        } => (DROP_PROGRESS_ADVANCED, transfer_id, sent_bytes, total_bytes, ""),
+        Progress::Completed { transfer_id } => (DROP_PROGRESS_COMPLETED, transfer_id, 0, 0, ""),
+        Progress::Failed { transfer_id, reason } => (DROP_PROGRESS_FAILED, transfer_id, 0, 0, reason),
     }
 }
 
 #[cfg(test)]
+#[expect(unsafe_code, reason = "calling the door is the only way to test the door")]
 mod tests {
-    #![expect(
-        unsafe_code,
-        reason = "the tests drive the same C entry points every caller does"
-    )]
-    #![expect(
-        clippy::indexing_slicing,
-        reason = "a test that slices its own fixture out of range has already failed"
-    )]
-    #![expect(
-        clippy::borrow_as_ptr,
-        reason = "a `&mut record` at a C entry point is exactly what Swift's `&record` compiles to"
-    )]
+    use core::ffi::c_void;
+    use core::ptr;
+    use std::net::TcpListener;
 
-    use slopdesk_dropd::protocol::encode_reply_frame;
+    use super::{DROP_PROGRESS_FAILED, slopdesk_drop_upload};
 
-    use super::*;
+    /// A batch of paths in the separation the door splits on.
+    fn batch(paths: &[&str]) -> Vec<u8> {
+        paths.join("\0").into_bytes()
+    }
 
-    /// Encodes through the door, sizing the way §4 says to.
-    fn framed(kind: u8, transfer_id: u32, file_size: u64, blob: &[u8]) -> Vec<u8> {
-        let call = |out: *mut c_uchar, cap: usize| {
-            // SAFETY: the fixture's blob outlives the call and `out` is this vector's storage.
-            unsafe {
-                slopdesk_drop_encode_request(
-                    kind,
-                    transfer_id,
-                    file_size,
-                    blob.as_ptr(),
-                    blob.len(),
-                    out,
-                    cap,
-                )
-            }
-        };
-        let needed = call(core::ptr::null_mut(), 0);
-        let mut frame = vec![0u8; needed];
-        assert_eq!(call(frame.as_mut_ptr(), needed), needed);
-        frame
+    /// What one call reported, collected through the callback's opaque context.
+    #[derive(Debug, Default)]
+    struct Reports(Vec<(u32, u32, String)>);
+
+    /// The `@convention(c)` shape, appending to a [`Reports`] the caller still owns.
+    unsafe extern "C" fn record(
+        context: *mut c_void,
+        kind: u32,
+        transfer_id: u32,
+        _sent: u64,
+        _total: u64,
+        text: *const u8,
+        text_len: usize,
+    ) {
+        if context.is_null() {
+            return;
+        }
+        // SAFETY: the context is the caller's `Reports`, live for the whole call below, and the
+        // text is lent for the duration of this one.
+        let (reports, text) = unsafe { (&mut *context.cast::<Reports>(), crate::borrow(text, text_len)) };
+        reports
+            .0
+            .push((kind, transfer_id, String::from_utf8_lossy(text).into_owned()));
     }
 
     #[test]
-    fn every_request_the_door_encodes_is_the_frame_the_crate_encodes() {
-        assert_eq!(
-            framed(1, 0, u64::from(VERSION), &[]),
-            encode_request_frame(&Request::Hello { version: VERSION })
-        );
-        assert_eq!(
-            framed(2, 7, 4096, b"notes.txt"),
-            encode_request_frame(&Request::Offer {
-                transfer_id: 7,
-                file_size: 4096,
-                name: "notes.txt".to_owned(),
-            })
-        );
-        let mut chunk = vec![0u8; chunk_frame_len(4)];
-        assert!(write_chunk_frame(&mut chunk, 7, b"body"));
-        assert_eq!(framed(3, 7, 0, b"body"), chunk);
-        assert_eq!(
-            framed(4, 7, 0, &[]),
-            encode_request_frame(&Request::Finish { transfer_id: 7 })
-        );
-        assert_eq!(
-            framed(5, 7, 0, &[]),
-            encode_request_frame(&Request::Cancel { transfer_id: 7 })
-        );
-        assert_eq!(
-            framed(99, 0, 0, &[]),
-            Vec::<u8>::new(),
-            "an unknown kind is no frame"
-        );
-    }
-
-    #[test]
-    fn a_failed_reply_brings_its_reason_through_the_arena() {
-        let frame = encode_reply_frame(&Reply::Failed {
-            transfer_id: 3,
-            reason: "no room on disk".to_owned(),
-        });
-        let payload = &frame[4..];
-        let mut record = SlopDeskDropReply::default();
-        let mut arena = [0u8; 64];
-        // SAFETY: every pointer here is to a live local for the duration of the call.
-        let verdict = unsafe {
-            slopdesk_drop_decode_reply(
-                payload.as_ptr(),
-                payload.len(),
-                &mut record,
-                arena.as_mut_ptr(),
-                arena.len(),
+    fn a_path_that_is_not_utf8_dials_nothing_and_answers_zero() {
+        let mut reports = Reports::default();
+        // A lone continuation byte: no UTF-8 sequence starts with it.
+        let ragged = [b'/', b't', 0, 0x80];
+        // SAFETY: every span is a live local, and the callback context is `reports`.
+        let attempted = unsafe {
+            slopdesk_drop_upload(
+                b"127.0.0.1".as_ptr(),
+                9,
+                1,
+                ragged.as_ptr(),
+                ragged.len(),
+                50,
+                ptr::from_mut(&mut reports).cast(),
+                Some(record),
             )
         };
-        assert_eq!(verdict, DROP_OK);
-        assert_eq!(record.kind, 9);
-        assert_eq!(record.transfer_id, 3);
-        let start = record.reason.offset as usize;
-        let end = start + record.reason.length as usize;
-        assert_eq!(&arena[start..end], b"no room on disk");
+        assert_eq!(attempted, 0);
+        assert!(reports.0.is_empty(), "nothing was dialled, so nothing was said");
     }
 
     #[test]
-    fn a_request_type_arriving_as_a_reply_is_refused_by_its_own_byte() {
-        let mut record = SlopDeskDropReply::default();
-        // SAFETY: the payload and the record are live locals.
-        let verdict = unsafe {
-            slopdesk_drop_decode_reply([2u8, 0, 0].as_ptr(), 3, &mut record, core::ptr::null_mut(), 0)
+    fn an_empty_batch_answers_zero_without_a_socket() {
+        // SAFETY: null-with-zero-length is the documented absent buffer for both spans.
+        let attempted =
+            unsafe { slopdesk_drop_upload(ptr::null(), 0, 1, ptr::null(), 0, 50, ptr::null_mut(), None) };
+        assert_eq!(attempted, 0);
+    }
+
+    #[test]
+    fn an_unreachable_host_reports_a_failure_per_file_rather_than_nothing() {
+        // Bound and immediately dropped, so nothing is listening on that port any more.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .map_or(0, |address| address.port());
+        let blob = batch(&["/nowhere/one.txt", "/nowhere/two.txt"]);
+        let mut reports = Reports::default();
+
+        // SAFETY: every span is a live local, and the callback context is `reports`.
+        let attempted = unsafe {
+            slopdesk_drop_upload(
+                b"127.0.0.1".as_ptr(),
+                9,
+                port,
+                blob.as_ptr(),
+                blob.len(),
+                200,
+                ptr::from_mut(&mut reports).cast(),
+                Some(record),
+            )
         };
-        assert_eq!(verdict, DROP_UNKNOWN_TYPE);
-        assert_eq!(record.detail, 2);
+
+        assert_eq!(attempted, 2);
+        assert_eq!(reports.0.len(), 2);
+        assert!(
+            reports
+                .0
+                .iter()
+                .all(|(kind, _id, said)| *kind == DROP_PROGRESS_FAILED && !said.is_empty()),
+            "{reports:?}"
+        );
+        assert_eq!(reports.0.first().map(|report| report.1), Some(0));
+        assert_eq!(reports.0.last().map(|report| report.1), Some(1));
     }
 
     #[test]
-    fn the_splitter_waits_for_a_whole_frame_and_then_answers() {
-        let frame = encode_reply_frame(&Reply::Accept { transfer_id: 12 });
-        let mut record = SlopDeskDropReply::default();
-        // SAFETY: the handle comes from `new`, is used by this thread only, and is freed once.
-        unsafe {
-            let handle = slopdesk_drop_decoder_new();
-            slopdesk_drop_decoder_append(handle, frame.as_ptr(), 2);
-            assert_eq!(
-                slopdesk_drop_decoder_next(handle, &mut record, core::ptr::null_mut(), 0),
-                DROP_PENDING
-            );
-            slopdesk_drop_decoder_append(handle, frame[2..].as_ptr(), frame.len() - 2);
-            assert_eq!(
-                slopdesk_drop_decoder_next(handle, &mut record, core::ptr::null_mut(), 0),
-                DROP_OK
-            );
-            assert_eq!(record.kind, 7);
-            assert_eq!(record.transfer_id, 12);
-            slopdesk_drop_decoder_free(handle);
-        }
-    }
-
-    #[test]
-    fn an_over_cap_prefix_poisons_the_splitter_and_keeps_reporting_it() {
-        let mut record = SlopDeskDropReply::default();
-        let prefix = u32::MAX.to_be_bytes();
-        // SAFETY: as above.
-        unsafe {
-            let handle = slopdesk_drop_decoder_new();
-            slopdesk_drop_decoder_append(handle, prefix.as_ptr(), prefix.len());
-            assert_eq!(
-                slopdesk_drop_decoder_next(handle, &mut record, core::ptr::null_mut(), 0),
-                DROP_FRAME_TOO_LARGE
-            );
-            assert_eq!(record.detail, u64::from(u32::MAX));
-            slopdesk_drop_decoder_append(handle, prefix.as_ptr(), prefix.len());
-            assert_eq!(
-                slopdesk_drop_decoder_buffered(handle),
-                0,
-                "a poisoned splitter cannot grow"
-            );
-            assert_eq!(
-                slopdesk_drop_decoder_next(handle, &mut record, core::ptr::null_mut(), 0),
-                DROP_FRAME_TOO_LARGE
-            );
-            slopdesk_drop_decoder_free(handle);
-        }
-    }
-
-    #[test]
-    fn the_constants_are_the_crate_s_own() {
-        assert_eq!(slopdesk_drop_constant(0), i64::from(VERSION));
-        assert_eq!(
-            slopdesk_drop_constant(1),
-            i64::try_from(MAX_FRAME_PAYLOAD).unwrap_or(i64::MAX)
-        );
-        assert_eq!(
-            slopdesk_drop_constant(2),
-            i64::try_from(CHUNK_BYTE_COUNT).unwrap_or(i64::MAX)
-        );
-        assert_eq!(
-            slopdesk_drop_constant(3),
-            i64::try_from(MAX_TRANSFER_BYTES).unwrap_or(i64::MAX)
-        );
-        assert_eq!(slopdesk_drop_constant(99), -1);
+    fn a_null_callback_still_runs_the_batch_rather_than_faulting() {
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .map_or(0, |address| address.port());
+        let blob = batch(&["/nowhere/one.txt"]);
+        // SAFETY: every span is a live local; a null callback and context are documented as absent.
+        let attempted = unsafe {
+            slopdesk_drop_upload(
+                b"127.0.0.1".as_ptr(),
+                9,
+                port,
+                blob.as_ptr(),
+                blob.len(),
+                200,
+                ptr::null_mut(),
+                None,
+            )
+        };
+        assert_eq!(attempted, 1);
     }
 }

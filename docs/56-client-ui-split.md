@@ -1413,7 +1413,7 @@ every group and every platform gate is still read from the one table.
 `GuiLeafView`'s drag-drop upload — a file dropped on a live desktop pane, sent over the dedicated
 PATH-4 connection — was `#if os(macOS)` across three sites: the hover `@State`, the `.dropDestination`
 plus its highlight and progress overlay, and the two helpers behind them. Nothing in that path is
-macOS's. `FileUploadCoordinator` is Foundation over the Network-backed `FileTransferClient`;
+macOS's. `FileUploadCoordinator` is Foundation over `FileTransferClient`;
 `.dropDestination(for: URL.self)` is SwiftUI's on both platforms; `FileDropHighlight` and
 `FileUploadOverlay` are plain SwiftUI in the same file. `PaneDropReceiver` — the terminal pane's
 drop — was never gated at all, which is what made this one look like the odd one out rather than a

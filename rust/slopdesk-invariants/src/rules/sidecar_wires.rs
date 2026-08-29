@@ -24,8 +24,6 @@ use crate::tree::Tree;
 const DROP_FFI: &str = "rust/slopdesk-ffi/src/file_transfer.rs";
 /// The Swift target that is dropd's face.
 const DROP_DIR: &str = "Sources/SlopDeskFileTransfer";
-/// The one file in it that used to hold a layout.
-const DROP_PROTOCOL_FACE: &str = "Sources/SlopDeskFileTransfer/FileTransferProtocol.swift";
 /// The client half of the wire — the module that writes every request and reads every reply.
 const DROP_CLIENT: &str = "rust/slopdesk-dropd/src/client.rs";
 /// The daemon half — the module that decodes every request and writes every reply.
@@ -76,32 +74,23 @@ const HOMEBREW_FORMULA: &str = "packaging/homebrew/Formula/slopdesk.rb";
 
 /// dropd's client end holds no layout of its own
 ///
-/// PATH 4 (`docs/53`). The client half is `rust/slopdesk-dropd`'s `client` module;
-/// `Sources/SlopDeskFileTransfer` calls it through the door in
-/// `rust/slopdesk-ffi/src/file_transfer.rs` and holds nothing. So the four numbers are not compared
-/// across two spellings — there is one spelling, and what is pinned is that Swift still READS it.
+/// PATH 4 (`docs/53`). The client half is `rust/slopdesk-dropd` — `upload` holds the SEQUENCE and
+/// `client` every layout — and `Sources/SlopDeskFileTransfer` reaches all of it through the one
+/// door in `rust/slopdesk-ffi/src/file_transfer.rs`. It used to be eight doors with a Swift driver
+/// above them holding the socket and the order; the door is one verb now, so what this pins is that
+/// the face still goes through it rather than dialling anything itself.
 ///
 /// A "just this one field" big-endian helper is how a second implementation grows back one accessor
-/// at a time, and a literal cap in the face is drift starting: a cap the client believes and a cap
-/// the host enforces that disagree is a bug neither side's tests can see.
+/// at a time, and a Swift receiver is the cross-language mirror the tree forbids outright.
 ///
-/// BREAK-TEST: dropped `slopdesk_drop_decoder_next` from the shim ⇒ FAIL "no longer exports".
+/// BREAK-TEST: dropped `slopdesk_drop_upload` from the shim ⇒ FAIL "no longer exports".
 /// Separately added `func appendBE(` to a file in the target ⇒ FAIL "a byte reader/writer is back".
-/// Separately wrote `256 * 1024` into the face ⇒ FAIL "respells a dropd constant". All three
-/// restored from /tmp; PASS.
+/// Separately spelled `final class FileTransferServer` under `Sources/` ⇒ FAIL "a Swift file-drop
+/// receiver is back". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_drop_client_holds_no_layout(tree: &Tree) -> Report {
-    /// The eight entries the door vends, each of which Swift calls.
-    const DOORS: &[&str] = &[
-        "slopdesk_drop_encode_request",
-        "slopdesk_drop_decode_reply",
-        "slopdesk_drop_constant",
-        "slopdesk_drop_decoder_new",
-        "slopdesk_drop_decoder_free",
-        "slopdesk_drop_decoder_append",
-        "slopdesk_drop_decoder_next",
-        "slopdesk_drop_decoder_buffered",
-    ];
+    /// The one entry the door vends, which the face calls.
+    const DOORS: &[&str] = &["slopdesk_drop_upload"];
     check_all(tree, &[
         Claim::Mentions {
             path: DROP_FFI,
@@ -126,14 +115,6 @@ pub fn the_drop_client_holds_no_layout(tree: &Tree) -> Report {
             message: "a byte reader/writer is back in Sources/SlopDeskFileTransfer — dropd's client module \
                       owns the layout, and a one-field helper is the second implementation growing back one \
                       accessor at a time: {files}",
-        },
-        Claim::Lacks {
-            path: DROP_PROTOCOL_FACE,
-            pattern: r"16 \* 1024 \* 1024|256 \* 1024|20 \* 1024|UInt8 = [0-9]",
-            view: View::Code,
-            message: "FileTransferProtocol.swift respells a dropd constant — read slopdesk_drop_constant \
-                      instead, because a cap the client believes and a cap the host enforces that drift \
-                      apart is a bug neither side's tests can see (docs/53)",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -806,10 +787,6 @@ mod tests {
             (super::INSPECTOR_WIRE, INSPECTOR_WIRE_BODY),
             (super::INSPECTOR_FACE, INSPECTOR_FACE_BODY),
             ("Sources/SlopDeskFileTransfer/FileTransferClient.swift", DROP_FACE),
-            (
-                super::DROP_PROTOCOL_FACE,
-                "enum Wire { static let kind = slopdesk_drop_constant(0) }\n",
-            ),
             (super::ANDROID_HEADER, ANDROID_HEADER_BODY),
             (super::ANDROID_BRIDGE, ANDROID_BRIDGE_BODY),
             (ANDROID_FACE, ANDROID_FACE_BODY),
@@ -848,18 +825,9 @@ mod tests {
     const ANDROID_LINE: &str = "androidd: listening on 0.0.0.0:";
     const INSPECTOR_LINE: &str = "inspectord: listening on 0.0.0.0:";
 
-    /// The eight dropd doors, as the shim and as the face that calls them.
-    const DOOR_SHIM: &str =
-        "pub extern \"C\" fn slopdesk_drop_encode_request() {}\npub extern \"C\" fn \
-         slopdesk_drop_decode_reply() {}\npub extern \"C\" fn slopdesk_drop_constant() {}\npub extern \"C\" \
-         fn slopdesk_drop_decoder_new() {}\npub extern \"C\" fn slopdesk_drop_decoder_free() {}\npub extern \
-         \"C\" fn slopdesk_drop_decoder_append() {}\npub extern \"C\" fn slopdesk_drop_decoder_next() \
-         {}\npub extern \"C\" fn slopdesk_drop_decoder_buffered() {}\n";
-    const DROP_FACE: &str = "let a = slopdesk_drop_encode_request()\nlet b = \
-                             slopdesk_drop_decode_reply()\nlet c = slopdesk_drop_constant(0)\nlet d = \
-                             slopdesk_drop_decoder_new()\nlet e = slopdesk_drop_decoder_free(d)\nlet f = \
-                             slopdesk_drop_decoder_append(d)\nlet g = slopdesk_drop_decoder_next(d)\nlet h \
-                             = slopdesk_drop_decoder_buffered(d)\n";
+    /// The one dropd door, as the shim and as the face that calls it.
+    const DOOR_SHIM: &str = "pub extern \"C\" fn slopdesk_drop_upload() {}\n";
+    const DROP_FACE: &str = "let n = slopdesk_drop_upload(h, l, p, b, c, t, x, f)\n";
 
     /// Five request bytes across the two writers, four reply arms.
     const DROP_CLIENT_BODY: &str = "fn write_chunk_payload(kind: &mut u8) {\n    *kind = 3;\n}\n\
@@ -985,19 +953,21 @@ mod tests {
     }
 
     #[test]
-    fn a_respelled_cap_in_the_face_is_red() {
-        let fixture = Fixture::new("drop-cap");
+    fn a_swift_receiving_end_is_red() {
+        let fixture = Fixture::new("drop-receiver");
         wires(&fixture);
+        assert!(super::the_drop_client_holds_no_layout(&fixture.tree()).is_clean());
+
         fixture.write(
-            super::DROP_PROTOCOL_FACE,
-            "enum Wire { static let cap = 16 * 1024 * 1024 }\n",
+            "Sources/SlopDeskFileTransfer/FileTransferServer.swift",
+            "final class FileTransferServer {\n    func serve() {}\n}\n",
         );
         let report = super::the_drop_client_holds_no_layout(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("respells a dropd constant")),
+                .any(|v| v.contains("a Swift file-drop receiver is back")),
             "{report:?}"
         );
     }

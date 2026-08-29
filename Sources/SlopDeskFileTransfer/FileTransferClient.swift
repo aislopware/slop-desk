@@ -1,6 +1,5 @@
+import CSlopDeskFFI
 import Foundation
-import Network
-import SlopDeskNet
 
 /// A single upload's progress, surfaced to the UI. `id` is the client-scoped transfer id.
 public enum FileUploadEvent: Sendable, Equatable {
@@ -10,16 +9,22 @@ public enum FileUploadEvent: Sendable, Equatable {
     case failed(id: UInt32, reason: String)
 }
 
-/// Client-side PATH-4 driver: dials the host's dedicated file-transfer port and streams dropped files
-/// over it, one at a time, reporting progress. Never touches the terminal mux or the video path.
+/// PATH 4's client end, as a FACE over one door.
 ///
-/// The wire dance per connection: `hello` → await `helloAck`; then per file `offer` → await `accept`
-/// → stream `chunk`s (256 KiB, read straight off disk so a multi-GiB file stays flat in RAM) →
-/// `finish` → await `complete`. A `failed` at any point ends that file (the rest still try).
+/// A drop rides its OWN reliable TCP connection to `slopdesk-dropd`, never the terminal mux (a bulk
+/// body sharing the PTY data channel would stall keystrokes) and never the lossy video path (FEC
+/// recovers frames, not files). What that connection SAYS — `hello` → `helloAck`, then per file
+/// `offer` → `accept` → 256 KiB chunks → `finish` → `complete` — is `rust/slopdesk-dropd`'s `upload`
+/// module, beside the layouts it writes and the `protocol` module that decodes them.
 ///
-/// A value type with no shared state — each ``upload(files:host:port:onEvent:)`` drives an independent
-/// connection with a local frame reader, so no actor isolation is needed (and an actor would flag the
-/// non-`Sendable` inbound iterator as it crosses an await).
+/// ## Why nothing here decides
+/// This used to be the driver: it held the socket, the frame reader, the retry-free error policy
+/// and the order every frame goes in, and it called eight small doors to lay each frame out. Every
+/// one of those doors was right on its own and nothing could check the ORDER they were assembled
+/// in, which is the fault `docs/55` §4b names — *a law moved without its sequencing*. With the
+/// socket in Rust there is no order left on this side to get wrong, so what survives is the two
+/// things a face is for: turning `URL`s into bytes the door reads, and turning the door's reports
+/// back into a Swift enum the UI can switch on.
 public struct FileTransferClient: Sendable {
     public init() {}
 
@@ -30,148 +35,128 @@ public struct FileTransferClient: Sendable {
     /// actor-isolated consumer observes the exact `started → progress… → completed/failed` sequence
     /// (a fire-and-forget per-event hop reorders under pool contention: progress runs backwards, a
     /// stale progress stomps a completed row). Every event is delivered before this returns.
+    ///
+    /// A file is offered under its INDEX in `files`, which is the `id` every event carries.
     @preconcurrency
     public func upload(
         files: [URL],
         host: String,
         port: UInt16,
-        onEvent: @Sendable @escaping (FileUploadEvent) async -> Void,
-    ) async {
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
-        let connection = NWConnection(
-            host: NWEndpoint.Host(host),
-            port: nwPort,
-            using: NWByteChannel.parameters(),
-        )
-        let channel = NWByteChannel(connection: connection, label: "slopdesk.filetransfer.channel")
-        await channel.start()
-        await run(files: files, over: channel, onEvent: onEvent)
-    }
-
-    /// The testable core: run the upload protocol over an already-open channel. The end-to-end test
-    /// dials a real `slopdesk-dropd` — there is no in-process host to wire a loopback to any more,
-    /// because the receiving end is a separate binary (`docs/53`).
-    @preconcurrency
-    public func run(
-        files: [URL],
-        over channel: FileTransferChannel,
-        onEvent: @Sendable @escaping (FileUploadEvent) async -> Void,
-    ) async {
-        var reader = FrameReader(channel: channel)
-        defer { channel.close() }
-
-        // Handshake.
-        do {
-            try await send(.hello(version: fileTransferVersion), over: channel)
-            guard case let .helloAck(accepted)? = try await reader.next(), accepted else {
-                for (index, url) in files.enumerated() {
-                    await onEvent(.failed(
-                        id: UInt32(index),
-                        reason: "host rejected handshake — url \(url.lastPathComponent)",
-                    ))
-                }
-                return
-            }
-        } catch {
-            return
-        }
-
-        for (index, url) in files.enumerated() {
-            await uploadOne(url: url, transferId: UInt32(index), over: channel, reader: &reader, onEvent: onEvent)
-        }
-    }
-
-    // MARK: - One file
-
-    private func uploadOne(
-        url: URL,
-        transferId: UInt32,
-        over channel: FileTransferChannel,
-        reader: inout FrameReader,
         onEvent: @Sendable (FileUploadEvent) async -> Void,
     ) async {
-        let name = url.lastPathComponent
-        let handle: FileHandle
-        let size: UInt64
-        do {
-            handle = try FileHandle(forReadingFrom: url)
-            let fileSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            size = UInt64(max(0, fileSize))
-        } catch {
-            await onEvent(.failed(id: transferId, reason: "cannot read \(name)"))
-            return
+        guard !files.isEmpty else { return }
+        // NUL is the separator `find -print0` uses, for its reason: a POSIX path holds every byte
+        // but this one, so there is no length prefix to write and nothing here to spell wrong.
+        let batch = Data(files.map(\.path).joined(separator: "\0").utf8)
+        let (events, continuation) = AsyncStream.makeStream(
+            of: FileUploadEvent.self,
+            bufferingPolicy: .unbounded,
+        )
+        let sink = Sink(continuation)
+
+        // A GLOBAL QUEUE and not a `Task`: the door blocks for the whole batch, which is minutes on
+        // a large file, and a blocked cooperative-pool thread is one the whole app no longer has.
+        DispatchQueue.global(qos: .utility).async {
+            drive(host: host, port: port, batch: batch, into: sink)
+            continuation.finish()
         }
-        defer { try? handle.close() }
 
-        await onEvent(.started(id: transferId, name: name, totalBytes: size))
-
-        do {
-            try await send(.offer(transferId: transferId, fileSize: size, name: name), over: channel)
-            guard case .accept? = try await expect(transferId, reader: &reader) else {
-                // `expect` already emitted `.failed` for a `failed` reply; a nil/other ends it too.
-                await onEvent(.failed(id: transferId, reason: "host did not accept \(name)"))
-                return
-            }
-
-            var sent: UInt64 = 0
-            while true {
-                let chunk = try handle.read(upToCount: FileTransferProtocolConstants.chunkByteCount) ?? Data()
-                if chunk.isEmpty { break }
-                try await send(.chunk(transferId: transferId, data: chunk), over: channel)
-                sent += UInt64(chunk.count)
-                await onEvent(.progress(id: transferId, sentBytes: sent, totalBytes: size))
-            }
-
-            try await send(.finish(transferId: transferId), over: channel)
-            switch try await expect(transferId, reader: &reader) {
-            case .complete:
-                await onEvent(.completed(id: transferId))
-            case let .failed(reason):
-                await onEvent(.failed(id: transferId, reason: reason))
-            default:
-                await onEvent(.failed(id: transferId, reason: "no completion for \(name)"))
-            }
-        } catch {
-            try? await send(.cancel(transferId: transferId), over: channel)
-            await onEvent(.failed(id: transferId, reason: "upload error for \(name)"))
+        // The stream ends only after `drive` returns, and buffered events drain before it does — so
+        // this loop IS the "every event delivered before we return" guarantee above.
+        for await event in events {
+            await onEvent(event)
         }
-    }
-
-    /// The relevant reply outcome for `transferId`, skipping any message about another id.
-    private enum Outcome { case accept, complete, failed(String), other }
-
-    private func expect(_ transferId: UInt32, reader: inout FrameReader) async throws -> Outcome? {
-        while let message = try await reader.next() {
-            switch message {
-            case let .accept(id) where id == transferId: return .accept
-            case let .complete(id) where id == transferId: return .complete
-            case let .failed(id, reason) where id == transferId: return .failed(reason)
-            default: continue // a reply about a different transfer, or a stray — keep reading
-            }
-        }
-        return nil
-    }
-
-    private func send(_ request: FileTransferRequest, over channel: FileTransferChannel) async throws {
-        try await channel.send(FileTransferCodec.encodeFrame(request))
     }
 }
 
-/// Pulls whole ``FileTransferReply`` values off a channel's inbound byte stream, buffering partial
-/// frames across reads. One per connection, iterated by a single consumer.
-private struct FrameReader {
-    private var iterator: AsyncThrowingStream<Data, Error>.AsyncIterator
-    private let decoder = FileTransferFrameDecoder()
+// MARK: - The door
 
-    init(channel: FileTransferChannel) {
-        iterator = channel.inbound.makeAsyncIterator()
+/// Where the door's reports land, as something a `void *` can point at.
+///
+/// A `final class` and not the stream continuation itself, because the context crosses as a raw
+/// pointer and a struct has no identity to make one from. Its one field is immutable and `Sendable`,
+/// so the yield is safe from the door's thread with no lock.
+private final class Sink: Sendable {
+    let continuation: AsyncStream<FileUploadEvent>.Continuation
+
+    init(_ continuation: AsyncStream<FileUploadEvent>.Continuation) {
+        self.continuation = continuation
     }
+}
 
-    mutating func next() async throws -> FileTransferReply? {
-        while true {
-            if let reply = try decoder.nextReply() { return reply }
-            guard let bytes = try await iterator.next() else { return nil }
-            decoder.append(bytes)
+/// How long the dial may take before the batch is failed by name.
+///
+/// A ceiling exists at all because the door BLOCKS: without one, a host that is asleep rather than
+/// refusing parks the upload thread until the kernel gives up, which on a dropped tunnel is minutes
+/// of a drop overlay saying nothing.
+private let connectTimeoutMilliseconds: UInt64 = 10000
+
+/// Runs the whole batch through `slopdesk_drop_upload`, blocking until it is done.
+private func drive(host: String, port: UInt16, batch: Data, into sink: Sink) {
+    var host = host
+    // `passUnretained` is what the door's contract asks for — it retains nothing and calls nothing
+    // after it returns — and `withExtendedLifetime` is what keeps that true: after `toOpaque()` the
+    // only thing holding the sink is a RAW POINTER, which is not a reference ARC can see.
+    withExtendedLifetime(sink) {
+        let context = Unmanaged.passUnretained(sink).toOpaque()
+        host.withUTF8 { hostBytes in
+            batch.withUnsafeBytes { blob in
+                _ = slopdesk_drop_upload(
+                    hostBytes.baseAddress,
+                    hostBytes.count,
+                    port,
+                    blob.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    blob.count,
+                    connectTimeoutMilliseconds,
+                    context,
+                    report,
+                )
+            }
         }
     }
+}
+
+/// The `@convention(c)` progress callback: one report in, one ``FileUploadEvent`` out.
+///
+/// Runs on the calling thread — the global queue `drive` blocks on — never concurrently with itself
+/// and never after the door returns, so `context` is live for every call and `text` is lent for the
+/// duration of one.
+private func report(
+    _ context: UnsafeMutableRawPointer?,
+    _ kind: UInt32,
+    _ id: UInt32,
+    _ sentBytes: UInt64,
+    _ totalBytes: UInt64,
+    _ text: UnsafePointer<UInt8>?,
+    _ textLength: Int,
+) {
+    guard let context else { return }
+    let sink = Unmanaged<Sink>.fromOpaque(context).takeUnretainedValue()
+    switch kind {
+    case SLOPDESK_DROP_PROGRESS_STARTED:
+        sink.continuation.yield(.started(id: id, name: said(text, textLength), totalBytes: totalBytes))
+    case SLOPDESK_DROP_PROGRESS_ADVANCED:
+        sink.continuation.yield(.progress(id: id, sentBytes: sentBytes, totalBytes: totalBytes))
+    case SLOPDESK_DROP_PROGRESS_COMPLETED:
+        sink.continuation.yield(.completed(id: id))
+    case SLOPDESK_DROP_PROGRESS_FAILED:
+        sink.continuation.yield(.failed(id: id, reason: said(text, textLength)))
+    // A kind this build does not know is a report it cannot draw, and the door promises only the
+    // four above — so dropping it IS the handling.
+    default:
+        break
+    }
+}
+
+/// The one string a report can carry. Emptiness is decided by the LENGTH: a report with nothing to
+/// say lends a dangling non-null the door documents as an empty string, so the pointer answers
+/// nothing here and is unwrapped only to read the bytes a non-zero length promises.
+private func said(_ text: UnsafePointer<UInt8>?, _ length: Int) -> String {
+    guard let text, length > 0 else { return "" }
+    let bytes = Array(UnsafeBufferPointer(start: text, count: length))
+    // The producer is `slopdesk-dropd`'s own `String`, so these bytes cannot be invalid UTF-8. A
+    // failable init would add a `nil` branch that means "the report said nothing", which the length
+    // guard above already answers.
+    // swiftlint:disable:next optional_data_string_conversion
+    return String(decoding: bytes, as: UTF8.self)
 }
