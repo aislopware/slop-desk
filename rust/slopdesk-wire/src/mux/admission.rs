@@ -56,6 +56,20 @@ pub enum Role {
     Host = 1,
 }
 
+impl Role {
+    /// Whether this end is the one that allocates ids and SENDS `channelOpen`.
+    ///
+    /// The same fact [`admit`] spends when it drops an open arriving at the initiator, offered as a
+    /// question because a transport needs it on the sending side too: refusing to open a channel
+    /// from a responder is a guard on an outbound frame, and [`admit`] judges arrivals only. Two
+    /// callers, one rule — and a test below pins them to each other, so a future asymmetry cannot
+    /// land in one and not the other.
+    #[must_use]
+    pub const fn initiates_opens(self) -> bool {
+        matches!(self, Self::Client)
+    }
+}
+
 /// Which of the two physical links a frame arrived on.
 ///
 /// The split is the reason a `resize` is never stuck behind a megabyte of `output`; here it also
@@ -151,7 +165,7 @@ pub fn admit(arrival: &Arrival) -> Admission {
     if arrival.link == Link::Control {
         return Admission::Drop(Ignored::OpenOnControlLink);
     }
-    if arrival.role == Role::Client {
+    if arrival.role.initiates_opens() {
         return Admission::Drop(Ignored::OpenAtInitiator);
     }
     if responder_on_data
@@ -342,6 +356,21 @@ mod tests {
             admit(&open_at(Role::Client, Link::Data)),
             Admission::Drop(Ignored::OpenAtInitiator),
         );
+    }
+
+    /// The sending side's guard and the receiving side's drop are the SAME fact, so they are pinned
+    /// to each other rather than each to a literal. A transport asks `initiates_opens` before it
+    /// sends an open; `admit` drops one that arrives at that end. If a future change ever made a
+    /// second role initiate, one of the two would otherwise keep the old answer.
+    #[test]
+    fn the_role_that_initiates_is_the_role_an_arriving_open_is_dropped_at() {
+        for role in [Role::Client, Role::Host] {
+            assert_eq!(
+                admit(&open_at(role, Link::Data)) == Admission::Drop(Ignored::OpenAtInitiator),
+                role.initiates_opens(),
+                "{role:?}",
+            );
+        }
     }
 
     #[test]

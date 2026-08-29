@@ -8,80 +8,26 @@
 //! it does so with no branch of its own, which is why each test below names the `admission` rule it
 //! is the visible consequence of rather than a line of `connection.rs`.
 //!
-//! Real sockets, not a double. The crate has an in-memory link in `subchannel`'s unit tests for the
-//! questions that do not need one; a connection's whole job is two link threads, so these do.
+//! The one guard that IS a branch — a responder refusing to initiate an open — is `initiator.rs`'s,
+//! beside the send path it guards.
 
 #![expect(
-    clippy::expect_used,
     clippy::panic,
     reason = "a panic in a test is the failure report, not a fault"
 )]
 
-use std::io::Write as _;
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::sync::mpsc::RecvTimeoutError;
 
-use slopdesk_muxnet::connection::{ConnectionThreads, MuxConnection, MuxEvent, PairedConnection};
-use slopdesk_muxnet::link::TcpByteLink;
-use slopdesk_muxnet::preamble::ConnectionId;
+use slopdesk_muxnet::connection::MuxEvent;
 use slopdesk_wire::MuxFrame;
 use slopdesk_wire::mux::admission::Role;
 
-/// Long enough that a loaded machine does not fail this suite, short enough that a real hang does.
-const GENEROUS: Duration = Duration::from_secs(10);
+mod common;
 
-/// Long enough that a frame that WAS going to produce an event has produced it.
-///
-/// Only ever used to prove an absence, so a false pass here is a slow machine rather than a wrong
-/// answer — and the frame it waits on has already crossed a loopback socket and been decoded.
-const SETTLE: Duration = Duration::from_millis(250);
+use common::{GENEROUS, SETTLE, Wired, write_all};
 
-/// A connection at `role`, and the two peer sockets whose bytes reach it.
-struct Wired {
-    peer_control: TcpStream,
-    peer_data: TcpStream,
-    events: Receiver<MuxEvent>,
-    connection: std::sync::Arc<MuxConnection>,
-    threads: ConnectionThreads,
-}
-
-impl Wired {
-    fn up(role: Role) -> Self {
-        let (peer_control, ours_control) = loopback_pair();
-        let (peer_data, ours_data) = loopback_pair();
-        let pair = PairedConnection {
-            connection: ConnectionId::from_bytes([7; 16]),
-            control: Box::new(TcpByteLink::new(ours_control, "test.control")),
-            data: Box::new(TcpByteLink::new(ours_data, "test.data")),
-        };
-        let (connection, events, threads) = MuxConnection::serve(pair, role);
-        Self {
-            peer_control,
-            peer_data,
-            events,
-            connection,
-            threads,
-        }
-    }
-
-    fn down(self) {
-        self.connection.close();
-        drop(self.peer_control);
-        drop(self.peer_data);
-        self.threads.join();
-    }
-}
-
-/// Two ends of one real TCP connection: `(what the peer writes on, what the mux reads)`.
-fn loopback_pair() -> (TcpStream, TcpStream) {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind loopback");
-    let port = listener.local_addr().expect("local addr").port();
-    let peer = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("dial loopback");
-    let (ours, _from) = listener.accept().expect("accept the dial");
-    (peer, ours)
-}
-
+/// A peer-initiated open. Only this file writes one: at a client it is the frame that must be
+/// ignored, at a host it is the frame that mints a pane.
 fn open_frame(channel_id: u32) -> Vec<u8> {
     MuxFrame::ChannelOpen {
         channel_id,
@@ -101,8 +47,8 @@ fn open_frame(channel_id: u32) -> Vec<u8> {
 /// so nothing goes back on the wire.
 #[test]
 fn an_open_arriving_at_a_client_mints_nothing_and_is_answered_with_nothing() {
-    let mut wired = Wired::up(Role::Client);
-    wired.peer_data.write_all(&open_frame(1)).expect("write the open");
+    let wired = Wired::up(Role::Client);
+    write_all(&wired.peer_data, &open_frame(1));
 
     match wired.events.recv_timeout(SETTLE) {
         Err(RecvTimeoutError::Timeout) => {},
@@ -122,10 +68,7 @@ fn an_open_arriving_at_a_client_mints_nothing_and_is_answered_with_nothing() {
 #[test]
 fn the_same_open_arriving_at_a_host_does_mint_one() {
     let wired = Wired::up(Role::Host);
-    {
-        let mut data = &wired.peer_data;
-        data.write_all(&open_frame(1)).expect("write the open");
-    }
+    write_all(&wired.peer_data, &open_frame(1));
 
     match wired.events.recv_timeout(GENEROUS) {
         Ok(MuxEvent::Opened(open)) => assert_eq!(open.channel_id, 1),

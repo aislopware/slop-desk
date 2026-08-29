@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use slopdesk_muxnet::connection::PairedConnection;
 use slopdesk_muxnet::link::{ByteLink, TcpByteLink};
-use slopdesk_muxnet::params::keepalive;
+use slopdesk_muxnet::params;
 use slopdesk_muxnet::preamble::{Lane, PREAMBLE_BYTE_COUNT, decode};
 use socket2::{Domain, Socket, Type};
 
@@ -273,11 +273,15 @@ fn reap_loop(pending: &Arc<Mutex<PendingLinks>>, stopping: &Arc<AtomicBool>, tic
     }
 }
 
-/// Applies the PATH-1 socket options to an accepted stream.
+/// Applies the PATH-1 socket options to an accepted stream, plus the one that is the HOST's alone.
+///
+/// The shared options are `slopdesk_muxnet::params`'. What is added here is the read timeout, and
+/// it is not a transport parameter: it bounds the HANDSHAKE, so that a socket which connects and
+/// then says nothing cannot hold a worker thread. A dialler has no such phase — it writes its
+/// preamble first — which is exactly why this line is here and not there.
 fn configure(stream: &TcpStream) -> io::Result<()> {
-    stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
-    Socket::from(stream.try_clone()?).set_tcp_keepalive(&keepalive())
+    params::apply(stream)?;
+    stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT))
 }
 
 /// Runs `body` under the pending map's lock, or reports the lock as poisoned by returning `None`.

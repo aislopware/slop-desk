@@ -25,10 +25,29 @@
 //! link, and this module only spends it. Spelling it again here is exactly the second copy
 //! `slopdesk-invariants` exists to refuse.
 
+use std::io;
+use std::net::TcpStream;
+
 use slopdesk_wire::transport::{
     TCP_KEEPALIVE_IDLE_SECONDS, TCP_KEEPALIVE_INTERVAL_SECONDS, TCP_KEEPALIVE_RETRY_COUNT,
 };
-use socket2::TcpKeepalive;
+use socket2::{Socket, TcpKeepalive};
+
+/// Applies the PATH-1 socket options to a stream, however it was obtained.
+///
+/// One function for the accepted socket and the dialled one, because `NWParameters` was one object
+/// for both: the listener and the dialler configured the SAME `TransportParameters.makeTCP()`, and
+/// two copies here could drift into a connection whose two ends disagree about `noDelay`.
+///
+/// # Errors
+/// Whatever the socket layer reports. A stream that cannot take these options is not a stream this
+/// transport can use.
+pub fn apply(stream: &TcpStream) -> io::Result<()> {
+    stream.set_nodelay(true)?;
+    // `Socket::from` takes ownership of the fd it is handed, so it is handed a DUP: the socket2
+    // wrapper closes the clone when it drops here, and `stream` keeps the fd the caller owns.
+    Socket::from(stream.try_clone()?).set_tcp_keepalive(&keepalive())
+}
 
 /// The keepalive policy every PATH-1 socket carries, on both ends.
 ///

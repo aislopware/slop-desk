@@ -7,16 +7,22 @@
 //! say what a channel's ending reaches. None of them is re-derived here. What is here is the
 //! threads, the tables they read, and the two links they write on.
 //!
-//! ## One connection, two roles, no branch
+//! ## One connection, two roles, and exactly one guard
 //!
 //! The mux is asymmetric — the client allocates ids and initiates every open, the host only
 //! responds — and every one of those three questions takes a [`Role`] because of it. So this type
-//! carries a role and SPENDS it; it does not read it. There is no `if host` anywhere below, and the
-//! properties that sound like they would need one fall out of the ladder instead: an open arriving
-//! at a client is `Admission::Drop(Ignored::OpenAtInitiator)`, so a client connection cannot emit
-//! [`MuxEvent::Opened`]; a refusal is only ever produced for a responder on DATA, so
-//! [`MuxConnection::send_open_ack`] is only ever reached from the arm that the host reaches. A
-//! second copy of either rule here would be a copy that can disagree.
+//! carries a role and SPENDS it. Nothing on the RECEIVING side reads it: there is no `if host` in
+//! any routing path below, and the properties that sound like they would need one fall out of the
+//! ladder instead: an open arriving at a client is `Admission::Drop(Ignored::OpenAtInitiator)`, so
+//! a client connection cannot emit [`MuxEvent::Opened`]; a refusal is only ever produced for a
+//! responder on DATA, so [`MuxConnection::send_open_ack`] is only ever reached from the arm that
+//! the host reaches. A second copy of either rule here would be a copy that can disagree.
+//!
+//! The SENDING side has one guard, and naming it is cheaper than a claim that is nearly true:
+//! [`MuxConnection::open_channel`] refuses at a responder. `admit` cannot hold that rule, because
+//! it judges frames that ARRIVE and this one is about a frame going out — so the rule stays stated
+//! once in the wire, as [`Role::initiates_opens`], and this file asks it rather than comparing to a
+//! variant. That single question is the whole of what this crate reads about its own role.
 //!
 //! ## Events, not handlers — and the four things that dissolve with them
 //!
@@ -51,12 +57,12 @@
 //! in the Swift where the detach path must remember NOT to run the kill loop.
 
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use slopdesk_wire::WireMessage;
 use slopdesk_wire::mux::admission::{
@@ -124,6 +130,88 @@ pub struct ChannelOpen {
     pub control_inbound: Receiver<WireMessage>,
 }
 
+/// What the initiator is asking the responder to open.
+///
+/// The same four fields [`ChannelOpen`] reports at the other end, which is the point: one struct
+/// describes the frame going out and one the frame coming in, and neither carries a sub-channel the
+/// sender does not have yet.
+#[derive(Debug, Clone)]
+pub struct OpenRequest {
+    /// The session this channel binds to. The responder resumes an existing pane under it, or mints
+    /// one.
+    pub session_id: [u8; 16],
+    /// The highest output seq this end already holds, for a byte-exact resume.
+    pub last_received_seq: i64,
+    /// The raw `channel_class` byte — see [`ChannelOpen::channel_class`].
+    pub channel_class: u8,
+    /// The working directory a freshly minted pane should start in.
+    pub initial_cwd: Option<String>,
+}
+
+/// A channel this end opened, live from the moment it is returned.
+///
+/// The pair is usable before the responder has answered, because the responder opens on the first
+/// `channelOpen` rather than on a handshake — so the ACK is a verdict about resume, not permission
+/// to write. [`MuxConnection::await_open_ack`] is where that verdict is collected.
+#[derive(Debug)]
+pub struct OpenedChannel {
+    /// The id this end allocated.
+    pub channel_id: u32,
+    /// The DATA sub-channel: PTY bytes, flow-controlled.
+    pub data: Arc<SubChannel>,
+    /// Its inbound stream.
+    pub data_inbound: Receiver<WireMessage>,
+    /// The CONTROL sub-channel: resize, ack, bye — never gated.
+    pub control: Arc<SubChannel>,
+    /// Its inbound stream.
+    pub control_inbound: Receiver<WireMessage>,
+}
+
+/// The responder's verdict on an open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenAck {
+    /// Whether the channel was accepted at all.
+    pub accepted: bool,
+    /// The output seq the responder will resume from — AUTHORITATIVE, and the reason this verdict
+    /// is worth waiting for: the initiator's own `last_received_seq` is a request, this is the
+    /// answer.
+    pub resume_from_seq: i64,
+}
+
+impl OpenAck {
+    /// The answer when there is no verdict to be had: the connection died, the channel was closed
+    /// under the waiter, or nothing arrived inside the caller's bound.
+    ///
+    /// One value for all three because the caller does the same thing with each — a pane that
+    /// cannot be told where to resume from cannot resume — and a taxonomy nobody branches on is a
+    /// taxonomy that goes stale.
+    pub const REFUSED: Self = Self {
+        accepted: false,
+        resume_from_seq: 0,
+    };
+}
+
+/// Why an open never reached the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenFailure {
+    /// This end is the responder. It registers the ids it is SHOWN; it does not mint them.
+    NotInitiator,
+    /// The connection is torn down, or the write failed. Either way nothing was left registered.
+    LinkDown,
+}
+
+impl core::fmt::Display for OpenFailure {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let said = match *self {
+            Self::NotInitiator => "a responder cannot initiate a channel open",
+            Self::LinkDown => "the mux connection is down",
+        };
+        formatter.write_str(said)
+    }
+}
+
+impl core::error::Error for OpenFailure {}
+
 /// Something the connection is telling its owner about.
 #[derive(Debug)]
 pub enum MuxEvent {
@@ -164,6 +252,20 @@ struct Tables {
     data_channels: HashMap<u32, Arc<SubChannel>>,
 }
 
+/// One channel's pair of sub-channels, freshly registered, with the ends the owner is handed.
+///
+/// Both roles mint exactly this: the responder when an open ARRIVES, the initiator when it sends
+/// one. The two used to be the same five lines written twice in the Swift (`acceptChannel` and
+/// `openChannel` both call `registerChannels`), and they are one function here for the same reason
+/// — a channel registered in one map and not the other routes half its frames into nothing.
+#[derive(Debug)]
+struct Registered {
+    data: Arc<SubChannel>,
+    data_inbound: Receiver<WireMessage>,
+    control: Arc<SubChannel>,
+    control_inbound: Receiver<WireMessage>,
+}
+
 impl Tables {
     fn new() -> Self {
         Self {
@@ -171,6 +273,30 @@ impl Tables {
             data: ChannelTable::new(),
             control_channels: HashMap::new(),
             data_channels: HashMap::new(),
+        }
+    }
+
+    /// Mints and registers the pair of sub-channels for `channel_id` in both dispatch maps.
+    ///
+    /// Does NOT touch either [`ChannelTable`]: which table step a registration owes is different at
+    /// the two ends — the responder mirrors a peer's open, the initiator opens both of its own —
+    /// and a function that guessed would be the second copy of the rule.
+    fn register(
+        &mut self,
+        channel_id: u32,
+        data_link: &Arc<dyn ByteLink>,
+        control_link: &Arc<dyn ByteLink>,
+    ) -> Registered {
+        let (data, data_inbound) =
+            SubChannel::data(channel_id, Arc::clone(data_link), Arc::clone(control_link));
+        let (control, control_inbound) = SubChannel::control(channel_id, Arc::clone(control_link));
+        self.data_channels.insert(channel_id, Arc::clone(&data));
+        self.control_channels.insert(channel_id, Arc::clone(&control));
+        Registered {
+            data,
+            data_inbound,
+            control,
+            control_inbound,
         }
     }
 
@@ -223,6 +349,20 @@ pub struct MuxConnection {
     data_link: Arc<dyn ByteLink>,
     tables: Mutex<Tables>,
     events: Sender<MuxEvent>,
+    /// One slot per open this end has in flight, keyed by the id it allocated. `None` is "sent, not
+    /// yet answered"; `Some` is the responder's verdict, waiting to be collected once.
+    ///
+    /// A LEAF lock: [`Self::route`] takes it while holding [`Self::tables`], so nothing may ever
+    /// take `tables` while holding this one. Every method here that needs both releases one first.
+    ///
+    /// Bounded by this end's own opens: a peer cannot add a key, only answer one. A verdict nobody
+    /// ever collects is dropped when its channel closes or the connection tears down — the same
+    /// bound the Swift's `openAckResults` carries, and the reason a REFUSED open's slot is left
+    /// standing here rather than swept by the router: the router's teardown runs a few lines after
+    /// the verdict was recorded, and sweeping would discard the answer it was recorded for.
+    open_acks: Mutex<HashMap<u32, Option<OpenAck>>>,
+    /// Woken whenever a slot is answered or removed — the second being how a teardown answers.
+    ack_settled: Condvar,
     /// Set by the first of [`Self::close`] or a link ending, so the teardown runs once.
     torn_down: AtomicBool,
 }
@@ -262,6 +402,8 @@ impl MuxConnection {
             data_link: Arc::from(pair.data),
             tables: Mutex::new(Tables::new()),
             events,
+            open_acks: Mutex::new(HashMap::new()),
+            ack_settled: Condvar::new(),
             torn_down: AtomicBool::new(false),
         });
         let mut joins = Vec::with_capacity(2);
@@ -295,6 +437,18 @@ impl MuxConnection {
         self.connection
     }
 
+    /// Whether this connection is finished — closed by its owner, or ended by a dead link.
+    ///
+    /// The Swift's `isDead` is `closed || linkFailed`, two fields because two things could end a
+    /// connection separately. Here one link ending IS the connection ending, so there is one flag
+    /// and the disjunction cannot go stale. A pool asks this before handing a connection out:
+    /// reusing a corpse would open a channel whose first frame fails and whose pane never
+    /// recovers.
+    #[must_use]
+    pub fn is_down(&self) -> bool {
+        self.torn_down.load(Ordering::Acquire)
+    }
+
     /// How many channels are live. The owner drops the connection when this reaches zero.
     #[must_use]
     pub fn live_channel_count(&self) -> usize {
@@ -315,13 +469,147 @@ impl MuxConnection {
         drop(self.data_link.send(&ack));
     }
 
-    /// Closes one channel from this side: tells the peer on both links, steps both tables, and ends
-    /// the pair of sub-channels — which wakes anything parked on an empty send window, so a close
-    /// with a full window never strands a thread.
-    pub fn close_channel(&self, channel_id: u32, reason: MuxCloseReason) {
-        let close = MuxFrame::ChannelClose { channel_id, reason }.encode();
-        drop(self.data_link.send(&close));
-        drop(self.control_link.send(&close));
+    /// Opens a channel from this side: allocates an id, registers its pair, and sends `channelOpen`
+    /// on DATA — the link an open is initiated on, and so the one the answer comes back on.
+    ///
+    /// It does NOT wait for the ack, because the responder does not wait to act on the open: it
+    /// registers the channel and mints the pane on the first `channelOpen`, so the returned pair is
+    /// writable at once and the ack is a resume verdict collected separately by
+    /// [`Self::await_open_ack`]. Making this call block would serialise every pane's first byte
+    /// behind a round trip that decides nothing about whether it may be sent.
+    ///
+    /// The allocator is the DATA table itself. `ChannelTable::allocate` hands out odd ids from a
+    /// monotonic counter that is independent of its state map, so its eviction ring can never make
+    /// it re-issue a live id, and `reject` is documented to accept the transition from `Open`
+    /// precisely because an initiator marks a channel open before the frame is on the wire. A
+    /// separate table kept only to count would be a second allocator that could disagree with the
+    /// one the router reads.
+    ///
+    /// # Errors
+    /// [`OpenFailure::NotInitiator`] at a responder, [`OpenFailure::LinkDown`] if the connection is
+    /// already down or the write fails. In both cases nothing is left registered.
+    pub fn open_channel(&self, request: &OpenRequest) -> Result<OpenedChannel, OpenFailure> {
+        if !self.role.initiates_opens() {
+            return Err(OpenFailure::NotInitiator);
+        }
+        // A pooled connection outlives the pane that made it, so a reconnecting pane can reach a
+        // corpse: the registry hands out a connection whose links died a moment ago. Registering on
+        // one would leave a channel nothing will ever finish.
+        if self.torn_down.load(Ordering::Acquire) {
+            return Err(OpenFailure::LinkDown);
+        }
+
+        let (channel_id, fresh) = {
+            let Ok(mut tables) = self.tables.lock() else {
+                return Err(OpenFailure::LinkDown);
+            };
+            let channel_id = tables.data.allocate();
+            tables.data.open(channel_id);
+            tables.control.open(channel_id);
+            let fresh = tables.register(channel_id, &self.data_link, &self.control_link);
+            (channel_id, fresh)
+        };
+        // The slot exists before the frame does. A responder that answers instantly — a loopback
+        // mesh link is fast enough — must find somewhere to record its verdict, or the ack is
+        // discarded as a phantom and the first `await_open_ack` waits out its whole bound.
+        if let Ok(mut acks) = self.open_acks.lock() {
+            acks.insert(channel_id, None);
+        }
+
+        let open = MuxFrame::ChannelOpen {
+            channel_id,
+            session_id: request.session_id,
+            last_received_seq: request.last_received_seq,
+            channel_class: request.channel_class,
+            initial_cwd: request.initial_cwd.clone(),
+        }
+        .encode();
+        if self.data_link.send(&open).is_err() {
+            // The link is dead, so the peer will never close this id and nothing else ever will
+            // either: an orphan here holds `live_channel_count` above zero forever, and the pool
+            // above only retires a connection that reaches zero. Undo the whole registration.
+            self.abandon(channel_id);
+            return Err(OpenFailure::LinkDown);
+        }
+        Ok(OpenedChannel {
+            channel_id,
+            data: fresh.data,
+            data_inbound: fresh.data_inbound,
+            control: fresh.control,
+            control_inbound: fresh.control_inbound,
+        })
+    }
+
+    /// Collects the responder's verdict on an open this end sent, waiting up to `within` for it.
+    ///
+    /// Answers [`OpenAck::REFUSED`] for every way there is no verdict: the bound elapsed, the
+    /// channel was closed under the waiter, the connection died, or the id was never one this end
+    /// opened. The verdict is collected ONCE — it is the answer to a handshake, not a state — so a
+    /// second caller for the same id is told the same thing as a caller for an id nobody opened.
+    ///
+    /// The Swift reaches this with a recorded-results map, a waiter list, a monotonic waiter id and
+    /// a cancellation handler, because a continuation must be resumed exactly once by exactly one
+    /// of four paths. Here the map IS all four: a slot's presence is the phantom-id discipline, its
+    /// `None` is the waiter's predicate, its `Some` is a recorded verdict, and its removal is how a
+    /// teardown answers everyone parked at once.
+    #[must_use]
+    pub fn await_open_ack(&self, channel_id: u32, within: Duration) -> OpenAck {
+        let Ok(acks) = self.open_acks.lock() else {
+            return OpenAck::REFUSED;
+        };
+        let Ok((mut acks, _timed_out)) = self
+            .ack_settled
+            .wait_timeout_while(acks, within, |acks| matches!(acks.get(&channel_id), Some(None)))
+        else {
+            return OpenAck::REFUSED;
+        };
+        // Only an ANSWERED slot is taken. A slot still pending is one this call gave up on, and
+        // leaving it lets a late ack still be recorded for whoever asks next — the channel's own
+        // close is what finally clears it.
+        if matches!(acks.get(&channel_id), Some(Some(_))) {
+            acks.remove(&channel_id).flatten().unwrap_or(OpenAck::REFUSED)
+        } else {
+            OpenAck::REFUSED
+        }
+    }
+
+    /// Records a verdict for an id this end opened, and wakes whoever is waiting on it.
+    ///
+    /// An id with no slot is one this end never opened: ignored, never inserted. That is what keeps
+    /// the map bounded by this end's own in-flight opens rather than by what a peer chooses to
+    /// send.
+    fn note_open_ack(&self, channel_id: u32, ack: OpenAck) {
+        let Ok(mut acks) = self.open_acks.lock() else {
+            return;
+        };
+        if let Some(slot) = acks.get_mut(&channel_id) {
+            *slot = Some(ack);
+            self.ack_settled.notify_all();
+        }
+    }
+
+    /// Drops `channel_id`'s ack slot and wakes any waiter, which then reads [`OpenAck::REFUSED`].
+    ///
+    /// Every path that ends a channel or the connection owes this call. A waiter is parked on a
+    /// condvar with a bound, not on a link, so nothing else will ever tell it that the thing it is
+    /// waiting for can no longer happen.
+    fn forget_open_ack(&self, channel_id: u32) {
+        if let Ok(mut acks) = self.open_acks.lock() {
+            acks.remove(&channel_id);
+        }
+        self.ack_settled.notify_all();
+    }
+
+    /// Ends a channel HERE: out of both dispatch maps, both tables stepped locally, both
+    /// sub-channels finished, and its ack slot dropped.
+    ///
+    /// The whole local half of ending a channel, and the only copy of it. [`Self::close_channel`]
+    /// is this plus the frame that tells the peer; an open whose frame never reached the wire
+    /// is this alone, because the peer was never told the channel existed.
+    ///
+    /// Finishing a sub-channel wakes anything parked on an exhausted send window, so a close with a
+    /// full window never strands a thread.
+    fn abandon(&self, channel_id: u32) {
         let removed = {
             let Ok(mut tables) = self.tables.lock() else {
                 return;
@@ -338,6 +626,20 @@ impl MuxConnection {
         if let Some(channel) = removed.1 {
             channel.finish();
         }
+        self.forget_open_ack(channel_id);
+    }
+
+    /// Closes one channel from this side: tells the peer on both links, then ends it here.
+    ///
+    /// Best effort on the wire — a failed write means the link is already gone, which its own
+    /// receive loop is finding out — and unconditional locally, including for an open whose ack is
+    /// still outstanding: a connect that raced a teardown must not leave a thread parked on a
+    /// verdict that is no longer coming.
+    pub fn close_channel(&self, channel_id: u32, reason: MuxCloseReason) {
+        let close = MuxFrame::ChannelClose { channel_id, reason }.encode();
+        drop(self.data_link.send(&close));
+        drop(self.control_link.send(&close));
+        self.abandon(channel_id);
     }
 
     /// Tears the whole connection down: both links closed, every channel finished.
@@ -361,6 +663,13 @@ impl MuxConnection {
         // finished, rather than sitting in `recv` behind a peer that has stopped sending.
         self.control_link.close();
         self.data_link.close();
+        // Every parked waiter, at once. An ack rides the DATA link, so a dead link is the end of
+        // every verdict in flight — and a waiter is parked on a condvar rather than on the link, so
+        // this is the only thing that will ever tell it so.
+        if let Ok(mut acks) = self.open_acks.lock() {
+            acks.clear();
+        }
+        self.ack_settled.notify_all();
         let (ids, channels) = {
             let Ok(mut tables) = self.tables.lock() else {
                 return Some(Vec::new());
@@ -468,6 +777,23 @@ impl MuxConnection {
             Admission::Drop(_) => return,
         }
 
+        // The host's verdict on an open THIS end initiated, recorded before the routing decision
+        // below can finish a refused channel. A waiter that lost that race would be woken by the
+        // teardown and answered with its default rather than with what the host actually said. An id
+        // this end never opened has no slot, which is the whole of the phantom-id discipline — and
+        // the reason a host reaching this line records nothing without asking its role.
+        if let MuxFrame::ChannelOpenAck {
+            channel_id,
+            accepted,
+            resume_from_seq,
+        } = *frame
+        {
+            self.note_open_ack(channel_id, OpenAck {
+                accepted,
+                resume_from_seq,
+            });
+        }
+
         let table = match lane {
             Link::Control => &mut tables.control,
             Link::Data => &mut tables.data,
@@ -512,30 +838,20 @@ impl MuxConnection {
             // suppressed. Over-cap NEW opens were already refused above, so anything here is within
             // the cap.
             //
-            // Destructured so the vacant-entry check and the CONTROL map are two disjoint borrows
-            // of one lock rather than a `contains_key` that could disagree with the `insert` after
-            // it.
-            let Tables {
-                control_channels,
-                data_channels,
-                ..
-            } = &mut *tables;
-            if let Entry::Vacant(slot) = data_channels.entry(id) {
-                let (data, data_inbound) =
-                    SubChannel::data(id, Arc::clone(&self.data_link), Arc::clone(&self.control_link));
-                let (control, control_inbound) = SubChannel::control(id, Arc::clone(&self.control_link));
-                slot.insert(Arc::clone(&data));
-                control_channels.insert(id, Arc::clone(&control));
+            // The check and the registration are one critical section — the lock is held across
+            // both — so no second open can land in between and mint a rival pair.
+            if !tables.data_channels.contains_key(&id) {
+                let fresh = tables.register(id, &self.data_link, &self.control_link);
                 drop(self.events.send(MuxEvent::Opened(Box::new(ChannelOpen {
                     channel_id: id,
                     session_id,
                     last_received_seq,
                     channel_class,
                     initial_cwd: initial_cwd.clone(),
-                    data,
-                    data_inbound,
-                    control,
-                    control_inbound,
+                    data: fresh.data,
+                    data_inbound: fresh.data_inbound,
+                    control: fresh.control,
+                    control_inbound: fresh.control_inbound,
                 }))));
             }
         }

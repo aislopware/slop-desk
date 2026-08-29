@@ -59,9 +59,9 @@ So the split is by direction, at the seam that already exists:
 
 ```
 rust/slopdesk-muxnet     link · params · preamble · subchannel · connection (role-generic)
-        │
-        ├── rust/slopdesk-hostnet    listener · pending          (the responder)
-        └── rust/slopdesk-clientnet  dialler · registry · open   (the initiator)
+        │                 …including open + openAck, which need the connection's own tables
+        ├── rust/slopdesk-hostnet    listener · pending    (the responder)
+        └── rust/slopdesk-clientnet  dialler · registry    (the initiator)
 ```
 
 **Why not one crate holding both ends.** A client that links the listener links an accept loop it
@@ -123,28 +123,73 @@ prohibitions, and a crate linked into hostd owes them whether or not the phone l
 
 Deletes: nothing. Proves: the seam is where §3 says it is.
 
-### G.2 — `rust/slopdesk-clientnet`: dial, open, registry
+### G.2 — the initiator's half: open in `muxnet`, dial and registry in `clientnet`
 
-The initiator's half, and the only genuinely new code in the campaign:
+The only genuinely new code in the campaign, and reading the Swift moved one piece of it across the
+seam before a line was written. `openChannel`, the openAck rendezvous and the id allocator are
+**methods on `MuxConnection`**, not on anything in `slopdesk-clientnet`: all three mutate the
+connection's own tables and dispatch maps, and a second type reaching into them would need those
+private fields to stop being private. That is also the Swift's own shape — `openChannel` lives on the
+role-typed connection, and the registry only calls it. `open_channel` is the exact mirror of the
+`send_open_ack` already in `muxnet`, and the `role` field from G.1 is what makes both safe to hold on
+one type.
 
-- **`dial`** — two `TcpStream::connect`s, `params` applied, the two 17-byte preambles written
+In `rust/slopdesk-muxnet`:
+
+- **`open_channel`** — allocate an id, register both sub-channels, open both tables, send
+  `channelOpen` on DATA. It does NOT wait for the ack, because the Swift does not: the host opens on
+  the first `channelOpen`, so the pair is usable immediately and the *verdict* is a separate
+  question. A failed send undoes the whole registration rather than leaving a ghost channel that
+  keeps `live_channel_count` above zero forever.
+- **No third `ChannelTable` for the allocator.** The Swift keeps one purely to hand out ids; here
+  `tables.data.allocate()` is the allocator, which is what `ChannelTable` was written for — its
+  `last_allocated` is monotonic and independent of the state map, so the eviction ring can never make
+  it re-hand out a live id, and `reject` already documents that it accepts the transition from `Open`
+  *because* the client marks a channel open optimistically before the frame is sent.
+- **`await_open_ack(channel_id, within)`** — the host-authoritative resume verdict. Four Swift
+  mechanisms (`openAckResults`, `openAckWaiters`, `nextOpenAckWaiterID`, the cancellation handler)
+  collapse into one `Mutex<HashMap<u32, Option<OpenAck>>>` behind a `Condvar`: presence of a slot is
+  the phantom-id discipline, `None` is a waiter's predicate, `Some` is a recorded verdict, and
+  absence answers `refused` at once. Cancellation becomes the `wait_timeout` a blocking caller passes
+  in — the `withThrowingTaskGroup` race in `MuxClientTransport` is one argument here.
+- **The teardown owes the waiters.** `tear_down` and `close_channel` clear the map and wake it, which
+  is Swift's `flushOpenAckWaiters` and the `closeChannel` prologue. Without it a client thread parks
+  on a dead connection forever — the one correctness trap of this stage, since every other failure
+  here is bookkeeping.
+- **The one place this crate reads its role.** `open_channel` refuses at a responder, which is a
+  guard on a SEND and so cannot live in `admission` — that ladder judges arrivals. The rule itself
+  still lives once in the wire, as `Role::initiates_opens`, tied by a test to the
+  `Ignored::OpenAtInitiator` arm that is the same fact seen from the receiving side. The crate docs
+  name this branch rather than keeping the flat "no branch on role anywhere" claim G.1 could make.
+
+In `rust/slopdesk-clientnet`:
+
+- **`dial`** — two `TcpStream::connect_timeout`s, `params` applied, the two 17-byte preambles written
   (`0x03│id` on CONTROL, `0x04│id` on DATA). The mirror of `listener`'s accept-and-pair, minus the
-  pairing map: the dialler *chose* the connection id, so there is no half-pair to park.
-- **`open_channel`** — sends `channelOpen` on DATA and parks on the openAck. The Swift's
-  `pendingOpens` dictionary of continuations becomes one condvar per waiter, which is the same
-  simplification `link` made to `send`. The client-only half `docs/60` §4 notes "is never written
-  twice at all".
-- **`ConnectionRegistry`** — the refcounted per-host pool. 316 lines of Swift `@MainActor` actor
-  isolation over a dictionary and a refcount; here a `Mutex<HashMap<HostPort, Entry>>`, because the
-  main actor was never what made it correct.
-- **`MuxAdmission`'s four-guard precedence** is `slopdesk_wire::mux::admission`'s already. The
-  Swift file is deleted here, and `one-frame-one-doorman` (`rules/hot_paths.rs:709`) re-points at
-  the Rust call sites — the claim unchanged, only the language it is checked in.
+  pairing map: the dialler *chose* the connection id, so there is no half-pair to park. The 34-line
+  `withMuxConnectTimeout` task-group race exists because `NWConnection` parks in `.waiting` forever
+  on an unreachable host and has no bounded connect; `connect_timeout` is that bound as an argument,
+  and a half-built pair is closed by `Drop` rather than by a `catch` that must remember both sockets.
+- **`ConnectionRegistry`** — the refcounted per-host pool. Five semantics survive: pin/unpin,
+  single-flight build, dead-connection eviction, the in-flight acquire count, and teardown only when
+  a connection is unpinned, channel-less and unclaimed. Roughly two hundred lines of `await`-
+  reentrancy commentary do not: the identity-gates, the TOCTOU re-checks and the lost-update note are
+  each about a suspension point that a `Mutex<HashMap<HostPort, Entry>>` does not have. The
+  single-flight map stays, because `dial` is slow and the lock is not held across it.
+- **`MuxAdmission`'s four-guard precedence** is `slopdesk_wire::mux::admission`'s already, so nothing
+  in this stage re-derives it.
 
-Deletes: `MuxNWConnection.swift` (847), `MuxSubChannel.swift` (426), `ConnectionRegistry.swift`
-(316), `MuxAdmission.swift` (171), `MuxRoutingCore.swift` (63), `MuxRouter.swift` (53),
-`MuxByteLink.swift` (34), `NWMuxByteLink.swift` (193), `NWConnection+Async.swift` (110),
-`TransportParameters.swift` (74), `ChannelAssociation.swift` (51). **2,338 lines.**
+Two smaller things the stage settled. The socket options are now `slopdesk_muxnet::params::apply`,
+called by both the listener and the dialler — `NWParameters` was ONE object configuring both ends, and
+two copies could have drifted into a connection whose halves disagree about `noDelay`; what stays in
+`listener` is the handshake read timeout, which a dialler has no phase for. And the connection id is
+an ARGUMENT to `dial` rather than something it mints: `slopdesk-ids` states the rule as "no clock and
+no randomness — every operation that needs a fresh id takes it as an argument", and a transport that
+invented one would be the second place entropy enters this tree. The `justfile` gains
+`clientnet-test`; `RUST_WORKSPACES` discovers the crate itself.
+
+Deletes: nothing — see the staging note above. Proves: the initiator's half runs on real sockets
+against the responder's, both halves of one `MuxConnection` type.
 
 ### G.3 — the FFI door: one handle, one callback
 

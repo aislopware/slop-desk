@@ -689,6 +689,18 @@ muxsession-test:
 muxnet-test:
     cd rust/slopdesk-muxnet && cargo test
 
+# The client's half of PATH-1, and the mirror image of `slopdesk-hostnet` (docs/63 G.2): a host
+# ACCEPTS two sockets and parks the first until its partner arrives, a client DIALS two and knows
+# they are a pair because it chose the id on both. Neither shape has a counterpart at the other end.
+# Also the shared-connection pool — every pane to one host rides one mux — which is 316 lines of
+# `@MainActor` reentrancy commentary in Swift and one `Mutex` here, because the actor was never what
+# made it correct. Opening a CHANNEL is NOT here: that mutates a connection's own tables, so it is
+# `slopdesk-muxnet`'s `open_channel`, and this crate calls it.
+
+# cargo test for the dialler and the shared-connection pool (rust/slopdesk-clientnet)
+clientnet-test:
+    cd rust/slopdesk-clientnet && cargo test
+
 # hostd's half of PATH-1, and only its half: the accept loop and the map that pairs a CONTROL and a
 # DATA connection into one shared mux link (docs/60 stage A, narrowed by docs/63 G.1). Its own crate
 # because it is the one part of the port that owns file descriptors before a pair exists, so it
@@ -1275,8 +1287,8 @@ host-status:
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
 
-# cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test muxnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord
+# cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # `superd` for the same load-bearing reason as `test` above, and it matters MORE here: this is the
@@ -1370,6 +1382,21 @@ provision-check:
 # cargo test for the pinned-dependency provisioner
 provision-test:
     cd rust/slopdesk-provision && cargo test
+
+# The four command-line instruments, and the same distinction `provision-test` draws one recipe up:
+# RUNNING one needs a GUI session, a Screen-Recording grant or a live daemon on the other end of a
+# socket, so none of them is in `build` or in any gate — but their pure halves decide what every
+# number they print MEANS, and those run anywhere. `slopdesk-framewatch` is the whole reason this
+# recipe exists: the arithmetic under its capture — the flip hysteresis, the flash pairing window,
+# the percentile floor, the luma walk and the checksum lattice — is where a cadence result is
+# actually computed, and two of its tests pin the report text to the Swift original's byte for byte.
+# Its own workspace for the profile reason (`opt-level = "z"` would report a number nothing in
+# production sees), so `rust/`'s `cargo test` cannot reach it and this `cd` is the only thing that
+# does.
+
+# cargo test for the operator instruments' arithmetic (rust/slopdesk-instruments)
+instruments-test:
+    cd rust/slopdesk-instruments && cargo test
 
 # ---------------------------------------------------------------------------- #
 # DEV tooling only (linters + hooks) — deliberately still brew. These shape the gates, not the

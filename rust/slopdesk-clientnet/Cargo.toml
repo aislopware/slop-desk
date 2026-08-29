@@ -1,0 +1,118 @@
+# `slopdesk-clientnet` — the initiator's end of PATH-1: dialling, and the pool of what was dialled.
+#
+# ## Why it exists
+# `docs/63-client-transport-in-rust.md` stage G.2, and it is the mirror image of `slopdesk-hostnet`.
+# The two crates hold what the split in G.1 could not make role-generic: a host ACCEPTS two sockets
+# and parks the first until its partner arrives; a client DIALS two and knows they are a pair because
+# it chose the id on both. Neither shape has a counterpart at the other end, which is why the shared
+# five modules live in `slopdesk-muxnet` and these two crates are thin.
+#
+# The dependency direction is the point of the name: this crate depends on `slopdesk-muxnet`, never
+# on `slopdesk-hostnet`. A client that linked the host crate would link an accept loop it can never
+# call — and it is the iOS client that links this, into a binary where `TcpListener::bind` is a thing
+# the platform will refuse.
+#
+# ## What is here and what is not
+# HERE: `dial` (two `connect`s, the parameters, the two 17-byte preambles) and `ConnectionRegistry`
+# (the refcounted per-endpoint pool, so panes to one host share one mux). Both own file descriptors
+# or the lifetime of something that does.
+# NOT here: opening a CHANNEL. That mutates a connection's own tables and dispatch maps, so it is
+# `MuxConnection::open_channel` in `slopdesk-muxnet` — the mirror of the `send_open_ack` already
+# there, and the reason `MuxConnection` carries a role at all. This crate calls it; it does not
+# reimplement any part of it.
+# Also NOT here: every rule. Admission, routing, flow control and the role asymmetry are
+# `slopdesk-wire::mux`'s, reached through `slopdesk-muxnet`, and nothing in this crate re-derives one.
+#
+# ## Two dependencies
+# `slopdesk-muxnet` carries the preamble, the socket parameters, the byte link and the connection.
+# `slopdesk-wire` carries `Role`, which is spent at exactly one call — `MuxConnection::serve(pair,
+# Role::Client)` — and the close reason a released channel names. No `socket2` here: the sockopts are
+# `slopdesk_muxnet::params::apply`'s, which is what keeps the dialled socket and the accepted one
+# configured by one function rather than by two that agree today.
+[package]
+name = "slopdesk-clientnet"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "the initiator's end of slopdesk's PATH-1 mux: dial, and the shared-connection pool"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[workspace]
+
+[dependencies]
+slopdesk-muxnet = { path = "../slopdesk-muxnet" }
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# A client's profile: this crate is on the path of every pane's first frame, and it links into the
+# phone, where binary size is not free.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, copied rather than inherited — inheriting would mean being a workspace member,
+# which is what the profile forbids.
+[lints.rust]
+# `forbid`, not `deny`: dialling a socket and refcounting a map need no `unsafe`, and this crate is
+# linked into the iOS client, where `forbid` is the form of the promise that no downstream `allow`
+# can lift.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+multiple_crate_versions = "allow"
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids. Allowed in every workspace for that repo-wide reason,
+#   not because this crate does float math — it does none.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
