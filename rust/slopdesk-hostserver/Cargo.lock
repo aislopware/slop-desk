@@ -377,6 +377,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-clipboard"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-wire",
+]
+
+[[package]]
 name = "slopdesk-fuzzy"
 version = "0.1.0"
 
@@ -411,6 +418,7 @@ dependencies = [
  "slopdesk-apple-app",
  "slopdesk-apple-fsevents",
  "slopdesk-apple-pasteboard",
+ "slopdesk-clipboard",
  "slopdesk-git",
  "slopdesk-hostpane",
  "slopdesk-hostsession",

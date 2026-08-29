@@ -409,6 +409,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-clipboard"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-wire",
+]
+
+[[package]]
 name = "slopdesk-codeseed"
 version = "0.1.0"
 dependencies = [
@@ -520,6 +527,7 @@ dependencies = [
  "slopdesk-apple-app",
  "slopdesk-apple-fsevents",
  "slopdesk-apple-pasteboard",
+ "slopdesk-clipboard",
  "slopdesk-git",
  "slopdesk-hostpane",
  "slopdesk-hostsession",

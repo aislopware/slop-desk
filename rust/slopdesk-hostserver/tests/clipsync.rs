@@ -15,7 +15,14 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use slopdesk_hostserver::clipsync::{Clip, Clipboard};
+use slopdesk_clipboard::Pasteboard;
+/// The two UTIs the fold refuses on, taken from the fold rather than re-typed.
+///
+/// A third spelling here would defeat the point: a fixture that declares its OWN string is green
+/// while the fold refuses a different one. `the_two_utis_are_the_ones_appkit_declares` pins THESE
+/// against `AppKit` itself, so the chain is fold → fixture → framework with no copy in it.
+use slopdesk_clipboard::{CONCEALED_TYPE as CONCEALED, FILE_URL_TYPE as FILE_URL};
+use slopdesk_hostserver::clipsync::Clipboard;
 use slopdesk_hostsession::{MetadataPerformer, MetadataRequest};
 use slopdesk_muxsession::metadata_admission::Performer;
 use slopdesk_wire::MetadataStatus;
@@ -24,13 +31,6 @@ use slopdesk_wire::metadata::codec::{
     CLIPBOARD_BASELINE_PROBE, ClipboardClip, ClipboardKind, MAX_CLIPBOARD_CONTENT_BYTES,
     decode_clipboard_read_response, encode_clipboard_read_request, encode_clipboard_set,
 };
-
-/// The concealed-clip marker, as the fold names it. Typed here on purpose: the ONE place the fold's
-/// spelling and the framework's could drift is this pair of constants, and
-/// `the_two_utis_are_the_ones_appkit_declares` pins them against `AppKit` itself.
-const CONCEALED: &str = "org.nspasteboard.ConcealedType";
-/// The file-copy UTI, for [`CONCEALED`]'s reason.
-const FILE_URL: &str = "public.file-url";
 
 /// A board made of three `Option`s and a counter.
 #[derive(Debug, Default)]
@@ -84,7 +84,7 @@ impl Fake {
     }
 }
 
-impl Clip for &Fake {
+impl Pasteboard for &Fake {
     fn change_count(&self) -> i64 {
         *self.count.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -126,7 +126,11 @@ impl Clip for &Fake {
 }
 
 /// A request at `verb` carrying `payload`.
-fn ask<B: Clip>(performer: &Clipboard<B>, verb: MetadataVerb, payload: &[u8]) -> (u8, Vec<u8>) {
+fn ask<B: Pasteboard + Send + Sync>(
+    performer: &Clipboard<B>,
+    verb: MetadataVerb,
+    payload: &[u8],
+) -> (u8, Vec<u8>) {
     let answer = performer.perform(&MetadataRequest {
         request_id: 3,
         verb: verb.as_byte(),
@@ -139,7 +143,10 @@ fn ask<B: Clip>(performer: &Clipboard<B>, verb: MetadataVerb, payload: &[u8]) ->
 }
 
 /// A verb-16 request for `last_seen`, decoded into `(change_count, clip)`.
-fn read<B: Clip>(performer: &Clipboard<B>, last_seen: i64) -> (i64, Option<ClipboardClip>) {
+fn read<B: Pasteboard + Send + Sync>(
+    performer: &Clipboard<B>,
+    last_seen: i64,
+) -> (i64, Option<ClipboardClip>) {
     let (status, body) = ask(
         performer,
         MetadataVerb::ReadClipboard,
@@ -450,9 +457,10 @@ fn a_verb_this_performer_does_not_own_is_answered_unsupported() {
 
 // ------------------------------------------------------- the two UTIs, against the framework
 
-/// The fold types both UTI strings so it can build with no `AppKit`; this is where they are
-/// checked against the framework that actually declares them. The drift this closes is
-/// `docs/55` §6's: two spellings of one contract, in two places that cannot see each other.
+/// `slopdesk-clipboard` types both UTI strings so it can build with no `AppKit`; this is where they
+/// are checked against the framework that actually declares them. The drift this closes is
+/// `docs/55` §6's: two spellings of one contract, in two places that cannot see each other. The
+/// pin lives in THIS suite because this is the crate that links both the fold and the framework.
 #[cfg(target_os = "macos")]
 #[test]
 fn the_two_utis_are_the_ones_appkit_declares() {

@@ -1,34 +1,25 @@
 //! The two clipboard-sync verbs: write the client's clip onto the host board, read the host's back.
 //!
-//! `HostClipboardPerformer.swift` (129) plus the `AppKit` half of
-//! `PasteboardClip.swift` (the `#if canImport(AppKit)` arm, ~70
-//! lines). Neither is host work: the codec is [`slopdesk_wire::metadata::codec`] and the board is
-//! `slopdesk_apple_pasteboard`. What the Swift added is the four rules below, and they are what
-//! this module is.
+//! `HostClipboardPerformer.swift` (129), and nothing more than that. The codec is
+//! [`slopdesk_wire::metadata::codec`], the board is `slopdesk_apple_pasteboard`, and the four rules
+//! that turn one into the other are [`slopdesk_clipboard`] — which the CLIENT reads too, because a
+//! disagreement between the two ends is a drift in the protocol that no compiler sees.
 //!
-//! ## The four rules, said once
+//! What is left here is the part that is genuinely the host's: the two verbs, and the echo guard.
 //!
-//! 1. **Image before text.** An app that copies a picture usually declares a text flavour too — its
-//!    caption, or its source URL. Taking the text would silently downgrade the paste, so the image
-//!    IS the clip whenever there is one. PNG as declared, else the TIFF transcoded, else text.
-//! 2. **The cap is the codec's.** [`MAX_CLIPBOARD_CONTENT_BYTES`] is checked here and typed nowhere
-//!    else; an over-cap clip is dropped rather than truncated, because half an image is not a
-//!    smaller image.
-//! 3. **A file copy never ships.** A path on the host means nothing on the client, so a board
-//!    declaring `NSPasteboardTypeFileURL` answers "nothing to send" — taken from the DECLARED
-//!    types, which costs no content read.
-//! 4. **The echo guard.** After a successful set, the resulting change count is remembered; a read
-//!    that finds the board still at that count answers count-only instead of shipping the client's
-//!    own clip straight back. The client holds the mirror-image guard, so a bounce needs BOTH ends
-//!    to fail.
+//! ## The echo guard
+//!
+//! After a successful set, the resulting change count is remembered; a read that finds the board
+//! still at that count answers count-only instead of shipping the client's own clip straight back.
+//! The client holds the mirror-image guard, so a bounce needs BOTH ends to fail. It is not in the
+//! shared crate because it is state about a CONVERSATION rather than a rule about a board, and the
+//! two ends do not share one.
 //!
 //! ## The asymmetry that is a product decision, not a bug
 //! The CLIENT refuses to push a CONCEALED clip — what a password manager marks with
 //! `org.nspasteboard.ConcealedType`. The HOST does not refuse to ship one back on a read. That
-//! asymmetry predates the shared reader and `PasteboardClip`'s own header preserves it deliberately
-//! as a named parameter rather than closing it in a refactor. It is preserved here for the same
-//! reason, in the same shape: [`Clipboard::read_clip`] takes `skipping_concealed`, and the verb-16
-//! path passes `false`.
+//! asymmetry is preserved as a named argument rather than two function bodies, which is why
+//! [`Clipboard::read_clip`] takes `skipping_concealed` and the verb-16 path passes `false`.
 //!
 //! ## Host-global, not pane-scoped
 //! The pasteboard is machine state: whichever pane's channel carries the request, the effect and
@@ -37,42 +28,14 @@
 
 use std::sync::{Mutex, PoisonError};
 
+use slopdesk_clipboard::{Pasteboard, apply_clip, shippable_clip};
 use slopdesk_hostsession::{MetadataAnswer, MetadataPerformer, MetadataRequest};
 use slopdesk_wire::MetadataStatus;
 use slopdesk_wire::metadata::MetadataVerb;
 use slopdesk_wire::metadata::codec::{
-    CLIPBOARD_BASELINE_PROBE, ClipboardClip, ClipboardKind, MAX_CLIPBOARD_CONTENT_BYTES,
-    decode_clipboard_read_request, decode_clipboard_set, encode_clipboard_read_response,
+    CLIPBOARD_BASELINE_PROBE, ClipboardClip, decode_clipboard_read_request, decode_clipboard_set,
+    encode_clipboard_read_response,
 };
-
-/// The system board, as the two rules above need to see it.
-///
-/// Five methods, each one board operation. `declared` is what makes the file-copy and concealed
-/// refusals free — they are answered from what the writer SAID it has, so no content crosses to
-/// decide them.
-pub trait Clip: Send + Sync + core::fmt::Debug {
-    /// The board's change counter, which advances on every write by anybody.
-    fn change_count(&self) -> i64;
-
-    /// Every type the current owner declared, as raw UTI strings.
-    fn declared(&self) -> Vec<String>;
-
-    /// The board's plain-text flavour, or `None`.
-    fn text(&self) -> Option<String>;
-
-    /// The board's PNG bytes: the declared PNG flavour, else its TIFF transcoded, else `None`.
-    ///
-    /// One method rather than two because the transcode is the board's own fidelity contract and
-    /// not a decision this module makes — `slopdesk_apple_pasteboard` owns both halves and answers
-    /// the one question the rule above asks: is there an image here, as PNG?
-    fn png(&self) -> Option<Vec<u8>>;
-
-    /// Replaces the board with `text`; `false` — board UNTOUCHED — when it will not write.
-    fn write_text(&self, text: &str) -> bool;
-
-    /// Replaces the board with a PNG; `false` — board UNTOUCHED — when the bytes will not decode.
-    fn write_png(&self, png: &[u8]) -> bool;
-}
 
 /// The performer for [`MetadataVerb::SetClipboard`] and [`MetadataVerb::ReadClipboard`].
 #[derive(Debug)]
@@ -85,7 +48,10 @@ pub struct Clipboard<B> {
     last_client_set: Mutex<Option<i64>>,
 }
 
-impl<B: Clip> Clipboard<B> {
+/// `Send + Sync` on top of [`Pasteboard`] because a HOST board is asked from several threads at
+/// once: metadata requests run on per-session executors, so two panes' clipboard verbs genuinely
+/// race. A client's own board carries no such bound, which is why the shared trait does not.
+impl<B: Pasteboard + Send + Sync> Clipboard<B> {
     /// A performer over `board`, with no push remembered yet.
     #[must_use]
     pub const fn new(board: B) -> Self {
@@ -103,15 +69,7 @@ impl<B: Clip> Clipboard<B> {
         };
         // Validate-then-clear all the way down: the board refuses BEFORE it clears, so a garbage
         // clip off the wire cannot destroy the clip a person put there.
-        let wrote = match ClipboardKind::from_byte(clip.kind_byte) {
-            Some(ClipboardKind::Text) => {
-                core::str::from_utf8(&clip.bytes).is_ok_and(|text| self.board.write_text(text))
-            },
-            Some(ClipboardKind::ImagePng) => self.board.write_png(&clip.bytes),
-            // An unknown future kind — refuse, never guess.
-            None => false,
-        };
-        if !wrote {
+        if !apply_clip(&self.board, &clip) {
             return MetadataStatus::Error;
         }
         *self
@@ -139,55 +97,20 @@ impl<B: Clip> Clipboard<B> {
         encode_clipboard_read_response(count, clip.as_ref())
     }
 
-    /// The board's current shippable clip, under the four rules in the module doc.
+    /// The board's current shippable clip, under [`slopdesk_clipboard`]'s four rules.
     ///
     /// `None` for an empty board, a file copy, an over-cap clip, an image that will not transcode,
     /// and — when `skipping_concealed` — a concealed one. The board is left untouched in every
     /// case.
+    ///
+    /// A method rather than a re-export because callers hold a performer, not a board: the board is
+    /// this type's private field, and `readClipboard`'s own path needs the count beside the clip.
     pub fn read_clip(&self, skipping_concealed: bool) -> Option<ClipboardClip> {
-        let declared = self.board.declared();
-        let has = |uti: &str| declared.iter().any(|ty| ty == uti);
-        if skipping_concealed && has(CONCEALED_TYPE) {
-            return None;
-        }
-        if has(FILE_URL_TYPE) {
-            return None;
-        }
-        if let Some(png) = self.board.png() {
-            return under_cap(ClipboardKind::ImagePng, png);
-        }
-        let text = self.board.text().filter(|text| !text.is_empty())?;
-        under_cap(ClipboardKind::Text, text.into_bytes())
+        shippable_clip(&self.board, skipping_concealed)
     }
 }
 
-/// The concealed-clip marker password managers set (the nspasteboard.org convention).
-///
-/// Typed here for [`FILE_URL_TYPE`]'s reason, and pinned by the same kind of test: this crate is
-/// where the RULE lives and it must build on a machine with no `AppKit` at all.
-const CONCEALED_TYPE: &str = "org.nspasteboard.ConcealedType";
-
-/// The file-copy UTI, as `NSPasteboardTypeFileURL` spells it.
-///
-/// Typed here rather than reached through `slopdesk_apple_pasteboard` because this crate must
-/// compile on a machine with no `AppKit`. The one place the two spellings could disagree is pinned
-/// by `tests/clipsync.rs`, which asserts both against the strings `AppKit` actually declares.
-const FILE_URL_TYPE: &str = "public.file-url";
-
-/// `bytes` as a clip of `kind`, or `None` when they exceed the codec's cap.
-///
-/// An over-cap clip is DROPPED and not truncated: half an image is not a smaller image, and half a
-/// string is not a shorter one when the cut lands mid-sequence.
-fn under_cap(kind: ClipboardKind, bytes: Vec<u8>) -> Option<ClipboardClip> {
-    (!bytes.is_empty() && bytes.len() <= MAX_CLIPBOARD_CONTENT_BYTES).then(|| {
-        ClipboardClip {
-            kind_byte: kind.as_byte(),
-            bytes,
-        }
-    })
-}
-
-impl<B: Clip> MetadataPerformer for Clipboard<B> {
+impl<B: Pasteboard + Send + Sync> MetadataPerformer for Clipboard<B> {
     fn perform(&self, request: &MetadataRequest<'_>) -> MetadataAnswer {
         match MetadataVerb::from_byte(request.verb) {
             Some(MetadataVerb::SetClipboard) => {
@@ -233,7 +156,7 @@ impl<B: Clip> MetadataPerformer for Clipboard<B> {
 pub struct GeneralBoard;
 
 #[cfg(target_os = "macos")]
-impl Clip for GeneralBoard {
+impl Pasteboard for GeneralBoard {
     fn change_count(&self) -> i64 {
         slopdesk_apple_pasteboard::Board::general().change_count()
     }

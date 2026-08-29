@@ -247,12 +247,21 @@ pub fn one_re_armable_deadline(tree: &Tree) -> Report {
 /// must ask the pasteboard for, and the byte ceiling it must clamp against.
 ///
 /// Since `docs/60` F.9 the two ends are in two LANGUAGES rather than two Swift files. The client's
-/// end is still `PasteboardClip`; the host's is `rust/slopdesk-hostserver/src/clipsync.rs`, which
-/// takes the clip record and the ceiling off `slopdesk-wire`'s codec — so the host half of the
-/// equality is the compiler's, and what is left to state is that it still ASKS.
+/// end is still `PasteboardClip`; the host's is `rust/slopdesk-hostserver/src/clipsync.rs`.
+///
+/// **The Rust half of that sentence moved once more, and the rule moved with it rather than being
+/// dropped.** The four rules are `rust/slopdesk-clipboard` now — a crate BOTH ends read, so what
+/// used to be "the host takes the record and the cap off the codec" is the fold's edge, and what is
+/// left to state about `clipsync.rs` is that it still asks the fold instead of growing a second
+/// opinion back. Two claims rather than one, because the two facts fail differently: a fold that
+/// stopped naming the codec is a drift against the wire, and a performer that stopped naming the
+/// fold is a drift against the other end.
 #[must_use]
 pub fn one_pasteboard_clip(tree: &Tree) -> Report {
-    /// The host's end, which reads the record and the cap off the codec both ends encode through.
+    /// The fold both ends read, which takes the record and the cap off the codec they encode
+    /// through.
+    const FOLD: &str = "rust/slopdesk-clipboard/src/lib.rs";
+    /// The host's end, which owns the two verbs and the echo guard and asks [`FOLD`] for the rest.
     const HOST_CLIP: &str = "rust/slopdesk-hostserver/src/clipsync.rs";
     /// The client's end and the direction it must still get from the shared Swift file.
     const SHARES: &[(&str, &str)] = &[
@@ -292,11 +301,32 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
             message: "{files} re-typed the clipboard ceiling — MAX_CLIPBOARD_CONTENT_BYTES is the codec's, \
                       and a host that clamps lower ships a clip the client will accept whole",
         },
+        // The fold is outside `HOSTD_CRATES` and must not re-type the ceiling either — it is the
+        // ONE place the cap is checked, so a literal here is the drift the ban above prevents in
+        // the crate that used to hold these rules.
+        Claim::NoneUnder {
+            roots: &["rust/slopdesk-clipboard"],
+            extensions: RUST,
+            pattern: r"12 \* 1024 \* 1024",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} re-typed the clipboard ceiling — MAX_CLIPBOARD_CONTENT_BYTES is the codec's, \
+                      and the fold is the one place it is checked for BOTH ends",
+        },
+        Claim::Mentions {
+            path: FOLD,
+            names: &["ClipboardClip", "MAX_CLIPBOARD_CONTENT_BYTES"],
+            message: "rust/slopdesk-clipboard/src/lib.rs no longer takes {entry} from slopdesk-wire — the \
+                      two ends agree by sharing the codec, not by luck",
+        },
         Claim::Mentions {
             path: HOST_CLIP,
-            names: &["ClipboardClip", "MAX_CLIPBOARD_CONTENT_BYTES"],
-            message: "rust/slopdesk-hostserver/src/clipsync.rs no longer takes {entry} from slopdesk-wire — \
-                      the two ends agree by sharing the codec, not by luck",
+            names: &["slopdesk_clipboard"],
+            message: "rust/slopdesk-hostserver/src/clipsync.rs no longer names {entry} — the host end keeps \
+                      the two verbs and the echo guard, and asks the shared fold for the four rules rather \
+                      than re-deciding them where the client cannot see",
         },
     ];
     for (end, direction) in SHARES {
@@ -576,8 +606,12 @@ mod tests {
                 "board.data(forType: .tiff)\nMetadataCodec.maxClipboardContentBytes\n",
             )
             .write(
-                "rust/slopdesk-hostserver/src/clipsync.rs",
+                "rust/slopdesk-clipboard/src/lib.rs",
                 "use slopdesk_wire::metadata::codec::{ClipboardClip, MAX_CLIPBOARD_CONTENT_BYTES};\n",
+            )
+            .write(
+                "rust/slopdesk-hostserver/src/clipsync.rs",
+                "use slopdesk_clipboard::{Pasteboard, apply_clip, shippable_clip};\n",
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
@@ -608,9 +642,28 @@ mod tests {
         );
         assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
 
+        // The FOLD re-typing it is the same skew one crate over, and outside `HOSTD_CRATES` the
+        // ban above cannot reach it — which is why it has a claim of its own.
+        clipboard(&fixture);
+        fixture.write(
+            "rust/slopdesk-clipboard/src/lib.rs",
+            "use slopdesk_wire::metadata::codec::ClipboardClip;\nconst CAP: usize = 12 * 1024 * 1024;\n",
+        );
+        assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
+
         // And an end that stopped sharing, which the bans above cannot see.
         clipboard(&fixture);
-        fixture.write("rust/slopdesk-hostserver/src/clipsync.rs", "");
+        fixture.write("rust/slopdesk-clipboard/src/lib.rs", "");
+        assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
+
+        // The host keeping its own copy of the four rules instead of asking the fold: green under
+        // every ban here, because a second opinion spelled in Rust names neither `.tiff` nor the
+        // literal — it just quietly disagrees with the client.
+        clipboard(&fixture);
+        fixture.write(
+            "rust/slopdesk-hostserver/src/clipsync.rs",
+            "fn shippable(board: &B) -> Option<ClipboardClip> { board.png().map(Into::into) }\n",
+        );
         assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
 
         clipboard(&fixture);

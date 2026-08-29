@@ -71,6 +71,11 @@ slopdesk-superwire = { path = "../slopdesk-superwire" }
 # settings file.
 slopdesk-wire = { path = "../slopdesk-wire" }
 
+# The four clipboard rules, which the CLIENT reads out of the same crate. This edge exists so that
+# `clipsync` holds the two verbs and the echo guard and NOT a second opinion about what a board's
+# declared types mean — the two ends of clipboard sync agree by sharing the fold, not by matching.
+slopdesk-clipboard = { path = "../slopdesk-clipboard" }
+
 # One function, and it is the link detector's: the `:line:col` tail an open target may carry. The
 # bridge splits it with the SAME splitter the client's terminal uses, so a detected link and a
 # bridge open can never disagree about where the path ends.
