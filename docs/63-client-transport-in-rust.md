@@ -199,18 +199,80 @@ door: the opaque context stays valid until `_free` returns, the callback is call
 thread (so the Swift handler hops to the main actor rather than touching UI where it lands), and it
 does not re-enter `_open`/`_close` on the same handle.
 
-What crosses is a verdict, never a payload: a `channelData` frame's bytes are already in the
-caller's receive buffer, and `docs/55` §4b's rule — "a decision says WHERE they go, and copying a
-chunk across a boundary to be told its channel id would be the whole cost of the mux for nothing" —
-is the reason the offset shape (§4, "the answer that is an OFFSET") applies here too.
+What crosses is a decoded MESSAGE, not a frame — and that inverts one sentence this section used to
+carry. While the socket was Swift's, a `channelData` frame's bytes were already in the caller's
+receive buffer and the only thing worth crossing was the routing verdict (`docs/55` §4b: "a decision
+says WHERE they go, and copying a chunk across a boundary to be told its channel id would be the
+whole cost of the mux for nothing"). With the socket in Rust the buffer is Rust's, so the offset
+shape has nothing to be an offset INTO. The callback hands over one `SlopDeskMuxInbound` record —
+a kind, three scalars and at most two `(ptr, len)` views BORROWED for the duration of the call —
+which is the same economics read from the other side: nothing is copied to be told what it is, and
+the one payload that genuinely must cross (the PTY bytes, whose destination is the terminal) crosses
+exactly once.
+
+That record is also why the inbound half of G.4 is not built twice. Re-encoding a decoded
+`WireMessage` back to frame bytes so that Swift's `WireMessageCodec` could decode it again would be
+a marshalling face built in G.3 and deleted in G.4; the record IS the decode result, so G.4's
+remaining work at this end is the outbound encode and the two verb-multiplexed codecs.
+
+**Two Swift protocols survive this stage on purpose, and neither is mux code.** `ClientTransporting`
+(97) is the seam 22 test files fake against — every suite in `Tests/SlopDeskClientTests` plus the
+Connection/TerminalViewModel/Workspace/Metadata suites of `Tests/SlopDeskWorkspaceCoreTests` —
+whose subjects are not ported until G.5, and `MessageChannel` (30) is the same seam for
+`WorkspaceChannelClient`, which injects its transport precisely so the whole subscribe→apply→ack
+loop is provable with no socket. Deleting either here would mean re-faking a Rust handle in 22
+files for two stages and then deleting the fakes again. They retire with their subjects, in G.4
+(`MessageChannel`, with `WorkspaceChannelClient`) and G.5 (`ClientTransporting`).
+
+The handle is therefore CLASS-GENERIC rather than pane-shaped: the workspace document rides the
+same mux at `channelClass == 1` (`docs/45` §5.1) and `WorkspaceChannelClient.Handle` is built from
+a `MuxAcquisition` in production, so a pane-only door would strand that path behind a bridge the
+demolish rule forbids. One `_open(class)`, one inbound record covering both lanes, one send door per
+verb.
 
 `slopdesk_channel_table_*` is **deleted** by this stage rather than extended: the table crossed as a
 handle only because the connection above it was Swift. With the connection in Rust the table has no
 foreign caller, and a handle whose far side went away is `docs/55` §4b's own retirement criterion.
+`mux_admission.rs`, `mux_decoder.rs`, `mux_envelope.rs` and all but the flow CONSTANT of
+`mux_flow.rs` go the same way. **`mux_header.rs` does not**: its caller is
+`Sources/SlopDeskVideoProtocol/Mux/VideoMuxHeaderCodec.swift`, which is PATH-2 (§5).
 
-Deletes: `Sources/SlopDeskTransport/{ClientTransporting,MessageChannel,SlopDeskTransportError,PortValidation}.swift`
-and the whole of `Sources/SlopDeskProtocol/Mux/`. The remaining `MuxClientTransport.swift` (329)
-becomes the ~80-line face that holds the handle, the way `InputInjector.swift` did (`docs/60` §4).
+Deletes, as the census found them rather than as the first draft of this section guessed:
+
+| Delete | Note |
+| --- | --- |
+| `Sources/SlopDeskProtocol/Mux/` — **eight** files, 888 lines | `BoundedQueuePolicy` `ChannelTable` `FlowCreditPolicy` `MuxChannelClass` `MuxEnvelope` `MuxFlowControl` `MuxFrameDecoder` `ReceiveWindowAccountant`. The first draft said seven |
+| `Sources/SlopDeskTransport/Mux/` — all but the face | `ConnectionRegistry` (316) `MuxAdmission` (171) `MuxByteLink` (34) `MuxNWConnection` (847) `MuxRouter` (53) `MuxRoutingCore` (63) `MuxSubChannel` (426) |
+| `Sources/SlopDeskTransport/{ChannelAssociation,NWConnection+Async,SlopDeskTransportError,PortValidation}.swift` | each internal, each with one caller inside the mux |
+| 21 of `Tests/SlopDeskTransportTests/` (~4,200 lines) | including `Support/{Blocking,InMemory,Recording}MuxLink` |
+
+Four types the first draft deleted wholesale have live callers OUTSIDE the mux, and each is
+vocabulary rather than machinery — so each stays Swift, re-homed onto the face's file, exactly as
+G.4 keeps the `WireMessage` enum: `MuxChannelClass` (`WorkspaceStore+WorkspaceMirror.swift:657`),
+`MuxCloseReason` (`SlopDeskClient.swift:312,731` and the *public* `hostChannelCloseReason` at `:915`),
+and `MuxFlowControl`'s two constants (`ConnectGate.swift:51`, `ReplayBufferTests.swift:611,641`),
+which are re-sourced from the surviving flow-constant door rather than re-typed.
+
+`NWMuxByteLink.swift` (193) is the one-file-two-types trap: `NWMuxByteLink` (`:14`) dies with the
+link layer, but `LiveMuxConnectionFactory` (`:98`) is production's construction path
+(`ClientComposition.swift:151`, `slopdesk-client/main.swift:41`) and becomes a face over
+`slopdesk_clientnet`'s dial. `ConnectionRegistry`'s five outside call sites move with it
+(`ClientComposition.swift:106`, `AppConnection.swift:154,188`, `WorkspaceStore.swift:3378,3408`,
+`WorkspaceStore+WorkspaceMirror.swift:585`).
+
+`Tests/SlopDeskProtocolTests/FrameDecoderCursorTests.swift` is MIXED — `FrameDecoder` cases at
+`:27,:37,:54` survive, the Mux cases at `:128–165` do not — so it is SPLIT, not deleted.
+
+Six invariants rules name a subject this stage deletes and must be re-aimed rather than dropped:
+`wire_codecs::mux_layer` (`:173`, which carries NO break-test today and gains one),
+`hot_paths::one_frame_one_doorman` (`:487`), `cross_twins::four_cross_language_twins` (`:108`),
+`path_confinement::an_unknown_mux_type_is_refused` (`:205`) and
+`gate_health::every_ffi_door_is_opened_or_declared_deliberate` (`:54`). No "deleted Swift stays
+deleted" list covers the client — `deleted_host_swift.rs` is hostd's — so a new rule module joins
+`rules/mod.rs`, with its own break-test.
+
+The remaining `MuxClientTransport.swift` (329) becomes the ~80-line face that holds the handle, the
+way `InputInjector.swift` did (`docs/60` §4).
 
 ### G.4 — `Sources/SlopDeskProtocol` dissolves
 
@@ -252,6 +314,25 @@ ships.
   `Sources/slopdesk-corevectors` is not ported. Its whole value is being Swift: it pins the Swift
   marshalling faces against the frozen corpus, so a Rust rewrite would be Rust pinning Rust. It
   shrinks as the faces it exercises shrink, and it retires with the last of them — not before.
+
+  **G.3 is where the first of them retires, and it costs a gate change this section originally did
+  not budget.** `Sources/slopdesk-corevectors/main.swift` builds twelve `MuxFrame`s and emits the
+  `"muxEnvelopes"` block (`:1230,:1233,:1310`); `MuxEnvelopeCodec` is one of the eight files G.3
+  deletes, so that block cannot be emitted by anything after G.3. `"muxEnvelopes"` moves from
+  `EMITTED_KEYS` to `FROZEN_KEYS` in `rust/slopdesk-devtools/src/gates/golden.rs:45`, which is the
+  one edit that keeps `just golden` — and therefore `just quick` (`justfile:372`) and `just check`
+  (`:339`) — green. **The corpus entry itself is not touched**: a frozen key is still diffed, it is
+  simply no longer regenerated, which is precisely the retirement this bullet describes happening
+  one block at a time instead of all at once.
+
+  Frozen is not free, and the gate says so in the message it prints: *"move it to FROZEN_KEYS with a
+  suite that pins its bytes"*. The reader must be a Swift suite under `Tests/` or a Rust INTEGRATION
+  test that opens the corpus (`golden.rs:106,113`), so G.3 adds
+  `rust/slopdesk-wire/tests/golden_mux_envelopes.rs`, which replays the block against
+  `slopdesk_wire::mux`. That is the stronger pin and not a weaker one: the bytes were pinned to the
+  Swift codec because the Swift codec was the one that shipped, and after G.3 it is Rust's that
+  ships. `"muxBare"` and `"muxFragment"` stay EMITTED — they are `VideoMuxHeaderCodec`'s
+  (`main.swift:555,558`), which is PATH-2.
 
 ## 6. The finish line, stated so it can be checked
 
