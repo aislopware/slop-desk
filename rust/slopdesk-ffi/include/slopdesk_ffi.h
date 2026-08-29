@@ -5943,11 +5943,10 @@ uint32_t slopdesk_mux_transport_channel_id(const SlopDeskMuxTransport *handle);
 bool slopdesk_mux_transport_await_open_ack(const SlopDeskMuxTransport *handle, uint64_t timeout_ms,
                                            int64_t *resume_from_seq_out);
 
-// PTY input on DATA, SPLIT across input frames at the flow-control cap. One call
-// becomes several frames; order survives, because a byte stream carries no frame
-// semantics. An unsplit paste would deadlock credit-at-consumption.
-int slopdesk_mux_transport_send_input(const SlopDeskMuxTransport *handle, const uint8_t *bytes,
-                                      size_t len);
+// There is no send_input and no note_consumed on this handle. PTY input rides
+// slopdesk_pane_driver_send_input and consumption credit is issued inside
+// slopdesk_pane_driver_take_output (docs/63 §G.5) — what is left here is the WORKSPACE
+// channel, which is channelClass 1 and speaks control alone.
 
 // One message on CONTROL. The record and arena are the SlopDeskWireMessage pair above.
 // REFUSES an input: CONTROL is unwindowed, and a paste on it would put a 16 MiB
@@ -5955,8 +5954,6 @@ int slopdesk_mux_transport_send_input(const SlopDeskMuxTransport *handle, const 
 int slopdesk_mux_transport_send(const SlopDeskMuxTransport *handle,
                                 const SlopDeskWireMessage *message, const uint8_t *arena,
                                 size_t arena_len, const uint8_t *blob, size_t blob_len);
-
-void slopdesk_mux_transport_note_consumed(const SlopDeskMuxTransport *handle, size_t bytes);
 
 // ---------------------------------------------------------------------------
 // ONE PANE'S CLIENT SESSION (rust/slopdesk-ffi/src/pane_driver.rs).
@@ -6093,16 +6090,25 @@ void slopdesk_pane_driver_set_initial_cwd(const SlopDeskPaneDriver *handle, cons
                                           size_t cwd_len);
 
 // BLOCKS until the dial and the handshake resolve, bounded by handshake_timeout_ms.
+//
+// The code says WHICH of seven things happened; `reason` says which host and why, as
+// UTF-8, with `*reason_len` set to the bytes written (0 on OK, and on every arm when
+// `reason` is NULL). TRUNCATED on a char boundary rather than asking for a length —
+// it is a diagnostic beside a code that already carries the decision, so 256 bytes is
+// generous and a second call for the tail of a log line would not be.
 int slopdesk_pane_driver_connect(const SlopDeskPaneDriver *handle, const uint8_t *host,
-                                 size_t host_len, uint16_t port, uint64_t handshake_timeout_ms);
+                                 size_t host_len, uint16_t port, uint64_t handshake_timeout_ms,
+                                 uint8_t *reason, size_t reason_cap, size_t *reason_len);
 
 // Backgrounded: acks what is held, says a clean bye, tears the transport down. The
 // host KEEPS the shell and its replay buffer. Idempotent.
 void slopdesk_pane_driver_pause(const SlopDeskPaneDriver *handle);
 
 // Foregrounded: reconnects with the preserved session id and seq. A no-op unless
-// paused. Answers as _connect, plus NO_ENDPOINT if nothing was ever connected.
-int slopdesk_pane_driver_resume(const SlopDeskPaneDriver *handle, uint64_t handshake_timeout_ms);
+// paused. Answers as _connect, plus NO_ENDPOINT if nothing was ever connected, and
+// fills `reason` on the same terms.
+int slopdesk_pane_driver_resume(const SlopDeskPaneDriver *handle, uint64_t handshake_timeout_ms,
+                                uint8_t *reason, size_t reason_cap, size_t *reason_len);
 
 // Permanently retires the session: a final ack, a clean bye, a teardown. Idempotent.
 void slopdesk_pane_driver_close(const SlopDeskPaneDriver *handle);
@@ -6147,7 +6153,6 @@ unsigned char slopdesk_pane_driver_resume_outcome(const SlopDeskPaneDriver *hand
 // False before the first pong, leaving `out` untouched.
 bool slopdesk_pane_driver_smoothed_rtt_ms(const SlopDeskPaneDriver *handle, double *out);
 
-bool slopdesk_pane_driver_is_connected(const SlopDeskPaneDriver *handle);
 bool slopdesk_pane_driver_is_paused(const SlopDeskPaneDriver *handle);
 
 // A NULL handle reads as CLOSED — the safe reading, since a caller holding
@@ -8629,42 +8634,6 @@ typedef void (*SlopDeskVirtualDisplayTerminatedFn)(void *context);
 // A NULL callback disarms. The context is opaque and never freed here — see the barrier
 // note above for the one moment at which the caller may release it.
 
-// ---- The controlling terminal, and the write that finishes ---------------------------
-//
-// `slopdesk_posix::rawmode` and `::fdio`. macOS-only for a STRUCTURAL reason rather than
-// a stylistic one: `slopdesk-posix` is a `cfg(target_os = "macos")` edge of this crate,
-// so these symbols are absent from both iOS slices and a declaration outside this region
-// would be a link error on a phone.
-//
-// Two things the Swift did are deliberately not preserved. Entering raw mode TWICE used
-// to overwrite the saved attributes with the raw ones it had just written, so the restore
-// wrote raw attributes back and reported success; entry is idempotent here and keeps the
-// FIRST entry's set. And the handler's copy of the saved `termios` was a plain mutable
-// global fenced only by `pthread_sigmask`, which is per-THREAD — a signal delivered to
-// another thread of a multi-threaded client could read it mid-write. It is published
-// through an atomic now, and exactly one of the handler and the locked path performs the
-// write-back.
-
-// Puts a terminal into raw mode, saving what it looked like first. 0 on success, else the
-// positive errno — `ENOTTY` for a descriptor that is not a terminal, from an explicit
-// `isatty` check rather than from whatever `tcgetattr` happened to report.
-int32_t slopdesk_tty_enter_raw(int32_t terminal);
-// Writes the saved attributes back. Idempotent, and a no-op when raw mode was never
-// entered, so a restore on an error path costs nothing and needs no flag beside it.
-void    slopdesk_tty_restore(void);
-// Installs the SIGINT/SIGTERM/SIGQUIT/SIGHUP handlers that restore the terminal and then
-// re-raise under SIG_DFL. Call it BEFORE slopdesk_tty_enter_raw: a window in which the
-// terminal is raw and no handler is installed is a shell left unusable by one ^C.
-void    slopdesk_tty_install_restore_on_signals(void);
-// A terminal's window size as EIGHT bytes — cols, rows, pxWidth, pxHeight, each a
-// little-endian uint16. 0 is §4's None: the descriptor is not a terminal.
-size_t  slopdesk_tty_window_size(int32_t terminal, uint8_t *out, size_t cap);
-// `write(2)` until the whole `(bytes, len)` is out, retrying EINTR. 0 every byte moved ·
-// -1 the peer closed while bytes were still owed · otherwise the positive errno. The
-// count is not answered, because the REACTION stays with the caller and no caller of this
-// could resume from a partial one.
-int32_t slopdesk_fd_write_all(int32_t fd, const uint8_t *bytes, size_t len);
-
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END
 
@@ -9621,82 +9590,34 @@ size_t slopdesk_ws_grid_readout(uint32_t cols, uint32_t rows, uint8_t attributio
                                 const unsigned char *label, size_t label_len, unsigned char *out,
                                 size_t capacity);
 
-/* ---- pane session: what a client decides about the stream the host is sending it ------------
+/* ---- the reconnect SCHEDULE, and the two numbers a near side names ---------------------------
  *
- * The driver keeps the transport, four background tasks, an output inbox and a multicast event hub;
- * none of that is here. What is here is what it DECIDES — which seq is new, what may be acked,
- * whether a connection may be opened or adopted, whether a stream end is a real drop, how long the
- * next retry waits and when the retries stop.
+ * What used to be here was eighteen doors: the client session's marks crossing by value, the
+ * deliver/ack/adopt/stream-ended that stepped them in place, four gates, a round-trip fold and the
+ * whole ladder. Their caller was the SWIFT pane session, and docs/63 §G.5 replaced it with
+ * rust/slopdesk-clientdriver, which calls slopdesk_clientsession as a CRATE. Sixteen of the
+ * eighteen lost their only caller in that one change.
  *
- * The machine crosses BY VALUE, IN PLACE: the driver holds one of these as a `var` and each entry
- * point steps it where it already lives. No allocation crosses in either direction. The BYTES never
- * come with it — `deliver` is handed a SEQ, and whether the chunk is fed, inboxed or dropped and
- * credited stays with the side that already holds the `Data`.
+ * The two below are not a session at all: they are a CONFIGURATION and a piece of UI copy, and
+ * both are asked BEFORE any driver exists.
+ *
+ * NANOSECONDS, because the near side's duration type carries attoseconds and milliseconds would
+ * silently round a schedule configured in fractions of one.
  */
-typedef struct {
-    int64_t       highest_fed;           // highest seq fed to the surface — the dedup bound
-    int64_t       highest_contiguous;    // what is acked, and what the next open presents
-    int64_t       presented_resume_seq;  // the lastReceivedSeq the running connection presented
-    unsigned char outcome;               // 0 undetermined · 1 a fresh shell · 2 the same shell
-    bool          ack_pending;           // an advance is waiting for the coalescing ticker
-} SlopDeskPaneSession;
-// The retry ladder, in NANOSECONDS: the near side's duration type carries attoseconds, and
-// milliseconds would silently round a schedule configured in fractions of one.
 typedef struct {
     uint64_t initial_ns; // the wait before the first retry
     uint64_t maximum_ns; // the ceiling every later wait saturates at
     double   multiplier; // what each step multiplies by
 } SlopDeskPaneBackoff;
 
-// The marks a RESTORED pane starts from — both already at the seq it last rendered.
-SlopDeskPaneSession slopdesk_pane_session_seeded(int64_t last_seq);
-// Adopts a handshaken connection. `presented_resume_seq` must be read BEFORE this call: the reset it
-// may perform clears the mark it came from. `resume_from_seq` is the HOST's answer and the only
-// correct signal — the near side's "returning client" flag is true on EVERY reconnect. Answers 0
-// when the marks were kept, 1 when cleared; on 1 the caller zeroes the wire credit on anything still
-// in its inbox, because the new channel's peer never sent those bytes. The bytes themselves stay.
-uint8_t slopdesk_pane_session_adopt(SlopDeskPaneSession *session, int64_t presented_resume_seq,
-                                    int64_t resume_from_seq);
-// Folds one inbound output seq. 0 = DUPLICATE (drop the bytes, still credit them), 1 = new.
-uint8_t slopdesk_pane_session_deliver(SlopDeskPaneSession *session, int64_t seq);
-// What the ticker should ack, written to `seq` only when there is one. The pending flag clears
-// either way — a flush with nothing delivered has answered the tick.
-bool slopdesk_pane_session_ack(SlopDeskPaneSession *session, int64_t *seq);
-// Re-arms after a failed send, so the next live transport carries the ack.
-void slopdesk_pane_session_ack_failed(SlopDeskPaneSession *session);
-// The stream ended: drops the resume verdict and nothing else.
-void slopdesk_pane_session_stream_ended(SlopDeskPaneSession *session);
-
-// One pong, folded into the smoothed round trip. false = nothing to surface and the previous reading
-// stands, which happens only for an echo dated after the instant it arrived at.
-bool slopdesk_pane_session_rtt(uint64_t now_ms, uint64_t sent_at_ms, bool has_previous,
-                               double previous, double *smoothed);
-
-// Why a client refuses to open a channel: 0 it does not · 1 closed · 2 the child exited · 3 the host
-// closed this pane's channel. Each is terminal for the INSTANCE; an allowed recovery builds a new one.
-uint8_t slopdesk_pane_session_connect_refusal(bool closed, bool child_exited, bool host_closed);
-// What the error thrown for that code says. 0 back for a code that is not a refusal.
-size_t slopdesk_pane_session_refusal_reason(uint8_t code, unsigned char *out, size_t capacity);
-// Whether a freshly-handshaken transport may be ADOPTED. Adopting over a live one leaks two sockets,
-// its pumps and a registry refcount for the life of the process.
-bool slopdesk_pane_session_adopts(bool closed, bool paused, bool cancelled, bool superseded);
-// Whether a stream end is a real drop, or one of the three expected ends — a deliberate close, this
-// driver's own teardown, or the post-exit FIN.
-bool slopdesk_pane_session_announces_drop(bool closed, bool tearing_down, bool child_exited);
-// Whether a reconnect campaign may start, or take another turn. Asked again at the top of every
-// retry, because all four states can arrive DURING one.
-bool slopdesk_pane_session_campaign_runs(bool paused, bool closed, bool child_exited,
-                                         bool host_closed);
-
-// The shipped ladder: a quarter second, doubling to a two-second ceiling.
+// The shipped ladder. Read once by SlopDeskClient.Backoff, presented as its three defaults, and
+// handed straight back across slopdesk_pane_driver_new's config — the schedule is BUILT on the Rust
+// side from those numbers. A literal 250ms/2s/2.0 in Swift would be the copy a caller edits.
 SlopDeskPaneBackoff slopdesk_pane_backoff_default(void);
-uint64_t slopdesk_pane_backoff_next_after(SlopDeskPaneBackoff schedule, uint64_t current_ns);
-// The wait BEFORE the `attempt`-th retry, one-indexed — the closed form of that ladder.
-uint64_t slopdesk_pane_backoff_delay(SlopDeskPaneBackoff schedule, uint32_t attempt);
-// The give-up ceiling, and the gate that fires one attempt past it.
+// The give-up ceiling. The near side needs it for a reason the driver cannot serve: the chrome
+// renders "attempt N of M" WHILE a campaign is running, so M has to be readable before the GaveUp
+// event that would report it. One source, so the two can never diverge into "attempt 25 of 20".
 uint32_t slopdesk_pane_backoff_max_attempts(void);
-uint32_t slopdesk_pane_backoff_direct_attempts(void);
-bool slopdesk_pane_backoff_exhausted(uint32_t attempt);
 
 /* ---------------------------------------------------------------------------- *
  * channel_run — which run of the workspace channel still speaks, and what it

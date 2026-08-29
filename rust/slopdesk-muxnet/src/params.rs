@@ -1,6 +1,6 @@
 //! The socket options every PATH-1 TCP connection is built with.
 //!
-//! This is `Sources/SlopDeskTransport/TransportParameters.swift`, read for what it ASKS FOR rather
+//! This is `Sources/SlopDeskNet/TransportParameters.swift`, read for what it ASKS FOR rather
 //! than what it was written in:
 //!
 //! ```swift

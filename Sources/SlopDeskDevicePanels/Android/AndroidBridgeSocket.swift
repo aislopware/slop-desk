@@ -29,7 +29,7 @@
 import CSlopDeskFFI
 import Foundation
 import Network
-import SlopDeskTransport
+import SlopDeskNet
 import SlopDeskWorkspaceModel
 
 /// The request lines the bridge accepts, written by `slopdesk_android_bridge_request`.

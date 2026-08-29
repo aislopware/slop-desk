@@ -180,7 +180,18 @@ let package = Package(
         // event channel and PATH-4's file transfer. It was the same actor in both, line for line,
         // and a lifetime this fussy — three separate fd-leak fixes — must not be maintained twice.
         // Foundation + Network only, so neither caller widens its graph by naming it.
-        .target(name: "SlopDeskNet"),
+        //
+        // It also holds `TransportParameters`, the ONE place any Swift `NWConnection`/`NWListener`
+        // is configured. That file used to live in `SlopDeskTransport`, which was wrong the moment
+        // `docs/63` G.3 moved the PATH-1 mux sockets into `rust/slopdesk-clientnet`: every caller
+        // left — the loopback code-sidebar proxy, the Android bridge, the simulator stream — is a
+        // socket built beside this target's byte channel, not beside the mux. The three keepalive
+        // numbers it spends are `slopdesk_wire::transport`'s, which is the one `CSlopDeskFFI` edge.
+        .target(
+            name: "SlopDeskNet",
+            dependencies: ["CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         .target(
             name: "SlopDeskProtocol",
@@ -212,8 +223,16 @@ let package = Package(
             path: "ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework",
         ),
 
-        // NWConnection + TCP_NODELAY, dual data/control channel, ET-style replay
-        // buffer, reconnect handshake. (Implemented in WF-2.)
+        // What is LEFT of the Swift transport: the mux FACE and nothing else — `ConnectionRegistry`
+        // and `MuxClientTransport` over `rust/slopdesk-clientnet`'s pool, `RustHandle`, the
+        // `MessageChannel` protocol the inspector and the workspace channel are both spelled
+        // against, and the error type those two throw.
+        //
+        // Everything that made the old name accurate is gone: the sockets and TCP_NODELAY are
+        // `slopdesk_muxnet::params` (`docs/63` G.3), the replay buffer and the reconnect handshake
+        // are `slopdesk-clientsession`, and the session that drove them is `slopdesk-clientdriver`
+        // (G.5). The two files that had no reason to be here left with G.5 as well —
+        // `TransportParameters` to `SlopDeskNet`, `AltScreenCutScanner` to `SlopDeskDevicePanels`.
         .target(
             name: "SlopDeskTransport",
             dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"],
@@ -417,8 +436,13 @@ let package = Package(
                 "SlopDeskWorkspaceModel",
                 // The metadata RPC the simulator control client rides.
                 "SlopDeskProtocol",
-                // `MuxNWConnection` — the Android bridge and the simulator stream are mux channels.
-                "SlopDeskTransport",
+                // `TransportParameters` — the Android bridge and the simulator stream each build an
+                // `NWConnection`, and there is one place that sets TCP_NODELAY and the keepalive
+                // ladder. This target no longer names `SlopDeskTransport` at all: the mux is
+                // `rust/slopdesk-clientnet`'s since `docs/63` G.3, and G.5 moved the last two files
+                // it held for this graph — `TransportParameters` here, `AltScreenCutScanner` INTO
+                // `Android/`, beside its one caller.
+                "SlopDeskNet",
                 // `DevicePanelGeometry` maps a touch into VIDEO pixels (docs/48 — the jank fix), which
                 // is the video path's coordinate domain, not the panel's.
                 "SlopDeskVideoProtocol",
@@ -779,16 +803,13 @@ let package = Package(
         // test could reach any of it. The Rust `shell` module reaches the app through a `Control`
         // trait and RETURNS an exit code, which is what made the whole surface testable.
 
-        // Interactive remote terminal client. Sources under Sources/slopdesk-client.
-        .executableTarget(
-            name: "slopdesk-client",
-            // `CSlopDeskFFI` because the local terminal's raw mode, its window size and the
-            // `write(2)`-until-done loop are `rust/slopdesk-posix`'s now — `main.swift` calls
-            // `slopdesk_tty_*`/`slopdesk_fd_write_all` directly, so the shim has to be linked here
-            // rather than reached transitively.
-            dependencies: ["SlopDeskClient", "SlopDeskTransport", "SlopDeskTerminal", "CSlopDeskFFI"],
-            linkerSettings: ffiCLibraries,
-        ),
+        // NOTE: the interactive remote terminal client `slopdesk-client` is GONE from this graph —
+        // it is Rust now (`rust/slopdesk-client`, `docs/63` §G.5). It was the last Swift executable
+        // in the tree that was not an app bundle, and nothing in it was presentation: an arg parser,
+        // a raw-mode guard, two byte pumps and a SIGWINCH resize over a session that is
+        // `slopdesk-clientdriver`'s. The Rust bin calls that crate DIRECTLY rather than through
+        // `slopdesk-ffi`, which is what retired the raw-mode trio, `slopdesk_tty_window_size` and
+        // `slopdesk_fd_write_all` — every one of them had this binary as its only caller.
 
         // (The GUI video path's host daemon is `rust/slopdesk-videohostd` — `just videohostd`,
         // docs/61. It was a Swift executable target here only because capture, encode, the window
@@ -883,17 +904,17 @@ let package = Package(
             exclude: ["Fixtures"],
         ),
         .testTarget(name: "SlopDeskTransportTests", dependencies: ["SlopDeskTransport"]),
+        .testTarget(name: "SlopDeskNetTests", dependencies: ["SlopDeskNet"]),
         // (No `SlopDeskHostTests`. Every suite it held tested the Swift host `docs/60` F.9 deleted;
         // the seven `rust/slopdesk-host*` crates carry their own, where a decision can be driven
         // without standing up a listener.)
-        .testTarget(
-            name: "SlopDeskClientTests",
-            dependencies: [
-                "SlopDeskClient",
-                "SlopDeskTransport",
-                "SlopDeskTerminal",
-            ],
-        ),
+        // (No `SlopDeskClientTests`. Twelve of its suites drove the Swift session actor through fake
+        // transports and retired with it — every decision they pinned is `slopdesk-clientdriver`'s,
+        // where the same property is pinned against a fake `ByteLink` rather than through a protocol
+        // the session itself defined. The thirteenth, `SubprocessE2ETests`, launched the two SHIPPED
+        // binaries; both are cargo binaries now, so the harness is `rust/slopdesk-client/tests` and
+        // `just client-e2e` builds what it execs. In this graph it could only ever XCTSkip: nothing
+        // stages `slopdesk-hostd` next to an xctest bundle, and nothing has since hostd left.)
         // Fixture-based tests for the inspector: JSONL parsing, tool-card pairing,
         // subagent tree, the append-follow tailer, transport round-trip, hook ingest.
         // The `Fixtures/` tree is read off disk via `#filePath` (see Fixtures.swift),
@@ -1009,7 +1030,7 @@ let package = Package(
         // an `NWConnection` framing seam and a `CMSampleBuffer` sink directly.
         .testTarget(
             name: "SlopDeskDevicePanelsTests",
-            dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol", "SlopDeskTransport"],
+            dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol", "SlopDeskNet"],
         ),
 
         // docs/56: the client's presentation-logic suite, moved out of `SlopDeskClientUITests` with

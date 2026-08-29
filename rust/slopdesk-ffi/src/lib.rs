@@ -215,11 +215,6 @@ pub mod terminal_controls;
 pub mod terminal_mode;
 pub mod toast;
 pub mod trendline;
-// macOS only: behind it is `slopdesk-posix`, a `cfg(target_os = "macos")` edge of this crate — and
-// the terminal it puts into raw mode is the one a macOS command-line binary was launched from. See
-// the module.
-#[cfg(target_os = "macos")]
-pub mod tty;
 pub mod upload_progress;
 pub mod vi_hints;
 pub mod video_control;

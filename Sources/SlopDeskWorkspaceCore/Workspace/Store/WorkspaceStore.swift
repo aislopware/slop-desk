@@ -3390,29 +3390,23 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Builds a `@Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient` whose clients route over the
-    /// shared mux connection pooled by `registry`. Each `SlopDeskClient` is constructed with an
-    /// injected `makeTransport` that vends a fresh `MuxClientTransport` bound to the pool — so the
-    /// channel is opened on the shared connection at `connect()` and released at `close()`, with the
-    /// shared connection torn down only when the LAST pane's channel goes.
+    /// Builds a `@Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient` whose sessions route over
+    /// the shared mux connection pooled by `registry`.
     ///
-    /// The `resumeSeed` parameter is passed straight through to `SlopDeskClient.init(resumeSeed:)`, which
-    /// sets `sessionID` / `highestContiguousSeq` / `highestSeqFed` synchronously as part of construction
-    /// (`docs/DECISIONS.md`). Seeding a restored pane's identity AFTER this factory returns the client —
-    /// a fire-and-forget `Task { await c.seedResumeIdentity(...) }` — races the separately-scheduled
-    /// `connect()` Task on the actor's mailbox, so the seed MUST ride `init`. `nil` = a fresh /
-    /// never-restored pane (no seed, no race).
+    /// The pool is handed to the session's Rust driver, which opens its own channel on it at
+    /// `connect()` and releases it at `close()` — so the shared connection is torn down only when the
+    /// LAST pane's channel goes, and every pane to one host keeps riding ONE mux.
+    ///
+    /// The `resumeSeed` rides `init`, which is the whole point of it being an init parameter: seeding
+    /// a restored pane's identity AFTER this factory returns — a fire-and-forget
+    /// `Task { await c.seed(…) }` — is ordered against nothing, and a cold-launch restore of many
+    /// panes could lose the race and start a fresh session instead of reattaching
+    /// (`docs/DECISIONS.md`). `nil` = a fresh / never-restored pane (no seed, no race).
     private static func muxBackedClientFactory(
         registry: ConnectionRegistry,
     ) -> @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient {
         { @Sendable resumeSeed in
-            SlopDeskClient(
-                // The class the transport announces rides its `channelOpen`. A pane here — a
-                // read-only view (class 2) is opened by a transport constructed with that class,
-                // not by a flag on this one.
-                makeTransport: { MuxClientTransport(registry: registry) },
-                resumeSeed: resumeSeed,
-            )
+            SlopDeskClient(registry: registry, resumeSeed: resumeSeed)
         }
     }
 

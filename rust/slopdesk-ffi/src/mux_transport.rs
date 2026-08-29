@@ -36,13 +36,13 @@
 //! exactly once and a caller that has to ASK is a caller that can ask too early.
 
 use core::ffi::{c_uchar, c_void};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use slopdesk_clientnet::dial::{Endpoint, establish, mint_connection_id};
-use slopdesk_clientnet::registry::ConnectionRegistry;
+use slopdesk_clientnet::dial::Endpoint;
+use slopdesk_clientnet::registry::DiallingPool;
 use slopdesk_clientnet::transport::{ChannelTransport, InboundSink, OpenError};
-use slopdesk_muxnet::connection::{ConnectionThreads, MuxConnection, OpenRequest};
+use slopdesk_muxnet::connection::OpenRequest;
 use slopdesk_muxnet::subchannel::{ChannelEnd, SendError};
 use slopdesk_wire::{SESSION_ID_BYTE_COUNT, WireMessage};
 
@@ -188,23 +188,22 @@ impl InboundSink for CSink {
     }
 }
 
-/// Every dialled connection and the two receive loops behind it, held until the pool is freed.
-///
-/// A named type because the alias is the DOCUMENTATION: the pair is what has to be closed and then
-/// joined, in that order, and a bare tuple in three signatures would say that nowhere.
-type Served = Arc<Mutex<Vec<(Arc<MuxConnection>, ConnectionThreads)>>>;
-
 /// The pooled connections to every host this client talks to, and the threads serving them.
 ///
 /// One per app, not one per pane: every pane to one host rides ONE mux, which is the property
-/// PATH-1 exists for. The `served` list is why `free` is a real quiescence point — see there.
+/// PATH-1 exists for.
+///
+/// It is one field, and the dial closure that used to sit here is gone: minting an id, calling
+/// [`slopdesk_clientnet::dial::establish`], dropping the event receiver and stashing the join
+/// handles is what EVERY shipping owner of a registry does, and there are two of them — this pool
+/// and `slopdesk-client`. [`DiallingPool`] is that owner written once, so `free` is still a real
+/// quiescence point (it closes then joins) without this file owning the list that makes it one.
 #[derive(Debug)]
 pub struct SlopDeskMuxPool {
     /// Reachable from [`crate::pane_driver`], which opens its channels on this same pool rather
     /// than minting a second one: every pane to one host and the workspace document ride ONE mux,
     /// and two registries would be two TCP pairs and two client identities at the host.
-    pub(crate) registry: Arc<ConnectionRegistry>,
-    served: Served,
+    pub(crate) pool: DiallingPool,
 }
 
 /// One channel, with the pooled connection under it.
@@ -271,29 +270,8 @@ const fn verdict(error: &SendError) -> i32 {
 )]
 #[must_use]
 pub unsafe extern "C" fn slopdesk_mux_pool_new(connect_timeout_ms: u64) -> *mut SlopDeskMuxPool {
-    let within = Duration::from_millis(connect_timeout_ms);
-    let served: Served = Arc::new(Mutex::new(Vec::new()));
-    let stash = Arc::clone(&served);
-    let registry = Arc::new(ConnectionRegistry::new(move |target: &Endpoint| {
-        let id = mint_connection_id().ok_or_else(|| {
-            std::io::Error::other("the connection id could not be minted: /dev/urandom is unreadable")
-        })?;
-        let dialled = establish(target, id, within)?;
-        // The EVENT receiver is dropped here, deliberately. A client never sees `Opened` — it is
-        // the side that opens — and it does not need `Closed` or `LinkDown` either, because
-        // `MuxConnection` finishes the affected sub-channels itself on both paths (`peer_closed`
-        // and `tear_down`). Every end therefore reaches this crate as a `ChannelEnd` on the lane it
-        // happened to, which is the one place a caller can act on it. Keeping the receiver would
-        // mean a third thread pumping a queue nothing reads.
-        //
-        // The THREADS are stashed rather than detached, which is what makes `free` a quiescence
-        // point: a leak test that cannot join has nothing to wait for.
-        if let Ok(mut held) = stash.lock() {
-            held.push((Arc::clone(&dialled.connection), dialled.threads));
-        }
-        Ok(dialled.connection)
-    }));
-    Box::into_raw(Box::new(SlopDeskMuxPool { registry, served }))
+    let pool = DiallingPool::new(Duration::from_millis(connect_timeout_ms));
+    Box::into_raw(Box::new(SlopDeskMuxPool { pool }))
 }
 
 /// Tears every pooled connection down and waits for its receive loops to return.
@@ -318,15 +296,7 @@ pub unsafe extern "C" fn slopdesk_mux_pool_free(handle: *mut SlopDeskMuxPool) {
     // SAFETY: non-null and, by the caller's obligation, a live pointer from `new` with no call in
     // flight — so this reconstitutes the unique owner.
     let held = unsafe { Box::from_raw(handle) };
-    let served = held
-        .served
-        .lock()
-        .map(|mut list| core::mem::take(&mut *list))
-        .unwrap_or_default();
-    for (connection, threads) in served {
-        connection.close();
-        threads.join();
-    }
+    held.pool.close();
     drop(held);
 }
 
@@ -350,7 +320,7 @@ pub unsafe extern "C" fn slopdesk_mux_pool_is_alive(
     let (Some(held), host) = (unsafe { (pool(handle), lent(host, host_len)) }) else {
         return false;
     };
-    held.registry.is_alive(&Endpoint::new(host, port))
+    held.pool.registry().is_alive(&Endpoint::new(host, port))
 }
 
 /// Holds the connection to `host:port` open with no channel on it, dialling if there is none.
@@ -376,7 +346,7 @@ pub unsafe extern "C" fn slopdesk_mux_pool_pin(
     let (Some(held), host) = (unsafe { (pool(handle), lent(host, host_len)) }) else {
         return false;
     };
-    held.registry.pin(&Endpoint::new(host, port)).is_ok()
+    held.pool.registry().pin(&Endpoint::new(host, port)).is_ok()
 }
 
 /// Releases a pin, reaping the connection if nothing else holds it.
@@ -398,7 +368,7 @@ pub unsafe extern "C" fn slopdesk_mux_pool_unpin(
     let (Some(held), host) = (unsafe { (pool(handle), lent(host, host_len)) }) else {
         return;
     };
-    held.registry.unpin(&Endpoint::new(host, port));
+    held.pool.registry().unpin(&Endpoint::new(host, port));
 }
 
 /// How many channels ride the connection to `host:port`. Zero if there is none.
@@ -421,7 +391,7 @@ pub unsafe extern "C" fn slopdesk_mux_pool_channel_count(
     let (Some(held), host) = (unsafe { (pool(handle), lent(host, host_len)) }) else {
         return 0;
     };
-    held.registry.channel_count(&Endpoint::new(host, port))
+    held.pool.registry().channel_count(&Endpoint::new(host, port))
 }
 
 /// How many connections the pool holds, across every endpoint.
@@ -439,7 +409,7 @@ pub unsafe extern "C" fn slopdesk_mux_pool_connection_count(handle: *const SlopD
     let Some(held) = (unsafe { pool(handle) }) else {
         return 0;
     };
-    held.registry.pooled_connection_count()
+    held.pool.registry().pooled_connection_count()
 }
 
 /// Opens one channel on the pooled connection to `host:port`, and starts delivering its inbound.
@@ -511,7 +481,7 @@ pub unsafe extern "C" fn slopdesk_mux_transport_open(
         ended: on_ended,
     });
     match ChannelTransport::open(
-        Arc::clone(&held.registry),
+        Arc::clone(held.pool.registry()),
         &Endpoint::new(host, port),
         &request,
         sink,
@@ -608,34 +578,11 @@ pub unsafe extern "C" fn slopdesk_mux_transport_await_open_ack(
     ack.accepted
 }
 
-/// Sends PTY input on the DATA lane, split across `input` frames at the flow-control cap.
-///
-/// Its own door rather than a `message_type` on the generic one below, because the LANE is the
-/// difference and the lane is not a field: `input` is the only verb that rides DATA, and the
-/// split — a paste larger than the window would otherwise deadlock credit-at-consumption — is the
-/// only place in this boundary where one call becomes several frames.
-///
-/// # Safety
-/// [`held`]'s, plus `(bytes, len)` must be null-with-zero-length or live for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[must_use]
-pub unsafe extern "C" fn slopdesk_mux_transport_send_input(
-    handle: *const SlopDeskMuxTransport,
-    bytes: *const c_uchar,
-    len: usize,
-) -> i32 {
-    // SAFETY: the caller's obligations, above.
-    let (Some(held), bytes) = (unsafe { (held(handle), borrow(bytes, len)) }) else {
-        return SLOPDESK_MUX_SEND_REFUSED;
-    };
-    held.transport
-        .send_input(bytes)
-        .map_or_else(|failure| verdict(&failure), |()| SLOPDESK_MUX_SEND_OK)
-}
+// NOTE: there is no `slopdesk_mux_transport_send_input`. A pane's keystrokes reach the DATA lane
+// through `slopdesk_pane_driver_send_input` now (`docs/63` §G.5), which is the same
+// `ChannelTransport::send_input` one layer further in — including the split at the flow cap that a
+// paste larger than the window needs. What is left on this handle is the WORKSPACE channel, which
+// is `channelClass 1` and speaks control alone, so a data-lane door here had no caller.
 
 /// Sends one message on the CONTROL lane.
 ///
@@ -692,32 +639,10 @@ pub unsafe extern "C" fn slopdesk_mux_transport_send(
         .map_or_else(|failure| verdict(&failure), |()| SLOPDESK_MUX_SEND_OK)
 }
 
-/// Reports that the caller's REAL consumer drained `bytes` of data-lane inbound.
-///
-/// Credit is granted at CONSUMPTION rather than at delivery, which is the whole reason this door
-/// exists: a grant issued when the callback returned would let a flooding pane commit the window to
-/// bytes nothing has rendered. Count what the wire spent, not what the payload was —
-/// [`slopdesk_wire_message_byte_count`](crate::wire_message::slopdesk_wire_message_byte_count) is
-/// what answers that — because the sender debits per frame and the two must match exactly or the
-/// window leaks. Control-lane messages are unwindowed and must NOT be reported.
-///
-/// # Safety
-/// [`held`]'s.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_mux_transport_note_consumed(
-    handle: *const SlopDeskMuxTransport,
-    bytes: usize,
-) {
-    // SAFETY: the caller's obligation, above.
-    let Some(held) = (unsafe { held(handle) }) else {
-        return;
-    };
-    held.transport.note_output_consumed(bytes);
-}
+// NOR a `slopdesk_mux_transport_note_consumed`. Consumption credit is issued inside
+// `PaneDriver::take_output`, against the wire byte count the driver recorded when it inboxed the
+// payload — so the near side no longer has to count what the wire spent, which is the one number a
+// caller could get wrong and leak the window with.
 
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the door is the only way to test the door")]
@@ -729,8 +654,7 @@ mod tests {
         slopdesk_mux_pool_connection_count, slopdesk_mux_pool_free, slopdesk_mux_pool_is_alive,
         slopdesk_mux_pool_new, slopdesk_mux_pool_pin, slopdesk_mux_pool_unpin,
         slopdesk_mux_transport_await_open_ack, slopdesk_mux_transport_channel_id,
-        slopdesk_mux_transport_free, slopdesk_mux_transport_note_consumed, slopdesk_mux_transport_open,
-        slopdesk_mux_transport_send, slopdesk_mux_transport_send_input,
+        slopdesk_mux_transport_free, slopdesk_mux_transport_open, slopdesk_mux_transport_send,
     };
 
     /// Every door survives a null handle, which is the shape a Swift `deinit` racing a send would
@@ -751,14 +675,9 @@ mod tests {
                 ptr::null_mut()
             ));
             assert_eq!(
-                slopdesk_mux_transport_send_input(ptr::null(), ptr::null(), 0),
-                SLOPDESK_MUX_SEND_REFUSED,
-            );
-            assert_eq!(
                 slopdesk_mux_transport_send(ptr::null(), ptr::null(), ptr::null(), 0, ptr::null(), 0),
                 SLOPDESK_MUX_SEND_REFUSED,
             );
-            slopdesk_mux_transport_note_consumed(ptr::null(), 4096);
             slopdesk_mux_transport_free(ptr::null_mut());
             slopdesk_mux_pool_free(ptr::null_mut());
         }

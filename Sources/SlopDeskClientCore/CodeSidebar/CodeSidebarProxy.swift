@@ -23,7 +23,7 @@
 
 import Foundation
 import Network
-import SlopDeskTransport
+import SlopDeskNet
 
 /// Pure derivation of the loopback ports the proxy tries to claim. Stable across launches —
 /// Swift's `Hasher` is process-seeded, so this is hand-rolled FNV-1a.

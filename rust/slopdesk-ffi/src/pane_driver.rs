@@ -389,6 +389,48 @@ const fn verdict(error: &ConnectError) -> i32 {
     }
 }
 
+/// Writes what a [`ConnectError`] SAYS into the caller's buffer, and how much it wrote.
+///
+/// The code says which of seven things happened; this says which host refused, which dial failed
+/// and why. Only [`ConnectError::Open`] and [`ConnectError::Refused`] carry a payload the code
+/// cannot reconstruct, but every arm spills, because a near side that has to know which codes are
+/// worth reading is a near side that will read the wrong one after the next arm is added.
+///
+/// TRUNCATED rather than retried when the buffer is short, unlike
+/// `slopdesk_pane_session_refusal_reason`, and the difference is what the two answers are FOR: that
+/// one is the sentence a refusal throws, this one is a diagnostic beside a code that already
+/// carries the decision. A clipped sentence still names the host; a second call to learn a length
+/// would be a round trip for the tail of a log line. The cut lands on a `char` boundary, so what
+/// arrives is always UTF-8.
+///
+/// # Safety
+/// `(reason, reason_cap)` must be null-with-zero-capacity or a live writable buffer, and
+/// `reason_len` must be null or a live `usize`, both for the duration of the call.
+#[expect(
+    unsafe_code,
+    reason = "writing into the caller's buffer IS the boundary this module documents"
+)]
+unsafe fn spill(error: &ConnectError, reason: *mut c_uchar, reason_cap: usize, reason_len: *mut usize) {
+    let mut said = error.to_string();
+    if said.len() > reason_cap {
+        // `floor_char_boundary` is not stable, so walk back from the cap by hand.
+        let mut cut = reason_cap;
+        while cut > 0 && !said.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        said.truncate(cut);
+    }
+    if !reason.is_null() && !said.is_empty() {
+        // SAFETY: `said.len() <= reason_cap` after the truncation above, and the caller's obligation
+        // makes that many bytes writable. A `String`'s buffer cannot overlap the caller's.
+        unsafe { core::ptr::copy_nonoverlapping(said.as_ptr(), reason, said.len()) };
+    }
+    if !reason_len.is_null() {
+        // SAFETY: non-null and, by the caller's obligation, a live `usize`.
+        unsafe { reason_len.write(said.len()) };
+    }
+}
+
 /// How a send failure reaches the near side.
 const fn sent(error: &slopdesk_muxnet::subchannel::SendError) -> i32 {
     match *error {
@@ -448,7 +490,7 @@ pub unsafe extern "C" fn slopdesk_pane_driver_new(
         event: on_event,
         wake: on_wake,
     });
-    PaneDriver::new(Arc::clone(&held.registry), observer, settings).map_or_else(
+    PaneDriver::new(Arc::clone(held.pool.registry()), observer, settings).map_or_else(
         |_unspawned| core::ptr::null_mut(),
         |driver| Box::into_raw(Box::new(SlopDeskPaneDriver { driver })),
     )
@@ -510,10 +552,12 @@ pub unsafe extern "C" fn slopdesk_pane_driver_set_initial_cwd(
 /// BLOCKS until the dial and the handshake resolve, bounded by `handshake_timeout_ms`, and answers
 /// one of the `SLOPDESK_PANE_CONNECT_*` constants. Each is a different thing for the caller to do —
 /// a refusal is permanent, a supersede means stop, a reentrant is the caller's own bug, and the
-/// rest are worth retrying.
+/// rest are worth retrying. What went wrong in WORDS lands in `(reason, reason_cap)`; see
+/// [`spill`].
 ///
 /// # Safety
-/// [`held`]'s, plus `(host, host_len)` must be null-with-zero-length or live UTF-8 for the call.
+/// [`held`]'s, plus `(host, host_len)` must be null-with-zero-length or live UTF-8 for the call,
+/// and [`spill`]'s for the three reason parameters.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -526,15 +570,25 @@ pub unsafe extern "C" fn slopdesk_pane_driver_connect(
     host_len: usize,
     port: u16,
     handshake_timeout_ms: u64,
+    reason: *mut c_uchar,
+    reason_cap: usize,
+    reason_len: *mut usize,
 ) -> i32 {
     // SAFETY: the caller's obligations, above.
     let (Some(driver), host) = (unsafe { (held(handle), lent(host, host_len)) }) else {
         return SLOPDESK_PANE_CONNECT_GONE;
     };
-    driver
+    match driver
         .driver
         .connect(host, port, Duration::from_millis(handshake_timeout_ms))
-        .map_or_else(|failure| verdict(&failure), |()| SLOPDESK_PANE_CONNECT_OK)
+    {
+        Ok(()) => SLOPDESK_PANE_CONNECT_OK,
+        Err(failure) => {
+            // SAFETY: the caller's obligation for the three reason parameters, above.
+            unsafe { spill(&failure, reason, reason_cap, reason_len) };
+            verdict(&failure)
+        },
+    }
 }
 
 /// Backgrounded: acks what is held, says a clean `bye` and tears the transport down.
@@ -564,7 +618,7 @@ pub unsafe extern "C" fn slopdesk_pane_driver_pause(handle: *const SlopDeskPaneD
 /// ever connected.
 ///
 /// # Safety
-/// [`held`]'s.
+/// [`held`]'s, plus [`spill`]'s for the three reason parameters.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -574,15 +628,22 @@ pub unsafe extern "C" fn slopdesk_pane_driver_pause(handle: *const SlopDeskPaneD
 pub unsafe extern "C" fn slopdesk_pane_driver_resume(
     handle: *const SlopDeskPaneDriver,
     handshake_timeout_ms: u64,
+    reason: *mut c_uchar,
+    reason_cap: usize,
+    reason_len: *mut usize,
 ) -> i32 {
     // SAFETY: the caller's obligation, above.
     let Some(driver) = (unsafe { held(handle) }) else {
         return SLOPDESK_PANE_CONNECT_GONE;
     };
-    driver
-        .driver
-        .resume(Duration::from_millis(handshake_timeout_ms))
-        .map_or_else(|failure| verdict(&failure), |()| SLOPDESK_PANE_CONNECT_OK)
+    match driver.driver.resume(Duration::from_millis(handshake_timeout_ms)) {
+        Ok(()) => SLOPDESK_PANE_CONNECT_OK,
+        Err(failure) => {
+            // SAFETY: the caller's obligation for the three reason parameters, above.
+            unsafe { spill(&failure, reason, reason_cap, reason_len) };
+            verdict(&failure)
+        },
+    }
 }
 
 /// Permanently retires the session: a final ack, a clean `bye`, and a teardown. Idempotent, and
@@ -878,20 +939,11 @@ pub unsafe extern "C" fn slopdesk_pane_driver_smoothed_rtt_ms(
     true
 }
 
-/// Whether a transport is currently adopted.
-///
-/// # Safety
-/// [`held`]'s.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[must_use]
-pub unsafe extern "C" fn slopdesk_pane_driver_is_connected(handle: *const SlopDeskPaneDriver) -> bool {
-    // SAFETY: the caller's obligation, above.
-    unsafe { held(handle) }.is_some_and(|driver| driver.driver.is_connected())
-}
+// NOTE: there is no `slopdesk_pane_driver_is_connected`. "Is a transport adopted" is not a question
+// the near side can act on: it is true for an instant between a dial and the drop that follows it,
+// and the two facts a caller actually branches on — paused and closed — are their own doors below.
+// The face reports connectedness from the EVENTS instead, which is the only spelling that cannot be
+// read after it stopped being true.
 
 /// Backgrounded by [`slopdesk_pane_driver_pause`].
 ///
@@ -976,16 +1028,15 @@ mod tests {
     use core::ptr;
 
     use super::{
-        SLOPDESK_PANE_CONNECT_GONE, SLOPDESK_PANE_SEND_REFUSED, SlopDeskPaneConfig,
+        ConnectError, SLOPDESK_PANE_CONNECT_GONE, SLOPDESK_PANE_SEND_REFUSED, SlopDeskPaneConfig,
         slopdesk_pane_driver_close, slopdesk_pane_driver_connect, slopdesk_pane_driver_flush_ack,
         slopdesk_pane_driver_free, slopdesk_pane_driver_highest_contiguous_seq,
         slopdesk_pane_driver_host_close_reason, slopdesk_pane_driver_is_closed,
-        slopdesk_pane_driver_is_connected, slopdesk_pane_driver_is_exited, slopdesk_pane_driver_is_paused,
-        slopdesk_pane_driver_new, slopdesk_pane_driver_pause, slopdesk_pane_driver_resume,
-        slopdesk_pane_driver_resume_outcome, slopdesk_pane_driver_send_control,
-        slopdesk_pane_driver_send_input, slopdesk_pane_driver_send_resize, slopdesk_pane_driver_session_id,
-        slopdesk_pane_driver_set_initial_cwd, slopdesk_pane_driver_smoothed_rtt_ms,
-        slopdesk_pane_driver_take_output,
+        slopdesk_pane_driver_is_exited, slopdesk_pane_driver_is_paused, slopdesk_pane_driver_new,
+        slopdesk_pane_driver_pause, slopdesk_pane_driver_resume, slopdesk_pane_driver_resume_outcome,
+        slopdesk_pane_driver_send_control, slopdesk_pane_driver_send_input, slopdesk_pane_driver_send_resize,
+        slopdesk_pane_driver_session_id, slopdesk_pane_driver_set_initial_cwd,
+        slopdesk_pane_driver_smoothed_rtt_ms, slopdesk_pane_driver_take_output, spill,
     };
     use crate::mux_transport::{slopdesk_mux_pool_free, slopdesk_mux_pool_new};
 
@@ -1004,11 +1055,20 @@ mod tests {
             );
             slopdesk_pane_driver_set_initial_cwd(ptr::null(), ptr::null(), 0);
             assert_eq!(
-                slopdesk_pane_driver_connect(ptr::null(), ptr::null(), 0, 0, 0),
+                slopdesk_pane_driver_connect(
+                    ptr::null(),
+                    ptr::null(),
+                    0,
+                    0,
+                    0,
+                    ptr::null_mut(),
+                    0,
+                    ptr::null_mut(),
+                ),
                 SLOPDESK_PANE_CONNECT_GONE,
             );
             assert_eq!(
-                slopdesk_pane_driver_resume(ptr::null(), 0),
+                slopdesk_pane_driver_resume(ptr::null(), 0, ptr::null_mut(), 0, ptr::null_mut()),
                 SLOPDESK_PANE_CONNECT_GONE
             );
             slopdesk_pane_driver_pause(ptr::null());
@@ -1037,7 +1097,6 @@ mod tests {
                 ptr::null(),
                 ptr::null_mut()
             ));
-            assert!(!slopdesk_pane_driver_is_connected(ptr::null()));
             assert!(!slopdesk_pane_driver_is_paused(ptr::null()));
             assert!(slopdesk_pane_driver_is_closed(ptr::null()));
             assert!(!slopdesk_pane_driver_is_exited(ptr::null()));
@@ -1070,11 +1129,55 @@ mod tests {
                 let driver =
                     slopdesk_pane_driver_new(pool, &raw const config, ptr::null_mut(), None, None, None);
                 assert!(!driver.is_null());
-                assert!(!slopdesk_pane_driver_is_connected(driver));
                 assert!(!slopdesk_pane_driver_is_closed(driver));
                 slopdesk_pane_driver_free(driver);
             }
             slopdesk_mux_pool_free(pool);
         }
+    }
+
+    /// The reason a refusal spills, at every buffer size including the ones that cut it.
+    ///
+    /// The cut is the point: the near side decodes these bytes as UTF-8, and a cap that landed
+    /// mid-scalar would hand it a replacement character or, in a stricter decoder, nothing at all —
+    /// from a path that only runs when something has ALREADY gone wrong, which is the worst place
+    /// to lose the sentence. Every arm's sentence is ASCII TODAY, so what this pins is the
+    /// walk-back itself: [`ConnectError::Open`] wraps an OS error whose text is the platform's, and
+    /// a host name or a path in it is where the first non-ASCII byte will arrive.
+    #[test]
+    fn a_reason_is_cut_on_a_boundary_or_not_at_all() {
+        let failure = ConnectError::NoVerdict;
+        let whole = failure.to_string();
+        for cap in 0..=whole.len() + 8 {
+            let mut buffer = vec![0_u8; whole.len() + 8];
+            let mut written = usize::MAX;
+            // SAFETY: the buffer outlives the call and is at least `cap` long for every `cap` here.
+            unsafe { spill(&failure, buffer.as_mut_ptr(), cap, &raw mut written) };
+            assert!(written <= cap, "spilled {written} into {cap}");
+            let (filled, untouched) = buffer.split_at(written);
+            // `unwrap_or_default` and then the LENGTH, rather than an unwrap: an invalid cut yields
+            // the empty string, which the assertion names as the boundary failure it is.
+            let said = core::str::from_utf8(filled).unwrap_or_default();
+            assert_eq!(said.len(), written, "the cut at {cap} fell off a char boundary");
+            assert!(whole.starts_with(said), "{said:?} is not a prefix of {whole:?}");
+            // Nothing past what was written may have been touched.
+            assert!(untouched.iter().all(|&byte| byte == 0));
+        }
+    }
+
+    /// A null buffer is not an error, and it still answers the length it would have written.
+    ///
+    /// Zero, not the whole sentence's length: `reason_len` is what ARRIVED, so a caller that
+    /// passed no buffer reads 0 and a caller that passed a short one reads the truncation. The
+    /// alternative — the length it WOULD have taken — is the two-call convention this door
+    /// deliberately does not use, and mixing the two is how a caller reads past its own buffer.
+    #[test]
+    fn a_null_reason_buffer_answers_nothing_rather_than_faulting() {
+        let mut written = usize::MAX;
+        // SAFETY: a null buffer with a zero capacity is the documented absent buffer.
+        unsafe { spill(&ConnectError::Gone, ptr::null_mut(), 0, &raw mut written) };
+        assert_eq!(written, 0);
+        // SAFETY: a null `reason_len` is likewise documented, and must not be written.
+        unsafe { spill(&ConnectError::Gone, ptr::null_mut(), 0, ptr::null_mut()) };
     }
 }

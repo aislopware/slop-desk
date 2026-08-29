@@ -790,6 +790,47 @@ clientsession-test:
 clientdriver-test:
     cd rust/slopdesk-clientdriver && cargo test
 
+# The interactive remote terminal, and the LAST thing `docs/63` moved out of Swift. Its own crate
+# rather than a `slopdesk` subcommand because the shipped name is release-facing (`docs/49` signs
+# it); its own workspace root rather than a member because it is a per-byte relay that lives as long
+# as a shell session and wants the client profile, not the CLI's startup-tuned one.
+#
+# The 534-line `main.swift` it replaces held four types that existed only to hold Swift's
+# concurrency together — a `DispatchSource`→`AsyncStream` resize bridge, a hand-rolled bounded pipe
+# re-creating `write(2)`'s backpressure, a lock around one exit code, and a `Shutdown` that stopped
+# two foreign producers before `exit(3)` could leave the terminal raw. None of the four is replaced:
+# the resize wait IS a thread in `sigwait`, the backpressure IS `send_input` blocking, and the
+# terminal is put back by a `Drop` that runs because `main` RETURNS a code.
+
+# Build slopdesk-client, the interactive remote terminal (rust/slopdesk-client)
+client:
+    cd rust/slopdesk-client && cargo build --release
+
+# cargo test for the client CLI's arg parse (rust/slopdesk-client)
+client-test:
+    cd rust/slopdesk-client && cargo test
+
+# THE crown-jewel end-to-end proof, and the one thing in this file that launches two SHIPPED
+# binaries against a real PTY. It is what `SubprocessE2ETests` was, re-homed with its subject: six
+# scenarios — an echo over TCP, a pane opening in `$HOME` rather than the daemon's cwd, scrollback
+# surviving a hostd restart, a cold reattach keeping the cursor shape, two clients on one PTY, and
+# the count from the PROCESS TABLE that a second client forks no second shell.
+#
+# hostd and superd are SEPARATE cargo workspaces, so an integration test in `slopdesk-client` cannot
+# ask cargo where either binary is. This recipe builds both: hostd is NAMED in the environment,
+# superd is FOUND beside its own manifest. Without `SLOPDESK_E2E_HOSTD_BIN` the suite SKIPS rather
+# than fails, which is what keeps `client-test` cheap and honest.
+#
+# The variable is deliberately not `SLOPDESK_HOSTD_BIN`: `docs/46` records THAT name as having no
+# reader, and the absence is the claim — a search order for hostd beside the installer's is exactly
+# what the row rules out. This one is scoped to the harness by its name.
+
+# The two SHIPPED binaries against a real PTY (rust/slopdesk-client/tests)
+client-e2e: host superd
+    cd rust/slopdesk-client && \
+        SLOPDESK_E2E_HOSTD_BIN="$PWD/../slopdesk-hostd/target/release/slopdesk-hostd" \
+        cargo test --test subprocess_e2e -- --test-threads=1 --nocapture
+
 # fzf's `FuzzyMatchV2` — the ranking behind every search field (command palette, Open-Quickly,
 # command navigator, Jump-To). Its own crate for the same reason `altscreen` is: it is a pure
 # algorithm with no protocol knowledge, and it wants `opt-level = 3` where the daemons want `"z"`.
@@ -1303,7 +1344,7 @@ host-status:
 # sees cargo — it just reports those tests skipped, by name.
 
 # cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + one client pane session's driver + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test ctl superd screend dropd androidd inspectord
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # `superd` for the same load-bearing reason as `test` above, and it matters MORE here: this is the

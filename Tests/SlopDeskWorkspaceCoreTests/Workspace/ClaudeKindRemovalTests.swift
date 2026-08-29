@@ -251,9 +251,7 @@ final class ClaudeKindRemovalTests: XCTestCase {
         let session = LivePaneSession.make(
             paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "term"),
             makeClient: { _ in
-                SlopDeskClient(makeTransport: {
-                    MuxClientTransport(registry: ConnectionRegistry())
-                })
+                SlopDeskClient(driver: FakePaneDriver.inert("the inspector gate never dials a pane"))
             },
             makeInspector: { _ in
                 madeInspector = true

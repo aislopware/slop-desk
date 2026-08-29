@@ -3,7 +3,7 @@ import SlopDeskClient
 import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 
-/// Orchestrates a ``SlopDeskClient`` + ``ReconnectManager`` for the UI: host/port entry,
+/// Orchestrates a ``SlopDeskClient`` for the UI: host/port entry,
 /// connect/disconnect, and a live status the chrome renders. Owns the connect lifecycle so views
 /// stay declarative:
 /// - ``connect()`` stands up the client, starts the reconnect supervisor + ``TerminalViewModel``
@@ -60,7 +60,6 @@ public final class ConnectionViewModel {
 
     private let terminal: TerminalViewModel
     private let makeClient: @Sendable () -> SlopDeskClient
-    private let backoff: ReconnectManager.Backoff
 
     /// An EXPLICIT child-requested desktop notification (OSC 9 / OSC 777). The store wires this to its
     /// pane-notification hook (a click can focus + centre this pane). `nil` ⇒ no observer (dropped).
@@ -163,7 +162,6 @@ public final class ConnectionViewModel {
     /// Every decision on those four scalars is `rust/slopdesk-workspace`'s `connect_run`, including
     /// the reap/eviction asymmetry; this side performs what it answers. See ``ConnectRun``.
     private let connectRun = ConnectRun()
-    private var reconnect: ReconnectManager?
     /// Single-flight guard for ``connect()``. `connect()` is `@MainActor`, but its body
     /// SUSPENDS at `await teardown()` (which awaits `outDrainTask?.value` / `client?.close()`), so two
     /// overlapping calls — a double / key-repeated "Reconnect Pane" — could interleave: the second call's
@@ -172,7 +170,6 @@ public final class ConnectionViewModel {
     /// whose output keeps painting into the pane). Chaining each attempt after the prior one SERIALIZES
     /// them: the second's teardown then closes+cancels the first's fully-built client, so no zombie leaks.
     private var connectTask: Task<Void, Never>?
-    private var supervisorTask: Task<Void, Never>?
     /// The single events loop (chrome status + forward to the terminal model).
     private var observeTask: Task<Void, Never>?
     /// The terminal model's `output` byte-pump loop (separate from events).
@@ -225,13 +222,11 @@ public final class ConnectionViewModel {
     public init(
         terminal: TerminalViewModel,
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
-        backoff: ReconnectManager.Backoff = .init(),
         initialCwd: String? = nil,
         makeClient: @escaping @Sendable () -> SlopDeskClient,
     ) {
         self.terminal = terminal
         self.target = target
-        self.backoff = backoff
         let trimmed = initialCwd?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.initialCwd = (trimmed?.isEmpty ?? true) ? nil : trimmed
         self.makeClient = makeClient
@@ -371,26 +366,6 @@ public final class ConnectionViewModel {
             await self?.terminal.observe(client: client)
         }
 
-        // Reconnect supervisor: drives byte-exact resumes on a drop. Its progress/give-up callbacks publish
-        // the WF3 backoff state onto `status` so the chrome surfaces an attempt-aware "reconnecting" (with
-        // a countdown) and a terminal "unreachable" instead of a frozen dot. The callbacks are `@Sendable`
-        // and hop onto the main actor; they only ENRICH the `.reconnecting` the events loop already set on
-        // the drop (`observeEvents`), so a recovery (`onLog "resumed"` → `.reconnected` → `.connected`) wins.
-        let manager = ReconnectManager(
-            client: client,
-            backoff: backoff,
-            onLog: { [weak self] line in
-                Task { @MainActor in self?.lastLog = line }
-            },
-            onProgress: { [weak self] attempt, nextRetryAt in
-                Task { @MainActor in self?.applyReconnectProgress(attempt: attempt, nextRetry: nextRetryAt) }
-            },
-            onGaveUp: { [weak self] in
-                Task { @MainActor in self?.applyReconnectGaveUp() }
-            },
-        )
-        reconnect = manager
-
         // DEAD-HOST TIMEOUT: the ~10s ceiling lives at the TRANSPORT layer
         // (`LiveMuxConnectionFactory.makeConnection` → `withMuxConnectTimeout`), NOT here. Do NOT re-add a
         // `withThrowingTaskGroup` racing `client.connect` against a `Task.sleep` at THIS level: that
@@ -398,15 +373,13 @@ public final class ConnectionViewModel {
         // logged the accept; the sleep never fired → the cooperative pool jammed). Wrapping only the inner
         // NWConnection establishment (a Network.framework callback, off the cooperative pool) is safe and
         // bounded; an unreachable host throws `SlopDeskTransportError.timedOut` here in ~`handshakeTimeout`
-        // and we surface `.failed` instead of hanging at "connecting" forever.
-        // Start the reconnect supervisor BEFORE `connect()` so its subscription to `client.events`
-        // (registered eagerly in `manager.start`) is live before any drop. Starting it AFTER a successful
-        // connect opens a window where a fast `.disconnected` is yielded to no subscriber and LOST — the
-        // pane then sticks at "reconnecting" with no retry. The supervisor only ACTS
-        // on a `.disconnected`; before/around connect there are none, so this is inert until a real drop.
-        // On an initial-connect failure there is no session to resume, so it is cancelled in the catch.
-        let supervisor = manager.start(host: host, port: port)
-        supervisorTask = supervisor
+        //
+        // THE RECONNECT SUPERVISOR IS NOT STARTED HERE, and there is nothing to start: the campaign
+        // runs inside the driver, on the thread that owns the transport, armed by the same drop that
+        // ends the stream. So the window this used to guard against — a fast `.disconnected` yielded
+        // before a separately-scheduled supervisor task had subscribed, leaving the pane stuck at
+        // "reconnecting" with no retry — cannot exist. What reaches this side is the ladder's own
+        // `.retrying` / `.gaveUp` / `.log`, folded by `foldEvent` like any other event.
         do {
             // CANCELLATION SHIELD (canvas auto-connect bug): the lazy connect-on-remount runs inside a
             // Task the LEAF owns, which it CANCELS and restarts whenever its dial key moves or it leaves
@@ -455,8 +428,6 @@ public final class ConnectionViewModel {
             }
         } catch {
             guard connectRun.isCurrent(myGeneration), self.client === client else { return }
-            supervisor.cancel()
-            supervisorTask = nil
             status = .failed(ConnectGate.failureReason(for: error))
         }
     }
@@ -587,7 +558,7 @@ public final class ConnectionViewModel {
             // re-reports its own.
             onProgressUpdate?(nil)
             // Both host closes read as deliberate too — they ARE deliberate, just decided at the
-            // other end. No campaign will follow either (``ReconnectManager`` gates on the same
+            // other end. No campaign will follow either (the driver's ladder gates on the same
             // fact), so showing "reconnecting" would be a spinner for a retry nobody is making.
             // That the eviction is RECOVERABLE does not make it a retry: what recovers it is the
             // fan-out or the user, and until one of them happens the pane is honestly disconnected.
@@ -734,6 +705,16 @@ public final class ConnectionViewModel {
             // CLEAR frame (session ended / claude gone), which must reach the store or a dead
             // session's task line would squat on the row title forever.
             onAgentIntentChanged?(intent)
+        case let .retrying(attempt, nextRetryAt):
+            // The driver's ladder, ENRICHING the `.reconnecting` the `.disconnected` branch above
+            // already set: the attempt count and the countdown instant are what the chrome renders
+            // beyond a spinner. Never a promotion — the fold refuses to touch a status that has
+            // moved on, so a late retry after a recovery cannot un-connect a live pane.
+            applyReconnectProgress(attempt: attempt, nextRetry: nextRetryAt)
+        case .gaveUp:
+            applyReconnectGaveUp()
+        case let .log(line):
+            lastLog = line
         case .bell:
             break
         }
@@ -747,7 +728,8 @@ public final class ConnectionViewModel {
     func foldEventForTesting(_ event: SlopDeskClient.Event) { foldEvent(event) }
     #endif
 
-    /// Folds a ``ReconnectManager`` progress callback into `status` (WF3 backoff → UI).
+    /// Folds the driver's ``SlopDeskClient/Event/retrying(attempt:nextRetryAt:)`` into `status`
+    /// (WF3 backoff → UI).
     ///
     /// The DECISION is ``ConnectGate/reconnectFold(status:deliberatelyClosed:gaveUp:)``; what is left
     /// here is the mutation, because the `@Observable` property is Swift's. `attempt` and `nextRetry`
@@ -771,10 +753,8 @@ public final class ConnectionViewModel {
     }
 
     private func teardown() async {
-        supervisorTask?.cancel()
         observeTask?.cancel()
         outputTask?.cancel()
-        supervisorTask = nil
         observeTask = nil
         outputTask = nil
         // Drop the OUT-path sinks + tear down the serial drain before releasing the client so the renderer
@@ -825,6 +805,5 @@ public final class ConnectionViewModel {
         outQueue.removeAll(keepingCapacity: true)
         await client?.close()
         client = nil
-        reconnect = nil
     }
 }

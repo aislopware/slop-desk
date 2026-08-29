@@ -14,11 +14,15 @@ import XCTest
 @MainActor
 final class OutDrainOffMainOrderTests: XCTestCase {
     func testKeystrokeOrderSurvivesJitteredTransportOffMain() async throws {
-        let rec = JitterRecorder()
+        let rec = PaneDriverRecorder { driver in
+            // Every third send stalls: an unordered design has every opportunity to scramble, and
+            // the single sequential drain must not take it.
+            driver.sendJitter = .milliseconds(2)
+        }
         let terminal = TerminalViewModel()
         let vm = ConnectionViewModel(
             terminal: terminal, target: { ConnectionTarget(host: "h", port: 1) },
-            makeClient: { SlopDeskClient(makeTransport: { rec.makeTransport() }) },
+            makeClient: { SlopDeskClient(driver: rec.make()) },
         )
         await vm.connect()
 
@@ -42,11 +46,15 @@ final class OutDrainOffMainOrderTests: XCTestCase {
     }
 
     func testTeardownAwaitsDrainNoDuplicationAndFlushesTrailingResize() async {
-        let rec = JitterRecorder()
+        let rec = PaneDriverRecorder { driver in
+            // Every third send stalls: an unordered design has every opportunity to scramble, and
+            // the single sequential drain must not take it.
+            driver.sendJitter = .milliseconds(2)
+        }
         let terminal = TerminalViewModel()
         let vm = ConnectionViewModel(
             terminal: terminal, target: { ConnectionTarget(host: "h", port: 1) },
-            makeClient: { SlopDeskClient(makeTransport: { rec.makeTransport() }) },
+            makeClient: { SlopDeskClient(driver: rec.make()) },
         )
         await vm.connect()
 
@@ -67,79 +75,6 @@ final class OutDrainOffMainOrderTests: XCTestCase {
         )
         XCTAssertEqual(rec.resizes.last?.cols, 123, "the trailing resize always reaches the host (control path)")
         XCTAssertEqual(rec.resizes.last?.rows, 45)
-    }
-
-    // MARK: - Jittering recording transport
-
-    private final class JitterRecorder: @unchecked Sendable {
-        private let lock = NSLock()
-        private var bytes = Data()
-        private var sizes: [(cols: UInt16, rows: UInt16)] = []
-        var inputBytes: Data { lock.lock()
-            defer { lock.unlock() }
-            return bytes
-        }
-
-        var resizes: [(cols: UInt16, rows: UInt16)] { lock.lock()
-            defer { lock.unlock() }
-            return sizes
-        }
-
-        func recordInput(_ d: Data) { lock.lock()
-            bytes.append(d)
-            lock.unlock()
-        }
-
-        func recordResize(_ c: UInt16, _ r: UInt16) { lock.lock()
-            sizes.append((c, r))
-            lock.unlock()
-        }
-
-        func makeTransport() -> JitterTransport { JitterTransport(recorder: self) }
-    }
-
-    private actor JitterTransport: ClientTransporting {
-        private let recorder: JitterRecorder
-        private var counter = 0
-        private var _sessionID: UUID?
-        var sessionID: UUID? { _sessionID }
-        var resumeFromSeq: Int64 { 0 }
-        var returningClient: Bool { false }
-        private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-        nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-
-        init(recorder: JitterRecorder) {
-            self.recorder = recorder
-            var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-            inbound = AsyncThrowingStream { c = $0 }
-            continuation = c
-        }
-
-        func connect(
-            host _: String,
-            port _: UInt16,
-            resume _: UUID,
-            lastReceivedSeq _: Int64,
-            handshakeTimeout _: Duration,
-        ) {
-            _sessionID = UUID()
-        }
-
-        func sendInput(_ bytes: Data) async {
-            // Deterministic jitter: every 3rd send suspends, giving an unordered design
-            // every opportunity to scramble. The single sequential drain must not.
-            counter += 1
-            if counter.isMultiple(of: 3) { try? await Task.sleep(for: .milliseconds(2)) }
-            recorder.recordInput(bytes)
-        }
-
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {
-            recorder.recordResize(cols, rows)
-        }
-
-        func sendAck(seq _: Int64) {}
-        func sendBye() {}
-        func close() { continuation.finish() }
     }
 
     private func waitUntil(timeout: Duration, _ condition: @Sendable () -> Bool) async throws {

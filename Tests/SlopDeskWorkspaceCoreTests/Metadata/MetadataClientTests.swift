@@ -7,7 +7,7 @@ import XCTest
 
 /// The client-side host-metadata round-trip: ``MetadataRequestRegistry`` (correlation +
 /// never-hangs timeout), ``MetadataClient`` (typed decode + per-pane cache + validate-then-drop), and the
-/// full wire path through a real ``SlopDeskClient`` + a fake ``ClientTransporting`` that echoes canned
+/// full wire path through a real ``SlopDeskClient`` + a fake ``PaneDriving`` that echoes canned
 /// `metadataResponse` frames. Every behavior has a test that FAILS on the un-fixed code:
 /// - drop the registry timeout → the timeout tests hang;
 /// - resolve ignoring `requestID` → the interleaved-correlation test swaps the replies;
@@ -294,15 +294,14 @@ final class MetadataClientTests: XCTestCase {
         XCTAssertEqual(responder.captured.count, 2, "invalidation forces a re-fetch")
     }
 
-    // MARK: - Full wire path: SlopDeskClient + echoing ClientTransporting + fold
+    // MARK: - Full wire path: SlopDeskClient + an echoing driver + fold
 
     func testEndToEndEchoedReplyDecodesThroughClientAndFold() async throws {
-        let transport = RecordingMetadataTransport()
         let canned = MetadataFixtureBytes.processList([(pid: 42, uptimeSec: 7, name: "claude")])
-        await transport.setReply(
+        let driver = echoingDriver(
             verb: MetadataVerb.processes.rawValue, status: MetadataStatus.ok.rawValue, payload: canned,
         )
-        let client = SlopDeskClient(makeTransport: { transport })
+        let client = SlopDeskClient(driver: driver)
         try await client.connect(host: "h", port: 1)
 
         // The fold runs on the MainActor, and under a loaded suite it can wait behind every other
@@ -329,14 +328,18 @@ final class MetadataClientTests: XCTestCase {
         await client.close()
 
         XCTAssertEqual(processes, [MetadataCodec.ProcessInfo(pid: 42, uptimeSec: 7, name: "claude")])
-        let requested = await transport.requested
+        let requested = driver.sentControl
         XCTAssertEqual(requested.count, 1)
-        XCTAssertEqual(requested.first?.verb, MetadataVerb.processes.rawValue)
-        XCTAssertNotEqual(requested.first?.requestID, 0)
+        guard case let .metadataRequest(requestID, verb, _) = try XCTUnwrap(requested.first) else {
+            XCTFail("the one control frame is the metadata request")
+            return
+        }
+        XCTAssertEqual(verb, MetadataVerb.processes.rawValue)
+        XCTAssertNotEqual(requestID, 0)
     }
 
     func testRequestMetadataBeforeConnectThrows() async {
-        let client = SlopDeskClient(makeTransport: { RecordingMetadataTransport() })
+        let client = SlopDeskClient(driver: FakePaneDriver())
         do {
             try await client.requestMetadata(requestID: 1, verb: MetadataVerb.cwd.rawValue, payload: Data())
             XCTFail("requestMetadata before connect must throw, never silently no-op")
@@ -382,48 +385,18 @@ private final class EchoResponder {
     }
 }
 
-/// A fake ``ClientTransporting`` that records `sendMetadataRequest` and echoes a canned `metadataResponse`
-/// (per verb) straight back onto the inbound stream — the "fake transport that echoes canned responses".
-private actor RecordingMetadataTransport: ClientTransporting {
-    private var _sessionID: UUID?
-    var sessionID: UUID? { _sessionID }
-    var resumeFromSeq: Int64 { 0 }
-    var returningClient: Bool { false }
-    private(set) var requested: [(requestID: UInt32, verb: UInt8, payload: Data)] = []
-    private var replies: [UInt8: (status: UInt8, payload: Data)] = [:]
-
-    private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-    nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-
-    init() {
-        var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-        inbound = AsyncThrowingStream { c = $0 }
-        continuation = c
+/// Builds a driver that ECHOES one canned `metadataResponse` for `verb`, straight back through the
+/// event sink — the "fake transport that echoes canned responses", one layer down.
+///
+/// One layer down is the whole difference: the old double implemented `sendMetadataRequest` and had
+/// to know that a request becomes a reply on the inbound stream. This one records a `sendControl`
+/// and answers it, which is all a host does.
+@MainActor
+private func echoingDriver(verb: UInt8, status: UInt8, payload: Data) -> FakePaneDriver {
+    let driver = FakePaneDriver()
+    driver.onControl = { [weak driver] message in
+        guard case let .metadataRequest(requestID, requested, _) = message, requested == verb else { return }
+        driver?.deliverWire(.metadataResponse(requestID: requestID, status: status, payload: payload))
     }
-
-    func setReply(verb: UInt8, status: UInt8, payload: Data) {
-        replies[verb] = (status: status, payload: payload)
-    }
-
-    func connect(
-        host _: String,
-        port _: UInt16,
-        resume _: UUID,
-        lastReceivedSeq _: Int64,
-        handshakeTimeout _: Duration,
-    ) {
-        _sessionID = UUID()
-    }
-
-    func sendInput(_: Data) {}
-    func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
-    func sendAck(seq _: Int64) {}
-    func sendBye() {}
-    func sendMetadataRequest(requestID: UInt32, verb: UInt8, payload: Data) {
-        requested.append((requestID: requestID, verb: verb, payload: payload))
-        guard let reply = replies[verb] else { return }
-        continuation.yield(.metadataResponse(requestID: requestID, status: reply.status, payload: reply.payload))
-    }
-
-    func close() { continuation.finish() }
+    return driver
 }

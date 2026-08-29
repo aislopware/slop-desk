@@ -59,6 +59,10 @@ const REGISTRY_FACE: &str = "Sources/SlopDeskTransport/Mux/ConnectionRegistry.sw
 /// neither byte door left on it.
 const WIRE_CODEC_FACE: &str = "Sources/SlopDeskProtocol/WireMessageCodec.swift";
 
+/// The per-PANE face that G.5 left standing — one `slopdesk_pane_driver_*` handle and three
+/// callbacks, under the protocol the app's suites now fake at.
+const DRIVER_FACE: &str = "Sources/SlopDeskClient/PaneDriving.swift";
+
 /// The client's mux layer is Rust, and the Swift that spoke it stays deleted.
 ///
 /// `docs/63` §G.3. Composed the way [`deleted_host_swift`](super::deleted_host_swift) is: a vector
@@ -69,8 +73,10 @@ pub fn deleted_client_swift(tree: &Tree) -> Report {
     claims.extend(the_transport_mux_stays_deleted());
     claims.extend(the_mux_test_fakes_stay_deleted());
     claims.extend(the_terminal_byte_codec_stays_deleted());
+    claims.extend(the_client_session_swift_stays_deleted());
     claims.extend(no_deleted_type_is_declared_again());
     claims.extend(the_three_faces_still_ask());
+    claims.extend(the_driver_face_still_asks());
     check_all(tree, &claims)
 }
 
@@ -298,6 +304,83 @@ fn the_terminal_byte_codec_stays_deleted() -> Vec<Claim> {
     ]
 }
 
+/// The pane SESSION and the CLI over it, deleted by `docs/63` §G.5.
+///
+/// G.3 moved the socket and G.4 moved the codec; what was left in Swift was the thing that DECIDED
+/// — the dedup fold, the ack cadence, the resume verdict, the retry ladder — and a 534-line `main`
+/// that drove it. All of it is `rust/slopdesk-clientdriver` and `rust/slopdesk-client` now.
+///
+/// Two of these are directories rather than files, and that is deliberate:
+/// `Sources/slopdesk-client` and `Tests/SlopDeskClientTests` were whole TARGETS, and a ban on one
+/// file inside either would be green the moment the target came back under a different filename.
+///
+/// ## Why the twelve suites are banned as a directory and not re-homed one by one
+///
+/// Each of them drove the Swift session actor through a fake `ClientTransporting`, which is a
+/// protocol the session itself declared. That is the weaker pin twice over: a suite can only reach
+/// as far as the seam its subject chose to offer, and a fake transport under a Swift driver quietly
+/// re-decides part of what the driver does. Every property they held is pinned in
+/// `rust/slopdesk-clientdriver` against a fake `ByteLink` — one layer BELOW the decisions rather
+/// than one layer above them. The thirteenth, `SubprocessE2ETests`, launched the two shipped
+/// binaries; both are cargo binaries now, so it is `rust/slopdesk-client/tests/`.
+fn the_client_session_swift_stays_deleted() -> Vec<Claim> {
+    vec![
+        Claim::Absent {
+            path: "Sources/slopdesk-client",
+            message: "the Swift CLI target is back — `slopdesk-client` is a cargo bin \
+                      (rust/slopdesk-client) whose whole body is an arg parse, a raw-mode guard, two byte \
+                      pumps and a SIGWINCH wait over slopdesk-clientdriver; a Swift one would be a second \
+                      process with a second session in it (docs/63 §G.5)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskClient/ReconnectManager.swift",
+            message: "the reconnect campaign is back in Swift — it is inside the driver now, over \
+                      slopdesk_clientsession::backoff and gated by campaign_runs, which is what dissolved \
+                      both the second event-stream consumer it needed and the subscribe-before-connect race \
+                      it documented (docs/63 §G.5)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskClient/BoundedInputPipe.swift",
+            message: "the bounded input hand-off is back — it existed because an AsyncStream has no \
+                      backpressure, and the Rust CLI's stdin thread blocks in send_input instead, which IS \
+                      write(2)'s own contract rather than an emulation of it (docs/63 §G.5)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskTransport/ClientTransporting.swift",
+            message: "the transport protocol is back — it existed so a Swift driver could be handed a fake, \
+                      and with the driver in Rust a Swift conformer is a second implementation wearing a \
+                      test's clothes; what the app's suites fake now is PaneDriving, which can only SAY \
+                      what arrived (docs/63 §G.5)",
+        },
+        Claim::Absent {
+            path: "Tests/SlopDeskClientTests",
+            message: "the Swift client suites are back — each drove the session through a protocol the \
+                      session itself declared, and every property they pinned is pinned in \
+                      rust/slopdesk-clientdriver against a fake ByteLink, one layer BELOW the decisions \
+                      (docs/63 §G.5)",
+        },
+        Claim::Lacks {
+            path: "rust/slopdesk-ffi/src/session_marks.rs",
+            pattern: r"slopdesk_pane_session_|slopdesk_pane_backoff_(delay|next_after|exhausted|direct)",
+            view: View::Code,
+            message: "a client-session door is back in session_marks.rs — the marks, the four gates, the \
+                      round-trip fold and the ladder's arithmetic were the C face slopdesk-clientsession \
+                      wore for a SWIFT driver, and the driver is rust/slopdesk-clientdriver now, which \
+                      calls the crate as a crate. TWO doors survive on purpose and are not matched here: \
+                      _backoff_default and _backoff_max_attempts, which answer a CONFIGURATION and a piece \
+                      of UI copy, both asked before any driver exists (docs/63 §G.5)",
+        },
+        Claim::Absent {
+            path: "rust/slopdesk-ffi/src/tty.rs",
+            message: "the raw-mode doors are back — slopdesk_tty_enter_raw, _restore, \
+                      _install_restore_on_signals, _window_size and slopdesk_fd_write_all existed for the \
+                      Swift CLI alone, and the Rust one calls slopdesk_posix::rawmode and ::fdio directly; \
+                      a door whose far side went away is docs/55 §4b's own retirement criterion (docs/63 \
+                      §G.5)",
+        },
+    ]
+}
+
 /// And the same layer under any other filename.
 ///
 /// The path bans above are exact, so a resurrection that renames the file slips all of them. These
@@ -336,7 +419,8 @@ fn no_deleted_type_is_declared_again() -> Vec<Claim> {
             exempt: &[],
             message: "{files} exposes a makeConnection seam again — it existed so a suite could pool a fake \
                       connection, and a second dial path that SHIPS is the price of that; a test with no \
-                      host injects at ClientTransporting, which docs/63 keeps until G.5",
+                      host injects at PaneDriving instead, which is where the last decision this pool \
+                      serves finally leaves Swift (docs/63 §G.5)",
         },
     ]
 }
@@ -362,12 +446,16 @@ fn the_three_faces_still_ask() -> Vec<Claim> {
                 "slopdesk_mux_transport_free",
                 "slopdesk_mux_transport_await_open_ack",
                 "slopdesk_mux_transport_send",
-                "slopdesk_mux_transport_send_input",
-                "slopdesk_mux_transport_note_consumed",
             ],
-            message: "MuxClientTransport.swift no longer calls {entry} — every one of those is a decision \
-                      the layer took with it (the open handshake, the input SPLIT at the flow cap, the \
-                      consumption credit), and a face that drops one has answered it itself (docs/63 §G.3)",
+            // The list is three now, not five. `_send_input` and `_note_consumed` retired with the
+            // PANE's use of this handle (docs/63 §G.5): keystrokes ride
+            // `slopdesk_pane_driver_send_input` and consumption credit is issued inside
+            // `slopdesk_pane_driver_take_output`. What is left on this face is the WORKSPACE
+            // channel, which is `channelClass 1` and speaks control alone — so naming a data-lane
+            // door here would demand a call the one surviving caller has no reason to make.
+            message: "MuxClientTransport.swift no longer calls {entry} — the open, its handshake and the \
+                      control send are the decisions the layer took with it, and a face that drops one has \
+                      answered it itself (docs/63 §G.3)",
         },
         Claim::Doors {
             path: REGISTRY_FACE,
@@ -383,6 +471,27 @@ fn the_three_faces_still_ask() -> Vec<Claim> {
                       spelling (docs/63 §G.3)",
         },
     ]
+}
+
+/// The G.5 face, on the same terms as the three above: it holds a handle and nothing else.
+///
+/// The four doors named are the four DECISIONS the port took away. A `PaneDriving` conformer that
+/// stopped calling `_connect` would be re-deciding when a channel opens; one that stopped calling
+/// `_take_output` would be holding an inbox of its own beside the driver's, which is the batched
+/// hot path growing a second copy. `_new` and `_free` are the lifetime, and the seed rides `_new`.
+fn the_driver_face_still_asks() -> Vec<Claim> {
+    vec![Claim::Doors {
+        path: DRIVER_FACE,
+        entries: &[
+            "slopdesk_pane_driver_new",
+            "slopdesk_pane_driver_free",
+            "slopdesk_pane_driver_connect",
+            "slopdesk_pane_driver_take_output",
+        ],
+        message: "PaneDriving.swift no longer calls {entry} — the transport, the tickers, the reconnect \
+                  campaign and the output inbox are rust/slopdesk-clientdriver's, and a face that drops one \
+                  of these has grown a second one beside it (docs/63 §G.5)",
+    }]
 }
 
 #[cfg(test)]
@@ -409,6 +518,22 @@ mod tests {
                 super::REGISTRY_FACE,
                 "slopdesk_mux_pool_new(ms)\nslopdesk_mux_pool_free(pool)\nslopdesk_mux_pool_pin(pool)\\
                  nslopdesk_mux_pool_unpin(pool)\n",
+            )
+            // The two doors G.5 left on the client-session face — a `Lacks` needs the file, and a
+            // fixture without it would fail every OTHER test in this module rather than the one
+            // about it.
+            .write(
+                "rust/slopdesk-ffi/src/session_marks.rs",
+                "pub extern \"C\" fn slopdesk_pane_backoff_default() -> Schedule { \
+                 SHIPPED }\npub const extern \"C\" fn slopdesk_pane_backoff_max_attempts() -> u32 { 20 }\n",
+            )
+            // The face G.5 left standing — a handle, and the four doors that are the four decisions
+            // it no longer takes.
+            .write(
+                super::DRIVER_FACE,
+                "slopdesk_pane_driver_new(pool, context, config)\nslopdesk_pane_driver_free(pointer)\\
+                 nslopdesk_pane_driver_connect(pointer, host, len, port, ms, reason, cap, \
+                 written)\nslopdesk_pane_driver_take_output(pointer, context, chunk)\n",
             )
             // The flattener that survived G.4 — a marshaller, with neither byte door on it.
             .write(
@@ -521,6 +646,25 @@ mod tests {
             "Tests/SlopDeskProtocolTests/MetadataWireMessageTests.swift",
             "func testMetadataRequestRoundTrip() { XCTAssertEqual(try roundTrip(m), m) }\n",
         ),
+        // G.5. The two DIRECTORY bans are not here — `Fixture::remove` takes a file out and leaves
+        // the directory, so the loop below could never restore the clean tree. They have their own
+        // test, one fixture each.
+        (
+            "Sources/SlopDeskClient/ReconnectManager.swift",
+            "func start(host: String, port: UInt16) -> Task<Void, Never> { Task { await ladder() } }\n",
+        ),
+        (
+            "Sources/SlopDeskClient/BoundedInputPipe.swift",
+            "func enqueue(_ bytes: Data) { while held + bytes.count > capacity { room.wait() } }\n",
+        ),
+        (
+            "Sources/SlopDeskTransport/ClientTransporting.swift",
+            "public protocol ClientTransporting: Sendable { func sendInput(_ bytes: Data) async throws }\n",
+        ),
+        (
+            "rust/slopdesk-ffi/src/tty.rs",
+            "pub extern \"C\" fn slopdesk_tty_enter_raw(terminal: i32) -> i32 { 0 }\n",
+        ),
     ];
 
     /// The clean tree is green, and each deleted path is red on its own.
@@ -542,6 +686,58 @@ mod tests {
                 "{path}: taking it back out did not restore the clean tree"
             );
         }
+    }
+
+    /// The two G.5 bans that are on a TARGET rather than on a file.
+    ///
+    /// Seeded the way either would actually come back — with a plausible file inside it, since
+    /// nobody restores an empty directory — and checked against a FRESH fixture rather than by
+    /// taking the file back out: `Fixture::remove` unlinks a file and leaves the directory, which
+    /// is exactly the state the ban is supposed to stay red on.
+    #[test]
+    fn a_revived_swift_client_target_is_red() {
+        for (path, seed) in [
+            (
+                "Sources/slopdesk-client/main.swift",
+                "let client = SlopDeskClient(makeTransport: { MuxClientTransport(registry: pool) })\n",
+            ),
+            (
+                "Tests/SlopDeskClientTests/SlopDeskClientDedupTests.swift",
+                "func testADuplicateSeqIsDropped() { XCTAssertEqual(client.takeOutputBatch().count, 1) }\n",
+            ),
+        ] {
+            let fixture = Fixture::new("deleted-client-swift-target");
+            client(&fixture);
+            assert!(deleted_client_swift(&fixture.tree()).is_clean(), "{path}");
+            fixture.write(path, seed);
+            assert!(
+                !deleted_client_swift(&fixture.tree()).is_clean(),
+                "{path}: the target came back and the ban did not fire"
+            );
+        }
+    }
+
+    /// The client-session doors growing back inside the file that kept two of them.
+    ///
+    /// A `Lacks` rather than an `Absent`, because the file SURVIVES: `_backoff_default` and
+    /// `_backoff_max_attempts` still cross, so the ban has to be on what is written in it. Seeded
+    /// with the door a resurrection would start from — the seed, which is where every restore of
+    /// this face began the first time.
+    #[test]
+    fn a_client_session_door_returning_to_session_marks_is_red() {
+        let fixture = Fixture::new("deleted-client-swift-marks");
+        client(&fixture);
+        assert!(
+            deleted_client_swift(&fixture.tree()).is_clean(),
+            "the two survivors are fine"
+        );
+
+        fixture.write(
+            "rust/slopdesk-ffi/src/session_marks.rs",
+            "pub const extern \"C\" fn slopdesk_pane_session_seeded(last_seq: i64) -> Marks { Marks::new() \
+             }\n",
+        );
+        assert!(!deleted_client_swift(&fixture.tree()).is_clean());
     }
 
     /// The byte half growing back INSIDE the surviving flattener, which no path ban would see.
@@ -651,6 +847,13 @@ mod tests {
 
         client(&fixture);
         fixture.write(super::REGISTRY_FACE, "slopdesk_mux_pool_new(ms)\n");
+        assert!(!deleted_client_swift(&fixture.tree()).is_clean());
+
+        client(&fixture);
+        fixture.write(
+            super::DRIVER_FACE,
+            "slopdesk_pane_driver_new(pool, context, config)\n",
+        );
         assert!(!deleted_client_swift(&fixture.tree()).is_clean());
 
         // A bare tree has no faces at all — which is what stops the ban list passing on nothing.

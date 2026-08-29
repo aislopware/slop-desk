@@ -1,6 +1,6 @@
 #if os(macOS)
 import Network
-import SlopDeskTransport
+import SlopDeskNet
 import XCTest
 @testable import SlopDeskClientCore
 

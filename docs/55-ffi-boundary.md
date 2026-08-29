@@ -1098,12 +1098,18 @@ Two rules keep that true, both gated in `slopdesk-invariants`:
 
 ## 6. The Swift side
 
-`Sources/SlopDeskTransport/AltScreenCutScanner.swift` is the reference shape and is deliberately
+`Sources/SlopDeskDevicePanels/Android/AltScreenCutScanner.swift` is the reference shape and is deliberately
 boring: two nested `withUnsafeBytes` and nothing between them, since those scopes *are* the safety
 contract; a first guess at the size, generous by an order of magnitude; a retry that exists to be
-correct rather than to be used. The public signature is unchanged from the Swift implementation it
-replaced, so its callers and its tests did not move — which is what makes "delete the original in
-the same change" a diff a reviewer can check.
+correct rather than to be used. The signature is unchanged from the Swift implementation it replaced,
+so the port itself moved no caller and no test — which is what makes "delete the original in the same
+change" a diff a reviewer can check.
+
+The FILE has moved since, and for a reason unrelated to the shape: `docs/63` G.5 emptied
+`SlopDeskTransport` of everything but the mux face, and a scanner of terminal bytes was never a
+transport concern. It sits beside its one caller in `SlopDeskDevicePanels/Android/` now and is
+internal rather than `public` — which is the shape this section should have recommended in the first
+place. A marshaller is `public` only when a second module calls it.
 
 ### What the imperative UI changed at this boundary, and what it did not
 

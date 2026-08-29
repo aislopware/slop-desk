@@ -1,7 +1,5 @@
 import Foundation
 import SlopDeskClient
-import SlopDeskProtocol
-import SlopDeskTransport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -13,62 +11,12 @@ import XCTest
 /// `tree.detachedPaneIDs()`; this helper must match).
 @MainActor
 final class RedialDetachedPaneTests: XCTestCase {
-    /// An in-memory transport that resolves `connect()` without any real networking (same shape as
-    /// `ConnectionViewModelConnectIfNeededTests.ImmediateTransport`).
-    private actor ImmediateTransport: ClientTransporting {
-        private var _sessionID: UUID?
-        var sessionID: UUID? { _sessionID }
-        var resumeFromSeq: Int64 { 0 }
-        var returningClient: Bool { false }
-        nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-        private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-
-        init() {
-            var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-            inbound = AsyncThrowingStream { c = $0 }
-            continuation = c
-        }
-
-        func connect(
-            host _: String,
-            port _: UInt16,
-            resume _: UUID,
-            lastReceivedSeq _: Int64,
-            handshakeTimeout _: Duration,
-        ) async {
-            await Task.yield()
-            _sessionID = UUID()
-        }
-
-        func sendInput(_: Data) {}
-        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
-        func sendAck(seq _: Int64) {}
-        func sendBye() {}
-        func close() { continuation.finish() }
-    }
-
-    private final class Recorder: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _count = 0
-        var count: Int { lock.lock()
-            defer { lock.unlock() }
-            return _count
-        }
-
-        func makeTransport() -> ImmediateTransport {
-            lock.lock()
-            _count += 1
-            lock.unlock()
-            return ImmediateTransport()
-        }
-    }
-
     /// A two-terminal-pane (`left` || `right`) tree store whose `makeSession` mints REAL
-    /// `LivePaneSession`s backed by `rec`'s in-memory transport — the seam
+    /// `LivePaneSession`s backed by `rec`'s in-memory driver — the seam
     /// ``WorkspaceStore/redialDisconnectedPanes()`` actually acts on (it casts to `LivePaneSession`; the
     /// `FakePaneSession` seam used elsewhere would no-op it). Two panes so detaching `right` leaves
     /// `left` as the tree's sole leaf WITHOUT tripping the sole-pane reseed (docs/DECISIONS.md).
-    private func makeStore(_ rec: Recorder) -> (WorkspaceStore, left: PaneID, right: PaneID) {
+    private func makeStore(_ rec: PaneDriverRecorder) -> (WorkspaceStore, left: PaneID, right: PaneID) {
         let base = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "left"))
         let left = base.allPaneIDs()[0]
         let (ws, right) = TreeIntent.splitPane(
@@ -79,7 +27,7 @@ final class RedialDetachedPaneTests: XCTestCase {
             makeSession: { seed in
                 LivePaneSession.make(
                     paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
-                    makeClient: { _ in SlopDeskClient(makeTransport: { rec.makeTransport() }) },
+                    makeClient: { _ in SlopDeskClient(driver: rec.make()) },
                     makeInspector: { _ in nil },
                     target: { .default },
                 )
@@ -92,7 +40,7 @@ final class RedialDetachedPaneTests: XCTestCase {
     private func megaYield() async { for _ in 0..<50 { await Task.yield() } }
 
     func testRedialReachesDetachedPane() async throws {
-        let rec = Recorder()
+        let rec = PaneDriverRecorder()
         let (store, left, right) = makeStore(rec)
         store.detachPaneToWindow(right)
         XCTAssertTrue(store.tree.isDetached(right), "precondition: the pane left the tree into a satellite")

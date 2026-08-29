@@ -17,13 +17,11 @@ import XCTest
 ///     `agentStatus(for:)` + the session/tab `rollupStatus(...)` light up live.
 @MainActor
 final class ClaudeStatusWiringTests: XCTestCase {
-    /// An inert client factory (never connected — these tests drive the status fold directly, no byte
-    /// stream). `@Sendable` free function so it can be passed as `makeClient` (ignores the resume seed —
-    /// no restored pane in these tests).
+    /// A never-dialled client factory — these tests drive the status fold directly, no byte stream.
+    /// `@Sendable` so it can be passed as `makeClient` (it ignores the resume seed: no restored pane
+    /// here).
     private static let makeUnconnectedClient: @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient = { _ in
-        SlopDeskClient(makeTransport: {
-            MuxClientTransport(registry: ConnectionRegistry())
-        })
+        SlopDeskClient(driver: FakePaneDriver.inert("the status fold never dials a pane"))
     }
 
     private func makeTerminalSession() -> LivePaneSession {
@@ -247,9 +245,11 @@ final class ClaudeStatusWiringTests: XCTestCase {
     // MARK: - 3. The wire→Event surface (SlopDeskClient maps types 26/27 to events)
 
     /// The client surfaces a type-27 `claudeStatus` WireMessage as a `.claudeStatus` Event (the byte
-    /// payload is carried verbatim; the UI maps it back). Proven via the client's test inbound seam.
+    /// payload is carried verbatim; the UI maps it back). Proven by handing the DRIVER the inbound
+    /// message and reading what the client multicast, which is the whole of the client's job here.
     func testClientSurfacesClaudeStatusWireMessageAsEvent() async {
-        let client = Self.makeUnconnectedClient(nil)
+        let driver = FakePaneDriver()
+        let client = SlopDeskClient(driver: driver)
         // Subscribe BEFORE driving so the multicast child stream observes the yield.
         let events = client.events
         let observer = Task { () -> SlopDeskClient.Event? in
@@ -258,7 +258,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
         }
         // Let the subscription register, then drive a type-27 message through the inbound seam.
         await Task.yield()
-        await client.handleInboundForTesting(.claudeStatus(state: 4, kind: 1, label: "Allow?"))
+        driver.deliverWire(.claudeStatus(state: 4, kind: 1, label: "Allow?"))
         let observed = await observer.value
         XCTAssertEqual(
             observed,

@@ -13,8 +13,9 @@ import Foundation
 /// The old one existed so a suite could pool a fake connection. The Rust pool is tested against real
 /// loopback sockets in `rust/slopdesk-clientnet/tests/`, which is a stronger proof and a cheaper one
 /// — so the seam has no remaining job, and re-exposing it would mean a second dial path that ships.
-/// A test that wants a transport with no host injects at ``ClientTransporting`` instead, which is
-/// the seam `docs/63` keeps until G.5.
+/// A test that wants a session with no host injects at `PaneDriving` instead, one module up: that is
+/// where the LAST decision this pool serves finally leaves Swift, so a double there cannot
+/// re-implement any of it.
 ///
 /// ### It is `Sendable`, not `@MainActor`, and that is what the port bought
 /// The Swift pool was `@MainActor` because it WAS the mutable state — an entry map, a refcount and
@@ -108,6 +109,17 @@ public final class ConnectionRegistry: Sendable {
     /// makes every pane to one host share ONE mux.
     var handle: RustHandle { box }
 
+    /// The same pointer, for the ONE door outside this module that takes a pool:
+    /// `slopdesk_pane_driver_new`, held by `SlopDeskClient`'s `LivePaneDriver`.
+    ///
+    /// Public because the pane driver is a module UP — it holds the session, which holds channels on
+    /// this pool — and the alternative was a `makePaneDriver` here, which would put the driver's
+    /// config and its three callbacks inside the transport module that knows nothing about them. The
+    /// invariant that makes it safe rather than merely convenient is the one this type exists for:
+    /// a driver holds a strong reference to the registry it was built from, so the pool cannot be
+    /// freed while a channel rides it — and `slopdesk_mux_pool_free` says exactly that.
+    public var rawPool: OpaquePointer? { box.raw }
+
     /// Lends a host string as the `(ptr, len)` UTF-8 pair every pool door takes.
     private func withHost<T>(_ host: String, _ body: (UnsafePointer<UInt8>?, Int) -> T) -> T {
         let utf8 = Array(host.utf8)
@@ -127,8 +139,12 @@ public final class ConnectionRegistry: Sendable {
     }
 }
 
-extension Duration {
+public extension Duration {
     /// This duration as whole milliseconds, which is the only unit the mux doors take.
+    ///
+    /// `public` because the pane driver's doors take the same unit for the same reason, and a
+    /// second copy of this conversion in `SlopDeskClient` is exactly the drift the one below
+    /// describes — one of the two copies would get the sub-second half right and the other would not.
     ///
     /// Reads the SUB-SECOND half too. Spelling it `components.seconds * 1000` — which both call
     /// sites did — silently floors every duration under a second to zero, so a 50 ms bound became

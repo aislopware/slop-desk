@@ -29,7 +29,14 @@ import Foundation
 /// head (ring entry / file tail). The surviving stream is then well-formed again, so the NEXT
 /// eviction's scan — which starts from that repaired head — needs no carried state. For the
 /// journal the repair is on disk, so the invariant survives the daemon.
-public enum AltScreenCutScanner {
+///
+/// ## Why it lives in `Android/` and is internal
+/// It sat in `SlopDeskTransport` for as long as that target was where a byte stream lived. It is not
+/// a transport concern and never was — it is a scan of terminal bytes, and its ONE caller in this
+/// tree is `AndroidControlMessage`. `docs/63` G.5 moved it beside that caller and dropped `public`
+/// with the move: a face with one caller in one module has no business widening the module's
+/// surface, and the suite reaches it `@testable`.
+enum AltScreenCutScanner {
     /// First guess at the answer's size. A re-opener is a DECSET and nothing else, so this is
     /// generous by an order of magnitude; the retry below exists to be correct, not to be used.
     private static let firstGuessBytes = 64
@@ -40,7 +47,7 @@ public enum AltScreenCutScanner {
     /// - Parameter keptHead: the first bytes of the SURVIVING stream, used only to resolve a
     ///   sequence straddling the cut. Pass what is cheap; missing bytes degrade to "straddler
     ///   unresolved → state unchanged", never to a wrong transition.
-    public static func reopenSequence(afterDropped dropped: Data, keptHead: Data) -> Data? {
+    static func reopenSequence(afterDropped dropped: Data, keptHead: Data) -> Data? {
         // Two nested `withUnsafeBytes` and nothing else between them: the ABI's whole safety
         // contract is that both pointers stay live for the call, and that is exactly what these
         // scopes mean. `Data` may have no base address when empty — the ABI reads a null pointer as

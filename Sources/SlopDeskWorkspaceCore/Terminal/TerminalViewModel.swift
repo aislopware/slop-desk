@@ -2407,6 +2407,13 @@ public final class TerminalViewModel {
     /// Folds one `SlopDeskClient.Event` into observable state.
     public func handle(_ event: SlopDeskClient.Event) {
         switch event {
+        case .retrying,
+             .gaveUp,
+             .log:
+            // The reconnect ladder's own narration. It belongs to the CHROME — attempt counts, the
+            // countdown and the log line are `ConnectionViewModel`'s to render — and the terminal
+            // already learned everything it needs from the `.disconnected` that armed the campaign.
+            break
         case let .title(text):
             // An EMPTY type-21 is the host's explicit RETIREMENT of a title an exiting agent owned,
             // never prompt-redraw noise: the host sniffer drops empty OSC 0/2 bodies (zsh/p10k emit

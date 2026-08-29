@@ -14,7 +14,7 @@ final class ConnectionViewModelTitleTests: XCTestCase {
         ConnectionViewModel(
             terminal: TerminalViewModel(),
             target: { .default },
-            makeClient: { SlopDeskClient(makeTransport: { fatalError("not used in title tests") }) },
+            makeClient: { SlopDeskClient(driver: FakePaneDriver.inert("not used in title tests")) },
         )
     }
 
@@ -109,7 +109,7 @@ final class ConnectionViewModelTitleTests: XCTestCase {
         let vm = ConnectionViewModel(
             terminal: terminal,
             target: { .default },
-            makeClient: { SlopDeskClient(makeTransport: { fatalError("not used") }) },
+            makeClient: { SlopDeskClient(driver: FakePaneDriver.inert("not used")) },
         )
         vm.onTitleChanged = { _ in } // wired to something
 

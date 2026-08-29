@@ -15,7 +15,7 @@ final class ConnectionViewModelWorkingDirectoryTests: XCTestCase {
         ConnectionViewModel(
             terminal: TerminalViewModel(),
             target: { .default },
-            makeClient: { SlopDeskClient(makeTransport: { fatalError("not used in cwd tests") }) },
+            makeClient: { SlopDeskClient(driver: FakePaneDriver.inert("not used in cwd tests")) },
         )
     }
 

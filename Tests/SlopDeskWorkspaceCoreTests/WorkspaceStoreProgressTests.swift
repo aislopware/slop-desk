@@ -162,7 +162,7 @@ final class WorkspaceStoreProgressTests: XCTestCase {
         let vm = ConnectionViewModel(
             terminal: terminal,
             target: { .default },
-            makeClient: { SlopDeskClient(makeTransport: { fatalError("not used in progress tests") }) },
+            makeClient: { SlopDeskClient(driver: FakePaneDriver.inert("not used in progress tests")) },
         )
         var pushed: [PaneProgress?] = []
         vm.onProgressUpdate = { pushed.append($0) }
@@ -179,7 +179,7 @@ final class WorkspaceStoreProgressTests: XCTestCase {
         let vm = ConnectionViewModel(
             terminal: terminal,
             target: { .default },
-            makeClient: { SlopDeskClient(makeTransport: { fatalError("not used in cwd tests") }) },
+            makeClient: { SlopDeskClient(driver: FakePaneDriver.inert("not used in cwd tests")) },
         )
         var pushed: [String] = []
         vm.onWorkingDirectoryChanged = { pushed.append($0) }
@@ -200,7 +200,7 @@ final class WorkspaceStoreProgressTests: XCTestCase {
         let vm = ConnectionViewModel(
             terminal: terminal,
             target: { .default },
-            makeClient: { SlopDeskClient(makeTransport: { fatalError("not used in progress tests") }) },
+            makeClient: { SlopDeskClient(driver: FakePaneDriver.inert("not used in progress tests")) },
         )
         var pushed: [PaneProgress?] = []
         vm.onProgressUpdate = { pushed.append($0) }

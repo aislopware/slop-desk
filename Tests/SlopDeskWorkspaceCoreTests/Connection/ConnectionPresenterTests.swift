@@ -28,12 +28,15 @@ final class ConnectionPresenterTests: XCTestCase {
     // MARK: - The ceiling is one number, and it travels
 
     func testReconnectCapMirrorsTheOneConstant() {
-        // The displayed "attempt N of M" cap and the per-pane transport campaign length must be the SAME
-        // number, or the UI lies (it once showed "of 20" while the per-pane campaign ran to 30).
+        // The displayed "attempt N of M" cap and the per-pane campaign length must be the SAME
+        // number, or the UI lies (it once showed "of 20" while the per-pane campaign ran to 30). The
+        // campaign is `slopdesk-clientsession::backoff`'s now and `SlopDeskClient` reads it through
+        // the door, so this asserts the number crossed the ABI rather than that two Swift constants
+        // agree — which is the version of the claim that can actually go wrong.
         XCTAssertEqual(
             ConnectionPresenter.maxReconnectAttempts,
-            ReconnectManager.maxReconnectAttempts,
-            "ConnectionPresenter must mirror ReconnectManager's give-up ceiling",
+            SlopDeskClient.maxReconnectAttempts,
+            "ConnectionPresenter must mirror the driver's give-up ceiling",
         )
     }
 

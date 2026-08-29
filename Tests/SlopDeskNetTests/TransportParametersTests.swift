@@ -1,6 +1,6 @@
 import Network
 import XCTest
-@testable import SlopDeskTransport
+@testable import SlopDeskNet
 
 /// Asserts the canonical parameters helper sets the mandatory low-latency options.
 final class TransportParametersTests: XCTestCase {

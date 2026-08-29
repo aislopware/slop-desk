@@ -1,5 +1,5 @@
 import XCTest
-@testable import SlopDeskTransport
+@testable import SlopDeskDevicePanels
 
 /// ``AltScreenCutScanner`` — exact alt-screen state at a front-truncation cut, so ring/journal
 /// eviction can re-open a segment the cut beheaded instead of letting its interior replay onto

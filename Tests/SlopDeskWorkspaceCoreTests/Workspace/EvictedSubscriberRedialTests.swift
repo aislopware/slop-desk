@@ -25,92 +25,17 @@ import XCTest
 ///   evicted pane, and still does not touch a retired one.
 @MainActor
 final class EvictedSubscriberRedialTests: XCTestCase {
-    // MARK: - Doubles
-
-    /// An in-memory PTY transport whose end can be any of the three kinds the client has to tell
-    /// apart: the host REAPING the pane, the host EVICTING this subscriber, or the link dying.
-    private actor ClosableTransport: ClientTransporting {
-        private var _sessionID: UUID?
-        var sessionID: UUID? { _sessionID }
-        var resumeFromSeq: Int64 { 0 }
-        var returningClient: Bool { false }
-        nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-        private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-        private(set) var hostCloseReason: MuxCloseReason?
-
-        init() {
-            var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-            inbound = AsyncThrowingStream { c = $0 }
-            continuation = c
-        }
-
-        func connect(
-            host _: String,
-            port _: UInt16,
-            resume _: UUID,
-            lastReceivedSeq _: Int64,
-            handshakeTimeout _: Duration,
-        ) async {
-            await Task.yield()
-            _sessionID = UUID()
-        }
-
-        /// The document reaped this pane: a `channelClose` naming a session the host is dropping.
-        func retireFromHost() {
-            hostCloseReason = .retired
-            continuation.finish()
-        }
-
-        /// The host evicted THIS subscriber for lagging: a `channelClose` whose pane keeps running.
-        func evictFromHost() {
-            hostCloseReason = .subscriberEvicted
-            continuation.finish()
-        }
-
-        func sendInput(_: Data) {}
-        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
-        func sendAck(seq _: Int64) {}
-        func sendBye() {}
-        func close() { continuation.finish() }
-    }
-
-    /// Which pane ids opened a channel, in order, plus the newest transport per pane so the test can
-    /// play the host against the live one. Each entry is one `channelOpen` the host would answer
-    /// with a state transfer.
-    private final class Dials: @unchecked Sendable {
-        private let lock = NSLock()
-        private var ids: [PaneID] = []
-        private var live: [PaneID: ClosableTransport] = [:]
-
-        var dialled: [PaneID] {
-            lock.lock()
-            defer { lock.unlock() }
-            return ids
-        }
-
-        func count(_ pane: PaneID) -> Int { dialled.filter { $0 == pane }.count }
-
-        func transport(for pane: PaneID) -> ClosableTransport? {
-            lock.lock()
-            defer { lock.unlock() }
-            return live[pane]
-        }
-
-        func makeTransport(for pane: PaneID) -> ClosableTransport {
-            let transport = ClosableTransport()
-            lock.lock()
-            ids.append(pane)
-            live[pane] = transport
-            lock.unlock()
-            return transport
-        }
-    }
-
     // MARK: - Rig
 
-    /// A two-pane store whose leaves mint REAL ``LivePaneSession``s over `dials`' transport — the
-    /// seam that actually opens a channel. Two panes so the pane under test is never the sole one.
-    private func makeStore(_ dials: Dials) -> (store: WorkspaceStore, other: PaneID, subject: PaneID) {
+    /// A two-pane store whose leaves mint REAL ``LivePaneSession``s over `dials`' drivers — the seam
+    /// that actually opens a channel. Two panes so the pane under test is never the sole one.
+    ///
+    /// The three ends this suite tells apart are all one call on the driver now:
+    /// `hostClose(.retired)` is the document's reap, `hostClose(.subscriberEvicted)` is the laggard
+    /// eviction, and a plain `.disconnected` is the link dying. They were three methods on a fake
+    /// transport because the SESSION had to derive the reason from a finished stream plus a flag;
+    /// the driver reports it, so the double only states it.
+    private func makeStore(_ dials: PaneDialLedger) -> (store: WorkspaceStore, other: PaneID, subject: PaneID) {
         let base = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "other"))
         let other = base.allPaneIDs()[0]
         let (tree, subject) = TreeIntent.splitPane(
@@ -121,7 +46,7 @@ final class EvictedSubscriberRedialTests: XCTestCase {
             makeSession: { seed in
                 LivePaneSession.make(
                     paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
-                    makeClient: { _ in SlopDeskClient(makeTransport: { dials.makeTransport(for: seed.id) }) },
+                    makeClient: { _ in SlopDeskClient(driver: dials.make(for: seed.id)) },
                     makeInspector: { _ in nil },
                     target: { .default },
                 )
@@ -132,7 +57,7 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     }
 
     /// Brings a store up and returns the pane under test, live on its first channel.
-    private func makeLivePane(_ dials: Dials) async -> (store: WorkspaceStore, subject: PaneID) {
+    private func makeLivePane(_ dials: PaneDialLedger) async -> (store: WorkspaceStore, subject: PaneID) {
         let (store, _, subject) = makeStore(dials)
         store.redialDisconnectedPanes()
         await expect("the pane under test to come up") {
@@ -163,7 +88,7 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     /// re-dial has happened long before the deadline and waiting cannot turn a red run green.
     private func expectNoRedial(
         _ pane: PaneID,
-        _ dials: Dials,
+        _ dials: PaneDialLedger,
         what: String,
         within: Duration = .milliseconds(750),
         file: StaticString = #filePath,
@@ -190,10 +115,10 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     /// itself. The app-connection fan-out is that dial — and gating it on "the host closed the
     /// channel" left the pane dead for the process lifetime.
     func testTheAppConnectionFanOutRecoversAnEvictedSubscriber() async {
-        let dials = Dials()
+        let dials = PaneDialLedger()
         let (store, subject) = await makeLivePane(dials)
 
-        await dials.transport(for: subject)?.evictFromHost()
+        dials.driver(for: subject)?.hostClose(.subscriberEvicted)
         await expect("the eviction to settle") {
             (store.handle(for: subject) as? LivePaneSession)?.connection?.status == .disconnected
         }
@@ -210,9 +135,9 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     /// …and it comes back CONNECTED, not merely re-dialled: the recovery is a working pane, not a
     /// second channel that immediately falls over on the client's own refusal to re-open.
     func testTheRecoveredPaneIsLiveAgain() async {
-        let dials = Dials()
+        let dials = PaneDialLedger()
         let (store, subject) = await makeLivePane(dials)
-        await dials.transport(for: subject)?.evictFromHost()
+        dials.driver(for: subject)?.hostClose(.subscriberEvicted)
         await expect("the eviction to settle") {
             (store.handle(for: subject) as? LivePaneSession)?.connection?.status == .disconnected
         }
@@ -229,10 +154,10 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     /// fan-out — otherwise the client re-joins at once, is evicted again, and the host pays for a
     /// state transfer every lap.
     func testAnEvictionIsNotAnsweredByTheReconnectCampaign() async {
-        let dials = Dials()
+        let dials = PaneDialLedger()
         let (store, subject) = await makeLivePane(dials)
 
-        await dials.transport(for: subject)?.evictFromHost()
+        dials.driver(for: subject)?.hostClose(.subscriberEvicted)
 
         await expectNoRedial(subject, dials, what: "after the host evicted this subscriber")
         XCTAssertEqual(dials.count(subject), 1, "no campaign, no churn loop")
@@ -243,11 +168,11 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     /// "reconnecting" chrome would be a spinner for a retry nobody is making — and `.disconnected`
     /// is the state both the fan-out and an explicit Reconnect act on.
     func testAnEvictedPaneReadsDisconnectedRatherThanReconnecting() async throws {
-        let dials = Dials()
+        let dials = PaneDialLedger()
         let (store, subject) = await makeLivePane(dials)
         let live = try XCTUnwrap(store.handle(for: subject) as? LivePaneSession)
 
-        await dials.transport(for: subject)?.evictFromHost()
+        dials.driver(for: subject)?.hostClose(.subscriberEvicted)
 
         await expect("the pane to settle on a definite state") { live.connection?.status == .disconnected }
         XCTAssertEqual(live.connection?.status, .disconnected)
@@ -260,10 +185,10 @@ final class EvictedSubscriberRedialTests: XCTestCase {
     /// fan-out must still leave it alone — re-opening it is a fresh login shell for a pane that is
     /// one round trip from leaving the layout.
     func testTheFanOutStillLeavesAReapedPaneAlone() async {
-        let dials = Dials()
+        let dials = PaneDialLedger()
         let (store, subject) = await makeLivePane(dials)
 
-        await dials.transport(for: subject)?.retireFromHost()
+        dials.driver(for: subject)?.hostClose(.retired)
         await expect("the retirement to settle") {
             (store.handle(for: subject) as? LivePaneSession)?.connection?.status == .disconnected
         }

@@ -3,51 +3,34 @@ import Foundation
 import SlopDeskProtocol
 import SlopDeskTransport
 
-/// The SlopDesk client session driver — the real, working PATH 1 client.
+/// One pane's client session, as the face over `rust/slopdesk-clientdriver`.
 ///
-/// `SlopDeskClient` owns a single ``ClientTransporting`` and turns its merged
-/// host→client ``ClientTransporting/inbound`` stream into three things a UI/CLI needs:
+/// `docs/63` stage G.5. What used to be here was the session: an owned transport, four background
+/// tasks, an output inbox, a dedup high-water mark, an ack coalescer, an RTT ticker, a connect
+/// generation, a teardown depth and a multicast hub — 984 lines in which every rule about a
+/// reconnect was written twice, once as a comment and once as an `if`. All of it is
+/// ``PaneDriving``'s now, and behind the shipping conformer it is one Rust supervisor thread and a
+/// mailbox. What is left here is the three things that cannot cross a C ABI:
 ///
-/// - **output bytes** — exposed as an `AsyncStream<Data>` (``output``) *and* fed to an
-///   optional ``TerminalSurface`` (the libghostty seam / `HeadlessTerminalSurface`);
-/// - **title / bell** — surfaced via the ``events`` stream;
-/// - **exit** — surfaced via ``events`` and terminates ``output``.
+/// - **the `Event` vocabulary**, because its payloads are Swift values the app pattern-matches;
+/// - **the multicast**, because its subscribers are Swift `AsyncStream`s and the driver has exactly
+///   one observer — the fan-out has to happen on whichever side the streams are;
+/// - **the hop**, because every driver call BLOCKS by design and the callers are on the main actor.
 ///
-/// ### Ack policy
-/// Tracks the **highest contiguous** `output.seq` delivered to the surface
-/// (``highestContiguousSeq``) and periodically `sendAck`s it so the host's `ReplayBuffer`
-/// can release acked output and the offline gate can recover. **Coalesced**: a pending-ack
-/// flag is set when the contiguous counter advances; a background ticker flushes it at most
-/// once every ``ackInterval`` (default 50ms). Never ack a seq we have not delivered —
-/// correctness over cadence (`docs/20` §5).
+/// ### The reconnect campaign is not here either
+/// `ReconnectManager` was 281 lines that watched `events` for a `.disconnected`, re-asked four
+/// terminal-state flags, and drove a capped exponential ladder. The driver runs that campaign
+/// itself, from inside the thread that owns the transport, so the four flags are read where they
+/// are written rather than across an actor hop that can interleave. What reaches the UI is the two
+/// events the ladder produces — ``Event/retrying(attempt:nextRetryAt:)`` and
+/// ``Event/gaveUp(attempts:)`` — plus its already-worded ``Event/log(_:)`` lines.
 ///
-/// ### Reconnect + seq dedup
-/// On a transport drop ``ReconnectManager`` calls back into ``connect(...)`` presenting the
-/// SAME `sessionID` + ``highestContiguousSeq`` as `lastReceivedSeq`. The **dedup** is robust:
-/// the client drops any inbound `output` whose `seq <= highestSeqFed`, so a replayed
-/// already-delivered tail (or a re-presented stale seq) splices into ``output`` gap-free and
-/// dup-free.
-///
-/// What reconnect does TODAY: the mux transport HAS per-channel server-side resume
-/// (host-side, gated by "Resume on Recovery"). A link drop parks the live shell in the host's
-/// `DetachedSessionStore`; reconnect presents the same `sessionID` + `lastReceivedSeq` and the
-/// host either reattaches it (PATH A — replays `seq > lastReceivedSeq`, byte-exact or as a
-/// rendered snapshot, docs/20 §8.3.1) or spawns fresh (PATH B/C). The `channelOpenAck`
-/// carries the HOST-AUTHORITATIVE `resumeFromSeq`, awaited by the transport's `connect`, so
-/// the reset of the dedup/ack high-water marks in ``connect(...)`` is CONDITIONAL on it:
-/// `resumeFromSeq == 0` (fresh shell / cold client) resets; `> 0` (true resume) keeps the
-/// seeded marks. Client-side scrollback additionally survives a SwiftUI surface rebuild (tab
-/// switch) via the view model's replay ring.
-///
-/// ### iOS lifecycle seam ([17] §2.5, [18] §H)
-/// ``pause()`` / ``resume()`` are the hooks wired to UIKit `didEnterBackground` /
-/// `willEnterForeground`. `pause()` proactively closes the transport (iOS tears the TCP down a
-/// few seconds after backgrounding anyway — see DECISIONS §reconnect); `resume()` triggers a
-/// reconnect with the preserved `sessionID` + seq. Per the reconnect note above, on the mux path
-/// this yields a FRESH shell (not a byte-exact resume): the renderer resets and the new shell
-/// repaints from its first prompt.
-///
-/// All mutable state lives inside this `actor`. No `@unchecked Sendable`.
+/// ### Ack policy, dedup, resume verdict
+/// All three are `slopdesk_clientsession`'s rules, applied by the driver: the highest CONTIGUOUS
+/// delivered seq is what gets acked and what the next `channelOpen` presents; an `output` at or
+/// below the high-water mark is a replayed duplicate and is dropped (but still credited, so a replay
+/// cannot leak window capacity); and the fresh-shell-vs-reattach verdict is resolved from the first
+/// seq a connection delivers, re-armed on every adopted connect and on every stream end.
 public actor SlopDeskClient {
     /// A host→client event the client surfaces beyond the raw byte stream.
     public enum Event: Sendable, Equatable {
@@ -102,8 +85,9 @@ public actor SlopDeskClient {
         /// list, raw UTF-8, or raw file bytes) the typed `MetadataClient` decodes. The host ALWAYS replies
         /// (status error/empty on any failure) so the registry never hangs.
         case metadataResponse(requestID: UInt32, status: UInt8, payload: Data)
-        /// The remote child process exited with `code`. Terminal — ``output`` finishes
-        /// right after this is surfaced.
+        /// The remote child process exited with `code`. Terminal — ``outputWakeups`` finishes right
+        /// after this is surfaced, so the single consumer's loop ends and its final
+        /// ``takeOutputBatch()`` drains the tail.
         case exit(code: Int32)
         /// A fresh smoothed app-layer RTT sample (EWMA over ping/pong on the CONTROL
         /// channel). Surfaced so the chrome can show a latency badge and lag can be
@@ -137,26 +121,36 @@ public actor SlopDeskClient {
         /// titleable prompt, host-latched per session and re-asserted on reattach. Empty =
         /// cleared (session ended) — the GUI drops its mirror and the row title falls back.
         case agentSessionIntent(String)
-        /// The transport dropped (network loss / clean close). ``ReconnectManager``
-        /// reacts to this; surfaced for diagnostics.
+        /// The transport dropped (network loss, clean close, or a deliberate ``pause()``). The
+        /// driver's own campaign reacts to it; surfaced for the chrome and for diagnostics.
         case disconnected(reason: String)
         /// A reconnect completed and the host began replaying the missing tail.
         case reconnected(sessionID: UUID, resumeFromSeq: Int64)
+        /// The reconnect campaign is on `attempt`, and `nextRetryAt` is when the NEXT one fires.
+        ///
+        /// `nil` means this attempt is firing now — there is nothing to count down to yet. A date
+        /// means the attempt just failed and the ladder is waiting, which is what the chrome renders
+        /// as "retrying in Ns". The driver sends a DURATION and this is where it becomes an instant,
+        /// because the two sides do not share a clock epoch and this one is the UI's.
+        case retrying(attempt: Int, nextRetryAt: Date?)
+        /// The campaign exhausted ``maxReconnectAttempts`` without reconnecting. The pane is
+        /// unreachable rather than reconnecting, and the chrome flips to a terminal state instead of
+        /// a frozen dot.
+        case gaveUp(attempts: Int)
+        /// A diagnostic line, already worded by the driver.
+        ///
+        /// The sentences are Rust's because they describe a ladder Rust owns; a second wording on
+        /// this side would drift from the behaviour it claims to narrate.
+        case log(String)
     }
 
     /// What the CURRENT connection turned out to be, derived from the first `output` seq it
-    /// delivers. The `channelOpenAck` now carries the host-authoritative `resumeFromSeq`
-    /// (docs/20 §8.3.1) — the seq-derived verdict remains as the belt-and-braces fallback
-    /// (it needs no wire field and still covers a transport double without an ack path).
+    /// delivers plus the host's authoritative `resumeFromSeq`.
     ///
-    /// The host's per-channel seq stream is monotonic across a PATH-A reattach (the ReplayBuffer
-    /// survives with the shell, and `replay(after: lastReceivedSeq)` only ever emits
-    /// `seq > lastReceivedSeq`), while a PATH-B/C FRESH shell mints a new ReplayBuffer whose first
-    /// output is seq 1. So, having presented `lastReceivedSeq = N` in the channelOpen preamble:
-    /// first delivered `seq > N` (with `N > 0`) ⇒ the SAME shell resumed; first delivered
-    /// `seq <= N` (or `N == 0` — nothing to resume) ⇒ a fresh shell. Consumed by
-    /// `TerminalViewModel.observe` to gate the one-shot fresh-session surface wipe: a warm
-    /// reattach must NOT wipe the surviving screen/scrollback the host never re-sends.
+    /// Consumed by `TerminalViewModel.observe` to gate the one-shot fresh-session surface wipe: a
+    /// warm reattach must NOT wipe the surviving screen/scrollback the host never re-sends. So
+    /// `undetermined` must never be read as "fresh" — a stream that has produced nothing has
+    /// established nothing.
     public enum SessionResumeOutcome: Sendable, Equatable {
         /// No output delivered on the current connection yet (or the link is down).
         case undetermined
@@ -169,7 +163,7 @@ public actor SlopDeskClient {
         /// The verdict `slopdesk_clientsession`'s probe answered, as a case. An unreadable byte is
         /// `undetermined` — the reading that establishes nothing, which is the honest answer to a
         /// byte nobody here can interpret.
-        init(code: UInt8) {
+        public init(code: UInt8) {
             switch code {
             case 1: self = .freshShell
             case 2: self = .resumedSession
@@ -178,807 +172,315 @@ public actor SlopDeskClient {
         }
     }
 
-    /// How often the coalesced ack ticker may flush a pending ack. Correctness does not
-    /// depend on this value (we never ack an undelivered seq); it only bounds how stale
-    /// the host's view of our progress can get.
+    /// The reconnect ladder's schedule, as the driver's config field rather than a policy of its own.
+    ///
+    /// The shipped values are stated once in `slopdesk_clientsession::backoff` and read here; a
+    /// literal `250ms`/`2s`/`2.0` in Swift would be a second copy of a rule that already has one.
+    public struct Backoff: Sendable, Equatable {
+        public var initial: Duration
+        public var maximum: Duration
+        public var multiplier: Double
+
+        private static let shipped = slopdesk_pane_backoff_default()
+        public static let defaultInitial = Duration.nanoseconds(Self.shipped.initial_ns)
+        public static let defaultMaximum = Duration.nanoseconds(Self.shipped.maximum_ns)
+        public static let defaultMultiplier = Self.shipped.multiplier
+
+        public init(
+            initial: Duration = Self.defaultInitial,
+            maximum: Duration = Self.defaultMaximum,
+            multiplier: Double = Self.defaultMultiplier,
+        ) {
+            self.initial = initial
+            self.maximum = maximum
+            self.multiplier = multiplier
+        }
+
+        /// The schedule in NANOSECONDS, which is how the driver's config states it: a `Duration`
+        /// carries attoseconds, and a millisecond unit would round a sub-millisecond schedule away.
+        var initialNanoseconds: UInt64 { Self.nanoseconds(initial) }
+        var maximumNanoseconds: UInt64 { Self.nanoseconds(maximum) }
+
+        private static func nanoseconds(_ duration: Duration) -> UInt64 {
+            let components = duration.components
+            guard components.seconds >= 0 else { return 0 }
+            let whole = UInt64(components.seconds).multipliedReportingOverflow(by: 1_000_000_000)
+            guard !whole.overflow else { return UInt64.max }
+            let fraction = UInt64(max(components.attoseconds, 0) / 1_000_000_000)
+            let total = whole.partialValue.addingReportingOverflow(fraction)
+            return total.overflow ? UInt64.max : total.partialValue
+        }
+    }
+
+    /// The restored-pane resume identity, threaded through ``init(registry:ackInterval:backoff:resumeSeed:)``
+    /// so it is part of CONSTRUCTION rather than a later call.
+    ///
+    /// Seeding at init closes a race (docs/DECISIONS, seed-resume-identity): a fire-and-forget
+    /// `Task { await client.seed(…) }` after construction orders nothing against a
+    /// separately-scheduled `connect()` task, so a cold-launch restore of many panes could lose the
+    /// race and start a fresh session instead of reattaching. There is no post-construction seeding
+    /// door at all now, which is what makes the race unreachable rather than merely unlikely.
+    public typealias ResumeSeed = (sessionID: UUID, lastSeq: Int64)
+
+    /// How often the coalesced ack ticker may flush a pending ack. Correctness does not depend on
+    /// this value (the driver never acks an undelivered seq); it only bounds how stale the host's
+    /// view of our progress can get.
     public static let defaultAckInterval: Duration = .milliseconds(50)
 
     /// RTT probe cadence (docs/26 D1). 3s: cheap (one 14-byte control frame each way) yet
     /// fresh enough for a latency badge / typing-lag attribution.
     public static let pingInterval: Duration = .seconds(3)
 
-    /// EWMA-smoothed app-layer RTT in milliseconds (`nil` until the first pong). α = 0.25
-    /// (≈ TCP SRTT's 1/8–1/4 family): responsive to weather changes without flapping on
-    /// one outlier.
-    public private(set) var smoothedRTTMS: Double?
+    /// The give-up ceiling, and the SINGLE source of truth for it: the UI's "attempt N of M" copy
+    /// (`ConnectionPresenter.maxReconnectAttempts`) mirrors this value, so the campaign and the
+    /// displayed cap can never diverge into an impossible "attempt 25 of 20".
+    public static let maxReconnectAttempts = Int(slopdesk_pane_backoff_max_attempts())
 
-    // MARK: Surfaced streams
+    // MARK: - What is held
 
-    /// Inbox of delivered-but-not-yet-consumed `output` payloads, drained in batches by the
-    /// single consumer via ``takeOutputBatch()``. Batched rather than a per-chunk `AsyncStream<Data>`
-    /// so a backlog crosses to the consumer as ONE batch (one MainActor hop, one render flush)
-    /// instead of one job per wire chunk. Each entry carries its wire byte count: taking a batch
-    /// CREDITS those bytes back to the host (credit-at-consumption), so the inbox can never hold
-    /// more than ~one mux window and the host's PTY-pause backpressure engages from a slow client.
-    private var outputInbox: [(bytes: Data, wireBytes: Int)] = []
+    private let driver: any PaneDriving
+
+    /// Multicast hub for events: each ``events`` access subscribes a fresh child stream, so the
+    /// chrome view-model, the terminal model and the store can all observe the SAME events
+    /// concurrently without stealing them from one another.
+    private let broadcaster = EventBroadcaster<Event>()
+
     private let outputWakeStream: AsyncStream<Void>
     private let outputWakeContinuation: AsyncStream<Void>.Continuation
 
-    /// Multicast hub for events: each ``events`` access subscribes a fresh child stream so
-    /// `ReconnectManager` and the view-models can all observe the SAME events concurrently
-    /// without stealing them from one another (a plain `AsyncStream` is single-consumer /
-    /// fan-in; see ``EventBroadcaster``).
-    private let eventBroadcaster = EventBroadcaster<Event>()
-
-    /// Wakeups for the output inbox: one (coalesced) signal per append burst.
+    /// Builds a session on the app's shared per-host mux pool.
     ///
-    /// **SINGLE consumer only**: the consumer
-    /// loops `for await _ in outputWakeups { await takeOutputBatch() … }` and MUST do one
-    /// final ``takeOutputBatch()`` after the loop exits — a tail appended immediately
-    /// before the stream finishes (exit/close) is otherwise lost. `bufferingNewest(1)`
-    /// coalesces redundant wakes; appends always happen BEFORE the yield, so a pending
-    /// wake always observes a complete inbox.
-    public nonisolated var outputWakeups: AsyncStream<Void> { outputWakeStream }
-
-    /// Atomically takes the whole pending output backlog (FIFO order preserved) and
-    /// CREDITS the taken bytes back to the host (credit-at-consumption: "taken" means the
-    /// single consumer is about to feed them — the next take cannot happen until that
-    /// ingest returns, so client-side un-rendered bytes stay bounded by ~one window plus
-    /// the batch in hand). Raw PTY/VT output bytes from the host, spliced gap-free /
-    /// dup-free across reconnects by ``deliverOutput(seq:bytes:)``'s dedup.
-    public func takeOutputBatch() async -> [Data] {
-        guard !outputInbox.isEmpty else { return [] }
-        let batch = outputInbox
-        outputInbox.removeAll(keepingCapacity: true)
-        let wireBytes = batch.reduce(0) { $0 + $1.wireBytes }
-        await transport?.noteOutputConsumed(wireBytes: wireBytes)
-        return batch.map(\.bytes)
+    /// - Parameters:
+    ///   - registry: the pool every pane to one host shares. One mux, one client identity.
+    ///   - ackInterval: how often the coalesced ack ticker may flush (correctness-independent).
+    ///   - backoff: the reconnect ladder, or `nil` for a session that must not reconnect itself.
+    ///   - resumeSeed: an optional restored-pane identity (see ``ResumeSeed``).
+    public init(
+        registry: ConnectionRegistry,
+        ackInterval: Duration = SlopDeskClient.defaultAckInterval,
+        backoff: Backoff? = Backoff(),
+        resumeSeed: ResumeSeed? = nil,
+    ) {
+        self.init(driver: LivePaneDriver(
+            registry: registry,
+            ackInterval: ackInterval,
+            pingInterval: SlopDeskClient.pingInterval,
+            backoff: backoff,
+            resumeSeed: resumeSeed,
+        ))
     }
+
+    /// Builds a session over an arbitrary ``PaneDriving``.
+    ///
+    /// The seam a suite injects at. It takes a driver rather than a transport on purpose: a fake
+    /// here can only SAY what arrived, never decide anything, because every decision lives behind
+    /// the protocol in Rust.
+    public init(driver: any PaneDriving) {
+        self.driver = driver
+        (outputWakeStream, outputWakeContinuation) =
+            AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        // Both sinks are called from driver threads and touch only `Sendable` values — a broadcaster
+        // guarded by its own lock, and a continuation, which is safe to yield to from anywhere. So
+        // neither hops onto this actor, and an event reaches its subscriber with no queue in
+        // between. Neither captures `self`, so the driver holding them is not a cycle.
+        let broadcaster = broadcaster
+        let wake = outputWakeContinuation
+        driver.attach(
+            events: { event in
+                broadcaster.yield(event)
+                // The byte stream is over once the child exits: finishing the wake ends the single
+                // consumer's loop, whose final `takeOutputBatch()` drains the tail. Ordered AFTER
+                // the yield so a subscriber that reads `isExited` on the `.exit` sees it set.
+                if case .exit = event { wake.finish() }
+            },
+            wake: { wake.yield(()) },
+        )
+    }
+
+    // MARK: - Surfaced streams
+
+    /// Wakeups for the output inbox: one signal per accepted `output`, coalesced.
+    ///
+    /// **SINGLE consumer only**: the consumer loops
+    /// `for await _ in outputWakeups { await takeOutputBatch() … }` and MUST do one final
+    /// ``takeOutputBatch()`` after the loop exits — a tail appended immediately before the stream
+    /// finishes (exit/close) is otherwise lost. `bufferingNewest(1)` is the coalescing the driver
+    /// deliberately does not do on its side: only this side can see whether a consumer is parked.
+    public nonisolated var outputWakeups: AsyncStream<Void> { outputWakeStream }
 
     /// Title / bell / exit / connection lifecycle events.
     ///
-    /// **Each access returns a NEW broadcasting child stream** — every concurrent consumer
-    /// (the reconnect supervisor, the chrome view-model, …) sees *every* event. This is a
-    /// live multicast: a late subscriber sees only events from its subscription point on.
-    /// (It is NOT a single shared `AsyncStream`; that would deliver each event to exactly
-    /// one of the loops, nondeterministically.)
-    public nonisolated var events: AsyncStream<Event> { eventBroadcaster.subscribe() }
+    /// **Each access returns a NEW broadcasting child stream** — every concurrent consumer sees
+    /// *every* event. This is a live multicast: a late subscriber sees only events from its
+    /// subscription point on. (It is NOT a single shared `AsyncStream`; that would deliver each
+    /// event to exactly one of the loops, nondeterministically.)
+    public nonisolated var events: AsyncStream<Event> { broadcaster.subscribe() }
 
-    // MARK: Connection target (remembered for reconnect)
-
-    public private(set) var host: String?
-    public private(set) var port: UInt16?
-
-    /// Authoritative session id learned from the first `helloAck`. Preserved across
-    /// reconnects so the host recognizes us as a RETURNING_CLIENT.
-    public private(set) var sessionID: UUID?
-
-    /// The four numbers this client keeps about the host's output stream, stepped by
-    /// `slopdesk_clientsession` (`docs/55` §4b — by value, in place, four integers and a flag).
+    /// Atomically takes the whole pending output backlog (FIFO order preserved) and CREDITS the
+    /// taken bytes back to the host.
     ///
-    /// Every reconnect decision underneath this actor is a question about them: which seq is a
-    /// replay duplicate, what may be acked, what the next `channelOpen` presents, and whether the
-    /// host reattached the same shell or spawned a new one. The bytes never cross with them — the
-    /// inbox, the surface and the window credit are this side's.
-    private var session = SlopDeskPaneSession()
+    /// Credit-at-consumption: "taken" means the single consumer is about to feed them — the next
+    /// take cannot happen until that ingest returns, so client-side un-rendered bytes stay bounded
+    /// by ~one mux window plus the batch in hand, and the host's PTY-pause backpressure engages
+    /// from a slow client. The bytes are spliced gap-free and dup-free across reconnects by the
+    /// driver's seq dedup.
+    public func takeOutputBatch() -> [Data] { driver.takeOutput() }
 
-    /// Highest **contiguous** output seq delivered to the surface. This is what we ack
-    /// and what we present as `hello.lastReceivedSeq` on reconnect.
-    public var highestContiguousSeq: Int64 { session.highest_contiguous }
+    // MARK: - Readouts
+
+    /// EWMA-smoothed app-layer RTT in milliseconds (`nil` until the first pong).
+    public var smoothedRTTMS: Double? { driver.smoothedRTTMS }
+
+    /// Authoritative session id learned from the first handshake, preserved across reconnects so
+    /// the host recognises us as a RETURNING_CLIENT.
+    public var sessionID: UUID? { driver.sessionID }
+
+    /// Highest **contiguous** output seq delivered. This is what is acked and what the next
+    /// `channelOpen` presents as `lastReceivedSeq`.
+    public var highestContiguousSeq: Int64 { driver.highestContiguousSeq }
 
     /// Fresh-shell-vs-reattach verdict for the CURRENT connection (see ``SessionResumeOutcome``).
-    /// Re-armed to `.undetermined` on every adopted `connect(...)` and on a stream end (so a
-    /// stale verdict from a dead link can never gate the NEXT session's wipe), then resolved by
-    /// ``deliverOutput(seq:bytes:wireBytes:)`` from the first `output` seq it sees.
-    public var sessionResumeOutcome: SessionResumeOutcome { SessionResumeOutcome(code: session.outcome) }
+    public var sessionResumeOutcome: SessionResumeOutcome { driver.resumeOutcome }
 
-    // MARK: Internals
+    /// True while paused by ``pause()`` (diagnostics / reconnect gating).
+    public var isPaused: Bool { driver.isPaused }
 
-    private let ackInterval: Duration
-    /// Factory for the session transport, injected so a pane is backed by a logical channel over the
-    /// per-host shared mux (a `MuxClientTransport`, supplied by ``WorkspaceStore/liveMakeSession``
-    /// bound to the per-host ``ConnectionRegistry``).
-    private let makeTransport: @Sendable () -> any ClientTransporting
-    private var transport: (any ClientTransporting)?
-    private var initialCwd: String?
-    private var inboundTask: Task<Void, Never>?
-    private var ackTask: Task<Void, Never>?
-    private var pingTask: Task<Void, Never>?
-    private var closed = false
-    private var paused = false
-    /// Set when the remote child `.exit`s — TERMINAL for this client instance, like `closed`. The
-    /// wake stream (`outputWakeups`) is created once in init and permanently `finish()`ed on
-    /// `.exit`; its single consumer returns and is never restarted. Any later `connect()` on the
-    /// SAME client would therefore hand a fresh host shell to a consumer-less inbox:
-    /// `takeOutputBatch` never runs, no window credit is re-granted, and every reconnect strands up
-    /// to one mux window of bytes forever. So `connect()` refuses, `resume()` no-ops, the post-exit
-    /// stream end surfaces no `.disconnected`, and `ReconnectManager` gates on ``isExited`` beside
-    /// `isPaused`/`isClosed`. A respawn is an explicit re-dial, which builds a NEW client.
-    private var childExited = false
+    /// True once ``close()`` has permanently retired the session.
+    public var isClosed: Bool { driver.isClosed }
 
-    /// Why the HOST closed this pane's channel — a per-channel `channelClose` and the reason it
-    /// carried — as opposed to the link dying under it (`nil`).
+    /// True once the remote child has exited — this session is permanently done.
+    public var isExited: Bool { driver.isExited }
+
+    /// True once the HOST closed this pane's channel, for any reason.
     ///
-    /// Either value is TERMINAL for this client INSTANCE, for the same reason `childExited` is: the
-    /// transport under it is spent, and re-opening from in here would re-use a session id the host
-    /// may no longer hold. So ``ReconnectManager`` gates on ``isHostClosed`` beside
-    /// `isPaused`/`isClosed`/`isExited`, and ``connect(host:port:handshakeTimeout:)`` refuses. What
-    /// the two values differ on is what may happen ABOVE this client, which reads the reason:
-    /// `.retired` means the pane itself is gone (a re-dial is a SPAWN — a whole login shell for a
-    /// pane on its way out of the layout), while `.subscriberEvicted` means only this attachment
-    /// ended and the pane is still there to be reattached by a NEW client.
-    /// A drop leaves it `nil`: nothing was said about the pane, and recovering that is the
-    /// campaign's whole job.
-    private var hostCloseReason: MuxCloseReason?
+    /// A `channelClose` sets neither `isPaused`, `isClosed` nor `isExited`, and it ends the inbound
+    /// stream exactly as a drop does — so without this a recovery would re-open the channel, which
+    /// for a reaped pane forks a shell the host has already given up on, and for an evicted
+    /// subscriber re-joins to be evicted again.
+    public var isHostClosed: Bool { driver.hostCloseReason != nil }
 
-    /// Monotonic connect-attempt counter. Each ``connect(...)`` captures its value at entry; if a
-    /// NEWER connect starts during this one's `await transport.connect(...)` suspension (the actor is
-    /// reentrant at every await), the older invocation observes its captured generation is now stale
-    /// and DISCARDS its just-built transport instead of adopting it. Without this, two overlapping
-    /// connects (e.g. the reconnect supervisor racing iOS `resume()`) both reach `self.transport =
-    /// transport`; the second overwrites the first WITHOUT tearing it down, leaking a fully-live
-    /// transport (2 sockets + inbound pump + ack ticker) and its ``ConnectionRegistry`` refcount — the
-    /// "zombie transport" race. Paired with the post-handshake `closed`/`paused` re-check below for the
-    /// close()/pause()-during-reconnect variants.
-    private var connectGeneration: UInt64 = 0
-
-    /// Set while we are deliberately replacing the transport (reconnect entry / pause).
-    /// `teardownTransport()` closes the OLD transport, finishing the OLD inbound stream and landing
-    /// the old pump in ``handleStreamEnded(error:hostClosed:)`` with `nil` — a SELF-INFLICTED end, not a real
-    /// drop. This flag lets `handleStreamEnded` suppress that spurious `.disconnected` (mirror of
-    /// the `closed` guard), so `ReconnectManager` does not queue a redundant reconnect campaign. The
-    /// real drop path (``forceDropForTesting()`` / transport failing on its own) leaves this `false`.
-    /// DEPTH counter, not a bare Bool: two overlapping teardowns — a reentrant connect()/pause() whose
-    /// teardownTransport awaits across another — must not clobber each other's suppression window. A
-    /// shared Bool would let the inner scope's `= false` clear the outer's `= true`, briefly
-    /// un-suppressing handleStreamEnded so a self-inflicted stream-end surfaces a spurious
-    /// `.disconnected` + redundant reconnect. Each scope inc/decrements only its own, so depth stays
-    /// > 0 for the whole span any teardown is in flight.
-    private var tearingDownDepth = 0
-    private var tearingDown: Bool { tearingDownDepth > 0 }
-    private var lastSentResize: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
-
-    /// Optional terminal renderer fed the inbound output (libghostty seam / headless).
-    /// Held as `AnyObject` + a feeder closure so this target need not link SlopDeskTerminal.
-    private var surfaceFeed: (@Sendable (Data) -> Void)?
-
-    /// The restored-pane resume identity, threaded into ``init(ackInterval:makeTransport:resumeSeed:)``
-    /// so it is set SYNCHRONOUSLY as part of construction — before the client object escapes to any
-    /// concurrent caller. Mirrors exactly the trio ``seedResumeIdentity(sessionID:seq:)`` mutates
-    /// (`sessionID`, `highestContiguousSeq`, `highestSeqFed`).
+    /// WHY the host closed this pane's channel, `nil` if it did not.
     ///
-    /// Seeds inside `init` to close a race (docs/DECISIONS, seed-resume-identity): seeding via an
-    /// UNAWAITED `Task { await c.seedResumeIdentity(...) }` after construction orders nothing between
-    /// that seed job's actor-hop and a separately-scheduled `connect()` Task's OWN actor-hop, so a
-    /// cold-launch restore of many panes can lose the race and silently start a fresh session instead
-    /// of reattaching. Init-time seeding removes the async gap entirely: there is no point after
-    /// construction where the fields are still unseeded, so a racing `connect()` can never observe
-    /// stale state.
-    public typealias ResumeSeed = (sessionID: UUID, lastSeq: Int64)
+    /// The campaign gate is ``isHostClosed`` and asks nothing about the reason — every host close
+    /// ends THIS session. The reason is for the layer above, which owns the different question of
+    /// whether a NEW session may be built for the pane: `.retired` says the pane is gone,
+    /// `.subscriberEvicted` says only this attachment was.
+    public var hostChannelCloseReason: MuxCloseReason? { driver.hostCloseReason }
 
-    /// - Parameters:
-    ///   - ackInterval: how often the coalesced ack ticker may flush (correctness-independent).
-    ///   - makeTransport: the session-transport factory. Vends a logical channel over the per-host
-    ///     shared mux (a `MuxClientTransport`) — wired at the
-    ///     `WorkspaceStore.liveMakeSession` construction site, never on the hot path.
-    ///   - resumeSeed: an optional restored-pane identity, applied synchronously before this
-    ///     initializer returns (see ``ResumeSeed``). `nil` (the default) is the ordinary fresh-shell
-    ///     path.
-    @preconcurrency
-    public init(
-        ackInterval: Duration = SlopDeskClient.defaultAckInterval,
-        makeTransport: @escaping @Sendable () -> any ClientTransporting,
-        resumeSeed: ResumeSeed? = nil,
-    ) {
-        self.ackInterval = ackInterval
-        self.makeTransport = makeTransport
-        (outputWakeStream, outputWakeContinuation) =
-            AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-        if let resumeSeed {
-            sessionID = resumeSeed.sessionID
-            session = slopdesk_pane_session_seeded(resumeSeed.lastSeq)
-        }
-    }
+    // MARK: - Connect / lifecycle
 
-    /// Attaches a feeder that mirrors every delivered `output` payload to a terminal
-    /// surface (in addition to the ``output`` stream). The closure runs on the actor;
-    /// a GUI surface should hop to `@MainActor` inside it.
-    @preconcurrency
-    public func setSurfaceFeed(_ feed: @escaping @Sendable (Data) -> Void) {
-        surfaceFeed = feed
-    }
-
-    // MARK: Connect / reconnect
-
-    /// Pre-seeds the resume identity so the NEXT ``connect(...)`` presents this session
-    /// UUID and last-received seq to the host (the detach/reattach path).
+    /// Provides a startup cwd for the next PTY spawn.
     ///
-    /// NOT the production restore-a-pane path (seed-resume-identity-race, docs/DECISIONS):
-    /// `LivePaneSession.makeTerminal` threads the pane's own id
-    /// through ``init(ackInterval:makeTransport:resumeSeed:)`` instead,
-    /// because calling this method requires an actor hop (`await`) that a separately-scheduled
-    /// `connect()` Task is not ordered against. Init-time seeding has no such window: the fields are
-    /// set before the object is ever handed to a second caller. This method remains for the CLI
-    /// (`slopdesk-client`, a single sequential `Task` with no competing connect job — not racy there)
-    /// and for tests that seed after construction.
-    ///
-    /// Design: seeding into the existing actor state (`sessionID` / `highestContiguousSeq`)
-    /// means the established ``connect(...)`` line `let resume = sessionID ?? WireMessage.newSessionID`
-    /// picks it up with no new parameter — the connect path needs no change. Calling this BEFORE
-    /// `connect()` is the only safe window: `connect()` immediately reads both fields on the fast
-    /// (pre-suspension) path. Calling it after `connect()` has no effect (the live session has
-    /// already presented its own learned identity). Must only be called before the first connect.
-    public func seedResumeIdentity(sessionID: UUID, seq: Int64) {
-        self.sessionID = sessionID
-        session = slopdesk_pane_session_seeded(seq)
-    }
-
-    /// Provides the transport with a startup cwd for the next PTY spawn. A host-side reattach IGNORES it
-    /// (the live shell's cwd is preserved — `performReattach` never reads `channelOpen.initialCwd`); only a
-    /// FRESH respawn honors it. It is therefore passed on every (re)connect (see `connect(...)`), so a pane
-    /// whose host shell had to be respawned lands back in its project directory, not the daemon's `$HOME`.
+    /// A host-side reattach IGNORES it (the live shell's cwd is preserved); only a FRESH respawn
+    /// honours it. It is re-sent on every (re)connect, so a pane whose host shell had to be
+    /// respawned lands back in its project directory rather than the daemon's `$HOME`.
     public func setInitialCwd(_ cwd: String?) {
         let trimmed = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
-        initialCwd = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        driver.setInitialCwd((trimmed?.isEmpty ?? true) ? nil : trimmed)
     }
 
-    /// Connects to `host:port`. A first call uses a NEW session (zero sessionID); a
-    /// later call (driven by ``ReconnectManager`` or ``resume()``) reuses the learned
+    /// Connects to `host:port`. A first call uses a NEW session; a later call reuses the learned
     /// ``sessionID`` and presents ``highestContiguousSeq`` so the host replays the tail.
     ///
-    /// Idempotency: any previous transport is torn down first, so a reconnect attempt
-    /// never leaks the old channels.
+    /// RETURNS rather than throwing when a `close()` or a `pause()` superseded the dial: the caller
+    /// reads a return as "somebody else is handling this pane" and a throw as "the host is
+    /// unreachable", and reporting the first as the second whitewashes a torn-down pane.
     public func connect(
         host: String,
         port: UInt16,
         handshakeTimeout: Duration = .seconds(10),
     ) async throws {
-        // The three terminal states, asked as one — including the enforcement point for
-        // `hostCloseReason`, at the one call that actually opens a channel: the host closed this
-        // pane's channel, so no path may re-open it under the same client, whichever reason it gave.
-        // A re-dial that is ALLOWED (an explicit user reconnect, or the app-connection fan-out after
-        // an eviction) is unaffected: it builds a NEW client. The sentence each arm throws is
-        // `slopdesk_clientsession`'s too, so the refusal and the words for it cannot drift apart.
-        let refusal = slopdesk_pane_session_connect_refusal(closed, childExited, hostCloseReason != nil)
-        if refusal != 0 { throw ClientError.invalidState(Self.refusalReason(refusal)) }
-        self.host = host
-        self.port = port
-
-        // Claim a generation BEFORE the first suspension (teardown). A concurrent connect that starts
-        // while we are suspended will claim a HIGHER one, marking us stale at the post-handshake check.
-        connectGeneration &+= 1
-        let myGeneration = connectGeneration
-
-        // Tear down any prior transport (reconnect path) so we never double-pump. Guard the
-        // teardown so the old inbound pump's self-inflicted stream-end (the OLD transport
-        // closing finishes the OLD inbound stream) does NOT surface a spurious `.disconnected`
-        // that would make ReconnectManager queue a redundant reconnect campaign.
-        tearingDownDepth += 1
-        await teardownTransport()
-        tearingDownDepth -= 1
-
-        let transport = makeTransport()
-        let resume = sessionID ?? WireMessage.newSessionID
-        let lastSeq = highestContiguousSeq
-        if let configurable = transport as? any InitialCwdConfigurableTransport {
-            // Pass the startup cwd on EVERY (re)connect, not only the first. On the host a RETURNING
-            // reattach (PATH A, `performReattach`) never reads `channelOpen.initialCwd` — it rebinds the
-            // live shell, so the hint is ignored and the shell's real cwd is preserved. Only a FRESH
-            // respawn (PATH B/C, `spawnFreshShell`, taken when the detached session is gone / TTL-expired)
-            // reads it — and there we WANT the pane's project dir. Nil-ing it on reconnect would make
-            // every fresh respawn land in `$HOME`, losing the working directory and collapsing the
-            // cwd-derived pane/tab title to "Terminal".
-            await configurable.setInitialCwd(initialCwd)
-        }
-        do {
-            try await transport.connect(
-                host: host,
-                port: port,
-                resume: resume,
-                lastReceivedSeq: lastSeq,
-                handshakeTimeout: handshakeTimeout,
-            )
-        } catch {
-            await transport.close()
-            throw error
-        }
-
-        // POST-HANDSHAKE re-check — the actor was reentrant across `await transport.connect(...)`.
-        // If, during that suspension, the client was closed (deliberate disconnect) or paused (iOS
-        // background), OR a NEWER connect() superseded us (claimed a higher `connectGeneration`), OR our
-        // driving task was cancelled, we must DISCARD this freshly-built transport rather than adopt it.
-        // Adopting it would assign `self.transport = transport` over the other live/closing one WITHOUT
-        // tearing this one down — leaking a live transport + its inbound pump + ack ticker + the
-        // ConnectionRegistry channel refcount (the zombie-transport bug). `transport.close()` releases
-        // the channel (refcount--), so nothing leaks. We RETURN rather than throw: a thrown error would
-        // make ``ReconnectManager``'s loop RETRY and fight whichever connect legitimately won — returning
-        // tells it "the client is handled, stop the campaign."
-        guard slopdesk_pane_session_adopts(
-            closed, paused, Task.isCancelled, myGeneration != connectGeneration,
-        ) else {
-            await transport.close()
-            return
-        }
-
-        self.transport = transport
-        let learnedID = await transport.sessionID
-        let resumeFromSeq = await transport.resumeFromSeq
-        let returning = await transport.returningClient
-        if let learnedID { sessionID = learnedID }
-
-        // RESET DEDUP / ACK STATE — conditional on the HOST's authoritative resumeFromSeq.
-        //
-        // The correct signal is the HOST-AUTHORITATIVE `resumeFromSeq` from the handshake ack, NOT
-        // the client-side `returningClient` flag (computed as `resume != newSessionID`, so ALWAYS
-        // true on reconnect — a `!returning` gate would skip the reset exactly when it is most
-        // needed; the dedup-regression test pins this).
-        //
-        //   • resumeFromSeq == 0  →  the host spawned a FRESH shell (PATH B/C), or a PATH-A
-        //     reattach for a COLD client (`lastReceivedSeq == 0` — nothing rendered, nothing
-        //     to keep). The seq marks MUST be reset so a fresh shell's seq-1 output isn't
-        //     dropped as a "duplicate" (a reattached shell's next seqs just re-baseline via
-        //     the gap-tolerant `deliverOutput`).
-        //
-        //   • resumeFromSeq > 0  →  HOST honored a real RETURNING_CLIENT resume (the detach/reattach path
-        //     path): it replays the tail from `resumeFromSeq` onward. The client's marks were seeded
-        //     by ``seedResumeIdentity(sessionID:seq:)`` to match, so the dedup high-water is ALREADY
-        //     correct — resetting would discard them and make `deliverOutput` re-deliver the replayed
-        //     tail as new, duplicating output on the pane. Leave them.
-        //
-        // The step also ARMS the resume-outcome probe for this connection, against the `lastSeq`
-        // captured before the handshake — strictly before the pump below can deliver anything, and
-        // strictly before the marks it is read against could have been reset.
-        if slopdesk_pane_session_adopt(&session, lastSeq, resumeFromSeq) == 1 {
-            // KEEP the un-consumed inbox bytes. `deliverOutput` advanced the contiguous mark at
-            // wire-ARRIVAL time, and this connect already presented it as `lastReceivedSeq` — so on a
-            // genuine reattach the host will NEVER resend these bytes: the inbox copy is the only copy,
-            // and a `removeAll()` here would make a silent, permanent scrollback gap at every reconnect
-            // that races an undrained burst (deterministically so on iOS pause→resume). The entries
-            // stay FIFO-ahead of the new life's output — correct for PATH A (tail of the same shell)
-            // and for PATH B (the grid keeps the old session's content; its tail still belongs before
-            // the fresh shell's bytes). Their wire-credit is ZEROED because `takeOutputBatch` credits
-            // taken entries to the CURRENT transport, and the NEW channel's peer never sent those bytes
-            // (a phantom windowAdjust over-grant otherwise).
-            if !outputInbox.isEmpty {
-                outputInbox = outputInbox.map { (bytes: $0.bytes, wireBytes: 0) }
-            }
-        }
-
-        if returning, let learnedID {
-            // Surface the reconnect so the UI flips `.reconnecting` → `.connected`
-            // (ConnectionViewModel folds this event). `resumeFromSeq` is the host-authoritative
-            // verdict: > 0 = the SAME shell resumed byte-exact (PATH A); 0 = a fresh shell or a
-            // cold-surface reattach.
-            eventBroadcaster.yield(.reconnected(sessionID: learnedID, resumeFromSeq: resumeFromSeq))
-        }
-
-        // Re-assert the last known window size on (re)connect so the remote PTY matches
-        // the local terminal even after a resume rebound the control channel.
-        if let size = lastSentResize {
-            try? await transport.sendResize(cols: size.cols, rows: size.rows, pxWidth: size.px, pxHeight: size.py)
-        }
-
-        // POST-ADOPTION re-check: the post-handshake check above ran BEFORE four more cross-actor awaits
-        // (transport.sessionID/resumeFromSeq/returningClient/sendResize), each a reentrancy window. If a
-        // deliberate close()/pause() landed during any of them, teardownTransport() already cancelled +
-        // niled the pumps and closed this transport — re-creating the pumps here would leak a forever-
-        // spinning ack ticker (its loop has no closed/transport guard). Bail before starting them.
-        guard slopdesk_pane_session_adopts(
-            closed, paused, Task.isCancelled, myGeneration != connectGeneration,
-        ) else {
-            await transport.close()
-            return
-        }
-
-        startInboundPump(transport)
-        startAckTicker()
-        startPingTicker()
+        let driver = driver
+        _ = try await Self.offCallerThread { try driver.connect(
+            host: host,
+            port: port,
+            handshakeTimeout: handshakeTimeout,
+        ) }
     }
 
-    /// Pumps the transport's merged inbound stream: dedups + delivers `output`, surfaces
-    /// title/bell/exit, and finishes (surfacing `.disconnected`) when the stream ends.
-    private func startInboundPump(_ transport: any ClientTransporting) {
-        let inbound = transport.inbound
-        inboundTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                for try await message in inbound {
-                    await handleInbound(message)
-                }
-                await handleStreamEnded(error: nil, hostClose: transport.hostCloseReason)
-            } catch {
-                await handleStreamEnded(error: error, hostClose: transport.hostCloseReason)
-            }
-        }
+    /// App backgrounded: proactively tear the transport down.
+    ///
+    /// The host keeps the shell and its replay buffer alive, so output produced while paused is
+    /// retained for replay. Idempotent. Surfaces its own ``Event/disconnected(reason:)``.
+    public func pause() async {
+        let driver = driver
+        await Self.offCallerThread { driver.pause() }
     }
 
-    /// Test-only seam: drive one inbound `WireMessage` through the exact same handling
-    /// path the live inbound pump uses (dedup + contiguous tracking + surface/event
-    /// fan-out), without standing up a real transport. `internal`, reached via
-    /// `@testable import` — this is the only way to prove the client-side dedup high-water
-    /// mark independent of host replay behavior (the host always keys replay off
-    /// `lastReceivedSeq`, so an e2e never feeds an already-fed seq).
-    func handleInboundForTesting(_ message: WireMessage) async {
-        await handleInbound(message)
+    /// App foregrounded: reconnect with the preserved `sessionID` + seq. A no-op unless paused.
+    public func resume() async throws {
+        let driver = driver
+        _ = try await Self.offCallerThread { try driver.resume(handshakeTimeout: .seconds(10)) }
     }
 
-    /// Test-only: whether a transport is currently adopted (`self.transport != nil`). Used by the
-    /// reconnect-race regression suite to assert that a connect superseded/closed/paused mid-handshake
-    /// does NOT leave a zombie transport adopted on the client.
-    var hasLiveTransportForTesting: Bool { transport != nil }
-
-    private func handleInbound(_ message: WireMessage) async {
-        switch message {
-        case let .output(seq, bytes):
-            await deliverOutput(seq: seq, bytes: bytes, wireBytes: message.wireByteCount)
-        case let .exit(code):
-            // TERMINAL for this client (see `childExited`): the wake stream below cannot be
-            // re-armed, so no later connect may spawn a shell into the now consumer-less inbox.
-            childExited = true
-            eventBroadcaster.yield(.exit(code: code))
-            // The byte stream is over once the child exits. Finishing the wake stream ends
-            // the consumer's wake loop; its final takeOutputBatch() drains any tail.
-            outputWakeContinuation.finish()
-            // `.exit` is data-class (it rode the windowed DATA sub-channel): credit it
-            // immediately — it never enters the inbox.
-            await transport?.noteOutputConsumed(wireBytes: message.wireByteCount)
-        case let .title(text):
-            eventBroadcaster.yield(.title(text))
-        case .bell:
-            eventBroadcaster.yield(.bell)
-        case let .commandStatus(status):
-            eventBroadcaster.yield(.commandStatus(status))
-        case let .notification(title, body):
-            eventBroadcaster.yield(.notification(title: title, body: body))
-        case let .foregroundProcess(name):
-            // COARSE Claude detection (type 26): surface the PTY foreground-process basename so the UI
-            // can derive a presence floor for this pane. Rides CONTROL; never blocks output.
-            eventBroadcaster.yield(.foregroundProcess(name: name))
-        case let .claudeStatus(state, kind, label):
-            // RICH Claude status (type 27): surface the raw bytes; the UI maps them back to a
-            // ClaudeStatus (SlopDeskClient does not depend on SlopDeskAgentDetect).
-            eventBroadcaster.yield(.claudeStatus(state: state, kind: kind, label: label))
-        case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText, promptOrdinal):
-            // BLOCK metadata (type 28): surface verbatim; the UI upserts a per-pane block keyed by index.
-            eventBroadcaster.yield(.commandBlock(
-                index: index, exitCode: exitCode, durationMS: durationMS,
-                complete: complete, outputLen: outputLen, commandText: commandText,
-                promptOrdinal: promptOrdinal,
-            ))
-        case let .blockOutput(index, output):
-            // BLOCK output (type 29): the reply to a requestBlockOutput. Surface the raw VT bytes; the
-            // UI resolves the pending request (empty == evicted/unknown — the UI must not hang).
-            eventBroadcaster.yield(.blockOutput(index: index, output: output))
-        case let .metadataResponse(requestID, status, payload):
-            // METADATA reply (type 30): the reply to a requestMetadata. Surface the raw status byte +
-            // opaque payload verbatim; the UI's MetadataRequestRegistry correlates it by requestID and the
-            // typed MetadataClient decodes the payload (SlopDeskClient does not depend on MetadataCodec).
-            eventBroadcaster.yield(.metadataResponse(requestID: requestID, status: status, payload: payload))
-        case let .inputEcho(enabled):
-            // SECURE INPUT (type 31): surface the host PTY termios `ECHO` edge so the macOS UI can engage
-            // process-global Secure Keyboard Entry while the remote shell is at a no-echo password prompt.
-            // Rides CONTROL; never blocks output.
-            eventBroadcaster.yield(.inputEcho(enabled: enabled))
-        case let .progress(state, percent):
-            // OSC 9;4 PROGRESS (type 32): the decoder carried the RAW state byte verbatim (a faithful
-            // byte round-trip keeps the golden vector stable); VALIDATE it HERE at the boundary and DROP an
-            // unknown discriminant (4/5/…/255) rather than forwarding a byte the UI cannot map. The
-            // host-clamped `percent` (0…100) rides through. Only a known state reaches the UI's badge/Dock.
-            guard let validated = ProgressState(wire: state) else { break }
-            eventBroadcaster.yield(.progress(state: validated, percent: percent))
-        case let .cwd(path):
-            eventBroadcaster.yield(.cwd(path))
-        case let .projectKey(path):
-            // Host-computed By-Project key (type 34): surface verbatim; the GUI store validates + persists.
-            eventBroadcaster.yield(.projectKey(path))
-        case let .projectGitStatus(status):
-            // Host-pushed project git summary (type 35): surface verbatim; the GUI store validates + books.
-            eventBroadcaster.yield(.projectGitStatus(status))
-        case let .agentSessionIntent(intent):
-            // Host-latched agent-session intent (type 36): surface verbatim; the GUI store mirrors it.
-            eventBroadcaster.yield(.agentSessionIntent(intent))
-        case let .pong(timestampMS):
-            recordPong(sentAtMS: timestampMS)
-        default:
-            // input/hello/resize/ack/bye/helloAck never arrive on the client inbound.
-            // Ignore defensively.
-            break
-        }
+    /// Permanently retires the session and finishes the surfaced streams. After this the client is
+    /// unusable; a recovery builds a new one.
+    public func close() async {
+        let driver = driver
+        await Self.offCallerThread { driver.close() }
+        outputWakeContinuation.finish()
+        broadcaster.finish()
     }
 
-    /// Folds one pong into the smoothed RTT (EWMA α=0.25) and broadcasts the fresh value.
-    /// The timestamp is OUR monotonic clock echoed verbatim, so the math never involves
-    /// the host's clock. A stale pong from before a suspend can yield a huge sample; the
-    /// EWMA absorbs it (and the next samples correct it).
-    private func recordPong(sentAtMS: UInt64) {
-        let nowMS = DispatchTime.now().uptimeNanoseconds / 1_000_000
-        var reading = 0.0
-        guard slopdesk_pane_session_rtt(
-            nowMS, sentAtMS, smoothedRTTMS != nil, smoothedRTTMS ?? 0, &reading,
-        ) else { return }
-        smoothedRTTMS = reading
-        eventBroadcaster.yield(.rtt(milliseconds: reading))
-    }
+    // MARK: - Outbound (client → host)
 
-    /// The dedup + contiguous-tracking core. Drops any `output` already delivered
-    /// (`seq <= highestSeqFed`) — this is what makes a replayed tail splice in without a
-    /// duplicate. A future seq beyond `highestSeqFed + 1` would be a gap; the transport
-    /// guarantees ascending in-order delivery (replay tail then live, `docs/20` §8.3), so
-    /// in practice every accepted output advances the counter by exactly one.
-    private func deliverOutput(seq: Int64, bytes: Data, wireBytes: Int) async {
-        // The fold — resolve the verdict, dedup, advance both marks, arm the ack — is
-        // `slopdesk_clientsession`'s. What stays here is the half it cannot do: the inbox, the
-        // surface and the window credit.
-        guard slopdesk_pane_session_deliver(&session, seq) == 1 else {
-            // Duplicate (replayed) — drop, but still CREDIT it: the bytes crossed the wire
-            // and were fully processed (by discarding); withholding the credit would leak
-            // window capacity on every replay.
-            await transport?.noteOutputConsumed(wireBytes: wireBytes)
-            return
-        }
-        // Append-then-yield: the pending wake (bufferingNewest(1)) always observes a
-        // complete inbox, so no chunk can be stranded without a wake. The wire byte count
-        // rides along so takeOutputBatch can credit the consumption.
-        outputInbox.append((bytes: bytes, wireBytes: wireBytes))
-        outputWakeContinuation.yield(())
-        surfaceFeed?(bytes)
-    }
+    /// Forces an immediate ack flush. Safe to call any time.
+    public func flushAck() { driver.flushAck() }
 
-    /// - Parameter hostClose: why the transport reports this end as a per-channel `channelClose`
-    ///   from the HOST, or `nil` for the link going away. Read from the pump's OWN captured
-    ///   transport, not `self.transport`, so a connect that replaces the transport while the old
-    ///   pump is still unwinding cannot attribute one channel's end to another's.
-    private func handleStreamEnded(error: Error?, hostClose: MuxCloseReason?) {
-        // The host closed this pane's channel. TERMINAL for this client, and recorded BEFORE the
-        // event goes out so every subscriber that reads `isHostClosed`/`hostChannelCloseReason` on
-        // the `.disconnected` — the reconnect campaign first among them — sees it already set (the
-        // `childExited` ordering).
-        if let hostClose { hostCloseReason = hostClose }
-        // The link is gone: the dead connection's resume verdict must not survive it — a stale
-        // `.resumedSession` read between the drop and the next connect would let the UI skip the
-        // fresh-session wipe the NEXT session may need. Reset unconditionally (before the guards:
-        // a deliberate close / self-inflicted teardown end invalidates the verdict just the same).
-        slopdesk_pane_session_stream_ended(&session)
-        // Surface a disconnect (unless we are closing on purpose, or we ourselves are
-        // tearing the old transport down to reconnect — in which case this end is
-        // self-inflicted and a real `.disconnected` would queue a redundant reconnect).
-        // ReconnectManager watches `events` / observes the thrown connect error.
-        // `childExited`: the post-exit FIN is likewise an EXPECTED end — the `.exit` event already
-        // told the UI the session is over; a `.disconnected` here would flip the pane to a
-        // forever-"reconnecting" (and, before the ReconnectManager exit gate, launched a respawn
-        // campaign against a client whose output nothing can consume).
-        guard slopdesk_pane_session_announces_drop(closed, tearingDown, childExited) else { return }
-        let reason = if let error { String(describing: error) } else { "stream ended (FIN)" }
-        eventBroadcaster.yield(.disconnected(reason: reason))
-    }
-
-    // MARK: Ack coalescing
-
-    /// Starts (or restarts) the background ack ticker. On each tick, if a contiguous
-    /// advance is pending, send a single `ack(highestContiguousSeq)`. Cancelled on
-    /// teardown/close. We re-create it per connect so it always targets the live
-    /// transport.
-    private func startAckTicker() {
-        ackTask?.cancel()
-        let interval = ackInterval
-        ackTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
-                guard let self else { return }
-                await flushAckIfPending()
-            }
-        }
-    }
-
-    /// Starts (or restarts) the RTT probe ticker: one `ping(now)` on the CONTROL channel
-    /// every ``pingInterval``. Best-effort (`try?`) — a dropped probe just skips a sample.
-    /// Re-created per connect so it always targets the live transport; cancelled on
-    /// teardown/close beside the ack ticker.
-    private func startPingTicker() {
-        pingTask?.cancel()
-        let interval = Self.pingInterval
-        pingTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
-                guard let self else { return }
-                await sendPingProbe()
-            }
-        }
-    }
-
-    private func sendPingProbe() async {
-        guard let transport else { return }
-        let nowMS = DispatchTime.now().uptimeNanoseconds / 1_000_000
-        try? await transport.sendPing(timestampMS: nowMS)
-    }
-
-    private func flushAckIfPending() async {
-        // The transport is asked FIRST, so a tick with nowhere to send leaves the flag armed for the
-        // next live one. Past that the gate is `slopdesk_clientsession`'s: it clears the flag, and
-        // answers a seq only when there is one — never 0, and never one we have not delivered.
-        guard let transport else { return }
-        var seq: Int64 = 0
-        guard slopdesk_pane_session_ack(&session, &seq) else { return }
-        do {
-            try await transport.sendAck(seq: seq)
-        } catch {
-            // Send failed (channel dropped): re-arm so the next live transport acks it.
-            slopdesk_pane_session_ack_failed(&session)
-        }
-    }
-
-    /// Forces an immediate ack flush (used by tests and by ``close()`` for a clean
-    /// final ack). Safe to call any time.
-    public func flushAck() async {
-        await flushAckIfPending()
-    }
-
-    // MARK: Outbound (client → host)
-
-    /// Sends raw keystroke/paste bytes as `input`.
+    /// Sends raw keystroke/paste bytes as `input`, on the windowed DATA lane.
+    ///
+    /// Hopped off the caller's thread because the door BLOCKS while the credit window is empty —
+    /// that IS the backpressure, and it is why there is no bounded queue on this side any more.
     public func sendInput(_ bytes: Data) async throws {
-        guard let transport else { throw ClientError.invalidState("sendInput before connect") }
-        try await transport.sendInput(bytes)
+        let driver = driver
+        try await Self.offCallerThread { try driver.sendInput(bytes) }
     }
 
-    /// Sends a `resize`, remembering it so it is re-asserted after a reconnect.
-    public func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16 = 0, pxHeight: UInt16 = 0) async throws {
-        lastSentResize = (cols, rows, pxWidth, pxHeight)
-        guard let transport else { throw ClientError.invalidState("sendResize before connect") }
-        try await transport.sendResize(cols: cols, rows: rows, pxWidth: pxWidth, pxHeight: pxHeight)
+    /// Sends a `resize`. The driver REMEMBERS it, so every later connection re-asserts it —
+    /// including when this send itself fails, which is exactly the resize the next one must assert.
+    public func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16 = 0, pxHeight: UInt16 = 0) throws {
+        try driver.sendResize(cols: cols, rows: rows, pxWidth: pxWidth, pxHeight: pxHeight)
     }
 
     /// Requests a Block's captured OUTPUT bytes (wire type 15) — fired when the user copies/expands a
-    /// block whose `index` came from a `.commandBlock` event. The host replies with a `.blockOutput`
-    /// (type 29) the inbound pump surfaces as a `.blockOutput` event (empty == evicted/unknown). Rides the
-    /// CONTROL channel, so it never head-of-line-blocks behind an output flood on DATA.
-    public func requestBlockOutput(index: UInt32) async throws {
-        guard let transport else { throw ClientError.invalidState("requestBlockOutput before connect") }
-        try await transport.sendRequestBlockOutput(index: index)
+    /// block whose `index` came from a ``Event/commandBlock(index:exitCode:durationMS:complete:outputLen:commandText:promptOrdinal:)``.
+    /// The host replies with a ``Event/blockOutput(index:output:)`` (empty == evicted/unknown). Rides
+    /// CONTROL, so it never head-of-line-blocks behind an output flood on DATA.
+    public func requestBlockOutput(index: UInt32) throws {
+        try driver.sendControl(.requestBlockOutput(index: index))
     }
 
-    /// Requests host-side pane metadata (wire type 16) — fired by the typed ``MetadataClient`` façade
-    /// behind the Details Panel. `verb` selects the operation (``MetadataVerb``), `requestID` is a
-    /// client-chosen monotonic id the host echoes so the registry can correlate the reply, and `payload`
-    /// carries the verb's argument (empty for the pane-scoped verbs — the pane rides the channel
-    /// envelope). The host always replies with a `.metadataResponse` (type 30) the inbound pump surfaces;
-    /// the registry's 5 s timeout is the belt-and-braces guard for a dropped reply. Rides the CONTROL
-    /// channel, so it never head-of-line-blocks behind an output flood on DATA.
-    public func requestMetadata(requestID: UInt32, verb: UInt8, payload: Data) async throws {
-        guard let transport else { throw ClientError.invalidState("requestMetadata before connect") }
-        try await transport.sendMetadataRequest(requestID: requestID, verb: verb, payload: payload)
+    /// Requests host-side pane metadata (wire type 16) — fired by the typed `MetadataClient` façade
+    /// behind the Details Panel. The host always replies with a
+    /// ``Event/metadataResponse(requestID:status:payload:)``; the registry's timeout is the
+    /// belt-and-braces guard for a dropped reply. Rides CONTROL.
+    public func requestMetadata(requestID: UInt32, verb: UInt8, payload: Data) throws {
+        try driver.sendControl(.metadataRequest(requestID: requestID, verb: verb, payload: payload))
     }
 
-    // MARK: iOS lifecycle seam ([17] §2.5)
+    // MARK: - Internals
 
-    /// App backgrounded: proactively tear the transport down. The host keeps the shell
-    /// + replay buffer alive; output produced while paused is retained for replay. Idempotent.
-    public func pause() async {
-        guard !paused, !closed else { return }
-        paused = true
-        // Best-effort clean ack of what we have, then a clean bye so the host marks us
-        // offline immediately (the kernel would FIN soon anyway).
-        await flushAckIfPending()
-        if let transport {
-            try? await transport.sendBye()
-        }
-        // Guard the teardown so the old inbound pump's self-inflicted end does not add a
-        // spurious `.disconnected` on top of the explicit "paused" one we yield below.
-        tearingDownDepth += 1
-        await teardownTransport()
-        tearingDownDepth -= 1
-        eventBroadcaster.yield(.disconnected(reason: "paused (backgrounded)"))
-    }
-
-    /// App foregrounded: reconnect with the preserved `sessionID` + seq for a byte-exact
-    /// resume. No-op if not paused / already closed.
-    public func resume() async throws {
-        // `childExited`: an exited pane must not come back on foreground — resume would spawn a
-        // fresh host shell into the finished wake stream's consumer-less inbox. No-op, like closed.
-        guard paused, !closed, !childExited else { return }
-        paused = false
-        guard let host, let port else { throw ClientError.invalidState("resume before first connect") }
-        try await connect(host: host, port: port)
-    }
-
-    /// True while paused by ``pause()`` (diagnostics / reconnect gating).
-    public var isPaused: Bool { paused }
-
-    /// True once ``close()`` has permanently retired the client (diagnostics / reconnect gating).
-    /// ``ReconnectManager`` consults this ALONGSIDE ``isPaused`` because the two deliberate-shutdown
-    /// paths are NOT symmetric: ``pause()`` yields an explicit `.disconnected` AND sets `paused`,
-    /// but ``close()`` sets `closed` and `finish()`es the event stream WITHOUT yielding `.disconnected`.
-    /// A real transport drop that yielded `.disconnected` just before `close()` leaves that event
-    /// BUFFERED in a subscriber ahead of the stream's finish — so a reconnect supervisor that gated
-    /// only on `isPaused` would pop the stale drop after close and run a doomed `connect`-after-close
-    /// campaign. Gating on `isClosed` too closes that race.
-    public var isClosed: Bool { closed }
-
-    /// True once the remote child has `.exit`ed — this client instance is permanently done (see
-    /// `childExited`). ``ReconnectManager`` consults this ALONGSIDE ``isPaused``/``isClosed``:
-    /// `.exit` sets neither of those, and the host's post-exit FIN would otherwise read as a real
-    /// drop and launch a reconnect campaign that respawns host shells into a consumer-less inbox.
-    public var isExited: Bool { childExited }
-
-    /// True once the HOST closed this pane's channel, for any reason (see `hostCloseReason`).
-    /// ``ReconnectManager`` consults this ALONGSIDE ``isPaused``/``isClosed``/``isExited``: a
-    /// `channelClose` sets none of those, and it ends the inbound stream exactly as a drop does — so
-    /// without this the campaign re-opens the channel, which for a reaped pane forks a shell the
-    /// host has already given up on and for an evicted subscriber re-joins to be evicted again.
-    public var isHostClosed: Bool { hostCloseReason != nil }
-
-    /// WHY the host closed this pane's channel, `nil` if it did not (see ``MuxCloseReason``). The
-    /// campaign gate is ``isHostClosed`` and asks nothing about the reason — every host close ends
-    /// THIS client. The reason is for the layer above, which owns the different question of whether
-    /// a NEW client may be built for the pane: `.retired` says the pane is gone, `.subscriberEvicted`
-    /// says only this attachment was.
-    public var hostChannelCloseReason: MuxCloseReason? { hostCloseReason }
-
-    /// Test-only: simulate a hard network loss — tear down the transport (cancelling the
-    /// underlying NWConnections) WITHOUT sending a clean `bye`, exactly as an iOS TCP
-    /// teardown or a NetBird path flap would. Preserves `sessionID` + `highestContiguousSeq`
-    /// so a subsequent ``connect(...)`` is a byte-exact RETURNING_CLIENT resume. The
-    /// surfaced ``output`` / ``events`` streams stay open (this is a drop, not a close).
+    /// Runs one blocking driver door off the caller's thread.
     ///
-    /// Marked underscored + documented as test-only; the production drop path is the
-    /// transport failing on its own (handled by ``handleStreamEnded(error:hostClosed:)``).
-    public func forceDropForTesting() async {
-        await teardownTransport()
-    }
-
-    // MARK: Teardown
-
-    /// What the error thrown for a `slopdesk_pane_session_connect_refusal` code says.
-    ///
-    /// The sentence lives on the far side beside the rule that produces it, so a refusal and the
-    /// words for it cannot drift. 64 bytes covers the longest of the three, and the retry covers a
-    /// sentence that outgrows it anyway — `docs/55` §4.
-    private static func refusalReason(_ code: UInt8) -> String {
-        var out = [UInt8](repeating: 0, count: 64)
-        var count = out.withUnsafeMutableBufferPointer { buffer in
-            slopdesk_pane_session_refusal_reason(code, buffer.baseAddress, buffer.count)
-        }
-        if count > out.count {
-            out = [UInt8](repeating: 0, count: count)
-            count = out.withUnsafeMutableBufferPointer { buffer in
-                slopdesk_pane_session_refusal_reason(code, buffer.baseAddress, buffer.count)
+    /// Every door parks by design — the driver is a mailbox and a supervisor thread — and every
+    /// caller here is on the main actor or on the cooperative pool, neither of which may block.
+    /// A `DispatchQueue.global` hop is the spelling that keeps the door synchronous in Rust, where
+    /// a blocking wait is the simple correct thing, without that simplicity landing on the UI.
+    private static func offCallerThread<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { resumption in
+            DispatchQueue.global(qos: .userInitiated).async {
+                resumption.resume(with: Result { try body() })
             }
         }
-        guard count > 0, count <= out.count else { return "connect refused" }
-        // swiftlint:disable:next optional_data_string_conversion
-        return String(decoding: out.prefix(count), as: UTF8.self)
     }
 
-    /// Tears down only the transport + its pumps (NOT the surfaced streams) so a
-    /// reconnect can replace them. Cancels the inbound + ack tasks and closes the
-    /// transport (which cancels its forwarders and the underlying NWConnections).
-    private func teardownTransport() async {
-        let oldInbound = inboundTask
-        inboundTask?.cancel()
-        ackTask?.cancel()
-        pingTask?.cancel()
-        inboundTask = nil
-        ackTask = nil
-        pingTask = nil
-        await transport?.close()
-        transport = nil
-        // Drain the old inbound pump to completion. `close()` above finished the old
-        // inbound stream, so the pump is unwinding into `handleStreamEnded`.
-        // Awaiting its `.value` here guarantees that self-inflicted end is fully processed
-        // BEFORE the caller clears `tearingDown` — so its `.disconnected` is suppressed
-        // deterministically (not by timing). The task never throws (`Task<Void, Never>`).
-        await oldInbound?.value
-    }
-
-    /// Permanently closes the client: tears down the transport and finishes the
-    /// surfaced streams. After this the client is unusable.
-    public func close() async {
-        guard !closed else { return }
-        closed = true
-        await flushAckIfPending()
-        if let transport { try? await transport.sendBye() }
-        await teardownTransport()
-        outputWakeContinuation.finish()
-        eventBroadcaster.finish()
+    /// The non-throwing half, spelled separately so `pause`/`close` need no `try`.
+    private static func offCallerThread(_ body: @escaping @Sendable () -> Void) async {
+        await withCheckedContinuation { resumption in
+            DispatchQueue.global(qos: .userInitiated).async {
+                body()
+                resumption.resume()
+            }
+        }
     }
 }

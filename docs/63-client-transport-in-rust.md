@@ -576,6 +576,87 @@ to the crate, `TransportParametersTests` and `AltScreenCutScannerTests` move wit
 in the same change, which is what keeps the crown-jewel end-to-end proof pointed at the thing that
 ships.
 
+#### What execution corrected, and what it found that this section had not planned for
+
+**One double replaced eleven.** The section says the app's suites fake "the face's EVENT SOURCE",
+and they do — but it did not say how many doubles that is. Eleven bespoke `ClientTransporting`
+actors became ONE `FakePaneDriver`, and the reason is the point of the whole stage: each old double
+re-implemented an inbound stream, a session id, a resume-from-seq and a set of no-op sends, and each
+one, being a transport under a Swift session, quietly re-decided a little of what the session did.
+There is nothing left to re-decide, so a double at `PaneDriving` can only SAY what arrived. It is a
+`final class` with a lock rather than an actor, because `PaneDriving` is SYNCHRONOUS by design and
+an actor cannot conform to a synchronous protocol without every method becoming a hop the real one
+does not have.
+
+**One test's PROPERTY changed, and it is the one worth recording.** With the campaign inside the
+driver, a plain link drop leaves it RUNNING — so the pane reads `.reconnecting` and the store's
+fan-out is right to leave it alone, because the recovery is already in flight inside the driver that
+still holds the session. A host RETIREMENT gates the campaign, so the pane reads `.disconnected` and
+stays there, and the fan-out dials it. The distinction `HostRetiredPaneRedialTests` is about
+survives whole; which SIDE does the recovering is what moved, and the suite was rewritten to assert
+the new property rather than patched to keep asserting the old one.
+
+**Two crates gained a type each, both to stop a second spelling before it was written.**
+`slopdesk-clientnet::registry::DiallingPool` is the shipping dial closure — mint an id, `establish`,
+drop the event receiver, keep the join handles — written once for the two owners that exist, the FFI
+pool and this CLI. `SlopDeskMuxPool` is one field now and holds no closure.
+
+**Twenty doors retired, not three.** The section names the raw-mode trio; the count is higher and
+the reason is the same each time — a door whose far side went away.
+
+| Retired | Its only caller was |
+| --- | --- |
+| `slopdesk_tty_enter_raw` · `_restore` · `_install_restore_on_signals` · `_window_size` · `slopdesk_fd_write_all` (`tty.rs`, whole) | `Sources/slopdesk-client/main.swift` |
+| Sixteen of the eighteen `slopdesk_pane_session_*` / `slopdesk_pane_backoff_*` (`session_marks.rs`) | `SlopDeskClient.swift` and `ReconnectManager.swift` |
+| `slopdesk_mux_transport_send_input` · `_note_consumed` | the PANE's use of the mux handle |
+| `slopdesk_pane_driver_is_connected` | nothing — it shipped unasked |
+
+`session_marks.rs` SURVIVES with two doors, and which two is the interesting part: both are asked
+BEFORE any driver exists. `slopdesk_pane_backoff_default` answers the shipped schedule, which
+`SlopDeskClient.Backoff` presents as three defaults and hands straight back across
+`slopdesk_pane_driver_new`'s config; `slopdesk_pane_backoff_max_attempts` is the give-up ceiling,
+which the chrome needs for "attempt N of M" WHILE a campaign runs, so it cannot wait for the
+`GaveUp` event that would report it.
+
+**The E2E suite moved with its subject, and its one environment variable is NOT the one the name
+suggests.** `SubprocessE2ETests` launched `slopdesk-hostd` and `slopdesk-client` as subprocesses; both
+are cargo binaries now, so it is `rust/slopdesk-client/tests/subprocess_e2e.rs` — the crate that OWNS
+the client binary, where `CARGO_BIN_EXE_slopdesk-client` names the thing under test instead of a
+hand-spelled path. hostd is a separate workspace and no `CARGO_BIN_EXE_*` reaches it, so its path
+arrives in `SLOPDESK_E2E_HOSTD_BIN`, which `just client-e2e` sets after building it; unset, every
+scenario prints why it proved nothing and returns green, the way `XCTSkip` did. The variable is
+deliberately not spelled `SLOPDESK_HOSTD_BIN` — `docs/46` records that name as having NO reader and
+the absence is the claim there, so a harness that started reading it would quietly delete a
+documented invariant.
+
+**Two files left `SlopDeskTransport` without being ported, and that is the right answer for both.**
+The section scopes G.5 as "the last of `Sources/SlopDeskTransport`", and what was actually last there
+was not transport. `TransportParameters` is the ONE place a Swift `NWConnection` gets TCP_NODELAY and
+the keepalive ladder, and every caller it has left — the loopback code-sidebar proxy, the Android
+bridge, the simulator stream — is a socket built beside `SlopDeskNet`'s byte channel, not beside the
+mux, whose sockopts became `slopdesk_muxnet::params::apply`'s at G.3. `AltScreenCutScanner` is a
+marshaller over `slopdesk_altscreen_reopen` with exactly one caller, `AndroidControlMessage`. Neither
+is portable — one builds an `NWParameters`, the other IS the call — so both MOVED: to `SlopDeskNet`
+and to `SlopDeskDevicePanels/Android/` respectively, the scanner dropping `public` on the way, since
+a face with one caller in one module should not widen that module's surface.
+
+The move is worth more than the tidying. `SlopDeskDevicePanels` no longer names `SlopDeskTransport`
+at all — neither the target nor its suite — so the panels graph is one edge narrower and the mux face
+has one fewer dependent to answer for. What is left under `SlopDeskTransport` is the mux face and
+nothing else: `ConnectionRegistry`, `MuxClientTransport`, `RustHandle`, the `MessageChannel` protocol
+the inspector and the workspace channel are both spelled against, and the error those two throw. The
+target keeps a name that no longer describes it, and renaming it is deliberately NOT this stage's
+change — the shape a later stage deletes wholesale is not improved by being renamed first.
+
+**Two invariants rules moved rather than retired**, and the distinction matters. `client_session`
+used to read two Swift files for door names; its subject did not change — one place decides, and the
+shell may not decide it twice — only the language the caller is written in did, so it names Rust
+call sites in `slopdesk-clientdriver` now. Its two Swift bans SURVIVE and are worth more than
+before: a mark kept as a Swift `var` is two boundaries from the call it would disagree with rather
+than one. `deleted_client_swift` gained a G.5 vector for the six paths above and a positive claim
+that `PaneDriving.swift` still ASKS its four doors — because a ban list alone is green on a tree
+where the face grew the driver back inside itself.
+
 ## 5. What this campaign does NOT do
 
 - **`Sources/SlopDeskNet`** stays. `NWByteChannel` is PATH-4 file transfer and the inspector event

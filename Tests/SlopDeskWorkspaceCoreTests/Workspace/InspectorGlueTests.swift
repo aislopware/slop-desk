@@ -5,13 +5,11 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// An `SlopDeskClient` whose transport factory is inert (never invoked — these terminal panes are
-/// never connected: the inspector fold is driven over an in-process loopback channel, no socket).
+/// An `SlopDeskClient` that is never dialled — these terminal panes have no host: the inspector
+/// fold is driven over an in-process loopback channel, no socket.
 @Sendable
 private func makeUnconnectedClient() -> SlopDeskClient {
-    SlopDeskClient(makeTransport: {
-        MuxClientTransport(registry: ConnectionRegistry())
-    })
+    SlopDeskClient(driver: FakePaneDriver.inert("the inspector glue never dials a pane"))
 }
 
 /// Writes the frames `slopdesk-inspectord` sends onto the host end of a loopback pair.

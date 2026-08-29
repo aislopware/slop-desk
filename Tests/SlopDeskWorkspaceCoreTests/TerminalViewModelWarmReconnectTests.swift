@@ -1,8 +1,6 @@
 import Foundation
 import SlopDeskClient
-import SlopDeskProtocol
 import SlopDeskTerminal
-import SlopDeskTransport
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -15,11 +13,13 @@ import XCTest
 /// post-reconnect output RIS-wiped the whole framebuffer AND replay ring: every network blip
 /// erased the terminal even though the shell survived byte-exactly.
 ///
-/// The reliable signal is the client's ``SlopDeskClient/SessionResumeOutcome`` (derived from
-/// the first post-reconnect output seq — a PATH-A reattach continues the retained seq stream past
-/// the presented `lastReceivedSeq`; a fresh shell restarts at 1). These tests drive the REAL pump
-/// (`observe(client:)`) over stub transports through a real reconnect: the resumed session must
-/// keep its screen; the fresh shell must still wipe.
+/// The reliable signal is the client's ``SlopDeskClient/SessionResumeOutcome``. DERIVING it is
+/// `slopdesk-clientsession`'s — a PATH-A reattach continues the retained seq stream past the
+/// presented `lastReceivedSeq`, a fresh shell restarts at 1 — and that derivation has its own tests
+/// where the seqs are the input. What is left here, and what these tests drive, is the half the pump
+/// owns: given a verdict, does `observe(client:)` consume the one-shot wipe or preserve it, and does
+/// it fire the toast exactly once and only after a DROP. So the double STATES the verdict; a suite
+/// that re-derived it here would be pinning a rule twice and in the weaker language.
 @MainActor
 final class TerminalViewModelWarmReconnectTests: XCTestCase {
     /// RIS — Reset to Initial State (`ESC c`), the fresh-session wipe prefix.
@@ -30,8 +30,8 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
     /// REVERT-TO-FAIL: the unconditional `pendingFreshSessionReset = true` in
     /// `markReconnecting()` (with no observe-side resolution) feeds RIS + clears the ring here.
     func testWarmReattachDoesNotWipeSurvivingScreenAndRing() async throws {
-        let factory = TransportFactory()
-        let client = SlopDeskClient(makeTransport: { factory.next() })
+        let driver = FakePaneDriver()
+        let client = SlopDeskClient(driver: driver)
         try await client.connect(host: "h", port: 1)
 
         let surface = RecordingSurface()
@@ -41,7 +41,7 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
 
         // Pre-drop history paints and is retained in the replay ring.
         let history = Data("$ ls\nREADME.md\n".utf8)
-        factory.current.deliver(.output(seq: 1, bytes: history))
+        driver.deliverOutput(history)
         await waitUntil { surface.writes.contains(history) }
         XCTAssertEqual(model.ringByteCount, history.count, "precondition: history retained in the ring")
         surface.writes.removeAll()
@@ -52,10 +52,11 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
 
         // The reconnect lands on PATH A: the client presents lastSeq=1 and the host reattaches
         // the SAME shell — nothing is replayed, and the SIGWINCH prompt repaint continues the
-        // retained seq stream at seq 2.
+        // retained seq stream.
+        driver.resumeOutcome = .resumedSession
         try await client.connect(host: "h", port: 1)
         let repaint = Data("$ ".utf8)
-        factory.current.deliver(.output(seq: 2, bytes: repaint))
+        driver.deliverOutput(repaint)
         await waitUntil { surface.writes.contains(repaint) }
 
         XCTAssertFalse(
@@ -74,8 +75,8 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
     /// the dead session's framebuffer would otherwise graft under the new prompt. Pins that the
     /// warm-reattach fix does not disarm the wipe for the genuinely-fresh case.
     func testReconnectOntoFreshShellStillWipes() async throws {
-        let factory = TransportFactory()
-        let client = SlopDeskClient(makeTransport: { factory.next() })
+        let driver = FakePaneDriver()
+        let client = SlopDeskClient(driver: driver)
         try await client.connect(host: "h", port: 1)
 
         let surface = RecordingSurface()
@@ -84,7 +85,7 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
         defer { pump.cancel() }
 
         let history = Data("$ old-session\n".utf8)
-        factory.current.deliver(.output(seq: 1, bytes: history))
+        driver.deliverOutput(history)
         await waitUntil { surface.writes.contains(history) }
         surface.writes.removeAll()
 
@@ -92,9 +93,10 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
 
         // The reconnect lands on PATH B/C: the host spawned a FRESH shell whose ReplayBuffer
         // restarts the stream at seq 1.
+        driver.resumeOutcome = .freshShell
         try await client.connect(host: "h", port: 1)
         let freshPrompt = Data("fresh-$ ".utf8)
-        factory.current.deliver(.output(seq: 1, bytes: freshPrompt))
+        driver.deliverOutput(freshPrompt)
         await waitUntil { surface.writes.contains(freshPrompt) }
 
         XCTAssertEqual(
@@ -115,8 +117,8 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
     /// signal the store turns into a "Reattached (session preserved)" toast. REVERT-TO-FAIL: without the
     /// `notifyResumeOutcome` call in `resolveResumeOutcomeIfNeeded` the callback never fires.
     func testResumeOutcomeCallbackFiresResumedAfterReconnect() async throws {
-        let factory = TransportFactory()
-        let client = SlopDeskClient(makeTransport: { factory.next() })
+        let driver = FakePaneDriver()
+        let client = SlopDeskClient(driver: driver)
         try await client.connect(host: "h", port: 1)
 
         let surface = RecordingSurface()
@@ -127,15 +129,16 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
         defer { pump.cancel() }
 
         let history = Data("$ ls\n".utf8)
-        factory.current.deliver(.output(seq: 1, bytes: history))
+        driver.deliverOutput(history)
         await waitUntil { surface.writes.contains(history) }
         XCTAssertTrue(captured.isEmpty, "the initial connect must not fire the reconnect toast")
 
-        // A genuine drop → reconnect that REATTACHES the same shell (seq stream continues past the presented 1).
+        // A genuine drop → reconnect that REATTACHES the same shell.
         model.markReconnecting()
+        driver.resumeOutcome = .resumedSession
         try await client.connect(host: "h", port: 1)
         let repaint = Data("$ ".utf8)
-        factory.current.deliver(.output(seq: 2, bytes: repaint))
+        driver.deliverOutput(repaint)
         await waitUntil { !captured.isEmpty }
 
         XCTAssertEqual(captured, [.resumedSession], "a warm reattach fires exactly one .resumedSession signal")
@@ -146,8 +149,8 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
     /// `onResumeOutcomeResolved(.freshShell)` — the store's "Reconnected (fresh shell — previous session ended)"
     /// cue. The two determinate verdicts must be distinguishable, so this pins the fresh side.
     func testResumeOutcomeCallbackFiresFreshAfterReconnect() async throws {
-        let factory = TransportFactory()
-        let client = SlopDeskClient(makeTransport: { factory.next() })
+        let driver = FakePaneDriver()
+        let client = SlopDeskClient(driver: driver)
         try await client.connect(host: "h", port: 1)
 
         let surface = RecordingSurface()
@@ -157,12 +160,13 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
         let pump = Task { await model.observe(client: client) }
         defer { pump.cancel() }
 
-        factory.current.deliver(.output(seq: 1, bytes: Data("$ old\n".utf8)))
+        driver.deliverOutput(Data("$ old\n".utf8))
         await waitUntil { surface.writes.contains(Data("$ old\n".utf8)) }
 
         model.markReconnecting()
+        driver.resumeOutcome = .freshShell
         try await client.connect(host: "h", port: 1)
-        factory.current.deliver(.output(seq: 1, bytes: Data("fresh-$ ".utf8)))
+        driver.deliverOutput(Data("fresh-$ ".utf8))
         await waitUntil { !captured.isEmpty }
 
         XCTAssertEqual(captured, [.freshShell], "a fresh host shell fires exactly one .freshShell signal")
@@ -174,8 +178,8 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
     /// launch surprise. REVERT-TO-FAIL: dropping the `resumeOutcomeNotifiable` gate makes this fire a spurious
     /// toast on every fresh connect.
     func testResumeOutcomeCallbackSuppressedOnFreshConnect() async throws {
-        let factory = TransportFactory()
-        let client = SlopDeskClient(makeTransport: { factory.next() })
+        let driver = FakePaneDriver()
+        let client = SlopDeskClient(driver: driver)
         try await client.connect(host: "h", port: 1)
 
         let surface = RecordingSurface()
@@ -188,8 +192,9 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
         // reset() is the fresh-connect boundary (the real ConnectionViewModel.connect() calls it): it arms the
         // wipe but clears the notify flag, so the resolved .freshShell verdict must stay silent.
         model.reset()
+        driver.resumeOutcome = .freshShell
         let prompt = Data("fresh-$ ".utf8)
-        factory.current.deliver(.output(seq: 1, bytes: prompt))
+        driver.deliverOutput(prompt)
         await waitUntil { surface.writes.contains(prompt) }
 
         XCTAssertTrue(captured.isEmpty, "a fresh connect (reset) resolves .freshShell but must fire no toast")
@@ -205,65 +210,6 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
             if condition() { return }
             try? await Task.sleep(for: .milliseconds(5))
         }
-    }
-
-    /// Vends a FRESH stub transport per `connect()` (the old one's inbound stream is finished by
-    /// the reconnect teardown and cannot be reused). `current` is the most recently vended one.
-    private final class TransportFactory: @unchecked Sendable {
-        private let lock = NSLock()
-        private var transports: [StubTransport] = []
-
-        var current: StubTransport {
-            lock.lock()
-            defer { lock.unlock() }
-            guard let last = transports.last else { preconditionFailure("no transport vended yet") }
-            return last
-        }
-
-        func next() -> StubTransport {
-            let transport = StubTransport()
-            lock.lock()
-            transports.append(transport)
-            lock.unlock()
-            return transport
-        }
-    }
-
-    /// Minimal `ClientTransporting` stub: `deliver` yields inbound wire messages; identity
-    /// values mirror the mux transport (`resumeFromSeq` hardcoded 0 — the very reason the
-    /// outcome must be derived from the seq stream).
-    private actor StubTransport: ClientTransporting {
-        nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-        private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-        private var _sessionID: UUID?
-        var sessionID: UUID? { _sessionID }
-        var resumeFromSeq: Int64 { 0 }
-        var returningClient: Bool { false }
-
-        init() {
-            var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-            inbound = AsyncThrowingStream { c = $0 }
-            continuation = c
-        }
-
-        nonisolated func deliver(_ message: WireMessage) { continuation.yield(message) }
-
-        func connect(
-            host _: String,
-            port _: UInt16,
-            resume: UUID,
-            lastReceivedSeq _: Int64,
-            handshakeTimeout _: Duration,
-        ) {
-            _sessionID = (resume == WireMessage.newSessionID) ? UUID() : resume
-        }
-
-        func sendInput(_: Data) {}
-        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
-        func sendAck(seq _: Int64) {}
-        func sendBye() {}
-        func close() { continuation.finish() }
-        func noteOutputConsumed(wireBytes _: Int) {}
     }
 
     private final class RecordingSurface: TerminalSurface, @unchecked Sendable {

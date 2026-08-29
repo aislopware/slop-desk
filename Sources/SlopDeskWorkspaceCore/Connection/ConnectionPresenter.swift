@@ -19,14 +19,14 @@ import SlopDeskWorkspaceModel
 /// compact form, and both want the plain state name underneath. Three doors would have been three
 /// crossings for one line of text — the same retreat the settings table already made.
 public enum ConnectionPresenter {
-    /// The supervisor's give-up ceiling, from ``ReconnectManager/maxReconnectAttempts`` (the single
+    /// The campaign's give-up ceiling, from ``SlopDeskClient/maxReconnectAttempts`` (the single
     /// source of truth, in the lower module) so "attempt N of M" can never drift from EITHER the
     /// app-global supervisor (``AppConnection``, which reads this) or the per-pane transport campaign
-    /// (``ReconnectManager``, which owns it).
+    /// (`rust/slopdesk-clientdriver`, which runs it).
     ///
     /// It crosses as an ARGUMENT to every door that phrases a retry. A `const` on the Rust side would
     /// be a second place to change it, and the one that could not see this one move.
-    public static let maxReconnectAttempts = ReconnectManager.maxReconnectAttempts
+    public static let maxReconnectAttempts = SlopDeskClient.maxReconnectAttempts
 
     /// Maps a raw transport failure payload to an actionable message. Substring-matched (the payloads
     /// are `String(describing:)` dumps with no stable structure); unknown payloads pass through

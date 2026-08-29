@@ -1,11 +1,16 @@
-/// Client-side errors surfaced by ``SlopDeskClient`` and ``ReconnectManager``.
+/// What ``SlopDeskClient`` throws.
+///
+/// Two cases, because the driver's eight connect verdicts and four send verdicts collapse to two
+/// questions the callers actually ask: is this pane's session finished (do not retry, do not report
+/// a network problem), or did the network fail (retry, and say so in the chrome). The associated
+/// string is the driver's OWN sentence, spilled through the door beside the code — so a refusal and
+/// the words for it cannot drift apart, and `ConnectGate.failureReason` (which reads
+/// `String(describing:)`) surfaces it verbatim.
 public enum ClientError: Error, Equatable, Sendable {
-    /// An operation was attempted from a state that does not permit it — e.g. sending
-    /// `input`/`resize` before the first `connect`, `resume` before any `connect`, or
-    /// `connect` after `close`. The associated string names the offending call site.
+    /// The session cannot do this from the state it is in — a send before the first connect, a
+    /// resume with no endpoint, a dial after close or after the child exited, or a call made from
+    /// inside an event callback. Terminal for this client instance; recovery builds a new one.
     case invalidState(String)
-    /// The host's `helloAck` did not match what we expected (e.g. version mismatch).
-    case handshakeRejected(String)
-    /// Every reconnect attempt in a bounded campaign failed; the supervisor gave up.
-    case reconnectExhausted
+    /// The dial or the handshake failed. Worth retrying, and what the reconnect campaign retries.
+    case notConnected(String)
 }

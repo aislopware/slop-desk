@@ -40,12 +40,15 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 use std::{fmt, io};
 
-use slopdesk_muxnet::connection::{MuxConnection, OpenFailure, OpenRequest, OpenedChannel};
+use slopdesk_muxnet::connection::{
+    ConnectionThreads, MuxConnection, OpenFailure, OpenRequest, OpenedChannel,
+};
 use slopdesk_wire::mux::MuxCloseReason;
 
-use crate::dial::Endpoint;
+use crate::dial::{Endpoint, establish, mint_connection_id};
 
 /// How a connection is made: the seam the pool is constructed over.
 type OpenConnection = Box<dyn Fn(&Endpoint) -> io::Result<Arc<MuxConnection>> + Send + Sync>;
@@ -445,6 +448,85 @@ impl ConnectionRegistry {
             .is_none_or(|entry| entry.is_unwanted(false))
         {
             let _was_pinned = pool.pinned.remove(target);
+        }
+    }
+}
+
+/// A [`ConnectionRegistry`] that dials real sockets, plus the threads its connections started.
+///
+/// The registry itself takes an injected `open` because the events and the threads a connection
+/// owns belong to its owner rather than to a map (see [`crate::dial::establish`]). Every SHIPPING
+/// owner then writes the same closure — mint an id, `establish`, drop the event receiver, keep the
+/// join handles — and the two that exist, the FFI pool and `slopdesk-client`, had no business
+/// spelling it twice. This is that owner, once.
+///
+/// ## Why the event receiver is dropped
+///
+/// A client never sees `Opened` — it is the side that opens — and it needs neither `Closed` nor
+/// `LinkDown`, because [`MuxConnection`] finishes the affected sub-channels itself on both paths.
+/// Every end therefore reaches a caller as a `ChannelEnd` on the lane it happened to, which is the
+/// one place it can be acted on. Keeping the receiver would mean a third thread pumping a queue
+/// nothing reads.
+///
+/// ## Why the threads are kept rather than detached
+///
+/// [`Self::close`] is a QUIESCENCE point: it closes every connection and JOINS its receive loops,
+/// so no thread this type ever started outlives it. A leak test that cannot join has nothing to
+/// wait for, and a process that exits with a receive loop still in a `read(2)` is a process whose
+/// last log line is a lie.
+#[derive(Debug)]
+pub struct DiallingPool {
+    registry: Arc<ConnectionRegistry>,
+    /// Shared with the dial closure inside `registry`, which is the only thing that appends to it.
+    served: Served,
+}
+
+/// Every connection this pool dialled, with the receive loops it started.
+type Served = Arc<Mutex<Vec<(Arc<MuxConnection>, ConnectionThreads)>>>;
+
+impl DiallingPool {
+    /// A pool that dials nothing until the first channel asks it to.
+    ///
+    /// `connect_timeout` bounds each dial — both sockets and the whole address ladder behind a
+    /// hostname, not each attempt — so a mesh name that resolves to four dead addresses still
+    /// answers inside it.
+    #[must_use]
+    pub fn new(connect_timeout: Duration) -> Self {
+        let served: Served = Arc::new(Mutex::new(Vec::new()));
+        let stash = Arc::clone(&served);
+        let registry = Arc::new(ConnectionRegistry::new(move |target: &Endpoint| {
+            let id = mint_connection_id().ok_or_else(|| {
+                io::Error::other("the connection id could not be minted: /dev/urandom is unreadable")
+            })?;
+            let dialled = establish(target, id, connect_timeout)?;
+            if let Ok(mut held) = stash.lock() {
+                held.push((Arc::clone(&dialled.connection), dialled.threads));
+            }
+            Ok(dialled.connection)
+        }));
+        Self { registry, served }
+    }
+
+    /// The pool every channel is opened on.
+    #[must_use]
+    pub const fn registry(&self) -> &Arc<ConnectionRegistry> {
+        &self.registry
+    }
+
+    /// Closes every connection and joins its receive loops.
+    ///
+    /// Closes UNCONDITIONALLY and before joining: a connection the pool already retired is closed
+    /// idempotently a second time, and one still holding a channel is closed rather than waited on,
+    /// so this can never hang on a caller that leaked a transport. Idempotent.
+    pub fn close(&self) {
+        let served = self
+            .served
+            .lock()
+            .map(|mut list| core::mem::take(&mut *list))
+            .unwrap_or_default();
+        for (connection, threads) in served {
+            connection.close();
+            threads.join();
         }
     }
 }

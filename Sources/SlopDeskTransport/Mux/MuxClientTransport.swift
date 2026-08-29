@@ -93,43 +93,39 @@ private final class CloseReasonBox: @unchecked Sendable {
     }
 }
 
-/// A ``ClientTransporting`` over one channel of the per-host shared mux — the handle side of
-/// `rust/slopdesk-clientnet`'s `ChannelTransport`.
+/// One channel of the per-host shared mux, as the WORKSPACE DOCUMENT's transport.
 ///
-/// `docs/63` stage G.3. What used to be here decided three things and this file states none of them,
-/// because all three moved: which lane a verb rides (`input` on DATA, everything else on CONTROL),
-/// how a paste is split at the flow-control cap, and that the merged inbound ends on the FIRST
-/// sub-channel to end. They are `rust/slopdesk-clientnet/src/transport.rs`'s module docs now, one
-/// paragraph each, with a loopback test apiece. What is left here is the calling convention.
+/// `docs/63` stages G.3 and G.5. G.3 moved every decision out — which lane a verb rides, how a paste
+/// is split at the flow-control cap, that the merged inbound ends on the FIRST sub-channel to end —
+/// into `rust/slopdesk-clientnet/src/transport.rs`, leaving the calling convention. G.5 then took
+/// the PANE session away: a pane rides `SlopDeskClient`'s `slopdesk_pane_driver_*` handle now, which
+/// owns its own transport in Rust, so the eight send verbs, the resume identity and the consumption
+/// credit that only a pane ever used went with it. What is left is class 1's whole need: open,
+/// collect the verdict, send arbitrary CONTROL, read the merged inbound, close.
 ///
 /// ### The channel IS the session
-/// The mux `channelOpen` carries the resume `sessionID` + `lastReceivedSeq` directly, so there is no
-/// separate hello/helloAck handshake on the shared link. The presented `sessionID` is authoritative;
-/// the host's `channelOpenAck` answers with the authoritative `resumeFromSeq` verdict (docs/20
-/// §8.3.1), which ``connect(host:port:resume:lastReceivedSeq:handshakeTimeout:)`` awaits.
+/// The mux `channelOpen` carries the session id directly, so there is no separate hello/helloAck
+/// handshake on the shared link. The workspace document mints a fresh one per open and presents no
+/// resume position: there is no PTY behind it to reattach to, so the host's `resumeFromSeq` verdict
+/// says only whether class 1 was ACCEPTED, which is what ``awaitAccepted(within:)`` answers.
 ///
 /// ### Why the callbacks land in a class rather than on this actor
 /// The Rust forwarders call on threads this actor does not own and cannot hop from, so the context
 /// they carry is a plain `final class` — ``Inbox`` above — holding the stream continuation. That is
 /// the whole reason `inbound` was already `nonisolated`: a continuation is safe to yield to from
 /// anywhere, so the message reaches the consumer with no actor hop and no queue in between.
-public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTransport {
+public actor MuxClientTransport {
     private let registry: ConnectionRegistry
     /// What this transport's channel is FOR — the ``SlopDeskProtocol/MuxChannelClass`` byte riding
     /// its `channelOpen`. Fixed for the transport's life: the class decides how the HOST routes the
     /// open, so a channel that changed class across a reconnect would become a different thing.
     private let channelClass: UInt8
 
-    public private(set) var sessionID: UUID?
-    public private(set) var resumeFromSeq: Int64 = 0
-    public private(set) var returningClient = false
-
     private let inboundStream: AsyncThrowingStream<WireMessage, Error>
     private let inbox: Inbox
     /// The open channel, or `nil` before ``open(host:port:resume:lastReceivedSeq:)`` and after
     /// ``close()``. Dropping it IS the close.
     private var held: Held?
-    private var initialCwd: String?
 
     public init(registry: ConnectionRegistry, channelClass: UInt8 = MuxChannelClass.pane.rawValue) {
         self.registry = registry
@@ -158,13 +154,6 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
     /// property of the Rust merge now rather than a lookup here.
     public var hostCloseReason: MuxCloseReason? { inbox.closeReason.reason }
 
-    // Actor-isolated (not `async`): the cross-actor hop supplies the async-ness the
-    // `InitialCwdConfigurableTransport` requirement asks for, so callers still `await` it.
-    public func setInitialCwd(_ cwd: String?) {
-        let trimmed = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
-        initialCwd = (trimmed?.isEmpty ?? true) ? nil : trimmed
-    }
-
     /// Opens the channel and starts delivering its inbound, WITHOUT awaiting the host's verdict.
     ///
     /// Split from ``connect(host:port:resume:lastReceivedSeq:handshakeTimeout:)`` because the two
@@ -177,10 +166,6 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
     /// - Throws: ``SlopDeskTransportError/notConnected(_:)`` if the channel could not be opened.
     public func open(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64) async throws {
         let id = resume == WireMessage.newSessionID ? UUID() : resume
-        // The cwd hint rides EVERY (re)connect. The host ignores it on a reattach (PATH A — the live
-        // shell's cwd is preserved) and honours it only on a fresh respawn (PATH B/C), where the
-        // pane's project dir is exactly what we want: otherwise the new shell lands in the daemon's
-        // `$HOME` and the cwd-derived title collapses to "Terminal".
         let retained = Unmanaged.passRetained(inbox)
         let opened = await Self.open(
             pool: registry.handle,
@@ -189,7 +174,6 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
             channelClass: channelClass,
             sessionID: id,
             lastReceivedSeq: lastReceivedSeq,
-            initialCwd: initialCwd,
             context: retained.toOpaque(),
         )
         guard let opened else {
@@ -199,97 +183,28 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
             throw SlopDeskTransportError.notConnected("mux: could not open a channel on \(host):\(port)")
         }
         held = Held(pointer: opened, context: retained, pool: registry)
-        sessionID = id
-        returningClient = (resume != WireMessage.newSessionID)
         inbox.setChannelID(slopdesk_mux_transport_channel_id(opened))
     }
 
-    /// Waits for the host's verdict on the open, recording the authoritative ``resumeFromSeq``.
-    ///
-    /// The `channelOpenAck` carries the HOST-AUTHORITATIVE `resumeFromSeq` (docs/20 §8.2): 0 = a
-    /// fresh shell (PATH B/C — the client must reset its seq marks), > 0 = the SAME live session
-    /// reattached (PATH A — the marks are already correct and the replay starts after this seq).
-    /// The host acks BEFORE the replay on the same DATA link, so this wait costs one verdict
-    /// round-trip, not the replay.
+    /// Waits for the host's verdict on the open.
     ///
     /// `false` covers refused, dead and timed-out alike, because
-    /// `slopdesk_mux_transport_await_open_ack` does — a pane that cannot be told where to resume
-    /// from cannot resume, so the three are one answer to every caller that has a resume position.
+    /// `slopdesk_mux_transport_await_open_ack` does. The one distinction that matters to class 1 —
+    /// a host that will not serve the workspace channel at all, versus a dial that failed — is the
+    /// caller's, which records the first as `.refused` and retries only the second.
     public func awaitAccepted(within: Duration) async -> Bool {
         guard let channel = held?.pointer else { return false }
         var verdict: Int64 = 0
-        let accepted = await Self.awaitAck(channel, timeout: within, resumeFromSeq: &verdict)
-        if accepted { resumeFromSeq = verdict }
-        return accepted
-    }
-
-    public func connect(
-        host: String,
-        port: UInt16,
-        resume: UUID,
-        lastReceivedSeq: Int64,
-        handshakeTimeout: Duration,
-    ) async throws {
-        try await open(host: host, port: port, resume: resume, lastReceivedSeq: lastReceivedSeq)
-        guard await awaitAccepted(within: handshakeTimeout) else {
-            // `ReconnectManager` retries either way, which is why the two read the same here.
-            await close()
-            throw SlopDeskTransportError.notConnected("mux: channel refused by host or the ack timed out")
-        }
-    }
-
-    public func sendInput(_ bytes: Data) throws {
-        let channel = try require()
-        // The SPLIT is Rust's: `slopdesk_mux_transport_send_input` chunks at the flow-control cap,
-        // for three separate failure reasons stated in that crate's module docs. This is one call.
-        let verdict = bytes.withUnsafeBytes { span in
-            slopdesk_mux_transport_send_input(
-                channel,
-                span.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                span.count,
-            )
-        }
-        try Self.check(verdict, "input")
-    }
-
-    public func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16 = 0, pxHeight: UInt16 = 0) throws {
-        try send(.resize(cols: cols, rows: rows, pxWidth: pxWidth, pxHeight: pxHeight), "resize")
-    }
-
-    public func sendAck(seq: Int64) throws {
-        try send(.ack(seq: seq), "ack")
-    }
-
-    public func sendBye() throws {
-        try send(.bye, "bye")
-    }
-
-    public func sendPing(timestampMS: UInt64) throws {
-        try send(.ping(timestampMS: timestampMS), "ping")
-    }
-
-    public func sendRequestBlockOutput(index: UInt32) throws {
-        try send(.requestBlockOutput(index: index), "requestBlockOutput")
-    }
-
-    public func sendMetadataRequest(requestID: UInt32, verb: UInt8, payload: Data) throws {
-        try send(.metadataRequest(requestID: requestID, verb: verb, payload: payload), "metadataRequest")
+        return await Self.awaitAck(channel, timeout: within, resumeFromSeq: &verdict)
     }
 
     /// One arbitrary message on the CONTROL lane — the workspace document's whole outbound.
     ///
-    /// Verb-agnostic because the door is: the seven `send*` methods above differ only in the value
-    /// they build, and a workspace request is one more of them. It refuses an `.input`, which rides
-    /// DATA and has ``sendInput(_:)``.
+    /// Verb-agnostic, and the only send left: the seven typed ones this file used to carry differed
+    /// from each other only in the value they built, and every one of them was a PANE's. It refuses
+    /// an `.input`, which rides DATA and belongs to `slopdesk_pane_driver_send_input`.
     public func sendControl(_ message: WireMessage) throws {
         try send(message, "control message")
-    }
-
-    /// Reports that the client's REAL consumer (the render drain) consumed `wireBytes` of
-    /// data-class inbound. Control-class messages are unwindowed and are not reported.
-    public func noteOutputConsumed(wireBytes: Int) {
-        guard wireBytes > 0, let channel = held?.pointer else { return }
-        slopdesk_mux_transport_note_consumed(channel, wireBytes)
     }
 
     /// Releases the channel and finishes the inbound stream.
@@ -348,7 +263,6 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         channelClass: UInt8,
         sessionID: UUID,
         lastReceivedSeq: Int64,
-        initialCwd: String?,
         context: UnsafeMutableRawPointer,
     ) async -> OpaquePointer? {
         // The continuation yields a ``RustHandle`` rather than the pointer: it crosses from the
@@ -356,28 +270,25 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         await withCheckedContinuation { (resumption: CheckedContinuation<RustHandle, Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 let hostBytes = Array(host.utf8)
-                let cwdBytes = Array((initialCwd ?? "").utf8)
                 var session = sessionID.uuid
                 let opened = withUnsafeBytes(of: &session) { raw in
                     hostBytes.withUnsafeBufferPointer { name in
-                        cwdBytes.withUnsafeBufferPointer { cwd in
-                            slopdesk_mux_transport_open(
-                                pool.raw,
-                                name.baseAddress,
-                                name.count,
-                                port,
-                                channelClass,
-                                raw.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                                lastReceivedSeq,
-                                // Absent and empty are different requests on the wire, so an unset
-                                // hint is the null pointer rather than a zero-length string.
-                                initialCwd == nil ? nil : cwd.baseAddress,
-                                initialCwd == nil ? 0 : cwd.count,
-                                context,
-                                onInbound,
-                                onEnded,
-                            )
-                        }
+                        slopdesk_mux_transport_open(
+                            pool.raw,
+                            name.baseAddress,
+                            name.count,
+                            port,
+                            channelClass,
+                            raw.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                            lastReceivedSeq,
+                            // The workspace document has no cwd hint: absent and empty are different
+                            // requests on the wire, so it is the null pointer rather than "".
+                            nil,
+                            0,
+                            context,
+                            onInbound,
+                            onEnded,
+                        )
                     }
                 }
                 resumption.resume(returning: RustHandle(opened))

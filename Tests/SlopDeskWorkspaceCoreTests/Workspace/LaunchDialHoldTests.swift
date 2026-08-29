@@ -32,59 +32,6 @@ import XCTest
 final class LaunchDialHoldTests: XCTestCase {
     // MARK: - Doubles
 
-    /// An in-memory PTY transport that resolves `connect()` with no networking (the
-    /// `RedialDetachedPaneTests` shape).
-    private actor ImmediateTransport: ClientTransporting {
-        private var _sessionID: UUID?
-        var sessionID: UUID? { _sessionID }
-        var resumeFromSeq: Int64 { 0 }
-        var returningClient: Bool { false }
-        nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-        private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-
-        init() {
-            var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-            inbound = AsyncThrowingStream { c = $0 }
-            continuation = c
-        }
-
-        func connect(
-            host _: String,
-            port _: UInt16,
-            resume _: UUID,
-            lastReceivedSeq _: Int64,
-            handshakeTimeout _: Duration,
-        ) async {
-            await Task.yield()
-            _sessionID = UUID()
-        }
-
-        func sendInput(_: Data) {}
-        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
-        func sendAck(seq _: Int64) {}
-        func sendBye() {}
-        func close() { continuation.finish() }
-    }
-
-    /// Which pane ids actually opened a channel, in order — the headless twin of the host log's
-    /// `attached for pane <uuid>` lines, which is what the hardware repro counts.
-    private final class Dials: @unchecked Sendable {
-        private let lock = NSLock()
-        private var ids: [PaneID] = []
-        var dialled: [PaneID] {
-            lock.lock()
-            defer { lock.unlock() }
-            return ids
-        }
-
-        func makeTransport(for pane: PaneID) -> ImmediateTransport {
-            lock.lock()
-            ids.append(pane)
-            lock.unlock()
-            return ImmediateTransport()
-        }
-    }
-
     /// The workspace channel's control ends, newest last. One per `open`, because an
     /// `AsyncThrowingStream` is consumed by the run that iterates it: a re-subscribe that reused the
     /// previous pipe would deliver to nobody, and the host-switch tests are entirely about what the
@@ -201,7 +148,7 @@ final class LaunchDialHoldTests: XCTestCase {
 
     private struct Rig {
         let store: WorkspaceStore
-        let dials: Dials
+        let dials: PaneDialLedger
         let pipes: PipeBox
         let client: WorkspaceChannelClient
         let restored: TreeWorkspace
@@ -237,7 +184,7 @@ final class LaunchDialHoldTests: XCTestCase {
 
     /// A store whose leaves mint REAL ``LivePaneSession``s over `dials`' transport — the seam that
     /// actually opens a channel. A `FakePaneSession` store cannot see this property at all.
-    private func makeStore(_ tree: TreeWorkspace, dials: Dials) -> WorkspaceStore {
+    private func makeStore(_ tree: TreeWorkspace, dials: PaneDialLedger) -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: tree,
             makeSession: { seed in
@@ -245,7 +192,7 @@ final class LaunchDialHoldTests: XCTestCase {
                     paneID: seed.id,
                     spec: seed.spec,
                     spawnCwd: seed.spawnCwd,
-                    makeClient: { _ in SlopDeskClient(makeTransport: { dials.makeTransport(for: seed.id) }) },
+                    makeClient: { _ in SlopDeskClient(driver: dials.make(for: seed.id)) },
                     makeInspector: { _ in nil },
                     target: { .default },
                 )
@@ -267,7 +214,7 @@ final class LaunchDialHoldTests: XCTestCase {
         connectedTo target: ConnectionTarget? = nil,
     ) -> Rig {
         let tree = restored ?? clientTree()
-        let dials = Dials()
+        let dials = PaneDialLedger()
         let store = makeStore(tree, dials: dials)
         if let target { store.commitConnectionTarget(target) }
         let pipes = PipeBox()
@@ -489,7 +436,7 @@ final class LaunchDialHoldTests: XCTestCase {
 
     /// A store with no workspace channel is headless — nothing is coming, so nothing is held.
     func testAStoreWithNoChannelIsNeverHeld() {
-        let store = makeStore(clientTree(), dials: Dials())
+        let store = makeStore(clientTree(), dials: PaneDialLedger())
         XCTAssertTrue(store.panesMayDial)
     }
 
@@ -497,7 +444,7 @@ final class LaunchDialHoldTests: XCTestCase {
     /// this tree. Holding for it would hold forever — every headless harness and every test that
     /// installs one dials through this.
     func testTheLoopbackSeamIsNeverHeld() {
-        let store = makeStore(clientTree(), dials: Dials())
+        let store = makeStore(clientTree(), dials: PaneDialLedger())
         store.attachLoopbackWorkspaceDocument()
         XCTAssertNotNil(store.pendingLaunchAdopt, "precondition: the offer is still armed")
         XCTAssertTrue(store.panesMayDial)
@@ -524,7 +471,7 @@ final class LaunchDialHoldTests: XCTestCase {
     /// The AUTOMATION bootstrap publishes its own shape and clears the offer, so the gates that ride
     /// it (`slopdesk-guigate macos --connect`, `slopdesk-guigate video`) dial exactly when they always did.
     func testTheAutomationBootstrapIsNeverHeld() {
-        let dials = Dials()
+        let dials = PaneDialLedger()
         let store = makeStore(clientTree(), dials: dials)
         store.bootstrapFromEnvironment([
             "SLOPDESK_AUTOCONNECT_HOST": "127.0.0.1",

@@ -24,7 +24,7 @@ final class DetachResumeIdentityTests: XCTestCase {
         ConnectionViewModel(
             terminal: TerminalViewModel(),
             target: { .default },
-            makeClient: { SlopDeskClient(makeTransport: { fatalError("not used in detach resume tests") }) },
+            makeClient: { SlopDeskClient(driver: FakePaneDriver.inert("not used in detach resume tests")) },
         )
     }
 
@@ -82,16 +82,22 @@ final class DetachResumeIdentityTests: XCTestCase {
     /// a brand-new one spawns a fresh shell under that same id (`HostServer.spawnFreshShell` branches
     /// only on the ZERO id), so nothing has to know which case it is in.
     ///
-    /// The seq: this is a COLD path — the client actor is brand-new, so `highestContiguousSeq` starts
-    /// at 0 regardless. Presenting a non-zero seq would tell the host to replay only `seq > N`,
-    /// skipping the whole scrollback ring; presenting 0 gets the full ring, like `tmux attach`.
+    /// The seq: this is a COLD path — the driver is brand-new, so `highestContiguousSeq` starts at 0
+    /// regardless. Seeding a non-zero seq would tell the host to replay only `seq > N`, skipping the
+    /// whole scrollback ring; seeding 0 gets the full ring, like `tmux attach`.
+    ///
+    /// What is asserted is the SEED the factory received, not an argument to a dial, and the two
+    /// used to be the same observation. They are not any more: the seed rides
+    /// `slopdesk_pane_driver_new`'s config into Rust, where every later `channelOpen` presents it,
+    /// so the last place this side can see it is the factory closure — which is also the only place
+    /// it could go wrong, since Rust cannot be handed a seed the factory never got.
     func testMakeTerminalPresentsThePanesOwnIDAsTheResumeSeed() async throws {
+        let seeds = SeedRecorder()
         let paneID = PaneID()
-        let recording = SeedRecordingTransport()
         let session = LivePaneSession.make(
             paneID: paneID,
             spec: PaneSpec(kind: .terminal, title: "Terminal"),
-            makeClient: { seed in SlopDeskClient(makeTransport: { recording }, resumeSeed: seed) },
+            makeClient: { seed in seeds.record(seed) },
             makeInspector: { _ in nil },
             target: { .default },
         )
@@ -99,12 +105,12 @@ final class DetachResumeIdentityTests: XCTestCase {
         let vm = try XCTUnwrap(session.connection, "a .terminal pane always has a connection")
         await vm.connect()
 
-        let (presentedResume, presentedSeq) = await recording.connectArgs
+        let seeded = try XCTUnwrap(seeds.first, "the factory was called with a seed")
         XCTAssertEqual(
-            presentedResume, paneID.raw,
+            seeded?.sessionID, paneID.raw,
             "the pane presents its OWN id, so host liveness lands under the id the topology uses",
         )
-        XCTAssertEqual(presentedSeq, 0, "a cold launch asks for the whole ring")
+        XCTAssertEqual(seeded?.lastSeq, 0, "a cold launch asks for the whole ring")
         XCTAssertEqual(session.id, paneID, "and the handle IS that leaf, with no adopt() to fix it up")
     }
 
@@ -112,27 +118,28 @@ final class DetachResumeIdentityTests: XCTestCase {
 
     /// Closes seed-resume-identity-race (`LivePaneSession.swift` `makeClientSeeded`, see
     /// docs/DECISIONS.md): a `makeClientSeeded` that called a zero-arg `makeClient()` factory and
-    /// fired an UNAWAITED `Task { await c.seedResumeIdentity(...) }` before returning the client
-    /// would have nothing ordering that seed job ahead of `ConnectionViewModel.performConnect()`'s own
+    /// fired an UNAWAITED `Task { await c.seed(...) }` before returning the client would have nothing
+    /// ordering that seed job ahead of `ConnectionViewModel.performConnect()`'s own
     /// separately-scheduled `connect()` Task — under cold-launch restore, the seed could lose the
-    /// race against the actor's mailbox, and `connect()` would read a nil `sessionID` (fresh shell)
-    /// instead of the restored one.
+    /// race and `connect()` would open with no session id (a fresh shell) instead of the restored
+    /// one. There is no post-construction seeding door at all now, which is what makes the race
+    /// unreachable rather than merely unlikely.
     ///
     /// This test drives the fixed path end to end: `LivePaneSession.make` → the
     /// `ConnectionViewModel` it wires → `connect()` — with a `makeClient` factory shaped exactly like
     /// production's `WorkspaceStore.muxBackedClientFactory` (a `(SlopDeskClient.ResumeSeed?) ->
     /// SlopDeskClient` that forwards the seed straight into `SlopDeskClient.init(resumeSeed:)`). It
-    /// asserts the FIRST connect presents the restored `sessionID` with `lastReceivedSeq == 0` (the
-    /// cold-launch contract) — deterministically, with no sleeps and no dependence on Task scheduling
-    /// order, because the seed is set synchronously in `init` before `makeClientSeeded` (a plain
-    /// zero-arg closure with no `Task` left in it) ever returns the client.
+    /// asserts the factory was handed the restored `sessionID` with `lastSeq == 0` (the cold-launch
+    /// contract) BEFORE `connect()` ever ran — deterministically, with no sleeps and no dependence on
+    /// Task scheduling order, because `makeClientSeeded` is a plain zero-arg closure with no `Task`
+    /// left in it.
     func testLivePaneSessionMakeSeedsClientAtConstructionNoRace() async throws {
+        let seeds = SeedRecorder()
         let paneID = PaneID()
-        let recording = SeedRecordingTransport()
         let session = LivePaneSession.make(
             paneID: paneID,
             spec: PaneSpec(kind: .terminal, title: "Terminal"),
-            makeClient: { seed in SlopDeskClient(makeTransport: { recording }, resumeSeed: seed) },
+            makeClient: { seed in seeds.record(seed) },
             makeInspector: { _ in nil },
             target: { .default },
         )
@@ -140,52 +147,41 @@ final class DetachResumeIdentityTests: XCTestCase {
         let vm = try XCTUnwrap(session.connection, "a .terminal pane always has a connection")
         await vm.connect()
 
-        let (presentedResume, presentedSeq) = await recording.connectArgs
+        let seeded = try XCTUnwrap(seeds.first, "the factory was called with a seed")
         XCTAssertEqual(
-            presentedResume, paneID.raw,
+            seeded?.sessionID, paneID.raw,
             "LivePaneSession.make must seed the resume identity at construction, with no race "
                 + "against ConnectionViewModel's separately-scheduled connect() Task",
         )
-        XCTAssertEqual(
-            presentedSeq, 0,
-            "cold launch must present lastReceivedSeq=0",
-        )
+        XCTAssertEqual(seeded?.lastSeq, 0, "cold launch must seed lastSeq = 0")
     }
 }
 
-// MARK: - SeedRecordingTransport
+// MARK: - SeedRecorder
 
-/// A minimal `ClientTransporting` stub used by the cold-launch contract tests.
-/// Records the `(resume, lastReceivedSeq)` presented to `connect()`.
-private actor SeedRecordingTransport: ClientTransporting {
-    private(set) var connectArgs: (UUID, Int64) = (WireMessage.newSessionID, 0)
+/// Records the ``SlopDeskClient/ResumeSeed`` each `makeClient` call was handed, and hands back a
+/// client that never dials.
+///
+/// The seed is the whole observable: it is applied inside `slopdesk_pane_driver_new`, before the
+/// driver escapes to any other thread, so nothing on this side can see it again afterwards. What
+/// this pins is that the factory got the right one, synchronously, which is the half of the
+/// contract Swift still owns.
+private final class SeedRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seeds: [SlopDeskClient.ResumeSeed?] = []
 
-    var sessionID: UUID? { UUID() }
-    var resumeFromSeq: Int64 { 0 }
-    var returningClient: Bool { false }
-
-    private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-    nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-
-    init() {
-        var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-        inbound = AsyncThrowingStream { c = $0 }
-        continuation = c
+    /// The seed the FIRST call was handed — double-optional on purpose: the outer `nil` means the
+    /// factory was never called at all, the inner one means it was called with no seed.
+    var first: (SlopDeskClient.ResumeSeed?)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return seeds.first
     }
 
-    func connect(
-        host _: String,
-        port _: UInt16,
-        resume: UUID,
-        lastReceivedSeq: Int64,
-        handshakeTimeout _: Duration,
-    ) {
-        connectArgs = (resume, lastReceivedSeq)
+    func record(_ seed: SlopDeskClient.ResumeSeed?) -> SlopDeskClient {
+        lock.lock()
+        seeds.append(seed)
+        lock.unlock()
+        return SlopDeskClient(driver: FakePaneDriver.inert("the seed tests never reach a host"))
     }
-
-    func sendInput(_: Data) {}
-    func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
-    func sendAck(seq _: Int64) {}
-    func sendBye() {}
-    func close() { continuation.finish() }
 }

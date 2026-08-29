@@ -16,7 +16,7 @@
 
 import Foundation
 import Network
-import SlopDeskTransport
+import SlopDeskNet
 
 /// What the panel learns from the socket. Delivered on the main actor — the consumer is a view
 /// model, and hopping once here is cheaper than making every observer thread-safe.
