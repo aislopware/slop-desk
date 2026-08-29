@@ -112,18 +112,18 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         store.workspaceMirror.apply(
             kind: WorkspaceEventKind.presence.rawValue,
             epoch: UUID(), baseStateNum: 0, newStateNum: 0,
-            payload: WorkspacePresenceRoster(clients: [
-                WorkspaceRosterClient(
+            payload: WorkspaceFixtureBytes.roster(clients: [
+                WorkspaceFixtureBytes.RosterClient(
                     clientInstanceID: mine, clientKind: 0, flags: 0,
                     viewingTabID: UUID(), viewingPaneID: hostPaneID, cols: 0, rows: 0,
                     label: "mac-studio",
                 ),
-                WorkspaceRosterClient(
+                WorkspaceFixtureBytes.RosterClient(
                     clientInstanceID: theirs, clientKind: 1, flags: 0,
                     viewingTabID: UUID(), viewingPaneID: hostPaneID, cols: 0, rows: 0,
                     label: "iPad",
                 ),
-            ]).encode(),
+            ]),
         )
 
         XCTAssertEqual(
@@ -154,15 +154,15 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
                 rosterClient(mine, label: "mac-studio"),
                 rosterClient(theirs, label: "iPad"),
             ],
-            panes: [WorkspaceRosterPane(
+            panes: [WorkspaceFixtureBytes.RosterPane(
                 paneID: paneID.raw,
                 resolvedCols: 120,
                 resolvedRows: 40,
                 attachments: [
-                    WorkspaceRosterPane.Attachment(
+                    WorkspaceFixtureBytes.RosterAttachment(
                         clientInstanceID: mine, contributes: true, cols: 120, rows: 40,
                     ),
-                    WorkspaceRosterPane.Attachment(
+                    WorkspaceFixtureBytes.RosterAttachment(
                         clientInstanceID: theirs, contributes: false, cols: 60, rows: 20,
                     ),
                 ],
@@ -191,16 +191,17 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         applyRoster(
             to: store,
             clients: [rosterClient(mine, label: "mac-studio")],
-            panes: [WorkspaceRosterPane(
+            panes: [WorkspaceFixtureBytes.RosterPane(
                 paneID: paneID.raw,
                 resolvedCols: 80,
                 resolvedRows: 24,
                 attachments: [
-                    WorkspaceRosterPane.Attachment(
+                    WorkspaceFixtureBytes.RosterAttachment(
                         clientInstanceID: mine, contributes: true, cols: 120, rows: 40,
                     ),
-                    WorkspaceRosterPane.Attachment(
-                        clientInstanceID: WireMessage.newSessionID, contributes: true, cols: 80, rows: 24,
+                    WorkspaceFixtureBytes.RosterAttachment(
+                        clientInstanceID: WorkspaceFixtureBytes.unsetID, contributes: true,
+                        cols: 80, rows: 24,
                     ),
                 ],
             )],
@@ -229,11 +230,11 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         applyRoster(
             to: store,
             clients: [rosterClient(mine, label: "mac-studio")],
-            panes: [WorkspaceRosterPane(
+            panes: [WorkspaceFixtureBytes.RosterPane(
                 paneID: paneID.raw,
                 resolvedCols: 120,
                 resolvedRows: 40,
-                attachments: [WorkspaceRosterPane.Attachment(
+                attachments: [WorkspaceFixtureBytes.RosterAttachment(
                     clientInstanceID: mine, contributes: true, cols: 120, rows: 40,
                 )],
             )],
@@ -261,15 +262,15 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         applyRoster(
             to: store,
             clients: [rosterClient(mine, label: "iPhone"), rosterClient(mac, label: "MacBook Pro")],
-            panes: [WorkspaceRosterPane(
+            panes: [WorkspaceFixtureBytes.RosterPane(
                 paneID: paneID.raw,
                 resolvedCols: 120,
                 resolvedRows: 40,
                 attachments: [
-                    WorkspaceRosterPane.Attachment(
+                    WorkspaceFixtureBytes.RosterAttachment(
                         clientInstanceID: mac, contributes: true, cols: 120, rows: 40,
                     ),
-                    WorkspaceRosterPane.Attachment(
+                    WorkspaceFixtureBytes.RosterAttachment(
                         clientInstanceID: mine, contributes: false, cols: 60, rows: 20,
                     ),
                 ],
@@ -291,23 +292,23 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         XCTAssertNil(store.paneGridReadout(for: paneID))
     }
 
-    private func rosterClient(_ id: UUID, label: String) -> WorkspaceRosterClient {
-        WorkspaceRosterClient(
+    private func rosterClient(_ id: UUID, label: String) -> WorkspaceFixtureBytes.RosterClient {
+        WorkspaceFixtureBytes.RosterClient(
             clientInstanceID: id, clientKind: 0, flags: 0,
-            viewingTabID: UUID(), viewingPaneID: WireMessage.newSessionID, cols: 0, rows: 0,
+            viewingTabID: UUID(), viewingPaneID: WorkspaceFixtureBytes.unsetID, cols: 0, rows: 0,
             label: label,
         )
     }
 
     private func applyRoster(
         to store: WorkspaceStore,
-        clients: [WorkspaceRosterClient],
-        panes: [WorkspaceRosterPane],
+        clients: [WorkspaceFixtureBytes.RosterClient],
+        panes: [WorkspaceFixtureBytes.RosterPane],
     ) {
         store.workspaceMirror.apply(
             kind: WorkspaceEventKind.presence.rawValue,
             epoch: UUID(), baseStateNum: 0, newStateNum: 0,
-            payload: WorkspacePresenceRoster(clients: clients, panes: panes).encode(),
+            payload: WorkspaceFixtureBytes.roster(clients: clients, panes: panes),
         )
     }
 

@@ -400,15 +400,30 @@ The second half landed as:
   ban is the load-bearing half — without it the host encoders grow back one verb at a time, each one
   justified by a test that wanted bytes.
 
-**The workspace channel owes the same census, and it is `WorkspaceChannelCodec`'s batch to pay.** The
-diagonal does not answer it by symmetry: `LoopbackWorkspaceDocument` really does serve intents on the
-client, so the intent pair is live in BOTH directions and the workspace channel is not one-sided the
-way the metadata one turned out to be. But three doors there have the metadata half's exact shape —
-`WorkspaceSubscribe`'s decoder, `WorkspacePresenceUpdate`'s and `WorkspacePresenceRoster`'s encoder
-are host-shaped and reachable only from tests — and `maxRecords` has no reader at all. They are left
-standing here rather than swept in passing, because the sweep is only sound behind a per-door census
-of that file, and a census is the batch. Until it runs, `payload_channels` keeps that half a
-`Mentions` list rather than a diagonal, and the doc comment says so.
+**The workspace channel owed the same census, and it did not answer by symmetry.** The diagonal is
+there — a client encodes subscribe/presence/intent and decodes roster/intentResult — but it has one
+real crossing that the metadata channel does not: `LoopbackWorkspaceDocument` is a HOST, a
+client-local one, serving the intents of a workspace that never leaves the process. So
+`WorkspaceIntentResult.encode` is host-shaped and LIVE, and the ban had to be four names rather than
+a direction. A pass that "finished the diagonal" would delete the loopback's only way to answer,
+which is why both the rule and the codec's own doc comment say so out loud.
+
+The workspace half landed as:
+
+- **Deleted.** `WorkspaceSubscribe.decode`, `WorkspacePresenceUpdate.decode`, `WorkspaceIntent.decode`
+  and `WorkspacePresenceRoster.encode` — the widest marshalling in the file, three flat arrays and an
+  interned label pool — with the four C entry points behind them.
+- **Two bounds went with them.** `WorkspacePresenceRoster.maxRecords` had no reader at all: the
+  decode sizes its slots off the payload, so the cap was the encoder's and the encoder was the
+  host's. `WorkspaceSubscribe.maxLabelBytes` lost its last reader with the decode it bounded — the
+  crate caps the label at both ends and the number is not respelled here.
+- **One generic helper dissolved.** `WorkspaceChannelCodec.decode(_:arenaBytes:…)` existed for the
+  subscribe decode alone; the roster is the one arena-filling decode left and it allocates three
+  record lists as well, so it never went through a helper.
+- **The tests took the fixture route again**, writer AND reader this time: a roster body is spelled
+  for the four sites that feed one into the live decode, and a hand-spelled reader answers the ten
+  that assert on FIELDS of what the client put on the wire — where byte-equality would over-specify,
+  because the client mints the UUIDs and the presence clock.
 
 ### G.5 — the CLI and `Sources/SlopDeskClient`
 

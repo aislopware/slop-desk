@@ -17,26 +17,10 @@ import Foundation
 extension Data {
     // MARK: Append (encode)
 
+    /// A count, or a length prefix — the only width the bodies this target still spells by hand hold.
     mutating func appendBE(_ value: UInt16) {
         append(UInt8(truncatingIfNeeded: value >> 8))
         append(UInt8(truncatingIfNeeded: value))
-    }
-
-    mutating func appendBE(_ value: UInt32) {
-        append(UInt8(truncatingIfNeeded: value >> 24))
-        append(UInt8(truncatingIfNeeded: value >> 16))
-        append(UInt8(truncatingIfNeeded: value >> 8))
-        append(UInt8(truncatingIfNeeded: value))
-    }
-
-    mutating func appendBE(_ value: Int64) {
-        appendBE(UInt64(bitPattern: value))
-    }
-
-    mutating func appendBE(_ value: UInt64) {
-        for shift in stride(from: 56, through: 0, by: -8) {
-            append(UInt8(truncatingIfNeeded: value >> UInt64(shift)))
-        }
     }
 }
 
@@ -47,3 +31,10 @@ extension Data {
 // The `Int32` overload went the same way in `docs/63` §G.4. Its only callers spelled a `gitStatus`
 // body's ahead/behind/stash, in the round-trip suite that retired with `MetadataCodec`'s host-side
 // encoders — and this file carries only the widths its remaining callers actually write.
+//
+// `Int64`, `UInt32` and `UInt64` went one stage later, when `WorkspaceChannelCodec` lost its
+// host-facing half. Their only callers spelled a subscribe body's `knownStateNum` and an intent's
+// hostile `argLen`, both in fault tests that `rust/slopdesk-wire`'s `workspace` suite already pins;
+// `Int64` was `UInt64`'s only caller, so the two left together. What is left of the wire this target
+// still spells by hand is the presence ROSTER, whose every field is a `u16`, a `u8` or sixteen raw
+// UUID bytes — so one overload is now the whole file.

@@ -68,19 +68,17 @@ public struct WorkspaceSubscribe: Equatable, Sendable {
     public var knownEpoch: UUID
     public var knownStateNum: Int64
     public var flags: UInt8
-    /// A human device name. Bounded at ``maxLabelBytes`` so a hostile peer cannot make the host
-    /// retain an arbitrarily long string per connection.
+    /// A human device name. `rust/slopdesk-wire` caps it on both ends, so a hostile peer cannot make
+    /// the host retain an arbitrarily long string per connection; the cap is not respelled here.
     public var label: String
 
     /// b0 — this client's viewport participates in the PTY size fold (docs/45 §8.3). Read from the
-    /// crate that puts the byte on the wire, like ``maxLabelBytes`` two lines down: a bit spelled
-    /// here as well is a mask the two ends can stop agreeing about, and the symptom is a client that
-    /// quietly stops counting toward the fold rather than a decode that fails.
+    /// crate that puts the byte on the wire: a bit spelled here as well is a mask the two ends can
+    /// stop agreeing about, and the symptom is a client that quietly stops counting toward the fold
+    /// rather than a decode that fails.
     public static let flagContributesSize = UInt8(truncatingIfNeeded: slopdesk_workspace_constant(5))
     /// b1 — this client follows host focus rather than steering its own view (docs/45 §8.2).
     public static let flagFollowsFocus = UInt8(truncatingIfNeeded: slopdesk_workspace_constant(6))
-    /// The label cap, read from the crate that enforces it rather than respelled here.
-    public static let maxLabelBytes = Int(slopdesk_workspace_constant(0))
 
     public var contributesSize: Bool { flags & Self.flagContributesSize != 0 }
     public var followsFocus: Bool { flags & Self.flagFollowsFocus != 0 }
@@ -120,23 +118,8 @@ public struct WorkspaceSubscribe: Equatable, Sendable {
         }
     }
 
-    public static func decode(_ payload: Data) throws -> Self {
-        // The label is capped, so the arena it lands in is a fixed 64 bytes rather than a fraction
-        // of the payload — the only decode here whose bound is a cap and not a length.
-        try WorkspaceChannelCodec.decode(
-            payload, arenaBytes: maxLabelBytes, "workspace subscribe",
-            slopdesk_workspace_decode_subscribe,
-        ) { record, arena in
-            Self(
-                clientInstanceID: WorkspaceChannelCodec.uuid(record.client_instance_id),
-                clientKind: record.client_kind,
-                knownEpoch: WorkspaceChannelCodec.uuid(record.known_epoch),
-                knownStateNum: record.known_state_num,
-                flags: record.flags,
-                label: WorkspaceChannelCodec.text(arena, record.label),
-            )
-        }
-    }
+    // There is no `decode` here: a subscribe is a REQUEST, and reading one is the host's half. See
+    // ``WorkspaceChannelCodec``'s note on the diagonal.
 }
 
 // MARK: - presence (verb 2)
@@ -184,19 +167,7 @@ public struct WorkspacePresenceUpdate: Equatable, Sendable {
         }
     }
 
-    public static func decode(_ payload: Data) throws -> Self {
-        let entry = slopdesk_workspace_decode_presence
-        return try WorkspaceChannelCodec.decode(payload, "workspace presence", entry) { record in
-            Self(
-                presenceClock: record.presence_clock,
-                viewingTabID: WorkspaceChannelCodec.uuid(record.viewing_tab_id),
-                viewingPaneID: WorkspaceChannelCodec.uuid(record.viewing_pane_id),
-                cols: record.cols,
-                rows: record.rows,
-                flags: record.flags,
-            )
-        }
-    }
+    // A presence update is a REQUEST too, so it has no `decode` here either.
 }
 
 // MARK: - intent (verb 3)
@@ -228,18 +199,9 @@ public struct WorkspaceIntent: Equatable, Sendable {
         }
     }
 
-    public static func decode(_ payload: Data) throws -> Self {
-        // The arguments are opaque here and run to the frame cap, so the decode answers WHERE they
-        // sit in the payload and this is the ONE copy of them.
-        let flat = try WorkspaceChannelCodec.decode(
-            payload, "workspace intent", slopdesk_workspace_decode_intent,
-        ) { $0 }
-        let start = Int(flat.args.offset)
-        let args = payload.withUnsafeBytes { bytes in
-            Data(bytes[start..<start + Int(flat.args.length)])
-        }
-        return Self(intentID: WorkspaceChannelCodec.uuid(flat.intent_id), op: flat.op, args: args)
-    }
+    // An intent is a REQUEST, and the LOOPBACK document — the one host that runs inside a client —
+    // never reads one off the wire: it is handed the value, because the intent it serves never left
+    // the process. So there is no `decode` here.
 }
 
 // MARK: - intentResult (kind 3)
@@ -358,61 +320,11 @@ public struct WorkspacePresenceRoster: Equatable, Sendable {
         self.panes = panes
     }
 
-    /// Upper bound on each list. Real rosters are single digits; this only exists so a hostile count
-    /// is rejected by arithmetic before it can drive an allocation.
-    public static let maxRecords = Int(slopdesk_workspace_constant(1))
-
-    public func encode() -> Data {
-        var pool = [UInt8]()
-        let flatClients = clients.map { client in
-            SlopDeskWorkspaceRosterClient(
-                client_instance_id: WorkspaceChannelCodec.flat(client.clientInstanceID),
-                viewing_tab_id: WorkspaceChannelCodec.flat(client.viewingTabID),
-                viewing_pane_id: WorkspaceChannelCodec.flat(client.viewingPaneID),
-                label: WorkspaceChannelCodec.intern(client.label, &pool),
-                cols: client.cols,
-                rows: client.rows,
-                client_kind: client.clientKind,
-                flags: client.flags,
-            )
-        }
-        var flatAttachments: [SlopDeskWorkspaceRosterAttachment] = []
-        let flatPanes = panes.map { pane in
-            let offset = UInt32(clamping: flatAttachments.count)
-            flatAttachments.append(contentsOf: pane.attachments.map { attachment in
-                SlopDeskWorkspaceRosterAttachment(
-                    client_instance_id: WorkspaceChannelCodec.flat(attachment.clientInstanceID),
-                    cols: attachment.cols,
-                    rows: attachment.rows,
-                    contributes: attachment.contributes,
-                )
-            })
-            return SlopDeskWorkspaceRosterPane(
-                pane_id: WorkspaceChannelCodec.flat(pane.paneID),
-                attachments: SlopDeskWorkspaceRun(
-                    offset: offset, count: UInt32(clamping: pane.attachments.count),
-                ),
-                resolved_cols: pane.resolvedCols,
-                resolved_rows: pane.resolvedRows,
-            )
-        }
-        return WorkspaceChannelCodec.sized { out, cap in
-            flatClients.withUnsafeBufferPointer { clientList in
-                flatPanes.withUnsafeBufferPointer { paneList in
-                    flatAttachments.withUnsafeBufferPointer { attachmentList in
-                        pool.withUnsafeBufferPointer { arena in
-                            slopdesk_workspace_encode_roster(
-                                clientList.baseAddress, clientList.count,
-                                paneList.baseAddress, paneList.count,
-                                attachmentList.baseAddress, attachmentList.count,
-                                arena.baseAddress, arena.count, out, cap,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // A roster is an EVENT, so only the decode is here. The encoder — three flat arrays, an
+    // attachment run per pane and an interned label pool, the widest marshalling in this file —
+    // belonged to the host, and `maxRecords` was the bound it never used: the DECODE sizes its slots
+    // off the payload (``WorkspaceChannelCodec/room(_:perRecord:)``), so the cap was read nowhere
+    // once the encoder went.
 
     public static func decode(_ payload: Data) throws -> Self {
         // Every buffer is bounded by the payload itself: no list can hold more records than
@@ -499,8 +411,21 @@ public struct WorkspacePresenceRoster: Equatable, Sendable {
 
 // MARK: - Shared helpers
 
-/// Namespace for the bits the workspace payload codecs share. Not a codec itself — every layout,
-/// clamp and validation lives in `rust/slopdesk-wire`'s `workspace` module, and the ENVELOPE is
+/// Namespace for the bits the workspace payload codecs share.
+///
+/// **It faces one way, the client's**, the way ``MetadataCodec`` does after `docs/63` §G.4: a client
+/// ENCODES requests — subscribe, presence, intent — and DECODES events — roster, intentResult. The
+/// opposite diagonal was here too, and had no caller but the suites checking it worked; it retired
+/// with the Swift host target that once answered these frames.
+///
+/// **One crossing is real and stays**: ``WorkspaceIntentResult/encode()`` is host-shaped, and
+/// `LoopbackWorkspaceDocument` is a host — a client-local one, serving the intents of a workspace
+/// that never leaves the process. So the ban on the host half names the four doors that went, not
+/// the direction, and a later pass that "completes the diagonal" would break the loopback rather
+/// than tidy it.
+///
+/// Not a codec itself — every layout, clamp and validation lives in `rust/slopdesk-wire`'s
+/// `workspace` module, and the ENVELOPE is
 /// ``WireMessage/workspaceRequest(requestSeq:verb:payload:)`` /
 /// ``WireMessage/workspaceEvent(kind:epoch:baseStateNum:newStateNum:payload:)`` while the document
 /// entries are `WorkspaceStateCodec` in the model target.
@@ -570,29 +495,10 @@ public enum WorkspaceChannelCodec {
         }
     }
 
-    /// Decodes a payload that is one record plus an arena its text lands in.
-    static func decode<Record, Item>(
-        _ payload: Data,
-        arenaBytes: Int,
-        _ context: String,
-        _ call: (
-            UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<Record>?, UnsafeMutablePointer<UInt8>?, Int,
-        ) -> UInt32,
-        _ build: (Record, UnsafeRawBufferPointer) -> Item,
-    ) throws -> Item {
-        try withUnsafeTemporaryAllocation(of: Record.self, capacity: 1) { record in
-            try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Swift.max(arenaBytes, 1)) { arena in
-                let verdict = payload.spanning { bytes, length in
-                    call(
-                        bytes?.assumingMemoryBound(to: UInt8.self), length,
-                        record.baseAddress, arena.baseAddress, arena.count,
-                    )
-                }
-                try throwIfFaulted(verdict, context)
-                return build(record[0], UnsafeRawBufferPointer(arena))
-            }
-        }
-    }
+    // The `arenaBytes:` overload of the door above — one record plus an arena its text lands in —
+    // went with `WorkspaceSubscribe.decode`, its only caller. The roster is the one decode left that
+    // fills an arena, and it does not go through a generic helper: it allocates three record lists
+    // as well, so the shape it needs is its own.
 
     /// Throws the error a non-OK verdict names.
     ///

@@ -808,6 +808,47 @@ mod tests {
         ));
     }
 
+    /// The label is the one field a hostile peer chooses the BYTES of, and `read_capped_label`
+    /// refuses a non-UTF-8 one rather than repairing it — a repaired label is a device name that
+    /// disagrees with the one the peer sent, in a roster the user reads to tell their machines
+    /// apart. `0x80` is a continuation byte with nothing to continue.
+    #[test]
+    fn a_label_that_is_not_utf8_is_malformed_rather_than_repaired() {
+        let mut body = WorkspaceSubscribe {
+            label: "ok".to_owned(),
+            ..WorkspaceSubscribe::default()
+        }
+        .encode();
+        let at = body.len() - 1;
+        body[at] = 0x80;
+        assert!(matches!(
+            WorkspaceSubscribe::decode(&body),
+            Err(WireError::MalformedBody(_))
+        ));
+    }
+
+    /// Every PREFIX of a subscribe is refused, not guessed at. The interesting boundary is the last
+    /// one: a body whose label length says six with five bytes behind it must fault rather than
+    /// read into whatever follows, and the fixed head above it has a boundary per field.
+    #[test]
+    fn a_subscribe_truncated_at_every_prefix_is_refused() {
+        let body = WorkspaceSubscribe {
+            client_instance_id: ID_A,
+            known_epoch: ID_B,
+            known_state_num: 42,
+            label: "iPhone".to_owned(),
+            ..WorkspaceSubscribe::default()
+        }
+        .encode();
+        for length in 0..body.len() {
+            assert!(
+                WorkspaceSubscribe::decode(&body[..length]).is_err(),
+                "a {length}-byte prefix decoded"
+            );
+        }
+        assert!(WorkspaceSubscribe::decode(&body).is_ok());
+    }
+
     #[test]
     fn an_over_long_label_is_clamped_on_encode_at_a_scalar_boundary() {
         // 4-byte scalars against a 64-byte cap: 64 = 4 * 16 exactly, so a 17th would not fit.
@@ -835,10 +876,13 @@ mod tests {
         assert_eq!(encoded.len(), 45);
         assert_eq!(WorkspacePresenceUpdate::decode(&encoded).unwrap(), update);
         assert!(update.contributes_size());
-        assert_eq!(
-            WorkspacePresenceUpdate::decode(&encoded[..44]),
-            Err(WireError::Truncated)
-        );
+        for length in 0..encoded.len() {
+            assert_eq!(
+                WorkspacePresenceUpdate::decode(&encoded[..length]),
+                Err(WireError::Truncated),
+                "a {length}-byte prefix decoded"
+            );
+        }
     }
 
     #[test]

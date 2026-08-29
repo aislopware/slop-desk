@@ -12,40 +12,24 @@ private extension UUID {
     var dataBytes: Data { withUnsafeBytes(of: uuid) { Data($0) } }
 }
 
-/// The payloads that ride INSIDE types 17 and 37 (docs/45 §5.2).
+/// The payloads that ride INSIDE types 17 and 37 (docs/45 §5.2), from the ONE side this target has.
 ///
-/// These bytes arrive from a network peer over a channel that carries no authentication of any kind
-/// (security is the WireGuard mesh, not the app layer), so every decode here is validate-then-drop:
-/// a declared length is bounded against the bytes ACTUALLY present before any allocation, a
-/// wrong-width scalar is a drop rather than a lenient prefix read, and nothing is force-unwrapped.
+/// `WorkspaceChannelCodec` faces the client's way: it ENCODES subscribe, presence and intent, and
+/// DECODES the roster and intentResult. The opposite diagonal is `rust/slopdesk-wire`'s alone, and
+/// so are the round trips that used to be here — a round trip through one codebase's own encoder and
+/// decoder passes just as happily when both have drifted from the wire, and `workspace.rs`'s own
+/// suite already pins every fault this one asserted twice.
+///
+/// What is left is what only THIS side can answer: the bytes an encoder actually emits, and what the
+/// roster decoder does with bytes no encoder here can produce. Those roster bodies arrive from a
+/// network peer over a channel that carries no authentication of any kind (security is the WireGuard
+/// mesh, not the app layer), so the decode is validate-then-drop: a declared count is bounded against
+/// the bytes ACTUALLY present before any allocation, and nothing is force-unwrapped.
 final class WorkspaceChannelCodecTests: XCTestCase {
     private let clientID = UUID(uuidString: "5D05DE5C-0000-4000-8000-000000000001")!
     private let epoch = UUID(uuidString: "5D05DE5C-0000-4000-8000-000000000002")!
 
     // MARK: subscribe
-
-    func testSubscribeRoundTrips() throws {
-        let cases = [
-            WorkspaceSubscribe(clientInstanceID: clientID, clientKind: 0),
-            WorkspaceSubscribe(
-                clientInstanceID: clientID,
-                clientKind: 1,
-                knownEpoch: epoch,
-                knownStateNum: Int64.max,
-                flags: WorkspaceSubscribe.flagContributesSize | WorkspaceSubscribe.flagFollowsFocus,
-                label: "congtran's iPhone — café 🚀",
-            ),
-            WorkspaceSubscribe(
-                clientInstanceID: clientID,
-                clientKind: 0,
-                knownStateNum: Int64.min,
-                flags: 0xFF,
-            ),
-        ]
-        for subscribe in cases {
-            XCTAssertEqual(try WorkspaceSubscribe.decode(subscribe.encode()), subscribe)
-        }
-    }
 
     func testSubscribeExactBytes() {
         // Pin the layout: [16B clientInstanceID][u8 kind][16B epoch][i64 stateNum][u8 flags][u16 len][label]
@@ -66,7 +50,7 @@ final class WorkspaceChannelCodecTests: XCTestCase {
         XCTAssertEqual([UInt8](subscribe.encode()), expected)
     }
 
-    func testSubscribeFlagsDecodeIndependently() {
+    func testSubscribeFlagBitsReadIndependently() {
         let contributing = WorkspaceSubscribe(
             clientInstanceID: clientID,
             clientKind: 0,
@@ -83,135 +67,11 @@ final class WorkspaceChannelCodecTests: XCTestCase {
         XCTAssertTrue(following.followsFocus)
     }
 
-    func testSubscribeUnknownFlagBitsAreIgnoredNotRejected() throws {
-        // Forward tolerance without version negotiation (which this protocol is not allowed to have):
-        // an unknown bit from a newer client must not fail the whole subscribe.
-        let subscribe = WorkspaceSubscribe(clientInstanceID: clientID, clientKind: 9, flags: 0b1111_1100)
-        let decoded = try WorkspaceSubscribe.decode(subscribe.encode())
-        XCTAssertEqual(decoded.flags, 0b1111_1100)
-        XCTAssertFalse(decoded.contributesSize)
-        XCTAssertFalse(decoded.followsFocus)
-    }
-
-    func testSubscribeClampsAnOverLongLabelOnEncode() throws {
-        // Clamping happens on ENCODE, at a scalar boundary, so the bytes stay valid UTF-8.
-        let label = String(repeating: "🚀", count: 40) // 160 UTF-8 bytes
-        let subscribe = WorkspaceSubscribe(clientInstanceID: clientID, clientKind: 0, label: label)
-        let decoded = try WorkspaceSubscribe.decode(subscribe.encode())
-        XCTAssertLessThanOrEqual(decoded.label.utf8.count, WorkspaceSubscribe.maxLabelBytes)
-        XCTAssertTrue(label.hasPrefix(decoded.label))
-    }
-
-    func testSubscribeRejectsAnOverLongDeclaredLabel() {
-        // A DECODER rejects rather than trims: silently truncating a field a peer over-declared hides
-        // a framing bug behind a plausible value.
-        var payload = Data()
-        payload.append(clientID.dataBytes)
-        payload.append(0)
-        payload.append(epoch.dataBytes)
-        payload.appendBE(Int64(0))
-        payload.append(0)
-        payload.appendBE(UInt16(WorkspaceSubscribe.maxLabelBytes + 1))
-        payload.append(Data(repeating: 0x41, count: WorkspaceSubscribe.maxLabelBytes + 1))
-        XCTAssertThrowsError(try WorkspaceSubscribe.decode(payload)) { error in
-            guard case SlopDeskError.malformedBody = error else {
-                return XCTFail("expected malformedBody, got \(error)")
-            }
-        }
-    }
-
-    func testSubscribeRejectsALabelLongerThanTheBuffer() {
-        var payload = Data()
-        payload.append(clientID.dataBytes)
-        payload.append(0)
-        payload.append(epoch.dataBytes)
-        payload.appendBE(Int64(0))
-        payload.append(0)
-        payload.appendBE(UInt16(10))
-        payload.append(Data([0x41])) // one byte where ten were declared
-        XCTAssertEqual(try? WorkspaceSubscribe.decode(payload), nil)
-    }
-
-    func testSubscribeRejectsNonUTF8Label() {
-        var payload = Data()
-        payload.append(clientID.dataBytes)
-        payload.append(0)
-        payload.append(epoch.dataBytes)
-        payload.appendBE(Int64(0))
-        payload.append(0)
-        payload.appendBE(UInt16(2))
-        payload.append(Data([0xFF, 0xFE]))
-        XCTAssertThrowsError(try WorkspaceSubscribe.decode(payload)) { error in
-            guard case SlopDeskError.malformedBody = error else {
-                return XCTFail("expected malformedBody, got \(error)")
-            }
-        }
-    }
-
-    func testSubscribeTruncatedAtEveryPrefixDrops() {
-        let full = WorkspaceSubscribe(
-            clientInstanceID: clientID,
-            clientKind: 1,
-            knownEpoch: epoch,
-            knownStateNum: 42,
-            flags: 1,
-            label: "mac",
-        ).encode()
-        for length in 0..<full.count {
-            XCTAssertThrowsError(
-                try WorkspaceSubscribe.decode(full.prefix(length)),
-                "prefix of length \(length) must not decode",
-            )
-        }
-    }
-
-    // MARK: presence
-
-    func testPresenceUpdateRoundTrips() throws {
-        let update = WorkspacePresenceUpdate(
-            presenceClock: Int64.max,
-            viewingTabID: epoch,
-            viewingPaneID: clientID,
-            cols: 213,
-            rows: 51,
-            flags: 1,
-        )
-        XCTAssertEqual(try WorkspacePresenceUpdate.decode(update.encode()), update)
-        XCTAssertTrue(update.contributesSize)
-    }
-
-    func testPresenceUpdateTruncatedDrops() {
-        let full = WorkspacePresenceUpdate(presenceClock: 1).encode()
-        for length in 0..<full.count {
-            XCTAssertThrowsError(try WorkspacePresenceUpdate.decode(full.prefix(length)))
-        }
-    }
-
-    // MARK: intent
-
-    func testIntentRoundTrips() throws {
-        let intent = WorkspaceIntent(intentID: clientID, op: 6, args: Data([1, 2, 3, 4]))
-        XCTAssertEqual(try WorkspaceIntent.decode(intent.encode()), intent)
-        let empty = WorkspaceIntent(intentID: clientID, op: 0)
-        XCTAssertEqual(try WorkspaceIntent.decode(empty.encode()), empty)
-    }
-
-    func testIntentRejectsAHostileArgLength() {
-        // `UInt32.max` declared over a four-byte buffer must cost nothing — the length is bounded
-        // against what remains BEFORE any read.
-        var payload = Data()
-        payload.append(clientID.dataBytes)
-        payload.append(7)
-        payload.appendBE(UInt32.max)
-        payload.append(Data([0, 0, 0, 0]))
-        XCTAssertThrowsError(try WorkspaceIntent.decode(payload)) { error in
-            XCTAssertEqual(error as? SlopDeskError, .truncated)
-        }
-    }
-
     // MARK: intentResult
 
     func testIntentResultRoundTripsEveryStatus() throws {
+        // The one crossing that faces BOTH ways here: `LoopbackWorkspaceDocument` is a client-local
+        // host, so it encodes the results this client decodes.
         for status in WorkspaceIntentStatus.allCases {
             let result = WorkspaceIntentResult(intentID: clientID, status: status)
             XCTAssertEqual(try WorkspaceIntentResult.decode(result.encode()), result)
@@ -223,42 +83,9 @@ final class WorkspaceChannelCodecTests: XCTestCase {
 
     // MARK: roster
 
-    func testRosterRoundTrips() throws {
-        let roster = WorkspacePresenceRoster(
-            clients: [
-                WorkspaceRosterClient(
-                    clientInstanceID: clientID,
-                    clientKind: 0,
-                    flags: 1,
-                    viewingTabID: epoch,
-                    viewingPaneID: clientID,
-                    cols: 213,
-                    rows: 51,
-                    label: "mac-studio",
-                ),
-                WorkspaceRosterClient(clientInstanceID: epoch, clientKind: 1, label: "iPhone 📱"),
-            ],
-            panes: [
-                WorkspaceRosterPane(
-                    paneID: clientID,
-                    resolvedCols: 120,
-                    resolvedRows: 40,
-                    attachments: [
-                        .init(clientInstanceID: clientID, contributes: true, cols: 213, rows: 51),
-                        .init(clientInstanceID: epoch, contributes: false, cols: 80, rows: 24),
-                    ],
-                ),
-                WorkspaceRosterPane(paneID: epoch, resolvedCols: 0, resolvedRows: 0, attachments: []),
-            ],
-        )
-        XCTAssertEqual(try WorkspacePresenceRoster.decode(roster.encode()), roster)
-    }
-
-    func testEmptyRosterRoundTrips() throws {
-        // The null broadcast — the frame sent when the last client leaves.
-        let empty = WorkspacePresenceRoster()
-        XCTAssertEqual([UInt8](empty.encode()), [0, 0, 0, 0])
-        XCTAssertEqual(try WorkspacePresenceRoster.decode(empty.encode()), empty)
+    func testTheNullRosterBroadcastDecodesToAnEmptyRoster() throws {
+        // The frame sent when the last client leaves: two zero counts and nothing else.
+        XCTAssertEqual(try WorkspacePresenceRoster.decode(Data([0, 0, 0, 0])), WorkspacePresenceRoster())
     }
 
     func testRosterRejectsAHostileClientCount() {
@@ -281,16 +108,49 @@ final class WorkspaceChannelCodecTests: XCTestCase {
         }
     }
 
-    func testRosterTruncatedAtEveryPrefixDrops() {
-        let full = WorkspacePresenceRoster(
-            clients: [WorkspaceRosterClient(clientInstanceID: clientID, clientKind: 0, label: "m")],
-            panes: [WorkspaceRosterPane(
-                paneID: epoch,
-                resolvedCols: 1,
-                resolvedRows: 2,
-                attachments: [.init(clientInstanceID: clientID, contributes: true, cols: 3, rows: 4)],
-            )],
-        ).encode()
+    func testARosterDecodesFromHandSpelledBytesAndDropsEveryPrefixOfThem() throws {
+        // One client and one pane holding one attachment, spelled against `encode_into` in
+        // `rust/slopdesk-wire/src/workspace.rs`:
+        //   [u16 clientCount]
+        //     [16B id][u8 kind][u8 flags][16B tabID][16B paneID][u16 cols][u16 rows][u16 len][label]
+        //   [u16 paneCount]
+        //     [16B paneID][u16 resolvedCols][u16 resolvedRows][u16 attachCount]
+        //       [16B clientID][u8 contributes][u16 cols][u16 rows]
+        // The attachments sit INLINE behind their pane — the `(offset, count)` run the Swift decoder
+        // reads them back through is the FFI crossing's shape, not the wire's.
+        var full = Data()
+        full.appendBE(UInt16(1))
+        full.append(clientID.dataBytes)
+        full.append(0) // clientKind
+        full.append(0) // flags
+        full.append(WireMessage.newSessionID.dataBytes)
+        full.append(WireMessage.newSessionID.dataBytes)
+        full.appendBE(UInt16(0)) // cols
+        full.appendBE(UInt16(0)) // rows
+        full.appendBE(UInt16(1))
+        full.append(contentsOf: Array("m".utf8))
+        full.appendBE(UInt16(1))
+        full.append(epoch.dataBytes)
+        full.appendBE(UInt16(1)) // resolvedCols
+        full.appendBE(UInt16(2)) // resolvedRows
+        full.appendBE(UInt16(1)) // one attachment
+        full.append(clientID.dataBytes)
+        full.append(1) // contributes
+        full.appendBE(UInt16(3))
+        full.appendBE(UInt16(4))
+
+        XCTAssertEqual(
+            try WorkspacePresenceRoster.decode(full),
+            WorkspacePresenceRoster(
+                clients: [WorkspaceRosterClient(clientInstanceID: clientID, clientKind: 0, label: "m")],
+                panes: [WorkspaceRosterPane(
+                    paneID: epoch,
+                    resolvedCols: 1,
+                    resolvedRows: 2,
+                    attachments: [.init(clientInstanceID: clientID, contributes: true, cols: 3, rows: 4)],
+                )],
+            ),
+        )
         for length in 0..<full.count {
             XCTAssertThrowsError(
                 try WorkspacePresenceRoster.decode(full.prefix(length)),

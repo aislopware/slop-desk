@@ -372,13 +372,14 @@ pub fn git_dialect(tree: &Tree) -> Report {
 /// name: `Sources/` had a host target once, and when `docs/63` §G.4 confirmed it was gone those
 /// thirteen doors had no caller but the golden generator and the suites checking they worked. They
 /// retired with the Swift, so this rule is what keeps a "just for a test fixture" encoder from
-/// growing the host half back one verb at a time. Five encode/decode pairs for the workspace
-/// channel are unchanged for now: its loopback document really does serve intents on the client, so
-/// the intent pair is live in BOTH directions — but `WorkspaceSubscribe`'s decoder,
-/// `WorkspacePresenceUpdate`'s and `WorkspacePresenceRoster`'s encoder are the same host-shaped
-/// residue one codec over, reachable only from tests. That is the `WorkspaceChannelCodec` batch's
-/// census to settle, not this one's, and until it does this half stays a `Mentions` list rather
-/// than a diagonal.
+/// growing the host half back one verb at a time.
+///
+/// The workspace channel is the same shape and got the same treatment: the client encodes
+/// subscribe/presence/intent and decodes roster/intentResult, and the four doors on the other
+/// diagonal are banned by name. By name rather than by direction because of the ONE real crossing —
+/// `slopdesk_workspace_encode_intent_result` is host-shaped and stays required, since
+/// `LoopbackWorkspaceDocument` is a host that happens to run inside the client, answering intents
+/// for a workspace that never leaves the process.
 ///
 /// A payload validated in two languages is two validations, and the lenient one is the one a
 /// hostile body finds — which is why the readers, the writers and the clamps are banned rather than
@@ -447,19 +448,34 @@ pub fn payload_channels(tree: &Tree) -> Report {
             path: SWIFT_WS_CHANNEL,
             names: &[
                 "slopdesk_workspace_encode_subscribe",
-                "slopdesk_workspace_decode_subscribe",
                 "slopdesk_workspace_encode_presence",
-                "slopdesk_workspace_decode_presence",
                 "slopdesk_workspace_encode_intent",
-                "slopdesk_workspace_decode_intent",
                 "slopdesk_workspace_encode_intent_result",
                 "slopdesk_workspace_decode_intent_result",
-                "slopdesk_workspace_encode_roster",
                 "slopdesk_workspace_decode_roster",
                 "slopdesk_workspace_constant",
             ],
             message: "WorkspaceChannelCodec.swift no longer calls {entry} — the workspace payloads are \
                       parsed in Rust (docs/45 §5.2)",
+        },
+        // The host's diagonal, banned by name — the metadata ban's twin, one channel over. A client
+        // encodes subscribe/presence/intent and decodes roster/intentResult; reading a request or
+        // writing a roster is what a HOST does, and the four doors that did it had no caller but the
+        // suites checking they worked.
+        //
+        // `slopdesk_workspace_encode_intent_result` is deliberately NOT here, and that is the whole
+        // subtlety: it is host-shaped and LIVE, because `LoopbackWorkspaceDocument` is a host — a
+        // client-local one, serving a workspace whose intents never leave the process. So this bans
+        // four names rather than a direction; a pass that "finished the diagonal" would delete the
+        // loopback's only way to answer.
+        Claim::Lacks {
+            path: SWIFT_WS_CHANNEL,
+            pattern: "slopdesk_workspace_decode_(subscribe|presence|intent)\\b|\
+                      slopdesk_workspace_encode_roster",
+            view: View::Code,
+            message: "WorkspaceChannelCodec.swift opened a host-side workspace door again — the client \
+                      encodes REQUESTS and decodes EVENTS, and that diagonal retired with the Swift host \
+                      target (docs/63 §G.4)",
         },
         Claim::Lacks {
             path: SWIFT_WS_CHANNEL,
@@ -734,14 +750,10 @@ mod tests {
     fn workspace_face() -> String {
         [
             "slopdesk_workspace_encode_subscribe",
-            "slopdesk_workspace_decode_subscribe",
             "slopdesk_workspace_encode_presence",
-            "slopdesk_workspace_decode_presence",
             "slopdesk_workspace_encode_intent",
-            "slopdesk_workspace_decode_intent",
             "slopdesk_workspace_encode_intent_result",
             "slopdesk_workspace_decode_intent_result",
-            "slopdesk_workspace_encode_roster",
             "slopdesk_workspace_decode_roster",
             "slopdesk_workspace_constant",
         ]
@@ -795,6 +807,58 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("host-side metadata door")),
+            "{report:?}"
+        );
+    }
+
+    /// The workspace channel points one way too — the client encodes subscribe/presence/intent and
+    /// decodes roster/intentResult. Reading a REQUEST is the host's half, and `decode_subscribe` is
+    /// the tempting one: a test wanting to know what the client sent would reach for it first.
+    #[test]
+    fn a_host_side_workspace_door_coming_back_is_caught() {
+        let fixture = Fixture::new("workspace-host-diagonal");
+        fixture
+            .write(super::SWIFT_METADATA, &metadata_face())
+            .write(super::SWIFT_WS_CHANNEL, &workspace_face());
+        assert!(super::payload_channels(&fixture.tree()).is_clean());
+
+        fixture.write(
+            super::SWIFT_WS_CHANNEL,
+            &format!("{}_ = slopdesk_workspace_decode_subscribe\n", workspace_face()),
+        );
+        let report = super::payload_channels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("host-side workspace door")),
+            "{report:?}"
+        );
+    }
+
+    /// And the roster ENCODER from the other end — writing one is what a host does. This also holds
+    /// the ban's one exception honest: the clean fixture calls
+    /// `slopdesk_workspace_encode_intent_result`, which is host-shaped and LIVE because the
+    /// loopback document is a client-local host, so a ban stated as a direction rather than
+    /// four names would fail this assertion before the seed ever ran.
+    #[test]
+    fn a_host_side_workspace_encoder_coming_back_is_caught() {
+        let fixture = Fixture::new("workspace-host-encoder");
+        fixture
+            .write(super::SWIFT_METADATA, &metadata_face())
+            .write(super::SWIFT_WS_CHANNEL, &workspace_face());
+        assert!(super::payload_channels(&fixture.tree()).is_clean());
+
+        fixture.write(
+            super::SWIFT_WS_CHANNEL,
+            &format!("{}_ = slopdesk_workspace_encode_roster\n", workspace_face()),
+        );
+        let report = super::payload_channels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("host-side workspace door")),
             "{report:?}"
         );
     }

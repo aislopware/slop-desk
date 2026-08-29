@@ -324,7 +324,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
 
         let payload = rig.pipe.requests(verb: .subscribe)[0]
-        let request = try? WorkspaceSubscribe.decode(payload)
+        let request = WorkspaceFixtureBytes.readSubscribe(payload)
 
         XCTAssertEqual(request?.knownStateNum, 0, "0 is the 'I know nothing' sentinel")
         XCTAssertEqual(request?.knownEpoch, WireMessage.newSessionID)
@@ -393,7 +393,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         ))
 
         await expect("the resubscribe") { rig.pipe.requests(verb: .subscribe).count == 2 }
-        let resub = try? WorkspaceSubscribe.decode(rig.pipe.requests(verb: .subscribe)[1])
+        let resub = WorkspaceFixtureBytes.readSubscribe(rig.pipe.requests(verb: .subscribe)[1])
         XCTAssertEqual(resub?.knownStateNum, 3, "we hold 3 and say so")
         XCTAssertEqual(resub?.knownEpoch, epoch)
         await MainActor.run {
@@ -458,7 +458,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         }
 
         await expect("both presence frames") { rig.pipe.requests(verb: .presence).count == 2 }
-        let updates = rig.pipe.requests(verb: .presence).compactMap { try? WorkspacePresenceUpdate.decode($0) }
+        let updates = rig.pipe.requests(verb: .presence).compactMap { WorkspaceFixtureBytes.readPresence($0) }
         XCTAssertEqual(updates.map(\.presenceClock), [1, 2], "strictly increasing — an older clock is ignored")
         XCTAssertEqual(updates.last?.cols, 100)
         XCTAssertEqual(updates.last?.viewingTabID, tab)
@@ -484,7 +484,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         }
 
         await expect("every presence frame") { rig.pipe.requests(verb: .presence).count == tabs.count }
-        let updates = rig.pipe.requests(verb: .presence).compactMap { try? WorkspacePresenceUpdate.decode($0) }
+        let updates = rig.pipe.requests(verb: .presence).compactMap { WorkspaceFixtureBytes.readPresence($0) }
         XCTAssertEqual(updates.map(\.presenceClock), Array(1...Int64(tabs.count)))
         XCTAssertEqual(updates.map(\.viewingTabID), tabs)
     }
@@ -517,7 +517,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
             rig.client.updatePresence(viewingTabID: tab, viewingPaneID: other, cols: 0, rows: 0)
         }
         await expect("the move") { rig.pipe.requests(verb: .presence).count == 2 }
-        let updates = rig.pipe.requests(verb: .presence).compactMap { try? WorkspacePresenceUpdate.decode($0) }
+        let updates = rig.pipe.requests(verb: .presence).compactMap { WorkspaceFixtureBytes.readPresence($0) }
         XCTAssertEqual(updates.map(\.presenceClock), [1, 2], "the guard skips the clock too")
     }
 
@@ -537,7 +537,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         rig.pipe.deliver(diff(WorkspaceStateDiff(), base: 9, new: 10))
 
         await expect("presence re-asserted after the resubscribe") { rig.pipe.requests(verb: .presence).count == 2 }
-        let updates = rig.pipe.requests(verb: .presence).compactMap { try? WorkspacePresenceUpdate.decode($0) }
+        let updates = rig.pipe.requests(verb: .presence).compactMap { WorkspaceFixtureBytes.readPresence($0) }
         XCTAssertEqual(updates.map(\.presenceClock), [1, 1], "a re-assert repeats the clock, it does not invent one")
     }
 
@@ -546,15 +546,15 @@ final class WorkspaceChannelClientTests: XCTestCase {
         await MainActor.run { rig.client.start() }
         await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
 
-        let roster = WorkspacePresenceRoster(
-            clients: [WorkspaceRosterClient(
+        let roster = WorkspaceFixtureBytes.roster(
+            clients: [WorkspaceFixtureBytes.RosterClient(
                 clientInstanceID: UUID(), clientKind: WorkspaceClientKind.iOS.rawValue, label: "iPad",
             )],
             panes: [],
         )
         rig.pipe.deliver(.workspaceEvent(
             kind: WorkspaceEventKind.presence.rawValue,
-            epoch: epoch, baseStateNum: 0, newStateNum: 0, payload: roster.encode(),
+            epoch: epoch, baseStateNum: 0, newStateNum: 0, payload: roster,
         ))
 
         await expect("the roster") { rig.box.roster?.clients.count == 1 }
@@ -715,7 +715,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         rig.pipe.releaseHeldIntentWrite()
 
         await expect("both intents on the wire") { rig.pipe.requests(verb: .intent).count == 2 }
-        let onTheWire = rig.pipe.requests(verb: .intent).compactMap { try? WorkspaceIntent.decode($0).args }
+        let onTheWire = rig.pipe.requests(verb: .intent).compactMap { WorkspaceFixtureBytes.readIntent($0)?.args }
         XCTAssertEqual(
             onTheWire, [first, second],
             "the host is asked in the order this client staged, so its applier runs the sequence the "

@@ -6282,13 +6282,6 @@ typedef struct {
 
 typedef struct {
     SlopDeskWsUuid intent_id;
-    // Into the PAYLOAD, not an arena.
-    SlopDeskWorkspaceText args;
-    uint8_t op;
-} SlopDeskWorkspaceIntent;
-
-typedef struct {
-    SlopDeskWsUuid intent_id;
     uint8_t status;
 } SlopDeskWorkspaceIntentResult;
 
@@ -6321,37 +6314,18 @@ size_t slopdesk_workspace_encode_subscribe(const SlopDeskWorkspaceSubscribe *rec
                                            const unsigned char *arena, size_t arena_len,
                                            unsigned char *out, size_t cap);
 
-uint32_t slopdesk_workspace_decode_subscribe(const unsigned char *payload, size_t payload_len,
-                                             SlopDeskWorkspaceSubscribe *out,
-                                             unsigned char *arena, size_t arena_cap);
-
 size_t slopdesk_workspace_encode_presence(const SlopDeskWorkspacePresence *record,
                                           unsigned char *out, size_t cap);
-
-uint32_t slopdesk_workspace_decode_presence(const unsigned char *payload, size_t payload_len,
-                                            SlopDeskWorkspacePresence *out);
 
 size_t slopdesk_workspace_encode_intent(const SlopDeskWsUuid *intent_id, uint8_t op,
                                         const unsigned char *args, size_t args_len,
                                         unsigned char *out, size_t cap);
-
-uint32_t slopdesk_workspace_decode_intent(const unsigned char *payload, size_t payload_len,
-                                          SlopDeskWorkspaceIntent *out);
 
 size_t slopdesk_workspace_encode_intent_result(const SlopDeskWorkspaceIntentResult *record,
                                                unsigned char *out, size_t cap);
 
 uint32_t slopdesk_workspace_decode_intent_result(const unsigned char *payload, size_t payload_len,
                                                  SlopDeskWorkspaceIntentResult *out);
-
-size_t slopdesk_workspace_encode_roster(const SlopDeskWorkspaceRosterClient *clients,
-                                        size_t client_count,
-                                        const SlopDeskWorkspaceRosterPane *panes,
-                                        size_t pane_count,
-                                        const SlopDeskWorkspaceRosterAttachment *attachments,
-                                        size_t attachment_count,
-                                        const unsigned char *arena, size_t arena_len,
-                                        unsigned char *out, size_t cap);
 
 // Every count is written before any array is filled, so a caller that
 // under-sized is told all three sizes at once rather than one per retry.

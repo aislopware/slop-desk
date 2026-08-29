@@ -9,9 +9,8 @@
 //! - **Record plus arena** where a payload carries text: a subscribe's label, a roster client's
 //!   label. The text is an `(offset, length)` into a byte pool passed alongside, so no record makes
 //!   the caller own a lifetime.
-//! - **Eliding** for the one field that is opaque and unbounded here: an intent's arguments. The
-//!   decode answers WHERE they sit in the caller's own payload rather than copying them into an
-//!   arena the caller would immediately copy out of again.
+//! - **Lent whole** for the one field that is opaque and unbounded here: an intent's arguments,
+//!   which the encode reads straight out of the caller's own buffer rather than through any record.
 //!
 //! ## The roster is three arrays, not a tree
 //! A roster is panes each holding attachments, which cannot cross as a nest without a pointer per
@@ -27,8 +26,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_wire::workspace::{
     ROSTER_ATTACHMENT_BYTES, ROSTER_CLIENT_MIN_BYTES, ROSTER_PANE_MIN_BYTES, WorkspaceIntent,
-    WorkspaceIntentResult, WorkspacePresenceRoster, WorkspacePresenceUpdate, WorkspaceRosterAttachment,
-    WorkspaceRosterClient, WorkspaceRosterPane, WorkspaceSubscribe,
+    WorkspaceIntentResult, WorkspacePresenceRoster, WorkspacePresenceUpdate, WorkspaceSubscribe,
 };
 
 use crate::wire_message::{WIRE_DECODE_AGAIN, WIRE_DECODE_OK, verdict};
@@ -36,9 +34,6 @@ use crate::workspace::Uuid;
 use crate::{TextArena, arena_text, borrow, deliver, lend, records_of};
 
 /// A text field, as an `(offset, length)` pair into the call's arena.
-///
-/// The one exception is [`SlopDeskWorkspaceIntent::args`], whose offsets are into the caller's
-/// PAYLOAD — see that field.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SlopDeskWorkspaceText {
@@ -92,19 +87,6 @@ pub struct SlopDeskWorkspacePresence {
     pub rows: u16,
     /// The same bits a subscribe carries.
     pub flags: u8,
-}
-
-/// `intent` — verb 3, with the arguments left where they lie.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SlopDeskWorkspaceIntent {
-    /// The client-minted id the result will name.
-    pub intent_id: Uuid,
-    /// Where the arguments sit in the caller's PAYLOAD — not in any arena, because an intent's
-    /// arguments are opaque here and run to the frame cap.
-    pub args: SlopDeskWorkspaceText,
-    /// Which mutation, carried raw.
-    pub op: u8,
 }
 
 /// `intentResult` — kind 3.
@@ -270,50 +252,6 @@ pub unsafe extern "C" fn slopdesk_workspace_encode_subscribe(
     }
 }
 
-/// Decodes a subscribe, interning its label at the front of `arena`.
-///
-/// # Safety
-/// `payload` must describe live memory for the call; `out` must point to one writable record;
-/// `arena` must be null or writable for `arena_cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_workspace_decode_subscribe(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut SlopDeskWorkspaceSubscribe,
-    arena: *mut c_uchar,
-    arena_cap: usize,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let decoded = match WorkspaceSubscribe::decode(borrow(payload, payload_len)) {
-            Ok(decoded) => decoded,
-            Err(error) => return verdict(&error),
-        };
-        let mut pool = TextArena::default();
-        let record = SlopDeskWorkspaceSubscribe {
-            client_instance_id: Uuid {
-                bytes: decoded.client_instance_id,
-            },
-            known_epoch: Uuid {
-                bytes: decoded.known_epoch,
-            },
-            known_state_num: decoded.known_state_num,
-            label: intern(&mut pool, decoded.label.as_bytes()),
-            client_kind: decoded.client_kind,
-            flags: decoded.flags,
-        };
-        if pool.0.len() > arena_cap {
-            return WIRE_DECODE_AGAIN;
-        }
-        deliver(&pool.0, arena, arena_cap);
-        place(out, record)
-    }
-}
-
 // ---------------------------------------------------------------------------------------------- //
 // presence — verb 2
 // ---------------------------------------------------------------------------------------------- //
@@ -349,41 +287,6 @@ pub unsafe extern "C" fn slopdesk_workspace_encode_presence(
     }
 }
 
-/// Decodes a presence update.
-///
-/// # Safety
-/// `payload` must describe live memory for the call; `out` must point to one writable record.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_workspace_decode_presence(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut SlopDeskWorkspacePresence,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let decoded = match WorkspacePresenceUpdate::decode(borrow(payload, payload_len)) {
-            Ok(decoded) => decoded,
-            Err(error) => return verdict(&error),
-        };
-        place(out, SlopDeskWorkspacePresence {
-            presence_clock: decoded.presence_clock,
-            viewing_tab_id: Uuid {
-                bytes: decoded.viewing_tab_id,
-            },
-            viewing_pane_id: Uuid {
-                bytes: decoded.viewing_pane_id,
-            },
-            cols: decoded.cols,
-            rows: decoded.rows,
-            flags: decoded.flags,
-        })
-    }
-}
-
 // ---------------------------------------------------------------------------------------------- //
 // intent — verb 3
 // ---------------------------------------------------------------------------------------------- //
@@ -414,37 +317,6 @@ pub unsafe extern "C" fn slopdesk_workspace_encode_intent(
         let args = borrow(args, args_len);
         lend(out, cap, |writer| {
             WorkspaceIntent::encode_parts_into(writer, &id.bytes, op, args);
-        })
-    }
-}
-
-/// Decodes an intent, leaving its arguments in the caller's payload.
-///
-/// # Safety
-/// `payload` must describe live memory for the call; `out` must point to one writable record.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_workspace_decode_intent(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut SlopDeskWorkspaceIntent,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let (intent_id, op, args) = match WorkspaceIntent::decode_leaving_args(borrow(payload, payload_len)) {
-            Ok(parts) => parts,
-            Err(error) => return verdict(&error),
-        };
-        place(out, SlopDeskWorkspaceIntent {
-            intent_id: Uuid { bytes: intent_id },
-            args: SlopDeskWorkspaceText {
-                offset: u32::try_from(args.start).unwrap_or(u32::MAX),
-                length: u32::try_from(args.len()).unwrap_or(u32::MAX),
-            },
-            op,
         })
     }
 }
@@ -512,78 +384,6 @@ pub unsafe extern "C" fn slopdesk_workspace_decode_intent_result(
 // ---------------------------------------------------------------------------------------------- //
 // presence roster — kind 2
 // ---------------------------------------------------------------------------------------------- //
-
-/// Encodes a presence roster from three flat arrays and one arena.
-///
-/// # Safety
-/// Each array must be null or describe its declared count of live records; `arena` must describe
-/// live memory for the call; `out` must be null or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_workspace_encode_roster(
-    clients: *const SlopDeskWorkspaceRosterClient,
-    client_count: usize,
-    panes: *const SlopDeskWorkspaceRosterPane,
-    pane_count: usize,
-    attachments: *const SlopDeskWorkspaceRosterAttachment,
-    attachment_count: usize,
-    arena: *const c_uchar,
-    arena_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let all_attachments = records_of(attachments, attachment_count);
-        let roster = WorkspacePresenceRoster {
-            clients: records_of(clients, client_count)
-                .iter()
-                .map(|record| {
-                    WorkspaceRosterClient {
-                        client_instance_id: record.client_instance_id.bytes,
-                        client_kind: record.client_kind,
-                        flags: record.flags,
-                        viewing_tab_id: record.viewing_tab_id.bytes,
-                        viewing_pane_id: record.viewing_pane_id.bytes,
-                        cols: record.cols,
-                        rows: record.rows,
-                        label: text(arena, record.label),
-                    }
-                })
-                .collect(),
-            panes: records_of(panes, pane_count)
-                .iter()
-                .map(|record| {
-                    let start = record.attachments.offset as usize;
-                    let end = start.saturating_add(record.attachments.count as usize);
-                    WorkspaceRosterPane {
-                        pane_id: record.pane_id.bytes,
-                        resolved_cols: record.resolved_cols,
-                        resolved_rows: record.resolved_rows,
-                        attachments: all_attachments
-                            .get(start..end)
-                            .unwrap_or(&[])
-                            .iter()
-                            .map(|attachment| {
-                                WorkspaceRosterAttachment {
-                                    client_instance_id: attachment.client_instance_id.bytes,
-                                    contributes: attachment.contributes,
-                                    cols: attachment.cols,
-                                    rows: attachment.rows,
-                                }
-                            })
-                            .collect(),
-                    }
-                })
-                .collect(),
-        };
-        lend(out, cap, |writer| roster.encode_into(writer))
-    }
-}
 
 /// Decodes a presence roster into three flat arrays and one arena.
 ///
@@ -743,6 +543,8 @@ mod tests {
         reason = "a `&mut record` at a C entry point is exactly what Swift's `&record` compiles to"
     )]
 
+    use slopdesk_wire::workspace::{WorkspaceRosterAttachment, WorkspaceRosterClient, WorkspaceRosterPane};
+
     use super::*;
 
     /// A distinguishable id: every byte is `seed`, which no other fixture here uses twice.
@@ -760,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn a_subscribe_round_trips_through_the_door() {
+    fn a_subscribe_encodes_the_bytes_the_wire_crate_would() {
         let label = "Mac Studio";
         let record = SlopDeskWorkspaceSubscribe {
             client_instance_id: id(0x11),
@@ -776,47 +578,16 @@ mod tests {
         let bytes = sized(|out, cap| unsafe {
             slopdesk_workspace_encode_subscribe(&record, label.as_ptr(), label.len(), out, cap)
         });
-        assert_eq!(bytes, WorkspaceSubscribe::decode(&bytes).unwrap().encode());
 
-        let mut back = SlopDeskWorkspaceSubscribe::default();
-        let mut arena = [0u8; 64];
-        let verdict = unsafe {
-            slopdesk_workspace_decode_subscribe(
-                bytes.as_ptr(),
-                bytes.len(),
-                &mut back,
-                arena.as_mut_ptr(),
-                arena.len(),
-            )
-        };
-        assert_eq!(verdict, WIRE_DECODE_OK);
-        assert_eq!(back.client_instance_id, id(0x11));
-        assert_eq!(back.known_epoch, id(0x22));
-        assert_eq!(back.known_state_num, -9);
-        assert_eq!(back.client_kind, 1);
-        assert_eq!(back.flags, WorkspaceSubscribe::FLAG_FOLLOWS_FOCUS);
-        assert_eq!(text(&arena, back.label), label);
-    }
-
-    #[test]
-    fn a_subscribe_whose_arena_is_too_small_is_told_to_call_again() {
-        let payload = WorkspaceSubscribe {
-            label: "a name that does not fit".to_owned(),
-            ..WorkspaceSubscribe::default()
-        }
-        .encode();
-        let mut back = SlopDeskWorkspaceSubscribe::default();
-        let mut arena = [0u8; 4];
-        let verdict = unsafe {
-            slopdesk_workspace_decode_subscribe(
-                payload.as_ptr(),
-                payload.len(),
-                &mut back,
-                arena.as_mut_ptr(),
-                arena.len(),
-            )
-        };
-        assert_eq!(verdict, WIRE_DECODE_AGAIN);
+        // The label was read out of the CALLER's arena, so the payload has to carry it.
+        let decoded = WorkspaceSubscribe::decode(&bytes).unwrap();
+        assert_eq!(decoded.client_instance_id, id(0x11).bytes);
+        assert_eq!(decoded.known_epoch, id(0x22).bytes);
+        assert_eq!(decoded.known_state_num, -9);
+        assert_eq!(decoded.client_kind, 1);
+        assert_eq!(decoded.flags, WorkspaceSubscribe::FLAG_FOLLOWS_FOCUS);
+        assert_eq!(decoded.label, label);
+        assert_eq!(bytes, decoded.encode());
     }
 
     #[test]
@@ -830,33 +601,35 @@ mod tests {
             flags: WorkspaceSubscribe::FLAG_CONTRIBUTES_SIZE,
         };
         let bytes = sized(|out, cap| unsafe { slopdesk_workspace_encode_presence(&record, out, cap) });
-        let mut back = SlopDeskWorkspacePresence::default();
-        let verdict = unsafe { slopdesk_workspace_decode_presence(bytes.as_ptr(), bytes.len(), &mut back) };
-        assert_eq!(verdict, WIRE_DECODE_OK);
-        assert_eq!(back.presence_clock, 7);
-        assert_eq!(back.viewing_tab_id, id(0x33));
-        assert_eq!(back.viewing_pane_id, id(0x44));
-        assert_eq!(back.cols, 120);
-        assert_eq!(back.rows, 40);
-        assert_eq!(back.flags, WorkspaceSubscribe::FLAG_CONTRIBUTES_SIZE);
+        assert_eq!(
+            bytes,
+            WorkspacePresenceUpdate {
+                presence_clock: 7,
+                viewing_tab_id: id(0x33).bytes,
+                viewing_pane_id: id(0x44).bytes,
+                cols: 120,
+                rows: 40,
+                flags: WorkspaceSubscribe::FLAG_CONTRIBUTES_SIZE,
+            }
+            .encode()
+        );
     }
 
+    /// The arguments are LENT, never interned: the door writes the caller's own 4 KiB straight
+    /// into the payload, at the offset the header's fixed prefix ends at.
     #[test]
-    fn an_intent_leaves_its_arguments_in_the_payload() {
+    fn an_intent_writes_its_arguments_straight_out_of_the_caller_s_buffer() {
         let args = vec![9u8; 4096];
         let bytes = sized(|out, cap| unsafe {
             slopdesk_workspace_encode_intent(&id(0x55), 12, args.as_ptr(), args.len(), out, cap)
         });
-        let mut back = SlopDeskWorkspaceIntent::default();
-        let verdict = unsafe { slopdesk_workspace_decode_intent(bytes.as_ptr(), bytes.len(), &mut back) };
-        assert_eq!(verdict, WIRE_DECODE_OK);
-        assert_eq!(back.intent_id, id(0x55));
-        assert_eq!(back.op, 12);
+        let (intent_id, op, run) = WorkspaceIntent::decode_leaving_args(&bytes).unwrap();
+        assert_eq!(intent_id, id(0x55).bytes);
+        assert_eq!(op, 12);
         // 16 id bytes + one op byte + a u32 length: the args start at 21, in the PAYLOAD.
-        assert_eq!(back.args.offset, 21);
-        assert_eq!(back.args.length, 4096);
-        let start = back.args.offset as usize;
-        assert_eq!(&bytes[start..start + 4096], args.as_slice());
+        assert_eq!(run.start, 21);
+        assert_eq!(run.len(), 4096);
+        assert_eq!(&bytes[21..21 + 4096], args.as_slice());
     }
 
     #[test]
@@ -971,23 +744,6 @@ mod tests {
         assert_eq!(panes[1].attachments.count, 1);
         assert!(attachments[0].contributes);
         assert!(!attachments[1].contributes);
-
-        // And back out the same way, which is the shape the host encodes from.
-        let round = sized(|out, cap| unsafe {
-            slopdesk_workspace_encode_roster(
-                clients.as_ptr(),
-                client_count,
-                panes.as_ptr(),
-                pane_count,
-                attachments.as_ptr(),
-                attachment_count,
-                arena.as_ptr(),
-                arena.len(),
-                out,
-                cap,
-            )
-        });
-        assert_eq!(round, payload);
     }
 
     #[test]
@@ -1024,9 +780,10 @@ mod tests {
 
     #[test]
     fn a_truncated_payload_is_refused_rather_than_guessed_at() {
-        let mut back = SlopDeskWorkspacePresence::default();
+        let mut back = SlopDeskWorkspaceIntentResult::default();
         let short = [0u8; 3];
-        let verdict = unsafe { slopdesk_workspace_decode_presence(short.as_ptr(), short.len(), &mut back) };
+        let verdict =
+            unsafe { slopdesk_workspace_decode_intent_result(short.as_ptr(), short.len(), &mut back) };
         assert_ne!(verdict, WIRE_DECODE_OK);
     }
 

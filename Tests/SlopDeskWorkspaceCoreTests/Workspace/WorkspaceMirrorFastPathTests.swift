@@ -442,15 +442,15 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
 
     func testAPresenceFrameReplacesTheRosterWithoutTouchingTheDocument() {
         let mirror = mirrorAtSnapshot([livenessEntry()])
-        let roster = WorkspacePresenceRoster(
-            clients: [WorkspaceRosterClient(
+        let roster = WorkspaceFixtureBytes.roster(
+            clients: [WorkspaceFixtureBytes.RosterClient(
                 clientInstanceID: UUID(), clientKind: WorkspaceClientKind.iOS.rawValue, flags: 0, label: "iPad",
             )],
             panes: [],
         )
 
         XCTAssertEqual(
-            mirror.apply(kind: 2, epoch: epoch, baseStateNum: 0, newStateNum: 0, payload: roster.encode()), .presence,
+            mirror.apply(kind: 2, epoch: epoch, baseStateNum: 0, newStateNum: 0, payload: roster), .presence,
         )
 
         XCTAssertEqual(mirror.roster?.clients.count, 1)

@@ -157,15 +157,15 @@ final class LaunchDialHoldTests: XCTestCase {
         /// the stop would be asserting about an empty document rather than about the drop.
         func drop() { continuation.finish() }
 
-        /// Every intent this client has put on the wire, decoded.
-        var intents: [WorkspaceIntent] {
+        /// Every intent this client has put on the wire, read back.
+        var intents: [WorkspaceFixtureBytes.Intent] {
             lock.lock()
             let messages = sent
             lock.unlock()
             return messages.compactMap {
                 guard case let .workspaceRequest(_, verb, payload) = $0,
                       verb == WorkspaceRequestVerb.intent.rawValue else { return nil }
-                return try? WorkspaceIntent.decode(payload)
+                return WorkspaceFixtureBytes.readIntent(payload)
             }
         }
     }
