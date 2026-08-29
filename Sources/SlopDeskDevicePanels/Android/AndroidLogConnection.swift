@@ -86,7 +86,10 @@ package final class AndroidLogConnection: AndroidLogStreaming {
         // stream that has ended. Dropping the handle IS the reset, which is why the door has none.
         lines = AndroidLogLines()
         guard let request = AndroidBridgeRequest.logcat(serial: serial, level: level) else {
-            sink(.ended(reason: "The logcat request could not be encoded."))
+            // The panel's own sentence, and the crate's: `AndroidBridgeRefusal` names it
+            // separately from the ordinary unbuildable request because this one is read where
+            // nothing else is on screen — see that case's note.
+            sink(.ended(reason: AndroidBridgeRefusal.unbuildableLogcat.message))
             return
         }
         let socket = AndroidBridgeSocket(

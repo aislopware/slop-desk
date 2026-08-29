@@ -10752,6 +10752,21 @@ size_t slopdesk_android_bridge_console_output(const unsigned char *line, size_t 
 // How many PNG bytes follow this ack. ONE answer for all three refusals — no count, a non-positive
 // one, and one past the 16 MiB ceiling — because the near side does the same thing with each.
 size_t slopdesk_android_bridge_screenshot_bytes(const unsigned char *line, size_t line_len);
+// The panel's OWN six refusals as one delivery: [u32 BE length][UTF-8 bytes] per sentence, in the
+// order the selectors below give, read once into a Swift `static let`. These are the failures the
+// HOST never saw — the request did not leave, or its answer was refused on this side — so they are
+// worded here rather than forwarded. Every other sentence on this path is the host's, verbatim.
+//
+// The selectors are the crate enum's own codes, the sidebar notice family's arrangement: a name
+// added there and not here reads as a sentence this build cannot ask for rather than as a silently
+// different one.
+#define SLOPDESK_ANDROID_BRIDGE_REFUSAL_NO_ENDPOINT           0
+#define SLOPDESK_ANDROID_BRIDGE_REFUSAL_UNBUILDABLE_REQUEST   1
+#define SLOPDESK_ANDROID_BRIDGE_REFUSAL_UNBUILDABLE_LOGCAT    2
+#define SLOPDESK_ANDROID_BRIDGE_REFUSAL_UNREADABLE_DEVICE_LIST 3
+#define SLOPDESK_ANDROID_BRIDGE_REFUSAL_UNREADABLE_SCREENSHOT 4
+#define SLOPDESK_ANDROID_BRIDGE_REFUSAL_TRUNCATED_SCREENSHOT  5
+size_t slopdesk_android_bridge_refusals(unsigned char *out, size_t cap);
 // The device set one `list` ack carries. 0 refuses the ENVELOPE — not an object, not `ok`, or no
 // `devices` array — which is distinct from an empty set, since a host with no device attached still
 // answers, and the panel must show an empty rail rather than the last one it saw. A single row that

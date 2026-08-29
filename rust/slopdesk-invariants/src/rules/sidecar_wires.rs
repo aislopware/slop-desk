@@ -376,13 +376,14 @@ fn the_op_crosses_its_three_links() -> Vec<Claim> {
 /// JSON encoder is gone from the face, no file under the panel writes a request line by hand, and
 /// no host-side bridge has grown back anywhere in `Sources/`.
 fn the_panel_holds_no_bridge_grammar() -> Vec<Claim> {
-    /// Every door the panel reaches the bridge through. All eight have a Swift caller under
-    /// [`ANDROID_DIR`] — the request/reply pair in the face, the console and screenshot readers in
-    /// the client, and the log splitter's four in the log connection — so this list has no
-    /// Rust-side-only entry to hold apart the way the inspector's does.
+    /// Every door the panel reaches the bridge through. All nine have a Swift caller under
+    /// [`ANDROID_DIR`] — the request/reply pair in the face, the console, screenshot and refusal
+    /// readers in the client, and the log splitter's four in the log connection — so this list has
+    /// no Rust-side-only entry to hold apart the way the inspector's does.
     const DOORS: &[&str] = &[
         "slopdesk_android_bridge_request",
         "slopdesk_android_bridge_reply_failure",
+        "slopdesk_android_bridge_refusals",
         "slopdesk_android_bridge_console_output",
         "slopdesk_android_bridge_screenshot_bytes",
         "slopdesk_android_log_lines_new",
@@ -793,7 +794,8 @@ mod tests {
             (
                 "Sources/SlopDeskDevicePanels/Android/AndroidBridgeClient.swift",
                 "let a = slopdesk_android_bridge_console_output(b, n)\nlet c = \
-                 slopdesk_android_bridge_screenshot_bytes(b, n)\n",
+                 slopdesk_android_bridge_screenshot_bytes(b, n)\nlet d = \
+                 slopdesk_android_bridge_refusals(out, cap)\n",
             ),
             (
                 "Sources/SlopDeskDevicePanels/Android/AndroidLogConnection.swift",

@@ -24,7 +24,8 @@
 use core::ffi::c_uchar;
 
 use slopdesk_devicepanel::android_bridge::{
-    BridgeOp, LogLineSplitter, console_output, decode_list, reply_failure, request_line, screenshot_bytes,
+    BridgeOp, LogLineSplitter, Refusal, console_output, decode_list, reply_failure, request_line,
+    screenshot_bytes,
 };
 
 use crate::{borrow, deliver, lent, push_text, saturating_u32};
@@ -158,6 +159,30 @@ pub unsafe extern "C" fn slopdesk_android_bridge_screenshot_bytes(
     // SAFETY: the caller's obligation, restated above; `borrow` states its own.
     let line = unsafe { borrow(line, line_len) };
     screenshot_bytes(line).unwrap_or(0)
+}
+
+/// The panel's OWN refusals as one delivery — a fixed table, read once into a Swift `static let`.
+///
+/// Six `[u32 BE length][UTF-8 bytes]` runs in [`Refusal::ALL`]'s order, which is the byte order the
+/// near side indexes by. A table rather than a door per sentence for
+/// [`crate::android_presentation`]'s reason: none of them carries a value, and six entry points
+/// that each answer one `&'static str` would be six §4 dances for a word that has been fixed since
+/// process start.
+///
+/// # Safety
+/// `out` must be null, or point to `cap` writable bytes for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_android_bridge_refusals(out: *mut c_uchar, cap: usize) -> usize {
+    let mut blob = Vec::new();
+    for refusal in Refusal::ALL {
+        push_text(&mut blob, refusal.text());
+    }
+    // SAFETY: `blob` is a live local that cannot overlap `out`, which the caller keeps writable.
+    unsafe { deliver(&blob, out, cap) }
 }
 
 /// Decode the `list` reply into the rows the sidebar renders.
@@ -363,11 +388,14 @@ unsafe fn held<'a>(handle: *mut LogLines) -> Option<&'a mut LogLines> {
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 mod tests {
+    use slopdesk_devicepanel::android_bridge::Refusal;
+
     use super::{
-        LogLines, slopdesk_android_bridge_console_output, slopdesk_android_bridge_reply_failure,
-        slopdesk_android_bridge_request, slopdesk_android_bridge_screenshot_bytes,
-        slopdesk_android_device_list, slopdesk_android_log_lines_answer, slopdesk_android_log_lines_free,
-        slopdesk_android_log_lines_new, slopdesk_android_log_lines_push,
+        LogLines, slopdesk_android_bridge_console_output, slopdesk_android_bridge_refusals,
+        slopdesk_android_bridge_reply_failure, slopdesk_android_bridge_request,
+        slopdesk_android_bridge_screenshot_bytes, slopdesk_android_device_list,
+        slopdesk_android_log_lines_answer, slopdesk_android_log_lines_free, slopdesk_android_log_lines_new,
+        slopdesk_android_log_lines_push,
     };
     use crate::testing::delivered;
 
@@ -610,6 +638,21 @@ mod tests {
             slopdesk_android_bridge_console_output(bare.as_ptr(), bare.len(), core::ptr::null_mut(), 0)
         };
         assert_eq!(needed, 0);
+    }
+
+    /// The refusal table crosses whole, in `ALL`'s order, and the walk lands exactly on the end —
+    /// which is what lets the near side index it by the same byte the crate answers.
+    #[test]
+    fn the_panels_own_refusals_cross_in_byte_order() {
+        let blob = delivered(|out, cap| {
+            // SAFETY: `(out, cap)` is the caller's buffer, live for the call.
+            unsafe { slopdesk_android_bridge_refusals(out, cap) }
+        });
+        let mut cursor = Cursor::new(&blob);
+        for refusal in Refusal::ALL {
+            assert_eq!(cursor.text(), refusal.text(), "{refusal:?}");
+        }
+        assert_eq!(cursor.at, blob.len(), "the layout must consume the delivery");
     }
 
     #[test]

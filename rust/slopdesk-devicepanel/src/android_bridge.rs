@@ -19,8 +19,10 @@
 //!
 //! [`REFUSED`] and [`UNREADABLE_REPLY`] are the panel's own sentences, for the two refusals the
 //! host does not word itself: a reply that is not an object at all, and one that says `ok: false`
-//! with no `error`. Every other failure sentence on this path is the HOST's, forwarded verbatim,
-//! because the host already decided which of its failures are worth telling apart.
+//! with no `error`. [`Refusal`] is the rest of that family — the six failures the host never sees,
+//! because the request did not leave or its answer was refused on this side. Every OTHER failure
+//! sentence on this path is the HOST's, forwarded verbatim, because the host already decided which
+//! of its failures are worth telling apart.
 
 use serde_json::{Map, Value};
 
@@ -140,6 +142,100 @@ pub const REFUSED: &str = "The host refused.";
 
 /// The panel's word for a reply line that is not a JSON object at all.
 pub const UNREADABLE_REPLY: &str = "The host's reply made no sense.";
+
+/// The refusals the panel words ITSELF, because no host ever saw them.
+///
+/// [`REFUSED`] and [`UNREADABLE_REPLY`] are about a reply that came back wrong. These six are about
+/// a request that never left, or an answer whose SHAPE the near side rejected — no endpoint to
+/// dial, a line [`request_line`] declined to build, a `list` ack that did not decode, and the three
+/// ways a capture ends without a PNG. Every one of them was a string literal at a call site, in a
+/// panel drawn by two renderers, which is the arrangement [`crate::android`]'s header describes as
+/// having one speller by accident.
+///
+/// They carry no value, so they cross as ONE table read once rather than as a door per sentence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// No ensure round has answered yet, so there is no address to open a socket to. Not a failure
+    /// of the bridge — a request made before the panel knows where the bridge is.
+    NoEndpoint,
+    /// [`request_line`] declined to build the line: a required field that is empty.
+    ///
+    /// One sentence for every operation, because the near side has ONE arm for it — see that
+    /// function's `None`.
+    UnbuildableRequest,
+    /// The same refusal for the console's subscription, which NAMES `logcat`.
+    ///
+    /// A separate sentence rather than [`Self::UnbuildableRequest`] because of where it is read:
+    /// the console's stream simply ends, and the row that says why is the only thing on screen.
+    /// "The request" names nothing when the request was the whole surface.
+    UnbuildableLogcat,
+    /// The `list` ack decoded as an envelope and carried no rows this build could read.
+    UnreadableDeviceList,
+    /// The screenshot ack named no count this panel will collect — see [`screenshot_bytes`], whose
+    /// three refusals are this one sentence.
+    UnreadableScreenshot,
+    /// The socket ended before the count the ack named had arrived.
+    ///
+    /// Told apart from [`Self::UnreadableScreenshot`] on purpose: one is a host that answered
+    /// nonsense and the other is a host that answered and then went away, and only the second is
+    /// worth trying again.
+    TruncatedScreenshot,
+}
+
+impl Refusal {
+    /// Every refusal, in delivery order. The order IS the contract with the words table.
+    pub const ALL: [Self; 6] = [
+        Self::NoEndpoint,
+        Self::UnbuildableRequest,
+        Self::UnbuildableLogcat,
+        Self::UnreadableDeviceList,
+        Self::UnreadableScreenshot,
+        Self::TruncatedScreenshot,
+    ];
+
+    /// The byte this refusal crosses as.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::NoEndpoint => 0,
+            Self::UnbuildableRequest => 1,
+            Self::UnbuildableLogcat => 2,
+            Self::UnreadableDeviceList => 3,
+            Self::UnreadableScreenshot => 4,
+            Self::TruncatedScreenshot => 5,
+        }
+    }
+
+    /// The refusal a byte names, or `None` for one no build of this crate wrote.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::NoEndpoint),
+            1 => Some(Self::UnbuildableRequest),
+            2 => Some(Self::UnbuildableLogcat),
+            3 => Some(Self::UnreadableDeviceList),
+            4 => Some(Self::UnreadableScreenshot),
+            5 => Some(Self::TruncatedScreenshot),
+            _ => None,
+        }
+    }
+
+    /// The sentence, in the words the panel shows.
+    ///
+    /// A full stop on each, unlike [`crate::android_sidebar::Notice`]: these are read as prose in a
+    /// failure row, not as a confirmation label.
+    #[must_use]
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::NoEndpoint => "The host has no Android bridge yet.",
+            Self::UnbuildableRequest => "The request could not be encoded.",
+            Self::UnbuildableLogcat => "The logcat request could not be encoded.",
+            Self::UnreadableDeviceList => "The device list made no sense.",
+            Self::UnreadableScreenshot => "The screenshot made no sense.",
+            Self::TruncatedScreenshot => "The screenshot was cut short.",
+        }
+    }
+}
 
 /// Why the host refused, or `None` for a reply that acked.
 ///
@@ -425,8 +521,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        BridgeOp, Device, LOG_LINE_LIMIT, LogLineSplitter, REFUSED, SCREENSHOT_LIMIT, UNREADABLE_REPLY,
-        console_output, decode_list, reply_failure, request_line, screenshot_bytes,
+        BridgeOp, Device, LOG_LINE_LIMIT, LogLineSplitter, REFUSED, Refusal, SCREENSHOT_LIMIT,
+        UNREADABLE_REPLY, console_output, decode_list, reply_failure, request_line, screenshot_bytes,
     };
 
     /// A `list` reply MEASURED against the daemon's own `encode_device`, one running phone and one
@@ -786,5 +882,63 @@ mod tests {
         assert_eq!(splitter.push(b"\r\n"), [""]);
         // A `\r` that is not at the end of a line is the app's own byte and stays.
         assert_eq!(splitter.push(b"a\rb\n"), ["a\rb"]);
+    }
+
+    /// Each of the panel's own refusals says the sentence it said in Swift, verbatim.
+    ///
+    /// The WHOLE string per arm, [`crate::sim_control`]'s way: these are read by the person in
+    /// front of the panel and there is nothing else that can catch a reworded one.
+    #[test]
+    fn the_panels_own_refusals_say_what_they_said() {
+        assert_eq!(Refusal::NoEndpoint.text(), "The host has no Android bridge yet.");
+        assert_eq!(
+            Refusal::UnbuildableRequest.text(),
+            "The request could not be encoded."
+        );
+        assert_eq!(
+            Refusal::UnbuildableLogcat.text(),
+            "The logcat request could not be encoded."
+        );
+        assert_eq!(
+            Refusal::UnreadableDeviceList.text(),
+            "The device list made no sense."
+        );
+        assert_eq!(
+            Refusal::UnreadableScreenshot.text(),
+            "The screenshot made no sense."
+        );
+        assert_eq!(
+            Refusal::TruncatedScreenshot.text(),
+            "The screenshot was cut short."
+        );
+    }
+
+    /// Every refusal survives the byte it crosses as, `ALL` is that walk in order, and no two of
+    /// them say the same thing — a duplicate would be a table slot the near side can never reach a
+    /// distinct sentence through.
+    #[test]
+    fn every_refusal_survives_the_byte_it_crosses_as() {
+        for (index, refusal) in Refusal::ALL.iter().enumerate() {
+            assert_eq!(Refusal::from_code(refusal.code()), Some(*refusal));
+            assert_eq!(usize::from(refusal.code()), index, "{refusal:?} is out of order");
+        }
+        assert_eq!(Refusal::from_code(6), None);
+        assert_eq!(Refusal::from_code(u8::MAX), None);
+
+        let mut said: Vec<&str> = Refusal::ALL.iter().map(|refusal| refusal.text()).collect();
+        said.sort_unstable();
+        let spoken = said.len();
+        said.dedup();
+        assert_eq!(said.len(), spoken, "two refusals say the same thing");
+    }
+
+    /// The panel's own sentences and the HOST's stay apart. Nothing in [`Refusal`] may claim a
+    /// refusal the host worded, and nothing the host worded may be answered from this table.
+    #[test]
+    fn the_panels_sentences_are_not_the_hosts() {
+        for refusal in Refusal::ALL {
+            assert_ne!(refusal.text(), REFUSED);
+            assert_ne!(refusal.text(), UNREADABLE_REPLY);
+        }
     }
 }
