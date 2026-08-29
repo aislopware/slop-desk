@@ -157,11 +157,6 @@ pub(crate) enum Command {
     Close {
         reply: Arc<Reply<()>>,
     },
-    /// A hard drop with no clean `bye`, exactly as a mesh path flap would produce. The test seam
-    /// `forceDropForTesting` was, kept because the alternative is a suite that unplugs a cable.
-    ForceDrop {
-        reply: Arc<Reply<()>>,
-    },
     /// One channel ended. Posted by a forwarder, which may not end a channel itself.
     Ended {
         epoch: u64,
@@ -282,23 +277,6 @@ impl PaneDriver {
         let reply = Arc::new(Reply::new());
         if self
             .post(Command::Close {
-                reply: Arc::clone(&reply),
-            })
-            .is_ok()
-        {
-            reply.wait();
-        }
-    }
-
-    /// Simulates a hard network loss: tears the transport down with no clean `bye`, preserving the
-    /// session id and the seq marks so the next connect is a real resume.
-    ///
-    /// The production drop path is a transport failing on its own; this is how a suite reaches that
-    /// path without a cable to unplug.
-    pub fn force_drop(&self) {
-        let reply = Arc::new(Reply::new());
-        if self
-            .post(Command::ForceDrop {
                 reply: Arc::clone(&reply),
             })
             .is_ok()
@@ -562,10 +540,7 @@ fn supervise(shared: &Arc<Shared>, inbox: &Receiver<Command>) {
 fn abandon(command: Command) {
     match command {
         Command::Connect { reply, .. } | Command::Resume { reply, .. } => reply.abandon(),
-        Command::Pause { reply }
-        | Command::Close { reply }
-        | Command::ForceDrop { reply }
-        | Command::Shutdown { reply } => reply.abandon(),
+        Command::Pause { reply } | Command::Close { reply } | Command::Shutdown { reply } => reply.abandon(),
         Command::Ended { .. } => {},
     }
 }
@@ -598,10 +573,6 @@ fn run(shared: &Arc<Shared>, command: Command, campaign: &mut Option<Campaign>) 
         Command::Close { reply } => {
             *campaign = None;
             close(shared);
-            reply.fill(());
-        },
-        Command::ForceDrop { reply } => {
-            teardown(shared);
             reply.fill(());
         },
         Command::Ended { epoch, end } => {

@@ -17,39 +17,18 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{GENEROUS, Harness, OpenPolicy, PORT, Recorder, Seen, endpoint_host, quiet_config};
+use common::{
+    GENEROUS, Harness, OpenPolicy, PORT, Recorder, Seen, connected, endpoint_host, observer, quiet_config,
+};
 use slopdesk_clientdriver::PaneDriver;
 use slopdesk_clientsession::seq::ResumeOutcome;
 use slopdesk_wire::{MuxFrame, WireMessage};
-
-/// The recorder as the trait object the driver takes.
-fn observer(log: &Arc<Recorder>) -> Arc<dyn slopdesk_clientdriver::Observer> {
-    Arc::<Recorder>::clone(log)
-}
-
-/// A driver on a fresh harness, connected, with the log it wrote.
-struct Live {
-    harness: Harness,
-    driver: PaneDriver,
-    log: Arc<Recorder>,
-}
-
-fn connected(policy: OpenPolicy, config: slopdesk_clientdriver::DriverConfig) -> Live {
-    let harness = Harness::new(policy);
-    let log = Arc::new(Recorder::default());
-    let driver = PaneDriver::new(Arc::clone(&harness.registry), observer(&log), config)
-        .expect("the supervisor thread starts");
-    driver
-        .connect(endpoint_host(), PORT, GENEROUS)
-        .expect("the host accepts the open");
-    Live { harness, driver, log }
-}
 
 /// The whole of a first connection, in the order the wire carries it: an open naming a fresh
 /// session and seq zero, then output, then the ack that releases it.
 #[test]
 fn a_cold_connect_presents_a_new_session_and_acks_what_it_gets() {
-    let live = connected(OpenPolicy::Accept(0), quiet_config());
+    let live = connected([], OpenPolicy::Accept(0), quiet_config());
     let host = live.harness.host(0);
     host.wait_opens(1);
 
@@ -88,7 +67,7 @@ fn a_cold_connect_presents_a_new_session_and_acks_what_it_gets() {
 /// dup-free, and the bytes already rendered do not arrive twice.
 #[test]
 fn a_replayed_tail_is_dropped_rather_than_delivered_twice() {
-    let live = connected(OpenPolicy::Accept(0), quiet_config());
+    let live = connected([], OpenPolicy::Accept(0), quiet_config());
     let host = live.harness.host(0);
     host.wait_opens(1);
 
@@ -115,7 +94,7 @@ fn a_replayed_tail_is_dropped_rather_than_delivered_twice() {
 /// consumer's "one wake, one batch, one render flush" contract true.
 #[test]
 fn a_drain_empties_the_inbox_in_one_take() {
-    let live = connected(OpenPolicy::Accept(0), quiet_config());
+    let live = connected([], OpenPolicy::Accept(0), quiet_config());
     let host = live.harness.host(0);
     host.wait_opens(1);
 
@@ -137,7 +116,7 @@ fn a_drain_empties_the_inbox_in_one_take() {
 /// consumer will drain.
 #[test]
 fn a_child_exit_is_terminal_for_the_session() {
-    let live = connected(OpenPolicy::Accept(0), quiet_config());
+    let live = connected([], OpenPolicy::Accept(0), quiet_config());
     let host = live.harness.host(0);
     host.wait_opens(1);
 
@@ -197,6 +176,75 @@ fn a_seq_past_the_presented_mark_reads_as_the_same_shell() {
         driver.highest_contiguous_seq(),
         8,
         "a real resume keeps its seeded marks"
+    );
+}
+
+/// What the driver does NOT interpret. `SlopDeskClientBlocksTests` decoded the two Warp-block
+/// messages into a bespoke `Event` case each and asserted the fields back one at a time; here the
+/// wire type IS the event, so the whole of that suite is the claim that neither message is consumed
+/// on the way through — including the empty `BlockOutput` a host sends for an evicted block, which
+/// the consumer must see in order to resolve its request as "gone" rather than wait forever.
+#[test]
+fn a_block_message_reaches_the_near_side_verbatim() {
+    let live = connected([], OpenPolicy::Accept(0), quiet_config());
+    let host = live.harness.host(0);
+    host.wait_opens(1);
+
+    let block = WireMessage::CommandBlock {
+        index: 7,
+        exit_code: Some(0),
+        duration_ms: Some(1250),
+        complete: true,
+        output_len: 42,
+        command_text: "ls -la".to_owned(),
+        prompt_ordinal: 9,
+    };
+    let evicted = WireMessage::BlockOutput {
+        index: 99,
+        output: Vec::new(),
+    };
+    host.send(&block);
+    host.send(&evicted);
+
+    let seen = live.log.wait_until("both block messages", |seen| {
+        seen.iter()
+            .filter(|one| matches!(**one, Seen::Message(_)))
+            .count()
+            >= 2
+    });
+    let forwarded: Vec<&WireMessage> = seen
+        .iter()
+        .filter_map(|one| {
+            match *one {
+                Seen::Message(ref message) => Some(message),
+                _ => None,
+            }
+        })
+        .collect();
+    assert_eq!(forwarded, vec![&block, &evicted], "verbatim, and in order");
+}
+
+/// A send before there is anything to send on ANSWERS, rather than dropping the bytes and reporting
+/// success. `requestBlockOutput` was the Swift case — a UI that thought it had asked and waited for
+/// a reply that was never requested — but the refusal belongs to every control verb, so it is
+/// asserted where it lives: on the driver with no transport.
+#[test]
+fn a_send_before_the_first_connect_is_refused() {
+    let harness = Harness::new(OpenPolicy::Accept(0));
+    let log = Arc::new(Recorder::default());
+    let driver = PaneDriver::new(Arc::clone(&harness.registry), observer(&log), quiet_config())
+        .expect("the supervisor thread starts");
+
+    let refused = driver
+        .send_control(&WireMessage::RequestBlockOutput { index: 5 })
+        .expect_err("nothing is connected");
+    assert!(
+        matches!(refused, slopdesk_muxnet::subchannel::SendError::Closed),
+        "{refused:?}"
+    );
+    assert!(
+        driver.send_input(b"x").is_err(),
+        "input before a connect is refused for the same reason"
     );
 }
 

@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 use std::{fmt, io};
 
 use slopdesk_clientdriver::event::{Event, Observer};
+use slopdesk_clientdriver::{DriverConfig, PaneDriver};
 use slopdesk_clientnet::dial::Endpoint;
 use slopdesk_clientnet::registry::ConnectionRegistry;
 use slopdesk_muxnet::connection::{ConnectionThreads, MuxConnection, MuxEvent, PairedConnection};
@@ -63,8 +64,8 @@ const POLL: Duration = Duration::from_millis(2);
 
 /// A driver configured the way every suite here wants it: no campaign unless the suite asks, and
 /// tickers slow enough that a test's assertions are not racing them.
-pub const fn quiet_config() -> slopdesk_clientdriver::DriverConfig {
-    slopdesk_clientdriver::DriverConfig {
+pub const fn quiet_config() -> DriverConfig {
+    DriverConfig {
         channel_class: 0,
         ack_interval: Duration::from_millis(5),
         ping_interval: Duration::from_secs(3_600),
@@ -627,6 +628,44 @@ impl Drop for Harness {
             }
         }
     }
+}
+
+// -- a driver already on the wire ----------------------------------------------------------- //
+
+/// The recorder as the trait object the driver takes.
+///
+/// The turbofish is load-bearing: a bare `Arc::clone(log)` infers `T` from the RETURN type and then
+/// demands an `&Arc<dyn Observer>` it was never given.
+pub fn observer(log: &Arc<Recorder>) -> Arc<dyn Observer> {
+    Arc::<Recorder>::clone(log)
+}
+
+/// A harness, the driver on it, and the log that driver wrote — kept together because a suite that
+/// dropped the harness while holding the driver would be asserting against a host with no pump.
+pub struct Live {
+    pub harness: Harness,
+    pub driver: PaneDriver,
+    pub log: Arc<Recorder>,
+}
+
+/// A driver connected to dial 0, under the plan that governs its redials.
+///
+/// The plan rather than a single policy, because the interesting connections are the LATER ones: a
+/// redial builds a whole new `Host`, so nothing reachable from the first one can say how the second
+/// should answer.
+pub fn connected(
+    scripted: impl IntoIterator<Item = OpenPolicy>,
+    fallback: OpenPolicy,
+    config: DriverConfig,
+) -> Live {
+    let harness = Harness::scripted(scripted, fallback);
+    let log = Arc::new(Recorder::default());
+    let driver = PaneDriver::new(Arc::clone(&harness.registry), observer(&log), config)
+        .expect("the supervisor thread starts");
+    driver
+        .connect(endpoint_host(), PORT, GENEROUS)
+        .expect("the host accepts the open");
+    Live { harness, driver, log }
 }
 
 pub const fn endpoint_host() -> &'static str {
