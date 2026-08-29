@@ -40,19 +40,16 @@ const FROM_NOW_ON_SITES: &[&str] = &[
     "rust/slopdesk-muxsession/src/open_route.rs",
 ];
 
-/// The face that answers whether an arriving mux frame is admissible, and what a channel's ending
+/// The one home of whether an arriving mux frame is admissible, and of what a channel's ending
 /// tears down.
-const DOORMAN_FACE: &str = "Sources/SlopDeskTransport/Mux/MuxAdmission.swift";
+const DOORMAN_HOME: &str = "rust/slopdesk-wire/src/mux/admission.rs";
 
-/// Every door that face must keep asking. Three, and a face that drops one has re-derived it.
-const DOORMAN_DOORS: &[&str] = &[
-    "slopdesk_mux_admit",
-    "slopdesk_mux_teardown_poisoned",
-    "slopdesk_mux_teardown_peer_close",
-];
+/// Every verdict that home must keep spelling. Three, and a caller that stops asking one has
+/// re-derived it.
+const DOORMAN_VERDICTS: &[&str] = &["pub fn admit", "pub const fn poisoned", "pub const fn peer_close"];
 
 /// The connection that routes frames through those verdicts and owns nothing else about them.
-const MUX_CONNECTION: &str = "Sources/SlopDeskTransport/Mux/MuxNWConnection.swift";
+const MUX_CONNECTION: &str = "rust/slopdesk-muxnet/src/connection.rs";
 
 /// One relation, one table — and one identity to ask it about
 ///
@@ -481,26 +478,40 @@ pub fn one_arc_one_ladder(tree: &Tree) -> Report {
 /// beside the door is that precedence forking in two.
 ///
 /// The teardown half is banned by the same shape: a channel that ends on one link has to reach the
-/// other, and a hand-rolled `localClose`/`remoteClose` in the connection is the branch that leaves
-/// a shell with no close trigger left.
+/// other, and a hand-rolled local/remote close in the connection is the branch that leaves a shell
+/// with no close trigger left.
+///
+/// ## Both sides of this rule became Rust, and it survives for the reason the seven above it did
+///
+/// It used to pin a Swift PAIR: `MuxAdmission.swift` calling the three `slopdesk_mux_*` doors, and
+/// `MuxNWConnection.swift` asking `MuxDoorman` for all three verdicts without reading the channel
+/// cap itself. `docs/63` §G.3 deleted both files and retired the three doors with them — the client
+/// mux is `slopdesk-muxnet` driving `slopdesk_wire::mux` in-process, and a decoded MESSAGE is what
+/// crosses to Swift now.
+///
+/// The claim did not become redundant when the Swift end died, for exactly the reason `docs/60` F.9
+/// left the seven splits above standing: the caller and the rule are still in SEPARATE CRATES with
+/// no dependency forcing the question through the door. `slopdesk-muxnet` can grow an `if role ==
+/// Role::Host && lane == Link::Data` beside `admit`, or read `MAX_CHANNELS_PER_CONNECTION` at a
+/// point in the precedence nobody chose, and every suite stays green. So the pins move to the Rust
+/// side of the same fact and the wording of the rule does not change.
 #[must_use]
 pub fn one_frame_one_doorman(tree: &Tree) -> Report {
     let claims = [
         Claim::Exists {
-            path: DOORMAN_FACE,
-            message: "Sources/SlopDeskTransport/Mux/MuxAdmission.swift is gone — whether a frame is \
-                      admissible, and what a channel's ending tears down, are not MuxNWConnection's to \
-                      re-derive (docs/59 §5)",
+            path: DOORMAN_HOME,
+            message: "rust/slopdesk-wire/src/mux/admission.rs is gone — whether a frame is admissible, and \
+                      what a channel's ending tears down, are not the connection's to re-derive (docs/59 §5)",
         },
         Claim::Doors {
-            path: DOORMAN_FACE,
-            entries: DOORMAN_DOORS,
-            message: "Sources/SlopDeskTransport/Mux/MuxAdmission.swift no longer calls {entry} — a face \
-                      that drops a door is a guard growing back beside the one that owns it",
+            path: DOORMAN_HOME,
+            entries: DOORMAN_VERDICTS,
+            message: "rust/slopdesk-wire/src/mux/admission.rs no longer spells {entry} — a verdict that \
+                      leaves this file is a guard growing back beside the one that owns it (docs/59 §5)",
         },
         Claim::NoneOf {
             paths: &[MUX_CONNECTION],
-            pattern: r"maxChannelsPerConnection",
+            pattern: r"MAX_CHANNELS_PER_CONNECTION",
             view: View::Code,
             message: "{files} reads the per-connection channel cap itself — the cap is one CLAUSE of a \
                       four-guard precedence, and a copy of it here is the bound being re-checked at a point \
@@ -508,10 +519,10 @@ pub fn one_frame_one_doorman(tree: &Tree) -> Report {
         },
         Claim::Doors {
             path: MUX_CONNECTION,
-            entries: &["MuxDoorman.admit", "MuxDoorman.poisoned", "MuxDoorman.peerClose"],
-            message: "Sources/SlopDeskTransport/Mux/MuxNWConnection.swift no longer asks {entry} — a frame \
-                      routed past the doorman, or an ending torn down without its verdict, is the guard \
-                      this rule exists for written a second time",
+            entries: &["admit", "poisoned", "peer_close"],
+            message: "rust/slopdesk-muxnet/src/connection.rs no longer asks {entry} — a frame routed past \
+                      the doorman, or an ending torn down without its verdict, is the guard this rule \
+                      exists for written a second time (docs/59 §5)",
         },
     ];
     check_all(tree, &claims)
@@ -561,16 +572,19 @@ mod tests {
         assert!(!super::one_regex_engine_over_untrusted(&fixture.tree()).is_clean());
     }
 
+    /// Seeded the way Rust would write the drift, for the same reason as the seven fixtures below:
+    /// both halves of this pair are crates now, and a Swift shape translated by hand would match
+    /// none of them.
     fn write_one_frame_one_doorman(fixture: &Fixture) {
-        let mut face = String::new();
-        for door in super::DOORMAN_DOORS {
-            face.push_str(door);
-            face.push_str("()\n");
+        let mut home = String::new();
+        for verdict in super::DOORMAN_VERDICTS {
+            home.push_str(verdict);
+            home.push_str("(arrival: &Arrival) {}\n");
         }
-        fixture.write(super::DOORMAN_FACE, &face).write(
+        fixture.write(super::DOORMAN_HOME, &home).write(
             super::MUX_CONNECTION,
-            "MuxDoorman.admit(role: role)\nMuxDoorman.poisoned(role: role)\nMuxDoorman.peerClose(role: \
-             role)\n",
+            "match admit(&Arrival { role: self.role }) {}\nlet verdict = poisoned(self.role, lane);\nlet \
+             verdict = peer_close(self.role, lane);\n",
         );
     }
 
@@ -580,29 +594,33 @@ mod tests {
         write_one_frame_one_doorman(&fixture);
         assert!(super::one_frame_one_doorman(&fixture.tree()).is_clean());
 
-        // The face stopped asking — a guard grew back beside the one that owns it.
-        fixture.write(super::DOORMAN_FACE, "slopdesk_mux_admit()\n");
+        // A verdict left the file that holds the precedence — a guard growing back beside the one
+        // that owns it.
+        fixture.write(super::DOORMAN_HOME, "pub fn admit(arrival: &Arrival) {}\n");
         assert!(!super::one_frame_one_doorman(&fixture.tree()).is_clean());
 
         // A second copy of the cap: the bound re-checked at a point in the order nobody chose.
         write_one_frame_one_doorman(&fixture);
         fixture.append(
             super::MUX_CONNECTION,
-            "dataChannels.count >= MuxFlowControl.maxChannelsPerConnection\n",
+            "if self.data.state_count() >= MuxFlowControl::MAX_CHANNELS_PER_CONNECTION { return; }\n",
         );
         assert!(!super::one_frame_one_doorman(&fixture.tree()).is_clean());
 
         // Each verdict the connection must keep asking for, dropped one at a time.
-        for kept in ["admit", "poisoned", "peerClose"] {
+        for kept in ["admit", "poisoned", "peer_close"] {
             write_one_frame_one_doorman(&fixture);
-            fixture.write(super::MUX_CONNECTION, &format!("MuxDoorman.{kept}(role: role)\n"));
+            fixture.write(
+                super::MUX_CONNECTION,
+                &format!("let verdict = {kept}(self.role, lane);\n"),
+            );
             assert!(
                 !super::one_frame_one_doorman(&fixture.tree()).is_clean(),
                 "the doors claim passed with only {kept}",
             );
         }
 
-        // A bare tree has no face at all.
+        // A bare tree has no admission module at all.
         let bare = Fixture::new("one-frame-one-doorman-bare");
         assert!(!super::one_frame_one_doorman(&bare.tree()).is_clean());
     }

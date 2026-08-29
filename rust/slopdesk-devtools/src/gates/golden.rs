@@ -58,7 +58,6 @@ pub const EMITTED_KEYS: &[&str] = &[
     "metadataCodecPayloads",
     "metadataWireMessages",
     "muxBare",
-    "muxEnvelopes",
     "muxFragment",
     "owdLateDrive",
     "pacerDepthFloats",
@@ -87,6 +86,11 @@ pub const FROZEN_KEYS: &[&str] = &[
     "hostOutputSniffer",
     "inputMotionCoalesce",
     "inspectorEvents",
+    // Frozen by the deletion of `MuxEnvelopeCodec`, not by a module the generator cannot reach:
+    // the Swift codec that emitted this block is gone, so the block's bytes are now Rust's to hold.
+    // `muxBare` and `muxFragment` above stay EMITTED — they are `VideoMuxHeaderCodec`'s, the PATH-2
+    // video mux, which is a different codec and still Swift.
+    "muxEnvelopes",
     "naluJoin",
     "naluSplit",
     "networkEstimateFold",

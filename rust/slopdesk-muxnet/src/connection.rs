@@ -1,6 +1,7 @@
 //! One mux connection, from whichever end holds it: two links in, channel events out.
 //!
-//! This is `Sources/SlopDeskTransport/Mux/MuxNWConnection.swift`. What it does is small — decode a
+//! This was MuxNWConnection.swift, under Sources/SlopDeskTransport/Mux, until docs/63 §G.3 deleted
+//! it. What it does is small — decode a
 //! frame, ask three questions about it, hand the bytes to a channel — and all three questions are
 //! already answered in `slopdesk_wire::mux`: [`admit`] says whether the connection reasons about
 //! the frame at all, [`ChannelTable::route`] says where it goes, and [`peer_close`]/[`poisoned`]

@@ -38,3 +38,4 @@
 
 pub mod dial;
 pub mod registry;
+pub mod transport;

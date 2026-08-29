@@ -241,24 +241,61 @@ Deletes, as the census found them rather than as the first draft of this section
 
 | Delete | Note |
 | --- | --- |
-| `Sources/SlopDeskProtocol/Mux/` — **eight** files, 888 lines | `BoundedQueuePolicy` `ChannelTable` `FlowCreditPolicy` `MuxChannelClass` `MuxEnvelope` `MuxFlowControl` `MuxFrameDecoder` `ReceiveWindowAccountant`. The first draft said seven |
-| `Sources/SlopDeskTransport/Mux/` — all but the face | `ConnectionRegistry` (316) `MuxAdmission` (171) `MuxByteLink` (34) `MuxNWConnection` (847) `MuxRouter` (53) `MuxRoutingCore` (63) `MuxSubChannel` (426) |
-| `Sources/SlopDeskTransport/{ChannelAssociation,NWConnection+Async,SlopDeskTransportError,PortValidation}.swift` | each internal, each with one caller inside the mux |
-| 21 of `Tests/SlopDeskTransportTests/` (~4,200 lines) | including `Support/{Blocking,InMemory,Recording}MuxLink` |
+| `Sources/SlopDeskProtocol/Mux/` — **seven** files, 888 lines | `BoundedQueuePolicy` `ChannelTable` `FlowCreditPolicy` `MuxChannelClass` `MuxEnvelope` `MuxFrameDecoder` `ReceiveWindowAccountant`. The eighth, `MuxFlowControl.swift`, is `git mv`d to `MuxVocabulary.swift` and rewritten — see below |
+| `Sources/SlopDeskTransport/Mux/` — all but the face | `ConnectionRegistry` (316) `MuxAdmission` (171) `MuxByteLink` (34) `MuxNWConnection` (847) `MuxRouter` (53) `MuxRoutingCore` (63) `MuxSubChannel` (426) `NWMuxByteLink` (193) |
+| `Sources/SlopDeskTransport/{ChannelAssociation,NWConnection+Async,PortValidation}.swift` | each internal, each with one caller inside the mux |
+| 18 of `Tests/SlopDeskTransportTests/` + 6 of `Tests/SlopDeskProtocolTests/` (~4,200 lines) | including `Support/{Blocking,InMemory,Recording}MuxLink` |
 
 Four types the first draft deleted wholesale have live callers OUTSIDE the mux, and each is
-vocabulary rather than machinery — so each stays Swift, re-homed onto the face's file, exactly as
-G.4 keeps the `WireMessage` enum: `MuxChannelClass` (`WorkspaceStore+WorkspaceMirror.swift:657`),
+vocabulary rather than machinery — so each stays Swift, re-homed onto `MuxVocabulary.swift`, exactly
+as G.4 keeps the `WireMessage` enum: `MuxChannelClass` (`WorkspaceStore+WorkspaceMirror.swift:657`),
 `MuxCloseReason` (`SlopDeskClient.swift:312,731` and the *public* `hostChannelCloseReason` at `:915`),
-and `MuxFlowControl`'s two constants (`ConnectGate.swift:51`, `ReplayBufferTests.swift:611,641`),
-which are re-sourced from the surviving flow-constant door rather than re-typed.
+and `MuxFlowControl`'s two constants, which are re-sourced from the surviving flow-constant door
+rather than re-typed.
 
-`NWMuxByteLink.swift` (193) is the one-file-two-types trap: `NWMuxByteLink` (`:14`) dies with the
-link layer, but `LiveMuxConnectionFactory` (`:98`) is production's construction path
-(`ClientComposition.swift:151`, `slopdesk-client/main.swift:41`) and becomes a face over
-`slopdesk_clientnet`'s dial. `ConnectionRegistry`'s five outside call sites move with it
-(`ClientComposition.swift:106`, `AppConnection.swift:154,188`, `WorkspaceStore.swift:3378,3408`,
-`WorkspaceStore+WorkspaceMirror.swift:585`).
+**Three of this section's census claims were wrong, and execution corrected them in place:**
+
+- `SlopDeskTransportError.swift` does **not** die here. It has ~10 live callers outside the mux —
+  `ConnectionViewModel`, four `SlopDeskClientTests` suites, `MacChromeSnapshotRender` and three
+  `SlopDeskWorkspaceCoreTests` — so it is not "internal with one caller inside the mux". It retires
+  with `ClientTransporting` in G.5, and the surviving `ConnectionRegistry.pin` throws it meanwhile.
+- `MuxAcquisition` needed a REPLACEMENT, not just a delete. `WorkspaceChannelClient.Handle` is built
+  from one, so deleting the struct with nothing in its place would have stranded the workspace
+  channel. `Handle.init` now takes the `MuxClientTransport` itself and reads `openedChannelID`,
+  which is one fewer value type on the path and the reason the deletion is not a bridge.
+- `MuxFlowControl`'s surviving members are `maxDataMessagePayloadBytes` and
+  `maxOutputFramePayloadBytes`, not the pair the first census named. `initialWindowBytes` died with
+  `MuxConsumptionCreditTests`, its only remaining reader.
+
+A fourth correction is scope, not census: `LiveMuxConnectionFactory` (`NWMuxByteLink.swift:98`) does
+not become a face over `slopdesk_clientnet`'s dial — it is deleted outright. The Rust pool dials
+internally, so `ConnectionRegistry()` takes no factory and its two production construction sites
+(`ClientComposition.swift:151`, `slopdesk-client/main.swift:41`) lose an argument rather than gain a
+face. That also removes the injection seam the old registry existed to offer; the Rust pool is
+tested against real loopback sockets in `rust/slopdesk-clientnet/tests/` instead, which is the
+stronger proof and the cheaper one.
+
+A fifth is a consequence nobody wrote down: **`ConnectionRegistry` stops being `@MainActor` and
+becomes `Sendable`.** The annotation was never a design choice — the Swift registry WAS the mutable
+state (an entry map, a refcount, an eviction path), and the main actor was the lock its callers
+already had. With the state in Rust behind its own `Mutex` the object is one immutable pointer, and
+the annotation turns from free into load-bearing in the wrong direction: `SlopDeskClient`'s
+`makeTransport` is a synchronous `@Sendable` closure that cannot hop, so a main-actor-only pool
+could not serve the CLI, the workspace mirror or the pane factory without a second construction
+path. All three lose an `await` instead. The pointer crosses in a `RustHandle`
+(`Sources/SlopDeskTransport/Mux/RustHandle.swift`), which is the ONE place the `@unchecked Sendable`
+claim is written down and reasoned about, rather than one escape hatch per use site.
+
+Two smaller things execution had to fix to make that land, both latent before it:
+
+- `Held` now holds the `ConnectionRegistry`. `slopdesk_mux_pool_free` requires every transport on the
+  pool to be freed first — it closes and JOINS each connection's receive loops — and ARC releases an
+  object's stored properties in no specified order, so a deallocating `MuxClientTransport` could have
+  freed the pool before its own channel. One strong reference makes the ordering structural instead
+  of a comment.
+- `Duration` → milliseconds read only `components.seconds`, flooring every sub-second bound to zero.
+  Harmless while the only caller passed 10 s; wrong the moment a test asked for 50 ms. It is
+  `Duration.milliseconds` now, one spelling for the pool's connect timeout and the ack wait both.
 
 `Tests/SlopDeskProtocolTests/FrameDecoderCursorTests.swift` is MIXED — `FrameDecoder` cases at
 `:27,:37,:54` survive, the Mux cases at `:128–165` do not — so it is SPLIT, not deleted.
@@ -271,8 +308,17 @@ Six invariants rules name a subject this stage deletes and must be re-aimed rath
 deleted" list covers the client — `deleted_host_swift.rs` is hostd's — so a new rule module joins
 `rules/mod.rs`, with its own break-test.
 
-The remaining `MuxClientTransport.swift` (329) becomes the ~80-line face that holds the handle, the
-way `InputInjector.swift` did (`docs/60` §4).
+The remaining `MuxClientTransport.swift` (329) becomes the face that holds the handle, the way
+`InputInjector.swift` did (`docs/60` §4). **It does not shrink, and this section's "~80 lines"
+guess was wrong: it lands at ~450.** The reason is worth recording, because it is the shape every
+later stage's face will take. A face over a *synchronous* door is small — `InputInjector` is a
+method per verb. This one spans an `async` actor, a C callback that fires on a Rust thread, and an
+ARC lifetime that must outlive both, so three of its four parts are not the mux at all: an `Inbox`
+that turns two `@convention(c)` functions into an `AsyncThrowingStream`, a `Held` class whose
+`deinit` is the only thing that may call `slopdesk_mux_transport_free`, and one send method per
+verb because `ClientTransporting` has one. What actually went is the 2,338 lines BEHIND it. A face
+that grows while its subject vanishes is the correct outcome; a face that shrank to 80 would mean
+the seam moved rather than the implementation.
 
 ### G.4 — `Sources/SlopDeskProtocol` dissolves
 

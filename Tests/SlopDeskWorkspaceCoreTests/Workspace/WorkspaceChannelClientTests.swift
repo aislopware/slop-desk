@@ -846,7 +846,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
     /// A host that takes the channel and then says nothing — a live link carrying no verdict.
     ///
-    /// The pane path already bounds this exact wait (`MuxClientTransport.race`, one
+    /// The pane path already bounds this exact wait (`slopdesk_mux_transport_await_open_ack`, one
     /// `handshakeTimeout`), and this one has to as well: an unbounded `awaitAccepted()` strands `run`
     /// for the life of the process. The state never leaves `.opening`, so no reopen is ever attempted
     /// and no document arrives — the window keeps drawing per-pane facts off the control-push sinks

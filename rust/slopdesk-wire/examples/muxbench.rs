@@ -5,9 +5,9 @@
 //! is not hypothetical in this repo: re-running the sniff bench is what found a 3.3× defect that a
 //! port would otherwise have carried across and credited to Rust.
 //!
-//! The Swift side it was compared against is `Sources/SlopDeskProtocol/Mux/MuxEnvelope.swift`,
-//! driven by an equivalent `-Ounchecked` program. Both take the best of five runs so a scheduler
-//! blip inflates neither. Numbers are recorded in `docs/DECISIONS.md`.
+//! The Swift side it was compared against was MuxEnvelope.swift, under
+//! Sources/SlopDeskProtocol/Mux, driven by an equivalent `-Ounchecked` program. Both take the best
+//! of five runs so a scheduler blip inflates neither. Numbers are recorded in `docs/DECISIONS.md`.
 //!
 //! An example rather than a `#[bench]`: this crate has no nightly dependency and no bench harness,
 //! and an example costs the library build nothing.

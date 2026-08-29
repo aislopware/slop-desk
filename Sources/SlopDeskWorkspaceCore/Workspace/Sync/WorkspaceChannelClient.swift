@@ -38,16 +38,20 @@ public final class WorkspaceChannelClient {
             self.awaitAccepted = awaitAccepted
         }
 
-        /// Adapts a mux acquisition. Production's only construction path.
-        public init(_ acquisition: MuxAcquisition) {
-            var accepted: (@Sendable () async -> Bool)?
-            if let awaitOpenAck = acquisition.awaitOpenAck {
-                accepted = { await awaitOpenAck().accepted }
-            }
+        /// Adapts an opened mux channel. Production's only construction path.
+        ///
+        /// The transport is asked for its verdict LAZILY rather than at construction, because the
+        /// two answers mean different things to this client: `false` is the host declining to serve
+        /// class 1 at all, which `ChannelRun` records as `.refused` and never retries.
+        ///
+        /// The bound is long rather than absent — the Swift this replaced waited forever — and it
+        /// costs nothing, because a connection that dies under the waiter resolves it immediately
+        /// on the Rust side rather than leaving it parked.
+        public init(_ transport: MuxClientTransport) {
             self.init(
-                channelID: acquisition.channelID,
-                control: acquisition.control,
-                awaitAccepted: accepted,
+                channelID: transport.openedChannelID,
+                control: MuxControlChannel(transport),
+                awaitAccepted: { await transport.awaitAccepted(within: .seconds(30)) },
             )
         }
     }
@@ -331,8 +335,9 @@ public final class WorkspaceChannelClient {
 
     /// Races `operation` against `timeout`, answering `nil` when the timeout wins.
     ///
-    /// The loser is cancelled. The production awaiter (`MuxNWConnection.awaitOpenAck`) resumes a
-    /// cancelled waiter immediately, so no continuation is stranded and the group closes.
+    /// The loser is cancelled. The production awaiter (`MuxClientTransport.awaitAccepted`) parks on
+    /// its own bounded deadline in Rust rather than forever, so no continuation is stranded and the
+    /// group closes.
     private static func race(
         _ operation: @escaping @Sendable () async -> Bool,
         timeout: Duration,

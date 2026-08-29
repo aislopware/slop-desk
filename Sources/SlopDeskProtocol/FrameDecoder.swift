@@ -12,7 +12,7 @@ import Foundation
 /// The buffering, the cursor that avoids a per-frame memmove, the fail-stop on a lost byte-boundary
 /// and the decode itself all live in `rust/slopdesk-wire`. This is the handle: a `final class` (so
 /// the per-channel decoder can be held by `let` and mutated through its reference, matching the
-/// owning `MuxSubChannel`/test call sites) and intentionally **not** `Sendable` — it carries
+/// owning terminal/file-transfer call sites) and intentionally **not** `Sendable` — it carries
 /// mutable buffer state and belongs to a single actor or task. One decoder per channel per
 /// connection.
 ///

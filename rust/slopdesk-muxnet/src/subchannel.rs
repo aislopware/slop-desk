@@ -1,11 +1,11 @@
 //! One logical channel on one of a connection's two links.
 //!
-//! This is `Sources/SlopDeskTransport/Mux/MuxSubChannel.swift`, which is 426 lines of an `actor`
-//! holding a decoder, an inbound continuation, a credit window, a FIFO park queue, a send gate,
-//! and a lock-guarded `Bool` that exists only so one caller can read the actor's state without
-//! suspending into it. Every one of those is Swift concurrency machinery around three ideas: frame
-//! it, gate it on credit, hand it up. Written against threads the machinery mostly disappears, and
-//! what is left is small enough that the invariants are visible in it.
+//! This was MuxSubChannel.swift, under Sources/SlopDeskTransport/Mux, which was 426 lines of an
+//! `actor` holding a decoder, an inbound continuation, a credit window, a FIFO park queue, a send
+//! gate, and a lock-guarded `Bool` that exists only so one caller can read the actor's state
+//! without suspending into it. Every one of those is Swift concurrency machinery around three
+//! ideas: frame it, gate it on credit, hand it up. Written against threads the machinery mostly
+//! disappears, and what is left is small enough that the invariants are visible in it.
 //!
 //! ## The two windows, and why only one of them is here
 //!

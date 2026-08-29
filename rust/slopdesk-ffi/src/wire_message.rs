@@ -366,7 +366,7 @@ pub(crate) fn pack(message: &WireMessage, run: &core::ops::Range<usize>) -> Pack
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the table hides the mapping it exists to show"
 )]
-fn unpack(flat: &SlopDeskWireMessage, arena: &[u8], blob: &[u8]) -> Option<WireMessage> {
+pub(crate) fn unpack(flat: &SlopDeskWireMessage, arena: &[u8], blob: &[u8]) -> Option<WireMessage> {
     let first = arena_text(arena, flat.text_a_offset, flat.text_a_length);
     let message = match flat.message_type {
         1 => {

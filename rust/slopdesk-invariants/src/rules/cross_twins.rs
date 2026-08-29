@@ -14,7 +14,8 @@ use crate::tree::Tree;
 const REPAIR: &str = "Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeWorkspace.swift";
 const PANE_SPEC: &str = "Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift";
 const NEW_TAB: &str = "Sources/SlopDeskWorkspaceModel/Domain/Tree/NewTabPosition.swift";
-const PORT: &str = "Sources/SlopDeskTransport/PortValidation.swift";
+/// The bindable port, after `docs/63` §G.3 took its Swift half: ONE spelling, and this is it.
+const PORT_RUST: &str = "rust/slopdesk-workspace/src/listen.rs";
 const REPLAY_BUFFER: &str = "Sources/SlopDeskTransport/ReplayBuffer.swift";
 const NERD_FONT: &str = "Sources/SlopDeskFontFaces/NerdSymbolFont.swift";
 
@@ -85,11 +86,19 @@ pub fn one_tree_repair_in_rust(tree: &Tree) -> Report {
 ///    always wrong. Catches: the broadcast recipient set and the launch restore selecting different
 ///    panes the day a third kind lands on one side only.
 ///
-/// 3. THE BINDABLE PORT. `PortValidation.port` asked the RANGE door and then made its own `UInt16`
-///    conversion, while `listen::port` — which does both — had no caller and said so in its own doc
-///    comment. The two agree only because `u16`'s range happens to BE the accepted range: that is a
-///    fact about today's rule, not a rule. A range that stopped being it — a reserved floor, a
-///    refusal of 0 — moves the predicate and leaves the near-side cast agreeing with nothing.
+/// 3. THE BINDABLE PORT, WHICH IS NO LONGER A TWIN. `PortValidation.port` asked the RANGE door and
+///    then made its own `UInt16` conversion, while `listen::port` — which does both — had no caller
+///    and said so in its own doc comment. The two agree only because `u16`'s range happens to BE
+///    the accepted range: that is a fact about today's rule, not a rule. A range that stopped being
+///    it — a reserved floor, a refusal of 0 — moves the predicate and leaves the near-side cast
+///    agreeing with nothing. `docs/63` §G.3 deleted `PortValidation.swift` with the rest of the
+///    Swift client transport and retired `slopdesk_ws_listen_port` with it, since a door outliving
+///    its only caller is what `docs/55` §4b forbids. So this row asserts the SURVIVING half of the
+///    same fact: the one file that holds the rule still holds it, the refusal and the conversion
+///    are still one expression, and no Swift anywhere spells the range or the cast a second time. A
+///    twin that became single-language is not a rule that stopped being needed — it is a rule with
+///    one side left to guard, and the Swift ban is what keeps the second side from being written
+///    again.
 ///
 /// 4. THE UNREACHED HALF THAT WAS DELETED RATHER THAN PORTED. `slopdesk_workspace::session` carried
 ///    a `VideoPaneModes` of five public fields with no methods, no callers, no tests and no
@@ -135,24 +144,33 @@ pub fn four_cross_language_twins(tree: &Tree) -> Report {
                       a classification asked and half transcribed is how the two halves come apart, with \
                       both suites green (docs/55 §8)",
         },
+        // The third twin is no longer cross-language, so what is asserted is that it is no longer a
+        // PAIR: one file spells the rule, the refusal and the conversion are one expression inside
+        // it, and no Swift anywhere holds a second half.
         Claim::Exists {
-            path: PORT,
-            message: "PortValidation.swift is gone — the listen-port doors have a Swift face and it is a \
-                      marshaller (docs/55 §6)",
+            path: PORT_RUST,
+            message: "rust/slopdesk-workspace/src/listen.rs is gone — the bindable port is one rule and \
+                      this is the file it lives in (docs/55 §8, docs/63 §G.3)",
         },
         Claim::Names {
-            path: PORT,
-            needle: "slopdesk_ws_listen_port(",
-            message: "PortValidation.swift stopped asking slopdesk_ws_listen_port — a range predicate plus \
-                      a cast of one's own is the same rule twice, and the cast is the copy nothing tests \
-                      (docs/55 §8)",
+            path: PORT_RUST,
+            needle: "u16::try_from(raw)",
+            message: "listen::port stopped deriving the port from the conversion — the range and the cast \
+                      are the same claim, and spelling them separately is the twin this rule was named for, \
+                      one register down (docs/55 §8)",
         },
-        Claim::Lacks {
-            path: PORT,
-            pattern: r"UInt16\(raw\)",
+        Claim::NoneUnder {
+            roots: &["Sources", "Tests", "Apps"],
+            extensions: SWIFT,
+            pattern: r"UInt16\(raw\)|0\.\.\.65535|1\.\.\.65535",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "PortValidation.swift re-derived the port from the range predicate — the refusal and \
-                      the conversion are one answer, and slopdesk_ws_listen_port is where it lives (docs/55 \
+            exempt: &[],
+            message: "the listen-port rule has a Swift half again ({files}) — PortValidation composed the \
+                      range door with a cast of its own and the two agreed only because u16's range happens \
+                      to BE the accepted one; docs/63 §G.3 deleted that file and retired \
+                      slopdesk_ws_listen_port with it, so there is one spelling and it is Rust's (docs/55 \
                       §8)",
         },
         Claim::Populated {
@@ -360,7 +378,10 @@ mod tests {
                 super::PANE_SPEC,
                 "slopdesk_ws_pane_kind_is_video\nslopdesk_ws_pane_kind_can_receive_text(\n",
             )
-            .write(super::PORT, "slopdesk_ws_listen_port(raw)\n");
+            .write(
+                super::PORT_RUST,
+                "pub fn port(raw: i64) -> Option<u16> { u16::try_from(raw).ok() }\n",
+            );
         for index in 0..20 {
             fixture.write(
                 &format!("rust/slopdesk-workspace/src/module{index}.rs"),
@@ -379,9 +400,22 @@ mod tests {
         fixture.append(super::NEW_TAB, "return min(max(index, 0), tabCount)\n");
         assert!(!super::four_cross_language_twins(&fixture.tree()).is_clean());
 
-        // The cast re-derived from the range predicate.
+        // The cast, written a second time in Swift — the half of the twin that came back rather than
+        // the half that stayed.
         twins(&fixture);
-        fixture.append(super::PORT, "return UInt16(raw)\n");
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Connection/ConnectionViewModel.swift",
+            "guard (1...65535).contains(raw) else { return nil }\nreturn UInt16(raw)\n",
+        );
+        assert!(!super::four_cross_language_twins(&fixture.tree()).is_clean());
+
+        // And the surviving half losing the property that made it ONE answer: a range predicate and a
+        // conversion spelled apart is the twin re-forming inside a single language.
+        twins(&fixture);
+        fixture.write(
+            super::PORT_RUST,
+            "pub fn port(raw: i64) -> Option<u16> { is_valid_port(raw).then(|| raw as u16) }\n",
+        );
         assert!(!super::four_cross_language_twins(&fixture.tree()).is_clean());
 
         // The unreached shape, back.
@@ -400,7 +434,10 @@ mod tests {
                 super::PANE_SPEC,
                 "slopdesk_ws_pane_kind_is_video\nslopdesk_ws_pane_kind_can_receive_text(\n",
             )
-            .write(super::PORT, "slopdesk_ws_listen_port(raw)\n");
+            .write(
+                super::PORT_RUST,
+                "pub fn port(raw: i64) -> Option<u16> { u16::try_from(raw).ok() }\n",
+            );
         assert!(!super::four_cross_language_twins(&moved.tree()).is_clean());
     }
 

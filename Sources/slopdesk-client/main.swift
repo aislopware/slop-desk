@@ -31,14 +31,11 @@ private let kDisconnectKey: UInt8 = 0x1D
 
 // MARK: - Shared mux connection pool
 
-/// Owns the single process-wide ``ConnectionRegistry`` (the per-host shared-connection pool). The
-/// `ConnectionRegistry` is `@MainActor`, so this `@MainActor` holder constructs it lazily on first
-/// acquire (reached from `MuxClientTransport.connect`, already in async context) and reuses it
-/// across reconnects. `acquire`/`release` simply forward to the registry — they exist so the
-/// non-isolated top-level transport closures have a `@MainActor` entry point to call.
-@MainActor
+/// Owns the single process-wide ``ConnectionRegistry`` (the per-host shared-connection pool), which
+/// is a handle on `rust/slopdesk-clientnet`'s pool. One for the process, so every reconnect opens a
+/// fresh channel on the surviving connection rather than dialling again.
 enum CLIMux {
-    static let shared = ConnectionRegistry(makeConnection: LiveMuxConnectionFactory.makeConnection)
+    static let shared = ConnectionRegistry()
 }
 
 // MARK: - Arg parsing
@@ -169,23 +166,8 @@ final class ResizeBridge: @unchecked Sendable {
 
 let interactive = (isatty(STDIN_FILENO) != 0) && !args.noRaw
 
-// The per-host shared-connection pool, owned by the @MainActor `CLIMux` holder. ONE registry for
-// the whole process so every reconnect (ReconnectManager re-calls client.connect →
-// MuxClientTransport.connect → registry.acquire) reuses the same pool and opens a fresh channel on
-// the surviving shared connection. The transport's acquire/release @Sendable closures are async, so
-// they hop onto the main actor to call the @MainActor registry.
 let client = SlopDeskClient(makeTransport: {
-    MuxClientTransport(
-        acquire: { host, port, sessionID, lastReceivedSeq, channelClass, _ in
-            try await CLIMux.shared.acquire(
-                host: host, port: port, sessionID: sessionID, lastReceivedSeq: lastReceivedSeq,
-                channelClass: channelClass,
-            )
-        },
-        release: { host, port, channelID in
-            await CLIMux.shared.release(host: host, port: port, channelID: channelID)
-        },
-    )
+    MuxClientTransport(registry: CLIMux.shared)
 })
 let reconnect = ReconnectManager(client: client, onLog: { stderrLine($0) })
 

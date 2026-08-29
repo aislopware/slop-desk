@@ -10,11 +10,27 @@ import XCTest
 /// socket.
 @MainActor
 final class AppConnectionTests: XCTestCase {
-    /// A registry whose `makeConnection` always throws — so `pin` fails immediately and `connect()` lands
-    /// in `.failed` without any real network.
+    /// A registry pointed at nothing — so `pin` fails and `connect()` lands in `.failed`.
+    ///
+    /// It used to inject a throwing `makeConnection`; `docs/63` G.3 deleted that seam, because a fake
+    /// dial is a second dial path that ships. What replaces it is the REAL dial against
+    /// ``unreachableHost``, which proves the production path instead of standing in for it. The 50 ms
+    /// ceiling is a backstop, not the mechanism: the refusal arrives first.
     private func failingRegistry() -> ConnectionRegistry {
-        ConnectionRegistry { _, _ in throw SlopDeskTransportError.timedOut("test: connect refused") }
+        ConnectionRegistry(connectTimeout: .milliseconds(50))
     }
+
+    /// Loopback, and a port nothing binds.
+    ///
+    /// Hermetic on purpose, and the reason is not pedantry: the address these tests used to name was
+    /// `10.0.0.5`, which is a perfectly ordinary machine on a perfectly ordinary office LAN. If one
+    /// answered, `pin` would SUCCEED and every assertion below would invert — a test that passes or
+    /// fails on which network the developer is sitting on. Loopback port 1 is privileged and unbound,
+    /// so the kernel refuses it immediately rather than filtering it, which is both deterministic and
+    /// faster than the ceiling. `rust/slopdesk-ffi`'s `a_refused_dial_answers_null_and_pools_nothing`
+    /// picks the same address for the same reason.
+    private let unreachableHost = "127.0.0.1"
+    private let unreachablePort = "1"
 
     // MARK: - Form validation
 
@@ -58,8 +74,8 @@ final class AppConnectionTests: XCTestCase {
         let c = AppConnection(registry: failingRegistry())
         var committed: ConnectionTarget?
         c.onTargetCommitted = { committed = $0 }
-        c.host = "10.0.0.5"
-        c.port = "7420"
+        c.host = unreachableHost
+        c.port = unreachablePort
         c.mediaPort = "9000"
         c.cursorPort = "9001"
 
@@ -70,7 +86,7 @@ final class AppConnectionTests: XCTestCase {
         }
         XCTAssertEqual(
             c.target,
-            ConnectionTarget(host: "10.0.0.5", port: 7420, mediaPort: 9000, cursorPort: 9001),
+            ConnectionTarget(host: unreachableHost, port: 1, mediaPort: 9000, cursorPort: 9001),
             "the parsed target is committed even on a failed connect",
         )
         XCTAssertEqual(committed, c.target, "onTargetCommitted fires with the committed target")
@@ -87,8 +103,8 @@ final class AppConnectionTests: XCTestCase {
     /// `disconnect()` always lands `.disconnected` and marks the connection deliberately closed.
     func testDisconnectSurfacesDisconnected() async {
         let c = AppConnection(registry: failingRegistry())
-        c.host = "h"
-        c.port = "7420"
+        c.host = unreachableHost
+        c.port = unreachablePort
         c.mediaPort = "9000"
         c.cursorPort = "9001"
         await c.connect() // → .failed (throwing registry)
@@ -146,8 +162,8 @@ final class AppConnectionTests: XCTestCase {
         c.markConnectedForAutomation()
         XCTAssertEqual(c.hostPulse?.cpuPercent, 34, "a recovered link shows the last reading immediately")
 
-        c.host = "10.0.0.9"
-        c.port = "7420"
+        c.host = unreachableHost
+        c.port = unreachablePort
         await c.connect() // the failing registry lands in .failed; the point is the pre-dial reset
         c.markConnectedForAutomation()
         XCTAssertNil(c.hostPulse, "a dial at a DIFFERENT machine must not flash the previous host's pulse")

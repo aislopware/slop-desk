@@ -7,7 +7,7 @@
 //! `appendBE` and a big-endian reader — because a second wire never arrives as a codec. It arrives
 //! as "just this one field".
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 use crate::vocabulary::{Vocabulary, agrees};
@@ -158,106 +158,137 @@ pub fn terminal_wire(tree: &Tree) -> Report {
 /// The MUX layer and the DEMUX rule.
 ///
 /// The envelope's bytes, the framing, the credit arithmetic and the channel state machine are all
-/// `rust/slopdesk-wire`'s — the Swift is the seam that flattens and asks. A window that is clamped
-/// in two languages is two windows, and the one that drifts low stalls a channel forever rather
-/// than failing.
+/// `rust/slopdesk-wire`'s. A window that is clamped in two languages is two windows, and the one
+/// that drifts low stalls a channel forever rather than failing.
 ///
-/// The demux rule is the newest of these to move. It used to be a Swift `MuxRoutingCore.route`
-/// reaching six ways into a table that was ALREADY Rust — a rule living apart from the state its
-/// every branch reads and then writes, which is the arrangement that lets one of them be edited
-/// alone. `slopdesk_wire`'s `ChannelTable::route` decides now; the Swift attaches the payload (the
-/// bytes never cross) and spells the two drop reasons, which is presentation. Each banned verb
-/// below is one the old copy called directly, and one of them reappearing means the decision has
-/// two owners again.
+/// ## What `docs/63` §G.3 changed about this rule
+///
+/// It used to be six claims about Swift FACES: that `MuxEnvelope.swift` called the four envelope
+/// doors, that `MuxFrameDecoder.swift` called the five framing doors, that something under
+/// `Sources/SlopDeskProtocol/Mux` called each of five policy doors, and that `MuxRoutingCore.swift`
+/// asked `table.route(` without spelling a table verb of its own. Every one of those files is gone
+/// and so are the doors: what crosses the boundary now is a decoded MESSAGE, not a frame, so there
+/// is no marshalling layer left for a door to be dropped from and the type system is what says the
+/// call happened. Only `slopdesk_mux_flow_constant` survives, because two payload CAPS are numbers
+/// a Swift caller still has to know, and `MuxVocabulary.swift` asks for them rather than
+/// transcribing.
+///
+/// What is NOT gone is the reason the rule exists. Nothing in the build graph stops
+/// `slopdesk-muxnet` or `slopdesk-clientnet` from growing a second credit accountant beside
+/// `slopdesk_wire::mux::flow`'s, or a second framing cursor beside the decoder's — each compiles,
+/// each passes its own tests, and each drifts. So the "there is one" half survives, spelled the way
+/// Rust would write the drift, with the four sites that hold the one copy pinned positively so the
+/// bans cannot go green by everything vanishing.
+///
+/// The DEMUX rule is pinned the same way. It used to be a Swift `MuxRoutingCore.route` reaching six
+/// ways into a table that was ALREADY Rust — a rule living apart from the state its every branch
+/// reads and then writes, which is the arrangement that lets one of them be edited alone.
+/// `ChannelTable::route` decides beside its table, and `rust/slopdesk-muxnet` is the caller that
+/// must keep asking rather than reading the table's verbs itself.
 #[must_use]
 pub fn mux_layer(tree: &Tree) -> Report {
-    const SWIFT_MUX: &str = "Sources/SlopDeskProtocol/Mux";
-    // The five mux POLICIES are called from somewhere under the directory rather than from one named
-    // file, which is what `grep -rq` meant. A door nobody calls is a policy that came back.
-    const POLICIES: [&str; 5] = [
-        "slopdesk_flow_credit_consume",
-        "slopdesk_receive_window_consume",
-        "slopdesk_bounded_queue_enqueue",
-        "slopdesk_channel_table_allocate",
-        "slopdesk_mux_flow_constant",
-    ];
-    const SWIFT_ROUTING: &str = "Sources/SlopDeskTransport/Mux/MuxRoutingCore.swift";
+    /// The envelope codec — one layout, and twelve golden vectors pinned against it.
+    const ENVELOPE: &str = "rust/slopdesk-wire/src/mux/envelope.rs";
+    /// The streaming decoder — the buffer, the length prefix and the partial-frame cursor.
+    const DECODER: &str = "rust/slopdesk-wire/src/mux/decoder.rs";
+    /// The channel state machine, and the demux rule beside it.
+    const CHANNELS: &str = "rust/slopdesk-wire/src/mux/channels.rs";
+    /// The three credit policies and the seven constants they are reasoned against.
+    const FLOW: &str = "rust/slopdesk-wire/src/mux/flow.rs";
+    /// The one Swift file left with a mux number in it, and it ASKS for it.
+    const SWIFT_VOCABULARY: &str = "Sources/SlopDeskProtocol/Mux/MuxVocabulary.swift";
+    /// The two crates that drive the layer, and would hold a second copy if one grew.
+    const DRIVERS: [&str; 2] = ["rust/slopdesk-muxnet/src", "rust/slopdesk-clientnet/src"];
 
-    let mut report = check_all(tree, &[
+    let claims = [
         Claim::Doors {
-            path: "Sources/SlopDeskProtocol/Mux/MuxEnvelope.swift",
+            path: ENVELOPE,
             entries: &[
-                "slopdesk_mux_frame_encode",
-                "slopdesk_mux_frame_decode",
-                "slopdesk_mux_frame_byte_count",
-                "slopdesk_mux_envelope_constant",
+                "pub fn encode",
+                "pub fn decode",
+                "pub fn encode_with_payload_into",
+                "pub fn encoded_byte_count_with_payload",
             ],
-            message: concat!(
-                "Sources/SlopDeskProtocol/Mux/MuxEnvelope.swift no longer calls ",
-                "{entry} — the mux envelope is Rust's",
-            ),
+            message: "rust/slopdesk-wire/src/mux/envelope.rs lost {entry} — the mux envelope's bytes are \
+                      laid out once, and the twelve muxEnvelopes vectors are golden-pinned against this \
+                      file (docs/20 §4)",
         },
         Claim::Doors {
-            path: "Sources/SlopDeskProtocol/Mux/MuxFrameDecoder.swift",
-            entries: &[
-                "slopdesk_mux_decoder_new",
-                "slopdesk_mux_decoder_free",
-                "slopdesk_mux_decoder_append",
-                "slopdesk_mux_decoder_next",
-                "slopdesk_mux_decoder_payload",
-            ],
-            message: concat!(
-                "Sources/SlopDeskProtocol/Mux/MuxFrameDecoder.swift no longer calls ",
-                "{entry} — the mux framing is Rust's",
-            ),
+            path: DECODER,
+            entries: &["pub fn append", "pub fn next_frame", "pub fn payload_bytes"],
+            message: "rust/slopdesk-wire/src/mux/decoder.rs lost {entry} — the framing cursor is one answer \
+                      to how many bytes a short read may keep (docs/20 §4)",
         },
+        // `Mentions` rather than `Doors`: three of these are TYPES and the fourth is a constant, so
+        // demanding a call parenthesis after the name would report all four as gone.
+        Claim::Mentions {
+            path: FLOW,
+            names: &[
+                "pub struct FlowCreditPolicy",
+                "pub struct ReceiveWindowAccountant",
+                "pub struct BoundedQueuePolicy",
+                "MAX_CHANNELS_PER_CONNECTION",
+            ],
+            message: "rust/slopdesk-wire/src/mux/flow.rs lost {entry} — the send credit, the receive \
+                      window, the outbound bound and the live-channel cap are one set of numbers both ends \
+                      are reasoned against (docs/20 §4)",
+        },
+        Claim::Names {
+            path: CHANNELS,
+            needle: "pub fn route",
+            message: "rust/slopdesk-wire/src/mux/channels.rs lost route — the demux rule lives beside its \
+                      table, which is what stops one of the two being edited alone (docs/20 §4)",
+        },
+        Claim::Names {
+            path: SWIFT_VOCABULARY,
+            needle: "slopdesk_mux_flow_constant(",
+            message: "MuxVocabulary.swift stopped asking slopdesk_mux_flow_constant — the two payload caps \
+                      are the only mux numbers Swift still needs, and a transcribed one chunks input to a \
+                      size the host does not bound (docs/20 §4)",
+        },
+        // The Swift half of the ban. `Sources/SlopDeskProtocol` and `Sources/SlopDeskTransport` are
+        // where the deleted arithmetic lived and where a rebuild of it would land; the roots are those
+        // two rather than all of `Sources` because `remaining -=` and `states[` are ordinary lines in
+        // a workspace store and a sidebar model, and a ban that fires on those is a ban somebody
+        // widens an exemption list for instead of reading.
         Claim::NoneUnder {
-            roots: &[SWIFT_MUX],
+            roots: &["Sources/SlopDeskProtocol", "Sources/SlopDeskTransport"],
             extensions: SWIFT,
             pattern: r"pendingCredit \+=|remaining -=|outstanding \+=|states\[|terminalRing",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "Sources/SlopDeskProtocol/Mux grew its own arithmetic back ({files}) — the mux \
-                      arithmetic is Rust's, and there is one",
+            message: "the client grew the mux arithmetic back in Swift ({files}) — the credit, the window \
+                      and the channel states are slopdesk_wire::mux's, and what crosses the boundary is a \
+                      decoded message rather than a frame (docs/20 §4, docs/63 §G.3)",
         },
-        Claim::Names {
-            path: SWIFT_ROUTING,
-            needle: "table.route(",
-            message: "MuxRoutingCore.swift stopped asking the door — it is a face, not a second demux rule",
-        },
-        Claim::Names {
-            path: "rust/slopdesk-wire/src/mux/channels.rs",
-            needle: "pub fn route",
-            message: "rust/slopdesk-wire/src/mux/channels.rs lost route — the demux rule lives beside its \
-                      table",
-        },
-        Claim::Lacks {
-            path: SWIFT_ROUTING,
-            pattern: r"table\.(isOpen|open\(|reject\(|remoteClose\(|localClose\(|state\()",
+        // And the Rust half, which is the one with nothing above it: the drivers may HOLD a policy,
+        // never declare one.
+        Claim::NoneUnder {
+            roots: &DRIVERS,
+            extensions: RUST,
+            pattern: concat!(
+                r"pub struct (FlowCreditPolicy|ReceiveWindowAccountant|BoundedQueuePolicy",
+                r"|ChannelTable|MuxFrameDecoder)\b",
+            ),
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "MuxRoutingCore.swift grew a table verb back — the demux decision is Rust's, and there \
-                      is one",
+            exempt: &[],
+            message: "{files} declares a second mux policy — slopdesk-muxnet and slopdesk-clientnet DRIVE \
+                      slopdesk_wire::mux, and a copy beside it agrees with the host until one of the two \
+                      clamps low and stalls a channel rather than failing (docs/20 §4)",
         },
-    ]);
-
-    let under_mux: Vec<&str> = tree
-        .under(SWIFT_MUX)
-        .map(|(_, source)| source.text.as_str())
-        .collect();
-    report.fail_if(
-        under_mux.is_empty(),
-        format!("{SWIFT_MUX} holds no files — the ban below reads an empty haystack and passes"),
-    );
-    for entry in POLICIES {
-        let call = format!("{entry}(");
-        report.fail_if(
-            !under_mux.iter().any(|text| text.contains(&call)),
-            format!("{SWIFT_MUX} no longer calls {entry} — the mux policies are rust/slopdesk-wire's"),
-        );
-    }
-    report
+        Claim::Populated {
+            roots: &DRIVERS,
+            extensions: RUST,
+            minimum: 8,
+            message: "rust/slopdesk-{muxnet,clientnet}/src read as {found} files — the crates moved, so the \
+                      second-copy ban beside this stopped checking anything (docs/20 §4)",
+        },
+    ];
+    check_all(tree, &claims)
 }
 
 /// The git DIALECT — `main ↑2 ↓1 +3 !4 ?5 ~1 $2`.
@@ -492,6 +523,115 @@ pub fn big_endian_helpers(tree: &Tree) -> Report {
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
+
+    /// A tree where the mux layer is laid out once, in the four files that hold it, and the one
+    /// Swift caller left asks for its two numbers.
+    ///
+    /// Seeded the way RUST would write the drift, because that is the language every remaining half
+    /// of this rule is in: a Swift pattern translated by hand would match none of the drivers and
+    /// the rule would pass while guarding nothing.
+    fn mux(fixture: &Fixture) {
+        fixture
+            .write(
+                "rust/slopdesk-wire/src/mux/envelope.rs",
+                "pub fn encode(&self) -> Vec<u8> { vec![] }\npub fn decode(inner: &[u8]) -> Result<Self> { \
+                 Err(()) }\npub fn encode_with_payload_into(&self) -> usize { 0 }\npub fn \
+                 encoded_byte_count_with_payload(&self) -> usize { 0 }\n",
+            )
+            .write(
+                "rust/slopdesk-wire/src/mux/decoder.rs",
+                "pub fn append(&mut self, data: &[u8]) {}\npub fn next_frame(&mut self) {}\npub fn \
+                 payload_bytes(&self) {}\n",
+            )
+            .write(
+                "rust/slopdesk-wire/src/mux/channels.rs",
+                "pub fn route(&mut self) -> RoutingDecision { RoutingDecision::Drop }\n",
+            )
+            .write(
+                "rust/slopdesk-wire/src/mux/flow.rs",
+                "pub struct FlowCreditPolicy;\npub struct ReceiveWindowAccountant;\npub struct \
+                 BoundedQueuePolicy;\npub const MAX_CHANNELS_PER_CONNECTION: usize = 256;\n",
+            )
+            .write(
+                "Sources/SlopDeskProtocol/Mux/MuxVocabulary.swift",
+                "static var cap: Int { Int(slopdesk_mux_flow_constant(1)) }\n",
+            );
+        // The file floor the two Rust bans stand on: eight sources across the two driver crates.
+        for (crate_name, module) in [
+            ("muxnet", "connection"),
+            ("muxnet", "subchannel"),
+            ("muxnet", "link"),
+            ("muxnet", "preamble"),
+            ("muxnet", "params"),
+            ("clientnet", "dial"),
+            ("clientnet", "registry"),
+            ("clientnet", "transport"),
+        ] {
+            fixture.write(
+                &format!("rust/slopdesk-{crate_name}/src/{module}.rs"),
+                "use slopdesk_wire::mux;\n",
+            );
+        }
+    }
+
+    /// The mux layer is pinned on the side it lives on, and both second copies are red.
+    ///
+    /// This rule carried no break-test at all while it was six claims about Swift faces — the gap
+    /// `docs/63` §G.3 closed along with the faces.
+    #[test]
+    fn a_second_copy_of_the_mux_layer_is_caught_on_either_side() {
+        let fixture = Fixture::new("mux-layer");
+        mux(&fixture);
+        assert!(super::mux_layer(&fixture.tree()).is_clean());
+
+        // The demux rule, edited away from the table it reads and writes.
+        fixture.write(
+            "rust/slopdesk-wire/src/mux/channels.rs",
+            "pub fn allocate(&mut self) {}\n",
+        );
+        assert!(!super::mux_layer(&fixture.tree()).is_clean());
+
+        // A policy dropped out of the one file that holds all three.
+        mux(&fixture);
+        fixture.write(
+            "rust/slopdesk-wire/src/mux/flow.rs",
+            "pub struct FlowCreditPolicy;\npub const MAX_CHANNELS_PER_CONNECTION: usize = 256;\n",
+        );
+        assert!(!super::mux_layer(&fixture.tree()).is_clean());
+
+        // The face that stopped asking for the two caps it still has to know.
+        mux(&fixture);
+        fixture.write(
+            "Sources/SlopDeskProtocol/Mux/MuxVocabulary.swift",
+            "static var cap: Int { 262_144 }\n",
+        );
+        assert!(!super::mux_layer(&fixture.tree()).is_clean());
+
+        // The arithmetic, back in the two Swift targets it left.
+        mux(&fixture);
+        fixture.write(
+            "Sources/SlopDeskTransport/Mux/MuxClientTransport.swift",
+            "pendingCredit += granted\n",
+        );
+        assert!(!super::mux_layer(&fixture.tree()).is_clean());
+
+        // And a second policy declared beside the one that ships, which is the half with nothing
+        // above it — no door goes missing, no test fails, the two simply disagree.
+        mux(&fixture);
+        fixture.write(
+            "rust/slopdesk-muxnet/src/subchannel.rs",
+            "pub struct ReceiveWindowAccountant { pending: i64 }\n",
+        );
+        let report = super::mux_layer(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("subchannel.rs")),
+            "{report:?}"
+        );
+
+        // A bare tree has neither the four files nor the floor under the bans.
+        let bare = Fixture::new("mux-layer-bare");
+        assert!(!super::mux_layer(&bare.tree()).is_clean());
+    }
 
     /// The failure the git dialect has ALREADY had: a second speller that agreed with the live
     /// renderer everywhere except one sigil, and compiled.

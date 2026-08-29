@@ -441,7 +441,7 @@ final class SlopDeskClientDetachResumeTests: XCTestCase {
 
     /// A minimal `ClientTransporting` stub that records the `connect()` call args and returns
     /// configurable session-identity values — so we can assert exactly what was presented to
-    /// the host in the channelOpen preamble without a real socket or `MuxNWConnection`.
+    /// the host in the channelOpen preamble without a real socket or a mux connection.
     private actor RecordingTransport: ClientTransporting {
         /// The `(resume, lastReceivedSeq)` pair passed to `connect()`. Fails if read before connect.
         private(set) var connectArgs: (UUID, Int64) = (WireMessage.newSessionID, 0)

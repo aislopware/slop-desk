@@ -19,7 +19,7 @@
 //! reading a CONTROL preamble first is what every host-side test and log was written against, and
 //! there is no reason for the two ends to disagree about the normal case.
 
-use std::io::{self, Write as _};
+use std::io::{self, Read as _, Write as _};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs as _};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
@@ -105,6 +105,29 @@ pub struct Dialled {
     pub events: Receiver<MuxEvent>,
     /// Its two receive loops, to be joined after [`MuxConnection::close`].
     pub threads: ConnectionThreads,
+}
+
+/// Sixteen fresh bytes from `/dev/urandom`, shaped into a version-4 UUID.
+///
+/// The SECOND entropy read in the tree, and deliberately not shared with the first
+/// (`slopdesk_hostserver::SystemIds`, which mints pane ids). That one lives in the host's graph,
+/// and this one is linked by the iOS app: an edge from here to there would drag hostd's whole
+/// dependency closure onto a phone to save one `read(2)`. `slopdesk-ids` refuses to mint at all —
+/// it is the crate with no dependencies and no runtime — so a shared home would have to be a new
+/// crate whose entire job is opening one file, which earns less than it costs.
+///
+/// `None` on any failure, and the caller must treat that as a refused dial. Unlike a pane id this
+/// is not a join key — the host only COMPARES it, to pair two sockets inside one accept window —
+/// but two clients that collided would have their lanes crossed, which is worse than not dialling.
+#[must_use]
+pub fn mint_connection_id() -> Option<ConnectionId> {
+    let mut raw = [0_u8; 16];
+    let mut source = std::fs::File::open("/dev/urandom").ok()?;
+    source.read_exact(&mut raw).ok()?;
+    // Version 4, variant RFC 4122 — the shape `UUID()` wrote when this id was Swift's.
+    *raw.get_mut(6)? = (raw.get(6)? & 0x0F) | 0x40;
+    *raw.get_mut(8)? = (raw.get(8)? & 0x3F) | 0x80;
+    Some(ConnectionId::from_bytes(raw))
 }
 
 /// [`dial`], then served as a client.

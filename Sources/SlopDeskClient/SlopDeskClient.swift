@@ -275,9 +275,9 @@ public actor SlopDeskClient {
     // MARK: Internals
 
     private let ackInterval: Duration
-    /// Factory for the session transport, injected so a pane is backed by a logical channel over a
-    /// shared ``MuxNWConnection`` (a `MuxClientTransport`, supplied by
-    /// ``WorkspaceStore/liveMakeSession`` bound to the per-host ``ConnectionRegistry``).
+    /// Factory for the session transport, injected so a pane is backed by a logical channel over the
+    /// per-host shared mux (a `MuxClientTransport`, supplied by ``WorkspaceStore/liveMakeSession``
+    /// bound to the per-host ``ConnectionRegistry``).
     private let makeTransport: @Sendable () -> any ClientTransporting
     private var transport: (any ClientTransporting)?
     private var initialCwd: String?
@@ -358,8 +358,8 @@ public actor SlopDeskClient {
 
     /// - Parameters:
     ///   - ackInterval: how often the coalesced ack ticker may flush (correctness-independent).
-    ///   - makeTransport: the session-transport factory. Vends a logical channel over a shared
-    ///     ``MuxNWConnection`` (a `MuxClientTransport`) — wired at the
+    ///   - makeTransport: the session-transport factory. Vends a logical channel over the per-host
+    ///     shared mux (a `MuxClientTransport`) — wired at the
     ///     `WorkspaceStore.liveMakeSession` construction site, never on the hot path.
     ///   - resumeSeed: an optional restored-pane identity, applied synchronously before this
     ///     initializer returns (see ``ResumeSeed``). `nil` (the default) is the ordinary fresh-shell

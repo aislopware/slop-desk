@@ -147,11 +147,12 @@ final class ConnectionPresenterTests: XCTestCase {
         // ~/Library/Preferences, and removing one mid-process lets cfprefsd write it back.
         SettingsKey.removeSuiteAtExit(named: suiteName)
 
-        // A FAILED connect (throwing registry) must not enter the MRU.
-        let failing = ConnectionRegistry { _, _ in throw SlopDeskTransportError.timedOut("test") }
+        // A FAILED connect must not enter the MRU. The pool is real and the dial is real; loopback
+        // port 1 refuses it, rather than an injected fake throwing on its behalf.
+        let failing = ConnectionRegistry(connectTimeout: .milliseconds(50))
         let c = AppConnection(registry: failing, defaults: defaults)
-        c.host = "10.0.0.9"
-        c.port = "7420"
+        c.host = "127.0.0.1"
+        c.port = "1"
         c.mediaPort = "9000"
         c.cursorPort = "9001"
         await c.connect()

@@ -22,10 +22,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// no restored pane in these tests).
     private static let makeUnconnectedClient: @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient = { _ in
         SlopDeskClient(makeTransport: {
-            MuxClientTransport(
-                acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert test transport") },
-                release: { _, _, _ in },
-            )
+            MuxClientTransport(registry: ConnectionRegistry())
         })
     }
 

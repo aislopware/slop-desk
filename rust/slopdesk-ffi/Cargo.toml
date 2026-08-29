@@ -60,6 +60,12 @@ slopdesk-clientctl = { path = "../slopdesk-clientctl" }
 # ack gate and the retry ladder. `slopdesk-muxsession` below is its opposite number on hostd; this is
 # the same carve from the other end of the wire.
 slopdesk-clientsession = { path = "../slopdesk-clientsession" }
+# PATH-1's client end: the dial, the connection pool and one channel's two lanes. A DIRECT edge for
+# the same reason `slopdesk-clientctl` is one — only a direct edge puts the crate inside
+# `slopdesk-gate ffi`'s content stamp — and it drags `slopdesk-muxnet` in behind it, which the shim
+# also names, so that one is declared too.
+slopdesk-clientnet = { path = "../slopdesk-clientnet" }
+slopdesk-muxnet = { path = "../slopdesk-muxnet" }
 slopdesk-devicelog = { path = "../slopdesk-devicelog" }
 slopdesk-devicepanel = { path = "../slopdesk-devicepanel" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }

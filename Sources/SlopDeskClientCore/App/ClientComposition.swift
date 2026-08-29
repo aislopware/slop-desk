@@ -146,9 +146,10 @@ package final class ClientComposition {
         self.isAutomation = isAutomation
         let persistence: WorkspacePersistence? = isAutomation ? nil : WorkspacePersistence()
 
-        // Per-host shared-connection pool (TCP-mux): EVERY pane rides one shared `MuxNWConnection` per
-        // host, each as a logical channel.
-        let muxRegistry = ConnectionRegistry(makeConnection: LiveMuxConnectionFactory.makeConnection)
+        // Per-host shared-connection pool (TCP-mux): EVERY pane rides ONE shared mux connection per
+        // host, each as a logical channel. The pool itself is `rust/slopdesk-clientnet`'s now
+        // (`docs/63` G.3); this is the handle.
+        let muxRegistry = ConnectionRegistry()
         self.muxRegistry = muxRegistry
 
         // Honour the `On Launch` general setting. `.restoreLastSession` (the default) restores the

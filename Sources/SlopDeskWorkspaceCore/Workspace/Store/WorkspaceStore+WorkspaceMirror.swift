@@ -647,20 +647,26 @@ public extension WorkspaceStore {
             label: label,
             open: {
                 let endpoint = await target()
-                let acquisition = try await muxRegistry.acquire(
+                let transport = MuxClientTransport(
+                    registry: muxRegistry,
+                    channelClass: MuxChannelClass.workspace.rawValue,
+                )
+                // OPENED, not connected: the verdict is collected lazily by the handle, because a
+                // host that refuses class 1 is a definite answer this client records as `.refused`
+                // rather than retrying, and `connect` collapses that into every other failure.
+                try await transport.open(
                     host: endpoint.host,
                     port: endpoint.port,
                     // The workspace document is not a pane, so it carries the zero session id and no
                     // resume position — there is no PTY behind it to reattach to.
-                    sessionID: WireMessage.newSessionID,
+                    resume: WireMessage.newSessionID,
                     lastReceivedSeq: 0,
-                    channelClass: MuxChannelClass.workspace.rawValue,
                 )
-                return WorkspaceChannelClient.Handle(acquisition)
+                return WorkspaceChannelClient.Handle(transport)
             },
-            close: { channelID in
-                let endpoint = await target()
-                await muxRegistry.release(host: endpoint.host, port: endpoint.port, channelID: channelID)
+            close: { _ in
+                // The transport owns its own pool entry and releases it on `close()`, which the
+                // handle drives when the run ends. Nothing here holds one to release by id.
             },
         )
     }

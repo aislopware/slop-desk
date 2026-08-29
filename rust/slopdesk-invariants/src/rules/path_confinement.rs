@@ -16,10 +16,8 @@ use crate::tree::Tree;
 const PROBE_HOME: &str = "rust/slopdesk-probe/src/path_confine.rs";
 /// The one process that enforces it — every metadata verb naming a path goes through this reducer.
 const METADATA_REDUCER: &str = "rust/slopdesk-hostserver/src/metadata.rs";
-/// The near-side rebuild that must refuse a type byte the door never accepted.
-const MUX_ENVELOPE_SWIFT: &str = "Sources/SlopDeskProtocol/Mux/MuxEnvelope.swift";
-/// The door it mirrors.
-const MUX_ENVELOPE_RUST: &str = "rust/slopdesk-ffi/src/mux_envelope.rs";
+/// The one file that decides what a mux type byte MEANS, and refuses the ones it does not know.
+const MUX_ENVELOPE_RUST: &str = "rust/slopdesk-wire/src/mux/envelope.rs";
 
 /// No Swift file decides about a `..` component, and none tests containment with a prefix
 ///
@@ -192,29 +190,45 @@ pub fn the_confinement_door_is_reachable(tree: &Tree) -> Report {
 
 /// The mux-type VOCABULARY is asked once, and a byte outside it is REFUSED
 ///
-/// A `default:` arm in the near-side rebuild answers a frame for a type byte the door never
-/// accepted. It used to answer `.windowAdjust`, which is flow-control CREDIT: had the two type
-/// lists stopped agreeing, an unrecognised byte would have granted a peer a send window out of a
-/// struct field nothing filled. `unpack` in `mux_envelope.rs` answers `None` for that input, and
-/// the face must answer the same.
+/// A `default:` arm answering a frame for a type byte nobody accepted used to answer
+/// `.windowAdjust`, which is flow-control CREDIT: had the two type lists stopped agreeing, an
+/// unrecognised byte would have granted a peer a send window out of a struct field nothing filled.
 ///
-/// Pinned POSITIVELY — as a `MuxFrameType(rawValue:)` lookup with a refusal behind it — because
-/// banning `default:` in the file would also ban the one legitimate `default:` in the verdict
-/// switch, and a pattern ban can see a shape but never an intent.
+/// ## The mirror is gone; the refusal is not
+///
+/// This rule used to be a PAIR — `MuxEnvelope.swift` doing a `MuxFrameType(rawValue:
+/// flat.mux_type)` lookup with a refusal behind it, mirroring `unpack` in `slopdesk-ffi`'s
+/// `mux_envelope.rs`. `docs/63` §G.3 deleted both: the near-side rebuild went with the Swift client
+/// mux, and the FFI module went with it because what crosses the boundary is a decoded MESSAGE
+/// rather than a frame, so no `mux_type` reaches Swift at all. The decision moved WHOLE into
+/// `slopdesk_wire::mux::envelope`, which is where it was always made.
+///
+/// So both anchors move to that file, and both halves of the refusal are pinned separately:
+/// `MuxFrameType::from_byte` answering `None` for a byte outside the list, and the decoder actually
+/// ROUTING through it rather than reading the byte itself. The second is the one a rewrite loses —
+/// a `match type_byte { 4 => …, _ => … }` inlined at the decode site is the `default:` arm coming
+/// back one language over, and it type-checks.
+///
+/// Pinned POSITIVELY, because banning a wildcard arm in the file would also ban the legitimate ones
+/// and a pattern ban can see a shape but never an intent. The Swift half is not re-aimed here:
+/// there is no Swift left that could answer, and `deleted_client_swift` is what keeps it that way.
 #[must_use]
 pub fn an_unknown_mux_type_is_refused(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::Matches {
-            path: MUX_ENVELOPE_SWIFT,
-            pattern: r"MuxFrameType\(rawValue: flat\.mux_type\)",
-            view: View::Raw,
-            message: "the near-side rebuild stopped refusing an unknown mux type — the type list is Rust's",
-        },
-        Claim::Matches {
             path: MUX_ENVELOPE_RUST,
             pattern: r"_ => None",
             view: View::Raw,
-            message: "the mux door stopped refusing an unknown type — the face mirrors it",
+            message: "MuxFrameType::from_byte stopped refusing an unknown type — a byte outside the list \
+                      that decodes to SOMETHING is a peer choosing which arm this host runs (docs/20 §4)",
+        },
+        Claim::Matches {
+            path: MUX_ENVELOPE_RUST,
+            pattern: r"MuxFrameType::from_byte\(type_byte\)",
+            view: View::Raw,
+            message: "the mux decoder stopped asking from_byte for the type — a match on the raw byte at \
+                      the decode site is the refused-arm question answered a second time, in the one place \
+                      that can act on the answer (docs/20 §4)",
         },
     ])
 }
@@ -337,33 +351,27 @@ mod tests {
     #[test]
     fn an_unrecognised_mux_byte_that_is_answered_is_red() {
         let fixture = Fixture::new("confine-mux");
-        fixture
-            .write(
-                super::MUX_ENVELOPE_SWIFT,
-                "guard let type = MuxFrameType(rawValue: flat.mux_type) else { return nil }\n",
-            )
-            .write(
-                super::MUX_ENVELOPE_RUST,
-                "match byte { 1 => Some(Data), _ => None }\n",
-            );
+        let refuses = "pub const fn from_byte(byte: u8) -> Option<Self> { match byte { 1 => \
+                       Some(Self::Data), _ => None } }\nlet Some(mux_type) = \
+                       MuxFrameType::from_byte(type_byte) else { return Err(()) };\n";
+        fixture.write(super::MUX_ENVELOPE_RUST, refuses);
         assert!(super::an_unknown_mux_type_is_refused(&fixture.tree()).is_clean());
 
-        // The lookup dropped for a switch with a `default:` — the shape that granted a send window
-        // out of a struct field nothing filled.
+        // The vocabulary answering rather than refusing — the shape that granted a send window out
+        // of a struct field nothing filled.
         fixture.write(
-            super::MUX_ENVELOPE_SWIFT,
-            "switch flat.mux_type { case 1: return .data\ndefault: return .windowAdjust }\n",
+            super::MUX_ENVELOPE_RUST,
+            "pub const fn from_byte(byte: u8) -> Self { match byte { 1 => Self::Data, _ => \
+             Self::WindowAdjust } }\nlet mux_type = MuxFrameType::from_byte(type_byte);\n",
         );
         assert!(!super::an_unknown_mux_type_is_refused(&fixture.tree()).is_clean());
 
-        // And the door itself answering rather than refusing.
-        fixture.write(
-            super::MUX_ENVELOPE_SWIFT,
-            "guard let type = MuxFrameType(rawValue: flat.mux_type) else { return nil }\n",
-        );
+        // And the decode site reading the raw byte itself, with the vocabulary left intact beside it
+        // — the `default:` arm coming back one language over, in the one place that can act on it.
         fixture.write(
             super::MUX_ENVELOPE_RUST,
-            "match byte { 1 => Some(Data), _ => Some(WindowAdjust) }\n",
+            "pub const fn from_byte(byte: u8) -> Option<Self> { match byte { 1 => Some(Self::Data), _ => \
+             None } }\nlet mux_type = match type_byte { 1 => Data, _ => WindowAdjust };\n",
         );
         assert!(!super::an_unknown_mux_type_is_refused(&fixture.tree()).is_clean());
     }

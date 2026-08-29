@@ -3372,13 +3372,13 @@ public extension WorkspaceStore {
     ///     Defaults to ``liveMakeInspector(_:)`` — a lazily-connecting NWConnection #2 client (see
     ///     that function for the unproven-host guardrail).
     ///   - muxRegistry: the per-host shared-connection pool. Every `SlopDeskClient` is backed by a
-    ///     logical channel over the per-host shared `MuxNWConnection` (refcounted by the registry).
+    ///     logical channel over the per-host shared mux connection (refcounted by the registry).
     static func liveMakeSession(
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient? = liveMakeInspector,
         muxRegistry: ConnectionRegistry,
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
     ) -> @MainActor (PaneMaterialization) -> any PaneSessionHandle {
-        // Every pane is backed by a logical channel over the per-host shared `MuxNWConnection`
+        // Every pane is backed by a logical channel over the per-host shared mux connection
         // (refcounted by the registry), connecting to the ONE app-global `target`. This is the SOLE
         // client-side construction site; nothing on the per-message path is touched.
         let effectiveMakeClient = muxBackedClientFactory(registry: muxRegistry)
@@ -3392,11 +3392,9 @@ public extension WorkspaceStore {
 
     /// Builds a `@Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient` whose clients route over the
     /// shared mux connection pooled by `registry`. Each `SlopDeskClient` is constructed with an
-    /// injected `makeTransport` that vends a fresh `MuxClientTransport` bound to the registry's
-    /// acquire/release — so the channel is opened on the shared connection at `connect()` and released
-    /// (refcount--) at `close()`, with the shared transport torn down only when the LAST pane's channel
-    /// goes. The registry is `@MainActor`; the transport's acquire/release closures hop onto the main
-    /// actor to call it.
+    /// injected `makeTransport` that vends a fresh `MuxClientTransport` bound to the pool — so the
+    /// channel is opened on the shared connection at `connect()` and released at `close()`, with the
+    /// shared connection torn down only when the LAST pane's channel goes.
     ///
     /// The `resumeSeed` parameter is passed straight through to `SlopDeskClient.init(resumeSeed:)`, which
     /// sets `sessionID` / `highestContiguousSeq` / `highestSeqFed` synchronously as part of construction
@@ -3409,26 +3407,10 @@ public extension WorkspaceStore {
     ) -> @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient {
         { @Sendable resumeSeed in
             SlopDeskClient(
-                makeTransport: {
-                    MuxClientTransport(
-                        // The class the transport announces reaches the registry hop, which puts it
-                        // on the `channelOpen`. A pane here — a read-only view (class 2) is opened
-                        // by a transport constructed with that class, not by a flag on this one.
-                        acquire: { host, port, sessionID, lastReceivedSeq, channelClass, initialCwd in
-                            try await registry.acquire(
-                                host: host,
-                                port: port,
-                                sessionID: sessionID,
-                                lastReceivedSeq: lastReceivedSeq,
-                                channelClass: channelClass,
-                                initialCwd: initialCwd,
-                            )
-                        },
-                        release: { host, port, channelID in
-                            await registry.release(host: host, port: port, channelID: channelID)
-                        },
-                    )
-                },
+                // The class the transport announces rides its `channelOpen`. A pane here — a
+                // read-only view (class 2) is opened by a transport constructed with that class,
+                // not by a flag on this one.
+                makeTransport: { MuxClientTransport(registry: registry) },
                 resumeSeed: resumeSeed,
             )
         }

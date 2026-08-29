@@ -2,7 +2,7 @@ import Foundation
 import SlopDeskProtocol
 
 /// The exact surface ``SlopDeskClient/SlopDeskClient`` drives on its session transport: a logical
-/// channel riding a shared ``MuxNWConnection`` (``MuxClientTransport``).
+/// channel riding the per-host shared mux (``MuxClientTransport``).
 ///
 /// ## Why a protocol
 /// `SlopDeskClient` takes an injectable `makeTransport` factory so the per-pane client can be backed

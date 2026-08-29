@@ -252,10 +252,7 @@ final class ClaudeKindRemovalTests: XCTestCase {
             paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "term"),
             makeClient: { _ in
                 SlopDeskClient(makeTransport: {
-                    MuxClientTransport(
-                        acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert") },
-                        release: { _, _, _ in },
-                    )
+                    MuxClientTransport(registry: ConnectionRegistry())
                 })
             },
             makeInspector: { _ in

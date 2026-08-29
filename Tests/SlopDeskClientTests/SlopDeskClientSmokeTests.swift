@@ -7,12 +7,15 @@ import XCTest
 final class SlopDeskClientSmokeTests: XCTestCase {
     /// An `SlopDeskClient` whose transport factory is inert (never invoked — these tests never
     /// `connect()`). Mirrors how production injects a `MuxClientTransport` over a shared connection.
+    ///
+    /// The pool is real and costs nothing: `slopdesk_mux_pool_new` allocates a registry and dials
+    /// NOTHING until a channel asks it to, which no test here does. The old spelling injected two
+    /// closures instead; `docs/63` G.3 deleted that seam, because a fake acquire is a second dial
+    /// path that ships and the real one is proved on loopback in `rust/slopdesk-clientnet/tests/`.
     private func makeUnconnectedClient() -> SlopDeskClient {
-        SlopDeskClient(makeTransport: {
-            MuxClientTransport(
-                acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert test transport") },
-                release: { _, _, _ in },
-            )
+        let registry = ConnectionRegistry()
+        return SlopDeskClient(makeTransport: {
+            MuxClientTransport(registry: registry)
         })
     }
 

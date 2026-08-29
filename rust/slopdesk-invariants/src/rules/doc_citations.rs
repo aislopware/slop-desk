@@ -69,7 +69,7 @@ const DOCC_EXTERNAL: [&str; 4] = [
 /// recording a deleted file is not fixed by an entry here; it is fixed by not spelling a backticked
 /// PATH, which that rule's own doc says stays legal. Adding the name here instead silently does
 /// nothing.
-const PATH_TOMBSTONES: [&str; 27] = [
+const PATH_TOMBSTONES: [&str; 31] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -97,6 +97,19 @@ const PATH_TOMBSTONES: [&str; 27] = [
     "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift",
     "Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift",
     "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
+    // `docs/63`'s block, and the fifth instance of the same argument. §G.3 moved the whole PATH-1
+    // client mux to Rust in one pass, and every surviving citation of the four paths below is a
+    // BEFORE, not a pointer: `docs/59` §1's projection table names them in its Swift column beside
+    // the `mux/flow.rs` and `mux/channels.rs` that replaced them, `docs/63` §G.3's inventory lists
+    // them as the files the stage deletes, `docs/59` §6's entry is struck through and corrected in
+    // place, and `docs/60` §1 quotes that struck entry while §7 recites what
+    // `one-frame-one-doorman` asserted before this stage re-pointed it. Repointing any of them at a
+    // successor would make a ledger's "before" column read as its "after", which is the same defect
+    // the phone block above records.
+    "Sources/SlopDeskProtocol/Mux/ChannelTable.swift",
+    "Sources/SlopDeskProtocol/Mux/MuxFlowControl.swift",
+    "Sources/SlopDeskTransport/Mux/MuxNWConnection.swift",
+    "Sources/SlopDeskTransport/Mux/MuxRoutingCore.swift",
 ];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.

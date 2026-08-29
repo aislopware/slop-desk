@@ -136,13 +136,20 @@ pub mod listen_port;
 pub mod metadata;
 pub mod metadata_wire;
 pub mod mirror_fold;
-pub mod mux_admission;
-pub mod mux_channels;
+// `mux_admission`, `mux_channels`, `mux_decoder` and `mux_envelope` were deleted with the Swift mux
+// in `docs/63` G.3, and twelve of `mux_flow`'s thirteen doors went with them: 1812 lines and 36
+// doors whose ONLY caller was `Sources/SlopDeskTransport/Mux`. The channel table, the admission
+// rule, the framing handle, the envelope codec and the three by-value flow policies each crossed
+// for one reason and no other — the connection above them was Swift. `slopdesk-clientnet` owns
+// that connection now and calls all of it in-process, so `docs/55` §4b's retirement criterion
+// applies literally: a handle whose far side went away. A door nothing calls is not free — it is a
+// second spelling of the mux that compiles, tests green, and drifts. What survived is the flow
+// CONSTANT, which is read from outside the mux; `mux_header` is not in this list at all, because
+// its caller is `VideoMuxHeaderCodec.swift` and that is PATH-2.
 pub mod mux_client;
-pub mod mux_decoder;
-pub mod mux_envelope;
 pub mod mux_flow;
 pub mod mux_header;
+pub mod mux_transport;
 pub mod new_tab_position;
 pub mod notify;
 pub mod notify_rate_limit;

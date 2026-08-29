@@ -21,6 +21,7 @@ pub mod crate_defaults;
 pub mod crate_policy;
 pub mod cross_twins;
 pub mod crossed_tables;
+pub mod deleted_client_swift;
 pub mod deleted_host_swift;
 pub mod deleted_video_swift;
 pub mod design_ratchets;
@@ -1753,6 +1754,11 @@ pub fn registry() -> Vec<Rule> {
             name: "deleted-host-swift",
             origin: "docs/50 §3, docs/51 §6.14, docs/52",
             check: deleted_host_swift::deleted_host_swift,
+        },
+        Rule {
+            name: "deleted-client-swift",
+            origin: "docs/63 §G.3",
+            check: deleted_client_swift::deleted_client_swift,
         },
         Rule {
             name: "deleted-video-swift",

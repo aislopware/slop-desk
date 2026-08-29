@@ -1,6 +1,6 @@
 import CoreGraphics // CGRect/CGPoint/CGSize for the host geometry deciders
 import Foundation
-import SlopDeskProtocol // WireMessage, MuxEnvelopeCodec (terminal/PTY path)
+import SlopDeskProtocol // WireMessage (the terminal/PTY path)
 import SlopDeskVideoClient // TrendlineEstimator, OwdLateDetector, PacerDepthPolicy
 import SlopDeskVideoProtocol
 
@@ -1225,101 +1225,12 @@ root["metadataCodecPayloads"] = [
     ),
 ]
 
-// MARK: SlopDeskProtocol — MuxEnvelopeCodec.encode (byte parity)
-
-func muxRecord(_ kind: String, _ f: MuxFrame, _ fields: [String: Any]) -> [String: Any] {
-    var r = fields
-    r["kind"] = kind
-    r["hex"] = hex(MuxEnvelopeCodec.encode(f))
-    return r
-}
-
-root["muxEnvelopes"] = [
-    muxRecord(
-        "channelOpen",
-        .channelOpen(
-            channelID: 1,
-            sessionID: WireMessage.newSessionID,
-            lastReceivedSeq: 0,
-            channelClass: 0,
-            initialCwd: nil,
-        ),
-        [
-            "channelId": UInt32(1),
-            "sessionIdHex": hex(uuidBytes(WireMessage.newSessionID)),
-            "lastReceivedSeq": Int64(0),
-            "channelClass": Int(0),
-        ],
-    ),
-    muxRecord(
-        "channelOpen",
-        .channelOpen(channelID: UInt32.max, sessionID: sidA, lastReceivedSeq: -1, channelClass: 255, initialCwd: nil),
-        [
-            "channelId": UInt32.max,
-            "sessionIdHex": hex(uuidBytes(sidA)),
-            "lastReceivedSeq": Int64(-1),
-            "channelClass": Int(255),
-        ],
-    ),
-    // channelClass 1 = the WORKSPACE-DOCUMENT channel (docs/45 §5.1). The field was already encoded,
-    // decoded and pinned at 0 and 255; this record pins the value the workspace channel actually
-    // uses. Coverage only — the codec is unchanged.
-    muxRecord(
-        "channelOpen",
-        .channelOpen(channelID: 9, sessionID: sidA, lastReceivedSeq: 0, channelClass: 1, initialCwd: nil),
-        [
-            "channelId": UInt32(9),
-            "sessionIdHex": hex(uuidBytes(sidA)),
-            "lastReceivedSeq": Int64(0),
-            "channelClass": Int(1),
-        ],
-    ),
-    muxRecord(
-        "channelOpenAck",
-        .channelOpenAck(channelID: 3, accepted: true, resumeFromSeq: 0),
-        ["channelId": UInt32(3), "accepted": true, "resumeFromSeq": Int64(0)],
-    ),
-    muxRecord(
-        "channelOpenAck",
-        .channelOpenAck(channelID: 5, accepted: false, resumeFromSeq: 0),
-        ["channelId": UInt32(5), "accepted": false, "resumeFromSeq": Int64(0)],
-    ),
-    muxRecord(
-        "channelOpenAck",
-        .channelOpenAck(channelID: 7, accepted: true, resumeFromSeq: 42),
-        ["channelId": UInt32(7), "accepted": true, "resumeFromSeq": Int64(42)],
-    ),
-    muxRecord(
-        "channelData",
-        .channelData(channelID: 9, payload: WireMessage.output(seq: 42, bytes: Data("vt ✅".utf8)).encode()),
-        ["channelId": UInt32(9), "payloadHex": hex(WireMessage.output(seq: 42, bytes: Data("vt ✅".utf8)).encode())],
-    ),
-    muxRecord(
-        "channelData",
-        .channelData(channelID: 4, payload: Data()),
-        ["channelId": UInt32(4), "payloadHex": ""],
-    ),
-    muxRecord("channelClose", .channelClose(channelID: 6), ["channelId": UInt32(6)]),
-    // The close REASON (docs/20 §8.3.2). `.retired` is the empty body above — the shape every close
-    // has always had — so only a close that means something else costs a byte, and this record is
-    // what pins that byte. Above the transport the host's two pane closes are the same stream
-    // ending; this is where the difference is made.
-    muxRecord(
-        "channelClose",
-        .channelClose(channelID: 6, reason: .subscriberEvicted),
-        ["channelId": UInt32(6), "closeReason": Int(MuxCloseReason.subscriberEvicted.rawValue)],
-    ),
-    muxRecord(
-        "windowAdjust",
-        .windowAdjust(channelID: 7, bytesToAdd: 262_144),
-        ["channelId": UInt32(7), "bytesToAdd": UInt64(262_144)],
-    ),
-    muxRecord(
-        "windowAdjust",
-        .windowAdjust(channelID: 1, bytesToAdd: UInt32.max),
-        ["channelId": UInt32(1), "bytesToAdd": UInt64(UInt32.max)],
-    ),
-]
+// NOTE: muxEnvelopes vectors are FROZEN in golden_vectors.json — this generator no longer imports
+// `MuxEnvelopeCodec`, because `docs/63` G.3 deleted it along with the rest of the Swift client mux.
+// The twelve cases are replayed by `every_pinned_mux_envelope_encodes_to_the_bytes_swift_encoded` in
+// `rust/slopdesk-wire/tests/golden_mux_envelopes.rs`, which CONSTRUCTS each frame from the record's
+// own fields and encodes it — the direction the corpus would otherwise lose. The decode direction
+// is `golden_vectors.rs`'s, and both are kept: they are opposite directions, not duplication.
 
 // MARK: - Host pure-geometry deciders (FLOAT-determinism parity)
 

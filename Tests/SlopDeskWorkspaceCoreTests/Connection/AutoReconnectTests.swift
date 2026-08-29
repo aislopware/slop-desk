@@ -11,9 +11,14 @@ import XCTest
 final class AutoReconnectTests: XCTestCase {
     // MARK: - Helpers
 
-    /// A registry whose `makeConnection` always throws (connect fails deterministically, no socket).
+    /// A registry pointed at nothing, so connect fails fast.
+    ///
+    /// It used to inject a throwing `makeConnection`; `docs/63` G.3 deleted that seam, because a fake
+    /// dial is a second dial path that ships. What replaces it is the REAL dial against loopback port
+    /// 1 — unbound and privileged, so it is REFUSED rather than filtered, which keeps these tests off
+    /// the developer's network entirely. `AppConnectionTests.unreachableHost` says the rest.
     private func failingRegistry() -> ConnectionRegistry {
-        ConnectionRegistry { _, _ in throw SlopDeskTransportError.timedOut("test: connect refused") }
+        ConnectionRegistry(connectTimeout: .milliseconds(50))
     }
 
     /// An isolated `UserDefaults` suite pre-seeded with one encoded `[ConnectionTarget]` under the
@@ -40,7 +45,7 @@ final class AutoReconnectTests: XCTestCase {
     /// `status` lands `.failed` — which is the expected outcome when no real server is present — but the
     /// target commit happens BEFORE `establish` can fail, so we can assert it.
     func testConnectIfSavedTargetWithSavedTargetFiresConnect() async throws {
-        let saved = ConnectionTarget(host: "myhost.local", port: 7420, mediaPort: 9000, cursorPort: 9001)
+        let saved = ConnectionTarget(host: "127.0.0.1", port: 1, mediaPort: 9000, cursorPort: 9001)
         let defaults = try defaultsWithSaved(saved)
         let c = AppConnection(registry: failingRegistry(), defaults: defaults)
 
@@ -75,7 +80,7 @@ final class AutoReconnectTests: XCTestCase {
 
     /// `SLOPDESK_SKIP_AUTO_RECONNECT=1` suppresses the auto-reconnect even when a saved target exists.
     func testSkipAutoReconnectEnvSuppressesConnect() async throws {
-        let saved = ConnectionTarget(host: "studio.local", port: 7420, mediaPort: 9000, cursorPort: 9001)
+        let saved = ConnectionTarget(host: "127.0.0.1", port: 1, mediaPort: 9000, cursorPort: 9001)
         let defaults = try defaultsWithSaved(saved)
         // Inject the env skip flag via ProcessInfo mock — we test the env check by confirming
         // the status never changes, since the method returns early before touching status.

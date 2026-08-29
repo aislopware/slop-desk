@@ -1,316 +1,145 @@
+import CSlopDeskFFI
 import Foundation
 
-/// Refcounted pool of shared ``MuxNWConnection``s, ONE per `host:port` — the heart of
-/// "share one TCP connection per host across many panes" (TCP-mux S1).
+/// The per-host shared-connection pool, as a handle on `rust/slopdesk-clientnet`'s.
 ///
-/// ## The single invariant it enforces
-/// All panes targeting the SAME `(host,port)` ride ONE shared ``MuxNWConnection`` (one CONTROL +
-/// one DATA socket-pair), each as a distinct logical channel. The pool refcounts channels per
-/// endpoint and tears the shared connection down **only when the LAST channel closes** — so a
-/// single pane closing or reconnecting never drops the connection the other panes ride (the
-/// subtlest required behaviour, spec §4 / §8.3).
+/// `docs/63` stage G.3. What used to be here was 316 lines of `@MainActor` bookkeeping over an
+/// entry map: a refcount per endpoint, an eviction path for a connection that died under its
+/// holders, a pin that kept one alive with no channel on it, and the `makeConnection` seam a test
+/// injected to avoid a socket. Every one of those is `ConnectionRegistry`'s in Rust now, reached
+/// through `slopdesk_mux_pool_*`, and this type is the handle plus the endpoint spelling.
 ///
-/// ## `@MainActor` + synchronous query
-/// `WorkspaceStore.reconcile()` materializes sessions synchronously and inline, so the pool's
-/// endpoint bookkeeping must be queryable without an `await`. The pool is `@MainActor` and its
-/// endpoint bookkeeping are plain main-actor reads. Acquiring/releasing a channel IS async (it
-/// opens/closes sockets), but that happens later inside `MuxClientTransport.connect/close`, never on
-/// `reconcile`'s synchronous path.
+/// ### There is no `makeConnection` seam any more, and that is the point
+/// The old one existed so a suite could pool a fake connection. The Rust pool is tested against real
+/// loopback sockets in `rust/slopdesk-clientnet/tests/`, which is a stronger proof and a cheaper one
+/// — so the seam has no remaining job, and re-exposing it would mean a second dial path that ships.
+/// A test that wants a transport with no host injects at ``ClientTransporting`` instead, which is
+/// the seam `docs/63` keeps until G.5.
 ///
-/// ## Headless-testable
-/// The physical ``MuxNWConnection`` is built via an injected `makeConnection` factory, so the
-/// pool's refcount/teardown logic is provable with an in-memory connection (no socket, no
-/// `HostServer`). Production injects a factory that opens real `NWConnection`-backed links.
-@preconcurrency
-@MainActor
-public final class ConnectionRegistry {
-    /// One shared connection's pool entry: the connection + the set of live channel ids on it.
-    private struct Entry {
-        let connection: MuxNWConnection
-        var channelIDs: Set<UInt32> = []
-        /// In-flight `acquire`s that hold this shared connection but have not yet inserted their
-        /// channelID (they are suspended in `openChannel`). A `release` that empties `channelIDs`
-        /// must NOT tear the connection down while one of these is mid-flight, else the acquiring
-        /// pane is stranded with a channel on a closed connection. Reserved BEFORE `openChannel`,
-        /// cleared after (success or throw) — the subsequent-acquire analogue of the `building`
-        /// coalescer's first-acquire TOCTOU guard.
-        var pendingAcquires: Int = 0
-    }
+/// ### It is `Sendable`, not `@MainActor`, and that is what the port bought
+/// The Swift pool was `@MainActor` because it WAS the mutable state — an entry map, a refcount and
+/// an eviction path that had to be serialised by something, and the main actor was the something its
+/// callers already had. None of that is here: the state is Rust's, behind its own `Mutex`, and this
+/// object is one immutable pointer. So the annotation would now be a hop that guards nothing while
+/// still costing every non-main caller one — and there is one, `SlopDeskClient`'s `makeTransport`,
+/// which is a synchronous `@Sendable` closure and cannot hop at all. A pool reachable only from the
+/// main actor could not serve it without a second dial path, which is the shape G.3 deleted.
+public final class ConnectionRegistry: Sendable {
+    /// The Rust pool. `nil` only if it could not be created, which nothing observed has ever done.
+    private let box: RustHandle
 
-    /// Keyed by the canonical `host:port` string. One entry == one shared physical connection.
-    private var entries: [String: Entry] = [:]
+    /// The raw pointer, spelled once so the rest of the file reads as it did before the box.
+    private var pool: OpaquePointer? { box.raw }
 
-    /// In-flight first-acquire builds, keyed by endpoint. Coalesces concurrent first acquisitions
-    /// for the SAME new endpoint onto ONE `makeConnection` so two panes connecting to a never-seen
-    /// host near-simultaneously share one connection instead of orphaning a second (the first-acquire
-    /// TOCTOU: `makeConnection` is awaited before the entry is stored, so a naive nil-check races).
-    private var building: [String: Task<MuxNWConnection, Error>] = [:]
-
-    /// Endpoints the app-global connection has PINNED (docs/31 connect-gate). The shared connection for
-    /// a pinned key stays up even with ZERO channels, so the gate can establish the mux BEFORE any pane
-    /// opens a channel and it survives closing the last pane. `pin`/`unpin` toggle membership; the
-    /// last-channel teardown guards additionally require the key to be un-pinned. There is exactly one
-    /// pinned key at a time in practice (the single app target), but the set generalizes cleanly.
-    private var pinnedKeys: Set<String> = []
-
-    /// Builds a fresh shared connection for an endpoint (opens the CONTROL + DATA links + starts
-    /// the receive loops). Injected so tests substitute an in-memory connection.
-    private let makeConnection: @MainActor (_ host: String, _ port: UInt16) async throws -> MuxNWConnection
-
-    /// - Parameters:
-    ///   - makeConnection: factory for a fresh shared connection (production: real NWConnections).
-    @preconcurrency
-    public init(
-        makeConnection: @escaping @MainActor (String, UInt16) async throws -> MuxNWConnection,
-    ) {
-        self.makeConnection = makeConnection
-    }
-
-    /// The canonical pool key for an endpoint.
-    private static func key(_ host: String, _ port: UInt16) -> String { "\(host):\(port)" }
-
-    /// The number of distinct shared connections currently pooled (one per active host). A test
-    /// asserts this is 1 for N same-host panes.
-    public var sharedConnectionCount: Int { entries.count }
-
-    /// The number of live channels on the shared connection for `(host,port)`, or 0 if none.
-    public func channelCount(host: String, port: UInt16) -> Int {
-        entries[Self.key(host, port)]?.channelIDs.count ?? 0
-    }
-
-    // MARK: - Acquire / release (driven by MuxClientTransport)
-
-    /// Acquires a channel on the shared connection for `(host,port)`, creating the connection on
-    /// the FIRST acquisition for that endpoint and reusing it thereafter (refcount++). Opens one
-    /// logical channel and returns its data + control sub-channel pair.
+    /// Wall-clock ceiling on the whole two-socket establishment, including every address a hostname
+    /// resolves to. Matches the client's default `handshakeTimeout` (`SlopDeskClient.connect`).
     ///
-    /// - Parameter channelClass: `0` (a pane) unless the caller is opening one of the non-pane
-    ///   classes — `1` is the workspace document (docs/45 §5.1). The class rides the `channelOpen`
-    ///   and decides how the HOST routes it; the pool's refcounting is class-agnostic, which is what
-    ///   makes a workspace channel keep the shared connection alive exactly like a pane does.
-    public func acquire(
-        host: String,
-        port: UInt16,
-        sessionID: UUID,
-        lastReceivedSeq: Int64,
-        channelClass: UInt8 = 0,
-        initialCwd: String? = nil,
-    ) async throws -> MuxAcquisition {
-        let key = Self.key(host, port)
-        let connection = try await sharedConnection(host: host, port: port, key: key)
-        // Reserve a refcount slot BEFORE the openChannel suspension so a concurrent last-channel
-        // `release` cannot tear this connection down while we are mid-open (release checks
-        // pendingAcquires). Mirrors the post-await in-place mutation discipline below.
-        //
-        // Create-or-fetch the entry FIRST (idempotent): a COALESCED first-acquire returns its
-        // connection via the `building` task (line ~119) WITHOUT creating the entry — only the build
-        // CREATOR stores `entries[key]` (line ~126). Awaiters of one `Task.value` are NOT guaranteed to
-        // resume in registration order, so a coalescer can reach this line BEFORE the creator runs that
-        // store, leaving `entries[key]` nil. The optional-chained `+= 1` would then SILENTLY NO-OP
-        // (under-count), but the matching `-= 1` (success/throw paths below) still runs → pendingAcquires
-        // goes NEGATIVE → the last-channel teardown guard `(pendingAcquires ?? 0) == 0` never holds → the
-        // shared connection (and both panes' sockets) leak FOREVER. Anchoring the reservation on a
-        // guaranteed-present entry closes the race; `Entry(connection:)` reuses the connection
-        // `sharedConnection` just returned (the same instance every coalescer shares).
-        if entries[key] == nil { entries[key] = Entry(connection: connection) }
-        entries[key]?.pendingAcquires += 1
-        let pair: (data: MuxSubChannel, control: MuxSubChannel)
-        do {
-            pair = try await connection.openChannel(
-                sessionID: sessionID,
-                lastReceivedSeq: lastReceivedSeq,
-                channelClass: channelClass,
-                initialCwd: initialCwd,
-            )
-        } catch {
-            // IDENTITY-GATE the cleanup (mirrors `release()` / `sharedConnection`): only touch
-            // entries[key] if it is STILL our connection. A dead-eviction can rebuild entries[key] under
-            // a DIFFERENT connection while `openChannel` is suspended; our `pendingAcquires` reservation
-            // went with the OLD (removed) entry, so decrementing the FRESH one underflows it. If rebuilt
-            // under us, just ensure our corpse is closed.
-            if entries[key]?.connection === connection {
-                entries[key]?.pendingAcquires -= 1
-                // openChannel only throws when the shared link is already dead (the send failed) — so the
-                // whole connection is unusable. If no OTHER channel is live AND no other acquire is in
-                // flight on this endpoint, drop the dead connection + entry so the next acquire builds a
-                // fresh one instead of reusing a corpse. A surviving sibling/pending keeps it.
-                if entries[key]?.channelIDs.isEmpty ?? true, (entries[key]?.pendingAcquires ?? 0) == 0,
-                   !pinnedKeys.contains(key)
-                {
-                    entries.removeValue(forKey: key)
-                    await connection.close()
-                }
-            } else {
-                await connection.close() // our corpse may not have been closed by the rebuild; idempotent
-            }
-            throw error
-        }
-        // IDENTITY-GATE the success-path mutations too: if a concurrent dead-eviction rebuilt
-        // entries[key] under a different connection while `openChannel` was suspended, `connection` is the
-        // OLD corpse — the eviction already `close()`d it (finishing these sub-channels) and discarded our
-        // `pendingAcquires` reservation with the old entry. Decrementing/inserting into the FRESH entry
-        // would underflow ITS pendingAcquires (→ permanent leak) AND collide our stale channelID with the
-        // new connection's first channel. Treat as a failed acquire; the caller (ReconnectManager) rebuilds.
-        guard entries[key]?.connection === connection else {
-            await connection.close() // idempotent — ensure the corpse is fully torn down
-            throw SlopDeskTransportError.notConnected("mux connection evicted during channel open")
-        }
-        entries[key]?.pendingAcquires -= 1
-        entries[key]?.channelIDs.insert(pair.data.channelID)
-        let channelID = pair.data.channelID
-        return MuxAcquisition(
-            channelID: channelID,
-            data: pair.data,
-            control: pair.control,
-            awaitOpenAck: { await connection.awaitOpenAck(for: channelID) },
-        )
+    /// The Swift this replaced needed a throwing task group and a careful `cancelAll` to bound an
+    /// `NWConnection` that parks in `.waiting` forever, plus a `catch` that remembered both half-open
+    /// sockets so a failed DATA leg did not leak the CONTROL one. `connect_timeout` is an argument in
+    /// Rust and a half-built pair is closed by dropping it, so the group, the race, the cancellation
+    /// and the leak are all gone together.
+    public static let connectTimeout: Duration = .seconds(10)
+
+    public init(connectTimeout: Duration = ConnectionRegistry.connectTimeout) {
+        box = RustHandle(slopdesk_mux_pool_new(connectTimeout.milliseconds))
     }
 
-    /// Returns the shared connection for `key`, building it on the first acquisition and reusing it
-    /// thereafter. Concurrent first acquisitions for the same endpoint await ONE shared build task
-    /// (the `building` pool) so they never each construct a connection and orphan one.
-    private func sharedConnection(host: String, port: UInt16, key: String) async throws -> MuxNWConnection {
-        if let existing = entries[key] {
-            // Evict a DEAD pooled connection: a link drop (TCP RST / NetBird flap) leaves the
-            // shared `MuxNWConnection` unusable but NOT removed from the pool (a surviving sibling
-            // channel kept the entry), so a reconnecting pane would otherwise re-acquire the corpse and
-            // its `openChannel` would fail forever. If the pooled connection reports `isDead`, drop the
-            // entry + close it and fall through to build a FRESH one. A still-live connection is reused
-            // as before (the shared-connection invariant).
-            if await existing.connection.isDead {
-                // IDENTITY-GATED eviction. `await existing.connection.isDead` is a real cross-actor hop
-                // into the `MuxNWConnection` actor; while suspended here, a CONCURRENT acquirer for this
-                // same key can run, evict this same corpse, and store a FRESH connection. Removing
-                // blindly (the prior code) would then delete that fresh entry → the concurrent
-                // acquirer's connection is ORPHANED (leaked — `release` can never find it again) AND
-                // both panes' first channels collide on id 1 (each connection's `ChannelTable` allocates
-                // 1 first), so a later release tears down the WRONG pane. So only evict if the pool STILL
-                // holds this exact corpse; if it was rebuilt under us, reuse the fresh connection.
-                if entries[key]?.connection === existing.connection {
-                    entries.removeValue(forKey: key)
-                    await existing.connection.close()
-                    // `close()` ALSO suspends — and during it a concurrent acquirer can have fully
-                    // built + stored a fresh connection (and cleared `building[key]`). If we then fell
-                    // straight through to build, we'd construct a SECOND fresh connection and ORPHAN
-                    // one (made.count == 3, one channel stranded). So re-check the pool here: reuse a
-                    // rebuilt entry if present; otherwise fall through to the `building` single-flight
-                    // below (which shares a concurrent acquirer's IN-FLIGHT build) or build fresh.
-                    if let rebuilt = entries[key]?.connection { return rebuilt }
-                } else if let rebuilt = entries[key]?.connection {
-                    return rebuilt // a concurrent acquirer already replaced the corpse with a live one
-                }
-                // else entries[key] == nil (corpse evicted by a concurrent acquirer, its fresh one not
-                // yet stored): fall through to the `building` single-flight below, which returns that
-                // concurrent acquirer's in-flight build instead of orphaning a second connection.
-            } else {
-                return existing.connection
-            }
-        }
-        if let inFlight = building[key] {
-            return try await inFlight.value // a concurrent first-acquire is already building it
-        }
-        let task = Task { @MainActor in try await self.makeConnection(host, port) }
-        building[key] = task
-        do {
-            let connection = try await task.value
-            building.removeValue(forKey: key)
-            if entries[key] == nil { entries[key] = Entry(connection: connection) }
-            return connection
-        } catch {
-            building.removeValue(forKey: key)
-            throw error
+    deinit {
+        // Closes every pooled connection and JOINS its receive loops, so no Rust thread outlives
+        // this object. Safe even if a caller leaked a transport: the pool closes rather than waits.
+        slopdesk_mux_pool_free(pool)
+    }
+
+    /// How many connections the pool holds, across every endpoint.
+    public var sharedConnectionCount: Int { slopdesk_mux_pool_connection_count(pool) }
+
+    /// How many channels ride the connection to `host:port`. Zero if there is none.
+    public func channelCount(host: String, port: UInt16) -> Int {
+        withHost(host) { bytes, count in
+            slopdesk_mux_pool_channel_count(pool, bytes, count, port)
         }
     }
 
-    /// Releases a channel from the shared connection (refcount--). Closes the channel; if it was the
-    /// LAST channel on that endpoint, tears the shared connection down and drops the pool entry — so
-    /// the connection survives exactly as long as at least one pane rides it.
-    public func release(host: String, port: UInt16, channelID: UInt32) async {
-        let key = Self.key(host, port)
-        // Capture ONLY the connection (a stable reference). Do NOT snapshot the value-type `Entry`:
-        // `closeChannel` suspends (a real NWConnection write) and this type is @MainActor (reentrant
-        // across the await), so a concurrent release/acquire can mutate `entries[key]` while we are
-        // suspended. Writing back a pre-await Entry snapshot would clobber that sibling change (lost
-        // update) — leaking the shared connection forever (a sibling release's removal is lost), or
-        // tearing down a connection a concurrent acquire just opened a channel on (an unrelated pane
-        // disconnects a live one). Mutate the LIVE entry AFTER the await, mirroring `acquire`.
-        guard let connection = entries[key]?.connection else { return }
-        await connection.closeChannel(channelID)
-        // `closeChannel` suspends (a real NWConnection write); while suspended, a concurrent
-        // dead-eviction in `sharedConnection` can have evicted this (now-dead) connection and stored a
-        // FRESH one under `key`. Our `channelID` belonged to the OLD connection, so we must touch the
-        // pool ONLY if it STILL holds that exact connection. A bare `entries[key] != nil` check (the
-        // prior guard) WRONGLY passes on a rebuild → we would `remove` the fresh entry and `close` the
-        // stale connection, orphaning the freshly-built one and stranding the pane riding it. Identity
-        // is the correct guard (mirrors `acquire`/`sharedConnection`).
-        guard entries[key]?.connection === connection else { return }
-        entries[key]?.channelIDs.remove(channelID)
-        // Tear down only when the LAST channel is gone AND no acquire is mid-open (pendingAcquires) AND
-        // the endpoint is NOT pinned by the app-global connection — so an in-flight acquire's channel is
-        // never stranded on a just-closed connection, and a pinned mux survives closing the last pane.
-        if entries[key]?.channelIDs.isEmpty == true, (entries[key]?.pendingAcquires ?? 0) == 0,
-           !pinnedKeys.contains(key)
-        {
-            entries.removeValue(forKey: key)
-            await connection.close()
+    /// Whether a connection to `host:port` is pooled and alive.
+    public func isConnectionAlive(host: String, port: UInt16) -> Bool {
+        withHost(host) { bytes, count in
+            slopdesk_mux_pool_is_alive(pool, bytes, count, port)
         }
     }
 
-    // MARK: - App-global pin (the connect-gate's mux lifecycle, docs/31)
-
-    /// Establishes (or reuses) the shared connection for `(host,port)` and PINS it so it stays up with
-    /// ZERO channels. The connect-gate calls this so the app is "connected" before any pane opens a
-    /// channel and stays connected across closing the last pane. Returns when the mux is established;
-    /// throws if it cannot be (host unreachable — `makeConnection`'s connect timeout). A re-`pin` after a
-    /// drop rebuilds: `sharedConnection` evicts a dead pooled connection regardless of the pin.
+    /// Holds the connection to `host:port` open with no channel on it, dialling if there is none.
+    ///
+    /// What a client about to re-open a pane wants, and what the pool would otherwise reap the
+    /// moment the last channel closed.
+    ///
+    /// `async` for the reason ``MuxClientTransport``'s open is: this DIALS, and a dial takes up to
+    /// the whole ``connectTimeout``. `slopdesk_mux_pool_pin` blocks the thread that calls it, and its
+    /// caller is `AppConnection.connect()` on the main actor — so running it inline would freeze the
+    /// UI for ten seconds against a host that is merely down. The hop is what keeps the door
+    /// synchronous in Rust, where a blocking dial is the simple correct thing, without that
+    /// simplicity landing on the main thread.
+    ///
+    /// - Throws: ``SlopDeskTransportError/notConnected(_:)`` if the dial failed.
     public func pin(host: String, port: UInt16) async throws {
-        let key = Self.key(host, port)
-        pinnedKeys.insert(key) // optimistic — protects the build from a racing last-channel teardown
-        let connection: MuxNWConnection
-        do {
-            connection = try await sharedConnection(host: host, port: port, key: key)
-        } catch {
-            // Build failed: drop the pin we optimistically set, unless a channel / another acquire still
-            // wants this endpoint (then leave the entry's own lifecycle in charge).
-            if entries[key]?.channelIDs.isEmpty ?? true, (entries[key]?.pendingAcquires ?? 0) == 0 {
-                pinnedKeys.remove(key)
-            }
-            throw error
+        let pinned = await offCallerThread { [self] in
+            withHost(host) { bytes, count in slopdesk_mux_pool_pin(pool, bytes, count, port) }
         }
-        // A concurrent `unpin()` during the build await removed our pin (its `entries[key]` was still nil
-        // mid-build, so it could not tear the not-yet-built connection down). Tear the just-built,
-        // now-unpinned, zero-channel connection down instead of ORPHANING it — symmetric to `acquire()`'s
-        // post-`openChannel` identity re-check. The `=== connection` gate avoids clobbering a connection a
-        // concurrent dead-eviction rebuilt under this key during the await.
-        if !pinnedKeys.contains(key),
-           entries[key]?.connection === connection,
-           entries[key]?.channelIDs.isEmpty ?? true,
-           (entries[key]?.pendingAcquires ?? 0) == 0
-        {
-            entries.removeValue(forKey: key)
-            await connection.close()
+        guard pinned else {
+            throw SlopDeskTransportError.notConnected("mux: could not reach \(host):\(port)")
         }
     }
 
-    /// Removes the pin for `(host,port)` and tears the shared connection down if no channel rides it.
-    /// The app-global connection's `disconnect()` calls this; if panes still hold channels, the shared
-    /// connection survives until the last one releases (the normal refcount path).
+    /// Releases a pin, reaping the connection if nothing else holds it.
+    ///
+    /// `async` for a weaker version of ``pin(host:port:)``'s reason: releasing the LAST hold closes
+    /// the connection and joins its receive loops, which is bounded by a socket close rather than by
+    /// a dial, but is still not work to do on the main thread.
     public func unpin(host: String, port: UInt16) async {
-        let key = Self.key(host, port)
-        pinnedKeys.remove(key)
-        guard let connection = entries[key]?.connection else { return }
-        if entries[key]?.channelIDs.isEmpty == true, (entries[key]?.pendingAcquires ?? 0) == 0 {
-            entries.removeValue(forKey: key)
-            await connection.close()
+        await offCallerThread { [self] in
+            withHost(host) { bytes, count in slopdesk_mux_pool_unpin(pool, bytes, count, port) }
         }
     }
 
-    /// Whether the shared connection for `(host,port)` is currently established and alive. Used by
-    /// ``AppConnection`` to detect a drop (it polls this while connected) so the connect-gate can
-    /// reappear and auto-reconnect. `false` when there is no entry or the connection reports `isDead`.
-    public func isConnectionAlive(host: String, port: UInt16) async -> Bool {
-        let key = Self.key(host, port)
-        guard let connection = entries[key]?.connection else { return false }
-        return await !(connection.isDead)
+    /// The raw pool pointer, for ``MuxClientTransport`` to open a channel on.
+    ///
+    /// `internal` on purpose: a caller outside this file has no door that takes it, and the whole
+    /// reason the transport reaches for it rather than holding its own is that the pool is what
+    /// makes every pane to one host share ONE mux.
+    var handle: RustHandle { box }
+
+    /// Lends a host string as the `(ptr, len)` UTF-8 pair every pool door takes.
+    private func withHost<T>(_ host: String, _ body: (UnsafePointer<UInt8>?, Int) -> T) -> T {
+        let utf8 = Array(host.utf8)
+        return utf8.withUnsafeBufferPointer { body($0.baseAddress, $0.count) }
+    }
+
+    /// Runs one pool door on a background queue and hands the answer back to the caller's context.
+    ///
+    /// Only the two doors that can BLOCK use it — the three counting doors take the pool's lock and
+    /// return, so wrapping them would buy a thread hop and nothing else.
+    private func offCallerThread<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { resumption in
+            DispatchQueue.global(qos: .userInitiated).async {
+                resumption.resume(returning: body())
+            }
+        }
+    }
+}
+
+extension Duration {
+    /// This duration as whole milliseconds, which is the only unit the mux doors take.
+    ///
+    /// Reads the SUB-SECOND half too. Spelling it `components.seconds * 1000` — which both call
+    /// sites did — silently floors every duration under a second to zero, so a 50 ms bound became
+    /// "no time at all" and the test that asked for one got whatever Rust does with a zero deadline
+    /// rather than the fast failure it wanted. Negative durations clamp to zero: the doors read the
+    /// argument as unsigned, and a deadline in the past is a deadline of none.
+    var milliseconds: UInt64 {
+        let components = components
+        guard components.seconds > 0 || components.attoseconds > 0 else { return 0 }
+        let whole = UInt64(components.seconds) * 1000
+        let fraction = UInt64(components.attoseconds) / 1_000_000_000_000_000
+        return whole + fraction
     }
 }

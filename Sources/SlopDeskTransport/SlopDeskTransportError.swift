@@ -31,7 +31,8 @@ public enum SlopDeskTransportError: Error, Equatable, Sendable {
 /// caller. The standalone-token scan that made the difference — `48` matches in `"errno 48"` and
 /// `"posix(48)"` but not in `"4843"`, `"148"` or `"1048576"` — is now spelled once, over there.
 ///
-/// The port field's half of the same module is ``PortValidation``.
+/// The port field's half of the same module was `PortValidation.swift`, which went in `docs/63`
+/// G.3 with the rest of the Swift client mux — the port is validated in Rust now, at the dial.
 public extension SlopDeskTransportError {
     /// Whether a ``listenerFailed(_:)`` detail string indicates the bind failed because the
     /// address/port is already in use (POSIX `EADDRINUSE`, errno 48). The host-app classifier uses

@@ -12,8 +12,8 @@
 //! blob — a name for an offer, a body for a chunk, nothing for the rest. A reply crosses as a
 //! record plus a small arena for the one string it can hold.
 //!
-//! The frame splitter is a HANDLE, for [`crate::mux_decoder`]'s reason: half a length prefix in one
-//! `recv` and the rest in the next is the normal case, so the buffer has to outlive the call.
+//! The frame splitter is a HANDLE, for [`crate::frame_decoder`]'s reason: half a length prefix in
+//! one `recv` and the rest in the next is the normal case, so the buffer has to outlive the call.
 //!
 //! ## The verdicts
 //! Its own, because this protocol's faults are its own: a reply type the client does not know is

@@ -349,14 +349,12 @@ final class MacChromeSnapshotRender: XCTestCase {
         )
     }
 
-    /// A connection whose registry always refuses — the column's foot island then draws its DISCONNECTED
-    /// ink, which is the resting state the sidebar ships in. No socket is ever opened (the hang-safety
-    /// rule).
-    private static let headlessConnection = AppConnection(
-        registry: ConnectionRegistry { _, _ in
-            throw SlopDeskTransportError.timedOut("snapshot: no host")
-        },
-    )
+    /// A connection that never connects — the column's foot island then draws its DISCONNECTED ink,
+    /// which is the resting state the sidebar ships in. No socket is ever opened (the hang-safety
+    /// rule), because the pool dials nothing until a channel asks it to and this render never calls
+    /// `connect()`. It used to inject a throwing `makeConnection`; `docs/63` G.3 deleted that seam,
+    /// and a pool with no dial in it is the same resting state without the fake.
+    private static let headlessConnection = AppConnection(registry: ConnectionRegistry())
 
     /// What a seeded pane is DOING — every one of these travels through the real store setters and out
     /// through the real resolver, so the render shows the badge the app would show, not one named here.

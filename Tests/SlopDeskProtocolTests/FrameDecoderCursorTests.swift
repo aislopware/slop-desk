@@ -1,13 +1,18 @@
 import XCTest
 @testable import SlopDeskProtocol
 
-/// Guards the advancing-cursor + lazy-compaction rewrite of ``FrameDecoder`` and ``MuxFrameDecoder``
+/// Guards the advancing-cursor + lazy-compaction rewrite of ``FrameDecoder``
 /// (deep-hunt R5, rank 4 — the O(n²) front-removal fix). Two properties:
 ///   1. CORRECTNESS is byte-identical under a dense chunk of many small frames (which crosses the
 ///      64 KiB compaction threshold mid-drain) and under arbitrary split boundaries.
 ///   2. PERF scales ~LINEARLY in frame count — a regression to per-frame front-removal would make the
 ///      drain quadratic, which this catches via a time-ratio bound (linear ≈ 4×, quadratic ≈ 16× for a
 ///      4× frame-count increase; the bound is a generous 8× to absorb timing noise).
+///
+/// The `MuxFrameDecoder` half of this file went with the Swift client mux in `docs/63` G.3. The same
+/// two properties hold for the Rust decoder that replaced it and are pinned where it lives
+/// (`rust/slopdesk-wire`'s `mux::decoder`), so what is left here is the terminal frame decoder alone
+/// — which is still Swift until G.4.
 final class FrameDecoderCursorTests: XCTestCase {
     // MARK: WireMessage / FrameDecoder
 
@@ -121,105 +126,5 @@ final class FrameDecoderCursorTests: XCTestCase {
             XCTAssertEqual(try d.nextMessage(), m)
             XCTAssertNil(try d.nextMessage())
         }
-    }
-
-    /// Same invariant for the mux envelope: the back-patched prefix equals the inner-run length and the
-    /// frame round-trips.
-    func testMuxFrameEncodePrefixEqualsInnerLength() throws {
-        let samples: [MuxFrame] = [
-            .channelOpen(channelID: 1, sessionID: UUID(), lastReceivedSeq: 5, channelClass: 0, initialCwd: nil),
-            .channelOpenAck(channelID: 2, accepted: true, resumeFromSeq: 0),
-            .channelOpenAck(channelID: 3, accepted: false, resumeFromSeq: 0),
-            .channelData(channelID: 4, payload: Data("payload-bytes".utf8)),
-            .channelData(channelID: 5, payload: Data()), // empty payload edge
-            .channelClose(channelID: 6),
-            .windowAdjust(channelID: 7, bytesToAdd: 262_144),
-        ]
-        for fr in samples {
-            let f = MuxEnvelopeCodec.encode(fr)
-            XCTAssertGreaterThanOrEqual(f.count, 9, "mux frame is at least prefix(4) + channelID(4) + type(1)")
-            let prefix = (UInt32(f[f.startIndex]) << 24) | (UInt32(f[f.startIndex + 1]) << 16)
-                | (UInt32(f[f.startIndex + 2]) << 8) | UInt32(f[f.startIndex + 3])
-            XCTAssertEqual(Int(prefix), f.count - 4, "back-patched mux prefix must equal inner length for \(fr)")
-            var d = MuxFrameDecoder()
-            d.append(f)
-            XCTAssertEqual(try d.nextFrame(), fr)
-            XCTAssertNil(try d.nextFrame())
-        }
-    }
-
-    // MARK: MuxFrame / MuxFrameDecoder
-
-    private func smallMuxFrames(_ n: Int) -> (frames: [MuxFrame], bytes: Data) {
-        var frames: [MuxFrame] = []
-        frames.reserveCapacity(n)
-        var bytes = Data()
-        for i in 0..<n {
-            // channelClose is the smallest mux frame (empty body) — maximal fragmentation.
-            let f = MuxFrame.channelClose(channelID: UInt32(i % 64 + 1))
-            frames.append(f)
-            bytes.append(MuxEnvelopeCodec.encode(f))
-        }
-        return (frames, bytes)
-    }
-
-    func testMuxFrameDecoderDecodesManySmallFramesIdenticallyInOneChunk() throws {
-        let (expected, bytes) = smallMuxFrames(12000)
-        let decoder = MuxFrameDecoder()
-        decoder.append(bytes)
-        var decoded: [MuxFrame] = []
-        while let f = try decoder.nextFrame() { decoded.append(f) }
-        XCTAssertEqual(decoded, expected)
-        XCTAssertNil(try decoder.nextFrame())
-    }
-
-    func testMuxFrameDecoderDecodesIdenticallyAcrossArbitrarySplits() throws {
-        let (expected, bytes) = smallMuxFrames(3000)
-        let decoder = MuxFrameDecoder()
-        var decoded: [MuxFrame] = []
-        var i = bytes.startIndex
-        while i < bytes.endIndex {
-            let end = bytes.index(i, offsetBy: 5, limitedBy: bytes.endIndex) ?? bytes.endIndex
-            decoder.append(Data(bytes[i..<end]))
-            while let f = try decoder.nextFrame() { decoded.append(f) }
-            i = end
-        }
-        XCTAssertEqual(decoded, expected)
-        XCTAssertNil(try decoder.nextFrame())
-    }
-
-    func testMuxFrameDecoderScalesLinearlyNotQuadratically() throws {
-        let small = try muxDrainTime { smallMuxFrames(8000).bytes }
-        let large = try muxDrainTime { smallMuxFrames(32000).bytes }
-        // 12: the same contention-aware bound (and rationale) as the WireMessage tripwire above.
-        XCTAssertLessThan(
-            large / max(small, 1e-9),
-            12.0,
-            "mux decode time must scale ~linearly (got \(large / small)× for 4× frames)",
-        )
-    }
-
-    /// Warm-up ×2, then MIN of 3 measured runs: min is the standard noise-resistant estimator —
-    /// a single measured run can be descheduled under `swift test --parallel` worker contention,
-    /// inflating the scaling ratio past its threshold (a load flake, not a regression).
-    private func muxDrainTime(_ make: () -> Data) throws -> Double {
-        let bytes = make()
-        for _ in 0..<2 {
-            var d = MuxFrameDecoder()
-            d.append(bytes)
-            while try d.nextFrame() != nil {}
-        }
-        let clock = ContinuousClock()
-        var best = Double.infinity
-        for _ in 0..<3 {
-            let start = clock.now
-            var d = MuxFrameDecoder()
-            d.append(bytes)
-            while try d.nextFrame() != nil {}
-            let elapsed = start.duration(to: clock.now)
-            let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-            best = Double.minimum(best, seconds)
-        }
-        return best
     }
 }

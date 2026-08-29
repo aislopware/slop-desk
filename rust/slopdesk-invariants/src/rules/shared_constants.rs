@@ -271,12 +271,15 @@ const RUST_REPR: &str = r"#\[repr\((?:u|i)(?:8|16|32|64|size)\)\]";
 
 /// A hand-written `Enum::Case => n` arm, which is where an unnumbered Rust enum's real law lives.
 ///
-/// `slopdesk_wire::mux::ChannelState` has no `= n` on any variant and no `#[repr]`, so reordering
-/// it changes nothing: the number Swift reads is minted by hand in a `const fn ordinal`.
-/// `ChannelTable.swift` turns it back with `ChannelState(rawValue: ordinal) ?? .closed`, and that
-/// `?? .closed` is why the drift is silent rather than loud — an arm renumbered in the shim does
-/// not fail to decode, it decodes to a DIFFERENT state, and a half-closed channel read as closed
-/// simply stops routing.
+/// `slopdesk_wire::mux::ChannelState` was the worked example: no `= n` on any variant and no
+/// `#[repr]`, so reordering it changed nothing — the number the other side read was minted by hand
+/// in a `const fn ordinal`, and the Swift `ChannelTable` turned it back with
+/// `ChannelState(rawValue: ordinal) ?? .closed`. That `?? .closed` is why the drift was silent
+/// rather than loud: an arm renumbered in the shim did not fail to decode, it decoded to a
+/// DIFFERENT state, and a half-closed channel read as closed simply stopped routing. `docs/63` §G.3
+/// deleted that Swift half, so the ordinal no longer crosses a language for this particular enum —
+/// the SHAPE it is named for is unchanged, and this rule pairs enums dynamically rather than by a
+/// list, so nothing about it moved with the file.
 ///
 /// The right-hand side is a number OR THE NAME OF ONE, because that is how a protocol whose bytes
 /// have names writes it: `Bodiless::type_byte` answers `kind::COLLAPSE_PANELS`, never `7`.

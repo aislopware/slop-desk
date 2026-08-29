@@ -794,8 +794,8 @@ public final class ConnectionViewModel {
         // AWAIT the drain's completion BEFORE the residual flush: a mid-batch drain is not stopped by
         // cancel() alone (its sends `try?`), so without this the residual flush below could interleave
         // with in-flight drain sends (a pre-existing hazard the off-main drain made worth closing).
-        // Bounded: cancel unparks a credit-window wait (MuxSubChannel.awaitChunkCredit is
-        // cancellation-aware) and a closed channel throws fast into the `try?`.
+        // Bounded: a send that is parked on the credit window is bounded in Rust (the sub-channel's
+        // own wait, `rust/slopdesk-muxnet`) and a closed channel throws fast into the `try?`.
         await outDrainTask?.value
         outDrainTask = nil
         // TRAILING-EDGE GUARANTEE at teardown: the async drain may have been cancelled with a settled

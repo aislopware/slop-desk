@@ -546,20 +546,11 @@ size_t slopdesk_ws_launch_keystrokes(const uint8_t *command, size_t command_len,
                                      const uint8_t *cwd, size_t cwd_len,
                                      uint8_t *out, size_t cap);
 
-// What the host may listen on, and what to tell the operator when it cannot. `0` is a valid port
-// and means "OS-assigned"; the two errno questions are here because a bind conflict can arrive as
-// a FAILURE or hide inside the framework's retryable waiting state, and both spell it in text.
-bool    slopdesk_ws_listen_port_is_valid(int64_t raw);
-// `raw` as a bindable port, or `-1` for one out of range. Signed rather than §4-shaped because 0 is
-// a REAL answer here — it is the OS-assigned port — and a port is unsigned, so -1 is outside the
-// answer's range by construction the way slopdesk_fuzzy_rank's refusal is. The refusal is never a
-// coercion: clamping mapped -5 to 0, an OS-assigned port nobody asked for and then persisted, and
-// 99999 to 65535 while the field on screen still read 99999. The predicate above is what the text
-// field asks per keystroke to decide whether Start is dark, where there is no port to carry back;
-// this is what the bind asks once, where there is. Composing the two on the near side was the pair
-// this door closes — the refusal was decided in Rust and the cast in Swift, agreeing only because
-// `u16`'s range happens to be the accepted range.
-int32_t slopdesk_ws_listen_port(int64_t raw);
+// What to tell the operator when the host cannot listen. Both questions are here because a bind
+// conflict can arrive as a FAILURE or hide inside the framework's retryable waiting state, and both
+// spell it in text. The RANGE question that used to lead this block went with
+// `Sources/SlopDeskTransport/PortValidation.swift` in `docs/63` G.3 — nothing in Swift validates a
+// port any more, because nothing in Swift dials one.
 bool    slopdesk_ws_listen_detail_is_address_in_use(const uint8_t *bytes, size_t len);
 bool    slopdesk_ws_listen_waiting_errno_is_fatal(int32_t posix_errno);
 
@@ -5944,251 +5935,152 @@ uint32_t slopdesk_frame_decoder_next(SlopDeskFrameDecoder *handle, SlopDeskWireM
 size_t slopdesk_frame_decoder_run(SlopDeskFrameDecoder *handle, uint8_t *out, size_t cap);
 
 // ---------------------------------------------------------------------------
-// The TCP mux envelope (rust/slopdesk-ffi/src/mux_envelope.rs).
+// The flow-control constants (rust/slopdesk-ffi/src/mux_flow.rs).
 //
-// `[u32 muxFrameLength][u32 channelID][u8 muxType][body]`, one layer outside the
-// terminal frame. Two address spaces, as in SlopDeskWireMessage: `cwd_*` is an
-// offset into the ARENA, `payload_*` an offset into the DATAGRAM. Decoding
-// answers where the payload sits; encoding takes it as its own argument, so it
-// is never copied through this door. The verdicts are the
-// SLOPDESK_WIRE_DECODE_* values above.
-// ---------------------------------------------------------------------------
-
-typedef struct SlopDeskMuxFrame {
-  int64_t last_received_seq;
-  int64_t resume_from_seq;
-  uint32_t channel_id;
-  uint32_t bytes_to_add;
-  uint32_t cwd_offset;
-  uint32_t cwd_length;
-  uint32_t payload_offset;
-  uint32_t payload_length;
-  uint8_t mux_type;
-  uint8_t channel_class;
-  uint8_t reason;
-  bool accepted;
-  bool has_cwd;
-  uint8_t session_id[16];
-} SlopDeskMuxFrame;
-
-uint32_t slopdesk_mux_frame_decode(const uint8_t *inner, size_t inner_len, SlopDeskMuxFrame *out,
-                                   uint8_t *arena, size_t arena_cap);
-
-size_t slopdesk_mux_frame_encode(const SlopDeskMuxFrame *frame, const uint8_t *arena,
-                                 size_t arena_len, const uint8_t *payload, size_t payload_len,
-                                 uint8_t *out, size_t cap);
-
-size_t slopdesk_mux_frame_byte_count(const SlopDeskMuxFrame *frame, const uint8_t *arena,
-                                     size_t arena_len, size_t payload_len);
-
-size_t slopdesk_mux_envelope_constant(uint32_t index);
-
-// ---------------------------------------------------------------------------
-// The mux receive path (rust/slopdesk-ffi/src/mux_decoder.rs).
+// The seven numbers the mux is sized from, read from the environment ONCE and
+// then fixed: 0 the initial window, 1 the input split cap, 2 the host queue
+// bound, 3 the detached host queue bound, 4 the merge cap, 5 the provably-safe
+// output payload cap, 6 the live channel cap. An index with no constant behind
+// it answers 0.
 //
-// The framing handle one layer up, answering the same verdicts as the terminal
-// one — SLOPDESK_FRAME_PENDING and SLOPDESK_FRAME_TOO_LARGE included. The
-// frame's opaque payload is PARKED, not written: `payload_length` says how
-// long, `..._payload` copies it out, and the park holds only until the next
-// `..._next` on the same handle.
+// The three by-value policies that stood here — the send window, the receive
+// accountant and the bounded producer queue, twelve doors between them — went
+// with the Swift mux in docs/63 G.3. Each crossed because the SubChannel
+// running the policy was Swift while the policy was Rust's; slopdesk-clientnet
+// runs both, so the state never leaves the crate. A CONSTANT is the opposite
+// case: its callers sit outside the mux and outlive it, and re-typing one where
+// a door already exists is the shape docs/55 §8 catalogues.
 // ---------------------------------------------------------------------------
-
-typedef struct SlopDeskMuxDecoder SlopDeskMuxDecoder;
-
-SlopDeskMuxDecoder *slopdesk_mux_decoder_new(void);
-
-void slopdesk_mux_decoder_free(SlopDeskMuxDecoder *handle);
-
-void slopdesk_mux_decoder_append(SlopDeskMuxDecoder *handle, const uint8_t *bytes, size_t len);
-
-size_t slopdesk_mux_decoder_buffered(SlopDeskMuxDecoder *handle);
-
-uint32_t slopdesk_mux_decoder_next(SlopDeskMuxDecoder *handle, SlopDeskMuxFrame *out,
-                                   uint8_t *arena, size_t arena_cap, size_t *detail);
-
-size_t slopdesk_mux_decoder_payload(SlopDeskMuxDecoder *handle, uint8_t *out, size_t cap);
-
-// ---------------------------------------------------------------------------
-// Per-channel credit flow control (rust/slopdesk-ffi/src/mux_flow.rs).
-//
-// Three pure state machines, each two int64s, so the state crosses BY VALUE:
-// the caller holds the struct and the entry point reads and writes it in place.
-// A handle would buy nothing and cost a new/free per channel per direction.
-//
-// slopdesk_receive_window_consume answers the credit to grant right now, or -1
-// when the half-window threshold has not been crossed — a grant is never
-// negative, so the sentinel is unambiguous.
-// ---------------------------------------------------------------------------
-
-typedef struct SlopDeskFlowCredit {
-  int64_t initial_window;
-  int64_t remaining;
-} SlopDeskFlowCredit;
-
-typedef struct SlopDeskFlowVerdict {
-  int64_t value;
-  bool allowed;
-} SlopDeskFlowVerdict;
-
-typedef struct SlopDeskReceiveWindow {
-  int64_t initial_window;
-  int64_t pending_credit;
-} SlopDeskReceiveWindow;
-
-typedef struct SlopDeskBoundedQueue {
-  int64_t capacity;
-  int64_t outstanding;
-} SlopDeskBoundedQueue;
-
-SlopDeskFlowCredit slopdesk_flow_credit_new(int64_t initial_window);
-
-SlopDeskFlowVerdict slopdesk_flow_credit_consume(SlopDeskFlowCredit *policy, int64_t bytes);
-
-void slopdesk_flow_credit_adjust(SlopDeskFlowCredit *policy, int64_t bytes_to_add);
-
-bool slopdesk_flow_credit_blocked(SlopDeskFlowCredit policy);
-
-SlopDeskReceiveWindow slopdesk_receive_window_new(int64_t initial_window);
-
-int64_t slopdesk_receive_window_threshold(int64_t initial_window);
-
-int64_t slopdesk_receive_window_consume(SlopDeskReceiveWindow *window, int64_t bytes);
-
-SlopDeskBoundedQueue slopdesk_bounded_queue_new(int64_t capacity);
-
-void slopdesk_bounded_queue_set_capacity(SlopDeskBoundedQueue *queue, int64_t new_capacity);
-
-bool slopdesk_bounded_queue_full(SlopDeskBoundedQueue queue);
-
-bool slopdesk_bounded_queue_enqueue(SlopDeskBoundedQueue *queue, int64_t bytes);
-
-bool slopdesk_bounded_queue_dequeue(SlopDeskBoundedQueue *queue, int64_t bytes);
-
 int64_t slopdesk_mux_flow_constant(uint32_t index);
 
 // ---------------------------------------------------------------------------
-// The channel table (rust/slopdesk-ffi/src/mux_channels.rs).
+// PATH-1's CLIENT END (rust/slopdesk-ffi/src/mux_transport.rs).
 //
-// The id allocator and the close state machine for one mux connection. A
-// handle, because a map plus an eviction ring cannot cross in a call. A state
-// crosses as its ordinal: 0 idle, 1 open, 2 half-closed, 3 closed, and
-// SLOPDESK_CHANNEL_UNKNOWN for an id the table has no entry for — a
-// distinction the caller has to keep, since an unknown id's frame is dropped
-// where a closed id's is a late frame on a channel that really existed.
+// Two handles, and they are the sockets themselves — not a rule about them.
+// Everything above this block is a pure fold Swift calls while owning the
+// bytes; everything below owns the connection.
+//
+//   SlopDeskMuxPool       one per app. Dials, pools and reaps every PATH-1
+//                         connection: every pane to one host rides ONE mux.
+//   SlopDeskMuxTransport  one channel on a pooled connection, with both lanes.
+//
+// LANES. `input` rides DATA, which is flow-controlled; every other verb rides
+// CONTROL, which is not. That is why there are two send doors rather than a
+// lane argument — and why _send REFUSES an input rather than rerouting it.
+//
+// CREDIT AT CONSUMPTION. Call _note_consumed with what the wire spent
+// (slopdesk_wire_message_byte_count), once the real consumer has drained the
+// bytes — not when the callback returned. The sender debits per frame and the
+// two must match exactly or the window leaks. CONTROL is never reported.
+//
+// THE CALLBACK CONTRACT, which is docs/55 §4b's:
+//   1. `context` stays valid until _free RETURNS. _free joins both forwarder
+//      threads, so a callback may still be running when it is entered.
+//   2. Both callbacks run on a Rust thread, never concurrently with each other.
+//      One lock serialises them, so an unsynchronised capture is safe.
+//   3. Neither may re-enter _free — it joins the thread they run on. Sending
+//      from inside on_inbound IS allowed and is what the ack gate does.
+//   4. on_ended fires exactly ONCE and nothing follows it, including from the
+//      other lane. There is no "why did it end" door: a caller that has to ask
+//      is a caller that can ask too early.
+//
+// Every pointer in both callbacks is LENT for the call. `arena` and `blob` are
+// two address spaces, as in SlopDeskWireMessage — but `blob_offset` is always
+// 0 here, because the datagram it used to index is Rust's now. Read the run
+// through the `blob` pointer, never through the record's offset.
 // ---------------------------------------------------------------------------
 
-#define SLOPDESK_CHANNEL_UNKNOWN 4u
+// How a channel ended.
+#define SLOPDESK_MUX_END_LOCAL 0u      /* this side, or the pool, closed it */
+#define SLOPDESK_MUX_END_PEER 1u       /* the host did; close_reason is its byte */
+#define SLOPDESK_MUX_END_LINK_DOWN 2u  /* the link died; says nothing about the channel */
+#define SLOPDESK_MUX_END_DECODE 3u     /* this channel's inner framing faulted; detail is lent */
 
-typedef struct SlopDeskChannelTable SlopDeskChannelTable;
+// What a send did.
+#define SLOPDESK_MUX_SEND_OK 0
+#define SLOPDESK_MUX_SEND_CLOSED 1   /* finished, reaped, or its link is gone */
+#define SLOPDESK_MUX_SEND_LINK 2     /* the write failed; the link is dying */
+#define SLOPDESK_MUX_SEND_REFUSED 3  /* null handle, unknown type, or an input on CONTROL */
 
-SlopDeskChannelTable *slopdesk_channel_table_new(void);
+typedef struct SlopDeskMuxPool SlopDeskMuxPool;
+typedef struct SlopDeskMuxTransport SlopDeskMuxTransport;
 
-void slopdesk_channel_table_free(SlopDeskChannelTable *handle);
+typedef void (*SlopDeskMuxInboundFn)(void *context, const SlopDeskWireMessage *message,
+                                     const uint8_t *arena, size_t arena_len, const uint8_t *blob,
+                                     size_t blob_len);
 
-unsigned int slopdesk_channel_table_allocate(SlopDeskChannelTable *handle);
+// `detail_len` is 0 for every kind but SLOPDESK_MUX_END_DECODE. Check the
+// LENGTH — the pointer is non-null even when there is nothing behind it.
+typedef void (*SlopDeskMuxEndedFn)(void *context, uint32_t kind, unsigned char close_reason,
+                                   const uint8_t *detail, size_t detail_len);
 
-void slopdesk_channel_table_open(SlopDeskChannelTable *handle, unsigned int id);
+// Dials nothing until the first channel asks it to. `connect_timeout_ms` bounds
+// each dial WHOLE — both sockets and every address a hostname resolves to.
+SlopDeskMuxPool *slopdesk_mux_pool_new(uint64_t connect_timeout_ms);
 
-uint32_t slopdesk_channel_table_reject(SlopDeskChannelTable *handle, unsigned int id);
+// Closes every pooled connection and JOINS its receive loops, so no thread this
+// module started outlives it. Free every transport first.
+void slopdesk_mux_pool_free(SlopDeskMuxPool *handle);
 
-uint32_t slopdesk_channel_table_local_close(SlopDeskChannelTable *handle, unsigned int id);
+bool slopdesk_mux_pool_is_alive(const SlopDeskMuxPool *handle, const uint8_t *host, size_t host_len,
+                                uint16_t port);
 
-uint32_t slopdesk_channel_table_remote_close(SlopDeskChannelTable *handle, unsigned int id);
+// Holds a connection open with no channel on it — what a client about to
+// re-open a pane wants, and what the pool would otherwise reap.
+bool slopdesk_mux_pool_pin(const SlopDeskMuxPool *handle, const uint8_t *host, size_t host_len,
+                           uint16_t port);
 
-uint32_t slopdesk_channel_table_state(SlopDeskChannelTable *handle, unsigned int id);
+void slopdesk_mux_pool_unpin(const SlopDeskMuxPool *handle, const uint8_t *host, size_t host_len,
+                             uint16_t port);
 
-size_t slopdesk_channel_table_state_count(SlopDeskChannelTable *handle);
+size_t slopdesk_mux_pool_channel_count(const SlopDeskMuxPool *handle, const uint8_t *host,
+                                       size_t host_len, uint16_t port);
 
-size_t slopdesk_channel_table_live(SlopDeskChannelTable *handle, unsigned int *out, size_t cap);
+size_t slopdesk_mux_pool_connection_count(const SlopDeskMuxPool *handle);
 
-// ---- The DEMUX RULE itself, not just the table it reads ----
+// CLASS-GENERIC: `channel_class` is the raw channelOpen byte, so one door serves
+// a pane and the workspace document alike. `session_id` is 16 raw bytes, all-zero
+// for a new session. `initial_cwd` NULL/0 means "wherever the host would start" —
+// which is NOT the same request as an empty string, and encodes two bytes shorter.
 //
-// One frame in, one verdict out, with the table advanced exactly as the frame
-// requires. `kind` is the mux envelope's own type byte (1 open, 2 openAck,
-// 3 data, 4 close, 5 windowAdjust); `accepted` is read for the open-ack alone.
+// The channel is usable the moment this returns: the responder opens on the first
+// channelOpen, so the ack below is a verdict about RESUME, not permission to write.
 //
-// The PAYLOAD never crosses. A verdict names a channel and the bytes stay with
-// whoever decoded them.
-//
-// A C enum with a payload is not a thing, so the discriminant and every field a
-// verdict could carry travel together and the caller reads the ones its verdict
-// names. `state` is meaningful for LIFECYCLE, `reason` for DROP.
-//
-// Both refusals FAIL CLOSED — a type byte no kind claims, and a null handle,
-// each drop as unknown. That is the opposite default from this header's platform
-// tables, and deliberately: with no table there is no channel, and delivering
-// bytes to one nobody described is what this rule exists to prevent.
+// NULL if the dial failed, the connection refused a channel, or a forwarder
+// could not start. On NULL neither callback has run or ever will, so `context`
+// may be freed at once.
+SlopDeskMuxTransport *slopdesk_mux_transport_open(
+    const SlopDeskMuxPool *handle, const uint8_t *host, size_t host_len, uint16_t port,
+    unsigned char channel_class, const uint8_t *session_id, int64_t last_received_seq,
+    const uint8_t *initial_cwd, size_t initial_cwd_len, void *context,
+    SlopDeskMuxInboundFn on_inbound, SlopDeskMuxEndedFn on_ended);
 
-#define SLOPDESK_MUX_VERDICT_DELIVER 0u
-#define SLOPDESK_MUX_VERDICT_LIFECYCLE 1u
-#define SLOPDESK_MUX_VERDICT_DROP 2u
+// Closes, joins both forwarders, frees. `context` may be released once this
+// RETURNS, never before. Never call it from inside either callback.
+void slopdesk_mux_transport_free(SlopDeskMuxTransport *handle);
 
-#define SLOPDESK_MUX_DROP_NON_OPEN 0u
-#define SLOPDESK_MUX_DROP_UNKNOWN 1u
+uint32_t slopdesk_mux_transport_channel_id(const SlopDeskMuxTransport *handle);
 
-typedef struct SlopDeskMuxRouting {
-  unsigned int verdict;
-  unsigned int channel_id;
-  unsigned int state;
-  unsigned int reason;
-} SlopDeskMuxRouting;
+// Answers whether the open was ACCEPTED, and writes the seq the host will resume
+// from. A refusal covers refused, dead and timed-out alike: a pane that cannot be
+// told where to resume from cannot resume, so the three are one answer.
+bool slopdesk_mux_transport_await_open_ack(const SlopDeskMuxTransport *handle, uint64_t timeout_ms,
+                                           int64_t *resume_from_seq_out);
 
-SlopDeskMuxRouting slopdesk_channel_table_route(
-    SlopDeskChannelTable *handle, unsigned char kind, unsigned int id, bool accepted);
+// PTY input on DATA, SPLIT across input frames at the flow-control cap. One call
+// becomes several frames; order survives, because a byte stream carries no frame
+// semantics. An unsplit paste would deadlock credit-at-consumption.
+int slopdesk_mux_transport_send_input(const SlopDeskMuxTransport *handle, const uint8_t *bytes,
+                                      size_t len);
 
-// ---- The DOOR the demux rule stands behind, and the two teardowns ----
-//
-// `slopdesk_mux_admit` runs BEFORE the route above and decides whether the frame
-// is one this connection reasons about at all. Four guards, in a precedence that
-// is load-bearing: an over-cap open refused AFTER the table advanced is a cap
-// that stopped bounding the table it was written to bound.
-//
-// `role` is 0 client / 1 host, `link` is 0 control / 1 data, `frame_type` is the
-// mux envelope's own type byte, `live_channels` is the DATA channels live right
-// now, and `prior_data_state` is the DATA table's state ordinal for the id —
-// SLOPDESK_CHANNEL_UNKNOWN for an id the table never heard of.
-//
-// A `frame_type` no kind claims ADMITS: the route above owns that drop, and a
-// second copy of the frame vocabulary here is how the two start to disagree.
-// A garbled `role` or `link` takes the STRICTER reading — host, control — so a
-// corrupted ordinal cannot buy a peer a shell.
+// One message on CONTROL. The record and arena are slopdesk_wire_message_encode's.
+// REFUSES an input: CONTROL is unwindowed, and a paste on it would put a 16 MiB
+// frame on the lane a Ctrl-C needs.
+int slopdesk_mux_transport_send(const SlopDeskMuxTransport *handle,
+                                const SlopDeskWireMessage *message, const uint8_t *arena,
+                                size_t arena_len, const uint8_t *blob, size_t blob_len);
 
-#define SLOPDESK_MUX_ADMISSION_PROCEED 0u
-#define SLOPDESK_MUX_ADMISSION_REFUSE_OVER_CAP 1u
-#define SLOPDESK_MUX_ADMISSION_REFUSE_REOPEN 2u
-#define SLOPDESK_MUX_ADMISSION_DROP_OPEN_ON_CONTROL 3u
-#define SLOPDESK_MUX_ADMISSION_DROP_OPEN_AT_INITIATOR 4u
-
-unsigned int slopdesk_mux_admit(
-    unsigned int role, unsigned int link, unsigned char frame_type, bool registered,
-    unsigned int live_channels, unsigned int prior_data_state);
-
-// What one channel's ENDING reaches. A pane is one session behind TWO
-// sub-channels, so an ending on one link has to reach the other or leave a
-// shell with no close trigger left.
-//
-// `data_table` and `control_table` are how each table advances: 0 hold, 1 local
-// close, 2 remote close. HOLD is not "nothing happened" — for a peer close it is
-// "the route above already did this one", which is the single place the two
-// teardowns differ.
-
-#define SLOPDESK_MUX_TABLE_HOLD 0u
-#define SLOPDESK_MUX_TABLE_LOCAL 1u
-#define SLOPDESK_MUX_TABLE_REMOTE 2u
-
-typedef struct SlopDeskMuxTeardown {
-  bool          drop_data;
-  bool          drop_control;
-  bool          reap;          /* never true on the client — it has no PTY */
-  unsigned char data_table;
-  unsigned char control_table;
-} SlopDeskMuxTeardown;
-
-// A sub-channel's own inner framing faulted while the rest of the mux is healthy.
-SlopDeskMuxTeardown slopdesk_mux_teardown_poisoned(unsigned int role, unsigned int link);
-
-// The peer closed this channel on this link.
-SlopDeskMuxTeardown slopdesk_mux_teardown_peer_close(unsigned int role, unsigned int link);
+void slopdesk_mux_transport_note_consumed(const SlopDeskMuxTransport *handle, size_t bytes);
 
 // ---------------------------------------------------------------------------
 // The host metadata RPC's payloads (rust/slopdesk-ffi/src/metadata.rs).

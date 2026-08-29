@@ -6,12 +6,12 @@ import XCTest
 /// The client's RTT fold: a `.pong` (our monotonic timestamp echoed back) becomes an
 /// EWMA-smoothed `smoothedRTTMS` and a broadcast `.rtt` event (the latency-badge datum).
 final class SlopDeskClientRTTTests: XCTestCase {
+    /// Inert: this test drives inbound directly and never `connect()`s, so the factory is never
+    /// invoked and the pool behind it never dials.
     private func makeClient() -> SlopDeskClient {
-        SlopDeskClient(makeTransport: {
-            MuxClientTransport(
-                acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert") },
-                release: { _, _, _ in },
-            )
+        let registry = ConnectionRegistry()
+        return SlopDeskClient(makeTransport: {
+            MuxClientTransport(registry: registry)
         })
     }
 

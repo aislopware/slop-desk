@@ -3,7 +3,8 @@ import Foundation
 
 /// UDP-side mux foundation for the GUI video path (PATH 2): a `UInt32` BE channelID
 /// PREFIX that lets several logical lanes share one physical UDP datagram socket the
-/// way ``MuxEnvelopeCodec`` lets several channels share one TCP connection.
+/// way PATH-1's envelope prefix lets several channels share one TCP connection (that codec is
+/// `rust/slopdesk-wire`'s `mux::envelope` — `docs/63` G.3 took the Swift one).
 ///
 /// This is a **NEW, additive** type living BESIDE the existing
 /// ``FrameFragmentHeader`` / ``FrameFragment`` (19-byte header) — it does NOT replace
@@ -16,7 +17,7 @@ import Foundation
 /// 1. ``VideoMuxHeaderCodec`` — a bare `[UInt32 BE channelID][rest...]` prefix for the
 ///    non-video media lanes (control / geometry) and the cursor socket. The `rest` is
 ///    an opaque payload carried verbatim — the codec never inspects it (mirroring
-///    `MuxEnvelopeCodec.channelData`, which carries its inner ``WireMessage`` opaquely).
+///    PATH-1's `channelData`, which carries its inner ``WireMessage`` opaquely).
 /// 2. ``MuxFrameFragmentHeader`` — the existing ``FrameFragmentHeader`` fields PLUS a
 ///    `channelID` at offset 0, for the high-rate video lane that wants the channel id
 ///    folded into the per-fragment header rather than a separate prefix. Layout:

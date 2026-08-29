@@ -86,6 +86,51 @@ public extension WireMessage {
     }
 }
 
+// MARK: - The record itself, for the doors that speak it rather than bytes
+
+// `encode()` and `decode(payload:)` above cross this boundary as BYTES because their door does:
+// `slopdesk_wire_message_encode` writes a frame and `slopdesk_wire_message_decode` reads one. The
+// PATH-1 client transport's door does not. `slopdesk_mux_transport_send` takes the flat record
+// directly and its inbound callback lends one, because on both sides of that door the frame is
+// Rust's — the socket moved there in `docs/63` G.3, so re-encoding a message to bytes just to have
+// Rust decode them again would be a marshalling face built to be deleted.
+//
+// So the two halves of the flattening are exported. Nothing new is computed here; these are the
+// same `flatten` and `build` the byte doors use, with the frame step left out.
+
+public extension WireMessage {
+    /// Rebuilds one message from a flat record and the two spans lent alongside it.
+    ///
+    /// `arena` holds the short text fields; `run` IS the opaque byte run, already its own `Data`.
+    /// Answers `nil` for a `message_type` no arm claims, which is a frame from a newer peer and is
+    /// dropped rather than guessed at — the same reading the byte decoder gives it.
+    static func lent(_ flat: SlopDeskWireMessage, arena: UnsafeRawBufferPointer, run: Data) -> WireMessage? {
+        build(flat, arena, run)
+    }
+
+    /// Hands this message to `body` as the flat record, its arena and its opaque run.
+    ///
+    /// Every pointer is valid for the duration of `body` and no longer, which is exactly the term
+    /// every door in `slopdesk_ffi.h` asks for. The run is passed as its own span rather than
+    /// interned: `Data` is copy-on-write, so handing over the caller's own bytes costs a retain,
+    /// while interning them would memcpy the largest field on the wire.
+    func withFlattened<T>(
+        _ body: (UnsafePointer<SlopDeskWireMessage>, UnsafeRawPointer?, Int, UnsafeRawPointer?, Int) -> T,
+    ) -> T {
+        var flat = SlopDeskWireMessage()
+        var arena = Data()
+        var blob = Data()
+        flatten(into: &flat, arena: &arena, blob: &blob)
+        return withUnsafePointer(to: flat) { message in
+            arena.spanning { pool, poolLength in
+                blob.spanning { payload, payloadLength in
+                    body(message, pool, poolLength, payload, payloadLength)
+                }
+            }
+        }
+    }
+}
+
 extension WireMessage {
     /// Decodes a message from a **complete payload** (`[UInt8 messageType][body...]`, without the
     /// length prefix — framing is ``FrameDecoder``'s job).

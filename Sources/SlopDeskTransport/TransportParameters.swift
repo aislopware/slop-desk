@@ -1,12 +1,16 @@
 import CSlopDeskFFI
 import Network
 
-/// Canonical `NWParameters` for every SlopDesk PATH 1 socket.
+/// Canonical `NWParameters` for every `NWConnection`/`NWListener` SlopDesk still builds in Swift.
 ///
 /// There is exactly **one** place that builds transport parameters so the
 /// mandatory low-latency settings can never be forgotten on one side of a
-/// connection. Both `HostTransport` in `rust/slopdesk-hostnet` (the `NWListener`) and the client-side
-/// ``NWMuxByteLink`` (the `NWConnection`) use this helper.
+/// connection. The PATH-1 mux is no longer among the callers: `docs/63` G.3 moved both of its
+/// sockets into `rust/slopdesk-clientnet`, and their sockopts are `slopdesk_muxnet::params::apply`'s
+/// — the one function that configures the dialled socket and the accepted one, which is the same
+/// single-place argument made on the other side of the boundary. What is left here is the loopback
+/// code-sidebar proxy, the Android bridge and the simulator stream — every Swift socket the tree
+/// still builds.
 ///
 /// ## What it sets and why
 /// - **`TCP_NODELAY`** (`NWProtocolTCP.Options.noDelay = true`). This *is*

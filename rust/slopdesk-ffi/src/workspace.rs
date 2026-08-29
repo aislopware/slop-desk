@@ -527,18 +527,11 @@ pub unsafe extern "C" fn slopdesk_ws_launch_keystrokes(
 
 // MARK: The listen port, and the bind conflict hiding inside a retryable state
 
-/// Whether `raw` is a usable listen port. `0` is valid and means "OS-assigned".
-///
-/// The host's port field is a free-form persisted integer, so this is asked before every bind and
-/// on every keystroke that redraws the Start button.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_listen_port_is_valid(raw: i64) -> bool {
-    listen::is_valid_port(raw)
-}
+// `slopdesk_ws_listen_port_is_valid` was here. Its ONE caller was
+// `Sources/SlopDeskTransport/PortValidation.swift:16`, which `docs/63` G.3 deleted along with the
+// rest of the Swift client mux — the port is validated at the dial in `rust/slopdesk-clientnet`
+// now, by the code that binds it rather than by a field that asks about it. `listen::is_valid_port`
+// stays: `listen::port` composes it, and that is the door the host still opens.
 
 /// Whether a listener-failure detail string says the bind failed because the address is in use.
 ///

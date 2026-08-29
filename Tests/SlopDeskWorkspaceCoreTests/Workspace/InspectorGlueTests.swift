@@ -10,10 +10,7 @@ import XCTest
 @Sendable
 private func makeUnconnectedClient() -> SlopDeskClient {
     SlopDeskClient(makeTransport: {
-        MuxClientTransport(
-            acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert test transport") },
-            release: { _, _, _ in },
-        )
+        MuxClientTransport(registry: ConnectionRegistry())
     })
 }
 

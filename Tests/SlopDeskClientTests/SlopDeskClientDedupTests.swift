@@ -16,12 +16,10 @@ import XCTest
 final class SlopDeskClientDedupTests: XCTestCase {
     func testDeliverOutputDropsAlreadyFedSeqs() async throws {
         // Inert transport factory: this test drives inbound via `handleInboundForTesting` and never
-        // `connect()`s, so the factory is never invoked.
+        // `connect()`s, so the factory is never invoked and the pool never dials.
+        let registry = ConnectionRegistry()
         let client = SlopDeskClient(makeTransport: {
-            MuxClientTransport(
-                acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert test transport") },
-                release: { _, _, _ in },
-            )
+            MuxClientTransport(registry: registry)
         })
 
         // Collect the surfaced output bytes (wake + batch-drain, the consumer contract).
