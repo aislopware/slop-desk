@@ -32,7 +32,8 @@
 
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
 use slopdesk_clientnet::dial::Endpoint;
@@ -145,6 +146,15 @@ pub(crate) struct Shared {
     /// epoch, and the wire wants a number the host echoes verbatim, so the session picks one.
     pub(crate) clock: Instant,
     pub(crate) commands: Sender<Command>,
+    /// The supervisor's own thread, published by that thread as its first act.
+    ///
+    /// It exists so a post-and-wait method can tell "the near side is asking" from "the observer is
+    /// asking, from inside the very thread that would have to answer" — the second of which is a
+    /// deadlock rather than a slow call. Every campaign event is emitted from the supervisor, so a
+    /// consumer that calls `close()` on a `GaveUp` is making the ordinary mistake, and it must get
+    /// the close rather than a frozen pane. A forwarder reads this too and correctly reads `false`,
+    /// whether or not the supervisor has published yet.
+    pub(crate) supervisor: OnceLock<ThreadId>,
 }
 
 impl core::fmt::Debug for Shared {
@@ -175,7 +185,13 @@ impl Shared {
             pausing: AtomicBool::new(false),
             clock: Instant::now(),
             commands,
+            supervisor: OnceLock::new(),
         }
+    }
+
+    /// Whether the CALLER is the supervisor thread itself.
+    pub(crate) fn on_supervisor(&self) -> bool {
+        self.supervisor.get() == Some(&thread::current().id())
     }
 
     /// Milliseconds since this session's own zero — the reading a `ping` carries and a `pong`

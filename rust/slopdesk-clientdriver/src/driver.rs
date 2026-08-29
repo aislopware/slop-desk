@@ -113,6 +113,14 @@ pub enum ConnectError {
     Superseded,
     /// The supervisor is gone. Only reachable while the driver is being dropped.
     Gone,
+    /// Called from INSIDE an observer callback the supervisor is running. A connect answers only
+    /// once the supervisor has dialled, so waiting for it from the supervisor's own thread would
+    /// wait forever; the call is refused instead of hanging the pane.
+    ///
+    /// Only [`Self::connect`](PaneDriver::connect) and [`Self::resume`](PaneDriver::resume) can
+    /// report it — [`pause`](PaneDriver::pause) and [`close`](PaneDriver::close) have an answer
+    /// nobody reads, so they queue their command and return rather than refusing anything.
+    Reentrant,
 }
 
 impl fmt::Display for ConnectError {
@@ -126,6 +134,7 @@ impl fmt::Display for ConnectError {
             },
             Self::Superseded => formatter.write_str("superseded by a close or a pause"),
             Self::Gone => formatter.write_str("the session driver has been shut down"),
+            Self::Reentrant => formatter.write_str("called from inside an observer callback"),
         }
     }
 }
@@ -173,6 +182,12 @@ pub(crate) enum Command {
 /// Every method is safe to call from any thread and blocks only for as long as the supervisor takes
 /// to run the command — which for a connect is the dial plus the handshake bound, and for
 /// everything else is a lock and a socket write.
+///
+/// Calling one from INSIDE an [`Observer`] callback is safe too, which is not free: a callback the
+/// supervisor is running cannot wait on the supervisor. The four methods that would have waited
+/// detect it and answer without waiting — [`Self::connect`] and [`Self::resume`] with
+/// [`ConnectError::Reentrant`], [`Self::pause`] and [`Self::close`] by leaving the command queued.
+/// Nothing else waits at all, so a send, a readout or a drain from a callback is an ordinary call.
 #[derive(Debug)]
 pub struct PaneDriver {
     shared: Arc<Shared>,
@@ -228,8 +243,12 @@ impl PaneDriver {
     /// # Errors
     /// [`ConnectError`], each arm of which is a different thing for the caller to do: a
     /// [`Refused`](ConnectError::Refused) is permanent, a [`Superseded`](ConnectError::Superseded)
-    /// means stop, and the rest are worth retrying.
+    /// means stop, a [`Reentrant`](ConnectError::Reentrant) is the caller's own bug rather than the
+    /// link's, and the rest are worth retrying.
     pub fn connect(&self, host: &str, port: u16, handshake_timeout: Duration) -> Result<(), ConnectError> {
+        if self.shared.on_supervisor() {
+            return Err(ConnectError::Reentrant);
+        }
         let reply = Arc::new(Reply::new());
         self.post(Command::Connect {
             endpoint: Endpoint::new(host, port),
@@ -242,20 +261,13 @@ impl PaneDriver {
     /// Backgrounded: acks what is held, says a clean `bye` and tears the transport down.
     ///
     /// The host keeps the shell and its replay buffer, so output produced while paused is retained.
-    /// Idempotent.
+    /// Idempotent. Returns once the pause has landed, or once it is QUEUED when called from inside
+    /// a callback — see the type docs.
     pub fn pause(&self) {
         // Set BEFORE the command is posted: a dial in flight reads this at its adoption point and
         // discards what it built rather than leaking it behind the paused state.
         self.shared.pausing.store(true, Ordering::SeqCst);
-        let reply = Arc::new(Reply::new());
-        if self
-            .post(Command::Pause {
-                reply: Arc::clone(&reply),
-            })
-            .is_ok()
-        {
-            reply.wait();
-        }
+        self.post_and_settle(|reply| Command::Pause { reply });
     }
 
     /// Foregrounded: reconnects with the preserved session id and seq. A no-op unless paused.
@@ -263,6 +275,9 @@ impl PaneDriver {
     /// # Errors
     /// As [`Self::connect`], plus [`ConnectError::NoEndpoint`] if nothing was ever connected.
     pub fn resume(&self, handshake_timeout: Duration) -> Result<(), ConnectError> {
+        if self.shared.on_supervisor() {
+            return Err(ConnectError::Reentrant);
+        }
         let reply = Arc::new(Reply::new());
         self.post(Command::Resume {
             handshake_timeout,
@@ -271,18 +286,11 @@ impl PaneDriver {
         reply.wait().unwrap_or(Err(ConnectError::Gone))
     }
 
-    /// Permanently retires the session: a final ack, a clean `bye`, and a teardown. Idempotent.
+    /// Permanently retires the session: a final ack, a clean `bye`, and a teardown. Idempotent, and
+    /// queued rather than awaited when called from inside a callback, as [`Self::pause`] is.
     pub fn close(&self) {
         self.shared.closing.store(true, Ordering::SeqCst);
-        let reply = Arc::new(Reply::new());
-        if self
-            .post(Command::Close {
-                reply: Arc::clone(&reply),
-            })
-            .is_ok()
-        {
-            reply.wait();
-        }
+        self.post_and_settle(|reply| Command::Close { reply });
     }
 
     /// Sends PTY input, split at the flow-control cap by the transport.
@@ -448,6 +456,22 @@ impl PaneDriver {
     fn post(&self, command: Command) -> Result<(), ConnectError> {
         self.commands.send(command).map_err(|_gone| ConnectError::Gone)
     }
+
+    /// Posts a command whose answer carries nothing, and waits for it — unless waiting would be a
+    /// wait on this very thread.
+    ///
+    /// The queue is what makes the reentrant path honest rather than merely non-fatal: the command
+    /// is enqueued behind whatever the supervisor is doing, so a `close()` from inside a `GaveUp`
+    /// callback still closes, one turn of the loop later, in the order it was asked. What the
+    /// caller loses is only the guarantee that it has ALREADY happened when the call returns —
+    /// and a callback cannot have that guarantee from any spelling, since the thread that would
+    /// provide it is the one standing in the callback.
+    fn post_and_settle(&self, command: impl FnOnce(Arc<Reply<()>>) -> Command) {
+        let reply = Arc::new(Reply::new());
+        if self.post(command(Arc::clone(&reply))).is_ok() && !self.shared.on_supervisor() {
+            reply.wait();
+        }
+    }
 }
 
 impl Drop for PaneDriver {
@@ -488,6 +512,9 @@ struct Campaign {
 
 /// The one thread every command, tick and retry runs on.
 fn supervise(shared: &Arc<Shared>, inbox: &Receiver<Command>) {
+    // Published before the first command is read, so no command this thread runs — and therefore no
+    // observer call it makes — can observe an unpublished id and mistake itself for the near side.
+    drop(shared.supervisor.set(thread::current().id()));
     let mut campaign: Option<Campaign> = None;
     let mut next_ack = Instant::now() + shared.config.ack_interval;
     let mut next_ping = Instant::now() + shared.config.ping_interval;
