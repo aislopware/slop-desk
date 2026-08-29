@@ -47,7 +47,6 @@ pub const EMITTED_KEYS: &[&str] = &[
     "adaptiveGroupSize",
     "adaptiveTier",
     "audioWire",
-    "blocksWireMessages",
     "coordWindowPoint",
     "cursorShape",
     "cursorUpdate",
@@ -56,7 +55,6 @@ pub const EMITTED_KEYS: &[&str] = &[
     "fragmentEncode",
     "inputEvent",
     "metadataCodecPayloads",
-    "metadataWireMessages",
     "muxBare",
     "muxFragment",
     "owdLateDrive",
@@ -64,7 +62,6 @@ pub const EMITTED_KEYS: &[&str] = &[
     "pacerDepthHinted",
     "recovery",
     "swipeNavStatus",
-    "terminalWireMessages",
     "trendlineDrive",
     "udpBackoff",
     "udpRearm",
@@ -74,18 +71,29 @@ pub const EMITTED_KEYS: &[&str] = &[
     "workspaceIntentArgs",
     "workspaceIntentOps",
     "workspaceStateCodec",
-    "workspaceWireMessages",
     "ycbcr",
 ];
 
 /// In the corpus, NOT emitted; pinned by their own suites. See the module docs before touching.
 pub const FROZEN_KEYS: &[&str] = &[
+    // The four terminal-wire blocks, frozen by `docs/63` G.4 for the reason `muxEnvelopes` was
+    // frozen by G.3: `WireMessage.encode()` is deleted, so the generator cannot produce them. The
+    // client's live path takes the FLAT RECORD through `slopdesk_mux_transport_send` and has not
+    // wanted bytes since G.3 moved the socket to Rust, which left the encoder with no caller but
+    // its own tests and this generator.
+    //
+    // `rust/slopdesk-wire/tests/golden_vectors.rs` replays all four, and it is a STRONGER pin than
+    // the emission was: it decodes each frame, asserts every field against the values the generator
+    // wrote beside the hex, re-encodes and asserts byte-identical output, and checks
+    // `wire_byte_count` against the frame's own length. An emission can only ever agree with itself.
+    "blocksWireMessages",
     "captureRetarget",
     "captureUnion",
     "fpsGovernorEwma",
     "hostOutputSniffer",
     "inputMotionCoalesce",
     "inspectorEvents",
+    "metadataWireMessages",
     // Frozen by the deletion of `MuxEnvelopeCodec`, not by a module the generator cannot reach:
     // the Swift codec that emitted this block is gone, so the block's bytes are now Rust's to hold.
     // `muxBare` and `muxFragment` above stay EMITTED — they are `VideoMuxHeaderCodec`'s, the PATH-2
@@ -100,12 +108,14 @@ pub const FROZEN_KEYS: &[&str] = &[
     "systemDialogClassify",
     "systemDialogDetect",
     "terminalModeTracker",
+    "terminalWireMessages",
     "vdChipPixelLimit",
     "vdOriginToRight",
     "vdRefreshRates",
     "virtualDisplayGeometry",
     "windowFits",
     "windowPlacement",
+    "workspaceWireMessages",
 ];
 
 /// A file counts as a reader only if it also mentions one of these.
@@ -115,7 +125,7 @@ const CORPUS_MENTIONS: &[&str] = &["golden_vectors", "GoldenCorpus"];
 ///
 /// `rust/*/tests` and not `rust/` — a crate's own `src/` is not a replay. This module names every
 /// frozen key and opens the corpus, so a walk over all of `rust/` would find THIS file as a reader
-/// for all thirteen and the check could never fail again.
+/// for every one of them and the check could never fail again.
 const READER_TREES: &[&str] = &["Tests"];
 
 /// The other half: each `rust/<crate>/tests` directory, one level down.

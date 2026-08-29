@@ -483,8 +483,6 @@ public struct MuxControlChannel: MessageChannel {
         self.transport = transport
     }
 
-    public var channel: Channel { .control }
-
     public var inbound: AsyncThrowingStream<WireMessage, Error> { transport.inbound }
 
     public func send(_ message: WireMessage) async throws {

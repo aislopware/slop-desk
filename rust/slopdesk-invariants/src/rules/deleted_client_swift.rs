@@ -1,4 +1,5 @@
-//! The PATH-1 client mux that used to be Swift, and the two faces that are all it left behind.
+//! The PATH-1 client mux that used to be Swift, the terminal wire's byte half that G.4 found had no
+//! caller left once it moved, and the faces that are all the two stages left behind.
 //!
 //! `deleted_host_swift` is this file's twin on the other end of the same connection: hostd stopped
 //! speaking the mux in Swift at `docs/60` F.9, and `docs/63` G.3 did the same to the CLIENT. What
@@ -54,6 +55,10 @@ const TRANSPORT_FACE: &str = "Sources/SlopDeskTransport/Mux/MuxClientTransport.s
 /// The per-host face — one handle, one pool, refcounts and eviction below the boundary.
 const REGISTRY_FACE: &str = "Sources/SlopDeskTransport/Mux/ConnectionRegistry.swift";
 
+/// The wire face that survived G.4 — a flattener between a Swift enum and the flat record, with
+/// neither byte door left on it.
+const WIRE_CODEC_FACE: &str = "Sources/SlopDeskProtocol/WireMessageCodec.swift";
+
 /// The client's mux layer is Rust, and the Swift that spoke it stays deleted.
 ///
 /// `docs/63` §G.3. Composed the way [`deleted_host_swift`](super::deleted_host_swift) is: a vector
@@ -63,6 +68,7 @@ pub fn deleted_client_swift(tree: &Tree) -> Report {
     let mut claims = the_protocol_mux_stays_deleted();
     claims.extend(the_transport_mux_stays_deleted());
     claims.extend(the_mux_test_fakes_stay_deleted());
+    claims.extend(the_terminal_byte_codec_stays_deleted());
     claims.extend(no_deleted_type_is_declared_again());
     claims.extend(the_three_faces_still_ask());
     check_all(tree, &claims)
@@ -233,6 +239,65 @@ fn the_mux_test_fakes_stay_deleted() -> Vec<Claim> {
     ]
 }
 
+/// The terminal wire's BYTE half, deleted by `docs/63` §G.4 for the reason G.3 created.
+///
+/// `FrameDecoder.swift` was a handle over `slopdesk_wire`'s `FrameDecoder` and `WireMessageCodec`'s
+/// `encode()`/`decode(payload:)` were handles over the two byte doors. All three were already one
+/// implementation; what G.4 found is that they had no CALLER. Once G.3 moved the socket into
+/// `slopdesk-clientnet`, the live path took the flat record through `slopdesk_mux_transport_send`
+/// and a channel's stream was framed on the Rust side — so the only things still asking for bytes
+/// were the suites checking the bytes were right, and the golden generator. A codec whose callers
+/// are its own tests is not a face; it is a second implementation with a witness.
+///
+/// The doors retired with them (`slopdesk_wire_message_encode`, `slopdesk_wire_message_decode`, the
+/// five `slopdesk_frame_decoder_*`), the way `slopdesk_ws_listen_port` retired with
+/// `PortValidation.swift` rather than outliving its only caller. The corpus keys those suites
+/// pinned moved EMITTED → FROZEN and are replayed by `rust/slopdesk-wire/tests/golden_vectors.rs`,
+/// which decodes each frame, checks its fields against the pinned values, re-encodes and asserts
+/// byte-identical output — a stronger pin than an emission, which can only agree with itself.
+///
+/// The test paths are banned as well as the source ones. Bringing back
+/// `WireMessageRoundTripTests.swift` alone would not compile, but bringing it back WITH the encoder
+/// it needs is exactly how the pair grows back, and a ban on only one half is a ban on the half
+/// nobody would restore first.
+fn the_terminal_byte_codec_stays_deleted() -> Vec<Claim> {
+    vec![
+        Claim::Absent {
+            path: "Sources/SlopDeskProtocol/FrameDecoder.swift",
+            message: "the terminal frame decoder is back in Swift — slopdesk_wire::framing's PrefixedReader \
+                      holds the buffer, the read cursor and the fail-stop, and the client's receive loop \
+                      frames on the Rust side of the boundary now, so a Swift decoder here has no stream to \
+                      read (docs/63 §G.4)",
+        },
+        Claim::Lacks {
+            path: WIRE_CODEC_FACE,
+            pattern: r"func encode\(\)|static func decode\(payload",
+            view: View::Code,
+            message: "the terminal wire's byte half is back in WireMessageCodec.swift — nothing on the \
+                      client asks for a frame, so an encode()/decode(payload:) pair here is a codec whose \
+                      only callers would be its own tests (docs/63 §G.4)",
+        },
+        Claim::Absent {
+            path: "Tests/SlopDeskProtocolTests/WireMessageRoundTripTests.swift",
+            message: "the Swift wire round-trip suite is back — round-tripping one codebase's encoder \
+                      through its own decoder passes just as happily when both have drifted from the wire; \
+                      rust/slopdesk-wire/tests/golden_vectors.rs checks the hex against the FIELDS (docs/63 \
+                      §G.4)",
+        },
+        Claim::Absent {
+            path: "Tests/SlopDeskProtocolTests/FrameDecoderTests.swift",
+            message: "the Swift framing suite is back — the buffer, the cursor and the poisoning are \
+                      exercised in rust/slopdesk-wire, beside the one copy of them (docs/63 §G.4)",
+        },
+        Claim::Absent {
+            path: "Tests/SlopDeskProtocolTests/MetadataWireMessageTests.swift",
+            message: "the type-16/30 envelope suite is back — its envelope half needed the deleted encoder, \
+                      and its verb/status half was a hand-typed copy of what wire_vocabularies already \
+                      ratchets in both directions against slopdesk_wire's table (docs/63 §G.4)",
+        },
+    ]
+}
+
 /// And the same layer under any other filename.
 ///
 /// The path bans above are exact, so a resurrection that renames the file slips all of them. These
@@ -344,6 +409,12 @@ mod tests {
                 super::REGISTRY_FACE,
                 "slopdesk_mux_pool_new(ms)\nslopdesk_mux_pool_free(pool)\nslopdesk_mux_pool_pin(pool)\\
                  nslopdesk_mux_pool_unpin(pool)\n",
+            )
+            // The flattener that survived G.4 — a marshaller, with neither byte door on it.
+            .write(
+                super::WIRE_CODEC_FACE,
+                "func withFlattened(_ body: (Record) -> T) -> T { body(flatten()) }\nstatic func lent(_ flat: \
+                 Record) -> WireMessage? { build(flat) }\n",
             );
     }
 
@@ -434,6 +505,22 @@ mod tests {
             "Tests/SlopDeskTransportTests/Support/RecordingMuxLink.swift",
             "func write(_ bytes: [UInt8]) { written.append(bytes) }\n",
         ),
+        (
+            "Sources/SlopDeskProtocol/FrameDecoder.swift",
+            "func nextMessage() throws -> WireMessage? { nil }\n",
+        ),
+        (
+            "Tests/SlopDeskProtocolTests/WireMessageRoundTripTests.swift",
+            "func testOutputRoundTrips() { XCTAssertEqual(try decode(m.encode()), m) }\n",
+        ),
+        (
+            "Tests/SlopDeskProtocolTests/FrameDecoderTests.swift",
+            "func testAPartialFrameIsNotAnError() { XCTAssertNil(try decoder.nextMessage()) }\n",
+        ),
+        (
+            "Tests/SlopDeskProtocolTests/MetadataWireMessageTests.swift",
+            "func testMetadataRequestRoundTrip() { XCTAssertEqual(try roundTrip(m), m) }\n",
+        ),
     ];
 
     /// The clean tree is green, and each deleted path is red on its own.
@@ -453,6 +540,28 @@ mod tests {
             assert!(
                 deleted_client_swift(&fixture.tree()).is_clean(),
                 "{path}: taking it back out did not restore the clean tree"
+            );
+        }
+    }
+
+    /// The byte half growing back INSIDE the surviving flattener, which no path ban would see.
+    ///
+    /// The file stays — it is the marshalling `withFlattened`/`lent` do — so the ban has to be on
+    /// what is written in it rather than on its existence.
+    #[test]
+    fn the_byte_pair_returning_to_the_flattener_is_red() {
+        for seed in [
+            "    func encode() -> Data { WireBuffer.filled(bound) { _ in } }\n",
+            "    static func decode(payload: Data) throws -> WireMessage { try attempt(payload) }\n",
+        ] {
+            let fixture = Fixture::new("deleted-client-swift-byte-pair");
+            client(&fixture);
+            assert!(deleted_client_swift(&fixture.tree()).is_clean(), "{seed}");
+
+            fixture.append(super::WIRE_CODEC_FACE, seed);
+            assert!(
+                !deleted_client_swift(&fixture.tree()).is_clean(),
+                "{seed}: the byte half came back and the ban did not fire"
             );
         }
     }

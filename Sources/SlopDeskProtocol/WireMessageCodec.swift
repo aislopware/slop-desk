@@ -2,11 +2,16 @@ import CSlopDeskFFI
 import Foundation
 import SlopDeskArena
 
-// The PATH-1 terminal codec, through `rust/slopdesk-wire` — the crate that has carried this whole
-// table since the port's stage 1. What used to be here was a second implementation of it: 680 lines
-// of Swift laying out the same 30 message types, kept in step with the Rust by review and by a
-// golden corpus both had to pass. `docs/DECISIONS.md` recorded that duplication as a debt whose
-// "only honest retirement is finishing the port". This is that retirement.
+// The PATH-1 terminal codec's MARSHALLING, and by G.4 that is all it is. `rust/slopdesk-wire` has
+// carried the table itself since the port's stage 1; what used to be here was a second
+// implementation of it — 680 lines of Swift laying out the same 30 message types, kept in step by
+// review and by a golden corpus both had to pass. `docs/DECISIONS.md` recorded that duplication as
+// a debt whose "only honest retirement is finishing the port", and the bytes half of the retirement
+// landed then. This file is the residue that retirement could not remove: a Swift `enum` the UI
+// switches on has to be spread onto the flat record every door speaks, and put back together from
+// one, and neither direction is something Rust can do for it. `flatten` and `build` below are those
+// two directions and nothing more — no length is computed here, no field is validated here, no byte
+// order is decided here.
 //
 // TWO ADDRESS SPACES, and it is worth knowing which is which:
 //
@@ -20,54 +25,11 @@ import SlopDeskArena
 //     same number the hand-written Swift made.
 
 public extension WireMessage {
-    /// Bytes a UUID occupies on the wire (its 16 raw bytes).
-    static let sessionIDByteCount = slopdesk_wire_constant(1)
-
     /// All-zero UUID used in `hello` to request a brand-new session.
     static let newSessionID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
-    /// Encodes this message into a complete frame, ready to write to a socket:
-    /// `[UInt32 BE payloadLength][UInt8 messageType][body...]`.
-    ///
-    /// `payloadLength` counts `messageType` + `body` and excludes the 4 prefix bytes — exactly what
-    /// ``FrameDecoder`` expects.
-    ///
-    /// The frame is sized by ASKING (``wireByteCount``, which never builds one), so there is one
-    /// allocation, one pass, and the opaque run copied exactly once. WHICH allocation is a measured
-    /// choice, because the two `Data` shapes cross over:
-    ///
-    ///   - `Data(count:)` zeroes what it hands back, but a frame of 14 bytes or fewer — an `ack`,
-    ///     the message this wire sends most — lives INSIDE the `Data` value and never reaches the
-    ///     allocator at all (~5 ns against ~113 ns for a `malloc`).
-    ///   - `Data(bytesNoCopy:deallocator:)` skips the zeroing but carries a heavier representation,
-    ///     about 20 ns of it, which only pays for itself once the pass it skips is longer than that.
-    ///
-    /// Measured, the crossing is at ``zeroingCheaperThanTheAllocator``: below it the two are within
-    /// noise and the small-frame win is large; at 32 KiB under an output flood the zeroing costs as
-    /// much as the encode (1.18 µs against 632 ns) and skipping it is the difference between this
-    /// and the hand-written Swift it replaced.
-    func encode() -> Data {
-        var flat = SlopDeskWireMessage()
-        var arena = Data()
-        var blob = Data()
-        flatten(into: &flat, arena: &arena, blob: &blob)
-        return withUnsafePointer(to: flat) { message in
-            arena.spanning { pool, poolLength in
-                blob.spanning { payload, payloadLength in
-                    let bound = slopdesk_wire_message_byte_count(message, pool, poolLength, payloadLength)
-                    precondition(bound > 0, "the wire codec refused a message this type can express")
-                    return WireBuffer.filled(bound) { out in
-                        let written = slopdesk_wire_message_encode(
-                            message, pool, poolLength, payload, payloadLength, out, bound,
-                        )
-                        precondition(written == bound, "the wire codec sized a frame differently than it wrote it")
-                    }
-                }
-            }
-        }
-    }
-
-    /// The exact number of bytes ``encode()`` produces, computed WITHOUT building the frame.
+    /// The exact number of bytes this message occupies as a complete frame
+    /// (`[UInt32 BE payloadLength][UInt8 messageType][body...]`), computed WITHOUT building one.
     ///
     /// The receive-side flow control credits this per consumed message and it must match the
     /// sender's per-frame debit EXACTLY — a mismatch leaks or over-grants window forever, because
@@ -86,17 +48,21 @@ public extension WireMessage {
     }
 }
 
-// MARK: - The record itself, for the doors that speak it rather than bytes
+// MARK: - The record itself, which is the only thing that crosses
 
-// `encode()` and `decode(payload:)` above cross this boundary as BYTES because their door does:
-// `slopdesk_wire_message_encode` writes a frame and `slopdesk_wire_message_decode` reads one. The
-// PATH-1 client transport's door does not. `slopdesk_mux_transport_send` takes the flat record
-// directly and its inbound callback lends one, because on both sides of that door the frame is
-// Rust's — the socket moved there in `docs/63` G.3, so re-encoding a message to bytes just to have
-// Rust decode them again would be a marshalling face built to be deleted.
+// There used to be a second pair here — an `encode()` that asked `slopdesk_wire_message_encode`
+// for a whole frame and a `decode(payload:)` that handed a whole frame to
+// `slopdesk_wire_message_decode`. Both are gone, and `docs/63` G.4 is why: once the socket moved
+// to Rust in G.3, `slopdesk_mux_transport_send` took the FLAT RECORD directly and its inbound
+// callback lent one back, so nothing on the client's live path ever wanted bytes. What kept the
+// byte pair alive was its own test suite and the golden generator — a codec whose only callers
+// were the things checking it still worked. Their pin did not go with them: the four wire-message
+// corpus keys are replayed end to end by `rust/slopdesk-wire/tests/golden_vectors.rs`, which
+// decodes each pinned frame, checks its fields, re-encodes and asserts byte-identical output.
 //
-// So the two halves of the flattening are exported. Nothing new is computed here; these are the
-// same `flatten` and `build` the byte doors use, with the frame step left out.
+// So what is exported is the two halves of the flattening and nothing else. Nothing is computed
+// here that Rust does not also compute; this is the marshalling between a Swift enum the UI
+// switches on and the flat record every door speaks.
 
 public extension WireMessage {
     /// Rebuilds one message from a flat record and the two spans lent alongside it.
@@ -128,60 +94,6 @@ public extension WireMessage {
                 }
             }
         }
-    }
-}
-
-extension WireMessage {
-    /// Decodes a message from a **complete payload** (`[UInt8 messageType][body...]`, without the
-    /// length prefix — framing is ``FrameDecoder``'s job).
-    ///
-    /// - Throws: ``SlopDeskError/truncated`` if the body is shorter than the type requires,
-    ///   ``SlopDeskError/unknownMessageType(_:)`` for an unrecognized type byte, or
-    ///   ``SlopDeskError/malformedBody(_:)`` for a right-length-but-invalid body. String fields are
-    ///   STRICT UTF-8 — an invalid sequence is malformed, never a replacement-character repair.
-    static func decode(payload: Data) throws -> WireMessage {
-        try payload.withUnsafeBytes { bytes -> WireMessage in
-            if let message = try Self.attempt(bytes, room: Self.scratchArena) { return message }
-            // Text on this wire is a SUBSTRING of the datagram, so the datagram's own length is a
-            // bound no message can exceed — a proof, not a bigger guess.
-            guard let message = try Self.attempt(bytes, room: bytes.count + 1) else {
-                throw SlopDeskError.truncated
-            }
-            return message
-        }
-    }
-
-    /// A title, a cwd or a label fits this, and nothing else reaches the arena at all — an
-    /// `.output` payload under a flood never enters it, in either direction.
-    private static let scratchArena = 512
-
-    /// One decode into an arena of `room` bytes. `nil` means only that the arena was too small.
-    private static func attempt(_ bytes: UnsafeRawBufferPointer, room: Int) throws -> WireMessage? {
-        var flat = SlopDeskWireMessage()
-        var verdict = UInt32(SLOPDESK_WIRE_DECODE_OK)
-        var built: WireMessage?
-        withUnsafeTemporaryAllocation(byteCount: room, alignment: 1) { arena in
-            verdict = slopdesk_wire_message_decode(
-                bytes.baseAddress, bytes.count, &flat, arena.baseAddress, arena.count,
-            )
-            if verdict == UInt32(SLOPDESK_WIRE_DECODE_OK) {
-                built = build(flat, UnsafeRawBufferPointer(arena), run(bytes, flat))
-            }
-        }
-        guard verdict != UInt32(SLOPDESK_WIRE_DECODE_AGAIN) else { return nil }
-        let type = bytes.first ?? 0
-        switch verdict {
-        case UInt32(SLOPDESK_WIRE_DECODE_TRUNCATED):
-            throw SlopDeskError.truncated
-        case UInt32(SLOPDESK_WIRE_DECODE_UNKNOWN_TYPE):
-            throw SlopDeskError.unknownMessageType(type)
-        case UInt32(SLOPDESK_WIRE_DECODE_MALFORMED):
-            throw SlopDeskError.malformedBody("type \(type): body is not what its type declares")
-        default:
-            break
-        }
-        guard let built else { throw SlopDeskError.unknownMessageType(type) }
-        return built
     }
 }
 
@@ -440,77 +352,4 @@ extension WireMessage {
     private static func text(_ arena: UnsafeRawBufferPointer, _ offset: UInt32, _ length: UInt32) -> String {
         ArenaText.text(arena, offset, length)
     }
-
-    /// Lifts the opaque run out of the caller's own datagram — the ONE copy this direction makes.
-    ///
-    /// Rebased inside the borrow that already holds the pointer: `dropFirst().prefix()` would build
-    /// two intermediate `Data` values, each retaining the whole parent buffer.
-    static func run(_ payload: UnsafeRawBufferPointer, _ flat: SlopDeskWireMessage) -> Data {
-        let start = Int(flat.blob_offset)
-        let end = start + Int(flat.blob_length)
-        guard flat.blob_length > 0, end <= payload.count else { return Data() }
-        return Data(UnsafeRawBufferPointer(rebasing: payload[start..<end]))
-    }
-}
-
-extension UUID {
-    /// The UUID's 16 raw bytes as `Data`, in canonical order.
-    var dataBytes: Data {
-        withUnsafeBytes(of: uuid) { Data($0) }
-    }
-
-    /// Builds a UUID from a session id's worth of raw bytes. Returns `nil` for any other length.
-    init?(dataBytes data: Data) {
-        guard data.count == WireMessage.sessionIDByteCount else { return nil }
-        var raw = uuid_t(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        withUnsafeMutableBytes(of: &raw) { dest in
-            _ = data.copyBytes(to: dest)
-        }
-        self.init(uuid: raw)
-    }
-}
-
-extension Data {
-    /// Hands this buffer to `body` as the `(pointer, length)` pair the codec's C entries take.
-    ///
-    /// An EMPTY buffer short-circuits to `(nil, 0)` rather than borrowing: the messages this wire
-    /// sends most — an `ack`, an `.output`, an `.input` — carry no text at all, so their arena is
-    /// empty every time, and `withUnsafeBytes` on it is a borrow bought for nothing.
-    @inline(__always)
-    func spanning<R>(_ body: (UnsafeRawPointer?, Int) throws -> R) rethrows -> R {
-        try isEmpty ? body(nil, 0) : withUnsafeBytes { try body($0.baseAddress, $0.count) }
-    }
-}
-
-/// Where this module's byte buffers come from.
-enum WireBuffer {
-    /// A buffer of exactly `count` bytes, written by `fill` and handed back as `Data`.
-    ///
-    /// WHICH allocation is a measured choice, because the two `Data` shapes cross over:
-    ///
-    ///   - `Data(count:)` zeroes what it hands back, but a buffer of 14 bytes or fewer — an `ack`,
-    ///     the message this wire sends most — lives INSIDE the `Data` value and never reaches the
-    ///     allocator at all (~5 ns against ~113 ns for a `malloc`).
-    ///   - `Data(bytesNoCopy:deallocator:)` skips the zeroing but carries a heavier representation,
-    ///     about 20 ns of it, which only pays for itself once the pass it skips is longer than that.
-    ///
-    /// Measured, the crossing is at ``zeroingCheaperThanTheAllocator``: below it the two are within
-    /// noise and the small-buffer win is large; at 32 KiB the zeroing costs as much as the encode
-    /// that follows it (1.18 µs against 632 ns).
-    @inline(__always)
-    static func filled(_ count: Int, _ fill: (UnsafeMutableRawPointer?) -> Void) -> Data {
-        guard count > 0 else { return Data() }
-        guard count >= zeroingCheaperThanTheAllocator else {
-            var buffer = Data(count: count)
-            buffer.withUnsafeMutableBytes { fill($0.baseAddress) }
-            return buffer
-        }
-        guard let out = malloc(count) else { preconditionFailure("out of memory for a wire buffer") }
-        fill(out)
-        return Data(bytesNoCopy: out, count: count, deallocator: .free)
-    }
-
-    /// The size at and above which writing into UNINITIALISED memory beats letting `Data` zero the
-    /// buffer first — see ``filled(_:_:)`` for the two costs that cross here.
-    private static let zeroingCheaperThanTheAllocator = 4096
 }

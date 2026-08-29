@@ -191,7 +191,7 @@ final class InspectorTransportTests: XCTestCase {
         // Length prefix claiming > 16 MiB must be rejected, not allocated.
         let decoder = InspectorFrameDecoder()
         var prefix = Data()
-        let tooBig = UInt32(SlopDesk.maxFramePayloadLength + 1)
+        let tooBig = UInt32(InspectorCodec.maxFramePayloadLength + 1)
         prefix.append(UInt8(truncatingIfNeeded: tooBig >> 24))
         prefix.append(UInt8(truncatingIfNeeded: tooBig >> 16))
         prefix.append(UInt8(truncatingIfNeeded: tooBig >> 8))

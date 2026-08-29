@@ -18,7 +18,6 @@ final class WorkspaceChannelClientTests: XCTestCase {
     /// One direction of a channel pair. Sends land in a lock-guarded log; `deliver` pushes an
     /// inbound message at the client.
     private final class PipeChannel: MessageChannel, @unchecked Sendable {
-        let channel: Channel = .control
         let inbound: AsyncThrowingStream<WireMessage, Error>
         private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
         private let lock = NSLock()

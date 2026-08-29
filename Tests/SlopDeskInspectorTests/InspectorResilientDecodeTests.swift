@@ -75,7 +75,7 @@ final class InspectorResilientDecodeTests: XCTestCase {
         // One good event, then an oversized length prefix (claims > 16 MiB).
         try hostChannel.send(good("before"))
         var bad = Data()
-        let tooBig = UInt32(SlopDesk.maxFramePayloadLength + 1)
+        let tooBig = UInt32(InspectorCodec.maxFramePayloadLength + 1)
         bad.append(UInt8(truncatingIfNeeded: tooBig >> 24))
         bad.append(UInt8(truncatingIfNeeded: tooBig >> 16))
         bad.append(UInt8(truncatingIfNeeded: tooBig >> 8))

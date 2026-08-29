@@ -5827,10 +5827,11 @@ bool slopdesk_video_reassembler_next_dropped_frame(SlopDeskVideoReassembler *han
  * enough for a copy to be felt, so decoding answers WHERE it is and encoding takes it as its own
  * argument. Neither direction copies it more than once.
  *
- * Decode answers a VERDICT (SLOPDESK_WIRE_DECODE_*). AGAIN means the arena was too small: nothing
- * was written, and an arena as large as the payload always fits, because text on this wire is a
- * substring of the datagram. Encode answers bytes NEEDED under §4 — the COMPLETE frame, four-byte
- * length prefix included — and 0 for a message_type no arm claims.
+ * The BYTES doors are gone (docs/63 G.4): the client's live path takes this record straight through
+ * slopdesk_mux_transport_send, so nothing asked for a frame any more. What is left is the size
+ * question the flow control has to ask — bytes NEEDED for the COMPLETE frame, four-byte length
+ * prefix included, and 0 for a message_type no arm claims. The SLOPDESK_WIRE_DECODE_* verdicts
+ * below stay: the metadata and workspace payload doors answer with them.
  *
  * slopdesk_wire_constant: 0 the wire version, 1 a session id's bytes, 2 the frame payload ceiling,
  * 3/4/5 the PATH-1 TCP keepalive ladder — idle seconds, probe interval seconds, retry count. That
@@ -5893,46 +5894,10 @@ typedef struct {
   uint8_t epoch[16];
 } SlopDeskWireMessage;
 
-uint32_t slopdesk_wire_message_decode(const uint8_t *payload, size_t payload_len,
-                                      SlopDeskWireMessage *out, uint8_t *arena, size_t arena_cap);
-
-size_t slopdesk_wire_message_encode(const SlopDeskWireMessage *message, const uint8_t *arena,
-                                    size_t arena_len, const uint8_t *blob, size_t blob_len,
-                                    uint8_t *out, size_t cap);
-
 size_t slopdesk_wire_message_byte_count(const SlopDeskWireMessage *message, const uint8_t *arena,
                                        size_t arena_len, size_t blob_len);
 
 size_t slopdesk_wire_constant(uint32_t index);
-
-// ---------------------------------------------------------------------------
-// The terminal receive path (rust/slopdesk-ffi/src/frame_decoder.rs).
-//
-// A handle, because a frame arrives in pieces. `next` answers with one of the
-// SLOPDESK_WIRE_DECODE_* verdicts above or one of the two below; `detail`
-// carries the arena size on AGAIN, the unknown type byte on UNKNOWN_TYPE and
-// the claimed length on TOO_LARGE. The message's opaque run is PARKED, not
-// written: `blob_length` says how long, `..._run` copies it out, and the park
-// holds only until the next `..._next` on the same handle.
-// ---------------------------------------------------------------------------
-
-#define SLOPDESK_FRAME_PENDING 5u
-#define SLOPDESK_FRAME_TOO_LARGE 6u
-
-typedef struct SlopDeskFrameDecoder SlopDeskFrameDecoder;
-
-SlopDeskFrameDecoder *slopdesk_frame_decoder_new(void);
-
-void slopdesk_frame_decoder_free(SlopDeskFrameDecoder *handle);
-
-void slopdesk_frame_decoder_append(SlopDeskFrameDecoder *handle, const uint8_t *bytes, size_t len);
-
-size_t slopdesk_frame_decoder_buffered(SlopDeskFrameDecoder *handle);
-
-uint32_t slopdesk_frame_decoder_next(SlopDeskFrameDecoder *handle, SlopDeskWireMessage *out,
-                                     uint8_t *arena, size_t arena_cap, size_t *detail);
-
-size_t slopdesk_frame_decoder_run(SlopDeskFrameDecoder *handle, uint8_t *out, size_t cap);
 
 // ---------------------------------------------------------------------------
 // The flow-control constants (rust/slopdesk-ffi/src/mux_flow.rs).
@@ -6073,7 +6038,7 @@ bool slopdesk_mux_transport_await_open_ack(const SlopDeskMuxTransport *handle, u
 int slopdesk_mux_transport_send_input(const SlopDeskMuxTransport *handle, const uint8_t *bytes,
                                       size_t len);
 
-// One message on CONTROL. The record and arena are slopdesk_wire_message_encode's.
+// One message on CONTROL. The record and arena are the SlopDeskWireMessage pair above.
 // REFUSES an input: CONTROL is unwindowed, and a paste on it would put a 16 MiB
 // frame on the lane a Ctrl-C needs.
 int slopdesk_mux_transport_send(const SlopDeskMuxTransport *handle,

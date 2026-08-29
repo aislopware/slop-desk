@@ -122,7 +122,6 @@ final class LaunchDialHoldTests: XCTestCase {
 
     /// The workspace channel's control end, held by the test so it can play the host.
     private final class PipeChannel: MessageChannel, @unchecked Sendable {
-        let channel: Channel = .control
         let inbound: AsyncThrowingStream<WireMessage, Error>
         private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
         private let lock = NSLock()

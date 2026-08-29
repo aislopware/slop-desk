@@ -81,37 +81,61 @@ pub fn video_control_channel(tree: &Tree) -> Report {
 /// `.output` flood behind every keystroke. Its Swift side is now a flattener and nothing else — the
 /// layout lives in `rust/slopdesk-wire`, reached through `slopdesk-ffi`.
 ///
-/// `SlopDeskProtocol` still owns `appendBE`/`BigEndianReader` for the framing and metadata layers
-/// that have not moved yet, so that ban is this FILE rather than the target: the codec that went to
-/// Rust may not quietly come back beside them.
+/// The `appendBE`/`BigEndianReader` ban is on this FILE rather than on the module. The helpers are
+/// not in `Sources/SlopDeskProtocol` at all any more — they are test fixtures under
+/// `Tests/SlopDeskProtocolTests/BigEndianFixtureBytes.swift`, where hand-spelling the bytes a
+/// decode must accept is the point rather than a shortfall. A file-scoped ban is what says the
+/// codec that went to Rust may not quietly come back by importing one.
 ///
-/// The three numbers both ends would otherwise type are the wire version, a session id's width and
-/// the frame ceiling. `slopdesk_wire_constant` vends all three. The version travels as a bare `1`,
-/// which no numeric pattern can tell from a tag byte — so it is pinned by NAME, and the two widths
-/// by value.
+/// The numbers both ends would otherwise type are the wire version and the frame ceiling, and by
+/// G.4 Swift asks for NEITHER: the `SlopDesk` namespace vended them and is deleted, which is why
+/// the claim below is the one that keeps it gone. The handshake's version is filled by
+/// `slopdesk-clientnet` and the ceiling is enforced by `slopdesk-wire`'s framer, so the last Swift
+/// reader of either was an inspector suite reaching across protocols for a number that happened to
+/// match — it asks `slopdesk_inspector_constant` now. A session id's 16 bytes were the third, asked
+/// for by a `UUID(dataBytes:)` initialiser nothing called. What survives is the TRANSCRIPTION ban,
+/// which is the half that mattered: the version travels as a bare `1`, which no numeric pattern can
+/// tell from a tag byte, so it is pinned by NAME and the width by value.
 ///
-/// The framing itself is `rust/slopdesk-wire`'s `FrameDecoder`, held through a handle: the
-/// buffering, the cursor that avoids a per-frame memmove and the fail-stop on a lost byte-boundary.
-/// What is left in Swift is the handle and the error mapping. A second READER of the same stream is
-/// not a second implementation; a second BUFFER of it is, and it is how the cursor and the
-/// fail-stop drift apart.
+/// ## What `docs/63` §G.4 changed about this rule
+///
+/// It used to make two more claims: that `WireMessageCodec.swift` called
+/// `slopdesk_wire_message_encode` and `slopdesk_wire_message_decode`, and that
+/// `FrameDecoder.swift` called the five framing doors. Both faces asked Rust for BYTES, and by G.4
+/// nothing wanted bytes: G.3 moved the socket into `slopdesk-clientnet`, so the live path takes the
+/// FLAT RECORD through `slopdesk_mux_transport_send` and a channel's stream is framed on the Rust
+/// side of the boundary. What kept the byte doors alive after that was their own test suites and
+/// the golden generator — a codec whose only callers were the things checking it still worked. The
+/// two doors, the five framing doors and `FrameDecoder.swift` are all deleted.
+///
+/// What is NOT gone is the reason the framing half of the rule existed. A second READER of a stream
+/// is not a second implementation; a second BUFFER of it is, and that is how a cursor and a
+/// fail-stop drift apart. So the ban is re-aimed the way `mux_layer` re-aimed its own: at the ONE
+/// copy, positively, in the crate that holds it, where a second buffer would actually be written.
 #[must_use]
 pub fn terminal_wire(tree: &Tree) -> Report {
     const SWIFT_WIRE: &str = "Sources/SlopDeskProtocol/WireMessageCodec.swift";
-    const SWIFT_ROOT: &str = "Sources/SlopDeskProtocol/SlopDesk.swift";
-    const SWIFT_FRAMING: &str = "Sources/SlopDeskProtocol/FrameDecoder.swift";
+    /// The buffer, the read cursor, the lazy compaction and the poisoning — one copy, and this is
+    /// it.
+    const RUST_FRAMING: &str = "rust/slopdesk-wire/src/framing.rs";
+    /// The receive loop that drives it, and the crate that would grow a second one if one grew.
+    const RUST_CLIENTNET: &str = "rust/slopdesk-clientnet/src";
 
     let claims = [
         Claim::Doors {
             path: SWIFT_WIRE,
-            entries: &[
-                "slopdesk_wire_message_encode",
-                "slopdesk_wire_message_decode",
-                "slopdesk_wire_message_byte_count",
-                "slopdesk_wire_constant",
-            ],
-            message: "Sources/SlopDeskProtocol/WireMessageCodec.swift no longer calls {entry} — the \
-                      terminal wire is rust/slopdesk-wire's",
+            entries: &["slopdesk_wire_message_byte_count"],
+            message: "Sources/SlopDeskProtocol/WireMessageCodec.swift no longer calls {entry} — it is the \
+                      one number the flow control depends on, it must equal the sender's per-frame debit \
+                      exactly, and a Swift count of it would be a second answer that drifts by accumulating \
+                      rather than by failing",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskProtocol/SlopDesk.swift",
+            message: "Sources/SlopDeskProtocol/SlopDesk.swift is back — the wire version and the frame \
+                      ceiling are the transport's now (slopdesk-clientnet fills the handshake, \
+                      slopdesk-wire's framer enforces the cap), and a Swift namespace holding them is a \
+                      second place to read a number no Swift code needs (docs/63 §G.4)",
         },
         Claim::Lacks {
             path: SWIFT_WIRE,
@@ -121,35 +145,43 @@ pub fn terminal_wire(tree: &Tree) -> Report {
                       once, in Rust",
         },
         Claim::NoneOf {
-            paths: &[SWIFT_WIRE, SWIFT_ROOT],
+            paths: &[SWIFT_WIRE],
             pattern: r"(static let|==) *(16 \* 1024 \* 1024|16)\b",
             view: View::Code,
             message: "a wire width is spelled in Swift again ({files}) — slopdesk_wire_constant vends it",
         },
         Claim::NoneOf {
-            paths: &[SWIFT_WIRE, SWIFT_ROOT],
+            paths: &[SWIFT_WIRE],
             pattern: r"protocolVersion[^=]*= *[0-9]",
             view: View::Code,
             message: "the wire version is spelled in Swift again ({files}) — slopdesk_wire_constant vends it",
         },
-        Claim::Doors {
-            path: SWIFT_FRAMING,
-            entries: &[
-                "slopdesk_frame_decoder_new",
-                "slopdesk_frame_decoder_free",
-                "slopdesk_frame_decoder_append",
-                "slopdesk_frame_decoder_next",
-                "slopdesk_frame_decoder_run",
-            ],
-            message: "Sources/SlopDeskProtocol/FrameDecoder.swift no longer calls {entry} — the terminal \
-                      framing is rust/slopdesk-wire's",
+        // The positive half, so the ban below cannot go green by the one copy vanishing too.
+        Claim::Mentions {
+            path: RUST_FRAMING,
+            names: &["struct PrefixedReader", "COMPACTION_THRESHOLD"],
+            message: "rust/slopdesk-wire/src/framing.rs lost {entry} — the frame buffer, its read cursor \
+                      and the lazy compaction that keeps a chunk of many small frames off O(n²) are one \
+                      answer, and the terminal decoder and the mux decoder are both three lines over it \
+                      (docs/20 §4)",
         },
-        Claim::Lacks {
-            path: SWIFT_FRAMING,
-            pattern: "readOffset|compactConsumed|readPrefix|private var buffer",
+        // The ban, aimed where a second buffer would actually be written: the receive loop. Not at
+        // all of `rust/` — `PrefixedReader` itself is these names, and a walk that includes it can
+        // never fail.
+        Claim::NoneUnder {
+            roots: &[RUST_CLIENTNET],
+            extensions: &["rs"],
+            pattern: r"read_offset|compact_consumed|read_prefix|COMPACTION_THRESHOLD",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "FrameDecoder.swift grew its own buffer back — the frame buffer is Rust's, and there \
-                      is one",
+            exempt: &[],
+            message: "a second frame buffer is growing beside PrefixedReader's ({files}) — the read cursor \
+                      and its compaction schedule are one implementation, and two of them drift apart \
+                      silently because each passes its own tests. The BUFFER is named rather than the \
+                      poisoning: `map_err(|_poisoned| …)` on a Mutex is an ordinary lock idiom the pool \
+                      uses eight times, and a ban that fires on it is one somebody exempts instead of reads \
+                      (docs/20 §4)",
         },
     ];
     check_all(tree, &claims)

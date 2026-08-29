@@ -4,16 +4,21 @@
 //! title, every agent-status edge. `rust/slopdesk-wire` has carried the whole table since the
 //! port's stage 1; this module is what finally lets Swift call it instead of keeping a second copy.
 //!
+//! ## What crosses is the RECORD, not a frame
+//! It used to be both. `docs/63` G.3 moved the client's socket into `slopdesk-clientnet` and G.4
+//! deleted what that left stranded: the two byte doors, and the Swift `FrameDecoder` and
+//! `encode()`/`decode(payload:)` above them. Nothing on the client wanted a frame any more —
+//! `mux_transport`'s inbound callback [`pack`]s a decoded message and `slopdesk_mux_transport_send`
+//! [`unpack`]s one — so the only callers the byte pair had left were its own tests and the golden
+//! generator. What is exported here is [`pack`]/[`unpack`], the size question the flow control has
+//! to ask, and the constants both ends are reasoned against.
+//!
 //! ## The opaque run never enters the arena, in either direction
 //! Six arms end in a run of bytes the codec never looks inside — an `output` payload under a flood,
 //! an `input`, a block's captured output, a metadata or workspace body. That run is the only field
 //! big enough for a copy to matter, and the old Swift codec copied it exactly once in each
-//! direction. So does this boundary:
-//!
-//! - **Decoding**, the run answers as `(blob_offset, blob_length)` into the caller's own datagram —
-//!   [`WireMessage::decode_leaving_opaque_run`] never materialises it — and Swift makes its one
-//!   durable copy straight out of the bytes it already holds.
-//! - **Encoding**, the run is its own `(ptr, len)` argument, copied once into the answer.
+//! direction. So does this boundary: the run is its own `(ptr, len)` span beside the record,
+//! `blob_length` says how long it is, and neither side interns it.
 //!
 //! ## Why there is an arena at all, and what is in it
 //! The short TEXT fields cannot be spans: a message may carry two of them (`notification`'s title
@@ -38,7 +43,7 @@ use slopdesk_wire::{
     WireMessage,
 };
 
-use crate::{arena_text, borrow, deliver, saturating_u32};
+use crate::{arena_text, borrow, saturating_u32};
 
 /// The message decoded; every span is valid.
 pub const WIRE_DECODE_OK: u32 = 0;
@@ -518,102 +523,15 @@ pub(crate) fn unpack(flat: &SlopDeskWireMessage, arena: &[u8], blob: &[u8]) -> O
     Some(message)
 }
 
-/// Decodes one message payload (`[type][body…]`, no length prefix — framing is the decoder's job).
-///
-/// Text lands in `arena` and is named by the `text_*` spans; the opaque byte run is NOT copied —
-/// the `blob_*` span points into `payload`, which the caller already holds.
-///
-/// Returns one of the `SLOPDESK_WIRE_DECODE_*` verdicts. On
-/// [`WIRE_DECODE_AGAIN`] the message's `arena_length`… is not available, so the caller retries with
-/// a buffer as large as `payload` — text on this wire is a substring of the datagram, so that
-/// always fits.
-///
-/// # Safety
-/// `payload` must describe live memory for the call, `out` must be writable for one
-/// [`SlopDeskWireMessage`], and `arena` must be writable for `arena_cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_wire_message_decode(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut SlopDeskWireMessage,
-    arena: *mut c_uchar,
-    arena_cap: usize,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's; `borrow` and `deliver` restate them.
-    unsafe {
-        let bytes = borrow(payload, payload_len);
-        let (message, run) = match WireMessage::decode_leaving_opaque_run(bytes) {
-            Ok(decoded) => decoded,
-            Err(error) => return verdict(&error),
-        };
-        let packed = pack(&message, &run);
-        if packed.arena.len() > arena_cap || out.is_null() {
-            return WIRE_DECODE_AGAIN;
-        }
-        deliver(&packed.arena, arena, arena_cap);
-        out.write(packed.flat);
-        WIRE_DECODE_OK
-    }
-}
-
-/// Encodes one message into a COMPLETE frame — the four-byte length prefix included.
-///
-/// `arena` holds the text the `text_*` spans name; `blob` is the opaque byte run, passed whole
-/// because it is the one field a copy would be felt on. Returns the byte count under the §4
-/// convention: `n <= cap` wrote the frame, `n > cap` wrote nothing, `0` means no arm answers to
-/// this type byte.
-///
-/// # Safety
-/// `message` must point at one live struct, every input pair must describe live memory for the
-/// call, and `out` must be writable for `cap` bytes. The struct crosses by POINTER because it is
-/// nearly 200 bytes wide and every caller already holds one — passing it by value made the C ABI
-/// copy it into a temporary on both sides of a call this sits on the hot path of.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_wire_message_encode(
-    message: *const SlopDeskWireMessage,
-    arena: *const c_uchar,
-    arena_len: usize,
-    blob: *const c_uchar,
-    blob_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: as above — one struct read, three borrows and one lent buffer, none outliving the
-    // call.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let blob = borrow(blob, blob_len);
-        // The message is built WITHOUT its opaque run and the run is handed to the encoder beside
-        // it, so a 32 KiB `.output` under a flood crosses this boundary copied once — into the
-        // caller's own buffer — rather than three times.
-        let Some(message) = unpack(&*message, arena, &[]) else {
-            return 0;
-        };
-        let out = if out.is_null() || cap == 0 {
-            &mut [][..]
-        } else {
-            core::slice::from_raw_parts_mut(out, cap)
-        };
-        message.encode_with_run_into(blob, out)
-    }
-}
-
-/// The byte count [`slopdesk_wire_message_encode`] would produce, WITHOUT building the frame.
+/// The byte count this message would occupy as a COMPLETE frame — the four-byte length prefix
+/// included — WITHOUT building one.
 ///
 /// The receive side credits this per consumed message and it must match the sender's per-frame
 /// debit exactly — a mismatch leaks or over-grants window forever, because the error accumulates
 /// rather than cancelling. `blob_len` is the opaque run's length; the run itself is not needed,
 /// which is the whole point of asking rather than encoding.
 ///
-/// Answers 0 for a `message_type` no arm claims — the same "no answer" the encoder gives.
+/// Answers 0 for a `message_type` no arm claims.
 ///
 /// # Safety
 /// `message` must point at one live struct and `arena` must describe live memory for the call.
@@ -672,7 +590,6 @@ pub extern "C" fn slopdesk_wire_constant(index: u32) -> usize {
 // The fixtures are built inline and known-good, so `unwrap` IS the assertion, and calling the raw
 // entry points the way Swift does is the thing under test.
 #[expect(
-    clippy::indexing_slicing,
     clippy::too_many_lines,
     unsafe_code,
     reason = "a panic in a test is the failure report, and the C ABI is what is being exercised"
@@ -681,58 +598,21 @@ mod tests {
     use slopdesk_wire::{CommandStatus, ProjectGitStatus, WireMessage};
 
     use super::{
-        SlopDeskWireMessage, WIRE_DECODE_AGAIN, WIRE_DECODE_OK, WIRE_DECODE_TRUNCATED,
-        WIRE_DECODE_UNKNOWN_TYPE, slopdesk_wire_constant, slopdesk_wire_message_byte_count,
-        slopdesk_wire_message_decode, slopdesk_wire_message_encode,
+        SlopDeskWireMessage, pack, slopdesk_wire_constant, slopdesk_wire_message_byte_count, unpack,
     };
 
-    /// Decodes the way the Swift wrapper does, answering the verdict, the flat message and the
-    /// arena.
-    fn decode(payload: &[u8]) -> (u32, SlopDeskWireMessage, Vec<u8>) {
-        let mut flat = SlopDeskWireMessage::default();
-        let mut arena = vec![0_u8; payload.len().max(1)];
-        // SAFETY: every pointer is a live local for the duration of the call.
-        let verdict = unsafe {
-            slopdesk_wire_message_decode(
-                payload.as_ptr(),
-                payload.len(),
-                &raw mut flat,
-                arena.as_mut_ptr(),
-                arena.len(),
-            )
-        };
-        (verdict, flat, arena)
-    }
-
-    /// Encodes the way the Swift wrapper does: size, then write.
-    fn encode(flat: SlopDeskWireMessage, arena: &[u8], blob: &[u8]) -> Vec<u8> {
-        // SAFETY: the pointers are live locals; a null `out` with cap 0 is the size query.
-        let needed = unsafe {
-            slopdesk_wire_message_encode(
-                &raw const flat,
-                arena.as_ptr(),
-                arena.len(),
-                blob.as_ptr(),
-                blob.len(),
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        let mut out = vec![0_u8; needed];
-        // SAFETY: `out` is now large enough, and every input is still live.
-        let written = unsafe {
-            slopdesk_wire_message_encode(
-                &raw const flat,
-                arena.as_ptr(),
-                arena.len(),
-                blob.as_ptr(),
-                blob.len(),
-                out.as_mut_ptr(),
-                out.len(),
-            )
-        };
-        assert_eq!(written, needed, "the sizing call and the writing call disagreed");
-        out
+    /// Crosses the boundary the way the shipped path does: `pack` on the way out, `unpack` on the
+    /// way back, with the opaque run handed over as its own span.
+    ///
+    /// This is not a convenience — it is the ONLY shape the boundary has. `docs/63` G.4 deleted the
+    /// two byte doors these helpers used to drive, because after G.3 put the socket in
+    /// `slopdesk-clientnet` nothing on the client asked for a frame: `mux_transport`'s inbound
+    /// callback packs, and `slopdesk_mux_transport_send` unpacks. So the round trip below exercises
+    /// the pair the product runs, rather than a pair kept alive to be tested.
+    fn there_and_back(message: &WireMessage) -> Option<WireMessage> {
+        let run = message.opaque_run();
+        let packed = pack(message, &(0..run.len()));
+        unpack(&packed.flat, &packed.arena, run)
     }
 
     /// One value per arm — the corpus every test here sweeps.
@@ -861,119 +741,63 @@ mod tests {
     #[test]
     fn every_message_round_trips_through_the_boundary() {
         for message in every_variant() {
-            let frame = message.encode();
-            let payload = &frame[4..];
-            let (verdict, flat, arena) = decode(payload);
-            assert_eq!(verdict, WIRE_DECODE_OK, "{message:?}");
-            assert_eq!(flat.message_type, message.message_type());
-
-            let blob = &payload[flat.blob_offset as usize..][..flat.blob_length as usize];
-            let back = encode(flat, &arena, blob);
-            assert_eq!(back, frame, "{message:?}");
+            assert_eq!(there_and_back(&message).as_ref(), Some(&message), "{message:?}");
         }
     }
 
-    /// The boundary's bytes are the crate's bytes — not merely a round trip that agrees with
-    /// itself.
+    /// The flat record's own answer for how many bytes the frame takes is the crate's answer.
+    ///
+    /// This is the one number the flow control depends on and the only reason the door survives:
+    /// the receive side credits it per consumed message and it must equal the sender's per-frame
+    /// debit exactly, because the error accumulates rather than cancelling. Checked against
+    /// `encode().len()` — the crate that owns the layout — and never against a second count here.
     #[test]
-    fn the_frame_is_byte_identical_to_the_crate_that_owns_the_layout() {
+    fn the_size_a_frame_is_asked_for_is_the_size_the_crate_encodes_to() {
         for message in every_variant() {
-            let frame = message.encode();
-            let (_, flat, arena) = decode(&frame[4..]);
-            let blob = &frame[4..][flat.blob_offset as usize..][..flat.blob_length as usize];
-            assert_eq!(encode(flat, &arena, blob), frame, "{message:?}");
-        }
-    }
-
-    /// Asking for the size and encoding must land on the same number, for every arm.
-    #[test]
-    fn the_size_a_frame_is_asked_for_is_the_size_it_encodes_to() {
-        for message in every_variant() {
-            let frame = message.encode();
-            let (_, flat, arena) = decode(&frame[4..]);
+            let run = message.opaque_run();
+            let packed = pack(&message, &(0..run.len()));
             // SAFETY: the arena is a live local for the duration of the call.
             let asked = unsafe {
                 slopdesk_wire_message_byte_count(
-                    &raw const flat,
-                    arena.as_ptr(),
-                    arena.len(),
-                    flat.blob_length as usize,
+                    &raw const packed.flat,
+                    packed.arena.as_ptr(),
+                    packed.arena.len(),
+                    run.len(),
                 )
             };
-            assert_eq!(asked, frame.len(), "{message:?}");
+            assert_eq!(asked, message.encode().len(), "{message:?}");
         }
     }
 
-    /// The opaque run is answered as a span into the CALLER's datagram, never copied out.
+    /// The opaque run crosses as its own span and never enters the arena.
+    ///
+    /// The arena is for the SHORT strings — a title, a cwd, a branch name. An `.output` payload
+    /// under a flood is the one field big enough for a copy to be felt, so it is handed over
+    /// beside the record rather than interned into it.
     #[test]
-    fn the_opaque_run_is_a_span_into_the_datagram() {
+    fn the_opaque_run_never_enters_the_arena() {
         let message = WireMessage::Output {
             seq: 1,
             bytes: vec![0xEE; 4096],
         };
-        let frame = message.encode();
-        let payload = &frame[4..];
-        let (verdict, flat, arena) = decode(payload);
-        assert_eq!(verdict, WIRE_DECODE_OK);
-        assert_eq!(flat.blob_length, 4096);
-        assert_eq!(&payload[flat.blob_offset as usize..], &[0xEE; 4096][..]);
-        assert!(
-            arena.iter().all(|byte| *byte == 0),
-            "the run must not enter the arena"
-        );
+        let run = message.opaque_run();
+        let packed = pack(&message, &(0..run.len()));
+        assert_eq!(packed.flat.blob_length, 4096);
+        assert_eq!(packed.flat.blob_offset, 0);
+        assert!(packed.arena.is_empty(), "the run must not enter the arena");
     }
 
-    /// An arena too small for the text is `AGAIN`, and nothing is written.
+    /// A type byte no arm answers to unpacks to nothing rather than to a wrong message.
     #[test]
-    fn an_undersized_arena_asks_to_be_called_again() {
-        let frame = WireMessage::Title("a long enough title".to_owned()).encode();
-        let mut flat = SlopDeskWireMessage::default();
-        let mut arena = [0xAA_u8; 4];
-        // SAFETY: the pointers are live locals for the duration of the call.
-        let verdict = unsafe {
-            slopdesk_wire_message_decode(
-                frame[4..].as_ptr(),
-                frame.len() - 4,
-                &raw mut flat,
-                arena.as_mut_ptr(),
-                arena.len(),
-            )
-        };
-        assert_eq!(verdict, WIRE_DECODE_AGAIN);
-        assert_eq!(
-            arena, [0xAA; 4],
-            "an undersized call must not write a partial answer"
-        );
-        assert_eq!(flat.message_type, 0, "nor a partial message");
-    }
-
-    /// The two ways a hostile frame is refused reach Swift as different verdicts.
-    #[test]
-    fn a_refused_frame_says_which_way_it_was_refused() {
-        assert_eq!(decode(&[]).0, WIRE_DECODE_TRUNCATED);
-        assert_eq!(decode(&[2, 0, 0]).0, WIRE_DECODE_TRUNCATED);
-        assert_eq!(decode(&[0xFE]).0, WIRE_DECODE_UNKNOWN_TYPE);
-    }
-
-    /// A type byte no arm answers to encodes as 0 rather than a wrong frame.
-    #[test]
-    fn an_unknown_type_encodes_to_nothing() {
+    fn an_unknown_type_unpacks_to_nothing() {
         let flat = SlopDeskWireMessage {
             message_type: 0xFE,
             ..SlopDeskWireMessage::default()
         };
-        // SAFETY: null input pairs are explicitly permitted; a null `out` with cap 0 is the size query.
-        let needed = unsafe {
-            slopdesk_wire_message_encode(
-                &raw const flat,
-                std::ptr::null(),
-                0,
-                std::ptr::null(),
-                0,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
+        assert!(unpack(&flat, &[], &[]).is_none());
+        // And the size door agrees: 0 bytes, not a frame of the wrong shape.
+        // SAFETY: null input pairs are explicitly permitted by the door.
+        let needed = unsafe { slopdesk_wire_message_byte_count(&raw const flat, std::ptr::null(), 0, 0) };
         assert_eq!(needed, 0);
     }
 

@@ -542,10 +542,12 @@ subscriber whose acked `stateNum` falls outside that window gets a snapshot.
    windowFits, windowPlacement`).
 4. **`muxEnvelopes`** (`main.swift:1267`) — add a `channelClass: 1` record beside the existing 0 and
    255. **Coverage only; the codec is unchanged.** Third hand-merged key.
-5. **`Tests/SlopDeskProtocolTests/MetadataWireMessageTests.swift:223`** — `[17, 37, 99]` →
-   **`[18, 38, 99]`**, and update the explanatory comment. **This is the only value-specific pin.**
-   `FrameDecoderTests.swift:88-97,175-188` and `MuxEnvelopeCodecTests.swift:134-145` use the
-   type-agnostic `0xFF` sentinel and are unaffected.
+5. The Swift unknown-type probe — `[17, 37, 99]` → **`[18, 38, 99]`**, and update the explanatory
+   comment. **This is the only value-specific pin.** The two framing suites beside it use the
+   type-agnostic `0xFF` sentinel and are unaffected. *(This step is historical: `docs/63` §G.4
+   deleted all three suites with the Swift byte codec they drove. Forward-tolerance is exercised in
+   `rust/slopdesk-wire`, beside the type table, so minting a type no longer moves a probe in a
+   second language.)*
 6. **`docs/20-wire-protocol.md`** —
    - two rows in the §4 message table;
    - `:352-353` is **stale today** (claims next-free host→client is **36**; 36 is `agentSessionIntent`).

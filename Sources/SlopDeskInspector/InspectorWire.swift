@@ -50,6 +50,17 @@ public enum InspectorCodec {
         case malformedBody(String)
     }
 
+    /// The largest payload a frame may claim, READ from the crate rather than respelled here.
+    ///
+    /// Counts `typeTag + body` and excludes the 4 prefix bytes. Its readers are the two suites that
+    /// drive a length prefix PAST the cap and assert the stream fails stop rather than buffering —
+    /// which is the inspector's OWN ceiling, so it is asked of the inspector's own vending door.
+    /// They used to reach for the terminal protocol's `SlopDesk.maxFramePayloadLength`: the two
+    /// numbers happen to be equal, but a test that borrows another protocol's constant goes green
+    /// for the wrong reason the day one of them moves. `docs/63` §G.4 deleted that namespace along
+    /// with the Swift byte codec it belonged to.
+    static let maxFramePayloadLength = Int(slopdesk_inspector_constant(0))
+
     // swiftlint:disable unused_declaration
     /// The frame's length-prefix width, READ from the crate rather than respelled here.
     ///

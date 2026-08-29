@@ -484,10 +484,12 @@ hyperlink type, but W14 ships OSC-8 click-to-open via **libghostty's own hit-tes
 later taken by the Warp-style `commandBlock`. See DECISIONS.md "W14 terminal parity".)
 
 > **These two numbers are prose and drift.** They read 17 / **36** until 2026-07-26, by which point
-> 36 was `agentSessionIntent`. Before minting a verb, verify against the type-byte switch in
-> `Sources/SlopDeskProtocol/WireMessage.swift` — that is the source of truth — and update the
-> unknown-type probe in `Tests/SlopDeskProtocolTests/MetadataWireMessageTests.swift`, which pins
-> specific unused values and must move with them.
+> 36 was `agentSessionIntent`. Before minting a verb, verify against the type table in
+> `rust/slopdesk-wire/src/codec.rs` — that is the source of truth, and
+> `Sources/SlopDeskProtocol/WireMessage.swift`'s `messageType` switch is the Swift vocabulary read
+> against it. The unknown-type probes that used to pin specific unused values here are gone with
+> `docs/63` §G.4; forward-tolerance is exercised in `rust/slopdesk-wire`, beside the table, so
+> minting a verb no longer means moving a probe in a second language.
 
 ## 5. Seq / ack / replay semantics
 

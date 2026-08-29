@@ -19,8 +19,10 @@
 //! A decode fault loses the byte-boundary for the whole channel stream, so no later byte can be
 //! trusted to START a frame. A poisoned decoder therefore DROPS all further input and keeps
 //! returning the fault, rather than resynchronising onto attacker-chosen bytes. This is the one
-//! place the resurrected code was behind: poisoning postdates the retirement, and is translated
-//! from today's `FrameDecoder.swift`.
+//! place the resurrected code was behind: poisoning postdates the retirement, and was translated
+//! from the Swift `FrameDecoder` that used to sit over this one through a handle. `docs/63` G.4
+//! deleted that handle — the client's receive path is `slopdesk-clientnet`'s now and frames a
+//! channel's bytes on this side of the boundary — so this is the only frame decoder there is.
 
 use core::ops::Range;
 

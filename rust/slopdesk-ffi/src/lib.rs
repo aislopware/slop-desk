@@ -107,7 +107,6 @@ pub mod file_transfer;
 pub mod find_bar;
 pub mod find_matches;
 pub mod folders;
-pub mod frame_decoder;
 pub mod fuzzy;
 pub mod git_line;
 pub mod global_search;

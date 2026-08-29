@@ -1,22 +1,5 @@
 import Foundation
 
-/// The two TCP connections that make up an SlopDesk session.
-///
-/// Per `DECISIONS.md`, a session uses **two** TCP connections so a burst of PTY
-/// output on the data channel can't delay a resize / disconnect on the control
-/// channel (the Zellij lesson). `TCP_NODELAY` is set on both — in
-/// `SlopDeskTransport`, not here (`SlopDeskProtocol` is transport-agnostic).
-///
-/// Advisory metadata: ``WireMessage/channel`` states which connection a message
-/// travels on. Framing and decoder are identical on both channels.
-public enum Channel: Sendable, Equatable {
-    /// PTY byte stream: `output`, `exit` (host -> client) and `input` (client -> host).
-    case data
-    /// Session lifecycle & sizing: `hello`/`resize`/`ack`/`bye` (client -> host) and
-    /// `helloAck`/`title`/`bell` (host -> client).
-    case control
-}
-
 /// One decoded SlopDesk protocol message.
 ///
 /// Frame layout: `[UInt32 BE payloadLength][UInt8 messageType][body...]`, where
@@ -26,6 +9,13 @@ public enum Channel: Sendable, Equatable {
 ///
 /// `Sendable` so decoded messages cross actor / task boundaries (the TCP receive
 /// loop hands them to the `@MainActor` renderer).
+///
+/// The `MARK`s below group the arms by which of a session's TWO TCP connections carries them:
+/// per `DECISIONS.md` a burst of PTY output on the DATA socket must not delay a resize or a
+/// disconnect on the CONTROL one (the Zellij lesson). That grouping is documentation, not a
+/// value — a `Channel` enum and a `WireMessage.channel` property used to spell it out and were
+/// read by nothing, because the socket a message goes down is chosen by the sender that already
+/// knows which one it holds, never re-derived from the message. Framing is identical on both.
 public enum WireMessage: Equatable, Sendable {
     // MARK: DATA channel, host -> client
 
@@ -405,43 +395,6 @@ public enum WireMessage: Equatable, Sendable {
         case .agentSessionIntent: 36
         case .workspaceRequest: 17
         case .workspaceEvent: 37
-        }
-    }
-
-    /// The channel this message is expected to travel on (advisory; see ``Channel``).
-    public var channel: Channel {
-        switch self {
-        case .output,
-             .exit,
-             .input:
-            .data
-        case .hello,
-             .resize,
-             .ack,
-             .bye,
-             .ping,
-             .requestBlockOutput,
-             .metadataRequest,
-             .helloAck,
-             .title,
-             .bell,
-             .commandStatus,
-             .pong,
-             .notification,
-             .foregroundProcess,
-             .claudeStatus,
-             .commandBlock,
-             .blockOutput,
-             .metadataResponse,
-             .inputEcho,
-             .progress,
-             .cwd,
-             .projectKey,
-             .projectGitStatus,
-             .workspaceRequest,
-             .workspaceEvent,
-             .agentSessionIntent:
-            .control
         }
     }
 }

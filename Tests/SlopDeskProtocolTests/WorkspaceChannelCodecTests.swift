@@ -1,5 +1,16 @@
+import Foundation
 import XCTest
 @testable import SlopDeskProtocol
+
+private extension UUID {
+    /// The UUID's 16 raw bytes as `Data`, in canonical order.
+    ///
+    /// A TEST helper, and it lives here for the same reason `appendBE` does: hand-spelling the
+    /// bytes a decode must accept is the point. It was `Sources/SlopDeskProtocol`'s until G.4,
+    /// where the census found its last production caller had been a `UUID(dataBytes:)` initialiser
+    /// nothing called at all — a helper kept alive by the tests that checked it worked.
+    var dataBytes: Data { withUnsafeBytes(of: uuid) { Data($0) } }
+}
 
 /// The payloads that ride INSIDE types 17 and 37 (docs/45 §5.2).
 ///

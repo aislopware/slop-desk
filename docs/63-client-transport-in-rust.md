@@ -324,11 +324,40 @@ the seam moved rather than the implementation.
 
 `WireMessage`, `WireMessageCodec`, `FrameDecoder`, `WorkspaceChannelCodec`, `MetadataCodec`,
 `MetadataVerb`, `ProgressState`, `ControlLine`. Every one is `slopdesk_wire`'s already; what is here
-is the marshalling. It goes the way every other face has gone — the enum stays as the Swift
-vocabulary the UI switches on, the encode/decode arms become one door each.
+is the marshalling.
 
 This is the stage that retires the debt `DECISIONS.md` 2026-08-13 opened for the wire codec, at the
 client end. **3,961 lines**, of which the honest residue is the `WireMessage` enum itself.
+
+**What the plan got wrong, and why.** It said "the encode/decode arms become one door each" — the
+shape every earlier face took. G.3 had already made that shape unreachable. Once the socket moved
+into `slopdesk-clientnet`, `slopdesk_mux_transport_send` took the FLAT RECORD directly and its
+inbound callback lent one back, so nothing on the client's live path ever asked for bytes again. A
+census found `WireMessage.encode()` with zero callers anywhere, `decode(payload:)` reached only from
+`Tests/`, and `SlopDeskProtocol.FrameDecoder` constructed only in `Tests/`. A door pair whose sole
+callers are the suites checking it works is not a face — so the DOORS retired too, the way
+`slopdesk_ws_listen_port` retired with `PortValidation.swift`, and `slopdesk-ffi`'s
+`frame_decoder.rs` (364 lines) went with them.
+
+The first half landed as:
+
+- **Deleted.** `FrameDecoder.swift`, `WireMessage.encode()`, `decode(payload:)` and their private
+  machinery (`attempt`, `scratchArena`, `run`, `sessionIDByteCount`, `UUID.dataBytes` /
+  `init?(dataBytes:)`); the `Channel` enum and `WireMessage.channel`, which nothing outside the
+  module ever read because the socket a message rides is chosen by the sender that already holds
+  one; `MessageChannel`'s `channel` requirement; `SlopDesk.swift`, whose two constants had no Swift
+  reader left; `slopdesk_wire_message_encode`/`_decode`/`frame_decoder.rs` and their header
+  declarations; and 15 Swift suites.
+- **Kept.** `flatten` and `build` — spreading a Swift `enum` onto the flat record and putting it
+  back is the one thing Rust cannot do for the UI — plus `wireByteCount`, which flow control debits.
+  `Data.spanning` and `WireBuffer` moved to `CodecBytes.swift`, where their real users are.
+- **The pin moved, and got stronger.** The four wire-message corpus keys went `EMITTED` → `FROZEN`:
+  `rust/slopdesk-wire/tests/golden_vectors.rs` replays each pinned frame against its FIELDS,
+  re-encodes and asserts byte-identity, and checks `wire_byte_count`. An emission can only ever
+  agree with itself.
+- **Two invariant rules re-aimed rather than dropped**, on `mux_layer`'s G.3 precedent: ban the
+  drift where it would actually be written (a second frame buffer in the Rust receive loop) and pin
+  the one copy positively, so the ban cannot go green by everything vanishing.
 
 ### G.5 — the CLI and `Sources/SlopDeskClient`
 
