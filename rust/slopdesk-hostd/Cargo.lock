@@ -468,6 +468,7 @@ dependencies = [
  "slopdesk-hostsession",
  "slopdesk-ids",
  "slopdesk-inspectord",
+ "slopdesk-muxnet",
  "slopdesk-muxsession",
  "slopdesk-probe",
  "slopdesk-sanitize",
@@ -492,8 +493,8 @@ dependencies = [
 name = "slopdesk-hostnet"
 version = "0.1.0"
 dependencies = [
+ "slopdesk-muxnet",
  "slopdesk-muxsession",
- "slopdesk-wire",
  "socket2",
 ]
 
@@ -520,10 +521,10 @@ dependencies = [
  "slopdesk-apple-fsevents",
  "slopdesk-apple-pasteboard",
  "slopdesk-git",
- "slopdesk-hostnet",
  "slopdesk-hostpane",
  "slopdesk-hostsession",
  "slopdesk-ids",
+ "slopdesk-muxnet",
  "slopdesk-muxsession",
  "slopdesk-panecensus",
  "slopdesk-posix",
@@ -547,8 +548,8 @@ dependencies = [
  "nix",
  "slopdesk-agent",
  "slopdesk-git",
- "slopdesk-hostnet",
  "slopdesk-hostpane",
+ "slopdesk-muxnet",
  "slopdesk-muxsession",
  "slopdesk-posix",
  "slopdesk-sanitize",
@@ -567,6 +568,14 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "slopdesk-muxnet"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-wire",
+ "socket2",
 ]
 
 [[package]]

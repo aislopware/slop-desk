@@ -4,7 +4,7 @@
 # `MuxChannelSession` is the place a shell's bytes meet a client's sockets, and the three crates it
 # would otherwise have to live in each refuse it for a reason worth keeping. `slopdesk-muxsession`
 # is verdicts with NO IO — threading it would change what that crate is. `slopdesk-hostpane` is one
-# pane's descriptor and knows nothing above it. `slopdesk-hostnet` owns the transport underneath and
+# pane's descriptor and knows nothing above it. `slopdesk-muxnet` owns the transport underneath and
 # `docs/60` §4 says out loud that it decides nothing about panes. This crate is the one that does:
 # it holds all three and owns the threads, the queues and the timers between them.
 #
@@ -38,7 +38,7 @@ slopdesk-hostpane = { path = "../slopdesk-hostpane" }
 
 # The transport above: one logical channel, its two credit windows, and the park that waits on the
 # send one. `docs/60` stage B.
-slopdesk-hostnet = { path = "../slopdesk-hostnet" }
+slopdesk-muxnet = { path = "../slopdesk-muxnet" }
 
 # Every verdict this session takes about its own state. Six of `docs/59`'s handles live here and
 # this crate is the first caller that reaches them without an FFI door in between.

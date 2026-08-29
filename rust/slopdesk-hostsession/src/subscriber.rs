@@ -12,8 +12,8 @@
 //! thread here ends on a condition the teardown can actually cause:
 //!
 //! - the two RELAYS end when their channel's `Receiver` ends, which
-//!   [`SubChannel::finish`](slopdesk_hostnet::subchannel::SubChannel::finish) causes by dropping
-//!   the sender;
+//!   [`SubChannel::finish`](slopdesk_muxnet::subchannel::SubChannel::finish) causes by dropping the
+//!   sender;
 //! - the two SENDERS end when their lane is CLOSED, which [`Subscriber::close_lanes`] causes, and
 //!   they check it under the same lock they park on so a close during a park is not missed.
 //!
@@ -32,8 +32,8 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
-use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::PtyProcess;
+use slopdesk_muxnet::subchannel::SubChannel;
 use slopdesk_muxsession::fanout::SubscriberId;
 use slopdesk_muxsession::resize_fold::Grid;
 use slopdesk_wire::message::WireMessage;

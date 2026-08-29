@@ -45,6 +45,12 @@ pub const RUST_CTL_LIB: &str = "rust/slopdesk-ctl/src/lib.rs";
 ///
 /// superd is deliberately absent. It is the one process allowed to read a PTY master, and a root
 /// that swept all of `rust` would fire on the only correct reader in the repo.
+///
+/// `slopdesk-muxnet` IS here even though `docs/63` G.1 made it the one crate on this list the
+/// clients link too. The bans that read this list are prohibitions, not obligations — "hostd never
+/// spells superd's socket path itself", "hostd never reads a PTY master" — and a crate linked into
+/// hostd must obey every one of them whether or not it is also linked into the phone. Dropping it
+/// for being shared would move hostd's mux out from under the bans by renaming it.
 pub const HOSTD_CRATES: &[&str] = &[
     "rust/slopdesk-hostd",
     "rust/slopdesk-hostlaunch",
@@ -52,4 +58,5 @@ pub const HOSTD_CRATES: &[&str] = &[
     "rust/slopdesk-hostpane",
     "rust/slopdesk-hostserver",
     "rust/slopdesk-hostsession",
+    "rust/slopdesk-muxnet",
 ];

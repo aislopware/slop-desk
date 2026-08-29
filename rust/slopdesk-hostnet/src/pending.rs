@@ -23,23 +23,10 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use slopdesk_muxnet::connection::PairedConnection;
+use slopdesk_muxnet::link::ByteLink;
+use slopdesk_muxnet::preamble::{ConnectionId, Lane, Preamble};
 use slopdesk_muxsession::pairing::{decide, pending_expired};
-
-use crate::link::ByteLink;
-use crate::preamble::{ConnectionId, Lane, Preamble};
-
-/// Two links that named the same id, ready to become one shared mux connection.
-#[derive(Debug)]
-pub struct PairedConnection {
-    /// The wire id both preambles carried. The relay owner namespaces its per-channel sessions by
-    /// `(connection, channel)` — two distinct clients each allocate channel 1 for their first pane,
-    /// so a channel-only key cross-resolves one client's session onto another's.
-    pub connection: ConnectionId,
-    /// The CONTROL link: small frames, never flow-controlled.
-    pub control: Box<dyn ByteLink>,
-    /// The DATA link: bulk `channelData`, flow-controlled per channel.
-    pub data: Box<dyn ByteLink>,
-}
 
 /// One id's half-pair, and when the first of it arrived.
 #[derive(Debug)]
@@ -227,9 +214,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
+    use slopdesk_muxnet::link::ByteLink;
+    use slopdesk_muxnet::preamble::{ConnectionId, Lane, Preamble};
+
     use super::{PendingLinks, duration_nanos};
-    use crate::link::ByteLink;
-    use crate::preamble::{ConnectionId, Lane, Preamble};
 
     /// A link that records only whether it was closed — which is the whole property this module is
     /// responsible for. No socket: the Swift original could not be tested without one.

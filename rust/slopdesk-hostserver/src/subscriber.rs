@@ -30,7 +30,7 @@
 use std::fmt;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
-use slopdesk_hostnet::subchannel::SubChannel;
+use slopdesk_muxnet::subchannel::SubChannel;
 use slopdesk_wire::document::{HostWorkspaceState, codec};
 use slopdesk_wire::message::{RawUuid, WireMessage};
 use slopdesk_wire::workspace::{

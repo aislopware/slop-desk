@@ -19,7 +19,7 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use slopdesk_hostnet::listener::Listener;
-use slopdesk_hostnet::preamble::{ConnectionId, Lane, Preamble, encode};
+use slopdesk_muxnet::preamble::{ConnectionId, Lane, Preamble, encode};
 
 /// Long enough that a loaded machine does not fail this suite, short enough that a real hang does.
 const GENEROUS: Duration = Duration::from_secs(10);

@@ -1,11 +1,22 @@
-//! The host end of one mux connection: two links in, channel events out.
+//! One mux connection, from whichever end holds it: two links in, channel events out.
 //!
-//! This is the responder half of `Sources/SlopDeskTransport/Mux/MuxNWConnection.swift`. What it
-//! does is small — decode a frame, ask three questions about it, hand the bytes to a channel — and
-//! all three questions are already answered in `slopdesk_wire::mux`: [`admit`] says whether the
-//! connection reasons about the frame at all, [`ChannelTable::route`] says where it goes, and
-//! [`peer_close`]/[`poisoned`] say what a channel's ending reaches. None of them is re-derived
-//! here. What is here is the threads, the tables they read, and the two links they write on.
+//! This is `Sources/SlopDeskTransport/Mux/MuxNWConnection.swift`. What it does is small — decode a
+//! frame, ask three questions about it, hand the bytes to a channel — and all three questions are
+//! already answered in `slopdesk_wire::mux`: [`admit`] says whether the connection reasons about
+//! the frame at all, [`ChannelTable::route`] says where it goes, and [`peer_close`]/[`poisoned`]
+//! say what a channel's ending reaches. None of them is re-derived here. What is here is the
+//! threads, the tables they read, and the two links they write on.
+//!
+//! ## One connection, two roles, no branch
+//!
+//! The mux is asymmetric — the client allocates ids and initiates every open, the host only
+//! responds — and every one of those three questions takes a [`Role`] because of it. So this type
+//! carries a role and SPENDS it; it does not read it. There is no `if host` anywhere below, and the
+//! properties that sound like they would need one fall out of the ladder instead: an open arriving
+//! at a client is `Admission::Drop(Ignored::OpenAtInitiator)`, so a client connection cannot emit
+//! [`MuxEvent::Opened`]; a refusal is only ever produced for a responder on DATA, so
+//! [`MuxConnection::send_open_ack`] is only ever reached from the arm that the host reaches. A
+//! second copy of either rule here would be a copy that can disagree.
 //!
 //! ## Events, not handlers — and the four things that dissolve with them
 //!
@@ -18,9 +29,9 @@
 //!
 //! None of them is here, because the ordering problem is not. [`MuxConnection::serve`] hands the
 //! caller its [`MuxEvent`] receiver BEFORE it spawns a thread — the same shape
-//! [`crate::listener::Listener::serve`] already uses — so the earliest possible event is queued for
-//! an owner that already exists. There is nothing to replay, nothing to nil, and no cycle: a
-//! channel is a value in a queue, not a closure holding the host.
+//! `slopdesk_hostnet::listener::Listener::serve` already uses — so the earliest possible event is
+//! queued for an owner that already exists. There is nothing to replay, nothing to nil, and no
+//! cycle: a channel is a value in a queue, not a closure holding the peer.
 //!
 //! ## One dead link is a dead connection
 //!
@@ -56,7 +67,6 @@ use slopdesk_wire::mux::{
 };
 
 use crate::link::ByteLink;
-use crate::pending::PairedConnection;
 use crate::preamble::ConnectionId;
 use crate::subchannel::SubChannel;
 
@@ -67,6 +77,24 @@ use crate::subchannel::SubChannel;
 /// is two of `MuxFlowControl::max_output_frame_payload_bytes` and one TCP window's worth on a mesh
 /// link, so a bulk read is one syscall rather than four.
 const RECEIVE_BUFFER_BYTES: usize = 64 * 1024;
+
+/// Two links that named the same id, ready to become one mux connection.
+///
+/// The whole of what this crate needs to know about how a connection came to exist. On the host the
+/// two arrived at an accept loop and were paired by `slopdesk_hostnet::pending`; on the client they
+/// were dialled and each wrote a preamble. From here the two are the same program, and that is the
+/// entire reason the split in `docs/63` §3 is where it is.
+#[derive(Debug)]
+pub struct PairedConnection {
+    /// The wire id both preambles carried. The host's relay owner namespaces its per-channel
+    /// sessions by `(connection, channel)` — two distinct clients each allocate channel 1 for their
+    /// first pane, so a channel-only key cross-resolves one client's session onto another's.
+    pub connection: ConnectionId,
+    /// The CONTROL link: small frames, never flow-controlled.
+    pub control: Box<dyn ByteLink>,
+    /// The DATA link: bulk `channelData`, flow-controlled per channel.
+    pub data: Box<dyn ByteLink>,
+}
 
 /// A peer-initiated channel open, with the pair of sub-channels already registered for it.
 ///
@@ -185,10 +213,12 @@ impl Tables {
     }
 }
 
-/// One mux connection, seen from the host.
+/// One mux connection, seen from whichever end holds it.
 #[derive(Debug)]
 pub struct MuxConnection {
     connection: ConnectionId,
+    /// Which end this is. Spent on `slopdesk_wire::mux::admission`, never branched on here.
+    role: Role,
     control_link: Arc<dyn ByteLink>,
     data_link: Arc<dyn ByteLink>,
     tables: Mutex<Tables>,
@@ -214,16 +244,20 @@ impl ConnectionThreads {
 }
 
 impl MuxConnection {
-    /// Adopts a paired connection and starts reading both links.
+    /// Adopts a paired connection at `role` and starts reading both links.
     ///
     /// The receiver is built and returned before any thread exists, so the earliest frame on the
     /// wire is queued for an owner that is already there. That ordering is the whole reason the
     /// Swift's two replay queues are absent.
+    ///
+    /// `role` is not a mode: it is the argument every `slopdesk_wire::mux::admission` call below
+    /// takes, and passing it is the ONE place this crate says which end it is.
     #[must_use]
-    pub fn serve(pair: PairedConnection) -> (Arc<Self>, Receiver<MuxEvent>, ConnectionThreads) {
+    pub fn serve(pair: PairedConnection, role: Role) -> (Arc<Self>, Receiver<MuxEvent>, ConnectionThreads) {
         let (events, inbox) = channel();
         let connection = Arc::new(Self {
             connection: pair.connection,
+            role,
             control_link: Arc::from(pair.control),
             data_link: Arc::from(pair.data),
             tables: Mutex::new(Tables::new()),
@@ -414,7 +448,7 @@ impl MuxConnection {
         // something a correct peer never touches, and a cap checked after the table advances is a
         // cap that stopped bounding the table it was written to bound.
         match admit(&Arrival {
-            role: Role::Host,
+            role: self.role,
             link: lane,
             kind,
             registered: tables.data_channels.contains_key(&id),
@@ -542,7 +576,7 @@ impl MuxConnection {
             // the mux is healthy. Stop routing to it, and on the host tear the SIBLING down with
             // it: the pair anchors one shell, the peer's side is already finished, and no
             // `channelClose` is coming to reap it.
-            let verdict = poisoned(Role::Host, lane);
+            let verdict = poisoned(self.role, lane);
             let (data, control) = tables.unregister(verdict, channel_id);
             // The arriving link's own channel is the one that faulted — it is already finished, and
             // finishing it again is the redundant wake this leaves out on purpose.
@@ -568,7 +602,7 @@ impl MuxConnection {
         // A peer close on DATA takes the sibling with it: a client that closes both links makes the
         // sibling step a harmless no-op, and one that closes DATA only would otherwise leave a
         // control channel and an open control-table entry that nothing ever collects.
-        let verdict = peer_close(Role::Host, lane);
+        let verdict = peer_close(self.role, lane);
         let (data, control) = tables.unregister(verdict, channel_id);
         let (arriving, sibling) = if lane == Link::Control {
             (control, data)

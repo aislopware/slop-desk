@@ -678,12 +678,23 @@ altscreen-test:
 muxsession-test:
     cd rust/slopdesk-muxsession && cargo test
 
-# hostd's PATH-1 socket: the accept loop, the 17-byte association preamble and the map that pairs
-# a CONTROL and a DATA connection into one shared mux link (docs/60 stage A). Its own crate because
-# it is the one part of the port that owns file descriptors, so it links `socket2` — a dependency
-# the `.xcframework` has no business carrying. The pairing VERDICTS are still `slopdesk-muxsession`'s
-# above; this crate owns the fds and obeys. The loopback suite dials real sockets, which is exactly
-# what the Swift original could not test.
+# PATH-1's mux over two sockets, with no end of it in the name (docs/63 stage G.1): the 17-byte
+# association preamble both ends write, the four sockopts both ends set, one byte link, one
+# sub-channel and the connection that demultiplexes frames into channels. Split out of
+# `slopdesk-hostnet` by the question "does this file say HOST anywhere" — five of seven did not, and
+# the iOS client links those five. The role asymmetry is `slopdesk-wire::mux::admission`'s and is
+# PASSED to it, never branched on here; `tests/role.rs` is that property from outside.
+
+# cargo test for the role-generic mux: preamble, links, sub-channels, connection (rust/slopdesk-muxnet)
+muxnet-test:
+    cd rust/slopdesk-muxnet && cargo test
+
+# hostd's half of PATH-1, and only its half: the accept loop and the map that pairs a CONTROL and a
+# DATA connection into one shared mux link (docs/60 stage A, narrowed by docs/63 G.1). Its own crate
+# because it is the one part of the port that owns file descriptors before a pair exists, so it
+# links `socket2` — a dependency the `.xcframework` has no business carrying. The pairing VERDICTS
+# are still `slopdesk-muxsession`'s above; this crate owns the fds and obeys. The loopback suite
+# dials real sockets, which is exactly what the Swift original could not test.
 
 # cargo test for hostd's PATH-1 listener and socket pairing (rust/slopdesk-hostnet)
 hostnet-test:
@@ -1265,7 +1276,7 @@ host-status:
 # sees cargo — it just reports those tests skipped, by name.
 
 # cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test muxnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # `superd` for the same load-bearing reason as `test` above, and it matters MORE here: this is the

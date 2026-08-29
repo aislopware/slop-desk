@@ -17,13 +17,13 @@ use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use slopdesk_hostnet::link::ByteLink;
-use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostserver::service::ServiceHandle;
 use slopdesk_hostserver::{EvictionObserver, Pane, TeardownExecutor, Wires};
 use slopdesk_hostsession::{
     BlockTap, BlockUpdate, CloseTap, OutputTap, PaneLatches, SessionObserver, TapToken,
 };
+use slopdesk_muxnet::link::ByteLink;
+use slopdesk_muxnet::subchannel::SubChannel;
 use slopdesk_muxsession::registry::{self, Slot, Subscriber, Uuid};
 use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;

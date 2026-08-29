@@ -9,39 +9,41 @@
 # the floor is a framework nobody needed rather than a framework nobody can replace.
 #
 # ## What is here and what is not
-# HERE: the association preamble, the TCP parameters, the accept loop, the map of half-paired links,
-# and — since stage B — the two threads that read mux frames off a paired connection and demultiplex
-# them into per-channel streams. Everything in that list owns a file descriptor or a thread.
-# NOT here, and deliberately: every RULE any of it applies. `slopdesk-muxsession::pairing` decides
+# HERE, since `docs/63-client-transport-in-rust.md` stage G.1 took the rest: the accept loop and the
+# map of half-paired links. Those are the two files in the original seven that said HOST — a client
+# dials rather than accepts, and its two halves are made together rather than parked apart — so they
+# are the two that stayed. The preamble, the TCP parameters, the byte link, the sub-channel and the
+# connection went to `slopdesk-muxnet`, which the iOS and macOS clients link too.
+# NOT here, and deliberately: every RULE either file applies. `slopdesk-muxsession::pairing` decides
 # what an arriving half means and whether a parked one has expired, with its whole state space
-# written out as a test table (`docs/59` step 6). `slopdesk-wire::mux` decides whether a frame is
-# admitted, where it routes, what a channel's ending reaches, and every flow-control number. This
-# crate applies those verdicts to real sockets and closes what it is told to close; it re-derives
-# none of them. Also not here: anything about a PANE — no PTY, no session, no detach policy. The
-# connection reports that a channel opened, that the peer closed one, or that a link died; what any
-# of that MEANS for a shell belongs to the stages above.
+# written out as a test table (`docs/59` step 6). This crate applies those verdicts to real sockets
+# and closes what it is told to close; it re-derives none of them. Nothing here decodes a FRAME at
+# all. Also not here: anything about a PANE — no PTY, no session, no detach policy.
 #
 # ## Three dependencies, and the rule about which
-# `socket2` is rust-lang's own crate and it is here for exactly one reason: `TcpKeepalive` spells
-# `with_time`/`with_interval`/`with_retries`, which are the three values `TransportParameters.swift`
-# set and which `std::net` does not expose. The alternative is three `setsockopt` calls, and a
-# `setsockopt` with no safe wrapper is `slopdesk-posix`'s business by `CLAUDE.md`'s rule — so the
-# choice is between a maintained wrapper and growing the `unsafe` crate for a socket option. The
-# wrapper wins; `forbid(unsafe_code)` below is the proof it was not needed here.
+# `socket2` is rust-lang's own crate and it is here for exactly one reason: the listener binds a
+# dual-stack socket and sets the keepalive ladder, and `TcpKeepalive` plus `set_only_v6` are what
+# `std::net` does not expose. The alternative is hand-written `setsockopt` calls, and a `setsockopt`
+# with no safe wrapper is `slopdesk-posix`'s business by `CLAUDE.md`'s rule — so the choice is
+# between a maintained wrapper and growing the `unsafe` crate for a socket option. The wrapper wins;
+# `forbid(unsafe_code)` below is the proof it was not needed here.
 #
-# `slopdesk-wire` is here for ONE constant: `SESSION_ID_BYTE_COUNT`. The preamble this crate frames
-# and the `hello` body that crate decodes are the same 16-byte field, and `ChannelAssociation.swift`
-# already refused to transcribe it — it asks `slopdesk_wire_constant(1)`. Asking is carried across.
+# `slopdesk-muxnet` carries the preamble this listener decodes, the sockopts it applies and the
+# `PairedConnection` it publishes. It is the half of this crate that has two callers.
 #
 # `slopdesk-muxsession` is here for `pairing::{decide, pending_expired}`, for the reason above: the
 # rule exists, it is tested exhaustively, and a second reading of "is this half displacing another"
 # is precisely the one that leaks an fd.
+#
+# `slopdesk-wire` is a DEV dependency alone: `tests/mux.rs` drives the whole host stack by building
+# real frames, and building one needs the encoder. No module in `src/` reaches the wire — that is
+# `slopdesk-muxnet`'s side of the split, stated as a dependency edge rather than as a comment.
 [package]
 name = "slopdesk-hostnet"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "hostd's PATH-1 TCP listener, preamble and CONTROL/DATA pairing for slopdesk"
+description = "hostd's PATH-1 TCP accept loop and CONTROL/DATA pairing for slopdesk"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -49,8 +51,11 @@ repository = "https://github.com/aislopware/slop-desk"
 
 [dependencies]
 socket2 = { version = "0.5", features = ["all"] }
-slopdesk-wire = { path = "../slopdesk-wire" }
+slopdesk-muxnet = { path = "../slopdesk-muxnet" }
 slopdesk-muxsession = { path = "../slopdesk-muxsession" }
+
+[dev-dependencies]
+slopdesk-wire = { path = "../slopdesk-wire" }
 
 # A daemon's profile: hostd is long-lived and this crate sits on the per-chunk receive path.
 [profile.release]

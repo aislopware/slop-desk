@@ -6,7 +6,7 @@
 # channel names, which parked pane a returning client may take, which service is up, which verb goes
 # where — and composition is exactly the thing that cannot live in any of the crates it composes.
 # `slopdesk-muxsession` is verdicts with no IO; `slopdesk-hostsession` is ONE pane and knows nothing
-# about the table it sits in; `slopdesk-hostnet` decides nothing about panes at all. This crate is
+# about the table it sits in; `slopdesk-muxnet` decides nothing about panes at all. This crate is
 # the one that may hold all of them, so it is the one place the joins can live.
 #
 # ## Its own `[workspace]`, for the reason its three siblings have one
@@ -47,7 +47,7 @@ slopdesk-hostsession = { path = "../slopdesk-hostsession" }
 # that answers it. Reached DIRECTLY rather than through `slopdesk-hostsession` since D.6.2 — the open
 # ladder names the sub-channel pair before any pane holds it, which is the whole window the join
 # reservation and the claim exist to make indivisible. Nothing here decides anything about panes.
-slopdesk-hostnet = { path = "../slopdesk-hostnet" }
+slopdesk-muxnet = { path = "../slopdesk-muxnet" }
 
 # Every DECISION the two service lifecycles reach for — the announce parse, the probe step, the
 # adopt verdict, the workbench's four boot gates, the CLI flags — plus the line assembler a panel

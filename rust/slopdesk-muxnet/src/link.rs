@@ -100,7 +100,7 @@ impl ByteLink for TcpByteLink {
         let _guard = self
             .write
             .lock()
-            .map_err(|_poisoned| io::Error::other("slopdesk-hostnet: write lock poisoned mid-frame"))?;
+            .map_err(|_poisoned| io::Error::other("slopdesk-muxnet: write lock poisoned mid-frame"))?;
         (&self.stream).write_all(bytes)
     }
 

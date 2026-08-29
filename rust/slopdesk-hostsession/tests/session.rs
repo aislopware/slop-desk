@@ -33,13 +33,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use nix::sys::socket::{ControlMessage, MsgFlags, sendmsg};
-use slopdesk_hostnet::link::ByteLink;
-use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::PtyProcess;
 use slopdesk_hostsession::{
     CloseTap, Eviction, EvictionSeam, MetadataAnswer, MetadataPerformer, MetadataRequest, OutputTap,
     PaneSession, ResolveExecutor, SessionConfig, SessionLog, SessionObserver,
 };
+use slopdesk_muxnet::link::ByteLink;
+use slopdesk_muxnet::subchannel::SubChannel;
 use slopdesk_superclient::client::{ClientThreads, SupervisorClient, SupervisorObserver};
 use slopdesk_superwire::blockwire::BlockEvent;
 use slopdesk_superwire::protocol::{

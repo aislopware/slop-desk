@@ -390,15 +390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-hostnet"
-version = "0.1.0"
-dependencies = [
- "slopdesk-muxsession",
- "slopdesk-wire",
- "socket2",
-]
-
-[[package]]
 name = "slopdesk-hostpane"
 version = "0.1.0"
 dependencies = [
@@ -421,10 +412,10 @@ dependencies = [
  "slopdesk-apple-fsevents",
  "slopdesk-apple-pasteboard",
  "slopdesk-git",
- "slopdesk-hostnet",
  "slopdesk-hostpane",
  "slopdesk-hostsession",
  "slopdesk-ids",
+ "slopdesk-muxnet",
  "slopdesk-muxsession",
  "slopdesk-panecensus",
  "slopdesk-posix",
@@ -449,8 +440,8 @@ dependencies = [
  "nix",
  "slopdesk-agent",
  "slopdesk-git",
- "slopdesk-hostnet",
  "slopdesk-hostpane",
+ "slopdesk-muxnet",
  "slopdesk-muxsession",
  "slopdesk-posix",
  "slopdesk-sanitize",
@@ -462,6 +453,14 @@ dependencies = [
 [[package]]
 name = "slopdesk-ids"
 version = "0.1.0"
+
+[[package]]
+name = "slopdesk-muxnet"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-wire",
+ "socket2",
+]
 
 [[package]]
 name = "slopdesk-muxsession"

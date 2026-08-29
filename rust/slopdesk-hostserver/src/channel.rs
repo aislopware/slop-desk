@@ -10,7 +10,7 @@
 //! The PRECEDENCE between those outcomes — channel class, then the host's condition, then the
 //! incumbent, then the store — is [`slopdesk_muxsession::open_route`] and has been since before
 //! this stage started. So is the resume clamp, the restore gate and the repaint verdict. The
-//! transport is [`slopdesk_hostnet`]'s, the tables are D.1's, one pane is
+//! transport is [`slopdesk_muxnet`]'s, the tables are D.1's, one pane is
 //! [`slopdesk_hostsession::PaneSession`]'s. What is left — and it is the whole file — is the ORDER
 //! those are called in, and the ONE critical section that makes the first four indivisible.
 //!
@@ -62,9 +62,9 @@ use core::time::Duration;
 use std::sync::{Arc, Weak};
 use std::thread;
 
-use slopdesk_hostnet::connection::ChannelOpen;
 use slopdesk_hostsession::{SessionObserver, StatusObserver};
 use slopdesk_ids::uuid_text;
+use slopdesk_muxnet::connection::ChannelOpen;
 use slopdesk_muxsession::open_route::{
     self, Claim as ClaimOutcome, Incumbent, OpenFacts, Redraw, Route, Settled,
 };
@@ -88,7 +88,7 @@ const REDRAW_DELAY: Duration = Duration::from_millis(200);
 ///
 /// Four questions, which is all any of them asks: which connection this is, "answer the open", and
 /// the two ways a ladder ENDS something — one channel, or the whole link. Narrow on purpose — a
-/// ladder that could reach the whole [`slopdesk_hostnet::connection::MuxConnection`] could send
+/// ladder that could reach the whole [`slopdesk_muxnet::connection::MuxConnection`] could send
 /// frames out of band, and the frames a pane emits are the pane's.
 pub trait Peer: Send + Sync + fmt::Debug {
     /// The connection id. Half of every table key, and the key the size-passivity table is under.

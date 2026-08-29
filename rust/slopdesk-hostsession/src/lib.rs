@@ -1,4 +1,4 @@
-//! One pane's session: the shell that turns `slopdesk-hostpane`'s descriptor, `slopdesk-hostnet`'s
+//! One pane's session: the shell that turns `slopdesk-hostpane`'s descriptor, `slopdesk-muxnet`'s
 //! transport and `slopdesk-muxsession`'s verdicts into a running pane.
 //!
 //! This is stage C.2 of `docs/60-hostd-in-rust.md`, and the shape of it is the finding that scoped
@@ -13,7 +13,7 @@
 //! Not `slopdesk-muxsession`: that crate is verdicts with NO IO, deliberately, and it does not
 //! depend on the protocol crate at all — the merge cap is passed IN so it stays spelled once. Not
 //! `slopdesk-hostpane`: that is one pane's descriptor and its supervised stream, and it knows
-//! nothing about members or the wire. Not `slopdesk-hostnet`: that is the transport, and it decides
+//! nothing about members or the wire. Not `slopdesk-muxnet`: that is the transport, and it decides
 //! nothing about panes. This crate is the one place that may hold all four, so it is the one place
 //! the joins between them can live.
 //!

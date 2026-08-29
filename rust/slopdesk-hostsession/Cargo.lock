@@ -253,15 +253,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-hostnet"
-version = "0.1.0"
-dependencies = [
- "slopdesk-muxsession",
- "slopdesk-wire",
- "socket2",
-]
-
-[[package]]
 name = "slopdesk-hostpane"
 version = "0.1.0"
 dependencies = [
@@ -280,8 +271,8 @@ dependencies = [
  "serde_json",
  "slopdesk-agent",
  "slopdesk-git",
- "slopdesk-hostnet",
  "slopdesk-hostpane",
+ "slopdesk-muxnet",
  "slopdesk-muxsession",
  "slopdesk-posix",
  "slopdesk-sanitize",
@@ -293,6 +284,14 @@ dependencies = [
 [[package]]
 name = "slopdesk-ids"
 version = "0.1.0"
+
+[[package]]
+name = "slopdesk-muxnet"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-wire",
+ "socket2",
+]
 
 [[package]]
 name = "slopdesk-muxsession"

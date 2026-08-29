@@ -4,7 +4,8 @@
 //! Every other part of this port had a Swift original to read. This did not: it was the body of
 //! `HostServer.start()`, interleaved with the bind, the retry, the task nursery and the actor hops
 //! around all three. Written down on its own it is small, and the reason it is small is that both
-//! sides of it were finished first — `slopdesk-hostnet` turns two sockets into a stream of events,
+//! sides of it were finished first — `slopdesk-hostnet` pairs two sockets and `slopdesk-muxnet`
+//! turns the pair into a stream of events,
 //! `slopdesk-hostserver` turns an event into a decision, and nothing in between needs to decide
 //! anything.
 //!
@@ -27,11 +28,11 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::thread;
 
-use slopdesk_hostnet::connection::{MuxConnection, MuxEvent};
 use slopdesk_hostnet::listener::{Listener, ListenerHandle};
-use slopdesk_hostnet::pending::PairedConnection;
 use slopdesk_hostserver::{Host, Peer};
+use slopdesk_muxnet::connection::{MuxConnection, MuxEvent, PairedConnection};
 use slopdesk_muxsession::registry::Key;
+use slopdesk_wire::mux::admission::Role;
 
 use crate::peer::ConnectionPeer;
 
@@ -103,7 +104,7 @@ fn accept_loop(pairs: &Receiver<PairedConnection>, host: &Arc<Host>) {
 
 /// Adopts one paired connection and gives its events a thread.
 fn serve_connection(pair: PairedConnection, host: &Arc<Host>) {
-    let (connection, events, threads) = MuxConnection::serve(pair);
+    let (connection, events, threads) = MuxConnection::serve(pair, Role::Host);
     let peer: Arc<dyn Peer> = Arc::new(ConnectionPeer::new(Arc::clone(&connection)));
     // Filed BEFORE the event thread starts. The composition's stop drains its peers to close them,
     // and a connection that were served first could take a channel, be counted by the workspace

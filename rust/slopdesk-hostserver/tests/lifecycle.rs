@@ -18,13 +18,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
-use slopdesk_hostnet::connection::ChannelOpen;
 use slopdesk_hostserver::control::SpawnRefused;
 use slopdesk_hostserver::{
     Adopted, DetachedStore, Fresh, Host, HostEnv, HostObserver, HostParts, Offload, Pane, Peer, Spawner,
     Standalone, Threads, WorkspaceChannels,
 };
 use slopdesk_ids::uuid_text;
+use slopdesk_muxnet::connection::ChannelOpen;
 use slopdesk_muxsession::registry::{Key, PRIMARY_SUBSCRIBER, Subscriber, Uuid};
 use slopdesk_wire::mux::envelope::MuxCloseReason;
 use support::{Ghost, as_pane};

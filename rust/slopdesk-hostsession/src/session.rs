@@ -39,8 +39,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use slopdesk_agent::{ClaudeHookEvent, ClaudeStatus};
-use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::{PaneOutputStream, PtyProcess};
+use slopdesk_muxnet::subchannel::SubChannel;
 use slopdesk_muxsession::fanout::SubscriberId;
 use slopdesk_muxsession::lifecycle::RebindVerdict;
 use slopdesk_muxsession::resize_fold::{Attachment, Grid, PRIMARY_SUBSCRIBER};

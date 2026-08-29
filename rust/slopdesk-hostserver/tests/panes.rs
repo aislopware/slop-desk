@@ -16,13 +16,13 @@ use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use slopdesk_hostnet::connection::ChannelOpen;
 use slopdesk_hostserver::control::SpawnRefused;
 use slopdesk_hostserver::{
     Adopted, DetachedStore, Fresh, Host, HostEnv, HostObserver, HostParts, Offload, Pane, Panes, Peer,
     Spawner, Standalone, WorkspaceChannels,
 };
 use slopdesk_hostsession::PaneLatches;
+use slopdesk_muxnet::connection::ChannelOpen;
 use slopdesk_muxsession::registry::{Key, PRIMARY_SUBSCRIBER, Uuid};
 use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_wire::document::fields::PaneLivenessState;

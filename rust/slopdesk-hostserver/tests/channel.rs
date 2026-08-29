@@ -22,12 +22,12 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use slopdesk_hostnet::connection::ChannelOpen;
 use slopdesk_hostserver::control::SpawnRefused;
 use slopdesk_hostserver::{
     Adopted, DetachedStore, Fresh, HookRoutes, Host, HostEnv, HostObserver, HostParts, NoWorkspace, Offload,
     Pane, Peer, Restored, Silent, Spawner, Standalone, Transcripts, WorkspaceChannels,
 };
+use slopdesk_muxnet::connection::ChannelOpen;
 use slopdesk_muxsession::open_route::SurvivorResume;
 use slopdesk_muxsession::registry::{Key, PRIMARY_SUBSCRIBER, Uuid};
 use slopdesk_wire::message::NEW_SESSION_ID;

@@ -22,8 +22,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
-use slopdesk_hostnet::connection::ChannelOpen;
 use slopdesk_ids::uuid_text;
+use slopdesk_muxnet::connection::ChannelOpen;
 use slopdesk_wire::document::codec;
 use slopdesk_wire::message::{RawUuid, WireMessage};
 use slopdesk_wire::workspace::{

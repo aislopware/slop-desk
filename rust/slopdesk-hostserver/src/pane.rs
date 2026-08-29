@@ -32,8 +32,8 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use slopdesk_agent::ClaudeHookEvent;
-use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneLatches, SessionObserver, TapToken};
+use slopdesk_muxnet::subchannel::SubChannel;
 use slopdesk_muxsession::registry::{Slot, Subscriber, Uuid};
 use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;

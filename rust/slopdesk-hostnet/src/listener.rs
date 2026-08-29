@@ -27,12 +27,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use slopdesk_muxnet::connection::PairedConnection;
+use slopdesk_muxnet::link::{ByteLink, TcpByteLink};
+use slopdesk_muxnet::params::keepalive;
+use slopdesk_muxnet::preamble::{Lane, PREAMBLE_BYTE_COUNT, decode};
 use socket2::{Domain, Socket, Type};
 
-use crate::link::{ByteLink, TcpByteLink};
-use crate::params::keepalive;
-use crate::pending::{PairedConnection, PendingLinks};
-use crate::preamble::{PREAMBLE_BYTE_COUNT, decode};
+use crate::pending::PendingLinks;
 
 /// Bound on one connection's accept→preamble sequence, symmetric with the client's.
 ///
@@ -245,8 +246,8 @@ fn handshake(stream: TcpStream, pending: &Arc<Mutex<PendingLinks>>, sender: &Sen
         return;
     };
     let label = match preamble.lane {
-        crate::preamble::Lane::Control => "host.control",
-        crate::preamble::Lane::Data => "host.data",
+        Lane::Control => "host.control",
+        Lane::Data => "host.data",
     };
     let link: Box<dyn ByteLink> = Box::new(TcpByteLink::new(stream, label));
     let paired = with_pending(pending, |map| map.admit(preamble, link, Instant::now())).flatten();

@@ -97,6 +97,12 @@ CONTROL/DATA pairing by `connectionID`, and a `ByteLink` trait matching `MuxByte
 the in-memory test double ports with it. Deliverable: a listener that accepts two real sockets
 naming one `connectionID` and hands up the pair of byte links they became.
 
+> Since `docs/63` G.1, five of stage A and B's seven modules live in `rust/slopdesk-muxnet` — the
+> preamble, the parameters, the link, the sub-channel and the connection, none of which said HOST.
+> `slopdesk-hostnet` is the accept loop and the pairing map, which is all a client has no use for.
+> The stages below are left as they were written; where one says `slopdesk-hostnet::connection` or
+> `::subchannel`, read `slopdesk-muxnet`.
+
 Its gate is preamble-level pairing on real file descriptors — nine loopback tests dialling with
 `std::net::TcpStream`, covering both arrival orders, two clients not cross-pairing, a mute socket,
 an unknown tag, the reaper, a same-side repark, and `stop` both closing what it parked and releasing

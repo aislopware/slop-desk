@@ -15,8 +15,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use slopdesk_hostnet::connection::MuxConnection;
 use slopdesk_hostserver::Peer;
+use slopdesk_muxnet::connection::MuxConnection;
 use slopdesk_muxsession::registry::Uuid;
 use slopdesk_wire::mux::envelope::MuxCloseReason;
 

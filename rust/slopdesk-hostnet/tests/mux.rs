@@ -22,9 +22,10 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
-use slopdesk_hostnet::connection::{ChannelOpen, ConnectionThreads, MuxConnection, MuxEvent};
 use slopdesk_hostnet::listener::{Listener, ListenerHandle};
-use slopdesk_hostnet::preamble::{ConnectionId, Lane, Preamble, encode as encode_preamble};
+use slopdesk_muxnet::connection::{ChannelOpen, ConnectionThreads, MuxConnection, MuxEvent};
+use slopdesk_muxnet::preamble::{ConnectionId, Lane, Preamble, encode as encode_preamble};
+use slopdesk_wire::mux::admission::Role;
 use slopdesk_wire::{MuxCloseReason, MuxFrame, MuxFrameDecoder, WireMessage};
 
 /// Long enough that a loaded machine does not fail this suite, short enough that a real hang does.
@@ -50,7 +51,7 @@ impl Wired {
         let control = dial(port, Lane::Control, id);
         let data = dial(port, Lane::Data, id);
         let pair = pairs.recv_timeout(GENEROUS).expect("the two sockets pair");
-        let (host, events, threads) = MuxConnection::serve(pair);
+        let (host, events, threads) = MuxConnection::serve(pair, Role::Host);
         Self {
             control,
             data,

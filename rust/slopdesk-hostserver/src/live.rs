@@ -19,10 +19,10 @@ use std::sync::Arc;
 
 use slopdesk_agent::supervision::SupervisionState;
 use slopdesk_agent::{ClaudeHookEvent, ClaudeStatus};
-use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostsession::{
     BlockTap, CloseTap, OutputTap, PaneLatches, PaneSession, SessionObserver, TapToken,
 };
+use slopdesk_muxnet::subchannel::SubChannel;
 use slopdesk_muxsession::registry::{self, Slot, Subscriber, Uuid};
 use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;

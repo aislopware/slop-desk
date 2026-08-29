@@ -10,7 +10,7 @@
 # ## What it adds that nothing else could
 # Three real implementations of doors stage D left as traits, and each is here because it is the
 # first place both halves are in scope:
-#   * `Peer` over `slopdesk-hostnet`'s connection — the composition names a client, the transport is
+#   * `Peer` over `slopdesk-muxnet`'s connection — the composition names a client, the transport is
 #     one.
 #   * `Spawner` over `slopdesk-hostpane` + `slopdesk-hostsession` — the composition decides a pane,
 #     those two make one.
@@ -59,6 +59,7 @@ slopdesk-hostserver = { path = "../slopdesk-hostserver" }
 # The listener, the paired connection behind it, and the mux events a served connection emits. The
 # accept loop below is the only thing in the tree that drives it.
 slopdesk-hostnet = { path = "../slopdesk-hostnet" }
+slopdesk-muxnet = { path = "../slopdesk-muxnet" }
 
 # The PTY half of a spawn: superd's fork, the master that comes back, and the subscription to
 # superd's read of it.
