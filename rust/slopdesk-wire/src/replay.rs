@@ -1500,6 +1500,23 @@ mod tests {
         assert_eq!(buffer.replay(0), [output(1, "a-b"), output(2, "c-d")]);
     }
 
+    /// A cold distilled replay whose ring and tail together sit under the re-chunk floor comes back
+    /// as ONE message. The entry boundary is NOT preserved — ring and tail are cleaned and
+    /// re-chunked as a single stream — history the transform leaves alone survives byte for byte,
+    /// and the one chunk carries the TOP seq, so the ack it provokes releases the whole tail.
+    ///
+    /// The count is the point: [`a_cold_replay_transforms_ring_and_tail_for_a_fresh_client`] reads
+    /// the joined bytes and the last seq, both of which a re-chunker emitting one message per entry
+    /// would still satisfy.
+    #[test]
+    fn a_small_cold_distilled_replay_is_one_chunk_at_the_top_seq() {
+        let mut buffer = ReplayBuffer::with_scrollback(256).distilling(identity());
+        buffer.append(bytes("a-b"));
+        buffer.append(bytes("c-d"));
+        buffer.ack(1);
+        assert_eq!(buffer.replay(0), [output(2, "a-bc-d")]);
+    }
+
     // MARK: Alt-screen cut repair
 
     #[test]

@@ -16,7 +16,6 @@ const PANE_SPEC: &str = "Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift";
 const NEW_TAB: &str = "Sources/SlopDeskWorkspaceModel/Domain/Tree/NewTabPosition.swift";
 /// The bindable port, after `docs/63` §G.3 took its Swift half: ONE spelling, and this is it.
 const PORT_RUST: &str = "rust/slopdesk-workspace/src/listen.rs";
-const REPLAY_BUFFER: &str = "Sources/SlopDeskTransport/ReplayBuffer.swift";
 const NERD_FONT: &str = "Sources/SlopDeskFontFaces/NerdSymbolFont.swift";
 
 /// The tree repair pass is Rust, and what regrows is one predicate
@@ -198,47 +197,36 @@ pub fn four_cross_language_twins(tree: &Tree) -> Report {
 
 /// The loop-shaped crossings: a whole-collection door, not a door per member
 ///
-/// Both pairs below are one rule asked about `n` members. Read one at a time they were a crossing
-/// per member on a path that runs per reattach and per render, which is the shape
-/// `slopdesk_settings_row_fields` and `slopdesk_ws_rail_disambiguated_labels` were widened out of.
-/// Nothing in the type system stops a caller sliding back to `entry(at: index)` inside a `for`, and
-/// no test would fail if it did — the answers are identical, only the crossing count moves.
+/// The pair below is one rule asked about `n` members. Read one at a time it was a crossing per
+/// member on a path that runs per render, which is the shape `slopdesk_settings_row_fields` and
+/// `slopdesk_ws_rail_disambiguated_labels` were widened out of. Nothing in the type system stops a
+/// caller sliding back to `entry(at: index)` inside a `for`, and no test would fail if it did — the
+/// answers are identical, only the crossing count moves.
+///
+/// THE OTHER PAIR IS GONE, AND THE BAN THAT REPLACED IT IS WIDER. The replay ring's message slot
+/// was the same shape — `slopdesk_replay_result_headers` in one crossing rather than two per-index
+/// doors at `3n + 1` for a slot of `n` — read by `ReplayBuffer.swift`, a 441-line Swift class over
+/// `rust/slopdesk-wire`'s `replay::ReplayBuffer` whose only callers by the end were its own two
+/// test suites. That is the one-implementation rule's own failure mode, not a crossing-count one: a
+/// second spelling of a live rule, reached by nothing but the tests written to reach it. The class,
+/// its suites and the whole `slopdesk_replay_*` door family went in one pass, so what is guarded
+/// here is no longer "ask the wide door" but "there is no near side at all" — any Swift naming that
+/// prefix is the mirror growing back, and `every_ffi_door_is_opened_or_declared_deliberate` cannot
+/// see it, because a regrown pair would come with its door.
 #[must_use]
 pub fn the_loop_shaped_crossings_are_whole_collection_doors(tree: &Tree) -> Report {
     let claims = [
-        // The message slot's METADATA crosses once for the whole slot. Losing this call means the file
-        // went back to asking per index, at `3n + 1` crossings for a slot of `n` — on a cold reattach
-        // that is a whole retained history's worth.
-        Claim::Names {
-            path: REPLAY_BUFFER,
-            needle: "slopdesk_replay_result_headers",
-            message: "ReplayBuffer.swift no longer calls slopdesk_replay_result_headers — read the WHOLE \
-                      message slot in one crossing, then one slopdesk_replay_result_copy per message",
-        },
-        // The two per-index metadata doors were DELETED, not kept beside the list door, because
-        // The dead-door ratchet would have called them dead the moment Swift stopped asking. A
-        // name reappearing anywhere in Swift means someone re-cut a second way to ask what the headers
-        // door answers.
         Claim::NoneUnder {
             roots: &["Sources", "Tests"],
             extensions: SWIFT,
-            pattern: "slopdesk_replay_result_seq|slopdesk_replay_result_len",
+            pattern: "slopdesk_replay_",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "{files} asks for one message's seq or length — those doors are gone; \
-                      slopdesk_replay_result_headers answers the whole slot at once",
-        },
-        // The SHAPE, not just the names: an index range mapped over the slot is how the per-member
-        // loop comes back even under different door names. The live reader walks the headers it was
-        // handed.
-        Claim::Lacks {
-            path: REPLAY_BUFFER,
-            pattern: r"\(0\.\.<count\)\.map|for index in 0\.\.<count",
-            view: View::Code,
-            message: "ReplayBuffer.swift walks the message slot by index again — take the headers in one \
-                      crossing and enumerate those",
+            message: "{files} calls a slopdesk_replay_ door — that family and the ReplayBuffer.swift class \
+                      over it are deleted; rust/slopdesk-wire's replay::ReplayBuffer is the one \
+                      implementation and the host reaches it in Rust (docs/63 §G.5)",
         },
         // `CommandBlock.statuses(of:)` is the whole-list form. `slopdesk_block_status` stays for the row
         // asking about itself, so the ban below is deliberately on the LOOP and not on the single door.
@@ -443,7 +431,6 @@ mod tests {
 
     fn loops(fixture: &Fixture) {
         fixture
-            .write(super::REPLAY_BUFFER, "slopdesk_replay_result_headers(slot)\n")
             .write(
                 "Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlockModel.swift",
                 "slopdesk_block_statuses(list)\n",
@@ -468,7 +455,9 @@ mod tests {
         );
         assert!(!super::the_loop_shaped_crossings_are_whole_collection_doors(&fixture.tree()).is_clean());
 
-        // A deleted per-index door, asked for again — anywhere, tests included.
+        // A retired door, asked for again — anywhere, tests included. The wide door the near side used
+        // to be allowed to call is banned with the rest of the family now, since there is no near side
+        // left for it to serve.
         loops(&fixture);
         fixture.write(
             "Tests/TransportTests/ReplayTests.swift",
@@ -476,9 +465,11 @@ mod tests {
         );
         assert!(!super::the_loop_shaped_crossings_are_whole_collection_doors(&fixture.tree()).is_clean());
 
-        // And the index walk, back under whatever door name.
         loops(&fixture);
-        fixture.append(super::REPLAY_BUFFER, "for index in 0..<count { read(index) }\n");
+        fixture.write(
+            "Sources/SlopDeskTransport/ReplayBuffer.swift",
+            "slopdesk_replay_result_headers(slot)\n",
+        );
         assert!(!super::the_loop_shaped_crossings_are_whole_collection_doors(&fixture.tree()).is_clean());
     }
 

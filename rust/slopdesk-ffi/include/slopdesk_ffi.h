@@ -17,7 +17,7 @@
 // No allocation crosses this boundary in either direction, so there is nothing to free. Passing
 // (NULL, 0) as the output is the supported way to ask for the length before allocating.
 //
-// THE HANDLE CONVENTION (SlopDeskReplay, SlopDeskVideoPacketizer, SlopDeskVideoReassembler,
+// THE HANDLE CONVENTION (SlopDeskBlockStore, SlopDeskVideoPacketizer, SlopDeskVideoReassembler,
 //                        SlopDeskHostVitalsSampler, SlopDeskDisplayWake,
 //                        SlopDeskLineAssembler, SlopDeskRepoWatch, SlopDeskKeyRepeat)
 //   Three things cannot cross per call: memory too big to copy, a counter two sides would then
@@ -144,95 +144,6 @@ int32_t slopdesk_term_prompt_edit_byte(bool undo, bool redo, bool in_prompt_zone
 // carries, so there is no second vocabulary. An unrecognised token does not intercept.
 bool slopdesk_term_right_click_intercepts_as_paste(const uint8_t *action, size_t action_len,
                                                    bool has_selection, bool mouse_captured);
-
-typedef struct SlopDeskReplay SlopDeskReplay;
-
-// The production caps `slopdesk_replay_new` takes, by index, so no caller respells one:
-// 0 the retained-byte ceiling, 1 the offline buffering gate, 2 the default scrollback ring size.
-// An unknown index answers -1.
-int64_t slopdesk_replay_constant(uint32_t index);
-
-// Lifecycle. Returns NULL only if allocation failed.
-//
-// The cold-replay scrollback cleaner is `rust/slopdesk-sanitize`, linked in — it used to be a
-// caller-supplied function pointer that dialled screend over AF_UNIX, which was a socket round trip
-// over the whole retained history to reach a pure function. `distill` selects the one pass a caller
-// may decline; `reassert_input_modes` re-appends the stream's net final input-mode state, which the
-// live ring wants and the disk journal must not.
-SlopDeskReplay *slopdesk_replay_new(size_t max_backup_bytes, size_t offline_gate_bytes,
-                                    size_t scrollback_bytes, bool distill,
-                                    bool reassert_input_modes);
-void slopdesk_replay_free(SlopDeskReplay *handle);
-
-// Observation. Every one of these is safe on a NULL handle.
-int64_t  slopdesk_replay_highest_seq(SlopDeskReplay *handle);
-int64_t  slopdesk_replay_acked_seq(SlopDeskReplay *handle);
-size_t   slopdesk_replay_retained_bytes(SlopDeskReplay *handle);
-size_t   slopdesk_replay_retained_bytes_above(SlopDeskReplay *handle, int64_t seq);
-bool     slopdesk_replay_is_client_online(SlopDeskReplay *handle);
-bool     slopdesk_replay_should_pause_drain(SlopDeskReplay *handle);
-size_t   slopdesk_replay_ring_len(SlopDeskReplay *handle);
-size_t   slopdesk_replay_ring_bytes(SlopDeskReplay *handle);
-size_t   slopdesk_replay_max_backup_cap(SlopDeskReplay *handle);
-size_t   slopdesk_replay_offline_gate_cap(SlopDeskReplay *handle);
-size_t   slopdesk_replay_scrollback_cap(SlopDeskReplay *handle);
-
-// Mutation.
-void    slopdesk_replay_set_client_online(SlopDeskReplay *handle, bool online);
-int64_t slopdesk_replay_append(SlopDeskReplay *handle, const uint8_t *bytes, size_t len);
-void    slopdesk_replay_ack(SlopDeskReplay *handle, int64_t up_to);
-
-// Producers filling the MESSAGE slot; each returns the message count.
-size_t slopdesk_replay_messages(SlopDeskReplay *handle, int64_t last_received_seq);
-size_t slopdesk_replay_replay(SlopDeskReplay *handle, int64_t last_received_seq);
-size_t slopdesk_replay_rechunk_snapshot(SlopDeskReplay *handle, const uint8_t *data, size_t data_len,
-                                        const int64_t *seqs, size_t seqs_len);
-
-// Producers filling the BLOB and SEQ slots.
-// snapshot_source returns the bytes behind the seqs; ring_fold_source returns the ring generation,
-// or UINT64_MAX when the ring is empty (there is no fold source and both slots are cleared).
-size_t   slopdesk_replay_snapshot_source(SlopDeskReplay *handle, int64_t last_received_seq);
-uint64_t slopdesk_replay_ring_fold_source(SlopDeskReplay *handle);
-size_t   slopdesk_replay_ring_seqs(SlopDeskReplay *handle);
-// The oldest ring entry. A ring length of 0 is how "no oldest entry" differs from "an empty one".
-size_t   slopdesk_replay_ring_oldest(SlopDeskReplay *handle, uint8_t *out, size_t cap);
-
-// Adoption, through the STAGING slot: clear, push each message, then adopt.
-void slopdesk_replay_input_clear(SlopDeskReplay *handle);
-void slopdesk_replay_input_push(SlopDeskReplay *handle, int64_t seq,
-                                const uint8_t *bytes, size_t len);
-void slopdesk_replay_adopt_snapshot_replay(SlopDeskReplay *handle);
-bool slopdesk_replay_adopt_folded_ring(SlopDeskReplay *handle,
-                                       const uint8_t *rendered, size_t rendered_len,
-                                       const int64_t *seqs, size_t seqs_len, uint64_t generation);
-
-// Reading the slots.
-//
-// One message's metadata. Two words and no padding, so there is nothing here to transcribe.
-typedef struct {
-  int64_t seq;                // the message's monotonic output seq
-  size_t  len;                // its payload length in bytes
-} SlopDeskReplayHeader;
-
-// Every staged message's seq and length, in slot order, in ONE delivery.
-//
-// Answers the count the slot holds — which is what the producer that filled it already returned —
-// and writes nothing unless all of it fits, so a short `cap` is §4's retry at record width. The
-// retry is unreachable in practice: the caller sizes at the count it was handed.
-//
-// The metadata used to be two more doors asked per message, which made reading a slot of n cost
-// 3n + 1 crossings to answer one question about a collection the handle already holds contiguous.
-// It is n + 2 now, and the two per-index metadata doors are gone rather than kept beside this one.
-//
-// A message's BYTES are not in here, deliberately. Each has to land in a buffer of its own on the
-// near side anyway, and a retained history runs to 256 MiB, so flattening the lot into one answer
-// would buy the saved crossings with a whole extra copy of the history.
-size_t  slopdesk_replay_result_headers(SlopDeskReplay *handle, SlopDeskReplayHeader *out, size_t cap);
-size_t  slopdesk_replay_result_copy(SlopDeskReplay *handle, size_t index, uint8_t *out, size_t cap);
-size_t  slopdesk_replay_blob_len(SlopDeskReplay *handle);
-size_t  slopdesk_replay_blob_copy(SlopDeskReplay *handle, uint8_t *out, size_t cap);
-size_t  slopdesk_replay_seqs_count(SlopDeskReplay *handle);
-size_t  slopdesk_replay_seqs_copy(SlopDeskReplay *handle, int64_t *out, size_t cap);
 
 // ---------------------------------------------------------------------------
 // Agent detection — rust/slopdesk-agent.

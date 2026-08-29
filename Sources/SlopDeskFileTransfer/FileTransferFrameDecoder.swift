@@ -6,7 +6,7 @@ import Foundation
 /// The buffer, the read cursor, the lazy head compaction and the poison-on-fault all live in
 /// `rust/slopdesk-dropd`'s `ReplyFrameDecoder`, beside the payload decode they hand bytes to. This
 /// type is the handle: Rust owns the state, Swift owns the lifetime — the shape `SlopDeskProtocol.FrameDecoder`
-/// and `SlopDeskReplay` already cross by, and the right one here because half a length prefix in one
+/// and `SlopDeskBlobAssembler` already cross by, and the right one here because half a length prefix in one
 /// `recv` and the rest in the next is the ordinary case, not the edge.
 ///
 /// A partial frame is NOT an error — ``nextReply()`` returns `nil` and waits for more bytes. A

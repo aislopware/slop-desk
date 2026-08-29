@@ -92,6 +92,28 @@ pub struct Recipe {
     pub metadata: Arc<dyn MetadataPerformer>,
 }
 
+/// The distiller a LIVE pane's ring runs its cold replay through.
+///
+/// [`slopdesk_sanitize`]'s, with `reassert_input_modes` TRUE — the ring fronts a live session, so a
+/// TUI that is still running needs its modes re-established after the stripped replay. The journal
+/// path passes false through the same function, and that one bool is the whole difference between
+/// the two restore chains.
+///
+/// A free function rather than a [`Recipe`] method because the composition it forms with
+/// [`ReplayBuffer`] is the thing worth asserting, and a `Recipe` cannot be built without superd's
+/// socket. Neither half is in doubt on its own — `slopdesk_sanitize` pins the transform and
+/// `slopdesk_wire` pins the ring against injected distillers — so what the test below covers is
+/// that this host wires THOSE two together, which is exactly what the deleted FFI door's one
+/// composition test used to be the only witness for.
+fn live_distiller(distill: bool) -> ScrollbackDistiller {
+    Arc::new(move |bytes: &[u8]| {
+        slopdesk_sanitize::sanitize(bytes, slopdesk_sanitize::Options {
+            reassert_input_modes: true,
+            distill,
+        })
+    })
+}
+
 impl Recipe {
     /// The pane id superd files this session under.
     ///
@@ -104,20 +126,8 @@ impl Recipe {
     }
 
     /// The ring this host's panes are built with.
-    ///
-    /// The distiller is [`slopdesk_sanitize`]'s, with `reassert_input_modes` TRUE — the ring fronts
-    /// a LIVE session, so a TUI that is still running needs its modes re-established after the
-    /// stripped replay. The journal path passes false through the same function, and that one bool
-    /// is the whole difference between the two restore chains.
     fn ring(&self) -> ReplayBuffer {
-        let distill = self.distill;
-        let distiller: ScrollbackDistiller = Arc::new(move |bytes: &[u8]| {
-            slopdesk_sanitize::sanitize(bytes, slopdesk_sanitize::Options {
-                reassert_input_modes: true,
-                distill,
-            })
-        });
-        ReplayBuffer::with_scrollback(self.scrollback_bytes).distilling(distiller)
+        ReplayBuffer::with_scrollback(self.scrollback_bytes).distilling(live_distiller(self.distill))
     }
 
     /// The eviction policy for the pane serving `session`.
@@ -350,3 +360,54 @@ impl Spawner for PaneSpawner {
 const FALLBACK_ROWS: u16 = 24;
 /// See [`FALLBACK_ROWS`].
 const FALLBACK_COLS: u16 = 80;
+
+#[cfg(test)]
+mod tests {
+    use slopdesk_wire::WireMessage;
+    use slopdesk_wire::replay::ReplayBuffer;
+
+    use super::live_distiller;
+
+    /// A pane's ring, wired the way [`super::Recipe::ring`] wires it, drops a CLOSED alt-screen
+    /// segment out of a cold replay and keeps the history either side of it.
+    ///
+    /// The scrollback a coding session accumulates is mostly a TUI redrawing itself; a reattaching
+    /// client that replayed it byte for byte would spend its whole budget on frames it will never
+    /// show. That saving is the reason the ring takes a distiller at all, and it only happens if
+    /// this host passes one — a `.distilling(…)` dropped from `ring` would leave every ring test in
+    /// `slopdesk_wire` green, because those inject their own.
+    #[test]
+    fn a_cold_replay_from_a_live_pane_ring_is_sanitized() {
+        let mut ring = ReplayBuffer::with_scrollback(4096).distilling(live_distiller(false));
+        let mut raw = b"before\n".to_vec();
+        raw.extend_from_slice(b"\x1b[?1049h");
+        raw.extend_from_slice(b"a whole TUI redrawing itself, tens of MiB in the real case\n");
+        raw.extend_from_slice(b"\x1b[?1049l");
+        raw.extend_from_slice(b"after\n");
+        ring.append(raw);
+        ring.ack(1);
+
+        let emitted: Vec<u8> = ring
+            .replay(0)
+            .into_iter()
+            .filter_map(|message| {
+                match message {
+                    WireMessage::Output { bytes, .. } => Some(bytes),
+                    _ => None,
+                }
+            })
+            .flatten()
+            .collect();
+        let text = String::from_utf8_lossy(&emitted).into_owned();
+
+        assert!(
+            text.contains("before"),
+            "history before the segment survives: {text:?}"
+        );
+        assert!(text.contains("after"), "and history after it: {text:?}");
+        assert!(
+            !text.contains("redrawing itself"),
+            "the closed segment is gone: {text:?}"
+        );
+    }
+}

@@ -227,8 +227,13 @@ Connection/TerminalViewModel/Workspace/Metadata suites of `Tests/SlopDeskWorkspa
 whose subjects are not ported until G.5, and `MessageChannel` (30) is the same seam for
 `WorkspaceChannelClient`, which injects its transport precisely so the whole subscribe→apply→ack
 loop is provable with no socket. Deleting either here would mean re-faking a Rust handle in 22
-files for two stages and then deleting the fakes again. They retire with their subjects, in G.4
-(`MessageChannel`, with `WorkspaceChannelClient`) and G.5 (`ClientTransporting`).
+files for two stages and then deleting the fakes again. They retire with their subjects —
+`ClientTransporting` in G.5, and `MessageChannel` whenever `WorkspaceChannelClient` is ported, which
+is not a stage this document has scoped. **Read "with their subjects" strictly:** the sentence was
+briefly written into §G.5's file list as though the workspace channel went with the pane session, and
+it does not. `WorkspaceChannelClient.swift:53` builds `MuxControlChannel(transport)` and
+`WorkspaceStore+WorkspaceMirror.swift:644` is the shipping construction, so the protocol and its one
+conformer outlive this campaign; what G.5 retires is the *pane* session's use of the mux.
 
 The handle is therefore CLASS-GENERIC rather than pane-shaped: the workspace document rides the
 same mux at `channelClass == 1` (`docs/45` §5.1) and `WorkspaceChannelClient.Handle` is built from
@@ -503,14 +508,37 @@ implementation wearing a test's clothes. What the app's own suites fake after G.
 EVENT SOURCE — a driver that is told what to emit — not a transport underneath a Swift driver that
 no longer exists.
 
-#### `Sources/SlopDeskTransport` dissolves with it, and two files relocate rather than retire
+#### `Sources/SlopDeskTransport` dissolves with it, and four files leave by three other doors
 
-Seven of its nine files are the session's and go behind the door: `MuxClientTransport` (491),
-`ReplayBuffer` (441) — whose only shipping caller is `SlopDeskClient.swift`, every other hit being a
-doc comment — `ConnectionRegistry` (145), `ClientTransporting` (97), `SlopDeskTransportError` (89),
-`MessageChannel` (26) and `RustHandle` (21).
+Five of its nine files are the session's and go behind the door: `MuxClientTransport` (491),
+`ConnectionRegistry` (145), `ClientTransporting` (97), `SlopDeskTransportError` (89) and `RustHandle`
+(21).
 
-The other two never belonged to the mux and must not be deleted with it:
+**`ReplayBuffer` (441) does not wait for the door — it has no shipping caller at all, and went
+first.** The census that put it in the list above read "the only non-doc-comment hit is
+`SlopDeskClient.swift`"; the grep that settles it —
+`git grep -nE "ReplayBuffer[(.<]" -- Sources | grep -v '//'` — answers three lines, all of them
+inside `ReplayBuffer.swift` naming its own static caps. `SlopDeskClient.swift` mentions the type in
+two doc comments and nowhere else, because what it describes is the *host's* buffer, on the far side
+of the wire. So the class was not transport residue awaiting a port: it was a 441-line Swift face
+over `slopdesk_replay_*`, reached by nothing but the two suites written to reach it, ever since
+hostd became Rust and started calling `slopdesk_wire::replay` directly. That is the
+one-implementation rule's own failure mode rather than this stage's, so it retires ahead of the
+driver, together with `rust/slopdesk-ffi/src/replay.rs` (1,106 lines of door), its 89-line header
+block, and the two suites — after every behaviour they pinned that the crate did not was pinned in
+`rust/slopdesk-wire/src/replay.rs`, where the buffer actually lives. `cross_twins`'s three
+loop-shaped claims about it widen into one ban on the whole `slopdesk_replay_` prefix.
+
+**`MessageChannel` (26) survives, and the file list above said otherwise until it was checked.** §G.3
+already recorded why — it is the seam `WorkspaceChannelClient` holds — and the grep confirms the
+wiring is live: `WorkspaceChannelClient.swift:53` builds `MuxControlChannel(transport)`, the
+conformer declared inside `MuxClientTransport.swift`, and `WorkspaceStore+WorkspaceMirror.swift:644`
+is the shipping construction. The workspace channel is not this stage's subject, so the protocol and
+its one conformer keep a thin channel face over the mux doors; a G.5 that swept them up would take
+the workspace mirror's transport out from under it. What retires with the driver is the *pane*
+session's use of the mux, not every use.
+
+The last two never belonged to the mux and must not be deleted with it:
 
 - **`TransportParameters` (78)** is the module's last `import Network`, and its three shipping
   callers are `CodeSidebarProxy`, `AndroidBridgeSocket` and `SimulatorStreamConnection` — the

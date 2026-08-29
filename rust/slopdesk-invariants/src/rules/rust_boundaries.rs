@@ -105,37 +105,29 @@ pub fn one_home_per_operation(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The replay buffer is `slopdesk_wire::replay`, and the Swift file is a handle owner.
+/// The replay buffer is `slopdesk_wire::replay`, and there is no Swift near side at all.
 ///
-/// The two banned strings are what a re-implementation would need and a wrapper cannot have: the
-/// ring storage, and the per-entry eviction walk. Checked as CONTENT rather than as a deleted path,
-/// because unlike the ported daemons this file legitimately still exists.
+/// This rule used to read the file's CONTENT — it demanded `import CSlopDeskFFI` and banned the two
+/// strings a re-implementation needs and a wrapper cannot have, the ring storage and the per-entry
+/// eviction walk — because unlike the ported daemons the file legitimately still existed. It does
+/// not any more. Once hostd became Rust and called the crate directly, the 441-line class had no
+/// shipping caller left in `Sources/`, and a marshaller reached only by the suites written to reach
+/// it is the one-implementation rule's own failure mode. It went with the whole `slopdesk_replay_*`
+/// door family, so the question is no longer whether the face is thin but whether it is back.
+///
+/// A PATH check rather than a content one, and that is the widening: the content claims could only
+/// fire on a file that named `ReplayBuffer.swift`, and the near side coming back need not be spelt
+/// that way. What a returning implementation cannot avoid is being a Swift file that holds the ring
+/// — so `cross_twins`'s ban on the `slopdesk_replay_` prefix catches the wrapper form, and this
+/// catches the one file whose name says outright which implementation it is a second copy of.
 #[must_use]
 pub fn replay_buffer(tree: &Tree) -> Report {
-    const REPLAY: &str = "Sources/SlopDeskTransport/ReplayBuffer.swift";
-
-    let claims = [
-        Claim::Names {
-            path: REPLAY,
-            needle: "import CSlopDeskFFI",
-            message: "Sources/SlopDeskTransport/ReplayBuffer.swift no longer calls the Rust buffer — the \
-                      port was undone (docs/55 §6)",
-        },
-        Claim::Lacks {
-            path: REPLAY,
-            pattern: "private var scrollbackRing",
-            view: View::Code,
-            message: "Sources/SlopDeskTransport/ReplayBuffer.swift grew the ring storage back — the buffer \
-                      lives in rust/slopdesk-wire (docs/55 §6)",
-        },
-        Claim::Lacks {
-            path: REPLAY,
-            pattern: "func evictScrollbackToFit",
-            view: View::Code,
-            message: "Sources/SlopDeskTransport/ReplayBuffer.swift grew the eviction walk back — the buffer \
-                      lives in rust/slopdesk-wire (docs/55 §6)",
-        },
-    ];
+    let claims = [Claim::Absent {
+        path: "Sources/SlopDeskTransport/ReplayBuffer.swift",
+        message: "Sources/SlopDeskTransport/ReplayBuffer.swift is back — the replay buffer is \
+                  rust/slopdesk-wire's replay::ReplayBuffer and the host reaches it in Rust, so a Swift \
+                  file by that name is a second implementation (docs/55 §6, docs/63 §G.5)",
+    }];
     check_all(tree, &claims)
 }
 
@@ -1419,23 +1411,26 @@ mod tests {
         assert!(super::one_home_per_operation(&fixture.tree()).is_clean());
     }
 
-    /// A wrapper that stopped calling its door is an implementation that came back.
+    /// The near side is gone, so ANY spelling of it is the violation — a thin one included.
+    ///
+    /// The wrapper form is what the old rule blessed, which is why the seed here is the wrapper
+    /// rather than a regrown ring: a file that only forwards to the doors is exactly what the
+    /// deleted class was on its last day, and it was deleted anyway.
     #[test]
-    fn a_replay_buffer_that_regrew_its_ring_is_caught() {
+    fn a_swift_replay_buffer_of_any_thickness_is_caught() {
         let fixture = Fixture::new("replay-ring");
-        fixture.write(
-            "Sources/SlopDeskTransport/ReplayBuffer.swift",
-            "import CSlopDeskFFI\nfinal class ReplayBuffer {}\n",
-        );
         assert!(super::replay_buffer(&fixture.tree()).is_clean());
 
         fixture.write(
             "Sources/SlopDeskTransport/ReplayBuffer.swift",
-            "import CSlopDeskFFI\nprivate var scrollbackRing: [Entry] = []\n",
+            "import CSlopDeskFFI\nfinal class ReplayBuffer {}\n",
         );
         let report = super::replay_buffer(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("ring storage")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("second implementation")),
             "{report:?}"
         );
     }

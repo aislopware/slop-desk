@@ -237,8 +237,8 @@ final class SlopDeskClientDetachResumeTests: XCTestCase {
     ///
     /// This test verifies the *client* side of that contract: seeding `seq=0` even when the
     /// spec carries a non-zero seq correctly presents `lastReceivedSeq=0` to the transport
-    /// (and thereby to the host). The host-side ring replay is proved by the `ReplayBufferTests`
-    /// scrollback suite.
+    /// (and thereby to the host). The host-side ring replay is proved by `slopdesk-wire`'s
+    /// `replay` scrollback tests.
     func testColdLaunchSeedsSeqZeroRegardlessOfSavedSeq() async throws {
         let savedID = UUID()
         // LivePaneSession.makeTerminal always passes seq=0 to seedResumeIdentity, regardless

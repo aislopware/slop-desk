@@ -47,8 +47,8 @@ const GUIDANCE: &str = "Each is one of three things, and the fix differs: a SECO
 /// A linked port has a failure mode a socket port does not, and `slopdesk-gate ffi --check` catches
 /// one of them: an artifact older than its sources. This catches the other, which is quieter — a
 /// door that NOTHING calls. It costs nothing at runtime and everything at read time: the next
-/// person to touch `slopdesk_replay_result_count` has to work out whether it is the way to ask, a
-/// second way to ask, or a way nobody asks. The audit that found the first four had to answer that
+/// person to touch `slopdesk_block_status` has to work out whether it is the way to ask, a second
+/// way to ask, or a way nobody asks. The audit that found the first four had to answer that
 /// question by hand four times.
 #[must_use]
 pub fn every_ffi_door_is_opened_or_declared_deliberate(tree: &Tree) -> Report {

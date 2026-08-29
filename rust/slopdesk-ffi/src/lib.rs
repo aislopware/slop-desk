@@ -23,9 +23,9 @@
 //!
 //! ## Two conventions, and when the second applies
 //! The above is the PURE convention and covers every function whose answer is a function of its
-//! arguments. What it cannot cover is a thing that IS memory — [`replay::SlopDeskReplay`], up to
-//! 256 MiB of retained PTY output appended on every chunk; [`blocks`]'s ring of command blocks;
-//! [`blob::SlopDeskBlobAssembler`]'s partial icons — so those use the HANDLE convention documented
+//! arguments. What it cannot cover is a thing that IS memory — [`blocks`]'s ring of command blocks,
+//! appended on every prompt mark; [`blob::SlopDeskBlobAssembler`]'s partial icons — so those use
+//! the HANDLE convention documented
 //! in their modules: Rust owns the object, the caller holds an opaque token, and answers are still
 //! read out with `(out, cap) -> needed`. Adding a third convention is a design change, not a patch.
 //!
@@ -181,7 +181,6 @@ pub mod rail_structure;
 pub mod rate_control;
 pub mod recovery;
 pub mod remote_window;
-pub mod replay;
 pub mod responsive;
 pub mod sanitize;
 pub mod scroll_reproject;

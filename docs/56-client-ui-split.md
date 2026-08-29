@@ -3058,8 +3058,9 @@ the two halves of the comparison that decides whether a saved workspace loads or
 
 Seven doors were what the pairs it could finally see turned into: `slopdesk_ws_schema_version`,
 `slopdesk_ws_max_string_bytes`, `slopdesk_phone_floating_cursor_run_capacity`,
-`slopdesk_replay_constant`, `slopdesk_video_packetizer_flag`,
-`slopdesk_video_reassembler_frame_flag`, and two more indices on `slopdesk_workspace_constant`.
+`slopdesk_replay_constant` (retired with its family in `docs/63` §G.5),
+`slopdesk_video_packetizer_flag`, `slopdesk_video_reassembler_frame_flag`, and two more indices on
+`slopdesk_workspace_constant`.
 Four of them are INDEX-SHAPED — one door vending a small family read together — because a family of
 five should not become five entry points, and an index nobody defined answers a value the family
 cannot hold (`-1` where the answers are lengths, `0` where they are bit masks). The flag doors earn

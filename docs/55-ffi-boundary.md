@@ -176,10 +176,12 @@ TIER rather than for all of them.
 A number both languages have to name is not two constants; it is one constant and a door. Some get
 an entry of their own — `slopdesk_ws_schema_version`, `slopdesk_ws_max_string_bytes`,
 `slopdesk_phone_floating_cursor_run_capacity` — and some are INDEX-SHAPED, one door vending a small
-family that is read together: `slopdesk_workspace_constant`, `slopdesk_replay_constant`,
-`slopdesk_video_packetizer_flag`, `slopdesk_video_reassembler_frame_flag`. The index form exists so
+family that is read together: `slopdesk_workspace_constant`, `slopdesk_video_packetizer_flag`,
+`slopdesk_video_reassembler_frame_flag`. The index form exists so
 a family of five does not become five entry points, and it costs nothing a caller notices: every one
-of these is read once into a `static let`.
+of these is read once into a `static let`. (`slopdesk_replay_constant` was a fourth until `docs/63`
+§G.5 retired the whole replay family; the caps it vended are `rust/slopdesk-wire`'s alone now, with
+no near side to hand them to.)
 
 An index nobody defined answers a value the family cannot hold — `-1` where the answers are lengths,
 `0` where they are bit masks — so a caller that asks for a constant that does not exist gets an
@@ -276,9 +278,12 @@ so a header that drifts from the library fails the build rather than the app.
 Some types do not fit §4, because they are not functions, and they fail to be functions for different
 reasons worth naming separately.
 
-`ReplayBuffer` **is** memory: up to 256 MiB of retained PTY output, appended on every PTY chunk, and
-the `should_pause_drain` answer after that append is what stops the host reading the master. Passing
-that across per call would copy the whole history twice per chunk.
+`BlockStore` **is** memory: a pane's ring of command blocks, appended on every prompt mark, and
+the status answer after that append is what a rail row and a re-run both read. Passing that across
+per call would copy the history twice per mark. (The lead example here was `ReplayBuffer` — 256 MiB
+of retained PTY output, whose `should_pause_drain` after an append is what stops the host reading the
+master — until `docs/63` §G.5 deleted the Swift face over it. The buffer is still exactly this shape;
+it is simply reached in Rust now, so it is no longer an example of a *boundary* convention.)
 
 `VideoPacketizer` is smaller than its own arguments — it is two `u32` counters — and it still cannot
 be a function. `streamSeq` advances per datagram and `frameID` per frame, and the host reads
@@ -451,8 +456,8 @@ would abort where a selection sort over sixty-five ids simply answers.
 
 So Rust owns the object and Swift holds an opaque token:
 
-- `slopdesk_replay_new` / `slopdesk_video_packetizer_new` / `slopdesk_block_store_new` /
-  `slopdesk_idr_policy_new` return an opaque `*`; exactly one `_free` per `_new`; NULL is inert at
+- `slopdesk_video_packetizer_new` / `slopdesk_block_store_new` / `slopdesk_idr_policy_new` return an
+  opaque `*`; exactly one `_free` per `_new`; NULL is inert at
   every entry point, so a failed `new` cannot become a crash in `deinit`. Where inertness has to
   mean something rather than nothing, it means the SAFE answer — a null policy suppresses the
   keyframe rather than granting one.
@@ -499,18 +504,19 @@ So Rust owns the object and Swift holds an opaque token:
 - Answers still come back through `(out, cap) -> needed`. **Nothing is allocated on one side and
   freed on the other**, so §4's "no free function" survives intact.
 
-A producer fills one of three **slots** on the handle and returns its item count; the caller reads
-items out one at a time. Peak memory stays at one message rather than a second copy of the whole
-replay, and no list encoding exists to get wrong.
+**The multi-SLOT form had exactly one handle, and it left with it.** A producer filled one of three
+slots on the replay handle and returned its item count; the caller read items out one at a time, so
+peak memory stayed at one message rather than a second copy of a 256 MiB history, and no list
+encoding existed to get wrong. Adoption ran the other way through a fourth, staging slot —
+`input_clear`, `input_push` per message, then `adopt_snapshot_replay`.
 
-| slot | filled by | read with |
-| --- | --- | --- |
-| messages | `messages`, `replay`, `rechunk_snapshot` | `result_count` / `result_seq` / `result_len` / `result_copy` |
-| blob | `snapshot_source`, `ring_fold_source` | `blob_len` / `blob_copy` |
-| seqs | `snapshot_source`, `ring_fold_source`, `ring_seqs` | `seqs_count` / `seqs_copy` |
-
-Adoption runs the other way through a fourth, staging slot: `input_clear`, `input_push` per message,
-then `adopt_snapshot_replay`.
+It is recorded rather than prescribed because `docs/63` §G.5 retired the replay doors and no
+surviving handle has slots: `grep result_ include/slopdesk_ffi.h` answers nothing. That is the right
+outcome for a convention rather than a loss. The pressure that produced it — an answer far larger
+than any one caller wants at once — is what a handle is *for*, and if it recurs the shape is here to
+copy; what a doc must not do is prescribe a pattern with no instance, because the next reader cannot
+tell a convention from a fossil. `rust/slopdesk-wire`'s `replay` module still answers in Rust types,
+where a `Vec<&WireMessage>` costs nothing to hand back and the whole question does not arise.
 
 The packetizer has one slot and one producer, for a reason §4 cannot cover: the answer's SIZE is
 what the call decides. How many parity fragments a tier adds is the logic being asked for, so the
@@ -540,11 +546,21 @@ meant "none".
 
 ### The callback, which is the same convention inverted
 
-The cold-replay scrollback cleaner is screend's `sanitize` verb, and the dialling is on the Swift
-side, so it enters as a C function pointer: `(ctx, in, in_len, out, cap) -> needed`. It is the only
-re-entrant path across this boundary. Rust sizes the first buffer at input + 4 KiB slack and writes
-into uninitialised capacity — `vec![0; n]` there would zero 64 MiB before the answer overwrote it —
-so the retry path is correct rather than travelled.
+A door that has to call BACK takes a C function pointer plus an opaque context, and the live instance
+is the mux transport's: `SlopDeskMuxInboundFn` and `SlopDeskMuxEndedFn` in
+`rust/slopdesk-ffi/src/mux_transport.rs`, fired from Rust's own forwarder threads. Its obligations
+are the ones an inverted crossing always has and are stated at that door: the context stays valid
+until `_free` RETURNS, the callbacks may arrive on any thread but never concurrently with each other,
+and a callback may not re-enter `_free`, which joins the very threads calling it.
+
+*The example that stood here was the cold-replay scrollback cleaner — `(ctx, in, in_len, out, cap) ->
+needed`, dialled to screend's `sanitize` verb from Swift, with Rust sizing the first buffer at input
++ 4 KiB slack and writing into uninitialised capacity because `vec![0; n]` would zero 64 MiB before
+the answer overwrote it. That callback had already become a direct call when `rust/slopdesk-sanitize`
+was linked in — a socket round trip over a whole retained history to reach a pure function — and the
+door it hung on retired with the rest of the replay family in `docs/63` §G.5. Both moves are the same
+lesson as §8's foreground job: an inversion is worth its obligations only while the two halves are
+genuinely on opposite sides.*
 
 **Two rules keep this from becoming the general case.** A third convention is a design change, not a
 patch; and a handle whose entry points started deciding things would be the domain logic leaking
@@ -988,8 +1004,10 @@ gives. When the far side does keep both forms, say in the header which one a row
 list asks — `slopdesk_block_statuses` sits beside `slopdesk_block_status` on exactly that basis.
 
 What does NOT flatten, even when the pricing says widen: bytes that have to land in a buffer of their
-own on the near side regardless. A retained replay history runs to 256 MiB, so folding every
-message's payload into one delivery buys `n` saved crossings with a whole extra copy of the history.
+own on the near side regardless. The replay ring made the case at full scale before its doors retired
+— a retained history runs to 256 MiB, so folding every message's payload into one delivery would have
+bought `n` saved crossings with a whole extra copy of the history — and the rule outlives it, because
+what it prices is payloads rather than that ring.
 The metadata crosses whole (`n + 2` from `3n + 1`); the payloads stay per-message.
 
 ### Where the sweep's real defects turned out to be: NOT at the boundary
@@ -1184,9 +1202,11 @@ a trampoline, all because SWIFT owned the syscalls that produced the job.
 It owns none of them now (`rust/slopdesk-posix/src/proc.rs`), so both halves of the question live on one
 side and `slopdesk_pty_foreground_agent` asks it in a single call — N+1 crossings per poll became one,
 and the resolver callback became a direct call. **Before staging a shape, ask which side is producing
-it.** Staging is the right answer for a shape the CALLER genuinely owns — the replay buffer's input
-slot still is one — and the wrong answer for a shape the caller only assembled because it was holding
-the wrong end of the port.
+it.** Staging is the right answer for a shape the CALLER genuinely owns and the wrong
+answer for a shape the caller only assembled because it was holding the wrong end of the port. The
+replay buffer's input slot was the standing example of the former, and §4b records how that ended:
+the caller stopped existing. Both halves moved to Rust, so the question the staging answered — how
+does a shape this big cross — stopped being asked at all, which is what this rule is pointing at.
 
 **A slot mask, where one fold owes several answers.** The pane detector's folds owe up to four
 messages of three different shapes. A single flat answer buffer encoding all four would be a second

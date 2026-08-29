@@ -516,8 +516,9 @@ un-acked `output` messages so a reconnect is lossless:
   unbounded; below the gate it keeps buffering (`BUFFERED_ONLY`). A long background build must not
   overflow the buffer and silently lose output.
   <br>*(These figures read 64 MiB / 4 MiB here until 2026-07-26 while the code said 256 / 64. The
-  constants in `Sources/SlopDeskTransport/ReplayBuffer.swift` are the contract; any multi-subscriber
-  eviction policy is calibrated against them.)*
+  constants in `rust/slopdesk-wire`'s `replay` module are the contract; any multi-subscriber eviction
+  policy is calibrated against them. They were reachable through a Swift class over an FFI door until
+  `docs/63` §G.5 found that class had no caller but its own tests and deleted the whole family.)*
 - Seq is **`Int64`** (ET proto2 used int32, which truncates on very long sessions).
 - **No app-layer crypto.** Deployment assumes a trusted private network — typically a WireGuard mesh
   (e.g. NetBird/Tailscale) providing E2E encryption + node auth — so the buffer stores **raw bytes**.
@@ -697,15 +698,18 @@ topology). See docs/DECISIONS.md 2026-07-28.
   `var inbound: AsyncThrowingStream<WireMessage, Error>`.
 - `actor NWMessageChannel: MessageChannel` — one `NWConnection`, drives a `FrameDecoder`, surfaces
   `State`.
-- `struct ReplayBuffer: Sendable` — pure logic: `append(bytes:) -> Int64`, `ack(upTo:)`,
-  `messages(after:) -> [(seq, bytes)]`, `retainedBytes`, `isClientOnline`, `shouldPauseDrain` (4 MiB
-  offline gate / 64 MiB cap; never drops un-acked data — backpressure via pause instead).
-  **Rust counterpart (stage 14, 2026-08-13):** `rust/slopdesk-wire`'s `replay::ReplayBuffer` and
-  `altscreen::reopen_sequence` carry every rule above — the seq ledger, the scrollback ring, the
-  line-aligned eviction, the alt-screen cut repair, the distiller re-chunk and the O(log n) lag
-  metric. It lives in the wire crate because the retained unit is a `WireMessage::Output` and the
-  re-chunk ceiling is `MuxFlowControl::max_output_frame_payload_bytes`; the Network.framework half of
-  `SlopDeskTransport` stays Swift. See `docs/DECISIONS.md`.
+- **The replay buffer is `rust/slopdesk-wire`'s `replay::ReplayBuffer`, and only that.** It carries
+  the seq ledger, the scrollback ring, the line-aligned eviction, the alt-screen cut repair
+  (`altscreen::reopen_sequence`), the distiller re-chunk and the O(log n) lag metric: `append`,
+  `ack`, `messages_after`, `retained_bytes`, `is_client_online`, `should_pause_drain` — never drops
+  un-acked data, and backpressures by pausing the PTY drain instead. It lives in the wire crate
+  because the retained unit is a `WireMessage::Output` and the re-chunk ceiling is
+  `MuxFlowControl::max_output_frame_payload_bytes`.
+  <br>*A `struct ReplayBuffer: Sendable` stood here in Swift from WF-2, and from stage 14
+  (2026-08-13) it was a class over the `slopdesk_replay_*` doors rather than a second implementation.
+  `docs/63` §G.5 deleted it anyway: once hostd was Rust, the near side had no shipping caller left,
+  and a marshaller reached only by the suites written to reach it is the one-implementation rule's
+  own failure mode. The doors went with it.*
 - `actor HostTransport` — `NWListener`; `start(port:)`, `boundPort`, `sessions_`
   (`AsyncStream<HostSessionTransport>`), `stop()`.
 - `actor HostSessionTransport` — per-session `ReplayBuffer` owner; `sendOutput(_:)`, `sendControl(_:)`,

@@ -69,7 +69,7 @@ const DOCC_EXTERNAL: [&str; 4] = [
 /// recording a deleted file is not fixed by an entry here; it is fixed by not spelling a backticked
 /// PATH, which that rule's own doc says stays legal. Adding the name here instead silently does
 /// nothing.
-const PATH_TOMBSTONES: [&str; 31] = [
+const PATH_TOMBSTONES: [&str; 32] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -110,6 +110,14 @@ const PATH_TOMBSTONES: [&str; 31] = [
     "Sources/SlopDeskProtocol/Mux/MuxFlowControl.swift",
     "Sources/SlopDeskTransport/Mux/MuxNWConnection.swift",
     "Sources/SlopDeskTransport/Mux/MuxRoutingCore.swift",
+    // The replay class, retired ahead of its stage. `docs/20` records that a `struct ReplayBuffer`
+    // stood in the wire contract from WF-2 and what replaced it, `docs/63` §G.5 names the file it
+    // deleted and quotes the grep that settled it had no caller, and `docs/55` §4b's handle table
+    // reads as a past-tense record of the one multi-slot instance the boundary ever had. Each is a
+    // BEFORE for the same reason the four paths above are: repointing them at
+    // `rust/slopdesk-wire`'s `replay` module would have the doc say a Rust crate was the thing the
+    // sentence is explaining the retirement of.
+    "Sources/SlopDeskTransport/ReplayBuffer.swift",
 ];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.

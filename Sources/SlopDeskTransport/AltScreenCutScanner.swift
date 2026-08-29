@@ -16,7 +16,7 @@ import Foundation
 ///
 /// ## Why
 /// Both scrollback retainers cut their stream from the FRONT when it outgrows the cap: the
-/// in-memory ring (``ReplayBuffer/ack(upTo:)`` eviction) and the on-disk journal (superd's
+/// in-memory ring (`slopdesk-wire`'s `ReplayBuffer::ack` eviction) and the on-disk journal (superd's
 /// `JournalStore` compaction). A cut that lands INSIDE an open alt-screen segment
 /// (`?1049h … ?1049l` — a Claude Code session holds one open for its whole run) beheads it: the
 /// surviving stream starts with segment interior and ends with an UNPAIRED `?1049l`. Replay-side

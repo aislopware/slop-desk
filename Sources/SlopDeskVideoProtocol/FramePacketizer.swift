@@ -182,7 +182,7 @@ public struct FrameFragment: Equatable, Sendable {
 /// Two counters outlive a call: `streamSeq` advances per datagram and `frameID` per frame, and the
 /// host reads `frameID` BEFORE packetizing so it can record the frame's LTR token against the id the
 /// frame is about to carry. They live in Rust, and this object holds the token — the convention
-/// `docs/55` §4b describes, and the same one ``ReplayBuffer`` uses. Its obligation comes with it:
+/// `docs/55` §4b describes, and the same one `SlopDeskBlockStore` uses. Its obligation comes with it:
 /// exactly one free per new (``deinit``), and no two calls on one handle may overlap.
 ///
 /// Kept as a `final class` (not a value `struct`) so `packetize`/`packetizeRaw` are NON-mutating and
