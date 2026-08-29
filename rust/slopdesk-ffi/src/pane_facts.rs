@@ -18,7 +18,7 @@
 use core::ffi::c_uchar;
 
 use slopdesk_agent::badge::TabBadge;
-use slopdesk_workspace::pane_facts::{self, Unseen, Waiting};
+use slopdesk_workspace::pane_facts::{self, DocumentIdentity, SeenDocument, Unseen, Waiting};
 
 use crate::agent::status_from;
 use crate::borrow;
@@ -120,6 +120,32 @@ pub const extern "C" fn slopdesk_ws_pane_unseen_done(
         Unseen::Clear => 0,
         Unseen::SeenThenClear => 1,
         Unseen::Mark => 2,
+    }
+}
+
+/// What a read of the mirror's document identity does to this device's seen-map: `0` nothing,
+/// `1` file the map under it, `2` EMPTY the map first and then file it.
+///
+/// `identity` is `0` unanswered (no document, or the store's own seed) · `1` the very document the
+/// map is filed under · `2` a real host document that is not. The three UUIDs behind that reading
+/// stay on the caller's side — they are identities it owns, and this rule asks only whether the
+/// answer is real and whether it is the same one. An unrecognised byte reads as `0`, which changes
+/// nothing.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_pane_seen_document(identity: c_uchar, has_stored: bool) -> c_uchar {
+    let identity = match identity {
+        1 => DocumentIdentity::Adopted,
+        2 => DocumentIdentity::New,
+        _ => DocumentIdentity::Unanswered,
+    };
+    match pane_facts::seen_document(identity, has_stored) {
+        SeenDocument::Ignore => 0,
+        SeenDocument::Adopt => 1,
+        SeenDocument::ClearAndAdopt => 2,
     }
 }
 

@@ -98,6 +98,51 @@ pub fn commit(
     })
 }
 
+/// Which document the mirror holds, relative to the one this device's seen-map is filed under.
+///
+/// The three UUIDs the caller compares to answer this — the live epoch, the store's own seed, the
+/// epoch the map was filed under — never cross. They are identities the caller owns, and the
+/// question the rule below asks is not about which document it is, only about whether it is a real
+/// one and whether it is the same one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentIdentity {
+    /// No document at all, or the store's own seed — which is the QUESTION a client sends, never a
+    /// host's answer, so nothing may be filed under it.
+    Unanswered,
+    /// The very document the map is already filed under.
+    Adopted,
+    /// A real host document, and not the one on file.
+    New,
+}
+
+/// What to do with this device's seen-map when the mirror's document identity is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeenDocument {
+    /// Nothing. Either there is no answer to act on, or the map is already filed correctly.
+    Ignore,
+    /// File the map under this document, keeping what is in it.
+    Adopt,
+    /// EMPTY the map first, then file it: these are another document's pane ids, and a counter
+    /// recorded against one document says nothing about the same-numbered pane in another.
+    ClearAndAdopt,
+}
+
+/// Decides what a read of the mirror's document identity does to the seen-map.
+///
+/// `has_stored` is what separates the two adopting arms, and it is the whole reason this is a rule
+/// rather than an assignment: a FIRST adopt is a map restored from disk meeting the document it was
+/// written for, and clearing there would throw away every acknowledgement the user made in the
+/// previous run. A LATER one is a genuine document switch, where keeping them would carry stale
+/// counters onto ids that merely happen to collide.
+#[must_use]
+pub const fn seen_document(identity: DocumentIdentity, has_stored: bool) -> SeenDocument {
+    match identity {
+        DocumentIdentity::Unanswered | DocumentIdentity::Adopted => SeenDocument::Ignore,
+        DocumentIdentity::New if has_stored => SeenDocument::ClearAndAdopt,
+        DocumentIdentity::New => SeenDocument::Adopt,
+    }
+}
+
 /// What one pane's unread-finish marker should become.
 ///
 /// The marker is a COMPARISON, not a latch: the host publishes a monotone counter per pane and
@@ -308,6 +353,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_first_adopt_keeps_the_restored_map_and_a_switch_empties_it() {
+        use super::{DocumentIdentity, SeenDocument, seen_document};
+        // The store's own seed is the question, so nothing may be filed under it.
+        assert_eq!(
+            seen_document(DocumentIdentity::Unanswered, false),
+            SeenDocument::Ignore
+        );
+        assert_eq!(
+            seen_document(DocumentIdentity::Unanswered, true),
+            SeenDocument::Ignore
+        );
+        // Already filed correctly — a re-read of the same document is not an event.
+        assert_eq!(
+            seen_document(DocumentIdentity::Adopted, true),
+            SeenDocument::Ignore
+        );
+        // A map restored from disk meeting the document it was written for keeps every
+        // acknowledgement the previous run made.
+        assert_eq!(seen_document(DocumentIdentity::New, false), SeenDocument::Adopt);
+        // A genuine switch does not: those counters were recorded against other panes.
+        assert_eq!(
+            seen_document(DocumentIdentity::New, true),
+            SeenDocument::ClearAndAdopt
+        );
+    }
     #[test]
     fn a_zero_counter_is_clear_and_records_nothing() {
         assert_eq!(unseen_done(0, None, false), Unseen::Clear);

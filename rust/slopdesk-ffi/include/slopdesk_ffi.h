@@ -9498,6 +9498,12 @@ SlopDeskWsPaneStatusCommit slopdesk_ws_pane_status_commit(uint8_t previous, uint
 // `has_seen` separates "never recorded" from "recorded zero" — the first can never match a live
 // counter, the second is every pane's state before the document arrives.
 uint8_t slopdesk_ws_pane_unseen_done(uint32_t epoch, bool has_seen, uint32_t seen, bool is_visible);
+// What a read of the mirror's document identity does to this device's seen-map: 0 nothing, 1 file the
+// map under it, 2 EMPTY the map first and then file it. `identity` is 0 unanswered (no document, or
+// the store's own seed) · 1 the document the map is already filed under · 2 a real host document that
+// is not. The UUIDs behind that reading never cross — the caller owns them, and this asks only
+// whether the answer is real and whether it is the same one.
+uint8_t slopdesk_ws_pane_seen_document(uint8_t identity, bool has_stored);
 // One pane in the unseen-attention queue. `since` is a flag plus a value because the absent case is
 // REAL — a manual badge override carries no age evidence — and a sentinel would sort as itself.
 typedef struct {

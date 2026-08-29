@@ -59,6 +59,45 @@ public enum PaneFacts {
         }
     }
 
+    /// Which document the mirror holds, relative to the one this device's seen-map is filed under.
+    ///
+    /// The reading is the caller's because the three UUIDs it compares are: the live epoch, the
+    /// store's own seed, and the epoch the map was filed under. None of them crosses — the rule
+    /// below asks only whether the answer is REAL and whether it is the SAME one.
+    public enum DocumentIdentity: UInt8 {
+        /// No document at all, or the store's own seed — the question a client sends, never an answer.
+        case unanswered = 0
+        /// The very document the map is already filed under.
+        case adopted = 1
+        /// A real host document, and not the one on file.
+        case new = 2
+    }
+
+    /// What a read of the mirror's document identity does to this device's seen-map.
+    public enum SeenDocument {
+        /// Nothing: no answer to act on, or the map is already filed correctly.
+        case ignore
+        /// File the map under this document, keeping what is in it.
+        case adopt
+        /// EMPTY the map first, then file it — these are another document's pane ids.
+        case clearAndAdopt
+    }
+
+    /// Decides what a read of the mirror's document identity does to the seen-map.
+    ///
+    /// `hasStored` separates the two adopting arms, and it is why this is a rule rather than an
+    /// assignment: a FIRST adopt is a map restored from disk meeting the document it was written
+    /// for, and clearing there would throw away every acknowledgement the previous run made. A LATER
+    /// one is a genuine document switch, where keeping them would carry stale counters onto ids that
+    /// merely happen to collide.
+    public static func seenDocument(_ identity: DocumentIdentity, hasStored: Bool) -> SeenDocument {
+        switch slopdesk_ws_pane_seen_document(identity.rawValue, hasStored) {
+        case 1: .adopt
+        case 2: .clearAndAdopt
+        default: .ignore
+        }
+    }
+
     /// Reorders `entries` the way the unseen-attention queue is walked: rank first (a waiting
     /// question, then a failure, then an unread finish), then longest-waiting, then the caller's own
     /// traversal order as the tie.

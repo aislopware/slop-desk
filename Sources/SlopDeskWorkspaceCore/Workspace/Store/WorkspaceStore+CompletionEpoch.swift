@@ -114,18 +114,27 @@ public extension WorkspaceStore {
         refreshUnseenDoneForAllPanes()
     }
 
-    /// Drops the whole map when the live document is not the one it was recorded under.
+    /// Files the seen-map under the live document, emptying it first when that is a switch.
     ///
-    /// A `nil` live epoch (no channel, or not yet subscribed) is not evidence of a different
-    /// document, so it leaves the map alone — otherwise every launch would discard the map before the
-    /// channel had a chance to say which document this is. Neither is
-    /// ``WorkspaceStore/seedEpoch``, which is what the store's own restored layout carries until a
-    /// real host frame arrives.
+    /// The three UUIDs are compared HERE and nowhere else, because they are identities this side
+    /// owns: a `nil` live epoch (no channel, or not yet subscribed) is not evidence of a different
+    /// document, and neither is ``WorkspaceStore/seedEpoch``, which is what the store's own restored
+    /// layout carries until a real host frame arrives. What that reading MEANS for the map is
+    /// ``PaneFacts/seenDocument(_:hasStored:)``.
     internal func reconcileSeenCompletionEpochDocument() {
         let live: UUID? = workspaceMirror.documentEpoch
-        guard let live, live != Self.seedEpoch else { return }
-        guard seenCompletionEpochDocument != live else { return }
-        if seenCompletionEpochDocument != nil { seenCompletionEpoch.removeAll() }
+        let identity: PaneFacts.DocumentIdentity =
+            switch live {
+            case nil,
+                 Self.seedEpoch: .unanswered
+            case seenCompletionEpochDocument: .adopted
+            default: .new
+            }
+        switch PaneFacts.seenDocument(identity, hasStored: seenCompletionEpochDocument != nil) {
+        case .ignore: return
+        case .clearAndAdopt: seenCompletionEpoch.removeAll()
+        case .adopt: break
+        }
         seenCompletionEpochDocument = live
         persistCompletionSeen()
     }
