@@ -1,12 +1,23 @@
-# `slopdesk-apple-pasteboard` — `NSPasteboard`, the board itself.
+# `slopdesk-apple-pasteboard` — the system pasteboard, on both of Apple's spellings of it.
 # Read `docs/57-apple-frameworks-in-rust.md` before changing it.
 #
 # ## What lives here
-# One thing: reading and writing ONE macOS pasteboard. The change counter, what types the current
+# One thing: reading and writing ONE system pasteboard. The change counter, what types the current
 # owner DECLARED, the bytes behind a type, and a validate-then-clear write. Nothing about clipboard
 # SYNC: which flavour is preferred, how big a clip may be, whether a concealed clip may leave the
 # machine, and whether an arriving read is the client's own push echoing back are all
-# `slopdesk_hostserver::clipsync`, which is `forbid(unsafe_code)` and testable against a fake board.
+# `slopdesk-clipboard`, which is `forbid(unsafe_code)` and testable against a fake board.
+#
+# ## ONE area, two frameworks, TWO sets of slices
+# The AREA is the pasteboard; `NSPasteboard` and `UIPasteboard` are two spellings of it, asked the
+# same six questions. `src/lib.rs`'s header carries the §2 argument for why that is one crate and
+# not two. What the dependency tables below do is keep each spelling on the slices that have it:
+# `AppKit` on macOS, `UIKit` + `UniformTypeIdentifiers` on iOS, and NOTHING on a host that is
+# neither — where the crate compiles to an empty lib the way it always has.
+#
+# Unlike `slopdesk-apple-vt`'s compression half, neither spelling is gated inside the header's
+# `MACOS-ONLY BEGIN/END` region: every client has a board, so `slopdesk_clipboard_*` is declared on
+# all three slices and the `cfg`s above are what pick the framework under it.
 #
 # ## `NSBitmapImageRep` is inside the framework area, and here is the argument
 # §2 gives a crate ONE framework area, and a transcode looks at first like a second. It is not: the
@@ -17,12 +28,22 @@
 # half to ask — which is exactly the decision §2 keeps out of wrapper crates.
 #
 # ## The `unsafe` in this crate
-# ONE block. Every `NSPasteboard` method this crate calls is generated SAFE, and so is
-# `NSBitmapImageRep::initWithData` and `TIFFRepresentation`. Only `representationUsingType:properties:`
-# is generated `unsafe`, because its properties dictionary is untyped in the header — and this crate
-# hands it an EMPTY dictionary, which is the one argument that cannot be of the wrong type. There is
-# no `from_raw`, no transmute and no raw-pointer arithmetic, so the two Core Foundation admissions §2
-# grants this family are unspent here.
+# On the `AppKit` half, ONE block. Every `NSPasteboard` method it calls is generated SAFE, and so
+# are `NSBitmapImageRep::initWithData` and `TIFFRepresentation`. Only
+# `representationUsingType:properties:` is generated `unsafe`, because its properties dictionary is
+# untyped in the header — and this crate hands it an EMPTY dictionary, which is the one argument
+# that cannot be of the wrong type.
+#
+# On the `UIKit` half the count is higher and the OBLIGATION is one, repeated: `objc2` generates
+# every non-atomic property accessor `unsafe`, so `changeCount`, `pasteboardTypes`, `string`,
+# `setString:`, `image`, `hasStrings` and `setItems:` are each an `unsafe` call with the same note.
+# The framework rule they satisfy is that `UIPasteboard` is one of the few `UIKit` classes documented
+# as usable from any thread — `objc2` marks it `Send + Sync` on exactly that basis. Plus the
+# `extern` statics: `UTTypePNG` and its three siblings, which is the same obligation the `AppKit`
+# half carries for `NSPasteboardTypePNG` and states the same way.
+#
+# There is no `from_raw`, no transmute and no raw-pointer arithmetic on either half, so the two Core
+# Foundation admissions §2 grants this family are unspent here.
 [workspace]
 resolver = "3"
 
@@ -31,7 +52,7 @@ name = "slopdesk-apple-pasteboard"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "NSPasteboard access for slopdesk — the board's counter, its declared types and its bytes"
+description = "System pasteboard access for slopdesk — the board's counter, its declared types and its bytes"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -63,6 +84,34 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
   "NSData",
   "NSArray",
   # `NSArray::iter` is gated on this; without it the declared-type list can only be indexed.
+  "NSEnumerator",
+  "NSDictionary",
+] }
+
+# The iOS spelling of the same area. `UIPasteboard` is the board; `UIImage` is what makes an image
+# clip decodable and re-encodable, the role `NSBitmapImageRep` plays on the other half.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2-ui-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "UIPasteboard",
+  "UIImage",
+  # `UIImage`'s superclass, without which the binding is absent rather than reduced.
+  "UIResponder",
+] }
+# The UTIs `AppKit` spells as `NSPasteboard.PasteboardType` globals. `UIKit` has no such constants,
+# so the framework-sourced spelling is `UTType`'s — read rather than typed for the AppKit half's
+# reason: a literal that looks right is the drift this family exists to make impossible.
+objc2-uniform-type-identifiers = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "UTType",
+  "UTCoreTypes",
+] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSString",
+  "NSData",
+  "NSArray",
   "NSEnumerator",
   "NSDictionary",
 ] }

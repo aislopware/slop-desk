@@ -356,9 +356,13 @@ pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
 const AREA_FLOORS: &[(&str, &str)] = &[
     ("rust/slopdesk-apple-fsevents/src/watch.rs", r"FSEventStream[A-Z]"),
     (
-        "rust/slopdesk-apple-pasteboard/src/board.rs",
+        "rust/slopdesk-apple-pasteboard/src/appkit.rs",
         r"NSPasteboard(Type)?::|NSPasteboard\b",
     ),
+    // The SAME area's other spelling, and a row of its own because this rule pins where a CALL
+    // happens rather than which crate is depended on: one crate holding two frameworks still owes
+    // one floor per framework, or the second one is unpinned inside a pinned crate.
+    ("rust/slopdesk-apple-pasteboard/src/uikit.rs", r"UIPasteboard\b"),
     ("rust/slopdesk-apple-app/src/lib.rs", r"NSWorkspace::"),
     ("rust/slopdesk-apple-machine/src/lib.rs", r"NSHost\b"),
     (

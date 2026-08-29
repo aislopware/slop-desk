@@ -97,7 +97,7 @@ public enum ClipboardPasteMenu {
     ///
     /// ⚠️ `clipboardHasText` is a `Bool`, and that is the whole point: enablement must be answerable
     /// WITHOUT the clipboard's content, because on iOS reading it from a renderer raises the modal
-    /// "Allow Paste?" alert (``SystemPasteboard``'s header). A caller that already holds the content
+    /// "Allow Paste?" alert (``ClientPasteboard``'s header). A caller that already holds the content
     /// because it is about to paste — the Mac's menu, rebuilt at OPEN — reduces it through
     /// ``isPastable(_:)``; a caller deciding at RENDER time asks a probe
     /// (``WorkspaceStore/localClipboardHasText()``). There is deliberately no `String?` spelling of

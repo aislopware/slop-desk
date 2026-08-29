@@ -1,16 +1,30 @@
 #if os(macOS)
 import AppKit
-import SlopDeskPasteboard
 import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// ``ClipboardSyncEngine`` tick logic against a NAMED pasteboard + fake push/pull seams (no live
-/// socket): push-on-local-change with pending retry, baseline-first pull, and the loop-safety
-/// contract (our own applies never bounce back, pulled clips never re-apply).
+/// ``ClipboardSyncEngine`` tick logic against a NAMED board + fake push/pull seams (no live socket):
+/// push-on-local-change with pending retry, baseline-first pull, and the loop-safety contract (our
+/// own applies never bounce back, pulled clips never re-apply).
+///
+/// ⚠️ WHAT IS NOT HERE ANY MORE, AND WHY. The four rules about what may leave a machine — image
+/// before text, the concealed refusal, the file-copy refusal, the content cap — are
+/// `rust/slopdesk-clipboard`'s, asserted against its own fake board and again through the HOST's
+/// end. A Swift suite restating them would be the third copy of a rule Swift no longer implements,
+/// which is the very drift this port closed. What is still Swift's, and so still here, is the tick:
+/// the ORDER the engine does things in, and that ``ClipboardSyncEngine/noteAttendedLocalRead(_:)``
+/// consults the board's declared types BEFORE it builds a clip.
+///
+/// `NSPasteboard` appears below only to SEED and to READ BACK raw flavours — states the door's write
+/// surface deliberately cannot produce (a board declaring two types at once) and a flavour it
+/// deliberately does not answer for (the TIFF twin). Every assertion about behaviour goes through
+/// ``ClientPasteboard``.
 @MainActor
 final class ClipboardSyncEngineTests: XCTestCase {
+    /// The seeding/read-back handle on the same board ``board`` names.
     private var pasteboard: NSPasteboard!
+    private var board: ClientPasteboard!
     private var pushed: [MetadataCodec.ClipboardClip] = []
     private var pushResult = true
     private var pullRequests: [Int64] = []
@@ -20,9 +34,9 @@ final class ClipboardSyncEngineTests: XCTestCase {
     // override of a throwing @objc method does not compile).
     // swiftlint:disable:next unneeded_throws_rethrows
     override func setUp() async throws {
-        pasteboard = NSPasteboard(
-            name: NSPasteboard.Name("slopdesk.tests.syncengine.\(UUID().uuidString)"),
-        )
+        let name = "slopdesk.tests.syncengine.\(UUID().uuidString)"
+        board = ClientPasteboard(name: name)
+        pasteboard = NSPasteboard(name: NSPasteboard.Name(name))
         pasteboard.clearContents()
         pushed = []
         pushResult = true
@@ -36,14 +50,21 @@ final class ClipboardSyncEngineTests: XCTestCase {
     override func tearDown() async throws {
         pasteboard.releaseGlobally()
         pasteboard = nil
+        board = nil
     }
+
+    /// The concealed marker, asked for rather than typed: a literal here would keep passing against
+    /// a UTI `rust/slopdesk-clipboard` had stopped recognising.
+    private static let concealedType = NSPasteboard.PasteboardType(
+        ClientPasteboard.concealedTypeIdentifier,
+    )
 
     /// `attendedReadsFrom` is the seam the app shells pass their store through — the tests that drive
     /// the whole store → engine → host chain give it one, the rest leave it `nil` exactly as a headless
     /// engine has.
     private func makeEngine(attendedReadsFrom store: WorkspaceStore? = nil) -> ClipboardSyncEngine {
         ClipboardSyncEngine(
-            pasteboard: SystemPasteboard(pasteboard),
+            board: board,
             attendedReadsFrom: store,
             push: { [weak self] clip in
                 guard let self else { return false }
@@ -59,8 +80,7 @@ final class ClipboardSyncEngineTests: XCTestCase {
     }
 
     private func copyLocally(_ text: String) {
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        board.write(text)
     }
 
     // MARK: Push (local copy → host)
@@ -113,22 +133,15 @@ final class ClipboardSyncEngineTests: XCTestCase {
         XCTAssertEqual(pullRequests.count, 1, "pull resumes once the push lands")
     }
 
-    func testConcealedClipIsNeverPushed() async {
+    /// The tick's snapshot takes the fold's refusals — pinned here at the SEAM only (one board the
+    /// fold refuses, reaching the engine), not rule by rule; see the type docs.
+    func testTheTickPushesNothingTheFoldRefuses() async {
         let engine = makeEngine()
         pasteboard.clearContents()
         pasteboard.setString("hunter2", forType: .string)
-        pasteboard.setString("1", forType: PasteboardClip.concealedType)
+        pasteboard.setString("1", forType: Self.concealedType)
         await engine.tick()
         XCTAssertEqual(pushed, [], "password-manager clips stay local")
-    }
-
-    func testFileCopyIsNeverPushed() async {
-        let engine = makeEngine()
-        pasteboard.clearContents()
-        pasteboard.setString("file:///Users/x/doc.pdf", forType: .fileURL)
-        pasteboard.setString("doc.pdf", forType: .string)
-        await engine.tick()
-        XCTAssertEqual(pushed, [], "a local file path is meaningless on the host")
     }
 
     // MARK: The ATTENDED door (the only client→host path a phone has)
@@ -170,28 +183,21 @@ final class ClipboardSyncEngineTests: XCTestCase {
     }
 
     /// A CONCEALED clip stays on the device even when the user pastes it somewhere on purpose. The
-    /// paste is one machine's; the pasteboard is both machines'. Answered from the DECLARED types
-    /// (``SystemPasteboard/isSyncable``) so the refusal costs no second content read.
-    func testAnAttendedReadOfAConcealedClipIsNeverPushed() async {
+    /// paste is one machine's; the board is both machines'.
+    ///
+    /// This is the ORDER assertion the Swift side still owes: the attended door is handed text that
+    /// is already in hand, so nothing forces it to consult the board at all — and if it did not, a
+    /// password would ship. It takes the refusal from ``ClientPasteboard/isSyncable``, which reads
+    /// the DECLARED types and so costs no second content read.
+    func testAnAttendedReadConsultsTheBoardBeforeBuildingAClip() async {
         let engine = makeEngine()
         pasteboard.clearContents()
         pasteboard.setString("hunter2", forType: .string)
-        pasteboard.setString("1", forType: PasteboardClip.concealedType)
+        pasteboard.setString("1", forType: Self.concealedType)
+        XCTAssertFalse(board.isSyncable, "the board itself refuses — that is what the door must ask")
         engine.noteAttendedLocalRead("hunter2")
         await engine.tick()
         XCTAssertEqual(pushed, [], "a password the user pasted into a pane must not land on the host board")
-    }
-
-    /// The other refusal the tick's snapshot takes, taken here too: a file copy is a path, and a path
-    /// means nothing on the other machine.
-    func testAnAttendedReadOfAFileCopyIsNeverPushed() async {
-        let engine = makeEngine()
-        pasteboard.clearContents()
-        pasteboard.setString("file:///Users/x/doc.pdf", forType: .fileURL)
-        pasteboard.setString("doc.pdf", forType: .string)
-        engine.noteAttendedLocalRead("doc.pdf")
-        await engine.tick()
-        XCTAssertEqual(pushed, [])
     }
 
     /// Empty text and over-cap text are dropped, and the ECHO guard holds on this door too: a clip we
@@ -262,7 +268,7 @@ final class ClipboardSyncEngineTests: XCTestCase {
             kind: .text, bytes: Data("from host".utf8),
         ))
         await engine.tick()
-        XCTAssertEqual(pasteboard.string(forType: .string), "from host")
+        XCTAssertEqual(board.plainText, "from host")
     }
 
     func testAppliedHostClipIsNotPushedBack() async {
@@ -288,7 +294,7 @@ final class ClipboardSyncEngineTests: XCTestCase {
         pullResult = (changeCount: 50, clip: MetadataCodec.ClipboardClip(kind: .imagePNG, bytes: png))
         await engine.tick()
         XCTAssertEqual(pasteboard.data(forType: .png), png)
-        XCTAssertNotNil(pasteboard.data(forType: .tiff))
+        XCTAssertNotNil(pasteboard.data(forType: .tiff), "the AppKit half declares the twin so every app can paste")
     }
 
     func testPullFailureResetsTheBaseline() async {
@@ -312,7 +318,7 @@ final class ClipboardSyncEngineTests: XCTestCase {
         let engine = makeEngine()
         pullResult = (changeCount: 60, clip: MetadataCodec.ClipboardClip(kindByte: 99, bytes: Data([1])))
         await engine.tick()
-        XCTAssertEqual(pasteboard.string(forType: .string), "local truth", "unknown kind → drop, never guess")
+        XCTAssertEqual(board.plainText, "local truth", "unknown kind → drop, never guess")
     }
 }
 #endif

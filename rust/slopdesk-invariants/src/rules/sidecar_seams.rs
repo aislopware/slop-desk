@@ -20,7 +20,7 @@ const LIFECYCLE: &str = "rust/slopdesk-hostserver/src/service.rs";
 /// The five-line latch with three load-bearing details in it.
 const LATCH: &str = "Sources/SlopDeskWorkspaceCore/Support/DeadlineLatch.swift";
 /// Where a pasteboard becomes a clip, both directions, once.
-const PASTEBOARD_CLIP: &str = "Sources/SlopDeskPasteboard/PasteboardClip.swift";
+const CLIENT_BOARD: &str = "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift";
 /// `WorkspaceCore`'s one sidecar encoder.
 const SIDECAR_JSON: &str = "Sources/SlopDeskWorkspaceCore/Support/SidecarJSON.swift";
 /// The one file that reads a client-side debug gate.
@@ -246,16 +246,14 @@ pub fn one_re_armable_deadline(tree: &Tree) -> Report {
 /// The two banned spellings are the ones a second conversion cannot avoid writing: the TIFF type it
 /// must ask the pasteboard for, and the byte ceiling it must clamp against.
 ///
-/// Since `docs/60` F.9 the two ends are in two LANGUAGES rather than two Swift files. The client's
-/// end is still `PasteboardClip`; the host's is `rust/slopdesk-hostserver/src/clipsync.rs`.
-///
-/// **The Rust half of that sentence moved once more, and the rule moved with it rather than being
-/// dropped.** The four rules are `rust/slopdesk-clipboard` now — a crate BOTH ends read, so what
-/// used to be "the host takes the record and the cap off the codec" is the fold's edge, and what is
-/// left to state about `clipsync.rs` is that it still asks the fold instead of growing a second
-/// opinion back. Two claims rather than one, because the two facts fail differently: a fold that
-/// stopped naming the codec is a drift against the wire, and a performer that stopped naming the
-/// fold is a drift against the other end.
+/// **BOTH ends are Rust now, and the rule was re-aimed rather than dropped.** The four rules are
+/// `rust/slopdesk-clipboard`, a crate the host end and the client end BOTH read; the Swift
+/// `PasteboardClip` that used to be the client's half is deleted, and what is left on that side is
+/// `ClientPasteboard`, a face over the `slopdesk_clipboard_*` doors. So the claims fail differently
+/// and are stated separately: a fold that stopped naming the codec is a drift against the wire, a
+/// performer or a face that stopped naming the fold is a drift against the other end, and a Swift
+/// file that spells a flavour or a UTI at all is the SECOND conversion growing back in the one
+/// language that no longer has a first.
 #[must_use]
 pub fn one_pasteboard_clip(tree: &Tree) -> Report {
     /// The fold both ends read, which takes the record and the cap off the codec they encode
@@ -263,15 +261,16 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
     const FOLD: &str = "rust/slopdesk-clipboard/src/lib.rs";
     /// The host's end, which owns the two verbs and the echo guard and asks [`FOLD`] for the rest.
     const HOST_CLIP: &str = "rust/slopdesk-hostserver/src/clipsync.rs";
-    /// The client's end and the direction it must still get from the shared Swift file.
+    /// The client's end and the two directions it must still get through the board face rather
+    /// than from a conversion of its own.
     const SHARES: &[(&str, &str)] = &[
         (
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
-            r"PasteboardClip\.read",
+            r"board\.clip\(skippingConcealed:",
         ),
         (
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
-            r"PasteboardClip\.write",
+            r"board\.apply\(",
         ),
     ];
 
@@ -279,13 +278,15 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
         Claim::NoneUnder {
             roots: &["Sources/"],
             extensions: SWIFT,
-            pattern: r"forType: \.tiff|MetadataCodec\.maxClipboardContentBytes",
+            pattern: r"forType: \.tiff|MetadataCodec\.maxClipboardContentBytes|org\.nspasteboard\.ConcealedType|public\.file-url",
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &[PASTEBOARD_CLIP],
-            message: "a second pasteboard↔clip conversion grew back ({files}) — PasteboardClip reads and \
-                      writes the client's end",
+            exempt: &[],
+            message: "a second pasteboard↔clip conversion grew back ({files}) — the flavour, the cap and \
+                      the two refused UTIs are rust/slopdesk-clipboard's, and Swift asks the \
+                      slopdesk_clipboard_* doors for all four (ClientPasteboard.concealedTypeIdentifier is \
+                      how a fixture SEEDS one without re-typing it)",
         },
         // The host may not re-type the ceiling either. The TIFF half is not banned in Rust: asking
         // for the flavour is `slopdesk-apple-pasteboard`'s whole job, and the host reaches it
@@ -322,6 +323,13 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
                       two ends agree by sharing the codec, not by luck",
         },
         Claim::Mentions {
+            path: CLIENT_BOARD,
+            names: &["slopdesk_clipboard_read", "slopdesk_clipboard_write"],
+            message: "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift no longer calls {entry} \
+                      — the client's board is a FACE over the doors, and Swift that reads or writes a clip \
+                      itself is the deleted PasteboardClip growing back",
+        },
+        Claim::Mentions {
             path: HOST_CLIP,
             names: &["slopdesk_clipboard"],
             message: "rust/slopdesk-hostserver/src/clipsync.rs no longer names {entry} — the host end keeps \
@@ -334,8 +342,8 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
             path: end,
             pattern: direction,
             view: View::Code,
-            message: "a clipboard end stopped calling PasteboardClip — the two ends agree by sharing, not \
-                      by luck",
+            message: "a clipboard end stopped reaching the board through ClientPasteboard — the two ends \
+                      agree by sharing the fold, not by luck",
         });
     }
     check_all(tree, &claims)
@@ -602,8 +610,9 @@ mod tests {
     fn clipboard(fixture: &Fixture) {
         fixture
             .write(
-                super::PASTEBOARD_CLIP,
-                "board.data(forType: .tiff)\nMetadataCodec.maxClipboardContentBytes\n",
+                super::CLIENT_BOARD,
+                "slopdesk_clipboard_read(name, len, true, out, cap)\nslopdesk_clipboard_write(name, len, \
+                 kind, bytes, len)\n",
             )
             .write(
                 "rust/slopdesk-clipboard/src/lib.rs",
@@ -615,7 +624,7 @@ mod tests {
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
-                "PasteboardClip.read(board, concealed: true)\nPasteboardClip.write(clip, to: board)\n",
+                "board.clip(skippingConcealed: true)\nboard.apply(clip)\n",
             );
     }
 
@@ -628,9 +637,25 @@ mod tests {
         clipboard(&fixture);
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
-            "PasteboardClip.read(board, concealed: true)\nPasteboardClip.write(clip, to: board)\nlet tiff = \
-             board.data(forType: .tiff)\n",
+            "board.clip(skippingConcealed: true)\nboard.apply(clip)\nlet tiff = board.data(forType: .tiff)\n",
         );
+        assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
+
+        // The UTI re-typed in Swift, which is the seam this port opened: the refusals are the
+        // fold's, so a literal here is a marker that keeps passing after the fold stops
+        // recognising it.
+        clipboard(&fixture);
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
+            "board.clip(skippingConcealed: true)\nboard.apply(clip)\nlet t = \
+             \"org.nspasteboard.ConcealedType\"\n",
+        );
+        assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
+
+        // The FACE going back to the framework instead of the doors — green under every ban,
+        // because AppKit spelled from Swift names none of the patterns above.
+        clipboard(&fixture);
+        fixture.write(super::CLIENT_BOARD, "NSPasteboard.general.clearContents()\n");
         assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
 
         // The host re-typing the ceiling rather than importing it — the skew that is silent in the
@@ -669,7 +694,7 @@ mod tests {
         clipboard(&fixture);
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
-            "PasteboardClip.read(board, concealed: true)\n",
+            "board.clip(skippingConcealed: true)\n",
         );
         assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
     }

@@ -2930,6 +2930,79 @@ size_t slopdesk_jump_resolve(const uint8_t *query, size_t query_len,
                              bool change_directory, SlopDeskJumpResolution *out, uint8_t *arena,
                              size_t arena_cap);
 
+/* ---- clipboard: the client's own board, and what may leave the device ------------------- */
+
+/* `rust/slopdesk-apple-pasteboard` is the board — `NSPasteboard` on one slice, `UIPasteboard` on the
+ * other — and `rust/slopdesk-clipboard` is the four rules over it, which the HOST reads out of the
+ * same crate. Declared OUTSIDE the macOS-only region below on purpose: every client has a board, so
+ * unlike the encoder there is no half that must be absent on a slice.
+ *
+ * Every door takes a board NAME, empty for the machine's own. The name exists because a Swift suite
+ * runs against a per-process board — the general one is machine-global shared state, and a parallel
+ * test worker or the developer's own copy clobbers what it asserts on. Which board, and whether to
+ * ask for a private one, is a fact about the Swift test harness and stays there. */
+
+/* Whether an UNATTENDED read of a board's CONTENT is free of a user-visible consequence: true on
+ * macOS, false on iOS, where since iOS 16 it raises a modal "Allow Paste?" alert. The probes below
+ * — the change count, syncability, "is there text" — never raise it on either platform. WHEN to
+ * read is still the caller's question; this answers only what the platform allows. */
+bool slopdesk_clipboard_unattended_read_is_permitted(void);
+
+/* The UTI a password manager marks a concealed clip with — the one door with no shipping caller. A
+ * Swift suite proving the refusal has to SEED a concealed board, and the only other way to spell
+ * that is a literal in Swift, which `one-pasteboard-clip` bans precisely because this exists. */
+size_t slopdesk_clipboard_concealed_type(uint8_t *out, size_t cap);
+
+/* The board's change counter, which advances on every write by anybody. The whole of a clipboard
+ * poll, and the half of it iOS still permits unattended. */
+int64_t slopdesk_clipboard_change_count(const uint8_t *name, size_t name_len);
+
+/* Whether this board's content may leave the device: not a CONCEALED clip (a password manager's
+ * `org.nspasteboard.ConcealedType`) and not a FILE copy (a path means nothing on the other
+ * machine). Answered from the DECLARED types, so it costs no content read and raises no alert. */
+bool slopdesk_clipboard_is_syncable(const uint8_t *name, size_t name_len);
+
+/* Whether the board holds plain text AT ALL, without reading it — the ENABLEMENT question, safe to
+ * ask on every render. The paste itself asks `slopdesk_clipboard_read_text`. */
+bool slopdesk_clipboard_has_text(const uint8_t *name, size_t name_len);
+
+/* The board's current shippable clip as `[kind byte][content]` — one call for the size, one for the
+ * bytes. The kind is the wire's own (1 text, 2 PNG); 0 bytes means nothing to ship, which a clip
+ * cannot be mistaken for since a clip is at least two. 0 for an empty board, a file copy, an
+ * over-cap clip, an image that will not transcode, and — when `skipping_concealed` — a concealed
+ * one. CONTENT read. */
+size_t slopdesk_clipboard_read(const uint8_t *name, size_t name_len, bool skipping_concealed,
+                               uint8_t *out, size_t cap);
+
+/* The board's plain-text head as UTF-8, 0 bytes when it holds something else. No cap and no
+ * refusals: this is the read behind a paste, not behind a push. CONTENT read. */
+size_t slopdesk_clipboard_read_text(const uint8_t *name, size_t name_len, uint8_t *out, size_t cap);
+
+/* Whether text the caller ALREADY HOLDS is a clip the wire will carry. The attended door: a
+ * platform that refuses an unattended read hands its push half the text on the paste the user
+ * asked for, and re-reading the board would spend a permission already spent. */
+bool slopdesk_clipboard_text_is_shippable(const uint8_t *text, size_t text_len);
+
+/* Writes a wire clip onto the board; false — board UNTOUCHED — for non-UTF-8 text, PNG bytes that
+ * will not decode, or an unknown future kind. Every refusal happens BEFORE anything is cleared. */
+bool slopdesk_clipboard_write(const uint8_t *name, size_t name_len, uint8_t kind,
+                              const uint8_t *bytes, size_t bytes_len);
+
+/* The client's one "copy" funnel: replace the board with `text`. false — board UNTOUCHED — for
+ * empty text. Carries no kind byte and owes no cap: nothing is shipping it anywhere. */
+bool slopdesk_clipboard_write_text(const uint8_t *name, size_t name_len, const uint8_t *text,
+                                   size_t text_len);
+
+/* The same funnel for a captured FRAME, in any format the system decoder reads — the two device
+ * panels hand it PNG and JPEG. false — board UNTOUCHED — for bytes that are not an image, which is
+ * how a caller tells a truncated capture from a successful copy. */
+bool slopdesk_clipboard_write_image(const uint8_t *name, size_t name_len, const uint8_t *bytes,
+                                    size_t bytes_len);
+
+/* Drops everything on the board. One caller: a suite opening its per-process board, because a pid
+ * the system reused hands back whatever the LAST run of that pid left there. */
+void slopdesk_clipboard_clear(const uint8_t *name, size_t name_len);
+
 /* ---- fuzzy: how a typed query ranks against one candidate ------------------------------- */
 
 /* fzf's `FuzzyMatchV2` (`rust/slopdesk-fuzzy`). The answer is `[int32 BE score][uint32 BE pos]*`

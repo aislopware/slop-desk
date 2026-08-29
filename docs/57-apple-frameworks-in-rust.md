@@ -283,7 +283,7 @@ accessor it needs, so the ownership question was answered by the binding rather 
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder` | **done** — the §2 exemption above; `AudioPlaybackEngine` went to `slopdesk-audio-out` (cpal) instead |
 | `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `PreventSleepPolicy`, `HostDisplayWake`'s seams | **landed** — costs **one** `unsafe` block; the deferral was a mis-read feature list, see §1 |
 
-| `slopdesk-apple-pasteboard` | `NSPasteboard` (+ the `NSBitmapImageRep` transcode) | `SystemPasteboard`, `PasteboardClip`'s `AppKit` arm | **landed** (stage E) — costs **one** `unsafe` block, and **neither** §2 admission |
+| `slopdesk-apple-pasteboard` | `NSPasteboard` **and** `UIPasteboard` (+ each framework's image transcode) | `SystemPasteboard`, `PasteboardClip` — the whole `SlopDeskPasteboard` target, both arms | **landed** (stage E for `AppKit`, extended to `UIKit` when the client end crossed) — costs **one** `unsafe` block on the `AppKit` half, a per-accessor `#[expect]` on the `UIKit` half where `objc2` generates every non-atomic property `unsafe`, and **neither** §2 admission. The family's SECOND two-framework crate, and for `slopdesk-apple-vt`'s reason: §2's unit is the framework AREA, and a pasteboard asked the same six questions in two spellings is one area. `appkit.rs` and `uikit.rs`, selected by `cfg`; `apple_floors.rs` carries a row per FILE, because one crate holding two frameworks still owes one floor each |
 | `slopdesk-apple-fsevents` | `FSEvents` | `RepoStatusWatcher`'s stream | **landed** (stage E) — costs **zero** `unsafe` blocks and **neither** admission; see the no-context-pointer note below |
 | `slopdesk-apple-nsapp` | `NSApplication` | the video host `main`'s `setActivationPolicy(.accessory)`, and its `NSApplication.run()`-vs-`dispatchMain()` block | **landed** (stage F) — costs **zero** `unsafe` blocks and **neither** admission. A separate crate from `slopdesk-apple-app` because §2's unit is a framework AREA and these are two: that one resolves OTHER processes, this one is what THIS process is — its window-server connection, its activation policy, its run loop. It keeps the Swift's TWO loops rather than unifying them: `dispatch_main()` is the proven default and `NSApplication.run()` is the arm a registered `CGVirtualDisplay` needs for its `CFRunLoop`, and the superset costing the default path nothing is a claim nobody has measured |
 | `slopdesk-apple-machine` | `NSHost` | `HostWorkspaceStore.hostDisplayName`'s first rung | **landed** (stage F) — costs **zero** `unsafe` blocks and **neither** admission; the ledger's `SCDynamicStoreCopyComputedName` was where the name LIVES, not what the Swift called. The class is deprecated, so the crate carries the family's first `#[expect(deprecated, reason = …)]`, at the one call and not crate-wide: `Network` replaces the four RESOLVING names this crate deliberately does not expose, and answers nothing at all for the label |
@@ -291,12 +291,15 @@ accessor it needs, so the ownership question was answered by the binding rather 
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
 
-**The two stage-E rows are the ONE exception, and it is `docs/60` §5's, not a new one.** hostd is a
-Swift process until stage F's cutover, so `SystemPasteboard` and `RepoStatusWatcher` are still
-RUNNING beside their crates; deleting them would take the host down. What holds the line meanwhile
-is `one-rust-home-per-apple-area` in `rules/apple_floors.rs` — the Rust side has exactly one caller
-per framework area, so the drift this family exists to prevent cannot start on the Rust side while
-the Swift waits to be deleted. Stage F deletes both.
+**The two stage-E rows were the ONE exception, and both are now closed.** hostd was a Swift process
+until stage F's cutover, so `SystemPasteboard` and `RepoStatusWatcher` ran beside their crates for
+one stage; deleting them would have taken the host down. What held the line meanwhile was
+`one-rust-home-per-apple-area` in `rules/apple_floors.rs` — the Rust side had exactly one caller per
+framework area, so the drift this family exists to prevent could not start on the Rust side while
+the Swift waited. Stage F deleted `RepoStatusWatcher`; the pasteboard's exception outlived it by the
+CLIENT half, which was not hostd's to delete, and closed when that half crossed too. Nothing in
+`Sources/` names a pasteboard flavour or a clip UTI now — `one-pasteboard-clip` bans all four
+spellings outright, with no exempt file, which is the shape a closed exception has.
 
 **`slopdesk-apple-machine` is under that same carve-out, mid-stage-F rather than before it.**
 `HostWorkspaceStore.hostDisplayName()` still exists and still runs, because the Swift hostd it lives

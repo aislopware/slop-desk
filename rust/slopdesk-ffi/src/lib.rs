@@ -72,12 +72,17 @@ pub mod channel_run;
 pub mod cheat_sheet;
 pub mod chip_notice;
 pub mod chrome;
+// Apple only, both slices, and unlike `audio_codec` above there is no half that stays behind: every
+// client has a system pasteboard, so the doors are declared OUTSIDE `slopdesk_ffi.h`'s macOS-only
+// region and `slopdesk-apple-pasteboard` picks the framework under them by `cfg`.
 pub mod client_ctl;
 pub mod client_gestures;
 pub mod client_input;
 pub mod client_jitter;
 pub mod client_session;
 pub mod client_view;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod clipboard;
 pub mod close_confirm;
 pub mod code_panel;
 pub mod code_surface;

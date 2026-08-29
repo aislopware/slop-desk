@@ -199,13 +199,12 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // The system pasteboard ↔ `MetadataCodec.ClipboardClip` conversion, both directions, for the
-        // CLIENT end. The host end left this graph with `docs/60` stage F — it is
-        // `rust/slopdesk-hostserver/src/clipsync.rs` over `slopdesk-apple-pasteboard` now — so what
-        // this target answers for is the Mac app's `NSPasteboard` and the phone's `UIPasteboard`,
-        // live on both triples rather than compiling empty on one. Still a leaf below
-        // SlopDeskProtocol, which is the wire and has no business importing AppKit.
-        .target(name: "SlopDeskPasteboard", dependencies: ["SlopDeskProtocol"]),
+        // NOTE: `SlopDeskPasteboard` is GONE. It held the CLIENT end of the pasteboard ↔
+        // `MetadataCodec.ClipboardClip` conversion in two framework spellings, which made it the
+        // second implementation of a wire contract whose first is the host's — and the two HAD
+        // drifted. Both ends now read `rust/slopdesk-clipboard` over `slopdesk-apple-pasteboard`,
+        // and the only Swift left is `ClientPasteboard`, a face over the `slopdesk_clipboard_*`
+        // doors in `SlopDeskWorkspaceCore`. Nothing below that target needs a board.
 
         // The Rust logic the Swift clients call in-process, as three arm64 static slices.
         //
@@ -244,8 +243,9 @@ let package = Package(
         // workspace document, inspector server, agent fold, the sidecar seams — into the seven
         // `rust/slopdesk-host*` crates, and stage F.9 deleted the Swift, per `CLAUDE.md`'s
         // one-implementation rule. What survives here is the CLIENT half of each seam and nothing
-        // else: `SlopDeskPasteboard` is the clip conversion the sync engine reads,
-        // `SlopDeskWorkspaceModel` the value model the client mirrors the host document into.
+        // else — for the clipboard that is now a face over the doors rather than a target of its
+        // own, and `SlopDeskWorkspaceModel` is the value model the client mirrors the host document
+        // into.
         // Batch B took the last two host-side targets with it — see the NOTE further down.
 
         // The workspace VALUE MODEL — the Session→Tab→split tree, `PaneSpec`, the pure
@@ -380,10 +380,6 @@ let package = Package(
                 "CSlopDeskFFI",
                 // …and the scan's arena is read through the one reader every face shares.
                 "SlopDeskArena",
-                // The client's own pasteboard↔clip conversion. The host's half is Rust
-                // (`slopdesk-hostserver`'s `clipsync`), so the two ends agree by the WIRE and by
-                // `clipsync.rs`'s four restated rules — not by sharing a file any more.
-                "SlopDeskPasteboard",
                 // The store dials the inspector's event lane over the shared byte channel.
                 "SlopDeskNet",
                 "SlopDeskClient",

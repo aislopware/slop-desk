@@ -1,9 +1,13 @@
-//! The board: its counter, what its owner declared, its bytes, and a write that validates first.
+//! `AppKit`'s half of the board: its counter, what its owner declared, its bytes, and a write that
+//! validates first.
+//!
+//! The iOS half is `uikit.rs` and answers the same surface. Read `lib.rs` on why one crate holds
+//! both.
 
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSPasteboard};
-use objc2_foundation::{NSData, NSDictionary, NSString};
+use objc2_foundation::{NSArray, NSData, NSDictionary, NSString};
 
 /// The concealed-clip marker password managers set (the nspasteboard.org convention).
 ///
@@ -117,6 +121,32 @@ impl Board {
         }
     }
 
+    /// The board somebody else already named, created if it does not exist yet.
+    ///
+    /// The client's door onto a board that is NOT the machine's: a Swift test suite runs against a
+    /// per-process one so a parallel worker — or the developer's own ⌘C mid-run — cannot clobber
+    /// what it asserts on. Which name, and whether to ask for one at all, is the caller's; this
+    /// crate only opens it.
+    ///
+    /// A `releaseGlobally` twin is deliberately absent: `objc2` does not bind it, and reaching the
+    /// selector by hand is the raw Objective-C `docs/57` §2 keeps out of this family. A named board
+    /// is instead [`Board::clear`]ed on first use, which is what pid reuse actually needs; the
+    /// pasteboard server reclaims the rest.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self {
+            board: NSPasteboard::pasteboardWithName(&NSString::from_str(name)),
+        }
+    }
+
+    /// Drops everything on the board and takes ownership of it.
+    ///
+    /// Separate from the writes — which clear as part of one validated operation — because this is
+    /// the one place a caller genuinely wants an EMPTY board rather than a different one.
+    pub fn clear(&self) {
+        let _count = self.board.clearContents();
+    }
+
     /// The board's change counter, which advances on every write by anybody.
     ///
     /// The whole of a clipboard poll is this one integer. `i64` rather than `NSInteger` because
@@ -147,6 +177,19 @@ impl Board {
             .is_some_and(|types| types.iter().any(|ty| *ty == *wanted))
     }
 
+    /// Whether the board holds plain text at all, WITHOUT reading it.
+    ///
+    /// A probe, not a read: `availableTypeFromArray:` reports what the writer DECLARED, so no
+    /// content is disclosed and none is asked for. It exists as its own method because the question
+    /// "would a paste have anything to type?" is what an ENABLEMENT check asks, and on the phone
+    /// the difference between asking it and asking [`Board::text`] is a modal alert per render.
+    #[must_use]
+    pub fn has_text(&self) -> bool {
+        self.board
+            .availableTypeFromArray(&NSArray::from_retained_slice(&[flavour::named(Flavour::Text)]))
+            .is_some()
+    }
+
     /// The board's plain-text flavour, or `None` when it holds something else.
     #[must_use]
     pub fn text(&self) -> Option<String> {
@@ -174,7 +217,7 @@ impl Board {
     #[must_use]
     pub fn png(&self) -> Option<Vec<u8>> {
         self.data(Flavour::Png)
-            .or_else(|| png_of_tiff(&self.data(Flavour::Tiff)?))
+            .or_else(|| png_of_image(&self.data(Flavour::Tiff)?))
     }
 
     /// Replaces the board's contents with `text`. `false` — board UNTOUCHED — for empty text.
@@ -217,16 +260,33 @@ impl Board {
         }
         wrote
     }
+
+    /// Replaces the board's contents with an image in ANY format the system decoder reads.
+    ///
+    /// `false` — board UNTOUCHED — for bytes that are not an image at all.
+    ///
+    /// Format-blind on purpose: a captured frame arrives as PNG from one device panel and JPEG from
+    /// another, and one decoder reads either. What lands on the board is always PNG plus the TIFF
+    /// twin [`Board::write_png`] declares, so a JPEG is TRANSCODED rather than declared under its
+    /// own flavour — a deliberate narrowing of what a `writeObjects:` would do: one predictable
+    /// pair of flavours, at the cost of a re-encode nobody sees.
+    #[must_use]
+    pub fn write_image(&self, bytes: &[u8]) -> bool {
+        png_of_image(bytes).is_some_and(|png| self.write_png(&png))
+    }
 }
 
-/// TIFF bytes as PNG bytes, or `None` when they will not decode or will not re-encode.
+/// Image bytes in any format the system decoder reads, as PNG bytes; `None` when they will not
+/// decode or will not re-encode.
 ///
-/// The transcode the read path needs: most Mac apps declare `public.tiff` and not `public.png`, and
-/// the wire carries PNG. A free function rather than a [`Board`] method because it is a pure byte
-/// conversion — the fold that decides WHETHER to reach for it holds no board at that moment.
+/// The transcode two paths need and neither may write twice: [`Board::png`] hands it a board's TIFF
+/// flavour, because most Mac apps declare `public.tiff` and not `public.png` while the wire carries
+/// PNG, and [`Board::write_image`] hands it a captured frame. A free function rather than a
+/// [`Board`] method because it is a pure byte conversion — the fold that decides WHETHER to reach
+/// for it holds no board at that moment.
 #[must_use]
-pub fn png_of_tiff(tiff: &[u8]) -> Option<Vec<u8>> {
-    let data = NSData::with_bytes(tiff);
+pub fn png_of_image(bytes: &[u8]) -> Option<Vec<u8>> {
+    let data = NSData::with_bytes(bytes);
     let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &data)?;
     let empty = NSDictionary::new();
 
@@ -248,7 +308,7 @@ pub fn png_of_tiff(tiff: &[u8]) -> Option<Vec<u8>> {
     reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
 )]
 mod tests {
-    use super::{Board, CONCEALED_TYPE, Flavour, png_of_tiff};
+    use super::{Board, CONCEALED_TYPE, Flavour, png_of_image};
 
     /// A 1×1 opaque red PNG, byte for byte. Small enough to read, real enough to decode.
     const RED_DOT: &[u8] = &[
@@ -327,7 +387,7 @@ mod tests {
         let board = Board::unique();
         assert!(board.write_png(RED_DOT), "the fixture write must land");
         let tiff = board.data(Flavour::Tiff).expect("the write declares a TIFF twin");
-        let png = png_of_tiff(&tiff).expect("a TIFF the framework produced must transcode back");
+        let png = png_of_image(&tiff).expect("a TIFF the framework produced must transcode back");
         // The bytes are NOT the ones we wrote — a re-encode is not a round trip — so the assertion
         // is the one the read path actually needs: what comes out is a PNG.
         assert_eq!(
@@ -351,7 +411,7 @@ mod tests {
     #[test]
     fn bytes_that_are_not_an_image_do_not_transcode() {
         assert!(
-            png_of_tiff(b"not a tiff").is_none(),
+            png_of_image(b"not a tiff").is_none(),
             "an undecodable input is not an image"
         );
     }
@@ -424,7 +484,7 @@ mod tests {
         for _ in 0..2_000 {
             let board = Board::unique();
             assert!(board.write_png(RED_DOT), "every board still takes a write");
-            assert!(png_of_tiff(&tiff).is_some(), "every transcode still answers");
+            assert!(png_of_image(&tiff).is_some(), "every transcode still answers");
             drop(board);
         }
         let last = Board::unique();

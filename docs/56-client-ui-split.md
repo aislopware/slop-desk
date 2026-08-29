@@ -3279,6 +3279,13 @@ compiled to nothing on the phone and ⌥⌘V opened onto a permanent "No recent 
 live on both triples now, over a `SystemPasteboard` shim that carries the board, its `changeCount`,
 its plain text, and one pure platform fact: `unattendedContentReadIsPermitted`.
 
+> **Since superseded.** `SystemPasteboard` and `PasteboardClip` are deleted with the whole
+> `SlopDeskPasteboard` target — `rust/slopdesk-clipboard` over `rust/slopdesk-apple-pasteboard` is
+> both ends of this now, and the Swift is `ClientPasteboard`, a face over the `slopdesk_clipboard_*`
+> doors. Every claim below survives the move: the split by DIRECTION, the count that is consumed on
+> both platforms, and the platform fact, which is a door
+> (`slopdesk_clipboard_unattended_read_is_permitted`) rather than a `#if`.
+
 That fact is the honest part, and it is why this increment does NOT claim parity. Since iOS 16,
 reading `UIPasteboard.string` for content the app did not write, with no paste gesture behind it,
 raises a system "Allow Paste?" alert — so a one-second poll would put a modal on screen once per new
@@ -3492,6 +3499,10 @@ AppKit, `hasStrings` on UIKit, the same two-spelling shape `plainText` already h
 the `has*` half of the sentence the header always carried: it discloses nothing, so iOS answers it in
 silence. `ClientPasteboard.hasText()` forwards to it rather than forking a third time, which also puts the
 probe on the test-safe per-process board the reads already use.
+
+> **Since superseded in its spelling, not its claim.** The probe is
+> `slopdesk_clipboard_has_text` and the two framework spellings are `slopdesk-apple-pasteboard`'s
+> `appkit.rs` / `uikit.rs`; `ClientPasteboard.hasText()` is still the one thing enablement calls.
 
 The distinction then lives in the headless model rather than in a view. `ClipboardPasteMenu.canPaste` now
 takes `clipboardHasText: Bool`, and the `String?` spelling is gone: an enablement predicate that CAN take

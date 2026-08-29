@@ -90,6 +90,9 @@ slopdesk-terminal = { path = "../slopdesk-terminal" }
 slopdesk-video = { path = "../slopdesk-video" }
 slopdesk-altscreen = { path = "../slopdesk-altscreen" }
 slopdesk-wire = { path = "../slopdesk-wire" }
+# The four clipboard rules, which the HOST reads out of the same crate. A client that decided any of
+# them here would be the second implementation the shared crate exists to have exactly one of.
+slopdesk-clipboard = { path = "../slopdesk-clipboard" }
 slopdesk-workspace = { path = "../slopdesk-workspace" }
 # The three crates carved out of `slopdesk-workspace`. The shim names modules in all four directly,
 # so all four are direct edges — and each one is what puts that crate inside `slopdesk-gate ffi`'s
@@ -115,6 +118,11 @@ slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
 # slice links a decoder and nothing else, and `slopdesk-gate ffi` asserts the encoder's symbols present on
 # macOS and absent on the other two slices — the same bijection `slopdesk-apple-vt` carries.
 slopdesk-apple-audio = { path = "../slopdesk-apple-audio" }
+# The THIRD, and the first whose two halves are the SAME audience: every client has a board, and the
+# crate wraps one area under two framework spellings — `NSPasteboard` on macOS, `UIPasteboard` on
+# iOS — so nothing here is gated INSIDE the header's `TARGET_OS_OSX` region. The bijection the other
+# two carry does not apply: there is no half that must be absent on a slice.
+slopdesk-apple-pasteboard = { path = "../slopdesk-apple-pasteboard" }
 # The client's speakers. Not `apple-*` and not gated to Apple by anything but this edge: it is
 # `forbid(unsafe_code)` over `cpal`, which is why the playback path — the one real-time deadline in
 # the client — carries no hand-written `unsafe` at all. Reached only through the player doors.

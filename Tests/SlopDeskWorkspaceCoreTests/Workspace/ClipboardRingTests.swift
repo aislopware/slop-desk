@@ -1,9 +1,5 @@
-import SlopDeskPasteboard
 import XCTest
 @testable import SlopDeskWorkspaceCore
-#if os(macOS)
-import AppKit
-#endif
 
 /// Pins the clipboard history ring: the store's dedup/cap/skip-empty ring bookkeeping and (macOS) the
 /// monitor's changeCount-gated poll into it.
@@ -137,37 +133,42 @@ final class ClipboardRingTests: XCTestCase {
         XCTAssertFalse(store.localClipboardHasText())
     }
 
-    #if os(macOS)
     /// The board-level probe itself: it reports the DECLARED type, and it is what the injected
-    /// `clipboardHasTextProbe` is wired to (`ClientPasteboard.hasText()`).
-    func testSystemPasteboardProbeSeesTextWithoutReadingIt() {
-        let pb = NSPasteboard(name: NSPasteboard.Name("slopdesk-test-\(UUID().uuidString)"))
-        defer { pb.releaseGlobally() }
-        pb.clearContents()
-        XCTAssertFalse(SystemPasteboard(pb).hasPlainText, "an empty board holds no text")
-        pb.setString("copied", forType: .string)
-        XCTAssertTrue(SystemPasteboard(pb).hasPlainText)
-        XCTAssertEqual(SystemPasteboard(pb).plainText, "copied", "the content read agrees with the probe")
+    /// `clipboardHasTextProbe` is wired to (``ClientPasteboard/hasText()``).
+    ///
+    /// No `#if os(macOS)` any more: the board is one Rust surface with a framework chosen at compile
+    /// time, so this reads the phone's `UIPasteboard` in the iOS bundle and the Mac's `NSPasteboard`
+    /// here — and the PROBE is the half iOS answers without the "Allow Paste?" alert, which is why
+    /// it can be asked unconditionally while the content read below cannot.
+    func testTheBoardProbeSeesTextWithoutReadingIt() {
+        let board = ClientPasteboard(name: "slopdesk-test-\(UUID().uuidString)")
+        board.clear()
+        XCTAssertFalse(board.hasPlainText, "an empty board holds no text")
+        board.write("copied")
+        XCTAssertTrue(board.hasPlainText)
+        XCTAssertEqual(board.plainText, "copied", "the content read agrees with the probe")
     }
 
+    /// The monitor's changeCount gate. The COUNT half runs on both triples; the ring only fills
+    /// where the platform permits an unattended content read, which is exactly the branch
+    /// ``ClipboardMonitor/poll()`` takes — so the assertion branches with it rather than the file
+    /// carrying an `#if` that would stop testing the phone's half altogether.
     func testMonitorPollCapturesNewClipsOnly() {
         let store = makeStore()
-        let pb = NSPasteboard(name: NSPasteboard.Name("slopdesk-test-\(UUID().uuidString)"))
-        defer { pb.releaseGlobally() }
-        pb.clearContents()
-        pb.setString("seed", forType: .string)
-        let monitor = ClipboardMonitor(store: store, pasteboard: SystemPasteboard(pb))
+        let board = ClientPasteboard(name: "slopdesk-test-\(UUID().uuidString)")
+        board.clear()
+        board.write("seed")
+        let monitor = ClipboardMonitor(store: store, board: board)
         // The seed predates the monitor → not retro-captured.
         monitor.poll()
         XCTAssertTrue(store.clipboardRing.isEmpty, "the clip present at init is not retro-captured")
-        // A new copy advances changeCount → captured.
-        pb.clearContents()
-        pb.setString("fresh", forType: .string)
+        // A new copy advances changeCount → captured where the content may be read.
+        board.write("fresh")
         monitor.poll()
-        XCTAssertEqual(store.clipboardRing, ["fresh"])
+        let expected = ClientPasteboard.unattendedContentReadIsPermitted ? ["fresh"] : []
+        XCTAssertEqual(store.clipboardRing, expected)
         // Polling again with no change is a no-op (no duplicate).
         monitor.poll()
-        XCTAssertEqual(store.clipboardRing, ["fresh"])
+        XCTAssertEqual(store.clipboardRing, expected)
     }
-    #endif
 }

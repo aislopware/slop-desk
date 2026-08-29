@@ -14388,6 +14388,17 @@ below both is `SlopDeskProtocol` — the WIRE, which has no business importing A
 reading is a leaf of its own: AppKit plus the clip type, nothing else, and hostd links what it
 already linked.
 
+> **SUPERSEDED (2026-08-29).** The target is deleted. The argument above holds for as long as both
+> ends are Swift, and once `docs/60` stage F made the host Rust it stopped holding: a Swift leaf
+> below two Swift graphs cannot be shared with a daemon that is no longer in either. For one stage
+> the two ends WERE two implementations again, in two languages — exactly the drift this section
+> opens by naming. The four rules are `rust/slopdesk-clipboard` now, a `forbid(unsafe_code)` leaf
+> both ends read, and the boards under it are `rust/slopdesk-apple-pasteboard`'s two framework
+> halves. What is left in Swift is `ClientPasteboard`, a face over eleven `slopdesk_clipboard_*`
+> doors that decides one thing: whether this process is a test process, and so which board to name.
+> The `skippingConcealed:` asymmetry survives the move unchanged and is still flagged, still
+> undecided.
+
 **The write answers `Bool`, not a status.** It validates before it clears, so a garbage clip arriving
 over the wire cannot destroy the clip already on the board. The two callers spell the refusal
 differently — the host answers `MetadataStatus.error` over the wire, the client just drops — which is

@@ -1,5 +1,4 @@
 import Foundation
-import SlopDeskPasteboard
 import SlopDeskProtocol
 
 /// Bidirectional clipboard sync between the client and the host, over the metadata RPC
@@ -8,7 +7,7 @@ import SlopDeskProtocol
 /// the loop ends on cancel.
 ///
 /// **Push (copy on the client → paste on the host).** Each tick compares
-/// ``SystemPasteboard/changeCount`` (one integer read); on a new LOCAL clip it snapshots the content
+/// ``ClientPasteboard/changeCount`` (one integer read); on a new LOCAL clip it snapshots the content
 /// (image preferred — PNG as-is or TIFF transcoded — else non-empty text) and pushes it to the host,
 /// which writes its general pasteboard. This is what makes Claude Code's Ctrl+V see a client-copied
 /// image, and a plain ⌘V
@@ -28,18 +27,19 @@ import SlopDeskProtocol
 /// mirror-image guard (its `changeCount` echo suppression), so a ping-pong needs both ends to fail.
 ///
 /// **Skips (validate-then-drop, privacy).** Concealed clips (`org.nspasteboard.ConcealedType` —
-/// password managers) are never pushed; file-copy clips (`.fileURL` — a local path is meaningless on
-/// the other machine) and over-cap clips (the cap is ``PasteboardClip``'s) are skipped;
-/// the pasteboard is left untouched in every skip case.
+/// password managers) are never pushed; file-copy clips (`public.file-url` — a local path is
+/// meaningless on the other machine) and over-cap clips are skipped. All four rules live in
+/// `rust/slopdesk-clipboard`, which is where the HOST end takes them from too;
+/// the board is left untouched in every skip case.
 ///
 /// **The one direction the phone cannot have ON A TIMER, and why — and the door that gives it back.**
-/// The engine used to carry a whole-file `#if os(macOS)`; the board is ``SystemPasteboard`` now and both
+/// The engine used to carry a whole-file `#if os(macOS)`; the board is ``ClientPasteboard`` now and both
 /// halves run the same tick. PULL is whole on iOS — writing `UIPasteboard` asks no permission, so a copy
 /// on the host lands on the phone within a tick, which is the direction a phone actually wants. The
 /// TIMER-DRIVEN push is not, and that IS necessity rather than scope: since iOS 16, reading pasteboard
 /// content the app did not write, with no system paste gesture behind it, raises a modal "Allow Paste?"
 /// alert, and this tick runs once a second. So ``captureLocalChange()`` consumes the count on every
-/// platform and snapshots the CONTENT only where ``SystemPasteboard/unattendedContentReadIsPermitted``.
+/// platform and snapshots the CONTENT only where ``ClientPasteboard/unattendedContentReadIsPermitted``.
 ///
 /// That guard is right and stays. What was MISSING is the other half of the same sentence: the timer is
 /// not the only way a clip can be read. ``noteAttendedLocalRead(_:)`` is the door for a read the USER's
@@ -50,8 +50,8 @@ import SlopDeskProtocol
 /// a pane (`pasteAsKeystrokes`) and none of them ever called `setClipboard`, so a copy on the phone was
 /// invisible to a ⌘V on the host and to Claude Code's Ctrl+V — the exact case the push half is for.
 ///
-/// Seams (`push`/`pull` closures + injected pasteboard) keep the tick logic unit-testable against a
-/// NAMED pasteboard with no live socket.
+/// Seams (`push`/`pull` closures + an injected board) keep the tick logic unit-testable against a
+/// NAMED board with no live socket.
 @preconcurrency
 @MainActor
 public final class ClipboardSyncEngine {
@@ -65,7 +65,7 @@ public final class ClipboardSyncEngine {
         changeCount: Int64, clip: MetadataCodec.ClipboardClip?,
     )?
 
-    private let pasteboard: SystemPasteboard
+    private let board: ClientPasteboard
     private let pollGap: Duration
     private let push: Push
     private let pull: Pull
@@ -81,19 +81,19 @@ public final class ClipboardSyncEngine {
     private var hostLastSeen: Int64 = MetadataCodec.clipboardBaselineProbe
 
     public init(
-        pasteboard: SystemPasteboard = ClientPasteboard.board,
+        board: ClientPasteboard = .shared,
         pollGap: Duration = .seconds(1),
         attendedReadsFrom store: WorkspaceStore? = nil,
         push: @escaping Push,
         pull: @escaping Pull,
     ) {
-        self.pasteboard = pasteboard
+        self.board = board
         self.pollGap = pollGap
         self.push = push
         self.pull = pull
         // Seed with the CURRENT count: the clip already on the board at launch is not pushed
         // (sync covers what you copy while the app watches — the ClipboardMonitor convention).
-        lastChangeCount = pasteboard.changeCount
+        lastChangeCount = board.changeCount
         // The store OWNS the attended reads (every caller of `currentLocalClipboard()` is a paste the
         // user asked for); this engine owns the wire. Installed here rather than at the app shell so
         // the two halves cannot each wire it their own way — the shell passes the store and is done.
@@ -121,14 +121,14 @@ public final class ClipboardSyncEngine {
     /// Folds a local pasteboard change into ``pendingPush`` (content-compared against
     /// ``lastSynced`` so our own applies never bounce back to the host).
     private func captureLocalChange() {
-        let count = pasteboard.changeCount
+        let count = board.changeCount
         guard count != lastChangeCount else { return }
         lastChangeCount = count
         // The count is consumed on EVERY platform — a tick that skipped the bookkeeping would leave
         // the seen count stale. Only the CONTENT snapshot is conditional: see the type docs for the
         // iOS paste alert this refuses to raise once a second.
-        guard SystemPasteboard.unattendedContentReadIsPermitted else { return }
-        guard let clip = Self.currentClip(pasteboard), clip != lastSynced else { return }
+        guard ClientPasteboard.unattendedContentReadIsPermitted else { return }
+        guard let clip = board.clip(skippingConcealed: true), clip != lastSynced else { return }
         pendingPush = clip
     }
 
@@ -138,18 +138,18 @@ public final class ClipboardSyncEngine {
     /// the board's CONTENT a second time.
     ///
     /// It still owes every refusal the tick's own snapshot takes, and takes them from the DECLARED
-    /// types instead of the bytes: ``SystemPasteboard/isSyncable`` refuses a CONCEALED clip (a password
-    /// manager's) and a FILE copy without prompting, and the cap is the same
-    /// cap ``PasteboardClip`` applies to every other clip. A concealed clip a user pastes into a pane on
+    /// types instead of the bytes: ``ClientPasteboard/isSyncable`` refuses a CONCEALED clip (a password
+    /// manager's) and a FILE copy without prompting, and the cap is the same cap
+    /// `rust/slopdesk-clipboard` applies to every other clip. A concealed clip a user pastes into a pane on
     /// purpose must still never land on the other machine's board — the paste is one machine's, the
     /// board is both machines'.
     ///
     /// The count is consumed for ``captureLocalChange()``'s reason: this read is as good as the tick's,
     /// and a stale seen count would make the next tick treat our own clip as new.
     public func noteAttendedLocalRead(_ text: String) {
-        lastChangeCount = pasteboard.changeCount
-        guard pasteboard.isSyncable else { return }
-        guard let clip = PasteboardClip.clip(forAttendedText: text) else { return }
+        lastChangeCount = board.changeCount
+        guard board.isSyncable else { return }
+        guard let clip = ClientPasteboard.clip(forAttendedText: text) else { return }
         guard clip != lastSynced else { return }
         pendingPush = clip
     }
@@ -178,22 +178,15 @@ public final class ClipboardSyncEngine {
         apply(clip)
     }
 
-    /// Writes a host clip onto the local pasteboard (image → PNG + TIFF twin so every app can
-    /// paste it; text → string), recording it as the synced truth and pre-advancing
+    /// Writes a host clip onto the local board (image → PNG, with AppKit's TIFF twin so every Mac
+    /// app can paste it; text → string), recording it as the synced truth and pre-advancing
     /// ``lastChangeCount`` so the very next tick does not even snapshot our own write.
     private func apply(_ clip: MetadataCodec.ClipboardClip) {
         // Validate-then-drop: the write refuses non-UTF-8/empty text, undecodable PNG bytes and an
         // unknown future kind WITHOUT touching the board, so a bad host clip is a no-op rather than
         // a cleared local clipboard.
-        guard PasteboardClip.write(clip, to: pasteboard) else { return }
+        guard board.apply(clip) else { return }
         lastSynced = clip
-        lastChangeCount = pasteboard.changeCount
-    }
-
-    /// The pasteboard's current syncable clip: PNG as-is, else an image transcoded to PNG, else a
-    /// non-empty string. `nil` for concealed (password-manager) clips, file copies, over-cap
-    /// content, an untranscodable image, or an empty board.
-    static func currentClip(_ pasteboard: SystemPasteboard) -> MetadataCodec.ClipboardClip? {
-        PasteboardClip.read(pasteboard, skippingConcealed: true)
+        lastChangeCount = board.changeCount
     }
 }

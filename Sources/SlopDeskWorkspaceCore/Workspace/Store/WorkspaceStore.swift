@@ -964,7 +964,7 @@ public final class WorkspaceStore {
     /// "Allow Paste?" alert, and a redraw path may run many times per interaction — so an affordance that
     /// greys itself out by asking
     /// "is there anything to paste?" needs a question that discloses nothing
-    /// (``SystemPasteboard/hasPlainText``).
+    /// (``ClientPasteboard/hasPlainText``).
     @ObservationIgnored public var clipboardHasTextProbe: (() -> Bool)?
 
     /// Where an ATTENDED read of the local clipboard goes besides the caller that asked for it —
@@ -973,7 +973,7 @@ public final class WorkspaceStore {
     ///
     /// It exists because the phone had no client→host clipboard path at all. The engine's timer cannot
     /// snapshot content on iOS (the modal "Allow Paste?" alert — see
-    /// ``SystemPasteboard/unattendedContentReadIsPermitted``), and the engine's own docs answered that
+    /// ``ClientPasteboard/unattendedContentReadIsPermitted``), and the engine's own docs answered that
     /// with "the local clip reaches the host through the paths the user asked to paste on" — prose that
     /// was never true of any path: every one of them TYPES the text into a pane and none called
     /// `setClipboard`. So a copy on the phone was invisible to a ⌘V on the host. This seam is that
@@ -998,7 +998,7 @@ public final class WorkspaceStore {
     /// Every caller of this is a paste the user asked for — the ⌥⌘V chord, the palette command, the
     /// remote-GUI pane's paste plate — which on iOS is the only moment the system permits reading
     /// pasteboard content without ambushing the user with an "Allow Paste?" alert (see
-    /// ``SystemPasteboard/unattendedContentReadIsPermitted``). On macOS the polling
+    /// ``ClientPasteboard/unattendedContentReadIsPermitted``). On macOS the polling
     /// ``ClipboardMonitor`` has usually recorded the same clip a tick earlier and ``recordClip(_:)``
     /// dedups it to a no-op, so this is one behaviour on both halves rather than a phone special case.
     /// A LIVE read is also a RECORDING **and a SYNC** — see ``attendedLocalClipboardSink`` for why the

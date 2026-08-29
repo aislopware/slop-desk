@@ -79,19 +79,19 @@ final class LinkActionActuatorTests: XCTestCase {
 
     /// `.copyPathClient` writes the CLIENT pasteboard.
     func testCopyActuationWritesClientPasteboard() {
-        let pb = ClientPasteboard.pasteboard
-        pb.clearContents()
+        let pb = ClientPasteboard.shared
+        pb.clear()
 
         LinkActionActuator.actuate(.copyPathClient("/a/b/c"), model: nil)
 
-        XCTAssertEqual(pb.string(forType: .string), "/a/b/c", "copy lands on the client pasteboard")
+        XCTAssertEqual(pb.plainText, "/a/b/c", "copy lands on the client pasteboard")
     }
 
     /// `.nothing` is a TRUE no-op: it never sends input, never fires a host callback, never touches the clipboard.
     func testNothingActionIsATrueNoOp() {
-        let pb = ClientPasteboard.pasteboard
-        pb.clearContents()
-        pb.setString("sentinel", forType: .string)
+        let pb = ClientPasteboard.shared
+        pb.clear()
+        pb.write("sentinel")
 
         let model = TerminalViewModel()
         var sunk: [Data] = []
@@ -106,7 +106,7 @@ final class LinkActionActuatorTests: XCTestCase {
         XCTAssertTrue(sunk.isEmpty, ".nothing sends no input")
         XCTAssertEqual(opened, 0, ".nothing fires no host-open")
         XCTAssertEqual(revealed, 0, ".nothing fires no host-reveal")
-        XCTAssertEqual(pb.string(forType: .string), "sentinel", ".nothing leaves the pasteboard untouched")
+        XCTAssertEqual(pb.plainText, "sentinel", ".nothing leaves the pasteboard untouched")
     }
 
     /// A nil model makes an open/reveal/cd a silent no-op (a disconnected pane), never a crash.
@@ -134,8 +134,8 @@ final class LinkActionActuatorTests: XCTestCase {
     /// Running a URL row's "Copy URL" action writes the raw URL to the client pasteboard (full
     /// rowActions → `LinkActionPolicy` → `actuate` path).
     func testRowActionsURLCopyWritesPasteboard() {
-        let pb = ClientPasteboard.pasteboard
-        pb.clearContents()
+        let pb = ClientPasteboard.shared
+        pb.clear()
         let item = JumpToItem(
             id: "link:url:https://example.com", kind: .url, title: "https://example.com",
             timestamp: nil, act: .link(urlLink()),
@@ -143,7 +143,7 @@ final class LinkActionActuatorTests: XCTestCase {
         let actions = LinkActionActuator.rowActions(for: item, store: makeStore(), model: TerminalViewModel())
         actions[1].run() // "Copy URL"
 
-        XCTAssertEqual(pb.string(forType: .string), "https://example.com", "Copy URL writes the raw URL")
+        XCTAssertEqual(pb.plainText, "https://example.com", "Copy URL writes the raw URL")
     }
 
     /// A path row offers the FULL set in order: Open / Copy Path / Reveal in Finder / Change Directory Here.
@@ -183,8 +183,8 @@ final class LinkActionActuatorTests: XCTestCase {
 
     /// A command BLOCK row offers Jump-to + Copy; running Copy writes the command text to the pasteboard.
     func testRowActionsForBlockOffersJumpAndCopy() {
-        let pb = ClientPasteboard.pasteboard
-        pb.clearContents()
+        let pb = ClientPasteboard.shared
+        pb.clear()
         let item = JumpToItem(
             id: "block:3", kind: .command, title: "make build", timestamp: nil, act: .block(index: 3),
         )
@@ -192,7 +192,7 @@ final class LinkActionActuatorTests: XCTestCase {
 
         XCTAssertEqual(actions.map(\.title), ["Jump to", "Copy"], "a command block offers Jump-to + Copy")
         actions[1].run() // "Copy"
-        XCTAssertEqual(pb.string(forType: .string), "make build", "Copy writes the command text")
+        XCTAssertEqual(pb.plainText, "make build", "Copy writes the command text")
     }
 }
 #endif
