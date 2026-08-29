@@ -28,7 +28,7 @@
 //
 // What it does NOT own is what the card SAYS: ``PeekReplyPresentation`` decides the caption, the
 // counter, the stand-in note and the zero-state line, ``PeekReplyTarget`` decides which pane and
-// where it sits in the queue, and ``PendingToolSummary`` collapses the pending call. Every one of
+// where it sits in the queue, and the STORE collapses the pending call. Every one of
 // them is shared with the phone's ``PhonePeekReplyCardView``.
 
 import AppKit
@@ -245,7 +245,7 @@ final class MacPeekReplyView: NSView, NSTextFieldDelegate {
         // The todo scent only while a `.live` inspector reports an in-progress item — an idle,
         // non-Claude or dead-feed pane's caption stays byte-identical to the label alone.
         let scent = inspector.flatMap { vm in
-            vm.feedState == .live ? PendingToolSummary.scent(todos: vm.todos) : nil
+            vm.feedState == .live ? vm.todoScent : nil
         }
         header.show(
             title: content.title,
@@ -262,10 +262,10 @@ final class MacPeekReplyView: NSView, NSTextFieldDelegate {
         // The single newest PENDING card, or nothing at all — zero layout residue when absent, and
         // gated on a `.live` feed so a stale feed's eternally-pending card cannot masquerade as the
         // live ask.
-        let card = inspector.flatMap { vm in
-            vm.feedState == .live ? vm.toolCards.last(where: { $0.status == .pending }) : nil
+        let pending = inspector.flatMap { vm in
+            vm.feedState == .live ? vm.pendingLine : nil
         }
-        pendingTool.show(card, expanded: pendingToolExpanded)
+        pendingTool.show(pending, expanded: pendingToolExpanded)
         recent.show(content.recent)
         send.isEnabled = PeekReplyFormatter.reply(for: field.stringValue) != nil
     }
@@ -519,8 +519,8 @@ final class MacPeekPendingToolView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    func show(_ card: ToolCard?, expanded: Bool) {
-        guard let card else {
+    func show(_ pending: PendingToolLine?, expanded: Bool) {
+        guard let pending else {
             isHidden = true
             return
         }
@@ -530,16 +530,14 @@ final class MacPeekPendingToolView: NSView {
         lineBottom?.isActive = !expanded
         scrollBottom?.isActive = expanded
         if expanded {
-            full.stringValue = card.inputDisplay
+            full.stringValue = pending.display
             full.layoutSubtreeIfNeeded()
             scrollHeight?.constant = Swift.min(
                 full.fittingSize.height, PeekReplyMetrics.scrollMaxHeight,
             )
         } else {
             scrollHeight?.constant = 0
-            line.attributedStringValue = Self.twoTone(
-                PendingToolSummary.line(card: card),
-            )
+            line.attributedStringValue = Self.twoTone(pending)
         }
     }
 

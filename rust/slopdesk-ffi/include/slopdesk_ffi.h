@@ -6688,33 +6688,6 @@ size_t slopdesk_inspector_encode_subscribe(int64_t from_seq, unsigned char *out,
 uint32_t slopdesk_inspector_decode_payload(const unsigned char *payload, size_t payload_len,
                                            SlopDeskInspectorFrame *out);
 
-// What the tool card in an event's RAW JSON reads as: two length-prefixed fields — the
-// flattened input, then the one-line summary. 0 out for an event carrying no card, for a
-// body this door cannot parse, and for a null input; the caller has already accepted the
-// event by then, so a rendering it cannot produce is an absence, not a refusal.
-//
-// The RAW bytes cross on purpose. The client's own decode makes every JSON number a
-// Double, so an input handed over after it would have lost the integer this door prints
-// exactly — which is the whole reason the flattening stopped existing in two languages.
-size_t slopdesk_inspector_tool_input_render(const unsigned char *json, size_t len,
-                                            unsigned char *out, size_t cap);
-
-// A todo's status, as the scent door reads it.
-#define SLOPDESK_INSPECTOR_TODO_PENDING 0
-#define SLOPDESK_INSPECTOR_TODO_IN_PROGRESS 1
-#define SLOPDESK_INSPECTOR_TODO_COMPLETED 2
-
-// The "i/n · activeForm" line for a todo list; 0 out when nothing is in flight.
-//
-// `states` is one SLOPDESK_INSPECTOR_TODO_* byte per todo, in list order. `texts` carries
-// 2n length-prefixed fields in the same framing the render door answers in — the n
-// contents first, then the n active forms, an EMPTY field where the producer sent none.
-// A `texts` that does not cut into exactly 2 * states_len fields answers 0: both arrays
-// come from one list, so disagreeing about its length is the caller's defect.
-size_t slopdesk_inspector_todo_scent(const unsigned char *states, size_t states_len,
-                                     const unsigned char *texts, size_t texts_len,
-                                     unsigned char *out, size_t cap);
-
 SlopDeskInspectorDecoder *slopdesk_inspector_decoder_new(void);
 void slopdesk_inspector_decoder_free(SlopDeskInspectorDecoder *handle);
 void slopdesk_inspector_decoder_append(SlopDeskInspectorDecoder *handle,
@@ -11009,54 +10982,55 @@ void slopdesk_client_ctl_refuse(SlopDeskCtlReply *reply, uint8_t refusal, SlopDe
 
 // ---- The inspector CLIENT's store fold ----------------------------------------------------------
 //
-// `slopdesk_workspace::inspector_store`. The `slopdesk_inspector_*` doors above are the DAEMON's
-// frame and share nothing with these: that one is what the wire delivers, this one is the fold the
-// read-only client applies to what the frame delivered. The two prefixes are
-// `slopdesk_inspector_` and `slopdesk_inspector_store_` for exactly that reason.
+// `slopdesk_inspectord::store`. The `slopdesk_inspector_*` doors above are the DAEMON's frame and
+// share nothing with these: that one is what the wire delivers, this one is the fold the read-only
+// client applies to what the frame delivered. The two prefixes are `slopdesk_inspector_` and
+// `slopdesk_inspector_store_` for exactly that reason.
 //
-// NO IDENTITY CROSSES. An agent id is a string the near side's map is keyed by, and the join that
-// resolves a parent id to an agent stays there: a parent crosses as the POSITION of the agent it
-// names, or as one of the two refusals. The id BYTES do cross, and only because a level is ordered
-// by them — `slopdesk_ws_search_rank`'s shape, where text crosses so the answer can name the
-// caller's own rows.
+// THE STATE IS THE STORE'S, WHICH IS WHY THERE ARE NO ARGUMENTS. This used to be five doors
+// answering one decision each — a ring's ceiling, its overflow, the empty-state gate, the agent
+// tree — while the values they decided about sat in a Swift class beside a second declaration of
+// the whole event taxonomy and a second JSON decoder for it. Every read lent state ACROSS the
+// boundary so a rule could be told about it. Now the store holds the values, so the tree walks real
+// ids, the scent reads the list it already has, and the caps apply where the collections live.
+// See docs/66.
 
-// The two parent refusals, as `SlopDeskInspectorStoreAgent::parent` spells them. Both are outside a
-// position's range by construction, which keeps 0 — the first agent, and the common answer — real.
-#define SLOPDESK_INSPECTOR_STORE_ROOT     (-1)
-#define SLOPDESK_INSPECTOR_STORE_DANGLING (-2)
-// The five rings the cap and overflow doors select on.
-#define SLOPDESK_INSPECTOR_STORE_RING_TOOL_CARDS     0
-#define SLOPDESK_INSPECTOR_STORE_RING_SUBAGENT_CARDS 1
-#define SLOPDESK_INSPECTOR_STORE_RING_MESSAGES       2
-#define SLOPDESK_INSPECTOR_STORE_RING_AGENTS         3
-#define SLOPDESK_INSPECTOR_STORE_RING_UNKNOWN_LINES  4
-// The cap on one card family, and how many entries to drop to get back under it. `kind` selects the
-// family; a byte this build cannot name answers 0, which is never a real cap.
-size_t slopdesk_inspector_store_cap(uint8_t kind);
-size_t slopdesk_inspector_store_overflow(uint8_t kind, size_t count);
-// Whether the inspector has anything to show at all — the zero-state gate, over the four card
-// families plus the unknown-line counter that proves a stream arrived even when nothing parsed.
-bool slopdesk_inspector_store_has_activity(bool has_tool_cards, bool has_todos,
-                                           bool has_subagent_tree, bool has_thinking,
-                                           uint64_t unknown_line_count);
-typedef struct {
-    uint32_t id_offset;  // where this agent's id starts in the `ids` arena
-    uint32_t id_length;
-    int32_t  parent;     // the POSITION of the agent this one is under, or a refusal
-} SlopDeskInspectorStoreAgent;
-typedef struct {
-    uint32_t position;     // which entry of the caller's array this slot renders
-    int32_t  parent_slot;  // the slot this one nests under, or -1 for a root
-} SlopDeskInspectorStoreSlot;
-// THE TREE ANSWERS A FLAT PRE-ORDER LIST. A nested answer would mean an allocation per node
-// crossing the boundary, which `docs/55`'s cost table is unambiguous about. Instead: one
-// `(position, parent_slot)` record per rendered agent, parents before children, and the near side
-// rebuilds the nesting by walking that list BACKWARDS — a mechanical transcription, with the
-// deciding all on this side. Returns the count NEEDED.
-size_t slopdesk_inspector_store_subagent_tree(const unsigned char *ids, size_t ids_len,
-                                              const SlopDeskInspectorStoreAgent *entries,
-                                              size_t entries_len, SlopDeskInspectorStoreSlot *out,
-                                              size_t cap);
+typedef struct SlopDeskInspectorStore SlopDeskInspectorStore;
+
+// One store per pane, built with the pane's session and freed with it. Freeing null is a no-op.
+SlopDeskInspectorStore *slopdesk_inspector_store_new(void);
+void slopdesk_inspector_store_free(SlopDeskInspectorStore *handle);
+
+// Folds one event's JSON body in. false = the body did not decode and nothing changed, which is
+// this wire's resilience contract rather than an error: a rogue event costs that event, never the
+// feed. A null handle folds nothing and answers false.
+bool slopdesk_inspector_store_apply(SlopDeskInspectorStore *handle, const unsigned char *body,
+                                    size_t len);
+
+// Undoes what a replay from sequence zero would double — the monotonic counters and the message
+// log — and NOTHING else. Deliberately not a clear: the cards a re-subscribe is about to be told
+// about again must not blank the panel in the meantime.
+void slopdesk_inspector_store_reset(SlopDeskInspectorStore *handle);
+
+// The counter a reader diffs against to learn that anything at all changed. 0 for a null handle.
+uint64_t slopdesk_inspector_store_revision(SlopDeskInspectorStore *handle);
+
+// Whether the inspector has anything to show at all — the zero-state gate. The subagent half of it
+// is the TREE's emptiness, never the raw agent map's, so one malformed agent cannot suppress the
+// placeholder while rendering nothing.
+bool slopdesk_inspector_store_has_activity(SlopDeskInspectorStore *handle);
+
+// The pending-tool line: the newest still-waiting card's NAME, then its input SUMMARY, then its
+// full input DISPLAY, as three length-prefixed fields — the collapsed row draws the first two in
+// two weights, the expanded one draws the third. 0 out when nothing is in flight — unambiguous,
+// since a real answer carries three four-byte prefixes and so is never shorter than twelve bytes.
+size_t slopdesk_inspector_store_pending_line(SlopDeskInspectorStore *handle, unsigned char *out,
+                                             size_t cap);
+
+// The "i/n · activeForm" line for the todos in flight; 0 out when nothing is. No list is lent to
+// it — the todos are the store's own, which is the whole difference from the door this replaces.
+size_t slopdesk_inspector_store_todo_scent(SlopDeskInspectorStore *handle, unsigned char *out,
+                                           size_t cap);
 
 // ---- What a live pane may do next ---------------------------------------------------------------
 //

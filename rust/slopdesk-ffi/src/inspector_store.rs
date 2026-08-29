@@ -1,155 +1,226 @@
-//! The inspector CLIENT's store rules, in C.
+//! The inspector CLIENT's store, as a handle.
 //!
-//! The rules are `slopdesk_workspace::inspector_store`; what is here is the marshalling. The
-//! `inspector` module in this crate is the other end of the same feature and shares nothing with
-//! it: that one is the daemon's FRAME, this one is the fold the read-only client applies to what
-//! the frame delivered. The door prefixes are `slopdesk_inspector_` and `slopdesk_inspector_store_`
-//! for exactly that reason.
+//! One store per pane, built when the pane's session is, fed one event body at a time. The
+//! `inspector` module in this crate is the other end of the same feature: that one is the daemon's
+//! FRAME, this one is the fold applied to what the frame delivered. The door prefixes are
+//! `slopdesk_inspector_` and `slopdesk_inspector_store_` for exactly that reason.
 //!
-//! ## No identity crosses
+//! ## Why the STATE crossed, and not just the rules
 //!
-//! An agent id is a string the near side's map is keyed by, and the join that resolves a parent id
-//! to an agent stays there: a parent crosses as the POSITION of the agent it names, or as one of
-//! the two refusals. What does cross is the id BYTES, and only because a level is ordered by them
-//! — `slopdesk_ws_search_rank`'s shape, where text crosses so that the answer can name the caller's
-//! own rows.
+//! It used to be five doors answering one decision each — a ring's ceiling, a ring's overflow, the
+//! empty-state gate, the agent tree — while the state they decided about sat in a Swift
+//! `@Observable` class, along with a second declaration of the whole event taxonomy and a second
+//! JSON decoder for it. Every read marshalled state ACROSS the boundary so a rule could be told
+//! about it: the todo-scent door took the entire todo list, packed into length-prefixed fields, on
+//! every read of a caption.
 //!
-//! ## The tree answers a flat pre-order list
+//! Now the store holds its own values, so the arguments are gone: the tree walks a map of real
+//! `String` ids instead of spans into a lent blob, the scent reads the list it already has, and the
+//! caps are applied where the collections live rather than being vended one integer at a time. See
+//! `docs/66`.
 //!
-//! A nested answer would mean an allocation per node crossing the boundary, which `docs/55`'s cost
-//! table is unambiguous about. Instead the door answers one `(position, parent_slot)` record per
-//! rendered agent, parents before children, and the near side rebuilds the nesting by walking that
-//! list BACKWARDS — a mechanical transcription, with the deciding all on this side.
+//! ## What the doors answer
+//!
+//! Exactly what a surface reads. `docs/66` §3 measures that: the pending-tool line, the todo scent,
+//! and the empty-state gate. The rest of the store — the timeline, the agent tree, the message log,
+//! the unknown-line window — is reachable from `slopdesk-inspectord`'s own tests and has no reader
+//! on this side, so it gets no door until a panel asks for one.
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::inspector_store::{
-    AgentEntry, has_renderable_activity, ring_ceiling, ring_overflow, subagent_tree,
-};
+use slopdesk_inspectord::store::InspectorStore;
 
-use crate::{borrow, spill};
+use crate::{borrow, deliver, push_text};
 
-/// One agent, as the tree door reads it.
+/// Turns the caller's handle back into a reference.
 ///
-/// The id is a span into the blob lent alongside this array, never a pointer: no record here makes
-/// the caller own a lifetime, which is the arena convention the rest of this crate keeps.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SlopDeskInspectorStoreAgent {
-    /// Where this agent's id starts in the id blob.
-    pub id_offset: u32,
-    /// How many bytes long it is. `0` — and any span that does not fit — is the empty id, which
-    /// renders nothing.
-    pub id_length: u32,
-    /// The POSITION of this agent's parent in the same array, `-1` for a top-level agent, and `-2`
-    /// for a parent id that names no agent.
-    pub parent: i32,
+/// # Safety
+/// `handle` must be null or a live pointer from [`slopdesk_inspector_store_new`] that has not been
+/// freed, and no other reference to it may be live for the duration of the call.
+#[expect(
+    unsafe_code,
+    reason = "turning the caller's handle back into a reference is this module's whole obligation"
+)]
+const unsafe fn held<'a>(handle: *mut InspectorStore) -> Option<&'a mut InspectorStore> {
+    // SAFETY: by the caller's obligation this is a live, exclusively-held allocation from `new`.
+    unsafe { handle.as_mut() }
 }
 
-/// One row of the answer.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SlopDeskInspectorStoreSlot {
-    /// Which entry of the caller's array this row draws.
-    pub position: u32,
-    /// The SLOT in this same answer holding this row's parent, or `-1` for a root.
-    pub parent_slot: i32,
-}
-
-/// The count above which the ring `kind` names evicts, or `0` for a kind this build cannot name.
+/// Builds an empty store.
+///
+/// # Safety
+/// Nothing is borrowed. The function is `unsafe` only because an exported C entry point is, in
+/// edition 2024.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub const extern "C" fn slopdesk_inspector_store_cap(kind: u8) -> usize {
-    ring_ceiling(kind)
+pub unsafe extern "C" fn slopdesk_inspector_store_new() -> *mut InspectorStore {
+    Box::into_raw(Box::new(InspectorStore::new()))
 }
 
-/// How many oldest entries the ring `kind` names evicts at `count`.
+/// Frees a store. Null is a no-op; anything else must come from exactly one
+/// [`slopdesk_inspector_store_new`] and be freed exactly once.
 ///
-/// `0` until the ceiling is passed, and `0` for a kind this build cannot name — which is the answer
-/// that cannot lose anything.
+/// # Safety
+/// `handle` must be null, or a live pointer from [`slopdesk_inspector_store_new`] not yet freed,
+/// with no other call on it in flight.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub const extern "C" fn slopdesk_inspector_store_overflow(kind: u8, count: usize) -> usize {
-    ring_overflow(kind, count)
+pub unsafe extern "C" fn slopdesk_inspector_store_free(handle: *mut InspectorStore) {
+    if handle.is_null() {
+        return;
+    }
+    // SAFETY: by the caller's obligation this came from one `new` and has not been freed.
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// Folds one event's JSON body in. `false` means the body did not decode and nothing changed.
+///
+/// A `false` is NOT an error the caller must act on: it is this wire's resilience contract, where a
+/// future or corrupt event costs that event and never the session's feed.
+///
+/// # Safety
+/// `handle` must be live per [`held`]; `(body, len)` must be null-with-zero-length or that many
+/// readable bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_inspector_store_apply(
+    handle: *mut InspectorStore,
+    body: *const c_uchar,
+    len: usize,
+) -> bool {
+    // SAFETY: the caller's obligations are this function's.
+    unsafe { held(handle).is_some_and(|store| store.apply(borrow(body, len))) }
+}
+
+/// Undoes what a replay from sequence zero would otherwise double.
+///
+/// Called on entry to each subscribe, because an iOS resume re-asks for the WHOLE history on the
+/// same store. Deliberately not a clear — see `InspectorStore::reset`.
+///
+/// # Safety
+/// `handle` must be live per [`held`].
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_inspector_store_reset(handle: *mut InspectorStore) {
+    // SAFETY: the caller's obligation, above.
+    unsafe {
+        if let Some(store) = held(handle) {
+            store.reset();
+        }
+    }
+}
+
+/// The counter a reader diffs against to learn that anything at all changed. `0` for a null handle.
+///
+/// # Safety
+/// `handle` must be live per [`held`].
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_inspector_store_revision(handle: *mut InspectorStore) -> u64 {
+    // SAFETY: the caller's obligation, above.
+    unsafe { held(handle).map_or(0, |store| store.revision()) }
 }
 
 /// Whether anything user-visible has been folded in yet — the empty-state placeholder's gate.
 ///
-/// `has_subagent_tree` is the TREE's emptiness, never the raw map's, so one malformed agent cannot
-/// suppress the placeholder while rendering nothing.
+/// # Safety
+/// `handle` must be live per [`held`].
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub const extern "C" fn slopdesk_inspector_store_has_activity(
-    has_tool_cards: bool,
-    has_todos: bool,
-    has_subagent_tree: bool,
-    has_thinking: bool,
-    unknown_line_count: u64,
-) -> bool {
-    has_renderable_activity(
-        has_tool_cards,
-        has_todos,
-        has_subagent_tree,
-        has_thinking,
-        unknown_line_count,
-    )
+#[must_use]
+pub unsafe extern "C" fn slopdesk_inspector_store_has_activity(handle: *mut InspectorStore) -> bool {
+    // SAFETY: the caller's obligation, above.
+    unsafe { held(handle).is_some_and(|store| store.has_renderable_activity()) }
 }
 
-/// The agent tree as a PRE-ORDER list of `(position, parent_slot)` rows, roots first, each level
-/// ordered by id.
+/// The pending-tool line, as three length-prefixed fields.
 ///
-/// Answers the number of rows NEEDED — `docs/55` §4 — so a caller that lent too little is told what
-/// to lend. The answer is never longer than `entries_len`, so a caller that sizes its buffer from
-/// the list it already holds never travels the retry path.
+/// The newest still-waiting card's NAME, its input SUMMARY and its full input DISPLAY, in
+/// [`crate::push_text`]'s framing. `0` bytes when nothing is in flight.
+///
+/// Three fields rather than one joined string because each is drawn on its own: both peek overlays
+/// render the name and the summary in two foreground weights on the collapsed row, and swap in the
+/// display when that row is expanded. Splitting a combined string on the far side would be a second
+/// place deciding where the splits fall. Zero is unambiguous as the refusal: a real answer carries
+/// three four-byte prefixes, so it is never shorter than twelve bytes.
 ///
 /// # Safety
-/// `(ids, ids_len)` and `(entries, entries_len)` must be readable for the call, and `out` either
-/// null or writable for `cap` records for the whole call.
+/// `handle` must be live per [`held`]; `(out, cap)` must be null-with-zero-capacity or writable for
+/// `cap` bytes for the whole call.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
-    reason = "`no_mangle` on an exported C entry point, and all three pointers are the caller's"
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_inspector_store_subagent_tree(
-    ids: *const c_uchar,
-    ids_len: usize,
-    entries: *const SlopDeskInspectorStoreAgent,
-    entries_len: usize,
-    out: *mut SlopDeskInspectorStoreSlot,
+#[must_use]
+pub unsafe extern "C" fn slopdesk_inspector_store_pending_line(
+    handle: *mut InspectorStore,
+    out: *mut c_uchar,
     cap: usize,
 ) -> usize {
-    // SAFETY: the caller's obligation, restated above; both borrows die with this call.
-    let (blob, lent) = unsafe { (borrow(ids, ids_len), borrow(entries, entries_len)) };
-    let rows: Vec<AgentEntry> = lent
-        .iter()
-        .map(|agent| {
-            AgentEntry {
-                id_offset: agent.id_offset,
-                id_length: agent.id_length,
-                parent: agent.parent,
-            }
-        })
-        .collect();
-    let answer: Vec<SlopDeskInspectorStoreSlot> = subagent_tree(blob, &rows)
-        .into_iter()
-        .map(|slot| {
-            SlopDeskInspectorStoreSlot {
-                position: slot.position,
-                parent_slot: slot.parent_slot,
-            }
-        })
-        .collect();
-    // SAFETY: `out` is the caller's, writable for `cap` records by the obligation above.
-    unsafe { spill(&answer, out, cap) }
+    // SAFETY: the caller's obligation, above.
+    let Some(store) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let Some(pending) = store.pending_card() else {
+        return 0;
+    };
+    let mut blob = Vec::new();
+    push_text(&mut blob, &pending.card.name);
+    push_text(&mut blob, &pending.render.summary);
+    push_text(&mut blob, &pending.render.display);
+    // SAFETY: as above, for the out half.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// The `i/n · activeForm` line for the todos in flight, or `0` bytes when nothing is.
+///
+/// No argument beyond the handle: the todo list is the store's own, which is the whole difference
+/// between this and the door it replaces.
+///
+/// Whether the caller may SHOW it is a separate question its own live-feed gate answers; this only
+/// says whether there is one and what it reads.
+///
+/// # Safety
+/// `handle` must be live per [`held`]; `(out, cap)` must be null-with-zero-capacity or writable for
+/// `cap` bytes for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_inspector_store_todo_scent(
+    handle: *mut InspectorStore,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, above.
+    let Some(scent) = (unsafe { held(handle) }).and_then(|store| store.todo_scent()) else {
+        return 0;
+    };
+    // SAFETY: as above, for the out half.
+    unsafe { deliver(scent.as_bytes(), out, cap) }
 }
 
 #[cfg(test)]
@@ -158,173 +229,199 @@ pub unsafe extern "C" fn slopdesk_inspector_store_subagent_tree(
     reason = "calling the boundary the way Swift does IS what these tests are for"
 )]
 mod tests {
-    use slopdesk_workspace::inspector_store::{DANGLING, ROOT, Ring};
+    use core::ffi::c_uchar;
 
     use super::{
-        SlopDeskInspectorStoreAgent, SlopDeskInspectorStoreSlot, slopdesk_inspector_store_cap,
-        slopdesk_inspector_store_has_activity, slopdesk_inspector_store_overflow,
-        slopdesk_inspector_store_subagent_tree,
+        slopdesk_inspector_store_apply, slopdesk_inspector_store_free, slopdesk_inspector_store_has_activity,
+        slopdesk_inspector_store_new, slopdesk_inspector_store_pending_line, slopdesk_inspector_store_reset,
+        slopdesk_inspector_store_revision, slopdesk_inspector_store_todo_scent,
     };
 
-    /// A blob of ids and the records naming them, from `(id, parent)` pairs.
-    fn corpus(rows: &[(&str, i32)]) -> (Vec<u8>, Vec<SlopDeskInspectorStoreAgent>) {
-        let mut ids: Vec<u8> = Vec::new();
-        let mut entries: Vec<SlopDeskInspectorStoreAgent> = Vec::new();
-        for (id, parent) in rows {
-            let offset = u32::try_from(ids.len()).unwrap_or(u32::MAX);
-            ids.extend_from_slice(id.as_bytes());
-            entries.push(SlopDeskInspectorStoreAgent {
-                id_offset: offset,
-                id_length: u32::try_from(id.len()).unwrap_or(u32::MAX),
-                parent: *parent,
-            });
+    /// One store for the body of a test, freed on the way out.
+    fn with_store(body: impl FnOnce(*mut slopdesk_inspectord::store::InspectorStore)) {
+        // SAFETY: `new` borrows nothing, and the handle is freed exactly once below.
+        let handle = unsafe { slopdesk_inspector_store_new() };
+        assert!(
+            !handle.is_null(),
+            "the store allocates or the process is out of memory"
+        );
+        body(handle);
+        // SAFETY: the one handle from the one `new` above, not yet freed.
+        unsafe { slopdesk_inspector_store_free(handle) };
+    }
+
+    /// Folds a body the way the Swift face does.
+    fn apply(handle: *mut slopdesk_inspectord::store::InspectorStore, json: &str) -> bool {
+        // SAFETY: the handle is live for the test, and the slice lives across the call.
+        unsafe { slopdesk_inspector_store_apply(handle, json.as_ptr(), json.len()) }
+    }
+
+    /// A door's answer, read the way the Swift face reads one: probe for the size, then fill.
+    fn read(
+        handle: *mut slopdesk_inspectord::store::InspectorStore,
+        door: unsafe extern "C" fn(
+            *mut slopdesk_inspectord::store::InspectorStore,
+            *mut c_uchar,
+            usize,
+        ) -> usize,
+    ) -> Vec<u8> {
+        // SAFETY: a null output with zero capacity is `docs/55` §4's documented length probe.
+        let needed = unsafe { door(handle, core::ptr::null_mut(), 0) };
+        if needed == 0 {
+            return Vec::new();
         }
-        (ids, entries)
-    }
-
-    /// The door run the way the Swift face runs it: one buffer sized from the caller's own list.
-    fn tree(rows: &[(&str, i32)]) -> Vec<(u32, i32)> {
-        let (ids, entries) = corpus(rows);
-        let mut room = vec![SlopDeskInspectorStoreSlot::default(); entries.len()];
-        // SAFETY: all three borrows live for the call, and `room` holds `entries.len()` records.
-        let needed = unsafe {
-            slopdesk_inspector_store_subagent_tree(
-                ids.as_ptr(),
-                ids.len(),
-                entries.as_ptr(),
-                entries.len(),
-                room.as_mut_ptr(),
-                room.len(),
-            )
-        };
-        assert!(
-            needed <= room.len(),
-            "the answer never outgrows the list it came from"
-        );
-        room.truncate(needed);
-        room.into_iter()
-            .map(|slot| (slot.position, slot.parent_slot))
-            .collect()
-    }
-
-    #[test]
-    fn the_tree_crosses_pre_order_with_each_level_ordered_by_id() {
-        assert!(tree(&[]).is_empty());
-        assert_eq!(tree(&[("c", ROOT), ("a", ROOT), ("b", ROOT)]), [
-            (1, -1),
-            (2, -1),
-            (0, -1)
-        ]);
-        assert_eq!(tree(&[("a", ROOT), ("b", 0), ("c", ROOT)]), [
-            (0, -1),
-            (1, 0),
-            (2, -1)
-        ]);
-    }
-
-    #[test]
-    fn the_three_kinds_of_unreachable_agent_render_nowhere() {
-        assert!(
-            tree(&[("", ROOT), ("child", 0)]).is_empty(),
-            "an empty id takes its children with it",
-        );
-        assert_eq!(tree(&[("orphan", DANGLING), ("root", ROOT)]), [(1, -1)]);
-        assert_eq!(tree(&[("loop", 0), ("root", ROOT)]), [(1, -1)]);
-    }
-
-    #[test]
-    fn null_pointers_read_as_an_empty_tree_rather_than_a_trap() {
-        // SAFETY: null with zero lengths is the documented empty input, and `borrow` answers an
-        // empty slice for it.
-        let needed = unsafe {
-            slopdesk_inspector_store_subagent_tree(
-                core::ptr::null(),
-                0,
-                core::ptr::null(),
-                0,
-                core::ptr::null_mut(),
-                0,
-            )
-        };
-        assert_eq!(needed, 0);
-    }
-
-    #[test]
-    fn a_short_buffer_writes_nothing_and_reports_what_it_needed() {
-        let (ids, entries) = corpus(&[("a", ROOT), ("b", ROOT), ("c", ROOT)]);
-        let mut room = [SlopDeskInspectorStoreSlot::default(); 1];
-        // SAFETY: every borrow lives for the call; the buffer is deliberately too small.
-        let needed = unsafe {
-            slopdesk_inspector_store_subagent_tree(
-                ids.as_ptr(),
-                ids.len(),
-                entries.as_ptr(),
-                entries.len(),
-                room.as_mut_ptr(),
-                room.len(),
-            )
-        };
-        assert_eq!(needed, 3, "a short lend is told what to lend");
+        let mut room = vec![0_u8; needed];
+        // SAFETY: `room` is writable for exactly the `needed` bytes the probe named.
+        let written = unsafe { door(handle, room.as_mut_ptr(), room.len()) };
         assert_eq!(
-            room,
-            [SlopDeskInspectorStoreSlot::default()],
-            "and nothing was written"
+            written, needed,
+            "a door sized its answer differently than it wrote it"
         );
+        room
     }
 
-    #[test]
-    fn a_null_output_is_the_length_probe() {
-        let (ids, entries) = corpus(&[("a", ROOT), ("b", 0)]);
-        // SAFETY: the two inputs live for the call; a null output is §4's documented probe.
-        let needed = unsafe {
-            slopdesk_inspector_store_subagent_tree(
-                ids.as_ptr(),
-                ids.len(),
-                entries.as_ptr(),
-                entries.len(),
-                core::ptr::null_mut(),
-                0,
-            )
-        };
-        assert_eq!(needed, 2);
-    }
-
-    #[test]
-    fn every_ring_crosses_and_an_unnamed_kind_refuses() {
-        for ring in Ring::ALL {
-            assert_eq!(slopdesk_inspector_store_cap(ring.code()), ring.ceiling());
-            assert_eq!(slopdesk_inspector_store_overflow(ring.code(), 0), 0);
-            assert_eq!(slopdesk_inspector_store_overflow(ring.code(), ring.ceiling()), 0);
-            let over = ring.ceiling().saturating_add(1);
-            assert_eq!(
-                over - slopdesk_inspector_store_overflow(ring.code(), over),
-                ring.retained(),
-            );
+    /// Cuts `push_text`'s framing back into its fields.
+    fn fields(blob: &[u8]) -> Vec<String> {
+        let mut answer = Vec::new();
+        let mut cursor = 0;
+        while cursor + 4 <= blob.len() {
+            let mut length = 0_usize;
+            for offset in 0..4 {
+                length = length << 8 | usize::from(blob.get(cursor + offset).copied().unwrap_or_default());
+            }
+            cursor += 4;
+            let Some(bytes) = blob.get(cursor..cursor + length) else {
+                break;
+            };
+            answer.push(String::from_utf8_lossy(bytes).into_owned());
+            cursor += length;
         }
-        let unnamed = u8::try_from(Ring::ALL.len()).unwrap_or(u8::MAX);
-        assert_eq!(slopdesk_inspector_store_cap(unnamed), 0);
-        assert_eq!(slopdesk_inspector_store_overflow(unnamed, 1_000_000), 0);
+        assert_eq!(cursor, blob.len(), "the framing cut evenly");
+        answer
+    }
+
+    const PENDING_BASH: &str =
+        r#"{"toolCard":{"_0":{"id":"b1","name":"Bash","input":{"command":"ls -la"},"status":"pending"}}}"#;
+
+    #[test]
+    fn a_null_handle_answers_the_empty_reading_rather_than_trapping() {
+        let null = core::ptr::null_mut();
+        // SAFETY: null is the documented no-op for every door here.
+        unsafe {
+            assert!(!slopdesk_inspector_store_apply(null, b"{}".as_ptr(), 2));
+            assert_eq!(slopdesk_inspector_store_revision(null), 0);
+            assert!(!slopdesk_inspector_store_has_activity(null));
+            assert_eq!(
+                slopdesk_inspector_store_pending_line(null, core::ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                slopdesk_inspector_store_todo_scent(null, core::ptr::null_mut(), 0),
+                0
+            );
+            // Freeing null is the documented no-op, and the reason a Swift `deinit` needs no guard.
+            slopdesk_inspector_store_free(null);
+        }
     }
 
     #[test]
-    fn the_empty_state_gate_crosses_whole() {
-        assert!(!slopdesk_inspector_store_has_activity(
-            false, false, false, false, 0
-        ));
-        assert!(slopdesk_inspector_store_has_activity(
-            true, false, false, false, 0
-        ));
-        assert!(slopdesk_inspector_store_has_activity(
-            false, true, false, false, 0
-        ));
-        assert!(slopdesk_inspector_store_has_activity(
-            false, false, true, false, 0
-        ));
-        assert!(slopdesk_inspector_store_has_activity(
-            false, false, false, true, 0
-        ));
-        assert!(slopdesk_inspector_store_has_activity(
-            false, false, false, false, 1
-        ));
+    fn a_fresh_store_reads_empty_and_one_event_moves_every_reading() {
+        with_store(|handle| {
+            assert_eq!(
+                read(handle, slopdesk_inspector_store_pending_line),
+                Vec::<u8>::new()
+            );
+            // SAFETY: the handle is live for the closure.
+            unsafe {
+                assert!(!slopdesk_inspector_store_has_activity(handle));
+                assert_eq!(slopdesk_inspector_store_revision(handle), 0);
+            }
+
+            assert!(apply(handle, PENDING_BASH));
+            // SAFETY: as above.
+            unsafe {
+                assert!(slopdesk_inspector_store_has_activity(handle));
+                assert_eq!(slopdesk_inspector_store_revision(handle), 1);
+            }
+            assert_eq!(fields(&read(handle, slopdesk_inspector_store_pending_line)), [
+                "Bash".to_owned(),
+                "ls -la".to_owned(),
+                "command: ls -la".to_owned()
+            ]);
+        });
+    }
+
+    #[test]
+    fn a_body_that_does_not_decode_folds_nothing_and_says_so() {
+        with_store(|handle| {
+            assert!(!apply(handle, "{not json"));
+            // SAFETY: the handle is live for the closure.
+            unsafe {
+                assert_eq!(slopdesk_inspector_store_revision(handle), 0);
+                assert!(!slopdesk_inspector_store_has_activity(handle));
+            }
+        });
+    }
+
+    #[test]
+    fn the_scent_reads_off_the_store_with_no_list_lent_to_it() {
+        with_store(|handle| {
+            assert_eq!(
+                read(handle, slopdesk_inspector_store_todo_scent),
+                Vec::<u8>::new()
+            );
+            assert!(apply(
+                handle,
+                r#"{"todosUpdated":{"_0":[
+                    {"content":"first","status":"completed"},
+                    {"content":"second","status":"in_progress","activeForm":"doing the second"}
+                ]}}"#,
+            ));
+            assert_eq!(
+                String::from_utf8_lossy(&read(handle, slopdesk_inspector_store_todo_scent)),
+                "2/2 · doing the second",
+            );
+        });
+    }
+
+    #[test]
+    fn a_short_lend_writes_nothing_and_reports_what_it_needed() {
+        with_store(|handle| {
+            assert!(apply(handle, PENDING_BASH));
+            let mut room = [0_u8; 4];
+            // SAFETY: the handle is live and `room` is deliberately too small.
+            let needed =
+                unsafe { slopdesk_inspector_store_pending_line(handle, room.as_mut_ptr(), room.len()) };
+            assert!(needed > room.len(), "a short lend is told what to lend");
+            assert_eq!(room, [0; 4], "and nothing was written");
+        });
+    }
+
+    #[test]
+    fn a_reset_clears_the_accumulators_and_keeps_the_cards() {
+        with_store(|handle| {
+            assert!(apply(handle, PENDING_BASH));
+            assert!(apply(handle, r#"{"unknownLine":{"raw":"x"}}"#));
+            // SAFETY: the handle is live for the closure.
+            let before = unsafe { slopdesk_inspector_store_revision(handle) };
+            // SAFETY: as above.
+            unsafe { slopdesk_inspector_store_reset(handle) };
+            // SAFETY: as above.
+            unsafe {
+                assert!(
+                    slopdesk_inspector_store_revision(handle) > before,
+                    "a reset is a change a reader must see",
+                );
+                assert!(
+                    slopdesk_inspector_store_has_activity(handle),
+                    "the card survived, so the panel still has something to draw",
+                );
+            }
+            assert_eq!(fields(&read(handle, slopdesk_inspector_store_pending_line)), [
+                "Bash".to_owned(),
+                "ls -la".to_owned(),
+                "command: ls -la".to_owned()
+            ]);
+        });
     }
 }

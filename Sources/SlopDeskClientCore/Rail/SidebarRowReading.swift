@@ -26,7 +26,7 @@
 
 import CSlopDeskFFI
 import SlopDeskAgentDetect
-import SlopDeskInspector // PendingToolSummary — the working row's todo-scent tooltip line
+import SlopDeskInspector // InspectorViewModel — the working row's todo-scent tooltip line
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -285,7 +285,7 @@ package enum SidebarRowPresentation {
         guard let session = store.handle(for: paneID) as? LivePaneSession,
               let inspector = session.inspector, inspector.feedState == .live
         else { return nil }
-        return PendingToolSummary.scent(todos: inspector.todos)
+        return inspector.todoScent
     }
 }
 

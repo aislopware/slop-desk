@@ -57,29 +57,6 @@ pub fn tool_input(name: &str, input: &Value) -> ToolInputRender {
     ToolInputRender { display, summary }
 }
 
-/// The renderings for whichever tool card an EVENT's JSON carries, or `None` when it carries none.
-///
-/// The client asks with the event's raw bytes rather than with a decoded input, and that is the
-/// whole point of the door: its own decode turns every JSON number into a `Double` on the way past,
-/// so an input that reached this function through it would already have lost the integer this one
-/// prints exactly. Reading the two card shapes out of the raw JSON here — `toolCard`'s `_0` and
-/// `subagentToolCard`'s labelled `card` — costs one extra parse of an event that arrives per TURN,
-/// and buys the tree back its single flattening.
-///
-/// A malformed body, a non-card event, or a card missing `name`/`input` all answer `None`: this
-/// door adds a rendering to an event the caller has already accepted, so it never decides that the
-/// event itself is bad.
-#[must_use]
-pub fn render_event(json: &[u8]) -> Option<ToolInputRender> {
-    let value: Value = serde_json::from_slice(json).ok()?;
-    let card = value
-        .get("toolCard")
-        .and_then(|body| body.get("_0"))
-        .or_else(|| value.get("subagentToolCard").and_then(|body| body.get("card")))?;
-    let name = crate::json::string_at(card, "name")?;
-    Some(tool_input(name, card.get("input")?))
-}
-
 /// The first line of a possibly-multi-line flattening.
 ///
 /// A multi-key object flattens with `\n` between its pairs, and the collapsed row is one line —
@@ -108,7 +85,7 @@ pub fn todo_scent(todos: &[crate::event::TodoItem]) -> Option<String> {
 mod tests {
     use serde_json::json;
 
-    use super::{render_event, todo_scent, tool_input};
+    use super::{todo_scent, tool_input};
     use crate::event::{TodoItem, TodoStatus};
 
     #[test]
@@ -182,33 +159,5 @@ mod tests {
     fn nothing_in_flight_is_no_scent() {
         let todos = [todo("later", TodoStatus::Pending, None)];
         assert_eq!(todo_scent(&todos), None);
-    }
-
-    #[test]
-    fn both_card_shapes_are_read_out_of_a_raw_event() {
-        let main =
-            br#"{"toolCard":{"_0":{"id":"t1","name":"Bash","input":{"command":"ls"},"status":"pending"}}}"#;
-        assert_eq!(render_event(main).map(|r| r.summary).as_deref(), Some("ls"));
-
-        let sub = br#"{"subagentToolCard":{"agentID":"a1","card":{"id":"s1","name":"Read","input":{"file_path":"/x"},"status":"pending"}}}"#;
-        assert_eq!(render_event(sub).map(|r| r.summary).as_deref(), Some("/x"));
-    }
-
-    /// The whole reason the raw bytes cross: an integer that a `Double` decode would have rounded
-    /// reaches the flattening intact.
-    #[test]
-    fn a_raw_event_keeps_an_integer_a_decode_through_double_would_lose() {
-        let json = br#"{"toolCard":{"_0":{"id":"t","name":"Sparkle","input":{"n":9007199254740993},"status":"pending"}}}"#;
-        assert_eq!(
-            render_event(json).map(|r| r.summary).as_deref(),
-            Some("n: 9007199254740993")
-        );
-    }
-
-    #[test]
-    fn an_event_that_carries_no_card_answers_nothing() {
-        assert!(render_event(br#"{"message":{"_0":{"role":"user","text":"hi"}}}"#).is_none());
-        assert!(render_event(b"not json at all").is_none());
-        assert!(render_event(br#"{"toolCard":{"_0":{"id":"t","status":"pending"}}}"#).is_none());
     }
 }

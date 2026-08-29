@@ -449,9 +449,11 @@ fn the_panel_holds_no_bridge_grammar() -> Vec<Claim> {
 ///
 /// `wire.rs` owns the prefix, the cap, the three tags and the splitter, and
 /// `Sources/SlopDeskInspector` is its face over the door in `rust/slopdesk-ffi/src/inspector.rs`.
-/// What is left in Swift is the event JSON, which is a document the daemon writes and the client
-/// reads — the two-ENDS shape, not one capability twice. The tags and the ceiling themselves are
-/// [`the_inspector_tags_are_one_alphabet`].
+/// What is left in Swift is FRAMING — which frame arrived and where its body sits. The body itself
+/// crosses unread: `docs/66` moved the fold and the taxonomy to `slopdesk-inspectord`, and the
+/// second claim below is what stops the taxonomy growing back. This doc used to call the event a
+/// two-ENDS document, which it was not — both ends deserialised the same body. The tags and the
+/// ceiling themselves are [`the_inspector_tags_are_one_alphabet`].
 ///
 /// `slopdesk_inspector_decoder_buffered` is the one door with no Swift caller: it is the door's own
 /// assertion that a drained splitter has compacted, exercised by the crate's tests, while Swift
@@ -460,7 +462,8 @@ fn the_panel_holds_no_bridge_grammar() -> Vec<Claim> {
 /// BREAK-TEST: dropped `slopdesk_inspector_decoder_next` from the face ⇒ FAIL "stopped calling".
 /// Separately wrote `16 * 1024 * 1024` into the face ⇒ FAIL "respells the inspector frame".
 /// Separately restored `struct TranscriptParser` under Sources/ ⇒ FAIL "a Swift inspector producer
-/// is back". All three restored from /tmp; PASS.
+/// is back". Separately restored `struct ToolCard` under Sources/ ⇒ FAIL "event taxonomy is back in
+/// Swift". All four restored from /tmp; PASS.
 #[must_use]
 pub fn the_inspector_frame_has_one_spelling(tree: &Tree) -> Report {
     /// The seven entries with a caller on both sides.
@@ -511,8 +514,23 @@ pub fn the_inspector_frame_has_one_spelling(tree: &Tree) -> Report {
             exempt: &[],
             message: "a Swift inspector producer is back in Sources/ — inspectord owns the fold, and \
                       `InspectorSource` is named here because it was the HOST end of the wire \
-                      (InspectorClient, InspectorViewModel and the event types are the far end, which is \
-                      allowed) (docs/54): {files}",
+                      (`InspectorClient` and `InspectorViewModel` are the far end, which is allowed) \
+                      (docs/54): {files}",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(enum|struct|final class|class|actor|protocol) (InspectorEvent|ToolCard|TodoItem|SubagentNode|MessageEvent|ThinkingMarker|WorkflowMarker|SessionInfo|PendingToolSummary|InspectorStoreRules)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the inspector's event taxonomy is back in Swift — it is declared ONCE, in \
+                      `slopdesk_inspectord::event`, and `slopdesk_inspectord::store` is the only thing that \
+                      decodes it. A second declaration here is not a two-ENDS document: both ends would \
+                      deserialise the SAME body, and this side's `JSONDecoder` flattened every integer to a \
+                      `Double` doing it. The bodies cross unread; ask a door for what a surface renders \
+                      (docs/66): {files}",
         },
     ])
 }
@@ -1249,6 +1267,28 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("slopdesk_inspector_decoder_buffered")),
+            "{report:?}"
+        );
+    }
+
+    /// A second declaration of the event taxonomy is the failure that goes green: both ends decode,
+    /// both compile, and the two answers differ only where a `Double` cannot hold an integer.
+    #[test]
+    fn the_event_taxonomy_redeclared_in_swift_is_red() {
+        let fixture = Fixture::new("inspector-taxonomy");
+        wires(&fixture);
+        assert!(super::the_inspector_frame_has_one_spelling(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskInspector/InspectorEvent.swift",
+            "public struct ToolCard: Codable {\n    public let id: String\n}\n",
+        );
+        let report = super::the_inspector_frame_has_one_spelling(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("event taxonomy is back in Swift")),
             "{report:?}"
         );
     }

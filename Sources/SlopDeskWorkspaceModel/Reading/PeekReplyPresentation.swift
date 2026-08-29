@@ -9,7 +9,7 @@
 // half that spelled one of them itself would drift the moment the copy changed on the other.
 //
 // The card's BEHAVIOUR is not here and never was: ``PeekReplyTarget`` picks the pane,
-// ``PeekReplyFormatter`` turns what was typed into the bytes the PTY gets, ``PendingToolSummary``
+// ``PeekReplyFormatter`` turns what was typed into the bytes the PTY gets, the inspector STORE
 // collapses the pending call, and ``OverlayCoordinator`` owns the target, the advance and the close.
 // All four predate this file and all four are already shared.
 //

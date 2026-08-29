@@ -10,10 +10,9 @@ import Foundation
 /// proven framing shape without coupling.
 ///
 /// Unlike the terminal hot path (manual binary, no JSON), the inspector payload is
-/// **JSON** (`InspectorEvent` is `Codable`): the event rate is low (per-turn /
-/// per-tool, not per-keystroke) and the schema is rich + evolving, so JSON's
-/// flexibility wins and its cost is irrelevant. Doc 16 explicitly calls for
-/// "length-prefixed JSON frames".
+/// **JSON**: the event rate is low (per-turn / per-tool, not per-keystroke) and the
+/// schema is rich + evolving, so JSON's flexibility wins and its cost is irrelevant.
+/// Doc 16 explicitly calls for "length-prefixed JSON frames".
 /// A frame the CLIENT receives (host → client). Tags `1` and `2`.
 ///
 /// The client's one outbound frame — `subscribe`, tag `3` — has no case here: it is written by
@@ -21,8 +20,13 @@ import Foundation
 /// the ONE-IMPLEMENTATION rule applied to a protocol's two ends (`CLAUDE.md`): `slopdesk-inspectord`
 /// encodes what this end decodes and decodes what it encodes, each written once.
 public enum InspectorWireMessage: Sendable, Equatable {
-    /// A structured inspector event. The whole read-only stream.
-    case event(InspectorEvent)
+    /// One event's JSON body, UNREAD. The whole read-only stream.
+    ///
+    /// Carried as bytes rather than as a decoded tree because this side no longer has a tree to
+    /// decode into: `slopdesk_inspectord::store` folds the body, and it is the only reader. Deciding
+    /// WHICH frame arrived is framing and stays here; deciding what the body SAYS is one job, and
+    /// `docs/66` gave it to the one end that does it.
+    case event(Data)
     /// Heartbeat / liveness, so a quiet workflow run is not mistaken for a dead connection.
     case keepAlive
 }
@@ -38,16 +42,21 @@ public enum InspectorWireMessage: Sendable, Equatable {
 /// terminal protocol's ceiling, spelled once in the crate. The `.event` body is JSON, `.keepAlive`
 /// has an empty body, and a `subscribe` body is one big-endian `Int64`.
 ///
-/// **What stays here is the JSON, and only the JSON.** `decode_client` answers WHICH frame arrived
-/// and WHERE its body sits, never what the body says; `InspectorEvent` is a document the daemon
-/// writes and this end reads, which is the two-ENDS shape rather than one capability written twice.
+/// **Nothing about the body stays here.** `decode_client` answers WHICH frame arrived and WHERE its
+/// body sits; the body itself is handed on as bytes. This doc used to claim the event was a
+/// two-ENDS document — one the daemon writes and this end reads — and that was wrong: both ends
+/// deserialised the SAME document against two declarations of one taxonomy, which is one capability
+/// written twice. `docs/66` deleted this side's declaration.
 public enum InspectorCodec {
     /// Errors distinct from `SlopDeskProtocol.SlopDeskError` (decode-time, inspector frames).
+    ///
+    /// Three, not four: a `malformedBody` case was here while this side parsed the JSON, and left
+    /// with the parse. A body that does not decode is now the STORE's answer — `apply` returns
+    /// `false` — because the store is what would have been wrong about it.
     public enum CodecError: Error, Equatable, Sendable {
         case frameTooLarge(Int)
         case truncated
         case unknownType(UInt8)
-        case malformedBody(String)
     }
 
     /// The largest payload a frame may claim, READ from the crate rather than respelled here.
@@ -98,106 +107,18 @@ public enum InspectorCodec {
             )
         }
         guard verdict == SLOPDESK_INSPECTOR_OK else { throw error(verdict, record.detail) }
-        return try message(record, payload)
+        return message(record, payload)
     }
 
     // MARK: Shared with the frame splitter
 
-    /// The message a decoded record names, reading an event's JSON out of `buffer` in place.
-    static func message(_ record: SlopDeskInspectorFrame, _ buffer: Data) throws -> InspectorWireMessage {
+    /// The message a decoded record names, taking an event's JSON out of `buffer` in place.
+    static func message(_ record: SlopDeskInspectorFrame, _ buffer: Data) -> InspectorWireMessage {
         guard record.tag == 1 else { return .keepAlive }
         let start = buffer.startIndex + Int(record.body_offset)
-        // `Data.SubSequence` IS `Data`, so the body reaches the parser as a view onto the payload
-        // the caller already holds — no copy to hand it over.
-        return try event(buffer[start..<start + Int(record.body_length)])
-    }
-
-    /// The event `json` describes, or the malformed-body error naming why it is not one.
-    ///
-    /// A tool card's two RENDERINGS are asked for beside the decode, with the same raw bytes, and
-    /// grafted onto the card the decode produced. They are not on the wire and never have been: the
-    /// daemon sends `input` as a JSON value, and turning it into the text a card shows is a rule —
-    /// one that lived in this target and a second time in `slopdesk-inspectord`, answering
-    /// differently for every integer this side's decoder had already flattened into a `Double`.
-    /// Asking with the RAW bytes is what makes the answer exact, so the graft happens HERE, before
-    /// the tree the decode built has a chance to be consulted.
-    static func event(_ json: Data) throws -> InspectorWireMessage {
-        do {
-            let decoded = try JSONDecoder().decode(InspectorEvent.self, from: json)
-            return .event(rendered(decoded, json))
-        } catch {
-            throw CodecError.malformedBody("event JSON: \(error)")
-        }
-    }
-
-    /// `event` with its tool card's renderings filled in, or unchanged when it carries no card.
-    private static func rendered(_ event: InspectorEvent, _ json: Data) -> InspectorEvent {
-        guard let fields = toolInputRender(json), fields.count == 2 else { return event }
-        switch event {
-        case var .toolCard(card):
-            card.inputDisplay = fields[0]
-            card.inputSummary = fields[1]
-            return .toolCard(card)
-        case let .subagentToolCard(agentID, original):
-            var card = original
-            card.inputDisplay = fields[0]
-            card.inputSummary = fields[1]
-            return .subagentToolCard(agentID: agentID, card: card)
-        default:
-            return event
-        }
-    }
-
-    /// The two rendered fields the crate answers for this event, or `nil` when it names no card.
-    private static func toolInputRender(_ json: Data) -> [String]? {
-        let blob: [UInt8]? = json.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> [UInt8]? in
-            let base = bytes.bindMemory(to: UInt8.self).baseAddress
-            let needed = slopdesk_inspector_tool_input_render(base, bytes.count, nil, 0)
-            guard needed > 0 else { return nil }
-            var buffer = [UInt8](repeating: 0, count: needed)
-            let written = buffer.withUnsafeMutableBufferPointer {
-                slopdesk_inspector_tool_input_render(base, bytes.count, $0.baseAddress, $0.count)
-            }
-            return written == needed ? buffer : nil
-        }
-        guard let blob else { return nil }
-        return splitFields(blob)
-    }
-
-    /// Packs texts into the doors' field framing: four big-endian bytes, then that many UTF-8 bytes.
-    ///
-    /// The inverse of ``splitFields(_:)``, and here beside it so this target spells the framing
-    /// once — the render door answers in it and the todo-scent door is asked in it.
-    static func packFields(_ texts: [String]) -> [UInt8] {
-        var blob: [UInt8] = []
-        for text in texts {
-            let bytes = Array(text.utf8)
-            let length = UInt32(truncatingIfNeeded: bytes.count)
-            blob.append(contentsOf: [
-                UInt8(truncatingIfNeeded: length >> 24),
-                UInt8(truncatingIfNeeded: length >> 16),
-                UInt8(truncatingIfNeeded: length >> 8),
-                UInt8(truncatingIfNeeded: length),
-            ])
-            blob.append(contentsOf: bytes)
-        }
-        return blob
-    }
-
-    /// Cuts the door's length-prefixed fields: four big-endian bytes, then that many UTF-8 bytes.
-    private static func splitFields(_ blob: [UInt8]) -> [String]? {
-        var fields: [String] = []
-        var cursor = 0
-        while cursor + 4 <= blob.count {
-            var length = 0
-            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
-            cursor += 4
-            guard cursor + length <= blob.count else { return nil }
-            guard let text = String(bytes: blob[cursor..<cursor + length], encoding: .utf8) else { return nil }
-            fields.append(text)
-            cursor += length
-        }
-        return cursor == blob.count ? fields : nil
+        // `Data.SubSequence` IS `Data`, so the body travels as a view onto the payload the caller
+        // already holds — no copy to hand it over.
+        return .event(buffer[start..<start + Int(record.body_length)])
     }
 
     /// The error a non-OK verdict names.
@@ -268,8 +189,9 @@ public final class InspectorFrameDecoder {
             case SLOPDESK_INSPECTOR_OK:
                 guard record.tag == 1 else { return .keepAlive }
                 let run = Int(record.body_offset)..<Int(record.body_offset + record.body_length)
-                let json = body.withUnsafeBytes { Data(UnsafeRawBufferPointer(rebasing: $0[run])) }
-                return try InspectorCodec.event(json)
+                // Copied out on purpose: `body` is REUSED by the next call, so the body a caller
+                // holds cannot be a view onto it.
+                return .event(body.withUnsafeBytes { Data(UnsafeRawBufferPointer(rebasing: $0[run])) })
             default:
                 throw InspectorCodec.error(verdict, record.detail)
             }

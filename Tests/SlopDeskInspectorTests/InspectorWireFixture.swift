@@ -13,8 +13,16 @@ import Foundation
 /// the failure a two-language protocol has. These bytes are the contract, written out.
 enum InspectorWireFixture {
     /// Tag `1` — an event, JSON body.
-    static func eventFrame(_ event: InspectorEvent) throws -> Data {
-        try frame(tag: 1, body: JSONEncoder().encode(event))
+    ///
+    /// Takes the body as TEXT, not as an event value: since `docs/66` there is no event type on this
+    /// side to encode from, and the frames a framing test needs never depended on there being one.
+    static func eventFrame(_ json: String) -> Data {
+        eventFrame(Data(json.utf8))
+    }
+
+    /// Tag `1` — an event whose body is already bytes, which is how it crosses the seam.
+    static func eventFrame(_ body: Data) -> Data {
+        frame(tag: 1, body: body)
     }
 
     /// Tag `2` — a keep-alive, empty body.

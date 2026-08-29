@@ -1,9 +1,10 @@
 //! The typed event taxonomy the inspector emits and the client renders.
 //!
 //! ## This shape is a CONTRACT, not a choice
-//! The other end is `Sources/SlopDeskInspector/InspectorEvent.swift`, decoded by Swift's
-//! SYNTHESIZED `Codable`, in a client that ships independently of this daemon. So the JSON these
-//! types produce must be what that synthesis expects, exactly:
+//! The names below are not this crate's to pick. They were authored by Swift's SYNTHESIZED
+//! `Codable` on a mirror of this taxonomy, which `docs/66` deleted — but the wire outlived it,
+//! because a client ships independently of this daemon and the two must still agree across a
+//! version skew. So the JSON these types produce is still exactly what that synthesis produced:
 //!
 //! - an enum is externally tagged by its case name — `{"toolCard": {…}}`;
 //! - a case with ONE unlabeled associated value nests it under the key `_0`;
@@ -14,8 +15,8 @@
 //! - a `String`-raw-value enum encodes as that raw string.
 //!
 //! `tests::the_wire_shape_matches_swifts_synthesized_codable` pins every one of those against
-//! literal JSON. Changing a name here silently breaks a shipped client, and that test is what makes
-//! it fail loudly instead.
+//! literal JSON, and `tests/golden_events.rs` pins the same shapes against the corpus. Changing a
+//! name here silently breaks a shipped client; those two are what make it fail loudly instead.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -288,12 +289,16 @@ pub struct WorkflowMarker {
 }
 
 /// A workflow's coarse state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Idle` is the DEFAULT because it is what a store that has been told nothing is in: a panel that
+/// has seen no workflow marker must not claim one is running.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkflowState {
     /// At least one subagent is active.
     Running,
     /// Nothing running.
+    #[default]
     Idle,
 }
 

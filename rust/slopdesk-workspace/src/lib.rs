@@ -96,9 +96,6 @@
 //! - [`pane_session`] — what a live pane may do next: how a status frame lands, whether the
 //!   inspector may attach, what its video window does about a resume or a teardown, and where a
 //!   dismissed chip routes. Nothing that is ALIVE appears — only the facts a decision reads.
-//! - [`inspector_store`] — the read-only inspector CLIENT's fold over what the daemon's frame
-//!   delivered: the four card rings and their eviction, the zero-state gate, and the subagent tree
-//!   flattened to one pre-order `(position, parent)` row per rendered agent.
 //!
 //! ## Invariants
 //!
@@ -140,7 +137,6 @@ pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
 pub mod host_name;
-pub mod inspector_store;
 pub mod jump;
 pub mod jump_to;
 pub mod key_repeat;

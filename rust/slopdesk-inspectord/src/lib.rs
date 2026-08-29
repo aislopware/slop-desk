@@ -33,6 +33,7 @@ pub mod line;
 pub mod parser;
 pub mod replay;
 pub mod server;
+pub mod store;
 pub mod subagents;
 pub mod tailer;
 pub mod tool_render;

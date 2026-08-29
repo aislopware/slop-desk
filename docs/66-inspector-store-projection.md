@@ -107,16 +107,21 @@ A handle, as `docs/59` §2 and `docs/65` §2 shape one:
   properties a future field can be forgotten from.
 - `_revision(handle)` — the monotonic counter a UIKit/AppKit reader diffs against, the way
   `workspaceMirrorRevision` is diffed.
-- The three readings from §3, and nothing else.
+- The three readings from §3, and nothing else. The pending-tool one carries THREE fields, not two —
+  the collapsed row draws the name and the summary, the expanded one draws the full display.
 
 Swift keeps `InspectorViewModel` as a `@MainActor` class holding the handle, plus `feedState` — which
 stays because it is about the `NWConnection`'s lifetime, and that seam is `docs/65` §5's parked one
 (`NWByteChannel`, `SerialFeedGate`, `BoundedInputPipe`). `@Observable` goes with the state it
 tracked: there is no SwiftUI left to track it, and the two overlays already read on demand.
 
-`InspectorEvent.swift` is deleted whole. `PendingToolSummary` keeps `PendingToolLine` — a two-string
-value the views render in two weights — and loses `scent(todos:)`'s packing and `TodoItem.Status`'s
-`ffiByte`, both of which exist only to send state back across.
+`InspectorEvent.swift` and `InspectorStoreRules.swift` are deleted whole, and so is
+`PendingToolSummary.swift`: `scent(todos:)`'s packing and `TodoItem.Status.ffiByte` exist only to send
+state back across, and `line(card:)` was already a field lift. `PendingToolLine` survives it — a
+value the views render in three places — and moves beside the model that vends it.
+
+`InspectorWireMessage.event` carries `Data`, not a decoded tree, and `CodecError` loses
+`malformedBody` with the parse that threw it: a body that does not decode is now `apply`'s `false`.
 
 ## 6. What must cross as an explicit operation
 
@@ -129,9 +134,12 @@ Four behaviours are load-bearing and none of them falls out of "port the fields"
 - **`historyTruncated` is latest-wins.** A re-replay re-sends the current drop count; accumulating it
   would claim a growing hole that is not there.
 - **serde's tolerance must equal `decodeIfPresent`'s.** `ToolCard.init(from:)` defaults `status` to
-  `.pending` and both rendered strings to `""`, because the daemon sends neither. Every such default
-  becomes a `#[serde(default)]`, and `InspectorResilientDecodeTests` is the differential that says
-  where one is missing.
+  `.pending` and both rendered strings to `""`, because the daemon sends neither. `slopdesk-inspectord`
+  already carried the whole taxonomy with those defaults and `golden_events.rs` already replayed the
+  pinned corpus through it, so this crossed before the pass rather than during it.
+- **A reset that undoes nothing must not report a change.** A subscribe is the one call made without
+  being told anything, so an unconditional revision bump would announce a change on every reconnect of
+  an idle pane. It bumps only when an accumulator actually carried something.
 - **The eviction index rebuild.** After a drop-oldest the surviving cards' positions all shift, and a
   later upsert of a retained id must still resolve in place. In Rust this is the same rebuild, but it
   is now on the same side as the cap that caused it.
@@ -140,18 +148,33 @@ Four behaviours are load-bearing and none of them falls out of "port the fields"
 
 As `docs/64` and `docs/65`: the consumers are the proof.
 
-- **Zero changes** at the six call sites in §3. A diff there means the boundary moved, which is the
-  failure this standard catches.
-- **Migrations, not rewrites.** `InspectorViewModelStateTests`, `InspectorResilientDecodeTests` and
+- **One change, the same one, at all six call sites in §3.** Each stops SEARCHING a collection it was
+  lent — `toolCards.last(where: { $0.status == .pending })`, `scent(todos:)` — and starts reading the
+  answer: `vm.pendingLine`, `vm.todoScent`. That is the whole diff; the surrounding `.live` gate, the
+  two-tone splice and the expand/collapse cut are untouched. A diff BEYOND that means the boundary
+  moved, which is the failure this standard catches.
+- **Migrations, not rewrites.** `InspectorViewModelStateTests`, `PendingToolSummaryTests` and
   `InspectorEventGoldenVectorTests` assert what is now Rust's, so they move to Rust with the same
   inputs and the same expected answers. A changed expectation is a transcription error.
+- **`InspectorResilientDecodeTests` stays, and splits.** The unknown-tag half is still framing and is
+  asserted where it was. The malformed-BODY half moved one layer in WITH the parse: the stream now
+  hands the garbage over like any other body, and `apply` returning `false` is what costs that one
+  event. Same inputs, same guarantee, asserted at the surface that now decides.
+- **`InspectorTransportTests` asserts what its layer owns.** It cannot assert what a body says any
+  more, so it asserts that the bytes between the length prefixes arrive whole, in order and unaltered
+  — which is also what pins the one copy `nextMessage` still makes out of its reused scratch buffer.
 - **`InspectorGlueTests` stays Swift.** Its subject is the channel and the `Task` lifetime — a
-  re-subscribe after a flap, a cancelled teardown, a keep-alive that must not register as an unknown
-  line. Only its READS move onto the handle.
+  re-subscribe after a flap, a cancelled teardown, a keep-alive that must not reach the fold. Its
+  READS move onto the handle, and the four cases whose only subject was fold SEMANTICS (upsert by id,
+  arrival order, todos-replace, subagent attach) are covered by the store's own tests against the same
+  bodies, so they go rather than being re-asserted through a narrower window.
 - **`inspectorEvents` keeps its reader.** The Swift golden replay is deleted with the decoder it
   drives; `rust/slopdesk-inspectord/tests/golden_events.rs` already replays that key against the same
   corpus, so `slopdesk-gate golden`'s frozen-key check stays satisfied. Verified before the sweep,
   not after.
+- **The ratchet gains a claim.** `the_inspector_frame_has_one_spelling` now bars the ten taxonomy type
+  names from `Sources/`, with its own break-test. Its doc's "two-ENDS document" reading of the event
+  was wrong and is corrected there.
 
 ## 8. One pass
 

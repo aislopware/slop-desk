@@ -304,7 +304,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   What the halves share is `PeekReplyPresentation` (`SlopDeskClientCore`): the header caption and the
   order its parts truncate in, the "N of M" counter's hard cut, the note a pane with no reported
   question gets, the zero-state line. Behaviour was already below the view before this port existed
-  — `PeekReplyTarget`, `PeekReplyFormatter`, `PendingToolSummary` — which is most of why the card is
+  — `PeekReplyTarget`, `PeekReplyFormatter`, the inspector store — which is most of why the card is
   a renderer on both sides.
 
   This is also the first DESIGN-SYSTEM LEAF to cross rather than a whole surface, and the terms are

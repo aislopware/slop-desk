@@ -13,7 +13,7 @@
 //
 // NOTHING HERE SPELLS A STRING THE CARD SAYS. The caption's join, the "N of M" counter, the note for a
 // pane that reported no question, and the all-caught-up line are ``PeekReplyPresentation``'s; the header
-// glyph's reading is ``StatusPresentation``'s and the pending-tool line is ``PendingToolSummary``'s.
+// glyph's reading is ``StatusPresentation``'s and the pending-tool line is the inspector STORE's.
 // `slopdesk-invariants` fails the build if any of them comes back into a view.
 //
 // ⚠️ THE QUICK-ANSWER DIGIT IS THE FIELD'S DELEGATE, NOT A `UIKeyCommand`, and the UIKit spelling is
@@ -389,7 +389,7 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
         // non-Claude or stale-feed pane's caption is byte-identical to what it was before the scent
         // existed.
         let scent = inspector(for: target).flatMap {
-            $0.feedState == .live ? PendingToolSummary.scent(todos: $0.todos) : nil
+            $0.feedState == .live ? $0.todoScent : nil
         }
         caption.text = PeekReplyPresentation.caption(status: status, scent: scent)
         // The counter REPLACES the card's name once a real queue exists — a hard cut on the queue edge,
@@ -440,7 +440,7 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
     /// a LIVE feed: a stale feed's eternally-pending card must not masquerade as the live ask.
     private func drawPending(_ target: PaneID) {
         guard let model = inspector(for: target), model.feedState == .live,
-              let card = model.toolCards.last(where: { $0.status == .pending })
+              let line = model.pendingLine
         else {
             pendingRow.isHidden = true
             pendingFullRow.isHidden = true
@@ -450,11 +450,10 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
         // are the same fact at two lengths, and a disclosure arrow on a one-line summary is chrome.
         pendingRow.isHidden = expanded
         pendingFullRow.isHidden = !expanded
-        pendingFull.text = card.inputDisplay
+        pendingFull.text = line.display
         // Two-tone: the tool NAME is a label and steps back, the summarised input is the thing to read.
-        // WHERE that split falls is ``PendingToolSummary``'s — the same formatter the header scent and
-        // the sidebar tooltip read.
-        let line = PendingToolSummary.line(card: card)
+        // WHERE that split falls is the STORE's — the same fold the header scent and the sidebar
+        // tooltip read.
         let face = UIFont.monospacedSystemFont(ofSize: Slate.Typeface.body, weight: .regular)
         let marked = NSMutableAttributedString(
             string: line.name + ": ",

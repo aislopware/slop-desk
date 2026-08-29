@@ -322,17 +322,18 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // Read-only structured inspector (WF-6). Tails Claude Code's JSONL transcript (+ subagent
-        // files + hooks) on the host, models typed `InspectorEvent`s, streams them over a SECOND
-        // length-prefixed channel (NWConnection #2) to a SwiftUI client. INDEPENDENT of the terminal
-        // byte pipeline — reuses only SlopDeskProtocol's framing *style*, never the terminal
-        // WireMessage. Read-only: observes the transcript, never drives the agent.
+        // Read-only structured inspector (WF-6). `slopdesk-inspectord` tails Claude Code's JSONL
+        // transcript (+ subagent files + hooks) on the host, models typed events and streams them
+        // over a SECOND length-prefixed channel (NWConnection #2). INDEPENDENT of the terminal byte
+        // pipeline — it reuses the framing *style*, never the terminal WireMessage. Read-only:
+        // observes the transcript, never drives the agent.
         .target(
-            // CSlopDeskFFI: the inspector's FRAME lives in `rust/slopdesk-inspectord`, the daemon
-            // that speaks the other end of it, and this end reaches it in process. Only the event
-            // JSON is decoded here.
+            // CSlopDeskFFI: the FRAME, and since `docs/66` the STORE too. This target unframes and
+            // hands the body over UNREAD — the taxonomy is declared once, in the daemon's crate,
+            // and `slopdesk_inspectord::store` is the only thing that decodes it. No
+            // `SlopDeskProtocol` edge: the framing style is borrowed, not the types.
             name: "SlopDeskInspector",
-            dependencies: ["SlopDeskProtocol", "SlopDeskNet", "CSlopDeskFFI"],
+            dependencies: ["SlopDeskNet", "CSlopDeskFFI"],
 
             linkerSettings: ffiCLibraries,
         ),
@@ -497,7 +498,7 @@ let package = Package(
                 "SlopDeskProtocol",
                 // The rail's rows and the palette's agent entries are keyed by agent state.
                 "SlopDeskAgentDetect",
-                // `PendingToolSummary` — the todo SCENT a working row's tooltip carries.
+                // `InspectorViewModel` — the todo SCENT a working row's tooltip carries.
                 "SlopDeskInspector",
                 // `SessionResumeOutcome` — the fresh-vs-resumed reconnect verdict a toast reports.
                 "SlopDeskClient",

@@ -18,6 +18,9 @@ private func makeUnconnectedClient() -> SlopDeskClient {
 /// borrow — a test that needs host → client bytes spells the wire out: `[UInt32 BE
 /// payloadLength][UInt8 tag][body]`, tag `1` for an event, `2` for a keep-alive. An actor, so the
 /// call sites read the same as the `InspectorSource` they replace.
+///
+/// The body is TEXT: since `docs/66` there is no Swift event type to encode from, and these tests
+/// are about the GLUE — subscribe, teardown, re-arm, one consumer — not about what a body says.
 private actor InspectorFeed {
     private let channel: LoopbackByteChannel
 
@@ -25,8 +28,8 @@ private actor InspectorFeed {
         self.channel = channel
     }
 
-    func send(_ event: InspectorEvent) throws {
-        try channel.send(Self.frame(tag: 1, body: JSONEncoder().encode(event)))
+    func send(_ body: String) {
+        channel.send(Self.frame(tag: 1, body: Data(body.utf8)))
     }
 
     func sendKeepAlive() {
@@ -63,12 +66,15 @@ private actor InspectorFeed {
 ///     for its *pure* port-convention math, never dialed),
 ///   - **NO real `SlopDeskClient`** and **NO terminal byte stream** touched (PATH 1 is independent).
 ///
-/// The fold under test is `InspectorViewModel.apply(_:)` driven through the real client transport
+/// The fold under test is `InspectorViewModel.apply(_:)` — a handle onto `slopdesk_inspectord`'s
+/// store — driven through the real client transport
 /// (`InspectorClient.events()`), fed by daemon-shaped frames (``InspectorFeed``) over the loopback.
 /// Two surfaces are covered:
 ///
-///   1. The raw view-model fold over the transport (tool-card upsert/dedup, todos replace, session,
-///      subagents) — the InspectorPanel's own `.task` would drive exactly this stream.
+///   1. The SEAM the store's own tests cannot reach: bytes on a channel become a fold, and the two
+///      readings — the todo scent and the pending line — follow it. What the fold DOES with an event
+///      (upsert by id, arrival order, todos-replace, subagent attach) is `slopdesk_inspectord`'s and
+///      is asserted there against these same bodies (`docs/66` §7).
 ///   2. The `LivePaneSession` glue: a `.terminal` session with a detected `claude` whose
 ///      `makeInspector` returns a loopback-backed `InspectorClient`, driven via `subscribeInspector()`
 ///      (the leaf's `.task` on appear) — proving the production glue path folds, that it
@@ -103,29 +109,28 @@ final class InspectorGlueTests: XCTestCase {
         }
     }
 
-    private func sampleCard(
+    /// One `toolCard` body, as `slopdesk-inspectord` writes it.
+    private func cardBody(
         id: String = "t1",
         name: String = "Bash",
         command: String = "ls",
         output: String? = nil,
-        status: ToolCard.Status = .pending,
-    ) -> ToolCard {
-        ToolCard(
-            id: id,
-            name: name,
-            inputDisplay: "command: \(command)",
-            inputSummary: command,
-            output: output,
-            status: status,
-        )
+        status: String = "pending",
+    ) -> String {
+        let result = output.map { #","output":"\#($0)""# } ?? ""
+        return #"{"toolCard":{"_0":{"id":"\#(id)","name":"\#(name)","input":{"command":"\#(command)"}"#
+            + result + #","status":"\#(status)"}}}"#
     }
 
     // MARK: - 1. Raw view-model fold over the real transport (the InspectorPanel `.task` stream)
 
-    /// A tool-card upsert: a `pending` card then a re-emitted `completed` card with the SAME id must
-    /// UPDATE in place (one card, dedup holds) — never append a duplicate. This is the doc-16
-    /// pairing contract folded through the client transport, not just the daemon's builder.
-    func testToolCardUpsertFoldsThroughTransportAndDedups() async throws {
+    /// A card folds through the real client transport and the pending READING follows it: the
+    /// `pending` card names the row, and its `completed` re-emission empties it.
+    ///
+    /// What the fold DOES with the card — upsert by id, arrival order, ring caps — is
+    /// `slopdesk_inspectord::store`'s, and asserted there against the same bodies. What this test
+    /// owns is the seam those assertions cannot reach: bytes over a channel become a fold.
+    func testAToolCardFoldsThroughTheTransportAndTheReadingFollowsIt() async {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
         let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
@@ -136,22 +141,23 @@ final class InspectorGlueTests: XCTestCase {
         defer { fold.cancel() }
 
         // pending tool_use → then its tool_result completes the SAME id.
-        try await source.send(.toolCard(sampleCard(status: .pending)))
-        try await source.send(.toolCard(sampleCard(output: "files", status: .completed)))
+        await source.send(cardBody(status: "pending"))
+        await waitUntil({ vm.pendingLine != nil }, "the pending card never folded")
+        XCTAssertEqual(vm.pendingLine?.name, "Bash")
+        XCTAssertEqual(vm.pendingLine?.summary, "ls")
+        XCTAssertEqual(vm.pendingLine?.display, "command: ls")
 
-        await waitUntil({ vm.toolCards.first?.status == .completed }, "card never reached completed")
-
-        XCTAssertEqual(vm.toolCards.count, 1, "re-emitted card with same id updates in place — no duplicate")
-        XCTAssertEqual(vm.toolCards.first?.id, "t1")
-        XCTAssertEqual(vm.toolCards.first?.status, .completed)
-        XCTAssertEqual(vm.toolCards.first?.output, "files")
+        await source.send(cardBody(output: "files", status: "completed"))
+        await waitUntil({ vm.pendingLine == nil }, "the completion never folded")
+        XCTAssertTrue(vm.hasRenderableActivity, "the card is still there — only the PENDING reading emptied")
 
         await source.close()
     }
 
-    /// Two distinct tool ids both appear, in arrival order; a third event re-touching the first id
-    /// still leaves exactly two cards (dedup is per-id, ordering preserved).
-    func testDistinctToolCardsAppendInOrderWhileDedupHoldsPerID() async throws {
+    /// The todo scent folds through the same seam, and a replacing list with nothing in progress
+    /// empties it — the caption's whole contract, read off the model the sidebar and both peek
+    /// headers read.
+    func testTheTodoScentFoldsThroughTransport() async {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
         let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
@@ -160,97 +166,22 @@ final class InspectorGlueTests: XCTestCase {
         let fold = Task { await vm.consume(client.events()) }
         defer { fold.cancel() }
 
-        try await source.send(.toolCard(sampleCard(id: "a", name: "Read", command: "open")))
-        try await source.send(.toolCard(sampleCard(id: "b", name: "Grep", command: "find")))
-        try await source.send(.toolCard(sampleCard(
-            id: "a",
-            name: "Read",
-            command: "open",
-            output: "done",
-            status: .completed,
-        )))
+        let both = #"[{"content":"a","status":"completed"},"#
+            + #"{"content":"b","status":"in_progress","activeForm":"doing b"}]"#
+        await source.send("{\"todosUpdated\":{\"_0\":\(both)}}")
+        await waitUntil({ vm.todoScent != nil }, "the todo scent never folded")
+        XCTAssertEqual(vm.todoScent, "2/2 · doing b")
 
-        await waitUntil(
-            { vm.toolCards.count == 2 && vm.toolCards.first?.status == .completed },
-            "expected exactly two cards with the first completed",
-        )
-
-        XCTAssertEqual(vm.toolCards.map(\.id), ["a", "b"], "arrival order preserved across the upsert")
-        XCTAssertEqual(vm.toolCards.first?.status, .completed)
-        XCTAssertEqual(vm.toolCards.last?.status, .pending)
-
-        await source.close()
-    }
-
-    /// A `sessionStarted` event populates header metadata, and `todosUpdated` REPLACES the list
-    /// wholesale on each emission (latest-wins, doc 16) — folded through the transport.
-    func testSessionAndTodosFoldThroughTransport() async throws {
-        let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorFeed(channel: hostCh)
-        let client = InspectorClient(channel: clientCh)
-        let vm = InspectorViewModel()
-
-        let fold = Task { await vm.consume(client.events()) }
-        defer { fold.cancel() }
-
-        try await source.send(.sessionStarted(SessionInfo(sessionID: "s1", model: "claude-opus-4-8", cwd: "/repo")))
-        try await source.send(.todosUpdated([
-            TodoItem(content: "a", status: .completed),
-            TodoItem(content: "b", status: .inProgress, activeForm: "doing b"),
-        ]))
-
-        await waitUntil({ vm.session != nil && vm.todos.count == 2 }, "session/todos never folded")
-
-        XCTAssertEqual(vm.session?.model, "claude-opus-4-8")
-        XCTAssertEqual(vm.session?.cwd, "/repo")
-        XCTAssertEqual(vm.todos.map(\.content), ["a", "b"])
-
-        // A second todos emission replaces (not appends) — latest-wins.
-        try await source.send(.todosUpdated([TodoItem(content: "c", status: .pending)]))
-        await waitUntil({ vm.todos.map(\.content) == ["c"] }, "todos were appended instead of replaced")
-        XCTAssertEqual(vm.todos.count, 1, "todosUpdated replaces the list wholesale")
-
-        await source.close()
-    }
-
-    /// A subagent node plus a tool card addressed to it lands under that subagent's bucket, NOT the
-    /// main timeline (the `.claudeCode` tree-attach contract), folded through the transport.
-    func testSubagentCardAttachesUnderNodeNotMainTimeline() async throws {
-        let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorFeed(channel: hostCh)
-        let client = InspectorClient(channel: clientCh)
-        let vm = InspectorViewModel()
-
-        let fold = Task { await vm.consume(client.events()) }
-        defer { fold.cancel() }
-
-        try await source.send(.subagentUpdated(SubagentNode(id: "deadbeef", agentType: "Ariadne", status: .running)))
-        try await source.send(.subagentToolCard(
-            agentID: "deadbeef",
-            card: ToolCard(
-                id: "sa1",
-                name: "Grep",
-                inputDisplay: "",
-                inputSummary: "",
-                output: "hit",
-                status: .completed,
-            ),
-        ))
-
-        await waitUntil({ vm.subagentCards["deadbeef"]?.count == 1 }, "subagent card never attached")
-
-        XCTAssertTrue(vm.toolCards.isEmpty, "a subagent card must not leak into the main timeline")
-        XCTAssertEqual(vm.subagents["deadbeef"]?.agentType, "Ariadne")
-        XCTAssertEqual(vm.subagentCards["deadbeef"]?.first?.id, "sa1")
-        XCTAssertEqual(vm.subagentTree.first?.cards.first?.id, "sa1", "tree projection carries the card")
+        await source.send(#"{"todosUpdated":{"_0":[{"content":"c","status":"completed"}]}}"#)
+        await waitUntil({ vm.todoScent == nil }, "a replacing list with nothing in flight must empty the scent")
 
         await source.close()
     }
 
     /// Keep-alive frames (host liveness) must be swallowed by the event stream — they never reach the
-    /// fold, so the view model state is untouched. (Mirrors the transport-level guarantee, asserted
-    /// here at the fold boundary the pane actually renders from.)
-    func testKeepAliveIsSwallowedAndDoesNotPerturbTheFold() async throws {
+    /// fold, so the model is untouched. (Mirrors the transport-level guarantee, asserted here at the
+    /// fold boundary the pane actually renders from.)
+    func testKeepAliveIsSwallowedAndDoesNotPerturbTheFold() async {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
         let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
@@ -260,13 +191,11 @@ final class InspectorGlueTests: XCTestCase {
         defer { fold.cancel() }
 
         await source.sendKeepAlive() // must NOT fold to any state
-        try await source.send(.toolCard(sampleCard(id: "real", status: .pending)))
+        await source.send(cardBody(id: "real", status: "pending"))
 
-        await waitUntil({ vm.toolCards.count == 1 }, "real card after keep-alive never folded")
+        await waitUntil({ vm.pendingLine != nil }, "real card after keep-alive never folded")
 
-        XCTAssertEqual(vm.toolCards.first?.id, "real")
-        XCTAssertEqual(vm.unknownLineCount, 0, "keep-alive must not register as an unknown line")
-        XCTAssertEqual(vm.toolCards.count, 1, "keep-alive added no spurious card")
+        XCTAssertEqual(vm.revision, 1, "exactly one fold — the keep-alive was not one of them")
 
         await source.close()
     }
@@ -307,19 +236,12 @@ final class InspectorGlueTests: XCTestCase {
         let fold = Task { await session.subscribeInspector() }
         defer { fold.cancel() }
 
-        try await source.send(.toolCard(sampleCard(id: "x", name: "Bash", command: "echo hi", status: .pending)))
-        try await source.send(.toolCard(sampleCard(
-            id: "x",
-            name: "Bash",
-            command: "echo hi",
-            output: "hi",
-            status: .completed,
-        )))
+        await source.send(cardBody(id: "x", command: "echo hi", status: "pending"))
+        await waitUntil({ vm.pendingLine?.summary == "echo hi" }, "session inspector never folded the card")
 
-        await waitUntil({ vm.toolCards.first?.status == .completed }, "session inspector never folded the card")
-
-        XCTAssertEqual(vm.toolCards.count, 1, "dedup holds through the LivePaneSession fold")
-        XCTAssertEqual(vm.toolCards.first?.output, "hi")
+        await source.send(cardBody(id: "x", command: "echo hi", output: "hi", status: "completed"))
+        await waitUntil({ vm.pendingLine == nil }, "the completion never folded through the session")
+        XCTAssertEqual(vm.revision, 2, "both events folded — through the session's own model")
 
         await source.close()
     }
@@ -381,19 +303,18 @@ final class InspectorGlueTests: XCTestCase {
         // Detecting a claude auto-spawns the FIRST subscribe (the dynamic open).
         detectClaude(in: session)
 
-        try await source.send(.toolCard(sampleCard(id: "only", status: .pending)))
-        await waitUntil({ vm.toolCards.count == 1 }, "first fold never folded the card")
+        await source.send(cardBody(id: "only", status: "pending"))
+        await waitUntil({ vm.revision == 1 }, "first fold never folded the card")
 
         // A second explicit subscribe must early-out (client already live) — no new client, no second
         // consumer. (The auto-spawned open already handed out exactly one client.)
         await session.subscribeInspector()
         XCTAssertEqual(clientHandedOut, 1, "a live inspector must not be rebuilt / re-subscribed")
 
-        try await source.send(.toolCard(sampleCard(id: "only", output: "ok", status: .completed)))
-        await waitUntil({ vm.toolCards.first?.status == .completed }, "single consumer should still receive updates")
+        await source.send(cardBody(id: "only", output: "ok", status: "completed"))
+        await waitUntil({ vm.pendingLine == nil }, "single consumer should still receive updates")
 
-        XCTAssertEqual(vm.toolCards.count, 1, "no split stream / duplicate cards from a second subscribe")
-        XCTAssertEqual(vm.toolCards.first?.output, "ok")
+        XCTAssertEqual(vm.revision, 2, "exactly two folds — a split stream would have dropped one")
 
         await source.close()
     }
@@ -427,10 +348,10 @@ final class InspectorGlueTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 20_000_000)
 
         // An event sent now must NOT be folded — the session is torn down, no live consumer remains.
-        try? await source.send(.toolCard(sampleCard(id: "post", status: .pending)))
+        await source.send(cardBody(id: "post", status: "pending"))
         await Task.yield()
         try? await Task.sleep(nanoseconds: 20_000_000)
-        XCTAssertTrue(vm.toolCards.isEmpty, "no card folds after teardown — the re-subscribe was cancelled")
+        XCTAssertEqual(vm.revision, 0, "no card folds after teardown — the re-subscribe was cancelled")
 
         await source.close()
     }
@@ -454,8 +375,8 @@ final class InspectorGlueTests: XCTestCase {
         // Claude detected (type-27 idle) → the inspector auto-opens (the dynamic OPEN).
         session.feedAgentSignal(.claudeStatus(state: 1, kind: 0, label: "")) // .idle
         XCTAssertNotEqual(session.claudeStatus, .none)
-        try await source.send(.toolCard(sampleCard(id: "live", status: .pending)))
-        await waitUntil({ vm.toolCards.count == 1 }, "inspector never folded while claude was live")
+        await source.send(cardBody(id: "live", status: "pending"))
+        await waitUntil({ vm.revision == 1 }, "inspector never folded while claude was live")
 
         // Claude LEAVES: the host pushes type-27 .none → the inspector client must be torn down.
         session.feedAgentSignal(.claudeStatus(state: 0, kind: 0, label: "")) // .none
@@ -464,11 +385,11 @@ final class InspectorGlueTests: XCTestCase {
         // Give the detached close a chance to run, then prove no further event is folded.
         await Task.yield()
         try? await Task.sleep(nanoseconds: 30_000_000)
-        try? await source.send(.toolCard(sampleCard(id: "after", status: .pending)))
+        await source.send(cardBody(id: "after", status: "pending"))
         await Task.yield()
         try? await Task.sleep(nanoseconds: 30_000_000)
-        XCTAssertEqual(vm.toolCards.count, 1, "no event folds after claude leaves — the inspector channel was closed")
-        XCTAssertEqual(vm.toolCards.first?.id, "live", "only the pre-close card remains")
+        XCTAssertEqual(vm.revision, 1, "no event folds after claude leaves — the inspector channel was closed")
+        XCTAssertEqual(vm.pendingLine?.name, "Bash", "only the pre-close card remains")
 
         await source.close()
     }
@@ -538,8 +459,8 @@ final class InspectorGlueTests: XCTestCase {
 
         // The FRESH channel is live end-to-end: an event over the NEW loopback folds into the pane model.
         let freshSource = try XCTUnwrap(hostSides.count == 2 ? hostSides[1] : nil, "no fresh channel was built")
-        try await freshSource.send(.toolCard(sampleCard(id: "fresh", status: .pending)))
-        await waitUntil({ vm.toolCards.contains { $0.id == "fresh" } }, "the fresh channel never folded")
+        await freshSource.send(cardBody(id: "fresh", command: "fresh", status: "pending"))
+        await waitUntil({ vm.pendingLine?.summary == "fresh" }, "the fresh channel never folded")
 
         for source in hostSides { await source.close() }
     }
@@ -561,15 +482,16 @@ final class InspectorGlueTests: XCTestCase {
         let vm = try XCTUnwrap(session.inspector)
         detectClaude(in: session)
         await waitUntil({ hostSides.count == 1 }, "detect never opened the first channel")
-        try await hostSides[0].send(.toolCard(sampleCard(id: "old", status: .pending)))
-        await waitUntil({ vm.toolCards.count == 1 }, "the first channel never folded")
+        await hostSides[0].send(cardBody(id: "old", command: "old", status: "pending"))
+        await waitUntil({ vm.pendingLine?.summary == "old" }, "the first channel never folded")
 
         session.reestablishInspectorOnReconnect()
         await waitUntil({ hostSides.count == 2 }, "the reconnect re-arm never rebuilt the client")
 
-        // Events over the FRESH channel fold (upsert keeps "old" — a full re-tail would dedupe by id).
-        try await hostSides[1].send(.toolCard(sampleCard(id: "new", status: .completed)))
-        await waitUntil({ vm.toolCards.map(\.id) == ["old", "new"] }, "the fresh channel never folded")
+        // Events over the FRESH channel fold. The re-arm does NOT reset the store — only a subscribe
+        // does — so "old" is still pending and "new" is the newer of the two.
+        await hostSides[1].send(cardBody(id: "new", command: "new", status: "pending"))
+        await waitUntil({ vm.pendingLine?.summary == "new" }, "the fresh channel never folded")
 
         for source in hostSides { await source.close() }
     }

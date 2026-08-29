@@ -1,4 +1,3 @@
-import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskInspector
 
@@ -6,76 +5,53 @@ import XCTest
 ///
 /// The frames come from ``InspectorWireFixture``, hand-built to the wire spec, because the Swift
 /// side has no event encoder any more — `slopdesk-inspectord` is the only thing that writes tag 1
-/// and tag 2 (`docs/54`). What Swift still owns is decode, plus the one control it sends.
+/// and tag 2 (`docs/54`). What Swift still owns is FRAMING, plus the one control it sends.
+///
+/// What a body SAYS is not asserted here and cannot be: since `docs/66` the body crosses this layer
+/// unread, and the taxonomy it belongs to is pinned in `slopdesk-inspectord`'s `golden_events.rs`
+/// against the same corpus. So these tests assert the property that is actually this layer's — the
+/// bytes between the length prefixes arrive whole, in order, and unaltered.
 final class InspectorTransportTests: XCTestCase {
-    private func sampleEvents() -> [InspectorEvent] {
+    /// One body per event SHAPE the daemon emits, spelled as `slopdesk-inspectord` writes them.
+    /// Kept as text so the fixture frames exactly these bytes and the assertion is byte-for-byte.
+    private func sampleBodies() -> [String] {
         [
-            .sessionStarted(SessionInfo(sessionID: "s1", model: "claude-opus-4-8", cwd: "/repo")),
-            .message(MessageEvent(role: .user, text: "hello")),
-            .thinking(ThinkingMarker(isPlaceholder: true, signature: "sig123")),
-            .toolCard(ToolCard(
-                id: "t1",
-                name: "Bash",
-                inputDisplay: "command: ls",
-                inputSummary: "ls",
-                status: .pending,
-            )),
-            .toolCard(ToolCard(
-                id: "t1",
-                name: "Bash",
-                inputDisplay: "command: ls", inputSummary: "ls",
-                output: "files",
-                status: .completed,
-            )),
-            .todosUpdated([
-                TodoItem(content: "a", status: .completed),
-                TodoItem(content: "b", status: .inProgress, activeForm: "doing b"),
-            ]),
-            .subagentUpdated(SubagentNode(
-                id: "deadbeef",
-                agentType: "Ariadne",
-                status: .stopped,
-                lastAssistantMessage: "done",
-            )),
-            .subagentToolCard(
-                agentID: "deadbeef",
-                card: ToolCard(
-                    id: "sa1",
-                    name: "Grep",
-                    inputDisplay: "",
-                    inputSummary: "",
-                    output: "hit",
-                    status: .completed,
-                ),
-            ),
-            .workflow(WorkflowMarker(state: .running)),
-            .unknownLine(raw: #"{"type":"future"}"#),
+            #"{"sessionStarted":{"_0":{"sessionID":"s1","model":"opus"}}}"#,
+            #"{"message":{"_0":{"role":"assistant","text":"hi"}}}"#,
+            #"{"thinking":{"_0":{"isPlaceholder":true,"signature":"sig"}}}"#,
+            #"{"toolCard":{"_0":{"id":"toolu_1","name":"Read","input":{"file_path":"/tmp/a"},"status":"pending"}}}"#,
+            #"{"todosUpdated":{"_0":[{"content":"port it","status":"in_progress","activeForm":"porting it"}]}}"#,
+            #"{"subagentUpdated":{"_0":{"id":"a1","agentType":"Ariadne","status":"stopped"}}}"#,
+            #"{"subagentToolCard":{"agentID":"a1","card":{"id":"toolu_2","name":"Grep","input":{},"status":"completed"}}}"#,
+            #"{"workflow":{"_0":{"state":"running"}}}"#,
+            #"{"unknownLine":{"raw":"{not json"}}"#,
+            #"{"historyTruncated":{"droppedCount":7}}"#,
         ]
     }
 
-    func testEveryEventShapeDecodesOffTheWire() async throws {
+    func testEveryEventBodyCrossesTheWireWhole() async throws {
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
         let client = InspectorClient(channel: clientChannel)
 
-        let events = sampleEvents()
+        let bodies = sampleBodies()
 
         // Collect on the client first.
         let stream = await client.events()
-        let collector = Task { () -> [InspectorEvent] in
-            var got: [InspectorEvent] = []
-            for try await event in stream {
-                got.append(event)
-                if got.count >= events.count { break }
+        let collector = Task { () -> [Data] in
+            var got: [Data] = []
+            for try await body in stream {
+                got.append(body)
+                if got.count >= bodies.count { break }
             }
             return got
         }
 
-        for event in events {
-            try hostChannel.send(InspectorWireFixture.eventFrame(event))
+        for body in bodies {
+            hostChannel.send(InspectorWireFixture.eventFrame(body))
         }
 
         let received = try await collector.value
-        XCTAssertEqual(received, events, "every event shape survives the framed channel")
+        XCTAssertEqual(received, bodies.map { Data($0.utf8) }, "every body survives the framed channel")
     }
 
     func testKeepAliveIsSwallowedByEventStream() async throws {
@@ -83,22 +59,22 @@ final class InspectorTransportTests: XCTestCase {
         let client = InspectorClient(channel: clientChannel)
 
         let stream = await client.events()
-        let collector = Task { () -> [InspectorEvent] in
-            var got: [InspectorEvent] = []
-            for try await event in stream {
-                got.append(event)
+        let collector = Task { () -> [Data] in
+            var got: [Data] = []
+            for try await body in stream {
+                got.append(body)
                 if got.count >= 1 { break }
             }
             return got
         }
 
         hostChannel.send(InspectorWireFixture.keepAliveFrame) // must NOT surface as an event
-        let real = InspectorEvent.message(MessageEvent(role: .assistant, text: "real"))
-        try hostChannel.send(InspectorWireFixture.eventFrame(real))
+        let real = #"{"message":{"_0":{"role":"assistant","text":"real"}}}"#
+        hostChannel.send(InspectorWireFixture.eventFrame(real))
 
         let received = try await collector.value
         XCTAssertEqual(received.count, 1)
-        XCTAssertEqual(received.first, real)
+        XCTAssertEqual(received.first, Data(real.utf8))
     }
 
     // MARK: - The one frame this end WRITES
@@ -145,12 +121,12 @@ final class InspectorTransportTests: XCTestCase {
 
     func testFrameDecoderReassemblesAcrossArbitraryByteBoundaries() throws {
         let messages: [InspectorWireMessage] = [
-            .event(.message(MessageEvent(role: .user, text: "x"))),
+            .event(Data(#"{"message":{"_0":{"role":"user","text":"x"}}}"#.utf8)),
             .keepAlive,
-            .event(.toolCard(ToolCard(id: "z", name: "Read", inputDisplay: "", inputSummary: "", status: .pending))),
+            .event(Data(#"{"toolCard":{"_0":{"id":"z","name":"Read","input":{},"status":"pending"}}}"#.utf8)),
         ]
         var blob = Data()
-        for message in messages { try blob.append(frame(for: message)) }
+        for message in messages { blob.append(frame(for: message)) }
 
         // Feed one byte at a time → the decoder must still recover every frame in order.
         let decoder = InspectorFrameDecoder()
@@ -168,12 +144,16 @@ final class InspectorTransportTests: XCTestCase {
     /// produces after a reconnect: one ≤64KiB TCP read packed with small JSON event frames).
     /// Exercises the lazy `readOffset` cursor draining several frames from a single `append` without
     /// any front-removal in between, and that decode order/content survive a later compaction.
+    ///
+    /// It is also what pins the ONE copy the decoder still makes: its scratch buffer is reused per
+    /// frame, so a body yielded as a view onto it would read as the LAST frame's by the time the
+    /// caller looked. 200 frames drained before anything is compared is exactly that trap.
     func testManyFramesInOneChunkDecodeInOrder() throws {
         let messages: [InspectorWireMessage] = (0..<200).map {
-            .event(.message(MessageEvent(role: .user, text: "line \($0)")))
+            .event(Data(#"{"message":{"_0":{"role":"user","text":"line \#($0)"}}}"#.utf8))
         }
         var blob = Data()
-        for message in messages { try blob.append(frame(for: message)) }
+        for message in messages { blob.append(frame(for: message)) }
 
         let decoder = InspectorFrameDecoder()
         decoder.append(blob) // one chunk holding every frame.
@@ -182,8 +162,8 @@ final class InspectorTransportTests: XCTestCase {
         XCTAssertEqual(decoded, messages, "every frame in the chunk decodes, in order")
 
         // The cursor-then-compact discipline must still work for a SUBSEQUENT chunk after the drain.
-        let tail: InspectorWireMessage = .event(.message(MessageEvent(role: .assistant, text: "after")))
-        try decoder.append(frame(for: tail))
+        let tail: InspectorWireMessage = .event(Data(#"{"message":{"_0":{"role":"assistant","text":"after"}}}"#.utf8))
+        decoder.append(frame(for: tail))
         XCTAssertEqual(try decoder.nextMessage(), tail)
     }
 
@@ -220,9 +200,9 @@ final class InspectorTransportTests: XCTestCase {
     // MARK: -
 
     /// The daemon-side frame for a message this end can decode.
-    private func frame(for message: InspectorWireMessage) throws -> Data {
+    private func frame(for message: InspectorWireMessage) -> Data {
         switch message {
-        case let .event(event): try InspectorWireFixture.eventFrame(event)
+        case let .event(body): InspectorWireFixture.eventFrame(body)
         case .keepAlive: InspectorWireFixture.keepAliveFrame
         }
     }

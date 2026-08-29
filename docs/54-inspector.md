@@ -108,15 +108,23 @@ one end of it.
 | 2 | inspectord → client | empty (keep-alive) |
 | 3 | client → inspectord | `fromSeq`, big-endian `i64` |
 
-Each end is written ONCE. `InspectorCodec` encodes tag 3 and decodes tags 1–2; `wire.rs` does the
-mirror — a tag 3 arriving at the client decodes as `unknownType`, not as a subscribe. That is the
-two-ENDS exemption to the one-implementation rule, and §12 of `slopdesk-invariants` is what keeps
-the halves from drifting.
+The exemption is the FRAME, and only the frame. Each end of it is written ONCE: `InspectorCodec`
+encodes tag 3 and decodes tags 1–2; `wire.rs` does the mirror — a tag 3 arriving at the client
+decodes as `unknownType`, not as a subscribe. That is the two-ENDS exemption to the
+one-implementation rule, and §12 of `slopdesk-invariants` is what keeps the halves from drifting.
 
-The event JSON is what Swift's **synthesized** `Codable` produces, which is a real constraint rather
-than a style: a single unlabelled associated value serialises as `{"caseName":{"_0":{…}}}`, labelled
-cases use their labels, and `nil` optionals are omitted entirely. `event.rs` reproduces that with
-serde attributes, and `the_wire_shape_matches_swifts_synthesized_codable` pins it.
+The BODY is not covered by it and never was. Until 2026-08-29 both ends deserialised the same eight
+types out of the same bytes, which is the one-implementation rule broken rather than exempted — a
+protocol's two ends read each other's messages, they do not each hold a private copy of the same
+one. The taxonomy now lives once, in `event.rs`, and `slopdesk_inspectord::store` is its only
+decoder; Swift carries the body across UNREAD as `InspectorWireMessage.event(Data)` and hands it to
+the store through the FFI. Framing is Swift's, meaning is Rust's. See `docs/66`.
+
+The event JSON is what Swift's **synthesized** `Codable` produced when the taxonomy was Swift's,
+which is a real constraint rather than a style — a shipped daemon writes it and the golden vectors
+pin it: a single unlabelled associated value serialises as `{"caseName":{"_0":{…}}}`, labelled cases
+use their labels, and `nil` optionals are omitted entirely. `event.rs` reproduces that with serde
+attributes, and `the_wire_shape_matches_swifts_synthesized_codable` pins it.
 
 Both ends are tolerant BY DESIGN, and that is why §12 exists: an unknown tag is skipped and an
 unparseable event body is skipped, precisely so one rogue frame cannot end a session's feed. Skew

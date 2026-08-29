@@ -1,270 +1,150 @@
-/// The client-side observable store the read-only SwiftUI views render from.
-///
-/// It consumes the deserialised ``InspectorEvent`` stream (from ``InspectorClient``)
-/// and projects it into render-ready collections: tool cards (timeline), the subagent
-/// tree, the latest todo list, and the thinking-placeholder indicator. **All logic
-/// lives here, none in the views** (the spec's "no business logic in views").
-///
-/// `@MainActor` + `@Observable` so SwiftUI tracks changes automatically. It is built
-/// in the library target and compiles on macOS + iOS.
-///
-/// **The rules are not here.** The tree's shape, the empty-state gate and the five drop-oldest
-/// ladders are `slopdesk_workspace::inspector_store`, reached through ``InspectorStoreRules`` — see
-/// that file's header for what crosses and what deliberately does not. What is left is the
-/// `@Observable` writes, the arrival-order bookkeeping, and the dictionary indices that keep an
-/// upsert O(1).
+// InspectorViewModel — the Swift side of one pane's read-only inspector, which is now a HANDLE and
+// the feed's liveness, and nothing else.
+//
+// What used to be here: thirteen stored properties, three dictionary indices, an upsert-and-evict
+// fold over them, and a second declaration of the whole event taxonomy for the `JSONDecoder` that
+// filled them. The rules were already Rust's — a door per decision, each one lent the state it was
+// deciding about. `docs/66` moved the state to meet the rules: the fold is
+// `slopdesk_inspectord::store`, the event is declared once, and what crosses is what a surface
+// actually reads.
+//
+// `feedState` stays because it is not the store's: whether a feed is live, ended or failed is about
+// the `NWConnection`'s lifetime, and that seam is `docs/65` §5's parked one.
+
+import CSlopDeskFFI
 import Foundation
 
+/// One pane's inspector, as the two peek overlays and the sidebar row read it.
+///
+/// A reference type owning one Rust store, and deliberately NOT `Sendable`: the handle is driven by
+/// a single main-actor consumer, which is the same lifetime rule ``InspectorFrameDecoder`` keeps.
 @preconcurrency
 @MainActor
-@Observable
 public final class InspectorViewModel {
-    /// Tool cards in arrival order (timeline). Keyed lookup keeps pairing O(1).
-    public private(set) var toolCards: [ToolCard] = []
-    private var toolCardIndex: [String: Int] = [:]
-    /// How many oldest main tool cards the drop-oldest cap has evicted — surfaced as a
-    /// "N earlier steps hidden" banner so a long session does not silently lose the start of its timeline.
-    /// Monotonic; reset in `consume()` so a fromSeq:0 replay rebuilds rather than doubles it.
-    public private(set) var evictedToolCardCount = 0
-
-    /// The latest todo list (replaced wholesale on each update).
-    public private(set) var todos: [TodoItem] = []
-
-    /// Subagent nodes by id (the tree is derived in ``subagentTree``).
-    public private(set) var subagents: [String: SubagentNode] = [:]
-    /// Tool cards owned by each subagent, in arrival order.
-    public private(set) var subagentCards: [String: [ToolCard]] = [:]
-    private var subagentCardIndex: [String: [String: Int]] = [:]
-
-    /// Message timeline (user/assistant text for the main session).
-    public private(set) var messages: [MessageEvent] = []
-
-    /// The drop-oldest CEILINGS, read out of `slopdesk_workspace::inspector_store` rather than
-    /// spelled here — the ladder and its batched retain marks are one rule, and half of it written
-    /// down on this side is the drift the port removed. See ``InspectorStoreRules``.
-    ///
-    /// They exist as members because they are what the panel and its tests talk about; the number
-    /// of entries an arrival actually evicts is ``InspectorStoreRules/overflow(_:count:)``, and no
-    /// call site below does that subtraction itself.
-    static let toolCardCap = InspectorStoreRules.cap(.toolCards)
-    /// The per-agent card ceiling. Per agent, not across them.
-    static let subagentCardCap = InspectorStoreRules.cap(.subagentCards)
-    /// The message timeline's ceiling.
-    static let messageCap = InspectorStoreRules.cap(.messages)
-    /// The distinct-agent ceiling — the OUTER dimension, whose eviction takes an agent's node,
-    /// cards and index TOGETHER so `subagentTree` never references an orphan.
-    static let maxAgents = InspectorStoreRules.cap(.agents)
-    /// Insertion order of distinct agentIDs (drives the drop-oldest agent-count cap above).
-    private var subagentOrder: [String] = []
-
-    /// The most recent thinking marker (drives the placeholder indicator).
-    public private(set) var lastThinking: ThinkingMarker?
-    /// Count of thinking blocks observed (so the UI can show "N thinking steps").
-    public private(set) var thinkingCount = 0
-
-    /// Session metadata (model / cwd) for the header.
-    public private(set) var session: SessionInfo?
-
-    /// Workflow state (defer/preview).
-    public private(set) var workflow: WorkflowMarker.State = .idle
-
-    /// Count of unrecognised lines (surfaced, not hidden) — the true monotonic total.
-    public private(set) var unknownLineCount = 0
-
-    /// The most recent unrecognised transcript lines (bounded ring, newest-last). Lets the UI turn
-    /// the bare count into an inspectable disclosure instead of a dead-end alarm. Bounded
-    /// (drop-oldest) so a malformed-feed flood cannot grow it without limit (cf. the daemon's builder
-    /// unbounded-maps history).
-    public private(set) var recentUnknownLines: [String] = []
-
-    /// Number of oldest events the HOST replay log dropped (retention overflow) before the prefix this
-    /// client subscribed from. `> 0` means the timeline starts mid-transcript; the UI
-    /// can disclose "N earlier steps dropped" instead of presenting a truncated history as complete.
-    public private(set) var droppedReplayEventCount = 0
-
-    /// Liveness of the consumed inspector feed. Surfaced as a banner so frozen tool cards don't look
-    /// live forever — on macOS there is no in-session auto-resume, so a feed that `.ended`
-    /// or `.failed` stays stale until the next iOS pause/resume cycle.
+    /// Liveness of the consumed feed. Surfaced as a banner so frozen tool cards do not look live
+    /// forever — on macOS there is no in-session auto-resume, so a feed that `.ended` or `.failed`
+    /// stays stale until the next iOS pause/resume cycle.
     public enum FeedState: Sendable, Equatable { case live, ended, failed }
+
     public private(set) var feedState: FeedState = .live
 
-    /// Whether anything user-visible has been folded into the timeline yet (drives the empty-state
-    /// placeholder). **Excludes `messages`** (stored but never rendered today — including it would
-    /// reintroduce a blank panel) and the always-present session header. Uses `subagentTree` (NOT the
-    /// raw `subagents` dict): the tree drops empty-id + self-parent nodes, so a single malformed
-    /// empty-id subagent must NOT suppress the placeholder while rendering nothing (the exact blank-void
-    /// this gate exists to prevent — `subagentTree.isEmpty` ⟺ the subagent section renders nothing).
-    public var hasRenderableActivity: Bool {
-        InspectorStoreRules.hasRenderableActivity(
-            hasToolCards: !toolCards.isEmpty,
-            hasTodos: !todos.isEmpty,
-            hasSubagentTree: !subagentTree.isEmpty,
-            hasThinking: lastThinking != nil,
-            unknownLineCount: unknownLineCount,
-        )
+    /// The Rust-owned store. `nonisolated(unsafe)` because a `deinit` is nonisolated by definition and
+    /// this is the pointer it must free; every OTHER touch is on the main actor, and by the time
+    /// `deinit` runs there is no reference left that could race it.
+    private nonisolated(unsafe) let store: OpaquePointer
+
+    public init() {
+        guard let store = slopdesk_inspector_store_new() else {
+            preconditionFailure("the inspector store could not be built")
+        }
+        self.store = store
     }
 
-    public init() {}
+    deinit { slopdesk_inspector_store_free(store) }
 
-    /// Folds one event into the store. Idempotent on tool-card id (a re-emitted card
-    /// updates in place rather than appending a duplicate).
-    public func apply(_ event: InspectorEvent) {
-        switch event {
-        case let .toolCard(card):
-            upsertMainCard(card)
-        case let .todosUpdated(items):
-            todos = items
-        case let .subagentUpdated(node):
-            if subagents[node.id] == nil { registerAgent(node.id) }
-            subagents[node.id] = node
-        case let .subagentToolCard(agentID, card):
-            upsertSubagentCard(card, agentID: agentID)
-        case let .thinking(marker):
-            lastThinking = marker
-            thinkingCount += 1
-        case let .message(message):
-            messages.append(message)
-            let overflow = InspectorStoreRules.overflow(.messages, count: messages.count)
-            if overflow > 0 { messages.removeFirst(overflow) }
-        case let .sessionStarted(info):
-            session = info
-        case let .workflow(marker):
-            workflow = marker.state
-        case let .unknownLine(raw):
-            unknownLineCount += 1
-            recentUnknownLines.append(raw)
-            let overflow = InspectorStoreRules.overflow(
-                .unknownLines, count: recentUnknownLines.count,
+    /// The counter that moves whenever anything folded. A view diffs against it rather than against
+    /// the collections, which no longer live on this side.
+    public var revision: UInt64 { slopdesk_inspector_store_revision(store) }
+
+    /// Whether anything user-visible has been folded in yet — the empty-state placeholder's gate.
+    public var hasRenderableActivity: Bool { slopdesk_inspector_store_has_activity(store) }
+
+    /// The "`i`/`n` · `activeForm`" todo-progress line, or `nil` when nothing is in flight.
+    ///
+    /// The caller's `.live`-feed gate is separate; this only answers "is there one, and what does it
+    /// say". No argument, because the todo list is the store's.
+    public var todoScent: String? {
+        answer { out, cap in slopdesk_inspector_store_todo_scent(store, out, cap) }
+            .flatMap { String(bytes: $0, encoding: .utf8) }
+    }
+
+    /// The newest tool call still waiting on its result, as the three strings a row renders.
+    ///
+    /// `nil` when nothing is in flight. Three strings rather than a card, because they are what both
+    /// call sites draw and the card they came from has no other reader on this side.
+    public var pendingLine: PendingToolLine? {
+        guard let blob = answer({ out, cap in slopdesk_inspector_store_pending_line(store, out, cap) }),
+              let fields = Self.splitFields(blob), fields.count == 3
+        else { return nil }
+        return PendingToolLine(name: fields[0], summary: fields[1], display: fields[2])
+    }
+
+    /// Folds one event's JSON body in. `false` means the body did not decode and nothing changed.
+    ///
+    /// Not an error the caller must act on: a future or corrupt event costs that event, never the
+    /// session's feed. That is the same in-band recovery ``InspectorFrameDecoder`` gives a bad frame,
+    /// applied one layer in — which is where the decode now happens.
+    @discardableResult
+    public func apply(_ body: Data) -> Bool {
+        body.withUnsafeBytes { bytes in
+            slopdesk_inspector_store_apply(
+                store, bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), bytes.count,
             )
-            if overflow > 0 { recentUnknownLines.removeFirst(overflow) }
-        case let .historyTruncated(droppedCount):
-            // Latest-wins (a re-replay re-sends the current drop count) — not accumulated.
-            droppedReplayEventCount = droppedCount
         }
     }
 
-    /// Consumes an event stream until it finishes (driven from a SwiftUI `.task`).
-    public func consume(_ events: AsyncThrowingStream<InspectorEvent, Error>) async {
+    /// Consumes a stream of event bodies until it finishes.
+    public func consume(_ bodies: AsyncThrowingStream<Data, Error>) async {
         feedState = .live // reset-on-entry: an iOS resume opens a fresh feed → live again
         // An iOS pause/resume reuses this SAME model and re-subscribes `fromSeq: 0`, so the host
-        // replays its ENTIRE history into us again. Cards/subagents self-dedupe by id (upsert), but
-        // these monotonic accumulators do NOT — without a reset, every resume DOUBLES the displayed
-        // "N thinking steps" / "N unrecognised lines" and re-appends duplicate messages.
-        // Clear them so a full replay REBUILDS, not inflates, them. (Safe only because the client
-        // always subscribes fromSeq:0 — a future partial-resume path would need a seq watermark or
-        // stable-key dedup here instead; see LivePaneSession.subscribeInspector.)
-        thinkingCount = 0
-        lastThinking = nil
-        unknownLineCount = 0
-        recentUnknownLines = []
-        messages = []
-        evictedToolCardCount = 0
-        droppedReplayEventCount = 0 // latest-wins; reset so a re-replay rebuilds it
+        // replays its ENTIRE history into us again. What that would double is the store's business,
+        // and it is one call rather than a list of properties a new field can be forgotten from.
+        slopdesk_inspector_store_reset(store)
         do {
-            for try await event in events {
-                apply(event)
+            for try await body in bodies {
+                apply(body)
             }
             feedState = .ended // the host closed the feed cleanly (no live resubscribe on macOS)
         } catch {
             feedState = .failed
-            // Read-only viewer: a transport error (e.g. a true framing desync,
-            // InspectorChannel `frameTooLarge`) just ends the feed. There is no in-session
-            // live resubscribe today. The feed resumes on the
-            // next iOS pause/resume cycle, when LivePaneSession.resume → subscribeInspector
-            // opens a fresh connection and subscribes(fromSeq: 0) from the host replay log.
+            // Read-only viewer: a transport error (a true framing desync, `frameTooLarge`) just ends
+            // the feed. There is no in-session live resubscribe today; it resumes on the next iOS
+            // pause/resume cycle, when `LivePaneSession.resume` → `subscribeInspector` opens a fresh
+            // connection and subscribes from 0 against the host replay log.
         }
     }
 
-    /// The subagent tree as roots + children, each level ordered by id, as
-    /// `slopdesk_workspace::inspector_store` builds it. (Sort in-level — doc 16: subagent ordering
-    /// is async; sort within a level, not globally.)
-    ///
-    /// **In practice this is flat today.** Nesting is keyed off ``SubagentNode/parentID``,
-    /// and no documented Claude Code signal in the doc-16 corpus carries a cross-file
-    /// parent link (the `SubagentStop` hook has no `parent_agent_id`; sidechain lines
-    /// only carry intra-file `parentUuid`). So every node currently has `parentID == nil`
-    /// and attaches directly under the main session — a single flat level. The nesting build
-    /// is retained so that when a real parent-linkage source lands (e.g. correlating
-    /// the parent session's `Task` `tool_use` id), it works without an API change;
-    /// it is not a claim that nested data exists today.
-    public var subagentTree: [SubagentTreeNode] {
-        InspectorStoreRules.subagentTree(subagents, cards: subagentCards)
+    // MARK: reading a door
+
+    /// A door's answer, or `nil` when it has none: probe for the size, then fill.
+    private func answer(_ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> [UInt8]? {
+        let needed = door(nil, 0)
+        guard needed > 0 else { return nil }
+        var out = [UInt8](repeating: 0, count: needed)
+        let written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        return written == needed ? out : nil
     }
 
-    // MARK: - Card upsert
-
-    private func upsertMainCard(_ card: ToolCard) {
-        if let index = toolCardIndex[card.id] {
-            toolCards[index] = card
-        } else {
-            toolCardIndex[card.id] = toolCards.count
-            toolCards.append(card)
-            let drop = InspectorStoreRules.overflow(.toolCards, count: toolCards.count)
-            if drop > 0 {
-                toolCards.removeFirst(drop)
-                evictedToolCardCount += drop // track the truncation so the UI can disclose it
-                // Every surviving card's index shifted down by `drop` — rebuild the lookup from the
-                // surviving slice so a later upsert of a retained id still resolves in place.
-                toolCardIndex = Dictionary(uniqueKeysWithValues: toolCards.enumerated().map { ($1.id, $0) })
-            }
+    /// Cuts the door's length-prefixed fields: four big-endian bytes, then that many UTF-8 bytes.
+    private static func splitFields(_ blob: [UInt8]) -> [String]? {
+        var fields: [String] = []
+        var cursor = 0
+        while cursor + 4 <= blob.count {
+            var length = 0
+            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
+            cursor += 4
+            guard cursor + length <= blob.count else { return nil }
+            guard let text = String(bytes: blob[cursor..<cursor + length], encoding: .utf8) else { return nil }
+            fields.append(text)
+            cursor += length
         }
-    }
-
-    /// Registers a newly-seen agentID in insertion order and, past `maxAgents`, evicts the oldest
-    /// agents' node + cards + index TOGETHER (batched cap→retain) so `subagentTree` never references an
-    /// orphan. Call EXACTLY when an agent is first created (the `subagents[id] == nil` branches).
-    private func registerAgent(_ agentID: String) {
-        subagentOrder.append(agentID)
-        let drop = InspectorStoreRules.overflow(.agents, count: subagentOrder.count)
-        guard drop > 0 else { return }
-        for id in subagentOrder.prefix(drop) {
-            subagents.removeValue(forKey: id)
-            subagentCards.removeValue(forKey: id)
-            subagentCardIndex.removeValue(forKey: id)
-        }
-        subagentOrder.removeFirst(drop)
-    }
-
-    private func upsertSubagentCard(_ card: ToolCard, agentID: String) {
-        // Make sure the node exists even if the line arrived before the hook.
-        if subagents[agentID] == nil {
-            registerAgent(agentID)
-            subagents[agentID] = SubagentNode(id: agentID, status: .running)
-        }
-        var cards = subagentCards[agentID] ?? []
-        var index = subagentCardIndex[agentID] ?? [:]
-        if let i = index[card.id] {
-            cards[i] = card
-        } else {
-            index[card.id] = cards.count
-            cards.append(card)
-            let drop = InspectorStoreRules.overflow(.subagentCards, count: cards.count)
-            if drop > 0 {
-                cards.removeFirst(drop)
-                index = Dictionary(uniqueKeysWithValues: cards.enumerated().map { ($1.id, $0) })
-            }
-        }
-        subagentCards[agentID] = cards
-        subagentCardIndex[agentID] = index
+        return cursor == blob.count ? fields : nil
     }
 }
 
-/// A render-ready subagent tree node (node + its cards + children).
-public struct SubagentTreeNode: Identifiable, Sendable, Equatable {
-    public var node: SubagentNode
-    public var cards: [ToolCard]
-    public var children: [Self]
+/// A pending tool call, as the two peek overlays draw it: the tool NAME and the one-line input
+/// SUMMARY for the collapsed row, and the full input DISPLAY for the expanded one.
+///
+/// Three fields rather than a card, kept apart so a view renders the name and the summary in two
+/// foreground weights without re-splitting a combined string.
+public struct PendingToolLine: Equatable, Sendable {
+    public let name: String
+    public let summary: String
+    public let display: String
 
-    public var id: String { node.id }
-
-    public init(node: SubagentNode, cards: [ToolCard], children: [Self]) {
-        self.node = node
-        self.cards = cards
-        self.children = children
+    public init(name: String, summary: String, display: String) {
+        self.name = name
+        self.summary = summary
+        self.display = display
     }
-}
-
-extension ToolCard: Identifiable {}
-extension TodoItem: Identifiable {
-    public var id: String { content }
 }

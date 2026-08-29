@@ -10,10 +10,11 @@
 //!
 //! ## What it protects that `event.rs`'s own unit tests cannot
 //! Those literals live beside the types they describe: renaming a field and its literal in one edit
-//! keeps them green while breaking a shipped client. The corpus is a file neither end owns, read
-//! from BOTH — here, and from `Tests/SlopDeskInspectorTests/InspectorEventGoldenVectorTests.swift`
-//! through a bare `JSONDecoder`. A rename has to be typed into the corpus too, which is the moment
-//! it becomes a wire change instead of a refactor.
+//! keeps them green while breaking a shipped client. The corpus is a file the types do not own —
+//! `slopdesk-gate golden` freezes its keys, so a rename has to be typed into the corpus too, which
+//! is the moment it becomes a wire change instead of a refactor. It used to be read from a Swift
+//! replay as well; `docs/66` deleted that end along with the decoder it drove, and the freeze is
+//! what carries the guarantee now.
 //!
 //! Each record is pinned in three directions: the value this crate builds SERIALIZES to the pinned
 //! JSON, the pinned JSON DESERIALIZES back to that value, and the whole tag-1 frame — the four-byte

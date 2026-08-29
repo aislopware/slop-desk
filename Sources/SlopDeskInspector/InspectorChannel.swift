@@ -24,8 +24,8 @@ public protocol ByteChannel: Sendable {
     func close()
 }
 
-/// Client side: deserialises a ``ByteChannel`` into an ``InspectorEvent`` stream for
-/// the SwiftUI views. It may send a single lightweight `.subscribe` control (the only
+/// Client side: unframes a ``ByteChannel`` into a stream of event BODIES for
+/// ``InspectorViewModel`` to fold. It may send a single lightweight `.subscribe` control (the only
 /// thing the client is allowed to send — never agent input).
 public actor InspectorClient {
     private let channel: ByteChannel
@@ -40,16 +40,19 @@ public actor InspectorClient {
         try await channel.send(InspectorCodec.encodeSubscribe(fromSeq: fromSeq))
     }
 
-    /// The decoded inbound stream, filtered to ``InspectorEvent`` (keep-alives are
-    /// swallowed; they exist only for liveness).
-    public func events() -> AsyncThrowingStream<InspectorEvent, Error> {
+    /// The unframed inbound stream, filtered to event BODIES (keep-alives are swallowed; they exist
+    /// only for liveness).
+    ///
+    /// The bodies are UNREAD JSON: what one says is `slopdesk_inspectord::store`'s answer, and this
+    /// end no longer has a second opinion to offer about it.
+    public func events() -> AsyncThrowingStream<Data, Error> {
         let messages = decodeStream(channel.inbound)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     for try await message in messages {
-                        if case let .event(event) = message {
-                            continuation.yield(event)
+                        if case let .event(body) = message {
+                            continuation.yield(body)
                         }
                     }
                     continuation.finish()
@@ -69,13 +72,15 @@ public actor InspectorClient {
 /// Wraps a raw byte stream in an ``InspectorFrameDecoder`` and yields whole messages.
 /// Shared by both ends.
 ///
-/// **Resilience (BUG-G).** A single bad *payload* must not kill the whole inspector for
+/// **Resilience (BUG-G).** A single bad *frame* must not kill the whole inspector for
 /// the session. ``InspectorFrameDecoder/nextMessage()`` removes a frame's bytes from the
-/// buffer *before* decoding its payload, so a `CodecError.malformedBody` (a future /
-/// corrupt event JSON) or `.unknownType` (a tag this build does not know) is recoverable:
-/// the frame boundary is intact, the next frame still decodes. We therefore **log +
-/// continue** on those two, draining the rest of the current chunk and resuming the live
-/// stream — the inspector survives one rogue event.
+/// buffer *before* answering, so an `.unknownType` (a tag this build does not know) is
+/// recoverable: the frame boundary is intact, the next frame still decodes. We therefore
+/// **skip + continue** on it, draining the rest of the current chunk and resuming the live
+/// stream — the inspector survives one rogue frame.
+///
+/// A rogue event *BODY* is recovered from one layer in and no longer appears here: the body travels
+/// unread, and `InspectorViewModel.apply` returning `false` is what costs that one event.
 ///
 /// `CodecError.frameTooLarge` is different: it is thrown from the *length-prefix* read,
 /// before any bytes are consumed, so the byte stream is framing-desynced and every
@@ -95,15 +100,14 @@ private func decodeStream(
                 for try await chunk in inbound {
                     decoder.append(chunk)
                     // Drain every complete frame currently buffered, skipping individually
-                    // bad payloads but propagating a framing desync (frameTooLarge).
+                    // bad frames but propagating a framing desync (frameTooLarge).
                     drain: while true {
                         do {
                             guard let message = try decoder.nextMessage() else { break drain }
                             continuation.yield(message)
                         } catch let error as InspectorCodec.CodecError {
                             switch error {
-                            case .malformedBody,
-                                 .unknownType,
+                            case .unknownType,
                                  .truncated:
                                 // Recoverable: the frame was already consumed (its bytes
                                 // removed before decode), so the boundary is intact. Skip
