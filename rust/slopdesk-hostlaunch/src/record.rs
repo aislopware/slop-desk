@@ -26,6 +26,7 @@
 //! the distinction `docs/51` §1 turns on. The file's own name is fixed, one per container.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
@@ -35,6 +36,9 @@ use crate::stamp;
 
 /// The variable that moves the whole container. Set it and no file below can reach the real one.
 pub const APP_SUPPORT_DIR_ENV: &str = "SLOPDESK_APP_SUPPORT_DIR";
+
+/// The container's own name inside whatever base holds it.
+pub const CONTAINER_NAME: &str = "SlopDesk";
 
 /// The record's file name, fixed, one per container.
 pub const FILE_NAME: &str = "hostd-launch.json";
@@ -155,18 +159,37 @@ pub fn remove(path: &Path) {
     drop(fs::remove_file(path));
 }
 
-/// The container every `SlopDesk` sidecar lands in, or `None` when there is no home directory to
-/// resolve it against.
+/// The container every `SlopDesk` sidecar lands in: `override_dir` when it names one, else
+/// [`CONTAINER_NAME`] inside `base`.
 ///
 /// An EMPTY override is treated as unset: the shell idiom `FOO="${BAR}"` with `BAR` unset is the
 /// usual way this variable arrives empty, and silently writing to `/` would be worse than writing
-/// to the real container.
+/// to the real container. The override is read FIRST, so a redirected run still answers on a
+/// machine with no base at all — `None` means "nowhere to fall back to", never "the redirect was
+/// ignored".
+///
+/// ## Why the base is a parameter
+/// The callers resolve it differently and neither answer is right for the other. A daemon has
+/// `HOME`. An app has Foundation's Application-Support URL, which `HOME` does NOT move — Core
+/// Foundation reads the user's home from the account record unless `CFFIXED_USER_HOME` is set — so
+/// an app that derived its base from `HOME` would keep writing to the developer's own container
+/// while believing it had been redirected. That is a bug this repository has already paid for,
+/// which is why the RULE lives here and the base does not.
+#[must_use]
+pub fn app_support_dir_in(base: Option<&Path>, override_dir: Option<&OsStr>) -> Option<PathBuf> {
+    match override_dir {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => Some(base?.join(CONTAINER_NAME)),
+    }
+}
+
+/// The container for a process that resolves its base from `HOME` — every daemon in this tree.
+///
+/// `None` when there is neither an override nor a home directory to fall back to.
 #[must_use]
 pub fn app_support_dir() -> Option<PathBuf> {
-    match env::var_os(APP_SUPPORT_DIR_ENV) {
-        Some(override_dir) if !override_dir.is_empty() => Some(PathBuf::from(override_dir)),
-        _ => Some(PathBuf::from(env::var_os("HOME")?).join("Library/Application Support/SlopDesk")),
-    }
+    let base = env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"));
+    app_support_dir_in(base.as_deref(), env::var_os(APP_SUPPORT_DIR_ENV).as_deref())
 }
 
 /// Where the record lives: `<Application Support>/SlopDesk/hostd-launch.json`.
@@ -248,9 +271,10 @@ fn running_executable() -> PathBuf {
 )]
 mod tests {
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::ffi::OsStr;
+    use std::path::{Path, PathBuf};
 
-    use super::{LaunchRecord, current, parse, path, read, remove};
+    use super::{CONTAINER_NAME, LaunchRecord, app_support_dir_in, current, parse, path, read, remove};
 
     /// A record with the one shape that made the shell version reach for `jq @sh` + `eval`: an
     /// environment value holding a space and a quote.
@@ -414,5 +438,43 @@ mod tests {
     fn the_record_path_ends_in_the_one_file_name() {
         let resolved = path().expect("a home or an override");
         assert!(resolved.ends_with("hostd-launch.json"), "{resolved:?}");
+    }
+
+    /// The override moves the WHOLE container, base or no base.
+    #[test]
+    fn the_override_names_the_container_outright() {
+        let base = Path::new("/Users/nobody/Library/Application Support");
+        assert_eq!(
+            app_support_dir_in(Some(base), Some(OsStr::new("/tmp/slopdesk-gate-container"))),
+            Some(PathBuf::from("/tmp/slopdesk-gate-container")),
+        );
+        assert_eq!(
+            app_support_dir_in(None, Some(OsStr::new("/tmp/slopdesk-gate-container"))),
+            Some(PathBuf::from("/tmp/slopdesk-gate-container")),
+            "a redirected run answers even where the base could not be resolved",
+        );
+    }
+
+    /// `FOO="${BAR}"` with `BAR` unset is how a shell hands over an empty value by accident.
+    /// Writing to `/` would be a worse answer than writing to the real container.
+    #[test]
+    fn an_empty_override_is_unset() {
+        let base = Path::new("/Users/nobody/Library/Application Support");
+        assert_eq!(
+            app_support_dir_in(Some(base), Some(OsStr::new(""))),
+            Some(base.join("SlopDesk")),
+        );
+    }
+
+    /// With nothing to redirect it, the container is the one name inside the base it was handed —
+    /// and there is no container at all when neither was supplied.
+    #[test]
+    fn with_no_override_it_is_the_container_name_inside_the_base() {
+        let base = Path::new("/Users/nobody/Library/Application Support");
+        assert_eq!(
+            app_support_dir_in(Some(base), None),
+            Some(base.join(CONTAINER_NAME)),
+        );
+        assert_eq!(app_support_dir_in(None, None), None);
     }
 }

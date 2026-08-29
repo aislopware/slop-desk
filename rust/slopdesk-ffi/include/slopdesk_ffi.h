@@ -2912,6 +2912,13 @@ size_t slopdesk_terminal_config_string(SlopDeskTerminalConfig config, const uint
  * numbers by, at the limit an env value reaches. The limit is not a thing the near side spells. */
 size_t slopdesk_settings_env_number_text(double value, uint8_t *out, size_t cap);
 
+/* The one directory every SlopDesk sidecar lands in, inside the lent Application-Support BASE —
+ * or the directory SLOPDESK_APP_SUPPORT_DIR names, which moves the whole container. The base
+ * crosses because only the app process can ask Foundation for it: HOME does not move Application
+ * Support, and a base derived from HOME would hand a redirected client the real container. An
+ * empty base with no override answers 0 — there is nowhere to put the file. */
+size_t slopdesk_app_support_dir(const uint8_t *base, size_t base_len, uint8_t *out, size_t cap);
+
 /* ---- folders: the frecency ranking, and the `jump` target it resolves ------------------- */
 
 /* Recency buckets, for `slopdesk_folder_weight`. */

@@ -120,18 +120,29 @@ public enum EnvBridge {
         }
     }
 
-    /// The default sidecar location under Application Support: `<AppSupport>/SlopDesk/video-prefs.json`,
-    /// moved wholesale by ``SlopDeskAppSupport/directoryEnvKey``.
-    /// `nil` only if the OS won't vend an Application-Support URL (never on macOS).
+    /// The default sidecar location: `video-prefs.json` inside the one container every SlopDesk
+    /// sidecar lands in. `nil` only if the OS won't vend an Application-Support URL (never on macOS)
+    /// and no override names a container.
     ///
     /// Both host daemons fold this file into ``EnvConfig/overlay`` at launch, so an automation run
     /// that resolves the real one inherits the developer's video/agent tuning as a silent overlay —
-    /// the gate then measures a configuration nobody wrote down.
-    public static func defaultSidecarURL(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default,
-    ) -> URL? {
-        SlopDeskAppSupport.directory(environment: environment, fileManager: fileManager)?
+    /// the gate then measures a configuration nobody wrote down. That is why the container is one
+    /// variable's to move, and why the rule for it is `slopdesk-hostlaunch`'s rather than this
+    /// side's: the daemons obey the same one.
+    ///
+    /// What stays HERE is the BASE, because only this process can ask for it. `HOME` does not move
+    /// Application Support and does not even move `NSHomeDirectory()` — Core Foundation resolves the
+    /// user's home from the account record unless `CFFIXED_USER_HOME` is set — so a base derived
+    /// from `HOME` on the far side would hand a redirected client the real container.
+    public static func defaultSidecarURL(fileManager: FileManager = .default) -> URL? {
+        guard let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        let bytes = Array(base.path.utf8)
+        let container = bytes.withUnsafeBufferPointer { base in
+            lentText { out, cap in slopdesk_app_support_dir(base.baseAddress, base.count, out, cap) }
+        }
+        guard !container.isEmpty else { return nil }
+        return URL(fileURLWithPath: container, isDirectory: true)
             .appendingPathComponent("video-prefs.json", isDirectory: false)
     }
 

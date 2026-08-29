@@ -11,10 +11,11 @@
 //! `launch_gui` is the bare-invocation path: `slopdesk` with no verb opens the window, the way bare
 //! `xterm`/`alacritty`/`ghostty` do, and `-e <cmd>` forwards a command into the first pane.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
-use slopdesk_hostlaunch::record::APP_SUPPORT_DIR_ENV;
+use slopdesk_hostlaunch::record::{self, APP_SUPPORT_DIR_ENV};
 use slopdesk_sidecars::manifest::{self, Manifest, Step};
 
 use crate::args::OutputFormat;
@@ -158,12 +159,20 @@ pub fn installed_manifest_path(binary: Option<&Path>, environment: &Environment)
 /// Honours [`APP_SUPPORT_DIR_ENV`], unlike the control-socket default beside it — the asymmetry
 /// `socket.rs` documents: the socket has to name the same file the APP resolved, and this file is
 /// only ever written by this program.
+///
+/// The RULE — the override first, an empty one read as unset — is
+/// [`record::app_support_dir_in`](slopdesk_hostlaunch::record::app_support_dir_in)'s; what is here
+/// is the base this program resolves it against, which is the environment it was HANDED rather than
+/// the one it runs in.
 #[must_use]
 pub fn app_support_dir(environment: &Environment) -> Option<PathBuf> {
-    if let Some(override_dir) = environment.get(APP_SUPPORT_DIR_ENV) {
-        return Some(PathBuf::from(override_dir));
-    }
-    Some(PathBuf::from(environment.get("HOME")?).join("Library/Application Support/SlopDesk"))
+    let base = environment
+        .get("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support"));
+    record::app_support_dir_in(
+        base.as_deref(),
+        environment.get(APP_SUPPORT_DIR_ENV).map(OsStr::new),
+    )
 }
 
 /// The copy recorded by the last `slopdesk sidecars --record`.

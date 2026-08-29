@@ -404,11 +404,15 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
 /// (`TrendlineEstimator`, `PacerDepthPolicy`, the FEC and recovery policies); `EnvConfig` publishes
 /// a per-KEY resolver and no merged map, and re-spelling `env → overlay` at a walk site would be a
 /// second copy of the one precedence rule that type owns — so those knob families are env-only,
-/// recorded rather than fixed. A SEAM is a default argument a test replaces (`EnvBridge`,
-/// `AppSupportContainer`, `WorkspaceStore+Bootstrap`, `FocusDebugProbe`). Two entries went with
-/// `docs/61` rather than being re-aimed — `WindowParkingSidecar.swift`'s seam and
-/// `RecoveryIDRPolicyTests.swift`'s skip guard — because an exemption is a permission, and a
-/// permission for a file that does not exist excuses nothing while reading as though it did.
+/// recorded rather than fixed. A SEAM is a default argument a test replaces
+/// (`WorkspaceStore+Bootstrap`, `FocusDebugProbe`). Four entries went rather than being re-aimed —
+/// `WindowParkingSidecar.swift`'s seam and `RecoveryIDRPolicyTests.swift`'s skip guard with
+/// `docs/61`, then `AppSupportContainer.swift` and `EnvBridge.swift`'s when the Application-Support
+/// container stopped being a Swift rule at all (the container is
+/// `slopdesk_hostlaunch::record::app_support_dir_in` now, reached through
+/// `slopdesk_app_support_dir`, so the environment is read on the far side and the near side lends
+/// only the base Foundation alone can resolve) — because an exemption is a permission, and a
+/// permission nothing needs excuses a knob nobody meant to allow.
 /// `EnvConfig` itself is exempt because it is THE reader. The `Tests` entries are harness reads — a
 /// child process's environment, a snapshot output directory, or a guard that must consult the REAL
 /// environment to skip when one is set, which is the opposite of reading a knob past the overlay.
@@ -446,11 +450,6 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
         "Sources/SlopDeskVideoProtocol/AdaptiveFECPolicy.swift",
         // WALK: same shape for the escalation floor.
         "Sources/SlopDeskVideoProtocol/RecoverySignaling.swift",
-        // SEAM: `environment:` default argument on the Application-Support resolver.
-        "Sources/SlopDeskVideoProtocol/Settings/AppSupportContainer.swift",
-        // SEAM + WALK: the sidecar path's default argument, and the gap-fill that must compare the
-        // REAL environment against the overlay it is filling.
-        "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift",
         // The automation gate that suppresses auto-reconnect; no `config.toml` row.
         "Sources/SlopDeskWorkspaceCore/Connection/AppConnection.swift",
         // The debug-trace gate reader itself — the key is a VARIABLE, so there is no knob to reach.

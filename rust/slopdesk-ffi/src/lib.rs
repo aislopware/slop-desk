@@ -49,6 +49,7 @@ pub mod android_presentation;
 pub mod android_sidebar;
 pub mod android_stream;
 pub mod annexb;
+pub mod app_support;
 pub mod attention_fold;
 // macOS only: the Accessibility grant, which is a question about THIS PROCESS and so cannot be
 // asked from a slice that has no such grant to hold. See the module.
