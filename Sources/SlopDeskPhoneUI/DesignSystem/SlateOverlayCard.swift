@@ -372,8 +372,13 @@ final class SlateClickTargetView: UIControl {
 ///
 /// It costs no view. A row already needs a container to lay its title, mark and keycap out in; this IS
 /// that container, which is why the wrapper-versus-decoration question does not arise for it.
+///
+/// ⚠️ NOT `final`, and that is the point of the previous paragraph rather than an omission. The two
+/// rows that need one — the pane switcher's and the toast card — are this control WITH their own
+/// subviews, because the alternative is the overlay form the ⚠️ above rules out. A `final` here would
+/// force them back to a control laid over a row, which is the bug, not the optimisation.
 @MainActor
-final class SlateRowButton: UIControl {
+class SlateRowButton: UIControl {
     private let action: () -> Void
 
     init(action: @escaping () -> Void) {

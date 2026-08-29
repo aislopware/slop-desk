@@ -8,8 +8,8 @@
 // THE PILL RIDES THE EXISTING PURE ENGINE. It reads the OBSERVABLE mirrors
 // (``TerminalViewModel/viVisualMode`` / ``viPendingCount``), never the `@ObservationIgnored` `isCopyMode`
 // flag the renderer's key path reads — that separation is what keeps the mode chrome off the key
-// intercept's hazard, and it survives the port because `withObservationTracking` registers on exactly the
-// properties its closure touches. One read, one callback, re-armed after every apply.
+// intercept's hazard, and it survives the port because ``ObservationFollow`` registers on exactly the
+// properties its `read` block touches — so the separation is a dependency set, not a convention.
 //
 // THE CARD'S REFLOW IS ARITHMETIC, AND HERE THAT IS THE ONLY REASON IT WORKS AT ALL. The SwiftUI half was
 // a `Layout` HANDED a `ProposedViewSize`; UIKit hands a view its own bounds, which is the size it has
@@ -63,17 +63,12 @@ final class ViModePillView: UIView {
     /// itself wherever a pane chip shows one.
     private let close: PaneStatusPillCloseView
 
-    /// The last applied reading. Kept so an observation callback that changes nothing repaints nothing —
-    /// the mirrors are re-synced after EVERY copy-mode key, including the ones that move a cursor and
-    /// leave both of these alone.
-    private var mode: TerminalViewModel.VisualMode = .none
-    private var pending: Int?
-    /// Whether the first paint has happened. It gates BOTH the early-out (the resting reading is `.none` /
-    /// `nil`, so an unpainted pill would compare equal to itself and never draw a word) and the animation
-    /// (a pill fading its own arrival in reads as a lag, not as a transition).
-    private var painted = false
-    /// Guards the observation re-arm against a stale `onChange` firing after this pill is gone.
-    private var generation = 0
+    /// The paint gate — the last applied reading and whether one has ever landed, on the floor so the
+    /// Mac's pill runs the same comparison rather than a second copy of it.
+    private let gate = DecorationViModePill()
+    /// The live following. Stored for ``teardown()`` alone — the pill can leave the chip column and stay
+    /// retained for a beat, which is the one case ``ObservationFollow/stop()`` exists for.
+    private var pillFollow: ObservationFollow?
 
     init(model: TerminalViewModel, onExit: @escaping () -> Void) {
         self.model = model
@@ -93,10 +88,11 @@ final class ViModePillView: UIView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// Bump the generation so an already-scheduled re-arm drops itself. Called by the leaf when the chip
-    /// leaves the column or the pane is torn down.
+    /// End the following, so a wake already in flight cannot re-arm against a model this pill has
+    /// finished with. Called by the leaf when the chip leaves the column or the pane is torn down.
     func teardown() {
-        generation &+= 1
+        pillFollow?.stop()
+        pillFollow = nil
     }
 
     private func build() {
@@ -135,18 +131,12 @@ final class ViModePillView: UIView {
             top: Slate.Metric.space1, leading: Slate.Metric.space2,
             bottom: Slate.Metric.space1, trailing: Slate.Metric.space2,
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
         row.addArrangedSubview(glyph)
         row.addArrangedSubview(label)
         row.addArrangedSubview(count)
         row.addArrangedSubview(close)
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
 
         // A semantic GROUP, for the reason the status chip gives: the copy is read once off the mode word
         // and the `×` stays a button VoiceOver can reach. The label is re-set on every apply — it carries
@@ -181,24 +171,13 @@ final class ViModePillView: UIView {
 
     // MARK: The live read
 
-    /// Re-read the two observable mirrors and repaint, re-arming for the next change.
+    /// Re-read the two observable mirrors and repaint, through ``ObservationFollow/arm(_:read:apply:)``.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        var mode: TerminalViewModel.VisualMode = .none
-        var pending: Int?
-        withObservationTracking {
-            mode = model.viVisualMode
-            pending = model.viPendingCount
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+        pillFollow = ObservationFollow.arm(self) { pill in
+            (mode: pill.model.viVisualMode, pending: pill.model.viPendingCount)
+        } apply: { pill, reading in
+            pill.apply(mode: reading.mode, pending: reading.pending)
         }
-        apply(mode: mode, pending: pending)
     }
 
     /// The count appearing and the ring going loud are ONE transaction. Both were
@@ -206,12 +185,7 @@ final class ViModePillView: UIView {
     /// and running them apart would let a `5v` — a count typed and then a visual mode armed — read as two
     /// separate events when it was one keystroke pair.
     private func apply(mode: TerminalViewModel.VisualMode, pending: Int?) {
-        guard !painted || mode != self.mode || pending != self.pending else { return }
-        let first = !painted
-        painted = true
-        self.mode = mode
-        self.pending = pending
-
+        guard let arrival = gate.accept(mode: mode, pending: pending) else { return }
         let paint = { [self] in
             label.attributedText = NSAttributedString(
                 string: mode.pillLabelOrDefault,
@@ -229,7 +203,7 @@ final class ViModePillView: UIView {
             layer.borderColor = ring().resolvedColor(with: traitCollection).cgColor
             layoutIfNeeded()
         }
-        guard !first else {
+        guard arrival == .again else {
             paint()
             return
         }
@@ -254,7 +228,7 @@ final class ViModePillView: UIView {
     /// re-spelling it is exactly the drift the descent was for: an alpha is frameworkless, so it can be
     /// compared across the framework boundary and a colour table cannot.
     private func ring() -> UIColor {
-        mode.isVisual
+        gate.mode.isVisual
             ? Slate.Native.accent.slateScalingAlpha(Slate.Opacity.accentRing)
             : Slate.Native.Line.subtle
     }
@@ -300,8 +274,6 @@ final class ViKeyHintBarView: UIView {
 
     /// Between two side-by-side column slots.
     private static let gap = Slate.Metric.space4
-    /// Between two columns stacked into one slot.
-    private static let stackSpacing = Slate.Metric.space3
 
     private let slots = UIStackView()
     private let columns: [ViKeyHintColumn: ViKeyHintColumnView]
@@ -309,7 +281,9 @@ final class ViKeyHintBarView: UIView {
     /// and re-measuring inside `layoutSubviews` would ask a column that is currently sitting in a
     /// stretched slot how wide it wants to be, which is a different question.
     private let columnWidths: [ViKeyHintColumn: CGFloat]
-    private var rung: ViKeyHintLayout?
+    /// The rung the card last settled on, and the re-hang that follows a change — on the floor, since
+    /// neither the comparison nor the parenting is a framework question.
+    private let ladder = DecorationViKeyHintLadder()
 
     /// Every key chip the card advertises — the honesty surface, forwarded so a test and the snapshot rig
     /// keep ONE address for it across both renderers.
@@ -353,14 +327,8 @@ final class ViKeyHintBarView: UIView {
             top: Slate.Metric.space2, leading: Slate.Metric.space3,
             bottom: Slate.Metric.space2, trailing: Slate.Metric.space3,
         )
-        slots.translatesAutoresizingMaskIntoConstraints = false
         addSubview(slots)
-        NSLayoutConstraint.activate([
-            slots.leadingAnchor.constraint(equalTo: leadingAnchor),
-            slots.trailingAnchor.constraint(equalTo: trailingAnchor),
-            slots.topAnchor.constraint(equalTo: topAnchor),
-            slots.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(slots.slateEdges(of: self))
 
         isAccessibilityElement = false
         accessibilityContainerType = .semanticGroup
@@ -384,40 +352,17 @@ final class ViKeyHintBarView: UIView {
 
     /// Ask the ladder what the proposal affords and re-hang the columns if the answer changed.
     ///
-    /// ⚠️ Measured against the width left INSIDE the card's own padding, not the proposal itself. The
-    /// padding is a fixed cost at both ends, and a ladder that spent the whole proposal would keep three
-    /// columns at a width that fits three columns and nothing else — which is a card whose last column is
-    /// cut off by its own edge inset.
+    /// The measurement, the change gate and the re-parenting all live on the floor; what is left here is
+    /// the one member the two shells spell apart — a vertical strip is `axis` on UIKit.
     private func applyLadder() {
-        let inner = Double(availableWidth) - Double(Slate.Metric.space3) * 2
-        apply(ViKeyHintPresentation.layout(
-            forWidth: inner, gap: Double(Self.gap),
+        guard let next = ladder.rung(
+            forWidth: Double(availableWidth), gap: Double(Self.gap),
             columnWidth: { [columnWidths] column in Double(columnWidths[column] ?? 0) },
-        ))
-    }
-
-    /// Hang the three columns in the slots the rung names.
-    ///
-    /// The COLUMN VIEWS are never rebuilt — only re-parented. A rung change is a re-flow, not a content
-    /// change, and rebuilding would throw away the measured widths this whole ladder runs on.
-    private func apply(_ next: ViKeyHintLayout) {
-        guard next != rung else { return }
-        rung = next
-        for slot in slots.arrangedSubviews {
-            slots.removeArrangedSubview(slot)
-            slot.removeFromSuperview()
-        }
-        for group in ViKeyHintPresentation.groups(for: next) {
+        ) else { return }
+        ladder.rehang(next, in: slots, column: { [columns] in columns[$0] }) {
             let stack = UIStackView()
             stack.axis = .vertical
-            stack.alignment = .leading
-            stack.spacing = Self.stackSpacing
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            for column in group {
-                guard let view = columns[column] else { continue }
-                stack.addArrangedSubview(view)
-            }
-            slots.addArrangedSubview(stack)
+            return stack
         }
     }
 }
@@ -464,12 +409,7 @@ private final class ViKeyHintColumnView: UIView {
         for hint in column.hints { stack.addArrangedSubview(Self.row(hint)) }
 
         addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(stack.slateEdges(of: self))
     }
 
     @available(*, unavailable)

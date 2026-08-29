@@ -1,12 +1,12 @@
 // MacContentColumn — the centre column: the pane canvas ON THE ISLAND, with the titlebar band
 // standing over it and the collapsed panel's rail standing at its trailing corner.
 //
-// The band and the rail are AppKit (``MacTitlebarBand``, ``MacPanelRail``, docs/56 stage D); the
-// CANVAS between them is still the hosted SwiftUI ``ContentColumn``, and that split is the point of
-// this controller. The band used to be a full-bleed `.overlay(alignment: .top)` inside that one
-// SwiftUI view, which cost it a `ZStack` it had to be given hit-testing back through, one modifier at
-// a time. As siblings each simply refuses every point it does not occupy
-// (``MacTitlebarBand/hitTest(_:)``, ``MacPanelRail/hitTest(_:)``) and the canvas gets the rest free.
+// All three are AppKit now (``MacTitlebarBand``, ``MacPanelRail``, ``MacContentCanvas``); the SPLIT
+// into siblings is the point of this controller, and it outlived the SwiftUI it was made against. The
+// band used to be a full-bleed `.overlay(alignment: .top)` inside one hosted view, which cost it a
+// `ZStack` it had to be given hit-testing back through, one modifier at a time. As siblings each
+// simply refuses every point it does not occupy (``MacTitlebarBand/hitTest(_:)``,
+// ``MacPanelRail/hitTest(_:)``) and the canvas gets the rest free.
 //
 // AND THE ISLAND IS THIS CONTROLLER'S NOW (docs/56 stage F, P5). The moat, the window-scale corner,
 // the glass and its rim were a SwiftUI modifier on the hosted column (`slateIsland(clearingBand:)`)
@@ -79,8 +79,9 @@ final class MacContentColumn: NSViewController {
         // foot. It fills the island edge to edge, so its frame is the canvas's rect exactly — see
         // ``registerCanvas(_:)``.
         let canvas = MacContentCanvas(
-            store: store, connection: connection, chrome: chrome, onConnect: onConnect,
-            paneDrag: paneDrag, overlay: overlay,
+            deps: PaneCanvasDeps(store: store, paneDrag: paneDrag, overlay: overlay, chrome: chrome),
+            connection: connection,
+            onConnect: onConnect,
         )
         island.addSubview(canvas)
         view.addSubview(island)

@@ -117,12 +117,7 @@ final class MacPaneStatusPillView: NSView {
             row.addArrangedSubview(close)
         }
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
 
         // A GROUP rather than SwiftUI's combined element, and the difference is the `×`. `.combine`
         // folds a child button's action into one element; AppKit has no equivalent that keeps the

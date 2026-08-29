@@ -26,6 +26,7 @@
 // two depths here are TWO SURFACES, not two screens — the stage's own device header owns the way back.
 
 #if os(iOS)
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the model follow
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
 import UIKit
@@ -39,13 +40,8 @@ final class PhoneSimulatorSurface: UIViewController {
     /// matters is "which surface, for which device" and the two answers have to compare as one value.
     private var mounted: String?
     private var mountedView: UIView?
-    private var mountedLeading: NSLayoutConstraint?
-    private var mountedTrailing: NSLayoutConstraint?
-
-    /// ⚠️ `withObservationTracking` fires ONCE, so ``follow()`` re-registers from inside its own
-    /// `onChange`; `[weak self]` ends a chain when the controller dies but does NOT supersede a live
-    /// arm, so a second call would leave two chains multiplying on the same key path.
-    private var generation = 0
+    /// The horizontal pair the mounted depth slides on — see ``DeviceDrillSlide``.
+    private var mountedSlide: DeviceDrillSlide?
 
     init(model: SimulatorSidebarModel) {
         self.model = model
@@ -68,88 +64,68 @@ final class PhoneSimulatorSurface: UIViewController {
         follow()
     }
 
-    /// The one observation: which depth, for which device.
+    /// The one observation: which depth, for which device. Armed ONCE, from ``viewDidLoad()`` — the
+    /// follow re-arms itself, so the plain arm is right and no handle has to be kept.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        var selection: String?
-        withObservationTracking {
-            selection = self.model.selection
-        } onChange: { [weak self] in
-            // The hop is required rather than tidy: `onChange` runs INSIDE the mutation, so re-reading
-            // the model from it would observe a half-written value.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    follow()
+        ObservationFollow.arm(self) { surface in
+            surface.model.selection
+        } apply: { surface, selection in
+            let wanted = selection.map { "stage:\($0)" } ?? "list"
+            guard wanted != surface.mounted else { return }
+            surface.mounted = wanted
+            let isEntering = selection != nil
+            // ENTERING: the stage arrives from the trailing edge. LEAVING: the list arrives from the
+            // leading one. The same two numbers, negated, which is what makes the pair read as one
+            // movement.
+            let shift = DeviceDrill.shift(entering: isEntering)
+            let mounting: UIView
+            if isEntering {
+                let stage = PhoneSimulatorStageView(model: surface.model)
+                // A `UIView` cannot present, and walking the responder chain to find a controller would
+                // make the stage's behaviour depend on where it happened to be mounted. The surface that
+                // DOES own a controller hands the capability down instead.
+                stage.present = { [weak surface] popover, anchor in
+                    popover.popoverPresentationController?.sourceView = anchor
+                    popover.popoverPresentationController?.sourceRect = anchor.bounds
+                    surface?.present(popover, animated: true)
                 }
+                mounting = stage
+            } else {
+                let model = surface.model
+                mounting = PhoneSimulatorDeviceList(model: model) { udid in model.select(udid) }
             }
+            surface.swap(to: mounting, from: shift)
         }
-        let wanted = selection.map { "stage:\($0)" } ?? "list"
-        guard wanted != mounted else { return }
-        mounted = wanted
-        let isEntering = selection != nil
-        // ENTERING: the stage arrives from the trailing edge. LEAVING: the list arrives from the leading
-        // one. The same two numbers, negated, which is what makes the pair read as one movement.
-        let shift = isEntering ? Slate.Metric.space4 : -Slate.Metric.space4
-        let surface: UIView
-        if isEntering {
-            let stage = PhoneSimulatorStageView(model: model)
-            // A `UIView` cannot present, and walking the responder chain to find a controller would make
-            // the stage's behaviour depend on where it happened to be mounted. The surface that DOES own
-            // a controller hands the capability down instead.
-            stage.present = { [weak self] popover, anchor in
-                popover.popoverPresentationController?.sourceView = anchor
-                popover.popoverPresentationController?.sourceRect = anchor.bounds
-                self?.present(popover, animated: true)
-            }
-            surface = stage
-        } else {
-            surface = PhoneSimulatorDeviceList(model: model) { [model] udid in model.select(udid) }
-        }
-        swap(to: surface, from: shift)
     }
 
     /// Mount `surface` offset by `shift` and slide it home, sliding whatever was there out the other
     /// way. The FIRST mount has nothing to leave, so it lands without a beat — an app opening the panel
     /// should not watch its first surface arrive from off-screen.
     private func swap(to surface: UIView, from shift: CGFloat) {
-        let outgoing = mountedView
-        let outgoingLeading = mountedLeading
-        let outgoingTrailing = mountedTrailing
+        let leaving = mountedView
+        let leavingSlide = mountedSlide
 
-        surface.translatesAutoresizingMaskIntoConstraints = false
-        surface.alpha = outgoing == nil ? 1 : 0
-        view.addSubview(surface)
-        let leading = surface.leadingAnchor.constraint(
-            equalTo: view.leadingAnchor, constant: outgoing == nil ? 0 : shift,
-        )
-        let trailing = surface.trailingAnchor.constraint(
-            equalTo: view.trailingAnchor, constant: outgoing == nil ? 0 : shift,
-        )
-        NSLayoutConstraint.activate([
-            leading, trailing,
-            surface.topAnchor.constraint(equalTo: view.topAnchor),
-            surface.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
+        surface.alpha = leaving == nil ? 1 : 0
+        // The mount is ``DeviceDrill``'s; what stays here is the BEAT below, which is the one half the
+        // two shells genuinely disagree about.
+        let slide = DeviceDrill.mount(surface, in: view, offsetBy: leaving == nil ? 0 : shift)
         mountedView = surface
-        mountedLeading = leading
-        mountedTrailing = trailing
-        guard outgoing != nil else { return }
+        mountedSlide = slide
+        guard let outgoing = leaving else { return }
 
         // Laid out at the OFFSET before the animation starts, or the first frame of the beat is the
         // whole slide: an unresolved constraint animates from wherever the view happened to be.
         view.layoutIfNeeded()
-        leading.constant = 0
-        trailing.constant = 0
-        outgoingLeading?.constant = -shift
-        outgoingTrailing?.constant = -shift
+        slide.leading.constant = 0
+        slide.trailing.constant = 0
+        leavingSlide?.leading.constant = -shift
+        leavingSlide?.trailing.constant = -shift
         phoneSimulatorAnimate(Slate.Motion.standard) { [weak self] in
             surface.alpha = 1
-            outgoing?.alpha = 0
+            outgoing.alpha = 0
             self?.view.layoutIfNeeded()
         } completion: {
-            outgoing?.removeFromSuperview()
+            outgoing.removeFromSuperview()
         }
     }
 }

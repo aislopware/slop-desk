@@ -42,9 +42,10 @@ final class NavigatorSectionHeaderCell: UICollectionViewListCell {
     private var rows: [RailRow] = []
     private var collapsed = false
 
-    /// The one-shot tracker's generation — see ``NavigatorRowCell/generation``. A reused header must
-    /// not be woken by the project it used to name.
-    private var generation = 0
+    /// The live following — the same discipline ``NavigatorRowCell/rowFollow`` keeps, for the same
+    /// reason: a reused header must not be woken by the project it used to name. ``follow()`` arms
+    /// `replacing:` it and ``prepareForReuse()`` stops it.
+    private var headerFollow: ObservationFollow?
 
     private let folder = UIImageView()
     private let name = UILabel()
@@ -95,15 +96,17 @@ final class NavigatorSectionHeaderCell: UICollectionViewListCell {
                 equalTo: contentView.leadingAnchor, constant: Slate.Metric.space3,
             ),
             folder.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
-            name.leadingAnchor.constraint(equalTo: folder.trailingAnchor, constant: 6),
+            name.leadingAnchor.constraint(equalTo: folder.trailingAnchor, constant: Self.glyphGap),
             name.topAnchor.constraint(equalTo: contentView.topAnchor, constant: Slate.Metric.space2),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -6),
+            name.trailingAnchor.constraint(
+                lessThanOrEqualTo: count.leadingAnchor, constant: -Self.glyphGap,
+            ),
             count.trailingAnchor.constraint(
                 equalTo: contentView.trailingAnchor, constant: -Slate.Metric.space3,
             ),
             count.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
             git.leadingAnchor.constraint(equalTo: name.leadingAnchor),
-            git.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 1),
+            git.topAnchor.constraint(equalTo: name.bottomAnchor, constant: Self.registerGap),
             git.trailingAnchor.constraint(
                 equalTo: contentView.trailingAnchor, constant: -Slate.Metric.space3,
             ),
@@ -112,6 +115,17 @@ final class NavigatorSectionHeaderCell: UICollectionViewListCell {
             ),
         ])
     }
+
+    /// The gap between the folder mark and the word beside it — and, mirrored, between the name and
+    /// the count it must not touch. SUB-GRID on purpose: the spacing ladder's smallest rung
+    /// (``Slate/Metric/space1``) is the gap between two OBJECTS, and a glyph with its own word is one
+    /// object. The same 6 ``SlopDeskMacUI/MacSidebarHeaderView`` sets its header on, so the two platforms
+    /// draw one header rather than two that nearly agree.
+    private static let glyphGap: CGFloat = 6
+    /// The gap between the name and the git line under it — the two REGISTERS of one header, so the
+    /// second line has to read as belonging to the first. Anything the ladder offers separates them
+    /// instead; this is the smallest space that is still a space.
+    private static let registerGap: CGFloat = 1
 
     // MARK: The live read
 
@@ -133,7 +147,8 @@ final class NavigatorSectionHeaderCell: UICollectionViewListCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        generation &+= 1
+        headerFollow?.stop()
+        headerFollow = nil
         store = nil
         rows = []
         git.summary = nil
@@ -143,32 +158,37 @@ final class NavigatorSectionHeaderCell: UICollectionViewListCell {
     /// collapsed count's roll-up — and re-arm for the next store tick. Leaf-scoped for the reason
     /// ``NavigatorRowCell/follow()`` is: a git or status tick repaints this header, never the list.
     ///
-    /// ⚠️ EVERY TRACKED READ IS INSIDE THE CLOSURE. Hoisting `projectGitSummary` out to a `let` above
-    /// would leave this header deaf to the very poll it exists to show.
+    /// ⚠️ EVERY TRACKED READ IS INSIDE `read`. Moving `projectGitSummary` into `apply` — which runs
+    /// OUTSIDE the tracking block — would leave this header deaf to the very poll it exists to show.
+    ///
+    /// `replacing:`, never a bare `arm`: the cell registration re-configures a MOUNTED header, and a
+    /// second plain arm would leave the previous project's chain applying beside the new one.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        guard let store else { return }
-        var summary: PaneGitSummary?
-        var focused = false
-        var rollup: AttentionRole?
-        withObservationTracking {
-            summary = projectKey.flatMap { store.projectGitSummary[$0] }
-            focused = SidebarSections.holdsFocus(rows: rows, store: store)
-            rollup = collapsed
-                ? TabBadgeReading.rollup(
-                    RailRowsBuilder.liveChrome(for: rows, store: store).map(\.badge),
-                )
-                : nil
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        headerFollow = ObservationFollow.arm(self, replacing: headerFollow) { cell -> Reading? in
+            guard let store = cell.store else { return nil }
+            return Reading(
+                summary: cell.projectKey.flatMap { store.projectGitSummary[$0] },
+                focused: SidebarSections.holdsFocus(rows: cell.rows, store: store),
+                rollup: cell.collapsed
+                    ? TabBadgeReading.rollup(
+                        RailRowsBuilder.liveChrome(for: cell.rows, store: store).map(\.badge),
+                    )
+                    : nil,
+            )
+        } apply: { cell, reading in
+            guard let reading else { return }
+            cell.apply(
+                summary: reading.summary, focused: reading.focused, rollup: reading.rollup,
+            )
         }
-        apply(summary: summary, focused: focused, rollup: rollup)
+    }
+
+    /// The header's volatile chrome, as one value — `read` returns it and `apply` paints it, which is
+    /// what keeps the three tracked reads on the tracking side of the boundary.
+    private struct Reading {
+        let summary: PaneGitSummary?
+        let focused: Bool
+        let rollup: AttentionRole?
     }
 
     private func apply(summary: PaneGitSummary?, focused: Bool, rollup: AttentionRole?) {
@@ -195,7 +215,7 @@ final class NavigatorSectionHeaderCell: UICollectionViewListCell {
         )
 
         git.summary = SidebarGitLine.detailSummary(collapsed: collapsed, summary: summary)
-        git.isHidden = git.segments.isEmpty
+        git.isHidden = git.isEmpty
 
         if let trailing = SidebarGitLine.trailingCount(collapsed: collapsed, count: rows.count) {
             count.text = trailing

@@ -57,8 +57,9 @@ final class PaneDropOverlayView: UIView {
     /// play the reveal from scratch — the launch state is not a gesture.
     private var settled = false
 
-    /// Superseded on teardown so a late `onChange` hop cannot re-arm a dead view (docs/62 §3.1).
-    private var generation = 0
+    /// The live following, stopped on teardown so a late wake cannot re-arm against a model this overlay
+    /// has finished with (docs/62 §3.1).
+    private var dropFollow: ObservationFollow?
 
     /// The draw / hit ORDER, which is ``PaneDropZoneLayout/zones``'. Asked of a degenerate layout
     /// because the order belongs to the layout type and not to any one pane's size — spelling
@@ -105,10 +106,11 @@ final class PaneDropOverlayView: UIView {
         }
     }
 
-    /// The pane is going away for good. Ends the tracking chain — an arm cannot be cancelled, so the
-    /// generation is what makes the last `onChange` a no-op.
+    /// The pane is going away for good. Ends the tracking chain — ``ObservationFollow/stop()`` is what
+    /// makes a wake already in flight a no-op.
     func teardown() {
-        generation &+= 1
+        dropFollow?.stop()
+        dropFollow = nil
     }
 
     // MARK: - The live read
@@ -117,26 +119,15 @@ final class PaneDropOverlayView: UIView {
     /// them separately would arm three observers over the same stored `content` and repaint the
     /// overlay three times for one finger move.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var active: DropZone?
-        var allowed: Set<DropZone> = []
-        var shown = false
-        withObservationTracking {
-            active = model.activeZone
-            allowed = model.allowedZones
-            shown = model.isActive
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        dropFollow = ObservationFollow.arm(self) { view in
+            (active: view.model.activeZone, allowed: view.model.allowedZones, shown: view.model.isActive)
+        } apply: { view, reading in
+            view.apply(
+                active: reading.active, allowed: reading.allowed, shown: reading.shown,
+                animated: view.settled,
+            )
+            view.settled = true
         }
-        apply(active: active, allowed: allowed, shown: shown, animated: settled)
-        settled = true
     }
 
     /// Fade the whole overlay to the drag's presence and re-ink every blob to the hovered zone.
@@ -148,25 +139,19 @@ final class PaneDropOverlayView: UIView {
         repaint(active: active, allowed: allowed, animated: animated)
     }
 
-    /// The rung → `UIColor` lookup applied to all five zones. Every branch below is
-    /// ``DropZonePresentation``'s; nothing here decides which zone is hot or what a hot one means.
+    /// The rung → `UIColor` lookup applied to all five zones. Which colour a zone wears is
+    /// ``DecorationDropOverlayInk``'s — the verdict, the alphas that travel with it and the ring's one
+    /// status rung — and the two `switch`es below are what this renderer contributes to it.
+    ///
+    /// A `UIColor` on a label stays dynamic and re-resolves itself on a theme flip, so unlike the
+    /// blobs' `CGColor`s the labels need no re-ink pass of their own.
     private func repaint(active: DropZone?, allowed: Set<DropZone>, animated: Bool) {
         for (zone, blob) in blobs {
-            let isActive = zone == active
-            let isAllowed = allowed.contains(zone)
-            let wash = DropZonePresentation.wash(zone, active: isActive, allowed: isAllowed)
-            blob.apply(
-                fill: Self.ink(wash.ink).slateScalingAlpha(wash.opacity),
-                // The ring says "release NOW", so it is only ever the status rung. An inactive zone
-                // gets that SAME colour at zero rather than no stroke at all, because a colour can
-                // cross-fade to a colour and cannot cross-fade to nothing — the ring would pop, and
-                // the zero is the crossing's own rather than a branch spelled here.
-                ring: Slate.Native.Status.ok.slateScalingAlpha(wash.strokeOpacity),
-                animated: animated,
+            let inks = DecorationDropOverlayInk.inks(
+                for: zone, active: active, allowed: allowed, ink: Self.ink, labelInk: Self.labelInk,
             )
-            // A `UIColor` on a label stays dynamic and re-resolves itself on a theme flip, so unlike
-            // the blobs' `CGColor`s this needs no re-ink pass of its own.
-            labels[zone]?.textColor = Self.labelInk(wash.labelInk)
+            blob.apply(fill: inks.fill, ring: inks.ring, animated: animated)
+            labels[zone]?.textColor = inks.label
         }
     }
 
@@ -236,25 +221,23 @@ final class PaneDropOverlayView: UIView {
 /// fill that shared that path would shrink by the same amount.
 @MainActor
 private final class PaneDropBlobView: UIView {
-    private let wash = CAShapeLayer()
-    private let ring = CAShapeLayer()
+    /// The two shape layers, the cross-fade and the hairline inset — ``DecorationDropBlob``, one
+    /// implementation for both shells.
+    private let blob = DecorationDropBlob()
 
-    /// Held so a theme flip (which re-runs `paint`) and a resize (which only re-paths) never have to
-    /// guess what the current verdict was.
+    /// Held so a theme flip (which re-inks) and a resize (which only re-paths) never have to guess
+    /// what the current verdict was.
     private var fill: UIColor = .clear
     private var rim: UIColor = .clear
 
     init() {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
-        ring.fillColor = nil
-        ring.lineWidth = Slate.Metric.hairline
-        layer.addSublayer(wash)
-        layer.addSublayer(ring)
+        layer.addSublayer(blob.node)
         // A `CGColor` is flat and does not follow a theme flip, so both rungs are re-resolved. The
         // verdict does not move; only the colour under it does.
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
-            view.paint(animated: false)
+            view.apply(fill: view.fill, ring: view.rim, animated: false)
         }
     }
 
@@ -264,36 +247,23 @@ private final class PaneDropBlobView: UIView {
     /// Ink this blob. `animated` spends ``Slate/Motion/reveal`` on the cross-fade — the finger moving
     /// from one zone to the next is the only thing that ever changes these colours, and it is the
     /// same reveal the whole overlay arrives on.
+    ///
+    /// ⚠️ THE COLOURS RESOLVE HERE, against this view's own `traitCollection`, and that is this
+    /// renderer's whole half of the blob: a `CGColor` is flat, so WHERE it is read from is the
+    /// decision and the layers it is read for are one floor down.
     func apply(fill: UIColor, ring rim: UIColor, animated: Bool) {
         self.fill = fill
         self.rim = rim
-        paint(animated: animated)
-    }
-
-    private func paint(animated: Bool) {
-        CATransaction.begin()
-        if animated {
-            CATransaction.setAnimationDuration(Slate.Motion.reveal.duration)
-            CATransaction.setAnimationTimingFunction(Slate.Motion.reveal.timingFunction)
-        } else {
-            CATransaction.setDisableActions(true)
-        }
-        wash.fillColor = fill.resolvedColor(with: traitCollection).cgColor
-        ring.strokeColor = rim.resolvedColor(with: traitCollection).cgColor
-        CATransaction.commit()
+        blob.ink(
+            fill: fill.resolvedColor(with: traitCollection).cgColor,
+            ring: rim.resolvedColor(with: traitCollection).cgColor,
+            animated: animated,
+        )
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let box = CGRect(origin: .zero, size: bounds.size)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        wash.frame = box
-        wash.path = CGPath(ellipseIn: box, transform: nil)
-        ring.frame = box
-        let inset = Slate.Metric.hairline / 2
-        ring.path = CGPath(ellipseIn: box.insetBy(dx: inset, dy: inset), transform: nil)
-        CATransaction.commit()
+        blob.place(in: CGRect(origin: .zero, size: bounds.size))
     }
 }
 #endif

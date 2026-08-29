@@ -176,12 +176,38 @@ pub fn one_notification_card_two_corners(tree: &Tree) -> Report {
             message: "{files} re-derives the headline from (source, flavour) — that pair is resolved ONCE, \
                       in Rust",
         },
-        Claim::Lacks {
+        // ⚠️ RE-AIMED 2026-08-28, from an ARRANGEMENT to the BEHAVIOUR it was standing in for.
+        //
+        // This was `Claim::Lacks { pattern: r"ToastStackView\(" }` on the phone's shared overlay host,
+        // and the sentence it printed named the real hazard: a full-bleed layer that takes touches
+        // everywhere steals every keystroke from the terminal underneath it. But the BAN was a fact
+        // about `SwiftUI`. There, the only lever was `.allowsHitTesting(!overlay.toasts.isEmpty)`
+        // per `.overlay` modifier, re-evaluated on every state change — so "do not mount the toast
+        // column in the shared host" really did approximate "do not let it swallow the screen".
+        //
+        // `PhoneOverlayLayerView` mounts all four overlays full-bleed ON PURPOSE (each owns its own
+        // dismiss floor, and the stacking order is the mount order), and answers the hazard
+        // STRUCTURALLY instead: `hitTest` returns `nil` for a touch that lands on the layer itself
+        // rather than on a card inside it. That is strictly stronger than the ban — it covers all four
+        // children and every future one — so the ban would now be red for the port getting it right.
+        //
+        // What is pinned is therefore the passthrough, and the expression is pinned exactly because
+        // there is only one correct spelling: `isUserInteractionEnabled = false` would deafen the
+        // cards too, so overriding `hitTest` is the only lever UIKit gives, and returning anything but
+        // `nil` for `self` is the swallow this rule exists to prevent.
+        Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
-            pattern: r"ToastStackView\(",
+            pattern: r"override func hitTest\(",
             view: View::Code,
-            message: "the shared overlay host mounts the toast column again — that mount claims every hit \
-                      over the split",
+            message: "the phone's overlay layer stopped overriding hitTest — a full-bleed layer that takes \
+                      every touch takes every keystroke away from the terminal underneath it",
+        },
+        Claim::Matches {
+            path: "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
+            pattern: r"=== self \? nil",
+            view: View::Code,
+            message: "the phone's overlay layer answers its own hit test with itself — a touch between \
+                      cards belongs to the columns beneath, and returning self claims the whole screen",
         },
     ];
     check_all(tree, &claims)
@@ -387,7 +413,8 @@ mod tests {
             )
             .write(
                 "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
-                "kept so the ban has a haystack\n",
+                "override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {\n    let hit = \
+                 super.hitTest(point, with: event)\n    return hit === self ? nil : hit\n}\n",
             );
     }
 
@@ -409,13 +436,32 @@ mod tests {
         );
         assert!(!super::one_notification_card_two_corners(&fixture.tree()).is_clean());
 
-        // And the shared host mounting the column, which claims every hit over the split.
+        // And the layer swallowing the screen — the hazard the mount ban used to stand in for, seeded
+        // both ways it can happen: the override deleted outright, and the override KEPT while its
+        // answer changes to `self`. The second is the one a reviewer waves through.
+        toast(&fixture);
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
+            "final class PhoneOverlayLayerView: UIView {}\n",
+        );
+        assert!(!super::one_notification_card_two_corners(&fixture.tree()).is_clean());
+
+        toast(&fixture);
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
+            "override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {\n    \
+             super.hitTest(point, with: event)\n}\n",
+        );
+        assert!(!super::one_notification_card_two_corners(&fixture.tree()).is_clean());
+
+        // Mounting the toast column in the shared layer is now FINE, and that is the whole re-aim:
+        // the passthrough covers it, and the three siblings mounted beside it.
         toast(&fixture);
         fixture.append(
             "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
-            "ToastStackView(store: store)\n",
+            "toasts = PhoneToastStackView(overlay: overlay)\n",
         );
-        assert!(!super::one_notification_card_two_corners(&fixture.tree()).is_clean());
+        assert!(super::one_notification_card_two_corners(&fixture.tree()).is_clean());
     }
 
     fn palette(fixture: &Fixture) {

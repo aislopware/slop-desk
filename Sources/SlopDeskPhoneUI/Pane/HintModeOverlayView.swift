@@ -91,8 +91,9 @@ final class HintModeOverlayView: UIView {
     /// The session this view is currently drawn for. The labels are stable for a session, so a keystroke
     /// re-inks the mounted badges instead of rebuilding them.
     private var session: Session?
-    /// Guards the observation re-arm against a stale `onChange` firing after this view is gone.
-    private var generation = 0
+    /// The live following. Stored for ``teardown()`` alone — the overlay can outlive the pane it reads,
+    /// which is the one case ``ObservationFollow/stop()`` exists for.
+    private var hintFollow: ObservationFollow?
 
     /// What makes two drawings the same drawing. The METRICS are in it because a font-size change or a
     /// resize moves every badge without changing a single label — which is the whole reason
@@ -126,40 +127,33 @@ final class HintModeOverlayView: UIView {
         isUserInteractionEnabled = false
     }
 
-    /// Bump the generation so an already-scheduled re-arm drops itself, and let the badges go.
+    /// End the following, and let the badges go.
     ///
     /// Called by the leaf when the pane is torn down. Nothing else is owed: `Observation`'s registration
-    /// dies with the closure, so there is no observer to remove — only the hop that is already in flight.
+    /// dies with the closure, so there is no observer to remove — only the wake that is already in
+    /// flight, which ``ObservationFollow/stop()`` turns into a no-op.
     func teardown() {
-        generation &+= 1
+        hintFollow?.stop()
+        hintFollow = nil
         retire()
     }
 
     // MARK: The live read
 
-    /// Re-read the two observable properties and re-place, re-arming for the next change.
+    /// Re-read the two observable properties and re-place, through
+    /// ``ObservationFollow/arm(_:read:apply:)``.
     ///
-    /// The geometry read sits in ``refresh()``, OUTSIDE the tracking closure, and deliberately: `surface`
-    /// is `@ObservationIgnored` and a weak reference to a live renderer, so making it part of the
-    /// dependency would register nothing and cost a retain cycle's worth of confusion for it.
+    /// The geometry read sits in ``refresh()``, OUTSIDE `read`, and deliberately: `surface` is
+    /// `@ObservationIgnored` and a weak reference to a live renderer, so making it part of the
+    /// dependency would register nothing and cost a retain cycle's worth of confusion for it. `apply`
+    /// therefore discards the reading and asks ``refresh()`` for the values again — the same recompute
+    /// `layoutSubviews` needs with no reading in hand.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        withObservationTracking {
-            _ = model.hintMode
-            _ = model.hintTyped
-        } onChange: { [weak self] in
-            // The hop is required: `onChange` runs INSIDE the mutation, so re-arming from it would
-            // register against a half-written model. The generation is what makes a hop scheduled by a
-            // torn-down overlay drop itself.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+        hintFollow = ObservationFollow.arm(self) { view in
+            (intent: view.model.hintMode, typed: view.model.hintTyped)
+        } apply: { view, _ in
+            view.refresh()
         }
-        refresh()
     }
 
     /// Read the model and the live cell geometry, mount or retire, and place.
@@ -320,10 +314,6 @@ private final class HintDimPlateView: UIView {
 /// keystroke.
 @MainActor
 private final class HintLabelBadgeView: UIView {
-    /// ⚠️ 14 is UNNAMED on the floor — the badge's minimum height, deliberately UNDER the keycap's 18
-    /// because a badge stands ON the grid rather than beside a label. It is the SECOND spelling: the Mac
-    /// half carries the same literal with the same ⚠️. Proposed `Slate.Metric.hintBadge`.
-    private static let minHeight: CGFloat = 14
     /// ⚠️ 0.2 is UNNAMED on the floor — the ruled-out badge's opacity, a rung BELOW ``Slate/Opacity/dim``
     /// (0.35) because this dims a whole PLATE rather than ink on one. Second spelling, same ⚠️ as the Mac
     /// half. Proposed `Slate.Opacity.dimmedPlate`.
@@ -353,13 +343,7 @@ private final class HintLabelBadgeView: UIView {
         text.isAccessibilityElement = false
         text.translatesAutoresizingMaskIntoConstraints = false
         addSubview(text)
-        NSLayoutConstraint.activate([
-            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space1),
-            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space1),
-            text.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minHeight),
-            heightAnchor.constraint(greaterThanOrEqualTo: text.heightAnchor),
-        ])
+        NSLayoutConstraint.activate(DecorationHintBadge.constraints(in: self, text: text))
 
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -374,8 +358,9 @@ private final class HintLabelBadgeView: UIView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// A badge is 14pt tall by design (see ``minHeight``) — far under a thumb — so its TOUCH target is
-    /// grown past its plate rather than the plate being grown past the cell it stands on. A badge that
+    /// A badge is 14pt tall by design (see ``DecorationHintBadge/minHeight``) — far under a thumb — so
+    /// its TOUCH target is grown past its plate rather than the plate being grown past the cell it
+    /// stands on. A badge that
     /// covered its neighbours would be pointing at the wrong word, which is the failure this whole family
     /// refuses; overlapping hit rects only cost the topmost badge the tie, and the two-key path is always
     /// there when the tie goes the wrong way.
@@ -385,31 +370,17 @@ private final class HintLabelBadgeView: UIView {
 
     /// Re-ink for the current typed prefix. The plate does not move and the label does not change — only
     /// which letters are faded, and whether the whole badge is still in the running.
+    ///
+    /// The 2-letter run itself is ``DecorationHintBadge/letters(label:typed:font:ink:)`` — WHICH letters
+    /// are faded, and that the label is uppercased at all, are ``HintPresentation``'s, and the drawing of
+    /// that answer is now one implementation rather than one per shell.
     func apply(typed: String, dimmed: Bool) {
-        text.attributedText = Self.letters(label: label, typed: typed)
+        text.attributedText = DecorationHintBadge.letters(
+            label: label, typed: typed,
+            font: .monospacedSystemFont(ofSize: Slate.Typeface.small, weight: .bold),
+            ink: HintPlate.ink,
+        )
         alpha = dimmed ? Self.ruledOut : 1
-    }
-
-    /// The 2 uppercase letters, already-typed ones faded (the progress cue), the rest solid black. WHICH
-    /// letters are faded, and that the label is uppercased at all, are ``HintPresentation``'s — spelled
-    /// as `offset < typed.count` there precisely because re-deriving it per renderer is a place a half
-    /// could fade the wrong letter and still look plausible.
-    private static func letters(label: String, typed: String) -> NSAttributedString {
-        let run = NSMutableAttributedString()
-        let font = UIFont.monospacedSystemFont(ofSize: Slate.Typeface.small, weight: .bold)
-        for (offset, character) in HintPresentation.displayLabel(label).enumerated() {
-            let faded = HintPresentation.isFaded(offset: offset, typed: typed)
-            run.append(NSAttributedString(
-                string: String(character),
-                attributes: [
-                    .font: font,
-                    .foregroundColor: faded
-                        ? HintPlate.ink.withAlphaComponent(Slate.Opacity.dim)
-                        : HintPlate.ink,
-                ],
-            ))
-        }
-        return run
     }
 
     /// The plate is a pinned yellow and the hairline is a pinned black — neither is appearance-dynamic,
@@ -491,18 +462,12 @@ private final class HintModeBadgeView: UIView {
             top: Slate.Metric.space1, leading: Slate.Metric.space2,
             bottom: Slate.Metric.space1, trailing: Slate.Metric.space2,
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
         row.addArrangedSubview(title)
         row.addArrangedSubview(intentLabel)
         row.addArrangedSubview(typedLabel)
         row.addArrangedSubview(close)
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
 
         // A semantic GROUP, for the reason the status chip gives: the copy is read once off the title and
         // the `×` stays a button VoiceOver can reach.

@@ -48,20 +48,17 @@ final class MacSatellitePaneRootView: NSView {
         self.paneID = paneID
         self.keyState = keyState
         pane = MacPaneContainer(
-            store: store, paneID: paneID, isFocused: keyState.isKey, isVisible: true,
-            overlay: overlay, chrome: chrome,
+            deps: PaneCanvasDeps(store: store, paneDrag: paneDrag, overlay: overlay, chrome: chrome),
+            paneID: paneID,
+            isFocused: keyState.isKey,
+            isVisible: true,
         )
         super.init(frame: .zero)
         wantsLayer = true
         paint()
 
         addSubview(pane)
-        NSLayoutConstraint.activate([
-            pane.topAnchor.constraint(equalTo: topAnchor),
-            pane.bottomAnchor.constraint(equalTo: bottomAnchor),
-            pane.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pane.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(pane.slateEdges(of: self))
 
         // A `.desktop` satellite has NO merge-back affordance — the desktop never joins a tab
         // (docs/DECISIONS.md 2026-07-22), so the grab strip would be a dead gesture.

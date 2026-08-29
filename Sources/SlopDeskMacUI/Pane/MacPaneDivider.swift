@@ -1,6 +1,6 @@
 // MacPaneDivider — the draggable seam between two panes, in AppKit (docs/56 wave R, batch R6).
 //
-// The AppKit half of ``PaneDivider``: a thin separator hairline drawn inside a comfortable hit band,
+// The AppKit half of ``PaneDividerView``: a thin separator hairline drawn inside a comfortable hit band,
 // a resize cursor over that band, and a drag that resizes the panes LIVE — the layout updates every
 // frame, like an `NSSplitView` divider — while the host grid-resize SEND is deferred until release
 // (the shell brackets the drag with `setTerminalResizeSuspended`, so the server gets ONE resize event
@@ -74,18 +74,10 @@ final class MacPaneDivider: NSView {
         }
     }
 
-    /// Drag start — wired to `store.setTerminalResizeSuspended(true)`, holding the host grid-resize
-    /// for the whole drag ("update the layout live, defer the server event to drag-end").
-    var onResizeBegin: () -> Void = {}
-    /// Each frame — the new ABSOLUTE leading-child weight (already clamped). Wired to
-    /// `store.setDividerWeightLive`, which re-solves the layout WITHOUT reconciling / persisting.
-    var onResizeChange: (_ leadingWeight: Double) -> Void = { _ in }
-    /// Drag end / interruption — wired to `store.setTerminalResizeSuspended(false)` (flush the
-    /// settled grid to the host) + `store.commitDividerResize()` (reconcile + persist ONCE).
-    var onResizeEnd: () -> Void = {}
-    /// Double-click → even out THIS seam (50/50, sum-preserving). Wired to `store.evenDividerTree`
-    /// with this handle's `(splitID, childIndex)` — never the whole-tab `balanceActivePaneSplits`.
-    var onReset: () -> Void = {}
+    /// What this seam's four gestures are wired to — ``DecorationDividerActions``, one vocabulary for
+    /// both shells. Each arm's meaning is documented there; what is decided here is only which
+    /// gesture reports which arm.
+    var actions = DecorationDividerActions()
 
     /// The drawn seam, centred in the band. Its thickness is the only geometry that animates.
     private let seam = Hairline()
@@ -108,18 +100,9 @@ final class MacPaneDivider: NSView {
     /// suspend/commit round-trip on the way to `onReset` — the press alone begins nothing.
     private static let dragSlop: CGFloat = 1
 
-    init(
-        handle: SplitTreeRenderModel.DividerHandle,
-        onResizeBegin: @escaping () -> Void = {},
-        onResizeChange: @escaping (Double) -> Void = { _ in },
-        onResizeEnd: @escaping () -> Void = {},
-        onReset: @escaping () -> Void = {},
-    ) {
+    init(handle: SplitTreeRenderModel.DividerHandle, actions: DecorationDividerActions = .init()) {
         self.handle = handle
-        self.onResizeBegin = onResizeBegin
-        self.onResizeChange = onResizeChange
-        self.onResizeEnd = onResizeEnd
-        self.onReset = onReset
+        self.actions = actions
         super.init(frame: handle.rect)
         build()
         handleUpdated()
@@ -221,7 +204,7 @@ final class MacPaneDivider: NSView {
         // is no in-flight resize to unwind first — just the pending grab to drop.
         if event.clickCount == 2 {
             grab = nil
-            onReset()
+            actions.onReset()
             return
         }
         grab = event.locationInWindow
@@ -235,14 +218,14 @@ final class MacPaneDivider: NSView {
         if startLead == nil {
             guard abs(translation) >= Self.dragSlop else { return }
             startLead = handle.leadingWeight
-            onResizeBegin()
+            actions.onResizeBegin()
             setDragging(true)
             // Held for the whole gesture: without the push, leaving the band's rect mid-drag hands
             // the pointer back to whatever cursor rect is under it and the arrow vanishes while the
             // seam is still tracking. Balanced by the single `pop()` in `endDrag()`.
             seamCursor.push()
         }
-        onResizeChange(targetLeadingWeight(translation: translation))
+        actions.onResizeChange(targetLeadingWeight(translation: translation))
         // The seam can reach a neighbour's floor mid-drag: the arrow becomes one-way THERE, not on
         // the next hover.
         seamCursor.set()
@@ -273,7 +256,7 @@ final class MacPaneDivider: NSView {
         // Rebuild the hover cursor for the ratio the drag settled on — a drag that ended pinned at
         // a floor must immediately hover as one-directional.
         window?.invalidateCursorRects(for: self)
-        onResizeEnd()
+        actions.onResizeEnd()
     }
 
     /// The cursor translation along the split axis, in the stable WINDOW space.
@@ -464,26 +447,11 @@ final class MacPaneDivider: NSView {
                 addSubview(field)
             }
 
-            NSLayoutConstraint.activate([
-                leadPct.leadingAnchor.constraint(
-                    equalTo: leadingAnchor, constant: Slate.Metric.space2,
-                ),
-                leadPct.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space1),
-                leadPct.bottomAnchor.constraint(
-                    equalTo: bottomAnchor, constant: -Slate.Metric.space1,
-                ),
-                dot.leadingAnchor.constraint(
-                    equalTo: leadPct.trailingAnchor, constant: Slate.Metric.space1,
-                ),
-                dot.centerYAnchor.constraint(equalTo: leadPct.centerYAnchor),
-                trailPct.leadingAnchor.constraint(
-                    equalTo: dot.trailingAnchor, constant: Slate.Metric.space1,
-                ),
-                trailPct.centerYAnchor.constraint(equalTo: leadPct.centerYAnchor),
-                trailPct.trailingAnchor.constraint(
-                    equalTo: trailingAnchor, constant: -Slate.Metric.space2,
-                ),
-            ])
+            // Where the three runs sit is ``DecorationRatioReadout``'s — an arrangement, and the same
+            // one on both shells down to the rung each gap spends.
+            NSLayoutConstraint.activate(DecorationRatioReadout.constraints(
+                in: self, leading: leadPct, dot: dot, trailing: trailPct,
+            ))
             setAccessibilityRole(.staticText)
             applyText()
             paint()

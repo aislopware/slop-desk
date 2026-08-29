@@ -1,6 +1,6 @@
 // MacPaneScrims — the two pane veils, in AppKit (docs/56 wave R, batch R1).
 //
-// The AppKit halves of ``PaneResizeScrim`` and ``PaneRecedeScrim``. Both are one rectangle of the
+// The AppKit halves of ``PaneVeilView/resize()`` and ``PaneVeilView/recede()``. Both are one rectangle of the
 // terminal's own paper colour at one alpha, and neither has any state, so the whole of each is a
 // layer-backed `NSView` with a `backgroundColor` — no `draw(_:)`, no tracking area, no observation.
 //

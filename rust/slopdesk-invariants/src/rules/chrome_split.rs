@@ -19,13 +19,81 @@ const MAC_ROW: &str = "Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift";
 /// `Columns/NavigatorColumn.swift` → `Shell/NavigatorColumnViewController.swift`,
 /// `Panel/PhonePanelSheet.swift` → `Shell/PhonePanelViewController.swift`.
 ///
-/// The `CodePanelSurfaces(` needle in `the_panel_is_one_reading` lost its trailing `(` in the same
-/// pass, for the reason docs/62 gives: the paren pinned a `SwiftUI` CONSTRUCTOR CALL, so the claim
-/// was green only while the type kept both its name and its initialiser, and would have gone red on
-/// `CodePanelSurfacesController` for a rename rather than for a drift. The law is that the phone's
-/// panel READS the shared surfaces, not how it spells the read.
+/// ⚠️ AND THE `CodePanelSurfaces` NEEDLE IS GONE ENTIRELY, which is the end of a two-step lesson
+/// worth keeping whole. It began as `CodePanelSurfaces(` — with the paren, pinning a `SwiftUI`
+/// CONSTRUCTOR CALL, so it was green only while the type kept both its name and its initialiser.
+/// The 2026-08-28 pass dropped the paren, on the sound reasoning that the law is what the panel
+/// READS and not how it spells the read. But the type had already died with its framework, and what
+/// the bare needle then matched was the SUBSTRING inside `MacCodePanelSurfaces` — a class name.
+/// Each step was right about the step before it and both missed that the subject no longer existed.
+/// What the two panels genuinely share is `CodePanelPresentation`, pinned at its call sites below.
 const PHONE_NAVIGATOR: &str = "Sources/SlopDeskPhoneUI/Shell/NavigatorColumnViewController.swift";
-const PHONE_PANEL: &str = "Sources/SlopDeskPhoneUI/Shell/PhonePanelViewController.swift";
+
+/// Every `(file, pattern, message)` that is a READING of the panel's shared vocabulary — one row
+/// per file per symbol, on both shells, symmetrically.
+///
+/// ⚠️ THE PARK IS PAID HERE. A predecessor left the phone's half of this red on purpose in
+/// 2026-08-28 rather than re-aim it, because its subject had been SPLIT rather than renamed — the
+/// controller stopped reading these symbols not by regressing but by handing each surface to a
+/// sibling — and deciding which file must read which symbol is the panel's architecture, not a
+/// gate's. The architecture is now settled: a file that DRAWS a tab reads the shared list, a file
+/// that draws the ANDROID mark reads the shared path, and each shell's workbench reads the shared
+/// clipped-titlebar metric. Which is also why the Mac gained rows it never had.
+///
+/// `Matches`/`Code` throughout, never `Mentions`: the latter reads RAW, so the sentence you are
+/// reading would have satisfied every row below had it been written in the file it guards. This
+/// family has already shipped one rule a comment could turn green; it will not ship a second.
+const PANEL_READERS: &[(&str, &str, &str)] = &[
+    (
+        "Sources/SlopDeskMacUI/Panel/MacPanelStrip.swift",
+        r"\bPanelTabs\b",
+        "MacPanelStrip stopped reading PanelTabs — the panel's four tabs are ClientCore's, cut once",
+    ),
+    (
+        "Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift",
+        r"\bPanelTabs\b",
+        "MacPanelTabGroup stopped reading PanelTabs — the panel's four tabs are ClientCore's, cut once",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/PhonePanelBar.swift",
+        r"\bPanelTabs\b",
+        "PhonePanelBar stopped reading PanelTabs — the phone's panel is a LAYOUT of the same four tabs, not \
+         a second panel",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabGroup.swift",
+        r"\bPanelTabs\b",
+        "PhonePanelTabGroup stopped reading PanelTabs — the phone's panel is a LAYOUT of the same four \
+         tabs, not a second panel",
+    ),
+    (
+        "Sources/SlopDeskMacUI/Panel/MacPanelTabPlate.swift",
+        r"\bAndroidMarkPath\b",
+        "MacPanelTabPlate stopped reading AndroidMarkPath — the robot is ONE path, or the two shells draw \
+         two robots",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabPlate.swift",
+        r"\bAndroidMarkPath\b",
+        "PhonePanelTabPlate stopped reading AndroidMarkPath — the robot is ONE path, or the two shells draw \
+         two robots",
+    ),
+    // ⚠️ AND NOT `CodePanelSurfaces` — see this module's header for why that needle was pinning a
+    // class NAME rather than a reading. What the two panels genuinely share is the clipped-titlebar
+    // metric, and the pin goes where it is CALLED rather than where a header names it.
+    (
+        "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift",
+        r"CodePanelPresentation\.",
+        "MacCodeWorkbenchView stopped reading CodePanelPresentation — how far the web view is lifted to \
+         clip its title bar is one number, not one per shell",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+        r"CodePanelPresentation\.",
+        "PhoneCodeWorkbenchView stopped reading CodePanelPresentation — how far the web view is lifted to \
+         clip its title bar is one number, not one per shell",
+    ),
+];
 
 /// One navigator, one row reading, one git dialect
 ///
@@ -177,10 +245,16 @@ pub fn one_titlebar_band_one_connection_reading(tree: &Tree) -> Report {
             message: "MacConnectionIsland stopped reading {entry} — the alarm ladder is ClientCore's, cut \
                       once",
         },
+        // ⚠️ RE-AIMED 2026-08-28, with `phone_parity`'s island rows. The phone's half of this reading
+        // was `Chrome/ConnectionPill.swift` and went with `3f11c6e6`; the `UIKit` rebuild is
+        // `ConnectionIslandView.swift`, which takes the Mac's noun for the same surface. Red until it
+        // lands, deliberately: this claim is the SECOND reader of a ladder cut once, and a list of one
+        // reader has nothing left to compare.
         Claim::Mentions {
-            path: "Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift",
+            path: "Sources/SlopDeskPhoneUI/Chrome/ConnectionIslandView.swift",
             names: &["ConnectionReading"],
-            message: "ConnectionPill stopped reading {entry} — the alarm ladder is ClientCore's, cut once",
+            message: "the phone's connection island stopped reading {entry} — the alarm ladder is \
+                      ClientCore's, cut once",
         },
         // The strip's chip is the navigator row's reading, NOT a second one. Its inputs are a strict
         // subset, and only one of the strip and the column is ever mounted, so there is nothing to buy
@@ -220,7 +294,7 @@ pub fn one_titlebar_band_one_connection_reading(tree: &Tree) -> Report {
 /// makes `revealCodeSidebar()` reach the phone at all — and the same drawn robot.
 #[must_use]
 pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
-    let claims = [
+    let mut claims = vec![
         Claim::Absent {
             path: "Sources/SlopDeskPhoneUI/Chrome/PanelRail.swift",
             message: "PanelRail.swift is back — the panel's chrome is MacPanelStrip + MacPanelRail (AppKit)",
@@ -245,46 +319,12 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
         // the strip and once down the rail — and the two had to agree on the mark, the word AND the
         // help of every surface. The WIDTH LADDER lives with them as arithmetic rather than a
         // `ViewThatFits`, so a test can ask it what a width affords without mounting anything.
-        Claim::Mentions {
-            path: "Sources/SlopDeskMacUI/Panel/MacPanelStrip.swift",
-            names: &["PanelTabs"],
-            message: "MacPanelStrip stopped reading {entry} — the panel's four tabs are ClientCore's, cut \
-                      once",
-        },
-        Claim::Mentions {
-            path: "Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift",
-            names: &["PanelTabs"],
-            message: "MacPanelTabGroup stopped reading {entry} — the panel's four tabs are ClientCore's, \
-                      cut once",
-        },
-        // ⚠️ PARKED, NOT RE-AIMED — 2026-08-28, and the finding is the point. The 2026-08-28 sweep
-        // re-aimed every phone path whose subject had merely been RENAMED; this claim's subject was
-        // not renamed, it was SPLIT, so re-aiming it is a design call and not a rename. The three
-        // symbols are all live on the phone, in three sibling files rather than in the controller:
-        // `PanelTabs` in `Panel/PhonePanelBar.swift`, `Panel/PhonePanelTabGroup.swift` and
-        // `Panel/PhonePanelTabPlate.swift`; `AndroidMarkPath` in `Panel/PhonePanelTabPlate.swift`;
-        // and `CodePanelSurfaces` NOWHERE, because the phone's surface host is
-        // `Panel/PhonePanelSurfacesViewController.swift` and it reads `CodePanelPresentation`
-        // instead. The Mac half above is already spelled per-file (`MacPanelStrip`,
-        // `MacPanelTabGroup`), so mirroring that shape is the likely answer — but "which file must
-        // read which symbol" is the panel's own architecture, and a gate should not be the thing
-        // that decides it. Left red on purpose so the decision is owed rather than assumed.
-        Claim::Mentions {
-            path: PHONE_PANEL,
-            names: &["PanelTabs", "CodePanelSurfaces", "AndroidMarkPath"],
-            message: "PhonePanelViewController stopped reading {entry} — the phone's panel is a LAYOUT, not \
-                      a second panel",
-        },
+        // The per-file readings are [`PANEL_READERS`], appended below.
         Claim::Names {
             path: "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift",
             needle: "codeSidebarCollapsed",
             message: "the phone's root stopped reading codeSidebarCollapsed — revealCodeSidebar() would not \
                       reach the phone at all",
-        },
-        Claim::Mentions {
-            path: "Sources/SlopDeskMacUI/Panel/MacPanelTabPlate.swift",
-            names: &["AndroidMarkPath"],
-            message: "MacPanelTabPlate stopped drawing {entry} — the head's proportions are cut once",
         },
         // NOTHING IN THE RAIL IS A TURNED VIEW. `frameCenterRotation` pivots a layer-backed view about
         // its layer's ANCHOR POINT — the frame's corner — which threw every rail tab out of the rail;
@@ -311,6 +351,14 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
                       areas overlap",
         },
     ];
+    claims.extend(PANEL_READERS.iter().map(|&(path, pattern, message)| {
+        Claim::Matches {
+            path,
+            pattern,
+            view: View::Code,
+            message,
+        }
+    }));
     check_all(tree, &claims)
 }
 
@@ -406,7 +454,7 @@ mod tests {
                 "ConnectionReading\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift",
+                "Sources/SlopDeskPhoneUI/Chrome/ConnectionIslandView.swift",
                 "ConnectionReading\n",
             )
             .write(
@@ -440,11 +488,12 @@ mod tests {
         );
         assert!(!super::one_titlebar_band_one_connection_reading(&fixture.tree()).is_clean());
 
-        // And a half that stopped reading the alarm ladder.
+        // And a half that stopped reading the alarm ladder. `UIKit` now, and the drift the claim
+        // exists for is the same one it always was: a shell wording the link itself.
         titlebar(&fixture);
         fixture.write(
-            "Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift",
-            "Text(\"link\")\n",
+            "Sources/SlopDeskPhoneUI/Chrome/ConnectionIslandView.swift",
+            "label.text = \"link\"\n",
         );
         assert!(!super::one_titlebar_band_one_connection_reading(&fixture.tree()).is_clean());
     }
@@ -456,9 +505,22 @@ mod tests {
                 "Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift",
                 "PanelTabs\n",
             )
+            .write("Sources/SlopDeskPhoneUI/Panel/PhonePanelBar.swift", "PanelTabs\n")
             .write(
-                super::PHONE_PANEL,
-                "PanelTabs\nCodePanelSurfaces(store: store)\nAndroidMarkPath\n",
+                "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabGroup.swift",
+                "PanelTabs\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabPlate.swift",
+                "AndroidMarkPath\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+                "constant: -CodePanelPresentation.clippedTitleBarHeight,\n",
+            )
+            .write(
+                "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift",
+                "constant: -CodePanelPresentation.clippedTitleBarHeight,\n",
             )
             .write(
                 "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift",
@@ -491,9 +553,30 @@ mod tests {
         );
         assert!(super::one_panel_chrome_one_tab_reading(&fixture.tree()).is_clean());
 
-        // And the phone's panel becoming a second panel.
+        // And the phone's panel becoming a second panel — a workbench that lifts its web view by a
+        // number of its own instead of the one both shells clip to.
         panel(&fixture);
-        fixture.write(super::PHONE_PANEL, "PanelTabs\nAndroidMarkPath\n");
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+            "constant: -28,\n",
+        );
+        assert!(!super::one_panel_chrome_one_tab_reading(&fixture.tree()).is_clean());
+
+        // A phone tab surface cutting its own four — the half the parked claim never reached, because
+        // it watched a controller that had already handed the tabs to its siblings.
+        panel(&fixture);
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabGroup.swift",
+            "let tabs: [PanelTab] = [.code, .simulator, .android, .web]\n",
+        );
+        assert!(!super::one_panel_chrome_one_tab_reading(&fixture.tree()).is_clean());
+
+        // The PROSE does not count, on either shell — the whole reason these are `Matches`/`Code`.
+        panel(&fixture);
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Panel/PhonePanelBar.swift",
+            "// The four tabs are PanelTabs', cut once in ClientCore.\n",
+        );
         assert!(!super::one_panel_chrome_one_tab_reading(&fixture.tree()).is_clean());
     }
 }

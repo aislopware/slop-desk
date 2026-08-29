@@ -25,6 +25,7 @@ import XCTest
 @MainActor
 final class SlateSharedInkTests: XCTestCase {
     // MARK: - The connection alarm (``MacConnectionIsland``; the phone's `ConnectionPill` has no UIKit
+
     // successor yet)
 
     /// The island spends BRIGHTNESS and WEIGHT, never hue: `quiet` is the metadata grey every healthy

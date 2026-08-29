@@ -1,9 +1,10 @@
 // CloseConfirmationCopy — the near-side FACE of `slopdesk_workspace::close_confirm`.
 //
 // The confirmation itself is the platform's own modal on both platforms — an `NSAlert` sheet on the Mac
-// (``SlopDeskMacUI/MacCloseConfirmation``), and a `UIAlertController` on the phone once the UIKit shell
-// mounts one — the SwiftUI `.alert` that used to sit on `OverlayHostView` has no successor yet — and
-// there is nothing to port about either. What there IS to keep in one place is the WORDING, because it
+// (``SlopDeskMacUI/MacCloseConfirmation``) and a `UIAlertController` on the phone
+// (``SlopDeskPhoneUI/PhoneCloseConfirmation``) — and there is nothing to port about either. Both
+// reconcile against ``request(store:)`` rather than against a flag, so a park cleared from somewhere
+// else takes the dialog down. What there IS to keep in one place is the WORDING, because it
 // is not a constant: it depends on which of the two parks is armed, on whether a configured policy
 // actually gated the park (a park raised purely for the project-loss warning must not claim "a process
 // is still running" over an idle shell), and on whether the close takes a project's last pane with it.

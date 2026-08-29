@@ -15,14 +15,27 @@ use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-/// The sidebar header, which holds the git line's measured ladder.
+/// The sidebar header, which holds the Mac's handle on the git line's measured ladder.
 const HEADER: &str = "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift";
+/// The phone's half of the same line — a `UIView` where the Mac has an `NSView`, and nothing else.
+const PHONE_GIT_LINE: &str = "Sources/SlopDeskPhoneUI/Columns/SidebarGitLineView.swift";
+/// The ladder itself, one floor below both shells.
+const LADDER: &str = "Sources/SlopDeskClientCore/Rail/GitLineLadder.swift";
 /// The overlay whose corpus is one DFS per session, tab and pane.
 const OPEN_QUICKLY: &str = "Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift";
 /// The canvas that re-solves every seam in the tab at the display's rate.
 const CANVAS: &str = "Sources/SlopDeskMacUI/Pane/MacSplitCanvasView.swift";
-/// The leaf whose drag update used to walk the split tree.
-const GUI_LEAF: &str = "Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift";
+/// The leaf core that holds the kind — the Mac leaf's drag update used to walk the split tree, and
+/// the cache moved down here with the rest of the leaf when both shells started sharing it.
+const GUI_LEAF_CORE: &str = "Sources/SlopDeskClientCore/Pane/GuiLeafCore.swift";
+/// The three shell files that may NOT re-derive the kind: two leaves and the Mac's control bar.
+/// Named individually rather than by directory, because `spec(for:)` is a legitimate call for a
+/// fact that is not fixed per pane id — only the `.kind` reading is barred.
+const GUI_LEAF_SHELLS: &[&str] = &[
+    "Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift",
+    "Sources/SlopDeskMacUI/Pane/MacGuiPaneControls.swift",
+    "Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift",
+];
 /// The container that re-runs its pane count on every ⌃⇥ tap.
 const CONTAINER: &str = "Sources/SlopDeskMacUI/Pane/MacPaneContainer.swift";
 /// The one path in this directory where the user watches the latency directly.
@@ -47,37 +60,87 @@ const DIVIDER: &str = "Sources/SlopDeskMacUI/Pane/MacPaneDivider.swift";
 /// `NSAttributedString.size()` (2.0–2.3 µs each, full CoreText typesetting) over five to nine
 /// candidates. Building the ladder ONCE costs 50–52 µs; every read after it is 5 ns.
 ///
-/// Three arms, because three separate things can go: the ladder being deleted, `measured()` being
-/// inlined back into its two callers, and — the one that is not a speed rule at all — the
-/// invalidation. The ladder is `segments` measured, so it must die with them and with nothing else;
-/// a `didSet` that rebuilds the segments without dropping the ladder serves the OLD branch name
-/// forever, which is worse than the 62 µs it saves.
+/// ## ⚠️ RE-AIMED 2026-08-28, AND IT IS NOW TWO SHELLS AND A FLOOR
+/// The ladder used to be a private `Ladder` type inside `MacSidebarHeader.swift`, and the phone had
+/// its own copy of the same forty-four lines — which is what `no-cross-target-clone` counted, and
+/// what `SidebarGitLineView.swift`'s old header called "deliberately incurred and reported". The
+/// arithmetic is `NSAttributedString`, spelled IDENTICALLY on both platforms, so it went one floor
+/// down to ``GitLineLadder`` (`SlopDeskClientCore`) and the two views became wrappers over it.
 ///
-/// Break-tested: `ladder` renamed to `ladderCache` in the real file → all three arms fired.
+/// The measurement did not change and neither did the law; only the SUBJECT moved, and the three
+/// old arms all named the Mac file's private spelling. So the arms are re-cut against what is now
+/// checkable and was not before: BOTH shells hold the memo, NEITHER builds it more than once, and
+/// neither one does attributed-string arithmetic any more. That last arm is the strongest of the
+/// four — it is the one that fires if the ladder is copied back UP into a view, which is the exact
+/// regression that produced the clone the move deleted.
+///
+/// Break-tested: `ladder` renamed to `ladderCache` in each real file, a second `GitLineLadder(`
+/// added to the phone's `draw(_:)`, and `NSAttributedString` reintroduced into the Mac header.
 #[must_use]
 pub fn the_git_line_stays_measured(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::Matches {
             path: HEADER,
-            pattern: r"private var ladder: Ladder\?",
-            view: View::Raw,
+            pattern: r"private var ladder: GitLineLadder\?",
+            view: View::Code,
             message: "the sidebar header no longer holds its measured ladder — the git line would \
                       re-typeset five to nine candidate strings on every AppKit layout pass (59–65 µs) to \
                       pick the one it already picked",
         },
         Claim::Matches {
-            path: HEADER,
-            pattern: r"private func measured\(\) -> Ladder\?",
-            view: View::Raw,
-            message: "the sidebar header lost measured() — intrinsicContentSize and draw(_:) must share ONE \
-                      build of the ladder, or the guard above buys nothing",
+            path: PHONE_GIT_LINE,
+            pattern: r"private var ladder: GitLineLadder\?",
+            view: View::Code,
+            message: "the phone's git line no longer holds its measured ladder — UIKit asks a redrawing \
+                      view for intrinsicContentSize and draw(_:) at least as often as AppKit does",
         },
-        Claim::Matches {
+        // ONE construction site per shell, and it is the `summary` didSet. Two is the memo coming
+        // undone: a ladder built inside `draw(_:)` or `intrinsicContentSize` is not a memo at all, and
+        // the `didSet` is also the whole of the INVALIDATION — the ladder is `summary` measured, so it
+        // dies with it and with nothing else. `Exactly` rather than a ban, because zero would mean the
+        // view stopped drawing the line.
+        Claim::Exactly {
             path: HEADER,
-            pattern: r"ladder = nil",
-            view: View::Raw,
-            message: "the sidebar header never invalidates the ladder — a memo with no kill is a stale git \
-                      line, which is worse than the 62 µs it saves",
+            pattern: r"GitLineLadder\(",
+            count: 1,
+            view: View::Code,
+            message: "the sidebar header builds its ladder {found} times — it is built once, in the summary \
+                      didSet, which is also the only invalidation a memo of a summary can have",
+        },
+        Claim::Exactly {
+            path: PHONE_GIT_LINE,
+            pattern: r"GitLineLadder\(",
+            count: 1,
+            view: View::Code,
+            message: "the phone's git line builds its ladder {found} times — it is built once, in the \
+                      summary didSet, which is also the only invalidation a memo of a summary can have",
+        },
+        // The floor keeps the width BESIDE the string. `NSAttributedString.size()` is a full CoreText
+        // typesetting pass (2.0–2.3 µs), so a rung that stored only its text would re-typeset on the
+        // fitting comparison and hand back exactly the cost the ladder was built to spend once.
+        Claim::Matches {
+            path: LADDER,
+            pattern: r"let width: CGFloat",
+            view: View::Code,
+            message: "the ladder stopped storing each rung's width — picking the widest fitting rung then \
+                      re-typesets every candidate, which is the 59–65 µs the memo exists to delete",
+        },
+        // AND NEITHER SHELL TYPESETS. This is the arm that fires if the arithmetic is copied back up,
+        // which is how the clone got written the first time. `View::Code` on purpose: both headers
+        // name `NSAttributedString` in prose, explaining where it went.
+        Claim::Lacks {
+            path: HEADER,
+            pattern: r"NSAttributedString",
+            view: View::Code,
+            message: "the sidebar header typesets again — the ladder is GitLineLadder's, one floor down, \
+                      and a second copy up here is the cross-target clone coming back (docs/62 stage H)",
+        },
+        Claim::Lacks {
+            path: PHONE_GIT_LINE,
+            pattern: r"NSAttributedString",
+            view: View::Code,
+            message: "the phone's git line typesets again — the ladder is GitLineLadder's, one floor down, \
+                      and a second copy up here is the cross-target clone coming back (docs/62 stage H)",
         },
     ])
 }
@@ -162,19 +225,43 @@ pub fn the_canvas_remembers_unthemed_leaves(tree: &Tree) -> Report {
 /// The shape that matters is what is NOT held: only the KIND is, because it is fixed for the life
 /// of a pane id. The liveness half (`model?.active != nil`) stays a fresh read on every call, and a
 /// `nil` kind is deliberately not cached, so a leaf that asks before its spec lands is not stuck
-/// answering no. One arm, because the name is the whole pin — the two exclusions above are
-/// unpinnable as text and are recorded here instead.
+/// answering no.
 ///
-/// Break-tested: `cachedPaneKind` renamed → fired.
+/// ⚠️ THE NAME ALONE WAS NOT THE PIN, and this rule proved it the hard way. It matched
+/// `cachedPaneKind` inside the MAC LEAF, so the day the leaf's logic moved down to
+/// `GuiLeafCore` — one implementation for both shells — the rule went red for a cache that had not
+/// gone anywhere. Worse, it had been blind all along to the OTHER site: both control bars asked
+/// `store.tree.spec(for: paneID)?.kind == .desktop` once per plate sync, for the privacy shield,
+/// and no arm here looked at them. A drag update fires per pointer move; a plate sync fires per
+/// model tick; the DFS is the same DFS. So the rule now pins the pair that actually holds — the
+/// cache EXISTS one floor down, and no shell re-derives the kind above it — and the answer rides to
+/// the bars inside `GuiLeafChrome`.
+///
+/// The `\.kind` suffix is load-bearing: `spec(for:)` is a fine call for a fact that is not fixed
+/// per pane id, and barring the whole call would have been a rule about a function name rather than
+/// about the walk it is being asked to repeat.
+///
+/// Break-tested: `cachedPaneKind` renamed → fired. Either bar's `spec(for: paneID)?.kind` restored
+/// verbatim → fired.
 #[must_use]
 pub fn the_gui_leaf_remembers_its_kind(tree: &Tree) -> Report {
-    check_all(tree, &[Claim::Matches {
-        path: GUI_LEAF,
+    let mut claims = vec![Claim::Matches {
+        path: GUI_LEAF_CORE,
         pattern: r"cachedPaneKind",
-        view: View::Raw,
+        view: View::Code,
         message: "the GUI leaf walks the split tree inside a drag-update again — cache the KIND (fixed per \
                   pane id), never the liveness",
-    }])
+    }];
+    claims.extend(GUI_LEAF_SHELLS.iter().map(|shell| {
+        Claim::Lacks {
+            path: shell,
+            pattern: r"spec\(for: paneID\)\?\.kind",
+            view: View::Code,
+            message: "a GUI shell re-derives its pane KIND with a full tree DFS — it is fixed per pane id, \
+                      the core already holds it, and it rides to the chrome as GuiLeafChrome.isDesktop",
+        }
+    }));
+    check_all(tree, &claims)
 }
 
 /// M5. The container counts its tab's panes without building T arrays
@@ -337,13 +424,24 @@ pub fn the_divider_hides_before_it_cuts(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
-    /// The header holding its ladder, building it once, and killing it with its segments.
+    /// Two shells each holding the ladder and building it exactly once, over a floor that keeps
+    /// every rung's width beside its text.
     fn header(fixture: &Fixture) {
-        fixture.write(
-            super::HEADER,
-            "private var ladder: Ladder?\nprivate func measured() -> Ladder? { ladder }\nvar segments: \
-             [Segment] = [] { didSet { ladder = nil } }\n",
-        );
+        fixture
+            .write(
+                super::HEADER,
+                "private var ladder: GitLineLadder?\nvar summary: PaneGitSummary? { didSet { ladder = \
+                 GitLineLadder(summary) } }\n",
+            )
+            .write(
+                super::PHONE_GIT_LINE,
+                "private var ladder: GitLineLadder?\nvar summary: PaneGitSummary? { didSet { ladder = \
+                 GitLineLadder(summary) } }\n",
+            )
+            .write(
+                super::LADDER,
+                "private struct Run {\n    let text: NSAttributedString\n    let width: CGFloat\n}\n",
+            );
     }
 
     #[test]
@@ -352,20 +450,38 @@ mod tests {
         header(&fixture);
         assert!(super::the_git_line_stays_measured(&fixture.tree()).is_clean());
 
-        // The memo with no kill: a ladder that outlives the segments it measured serves the OLD
-        // branch name forever, which is the wrong drawing rather than the slow one.
-        fixture.write(
-            super::HEADER,
-            "private var ladder: Ladder?\nprivate func measured() -> Ladder? { ladder }\nvar segments: \
-             [Segment] = []\n",
+        // The memo dropped, on either side. The phone arm is the one that did not exist before the
+        // ladder moved down: the Mac half can stay perfect while the UIKit half re-measures per draw.
+        fixture.write(super::HEADER, "var summary: PaneGitSummary?\n");
+        assert!(!super::the_git_line_stays_measured(&fixture.tree()).is_clean());
+
+        header(&fixture);
+        fixture.write(super::PHONE_GIT_LINE, "var summary: PaneGitSummary?\n");
+        assert!(!super::the_git_line_stays_measured(&fixture.tree()).is_clean());
+
+        // The build inlined back into a caller: the didSet still holds, so the FIRST arm passes and
+        // only the count catches it. That is the shape the old three arms could not see.
+        header(&fixture);
+        fixture.append(
+            super::PHONE_GIT_LINE,
+            "override func draw(_: CGRect) { GitLineLadder(summary)?.draw(in: bounds) }\n",
         );
         assert!(!super::the_git_line_stays_measured(&fixture.tree()).is_clean());
 
-        // And the build inlined back into its two callers.
+        // The rung that stores only its text, and re-typesets to answer "do you fit".
+        header(&fixture);
         fixture.write(
-            super::HEADER,
-            "private var ladder: Ladder?\nvar segments: [Segment] = [] { didSet { ladder = nil } }\n",
+            super::LADDER,
+            "private struct Run {\n    let text: NSAttributedString\n}\n",
         );
+        assert!(!super::the_git_line_stays_measured(&fixture.tree()).is_clean());
+
+        // And the arithmetic copied back up into a shell — the clone, returning. Prose naming it is
+        // still fine, which is why the arm reads CODE.
+        header(&fixture);
+        fixture.append(super::HEADER, "// the ladder is NSAttributedString arithmetic\n");
+        assert!(super::the_git_line_stays_measured(&fixture.tree()).is_clean());
+        fixture.append(super::HEADER, "let line = NSAttributedString(string: branch)\n");
         assert!(!super::the_git_line_stays_measured(&fixture.tree()).is_clean());
     }
 
@@ -405,12 +521,24 @@ mod tests {
     #[test]
     fn a_dfs_inside_a_drag_update_is_red() {
         let fixture = Fixture::new("macui-leaf");
-        fixture.write(super::GUI_LEAF, "private var cachedPaneKind: PaneKind?\n");
+        fixture.write(super::GUI_LEAF_CORE, "private var cachedPaneKind: PaneKind?\n");
+        for shell in super::GUI_LEAF_SHELLS {
+            // Asking the tree for something that is NOT fixed per pane id stays legal — the ban is on
+            // the `.kind` reading, not on the function.
+            fixture.write(shell, "let detached = store.tree.isDetached(paneID)\n");
+        }
         assert!(super::the_gui_leaf_remembers_its_kind(&fixture.tree()).is_clean());
 
+        // The cache renamed, or moved back up into a shell: the floor stops holding it.
+        fixture.write(super::GUI_LEAF_CORE, "private var heldKind: PaneKind?\n");
+        assert!(!super::the_gui_leaf_remembers_its_kind(&fixture.tree()).is_clean());
+        fixture.write(super::GUI_LEAF_CORE, "private var cachedPaneKind: PaneKind?\n");
+
+        // The walk restored in the CONTROL BAR — the site the name-only rule never looked at, and the
+        // one a plate sync runs per model tick.
         fixture.write(
-            super::GUI_LEAF,
-            "var isDesktopUploadTarget: Bool { store.tree.spec(for: id)?.kind == .desktop }\n",
+            super::GUI_LEAF_SHELLS[1],
+            "let isDesktop = store.tree.spec(for: paneID)?.kind == .desktop\n",
         );
         assert!(!super::the_gui_leaf_remembers_its_kind(&fixture.tree()).is_clean());
     }

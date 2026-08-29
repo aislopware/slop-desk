@@ -31,7 +31,7 @@
 // them asynchronously from inside it is what the API is FOR — so the bundle below holds the providers
 // directly and the commit's `Task` is safe without an eager copy.
 //
-// The `terminalModel` arrives as a CLOSURE rather than a value. The deleted SwiftUI receiver was a
+// The terminal model is ASKED FOR on every use rather than stored. The deleted SwiftUI receiver was a
 // struct rebuilt on every `body` pass, so it always held the pane's current model; this view is built
 // once and lives as long as the pane, across the moment a chooser pane goes live. A stored optional
 // would have been captured at mount time and read `nil` forever after — the read-only halt and the
@@ -54,39 +54,25 @@ final class PaneDropReceiverView: UIView {
     private let paneID: PaneID
     /// The drag state the overlay renders from and these callbacks mutate.
     private let model: PaneDropOverlayModel
-    /// The workspace store the terminal-rooted arms drive.
-    private let store: WorkspaceStore
-    /// THIS pane's live terminal model, read fresh on every use — see the header on why it is a
-    /// closure. `nil` for a chooser pane, where read-only does not apply.
-    private let terminalModel: () -> TerminalViewModel?
-    /// The coordinator the host-resolved advisory toast is pushed into; `nil` outside the scene root.
-    private let overlayCoordinator: OverlayCoordinator?
+    /// The pane cluster's injection list: the store the terminal-rooted arms drive, and the overlay
+    /// coordinator the host-resolved advisory toast is pushed into.
+    private let deps: PaneCanvasDeps
+
+    /// THIS pane's live terminal model, ASKED on every use rather than captured — see the header.
+    /// `nil` for a chooser pane, where read-only does not apply.
+    private var terminalModel: TerminalViewModel? { deps.liveSession(paneID)?.terminalModel }
 
     private let dropOverlay: PaneDropOverlayView
 
-    init(
-        paneID: PaneID,
-        model: PaneDropOverlayModel,
-        store: WorkspaceStore,
-        terminalModel: @escaping () -> TerminalViewModel?,
-        overlayCoordinator: OverlayCoordinator?,
-    ) {
+    init(paneID: PaneID, model: PaneDropOverlayModel, deps: PaneCanvasDeps) {
         self.paneID = paneID
         self.model = model
-        self.store = store
-        self.terminalModel = terminalModel
-        self.overlayCoordinator = overlayCoordinator
+        self.deps = deps
         dropOverlay = PaneDropOverlayView(model: model)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-
         addSubview(dropOverlay)
-        NSLayoutConstraint.activate([
-            dropOverlay.topAnchor.constraint(equalTo: topAnchor),
-            dropOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
-            dropOverlay.leadingAnchor.constraint(equalTo: leadingAnchor),
-            dropOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(dropOverlay.slateEdges(of: self))
 
         addInteraction(UIDropInteraction(delegate: self))
     }
@@ -98,14 +84,8 @@ final class PaneDropReceiverView: UIView {
     /// receiver's bounds are the pane's rect exactly — which is what ``PaneDropOverlayView`` builds its
     /// layout from and what the hover below hit-tests against.
     func mount(_ content: UIView) {
-        content.translatesAutoresizingMaskIntoConstraints = false
         insertSubview(content, belowSubview: dropOverlay)
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: topAnchor),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(content.slateEdges(of: self))
     }
 
     /// The pane is closed for good — ends the overlay's tracking arm with it.
@@ -140,7 +120,7 @@ extension PaneDropReceiverView: UIDropInteractionDelegate {
     func dropInteraction(_: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
         PaneDropGate.acceptsDrag(
             carriesSupportedType: session.hasItemsConforming(toTypeIdentifiers: Self.acceptedIdentifiers),
-            isReadOnly: terminalModel()?.isReadOnly,
+            isReadOnly: terminalModel?.isReadOnly,
         )
     }
 
@@ -200,16 +180,9 @@ extension PaneDropReceiverView: UIDropInteractionDelegate {
         // The terminal model is resolved NOW, while the drop is the current event — the same instant
         // the deleted half's struct was rebuilt with it. Everything else rides the capture list so the
         // commit never holds the view itself.
-        let terminal = terminalModel()
-        Task { @MainActor [store, overlayCoordinator, paneID] in
-            guard let content = await bundle.classify(),
-                  let action = DropActionResolver.resolve(zone: zone, content: content)
-            else { return }
-            PaneDropActuator.actuate(
-                action, store: store, terminalModel: terminal,
-                overlay: overlayCoordinator, paneID: paneID,
-            )
-        }
+        PaneDropActuator.commit(
+            bundle, zone: zone, terminalModel: terminalModel, deps: deps, paneID: paneID,
+        )
     }
 }
 

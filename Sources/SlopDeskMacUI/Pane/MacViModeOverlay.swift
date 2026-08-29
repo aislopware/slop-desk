@@ -1,7 +1,7 @@
 // MacViModeOverlay — the vi / copy-mode chrome, in AppKit (docs/56 wave R, batch R4).
 //
-// The AppKit halves of ``ViModePill`` (the persistent mode badge with a live repeat-count and an `×`
-// exit) and ``ViKeyHintBar`` (the `⌘/` reference card). Both are DRAWINGS over
+// The AppKit halves of ``ViModePillView`` (the persistent mode badge with a live repeat-count and an `×`
+// exit) and ``ViKeyHintBarView`` (the `⌘/` reference card). Both are DRAWINGS over
 // ``ViKeyHintPresentation`` (`SlopDeskClientCore`), which holds the three hint tables, the headings,
 // the pill's wording and the reflow ladder — so the two renderers cannot disagree about which keys
 // the card advertises, or about which arrangement a given width affords.
@@ -65,15 +65,9 @@ final class MacViModePill: NSView {
     /// to look like itself wherever a pane chip shows one.
     private let close: MacPaneStatusPillCloseView
 
-    /// The last applied reading. Kept so an observation callback that changes nothing repaints
-    /// nothing — the mirrors are re-synced after EVERY copy-mode key, including the ones that move a
-    /// cursor and leave both of these alone.
-    private var mode: TerminalViewModel.VisualMode = .none
-    private var pending: Int?
-    /// Whether the first paint has happened. It gates BOTH the early-out (the resting reading is
-    /// `.none` / `nil`, so an unpainted pill would compare equal to itself and never draw a word) and
-    /// the animation (a pill fading its own arrival in reads as a lag, not as a transition).
-    private var painted = false
+    /// The paint gate — the last applied reading and whether one has ever landed, on the floor so
+    /// the phone's pill runs the same comparison rather than a second copy of it.
+    private let gate = DecorationViModePill()
 
     init(model: TerminalViewModel, onExit: @escaping () -> Void) {
         self.model = model
@@ -143,18 +137,12 @@ final class MacViModePill: NSView {
             top: Slate.Metric.space1, left: Slate.Metric.space2,
             bottom: Slate.Metric.space1, right: Slate.Metric.space2,
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
         row.addArrangedSubview(glyph)
         row.addArrangedSubview(label)
         row.addArrangedSubview(count)
         row.addArrangedSubview(close)
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
 
         // A GROUP rather than SwiftUI's combined element, for the reason the status chip gives:
         // `.combine` folds a child button's action into one element and AppKit has no equivalent that
@@ -181,12 +169,7 @@ final class MacViModePill: NSView {
     /// curve), and running them apart would let a `5v` — a count typed and then a visual mode armed —
     /// read as two separate events when it was one keystroke pair.
     private func apply(mode: TerminalViewModel.VisualMode, pending: Int?) {
-        guard !painted || mode != self.mode || pending != self.pending else { return }
-        let first = !painted
-        painted = true
-        self.mode = mode
-        self.pending = pending
-
+        guard let arrival = gate.accept(mode: mode, pending: pending) else { return }
         let paint = { [self] in
             label.attributedStringValue = NSAttributedString(
                 string: mode.pillLabelOrDefault,
@@ -204,7 +187,7 @@ final class MacViModePill: NSView {
             needsDisplay = true
             updateLayer()
         }
-        guard !first else {
+        guard arrival == .again else {
             paint()
             return
         }
@@ -242,7 +225,7 @@ final class MacViModePill: NSView {
     /// was for: an alpha is frameworkless, so it can be compared across the framework boundary and a
     /// `Color` table cannot.
     private func ring() -> NSColor {
-        mode.isVisual
+        gate.mode.isVisual
             ? Slate.Native.accent.withAlphaComponent(Slate.Opacity.accentRing)
             : Slate.Native.Line.subtle
     }
@@ -252,7 +235,7 @@ final class MacViModePill: NSView {
     /// this is the net for the case where Esc lands in the PILL's chain instead — a click on the `×`
     /// leaves focus here — and it leaves through the SAME `onExit` seam the `×` fires.
     ///
-    /// `cancelOperation(_:)` is AppKit's spelling of what the phone spells ``View/slateCancelKey(perform:)``: AppKit routes Esc AND ⌘. up the responder chain, so this fires from
+    /// `cancelOperation(_:)` is AppKit's spelling of what the phone spells ``UIKeyCommand/slateCancel(action:)``: AppKit routes Esc AND ⌘. up the responder chain, so this fires from
     /// anywhere at or below the pill without anyone tapping the event stream. Installing a local
     /// monitor here would be a second reader of the same key, and is banned in this directory.
     override func cancelOperation(_: Any?) {
@@ -290,8 +273,6 @@ final class MacViKeyHintBar: NSView {
 
     /// Between two side-by-side column slots.
     private static let gap = Slate.Metric.space4
-    /// Between two columns stacked into one slot.
-    private static let stackSpacing = Slate.Metric.space3
 
     private let slots = NSStackView()
     private let columns: [ViKeyHintColumn: MacViKeyHintColumnView]
@@ -299,7 +280,9 @@ final class MacViKeyHintBar: NSView {
     /// stale — and re-measuring inside `layout()` would ask a column that is currently sitting in a
     /// stretched slot how wide it wants to be, which is a different question.
     private let columnWidths: [ViKeyHintColumn: CGFloat]
-    private var rung: ViKeyHintLayout?
+    /// The rung the card last settled on, and the re-hang that follows a change — on the floor, since
+    /// neither the comparison nor the parenting is a framework question.
+    private let ladder = DecorationViKeyHintLadder()
 
     /// Every key chip the card advertises — the honesty surface, forwarded so a test and the snapshot
     /// rig keep ONE address for it across both renderers.
@@ -351,14 +334,8 @@ final class MacViKeyHintBar: NSView {
             top: Slate.Metric.space2, left: Slate.Metric.space3,
             bottom: Slate.Metric.space2, right: Slate.Metric.space3,
         )
-        slots.translatesAutoresizingMaskIntoConstraints = false
         addSubview(slots)
-        NSLayoutConstraint.activate([
-            slots.leadingAnchor.constraint(equalTo: leadingAnchor),
-            slots.trailingAnchor.constraint(equalTo: trailingAnchor),
-            slots.topAnchor.constraint(equalTo: topAnchor),
-            slots.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(slots.slateEdges(of: self))
 
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
@@ -383,40 +360,17 @@ final class MacViKeyHintBar: NSView {
 
     /// Ask the ladder what the proposal affords and re-hang the columns if the answer changed.
     ///
-    /// ⚠️ Measured against the width left INSIDE the card's own padding, not the proposal itself. The
-    /// padding is a fixed cost at both ends, and a ladder that spent the whole proposal would keep
-    /// three columns at a width that fits three columns and nothing else — which is a card whose
-    /// last column is cut off by its own edge inset.
+    /// The measurement, the change gate and the re-parenting all live on the floor; what is left here
+    /// is the one member the two shells spell apart — a vertical strip is `orientation` on AppKit.
     private func applyLadder() {
-        let inner = Double(availableWidth) - Double(Slate.Metric.space3) * 2
-        apply(ViKeyHintPresentation.layout(
-            forWidth: inner, gap: Double(Self.gap),
+        guard let next = ladder.rung(
+            forWidth: Double(availableWidth), gap: Double(Self.gap),
             columnWidth: { [columnWidths] column in Double(columnWidths[column] ?? 0) },
-        ))
-    }
-
-    /// Hang the three columns in the slots the rung names.
-    ///
-    /// The COLUMN VIEWS are never rebuilt — only re-parented. A rung change is a re-flow, not a
-    /// content change, and rebuilding would throw away the measured widths this whole ladder runs on.
-    private func apply(_ next: ViKeyHintLayout) {
-        guard next != rung else { return }
-        rung = next
-        for slot in slots.arrangedSubviews {
-            slots.removeArrangedSubview(slot)
-            slot.removeFromSuperview()
-        }
-        for group in ViKeyHintPresentation.groups(for: next) {
+        ) else { return }
+        ladder.rehang(next, in: slots, column: { [columns] in columns[$0] }) {
             let stack = NSStackView()
             stack.orientation = .vertical
-            stack.alignment = .leading
-            stack.spacing = Self.stackSpacing
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            for column in group {
-                guard let view = columns[column] else { continue }
-                stack.addArrangedSubview(view)
-            }
-            slots.addArrangedSubview(stack)
+            return stack
         }
     }
 }
@@ -464,12 +418,7 @@ private final class MacViKeyHintColumnView: NSView {
         for hint in column.hints { stack.addArrangedSubview(Self.row(hint)) }
 
         addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(stack.slateEdges(of: self))
     }
 
     @available(*, unavailable)

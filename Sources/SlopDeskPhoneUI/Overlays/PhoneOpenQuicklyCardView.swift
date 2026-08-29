@@ -194,15 +194,9 @@ final class PhoneOpenQuicklyCardView: UIView {
         // two-result query is a small card rather than a tall one with empty paper under it.
         tableHeight.isActive = true
 
+        NSLayoutConstraint.activate(column.slateEdges(of: self))
+        NSLayoutConstraint.activate(tray.slateEdges(of: ring))
         NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-            tray.topAnchor.constraint(equalTo: ring.topAnchor),
-            tray.bottomAnchor.constraint(equalTo: ring.bottomAnchor),
-            tray.leadingAnchor.constraint(equalTo: ring.leadingAnchor),
-            tray.trailingAnchor.constraint(equalTo: ring.trailingAnchor),
             // The ring takes its height from the pills and never stretches — a scroll view has no
             // intrinsic size of its own, so this is what stops it eating the list's space.
             tray.heightAnchor.constraint(equalTo: ring.heightAnchor),
@@ -431,12 +425,7 @@ final class PhoneOpenQuicklyCardView: UIView {
         )
         actions = page
         addSubview(page)
-        NSLayoutConstraint.activate([
-            page.topAnchor.constraint(equalTo: topAnchor),
-            page.bottomAnchor.constraint(equalTo: bottomAnchor),
-            page.leadingAnchor.constraint(equalTo: leadingAnchor),
-            page.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(page.slateEdges(of: self))
     }
 
     private func closeActions() {
@@ -1090,14 +1079,8 @@ final class PhoneOpenQuicklyActionsView: UIView {
         column.axis = .vertical
         column.alignment = .fill
         column.spacing = 0
-        column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
-        NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(column.slateEdges(of: self))
         rank("")
     }
 

@@ -453,8 +453,7 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
                     await connection.connectIfSavedTarget()
                     return
                 }
-                let env = WorkspaceStore.automationInputs()
-                if env["SLOPDESK_AUTOCONNECT_HOST"]?.isEmpty == false {
+                if ClientComposition.hasTerminalAutoconnectHost() {
                     await connection.connect()
                 } else {
                     // Video-only automation (the video host serves UDP only, no TCP listener): mark

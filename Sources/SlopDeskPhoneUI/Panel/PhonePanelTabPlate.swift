@@ -275,17 +275,17 @@ private final class PhoneAndroidMark: UIView, PhonePanelMark {
 
     override func draw(_: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
-        context.setFillColor(ink.cgColor)
-        context.setStrokeColor(ink.cgColor)
-        // The antennae go down FIRST and as their own path: the head is filled even-odd, and an antenna
-        // crossing the dome's rim inside that one path would subtract a notch from it exactly where the
-        // two meet.
-        context.setLineWidth(AndroidMarkPath.antennaLineWidth(in: bounds))
-        context.setLineCap(.round)
-        context.addPath(AndroidMarkPath.antennae(in: bounds))
-        context.strokePath()
-        context.addPath(AndroidMarkPath.head(in: bounds))
-        context.fillPath(using: .evenOdd)
+        // The GEOMETRY is asked here — `AndroidMarkPath`'s angles are stated in the y-down space this
+        // view already draws in, which is the whole of what the Mac's twin needs a flip for — and the
+        // LADDER that paints it is the floor's (`SlateVectorDraw.androidMark`), which both shells had
+        // transcribed call for call.
+        SlateVectorDraw.androidMark(
+            head: AndroidMarkPath.head(in: bounds),
+            antennae: AndroidMarkPath.antennae(in: bounds),
+            lineWidth: AndroidMarkPath.antennaLineWidth(in: bounds),
+            ink: ink.cgColor,
+            into: context,
+        )
     }
 }
 #endif

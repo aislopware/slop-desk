@@ -60,6 +60,21 @@ public struct CommandNavigatorHint: Sendable, Hashable {
     }
 }
 
+// MARK: - The command line, cut
+
+/// A navigator row's command line and the runs the query matched in it.
+///
+/// The whole cut in ONE value because the two are decided together: the placeholder dash is what the
+/// runs were cut FROM, and a renderer holding one without the other could mark a line it is not
+/// drawing.
+public struct CommandNavigatorLineCut: Sendable {
+    /// The text the row draws — the block's command, or the em-dash placeholder for a block that has
+    /// not reported one yet.
+    public let line: String
+    /// ``line`` split into alternating unmatched / matched stretches. Never empty.
+    public let runs: [FuzzyRun]
+}
+
 // MARK: - The words
 
 /// Every word the Command Navigator card says.
@@ -80,6 +95,29 @@ public enum CommandNavigatorPresentation {
             Int(slopdesk_ws_command_navigator_empty_line(filter.navigatorCode, hasBlocks, out, cap))
         }
         return wsRuns(blob, count: 1)[0]
+    }
+
+    /// `1.4s · 4m ago` — the duration the block reports and the age the Outline words, joined by the
+    /// app's one separator. Either half may be missing; both missing is an empty line.
+    public static func metaLine(_ block: CommandBlock, firstSeen: Date?) -> String {
+        var parts: [String] = []
+        if let duration = block.durationLabel { parts.append(duration) }
+        if let firstSeen {
+            parts.append(OutlinePresentation.relativeTime(from: firstSeen, now: Date()))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The command line as it is drawn, cut at the query's matched runs.
+    ///
+    /// WHERE the cuts fall is ``FuzzyMatcher/runs(of:ranges:)``'s and the em-dash placeholder is this
+    /// card's; only the INK is a renderer's. A still-forming block has no command text yet and shows
+    /// the dash — no real query can match it, so it appears only in the zero-query list.
+    public static func markedCommand(_ text: String, query: String) -> CommandNavigatorLineCut {
+        let line = text.isEmpty ? "—" : text
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let ranges = trimmed.isEmpty ? [] : FuzzyMatcher.score(trimmed, line)?.ranges ?? []
+        return CommandNavigatorLineCut(line: line, runs: FuzzyMatcher.runs(of: line, ranges: ranges))
     }
 
     /// The selected row's "run this again in the pane" affordance, and the chord that does it

@@ -1,6 +1,6 @@
 // MacTerminalFindBar — the in-pane ⌘F find overlay, in AppKit (docs/56 wave R, batch R5).
 //
-// The Mac half of ``TerminalFindBar``. It is a THIN renderer over two shared values, exactly as its
+// The Mac half of ``TerminalFindBarView``. It is a THIN renderer over two shared values, exactly as its
 // SwiftUI twin is: the driver ``TerminalFindBarModel`` (`SlopDeskClientCore`), which owns every match
 // / nav / toggle mutation, and ``FindBarPresentation`` / ``FindBarMetrics``, which own every word and
 // every measurement. This file is the DRAWING and nothing else — the model already left for
@@ -184,15 +184,10 @@ final class MacTerminalFindBar: NSView, NSTextFieldDelegate {
         field.textColor = Slate.Native.Text.primary
         field.placeholderString = FindBarPresentation.placeholder
         field.delegate = self
-        field.translatesAutoresizingMaskIntoConstraints = false
         well.addSubview(field)
-        NSLayoutConstraint.activate([
-            field.widthAnchor.constraint(equalToConstant: CGFloat(rung.fieldWidth)),
-            field.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: Slate.Metric.space2),
-            field.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -Slate.Metric.space2),
-            field.topAnchor.constraint(equalTo: well.topAnchor, constant: Slate.Metric.space1),
-            field.bottomAnchor.constraint(equalTo: well.bottomAnchor, constant: -Slate.Metric.space1),
-        ])
+        NSLayoutConstraint.activate(DecorationFindWell.constraints(
+            in: well, field: field, width: CGFloat(rung.fieldWidth),
+        ))
     }
 
     private func buildRow() {
@@ -220,7 +215,10 @@ final class MacTerminalFindBar: NSView, NSTextFieldDelegate {
         tray.spacing = Slate.Metric.space1
         for mode in FindModePill.inPaneFindBar {
             guard let pill = pills[mode] else { continue }
-            pill.onToggle = { [weak self] in self?.toggle(mode) }
+            pill.onToggle = { [weak self] in
+                guard let self else { return }
+                DecorationFindBarRead.toggle(mode, in: model)
+            }
             tray.addArrangedSubview(pill)
         }
 
@@ -242,17 +240,11 @@ final class MacTerminalFindBar: NSView, NSTextFieldDelegate {
             top: Slate.Metric.space1, left: Slate.Metric.space2,
             bottom: Slate.Metric.space1, right: Slate.Metric.space2,
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
         for part in [well, tray, counterBox, previous, next, allTabs, dismiss] as [NSView] {
             row.addArrangedSubview(part)
         }
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
     }
 
     /// One trailing plate, standing on the bar's rung. Static so the initialiser can build the four
@@ -327,42 +319,28 @@ final class MacTerminalFindBar: NSView, NSTextFieldDelegate {
 
     // MARK: The live read
 
-    /// One tracked read of everything the bar draws. The model is `@Observable`, and every mutation it
-    /// makes — a keystroke's recount, a toggle, a ⌘G step, the re-open bump — lands in one of these.
+    /// One tracked read of everything the bar draws — ``DecorationFindBarRead/reading(_:)``, on the
+    /// floor because the DEPENDENCY SET is what must not drift between the two bars.
     private func follow() {
         ObservationFollow.arm(self) { bar in
-            let controller = bar.model.controller
-            return (
-                query: controller.query,
-                label: FindBarPresentation.counterText(
-                    position: controller.positionLabel, query: controller.query,
-                ),
-                // `isOn` reads three observable flags, so it belongs to the DEPENDENCY set and not to
-                // the work — hence the dictionary is built here rather than in `apply`.
-                lit: Dictionary(
-                    uniqueKeysWithValues: FindModePill.inPaneFindBar.map { ($0, bar.isOn($0)) },
-                ),
-                token: bar.model.focusToken,
-            )
+            DecorationFindBarRead.reading(bar.model)
         } apply: { bar, reading in
-            bar.apply(
-                query: reading.query, label: reading.label, lit: reading.lit, token: reading.token,
-            )
+            bar.apply(reading)
         }
     }
 
-    private func apply(query: String, label: String?, lit: [FindModePill: Bool], token: Int) {
+    private func apply(_ reading: DecorationFindBarReading) {
         // Written back only when it actually DIFFERS. `stringValue` on a field being edited rebuilds
         // the field editor's contents, which drops the insertion point to the end and discards any
         // marked (IME) text — and every keystroke round-trips through here, so an unguarded write
         // would make the bar unusable in any language composed rather than typed. The guard is false
         // exactly when something OTHER than this field moved the query: a close-and-reopen, or a
         // future seed.
-        if field.stringValue != query { field.stringValue = query }
-        for (mode, pill) in pills { pill.setOn(lit[mode] ?? false) }
-        showCounter(label)
-        if token != focusToken {
-            focusToken = token
+        if field.stringValue != reading.query { field.stringValue = reading.query }
+        for (mode, pill) in pills { pill.setOn(reading.lit[mode] ?? false) }
+        showCounter(reading.label)
+        if reading.token != focusToken {
+            focusToken = reading.token
             focusQuery()
         }
     }
@@ -384,28 +362,6 @@ final class MacTerminalFindBar: NSView, NSTextFieldDelegate {
         fade.timingFunction = Slate.Motion.smallFade.timingFunction
         counter.layer?.add(fade, forKey: "counter")
         counter.stringValue = label
-    }
-
-    // MARK: The mode chips
-
-    /// Whether `mode`'s chip is lit — the controller's own flag, never a mirror.
-    private func isOn(_ mode: FindModePill) -> Bool {
-        switch mode {
-        case .caseSensitive: model.controller.caseSensitive
-        case .wholeWord: model.controller.wholeWord
-        case .regex: model.controller.isRegex
-        }
-    }
-
-    /// Flip `mode` through the model, which refreshes the mirror and re-arms the highlight.
-    private func toggle(_ mode: FindModePill) {
-        switch mode {
-        case .caseSensitive: model.toggleCaseSensitive()
-        case .wholeWord: model.toggleWholeWord()
-        case .regex: model.toggleRegex()
-        }
-        // The pill's own lit state is redrawn by `follow()`, off the controller — a chip that painted
-        // itself on the click would be a mirror of the flag rather than a reading of it.
     }
 
     // MARK: The keyboard

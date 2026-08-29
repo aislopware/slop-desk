@@ -38,9 +38,14 @@
 //     seeded colour customizations paint it in the ground tone.
 //
 // THE GROUND TONE IS NOT MINTED HERE, and that is what let this file descend. It used to be — one
-// `underPageBackgroundColor` from `Slate.theme` at creation — and it could not come down with the
-// rest, because `SlopDeskSlate` DEPENDS on this target and an import back up is a cycle. It did not
-// need to: both mounts already re-apply that colour on the very update that creates the page, and
+// `underPageBackgroundColor` from `Slate.theme` at creation. ⚠️ THE REASON GIVEN FOR THAT BEING A
+// BLOCKER WAS FALSE: this header said "`SlopDeskSlate` DEPENDS on this target and an import back up
+// is a cycle", and it is the reverse — `Package.swift:475` puts `SlopDeskSlate` inside
+// `SlopDeskClientCore`'s dependencies, `Package.swift:537-549` shows Slate depending on nothing here,
+// and `Pane/GuiLeafChromeLayout.swift` reads `Slate.theme`'s neighbour `Slate.Metric` from this
+// target today. So the descent was never gated on a cycle. What it WAS gated on is the real
+// argument and stands on its own: both mounts already re-apply that colour on the very update that
+// creates the page, and
 // they must, because a pooled page outlives a theme switch and a creation-time snapshot would flash
 // the old tone on a scroll bounce. One writer, in the target that has the tokens.
 

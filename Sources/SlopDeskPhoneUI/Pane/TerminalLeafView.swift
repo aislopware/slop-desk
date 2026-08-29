@@ -47,7 +47,8 @@
 //   • THE COMMAND NAVIGATOR CARD (⌃⌘O). ``TerminalPaneWiring`` toggles ``CommandNavigatorChrome/isVisible``
 //     for this pane — that is what `onRequestBlockNavigator` is bound to — and the flag went UNREAD here
 //     while the chord took ⌃⌘O away from the PTY to flip a `Bool` nobody drew. It is read inside
-//     ``follow()``'s arm now and mounted by ``applyNavigator(_:)`` as ``PhoneCommandNavigatorView``,
+//     ``TerminalLeafView/followTerminalState()``'s arm now and mounted by ``applyNavigator(_:)`` as
+//     ``PhoneCommandNavigatorView``,
 //     covering the whole surface area (the column and the hint slot included) because it is added after
 //     them. Its Mac twin is ``SlopDeskMacUI/MacCommandNavigatorView`` and the divergences are written on
 //     the card, not here.
@@ -77,30 +78,10 @@ import UIKit
 final class TerminalLeafView: UIView {
     // MARK: What the leaf was handed
 
-    /// The live workspace store — the dial gate, the per-tab sync-input arming, the resolved grid, and
-    /// what the wiring's host-path actions resolve a project key against.
-    private let store: WorkspaceStore
-    /// The scene's overlay coordinator, for the ⇧⌘F escalation and the host-action failure toast. `nil`
-    /// outside the app scene (tests) ⇒ the failure is swallowed, never a crash.
-    private let overlay: OverlayCoordinator?
-    /// The shared chrome model, used ONLY to reveal the right code panel when an open-in-code-panel
-    /// action lands. `nil` ⇒ the file still opens host-side, the panel just is not auto-revealed.
-    private let chrome: WorkspaceChromeState?
-
-    /// This pane's wiring — the find bar, the Secure Keyboard Entry actuator and the Command Navigator
-    /// chrome, plus every callback they are driven by. Held as a stored property, exactly as the Mac
-    /// holds it; neither half owns a decision in it.
-    private let wiring: TerminalPaneWiring
-
-    /// The pane's session handle, or `nil` for a not-yet-live / non-terminal pane. Settable because a
-    /// session ARRIVES under a stable pane id.
-    private var live: LivePaneSession?
-    /// The host-reported working directory (`pane/cwd`, live-set from OSC 7), mirrored onto the model so
-    /// the renderer's link hit-test can resolve a RELATIVE detected path to its absolute form.
-    private var cwd: String?
-    /// The pane's WORKSPACE focus. Drives the renderer's first responder — only the focused pane types —
-    /// and never render-liveness, so an unfocused split sibling keeps repainting.
-    private var isFocused: Bool
+    /// The leaf's whole wiring life — the seven handles it was built with, the `isWired` latch, the
+    /// attach/detach pair, the three pushes and the two trigger keys. Shared with the Mac's leaf; this
+    /// file implements ``TerminalLeafHosting`` for it and keeps no decision of its own.
+    private let life: TerminalLeafLifecycle
 
     // MARK: The tree
 
@@ -165,14 +146,6 @@ final class TerminalLeafView: UIView {
     /// rather than re-arm from it. Without this the arms DOUBLE on every swap and quadruple on the next,
     /// which reads as the pane getting slower the longer it is open and has no crash to find it by.
     private var generation = 0
-    /// `controls.auto-secure-input`, as last ACTED on. Kept because the lock is reconciled on the EDGE,
-    /// not on the reading: a config edit to an unrelated key re-runs ``follow()`` and must not re-engage
-    /// a lock the user turned off. Inert on this platform (the actuator's phone half is a no-op seam),
-    /// and kept anyway so the two shells drive the controller through the same one door.
-    private var autoSecureInput = SettingsKey.autoSecureInputEnabled
-    /// `controls.secure-input-indicator` — the chip gate. No edge to speak of; re-reading the pill
-    /// conditions is the whole of applying it.
-    private var secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
 
     /// The grid the HOST resolved for this pane, and the line that names who resolved it. Both are store
     /// reads taken inside the tracked arm, so a reflow driven by another client re-letterboxes an idle
@@ -180,54 +153,34 @@ final class TerminalLeafView: UIView {
     private var grid: (cols: Int, rows: Int)?
     private var readout: String?
 
-    /// The two `.task(id:)` keys, as last acted on. A task fires when its key MOVES, which is the whole
-    /// of ``TerminalLeafPolicy``'s argument: a key that is already the pane's id while the gate is shut is
-    /// a task that ran once, too early, and never again.
-    private var dialKey: PaneID?
-    private var autotypeKey: PaneID?
-    private var dialTask: Task<Void, Never>?
-    private var autotypeTask: Task<Void, Never>?
-
-    /// Whether the wiring is installed. It is idempotent, but re-installing it on every window change
-    /// would also re-arm the observation for no reason.
-    private var isWired = false
-
     /// Whether this leaf is behind another tab — see ``setOccluded(_:)``.
     private var occluded = false
 
     // MARK: - Life
 
-    init(
-        live: LivePaneSession?,
-        isFocused: Bool,
-        cwd: String?,
-        store: WorkspaceStore,
-        overlay: OverlayCoordinator?,
-        chrome: WorkspaceChromeState?,
-        wiring: TerminalPaneWiring = TerminalPaneWiring(),
-    ) {
-        self.live = live
-        self.isFocused = isFocused
-        self.cwd = cwd
-        self.store = store
-        self.overlay = overlay
-        self.chrome = chrome
-        self.wiring = wiring
+    init(_ dependencies: TerminalLeafDependencies) {
+        life = TerminalLeafLifecycle(dependencies)
         super.init(frame: .zero)
-        build()
-        mountSurface()
-        attach()
+        life.start(host: self)
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    private func build() {
-        translatesAutoresizingMaskIntoConstraints = false
+    func buildLeafTree() {
         // The pane's paper. A dynamic `UIColor` on the VIEW re-resolves itself on a theme flip; only a
         // `CGColor` hung on a layer is flat, which is what the Mac's `updateLayer` + appearance override
         // is spent on and what does not survive the crossing.
         backgroundColor = Slate.Native.Surface.terminal
+        translatesAutoresizingMaskIntoConstraints = false
+        // The pane's paper MARGIN, as UIKit spells it: the leaf's own layout margins, with the safe
+        // area kept out of them so a notch never widens the rim. `NSView` has no margins guide at all,
+        // which is why the Mac's twin writes the same inset as four constants.
+        insetsLayoutMarginsFromSafeArea = false
+        directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: Slate.Metric.space2, leading: Slate.Metric.space2,
+            bottom: Slate.Metric.space2, trailing: Slate.Metric.space2,
+        )
 
         surfaceArea.translatesAutoresizingMaskIntoConstraints = false
         addSubview(surfaceArea)
@@ -251,16 +204,10 @@ final class TerminalLeafView: UIView {
         readoutCaption.isHidden = true
 
         NSLayoutConstraint.activate([
-            surfaceArea.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space2),
-            surfaceArea.leadingAnchor.constraint(
-                equalTo: leadingAnchor, constant: Slate.Metric.space2,
-            ),
-            trailingAnchor.constraint(
-                equalTo: surfaceArea.trailingAnchor, constant: Slate.Metric.space2,
-            ),
-            bottomAnchor.constraint(
-                equalTo: surfaceArea.bottomAnchor, constant: Slate.Metric.space2,
-            ),
+            surfaceArea.topAnchor.constraint(equalTo: layoutMarginsGuide.topAnchor),
+            surfaceArea.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
+            surfaceArea.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
+            surfaceArea.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor),
             chipColumn.topAnchor.constraint(
                 equalTo: surfaceArea.topAnchor, constant: Slate.Metric.space2,
             ),
@@ -286,7 +233,8 @@ final class TerminalLeafView: UIView {
     /// every reason a pane moves (a divider commit, a rotation, the keyboard, a zoom, a tab switch).
     ///
     /// It READS the model and sets frames, and writes nothing back (docs/62 hazard 7): the grid and the
-    /// readout are pulled from ``follow()``'s tracked arm, and only the placement arithmetic runs here.
+    /// readout are pulled from ``followTerminalState()``'s tracked arm, and only the placement arithmetic
+    /// runs here.
     override func layoutSubviews() {
         super.layoutSubviews()
         place()
@@ -308,47 +256,26 @@ final class TerminalLeafView: UIView {
     /// only by ``teardown()``, which the mounter calls when the pane is closed for good.
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil, superview == nil {
-            detach()
-        } else if window != nil {
-            attach()
-        }
+        life.viewTreeChanged(hasWindow: window != nil, hasSuperview: superview != nil)
     }
 
-    private func attach() {
-        guard !isWired else { return }
-        isWired = true
-        wiring.wire(
-            live: live, store: store, overlay: overlay, chrome: chrome,
-            autoSecureInput: autoSecureInput,
-        )
-        applyCwd()
-        follow()
-    }
-
-    private func detach() {
-        guard isWired else { return }
-        isWired = false
-        // Supersede every armed observation FIRST: a callback that lands after the wiring is cleared
-        // would re-arm against a model this leaf no longer drives.
+    /// Supersedes this leaf's tracked read. ``TerminalLeafLifecycle/detach()``'s first step, and the
+    /// generation counter is the whole of it: `withObservationTracking` has no cancel.
+    func unfollowTerminalState() {
         generation &+= 1
-        dialTask?.cancel()
-        dialTask = nil
-        autotypeTask?.cancel()
-        autotypeTask = nil
-        dialKey = nil
-        autotypeKey = nil
-        // The card carries an observation arm of its own against this pane's block model, and an arm
-        // cannot be cancelled — so it is dropped HERE rather than left to fade off a tree the leaf has
-        // stopped driving.
+    }
+
+    /// The card carries an observation arm of its own against this pane's block model, and an arm
+    /// cannot be cancelled — so it is dropped HERE rather than left to fade off a tree the leaf has
+    /// stopped driving.
+    func dropPaneModals() {
         dropNavigator()
-        wiring.clear(live: live)
     }
 
     /// The pane is closed for good: drop the wiring, the responder AND the libghostty surface. See
-    /// ``didMoveToWindow()`` for why the last is not automatic.
+    /// ``TerminalLeafLifecycle`` for why the last is not automatic.
     func teardown() {
-        detach()
+        life.detach()
         // The responder goes with the pane, and it goes EXPLICITLY: it holds first responder and a
         // registration in the focus coordinator, neither of which a `deinit` can be relied on to reach
         // in time (docs/62 hazard 6).
@@ -376,26 +303,23 @@ final class TerminalLeafView: UIView {
 
     // MARK: - What the mounter pushes
 
-    /// A session arrived, or was swapped under a stable pane id. Re-wires and rebuilds the pixels if the
-    /// model changed.
-    func setLive(_ live: LivePaneSession?) {
-        guard live !== self.live else { return }
-        let hadModel = self.live?.terminalModel
-        if isWired { wiring.clear(live: self.live) }
-        self.live = live
-        if live?.terminalModel !== hadModel {
-            surfaceHost?.detachSurface()
-            mountSurface()
-        }
+    /// The model under this pane changed: drop the old pixels and build new ones, and drop the card,
+    /// which holds the OLD model's block store and cannot be left standing over a swapped session.
+    func mountTerminalSurface() {
+        surfaceHost?.detachSurface()
+        mountSurface()
+        dropNavigator()
+    }
+
+    /// The session HANDLE moved, model or no model — so the key responder is re-pointed at it. This is
+    /// the callback the Mac's leaf has nothing to say for: over there the renderer IS the responder.
+    func terminalSessionChanged() {
         applyInputHost()
-        if isWired {
-            wiring.wire(
-                live: live, store: store, overlay: overlay, chrome: chrome,
-                autoSecureInput: autoSecureInput,
-            )
-            applyCwd()
-            follow()
-        }
+    }
+
+    /// A session arrived, or was swapped under a stable pane id.
+    func setLive(_ live: LivePaneSession?) {
+        life.setLive(live)
     }
 
     /// The pane's workspace focus moved. There is no render pass to re-run for this, so the push is
@@ -404,28 +328,18 @@ final class TerminalLeafView: UIView {
     /// The RESPONDER is not moved from here: which pane holds first responder is
     /// ``PaneFocusCoordinator``'s, driven off the store's active pane, and a second mover would race it.
     func setFocused(_ isFocused: Bool) {
-        guard isFocused != self.isFocused else { return }
-        self.isFocused = isFocused
+        guard life.setFocused(isFocused) else { return }
         surfaceHost?.setPaneFocused(isFocused)
-        // ⚠️ AND THE CHROME IS RECONCILED, because one chip is focus-gated. `isFocused` is a PUSHED
-        // property, not an observable one, so nothing wakes ``follow()``'s arm for it — and the
-        // send-a-file plate would then appear on whichever pane happened to be focused when the leaf
-        // last drew and stay there. Re-running the arm is the supersede pattern the method already
-        // documents, not a second one.
-        if isWired { follow() }
+        // ⚠️ AND THE CHROME IS RECONCILED, because one chip is focus-gated — the send-a-file plate has
+        // no Mac twin, and so neither has this line. `isFocused` is a PUSHED property, not an
+        // observable one, so nothing wakes the arm for it, and the plate would then appear on whichever
+        // pane happened to be focused when the leaf last drew and stay there.
+        if life.isWired { followTerminalState() }
     }
 
-    /// The host reported a new cwd (OSC 7). It changes independently of the session id, which is why it
-    /// gets its own push rather than being folded into the wiring's.
+    /// The host reported a new cwd (OSC 7).
     func setCwd(_ cwd: String?) {
-        guard cwd != self.cwd else { return }
-        self.cwd = cwd
-        applyCwd()
-        // The link overlay resolves relative paths against the MODEL, not a copy, so nothing else moves.
-    }
-
-    private func applyCwd() {
-        live?.terminalModel?.linkCwd = cwd
+        life.setCwd(cwd)
     }
 
     // MARK: - Occlusion (docs/56 risk 3, and the half of it that dissolves here)
@@ -477,10 +391,10 @@ final class TerminalLeafView: UIView {
         hintBar = nil
 
         applyInputHost()
-        guard let model = live?.terminalModel else { return }
+        guard let model = life.live?.terminalModel else { return }
 
         let pixels: UIView
-        if let host = TerminalRendererFactory.make(model: model, isFocused: isFocused) {
+        if let host = TerminalRendererFactory.make(model: model, isFocused: life.isFocused) {
             surfaceHost = host
             pixels = host.surfaceView
         } else {
@@ -493,7 +407,7 @@ final class TerminalLeafView: UIView {
         // point 3. Cell metrics answer with origin 0,0 at the surface's top-left, which is the stage's
         // origin exactly, so the rects map straight on however the stage is scaled.
         for decoration in [
-            LinkHighlightOverlayView(model: model, cwd: cwd) as UIView,
+            LinkHighlightOverlayView(model: model, cwd: life.cwd) as UIView,
             PromptJumpFlashOverlayView(model: model),
             ViCursorOverlayView(model: model),
             HintModeOverlayView(model: model),
@@ -511,7 +425,7 @@ final class TerminalLeafView: UIView {
     /// ``surfaceArea`` and not to the stage because it is not a decoration — it is not in the surface's
     /// coordinate space and must not be scaled with it.
     private func applyInputHost() {
-        guard let live else {
+        guard let live = life.live else {
             inputHost?.detach()
             inputHost?.removeFromSuperview()
             inputHost = nil
@@ -524,7 +438,7 @@ final class TerminalLeafView: UIView {
             inputHost = made
             return made
         }()
-        host.attach(to: live, store: store, focusCoordinator: store.focusCoordinator)
+        host.attach(to: live, store: life.store, focusCoordinator: life.store.focusCoordinator)
     }
 
     // MARK: - The letterbox (docs/45 §8.3)
@@ -570,7 +484,7 @@ final class TerminalLeafView: UIView {
     /// observable state, and a placeholder / headless / pre-layout surface has none, which is exactly
     /// when the placement degrades.
     private func cellSize() -> CGSize? {
-        guard let snapshot = live?.terminalModel?.surface as? TerminalViewportSnapshotting else {
+        guard let snapshot = life.live?.terminalModel?.surface as? TerminalViewportSnapshotting else {
             return nil
         }
         let metrics = snapshot.cellMetrics()
@@ -586,46 +500,31 @@ final class TerminalLeafView: UIView {
     /// read below is a property access on an object this leaf already holds.
     ///
     /// The generation check is the file's other observation rule: this method is called from the callback
-    /// AND from ``attach()`` and ``setLive(_:)``, and an arm cannot be cancelled. A superseded arm must
-    /// therefore drop its callback instead of re-arming from it.
-    private func follow() {
+    /// AND from the lifecycle's attach and session pushes, and an arm cannot be cancelled. A superseded
+    /// arm must therefore drop its callback instead of re-arming from it — which is why this half spells
+    /// `withObservationTracking` by hand where the Mac's twin arms an ``ObservationFollow``.
+    func followTerminalState() {
         generation &+= 1
         let generation = generation
 
-        var conditions = PaneStatusConditions()
-        var hintsToggled = false
-        var findVisible = false
-        var navigatorVisible = false
-        var dial: PaneID?
-        var autotype: PaneID?
-        var auto = autoSecureInput
+        var reading = LeafReading()
 
         withObservationTracking {
-            // The config-file edge. `AppConfig` is a plain locked global, so the two settings below are
-            // not observable on their own — the REVISION is, and reading it HERE (never hoisted out of
-            // the block, which silently unsubscribes the view) is what makes a saved config file
-            // reconcile every open pane. See ``ConfigRevision``.
-            _ = ConfigRevision.shared.generation
-            auto = SettingsKey.autoSecureInputEnabled
-            secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
-            conditions = pillConditions()
-            hintsToggled = live?.terminalModel?.showViKeyHints ?? false
-            findVisible = wiring.findBar.visible && live?.terminalModel != nil
+            reading.auto = life.readAutoSecureInput()
+            reading.conditions = life.pillConditions()
+            reading.hintsToggled = life.live?.terminalModel?.showViKeyHints ?? false
+            reading.findVisible = life.wiring.findBar.visible && life.live?.terminalModel != nil
             // ⌃⌘O. The model guard is the card's own precondition — it reads a live block store — and
             // it is the same pairing the find bar's read above uses.
-            navigatorVisible = wiring.navigatorChrome.isVisible && live?.terminalModel != nil
-            // THE LETTERBOX'S TWO STORE READS, INSIDE THE ARM. The resolved grid is the host's answer for
-            // this pane and moves when ANOTHER client joins or leaves the fold; read outside the arm this
-            // pane would keep the grid it happened to have at mount and never re-place, on a device that
-            // cannot cause a reflow itself and so has nothing else to poke it.
-            grid = live.flatMap { store.paneResolvedGrid(for: $0.id) }
-            readout = live.flatMap { store.paneGridReadout(for: $0.id) }
-            dial = TerminalLeafPolicy.dialTaskKey(pane: live?.id, mayDial: store.panesMayDial)
-            autotype = TerminalLeafPolicy.autotypeTaskKey(
-                pane: live?.id,
-                isTarget: live?.isAutotypeTarget ?? false,
-                status: live?.connection?.status,
-            )
+            reading.navigatorVisible = life.wiring.navigatorChrome.isVisible
+                && life.live?.terminalModel != nil
+            // THE LETTERBOX'S TWO STORE READS, INSIDE THE ARM, and the phone's alone. The resolved grid
+            // is the host's answer for this pane and moves when ANOTHER client joins or leaves the fold;
+            // read outside the arm this pane would keep the grid it happened to have at mount and never
+            // re-place, on a device that cannot cause a reflow itself and so has nothing else to poke it.
+            grid = life.live.flatMap { life.store.paneResolvedGrid(for: $0.id) }
+            readout = life.live.flatMap { life.store.paneGridReadout(for: $0.id) }
+            reading.keys = life.readTaskKeys()
         } onChange: { [weak self] in
             // The hop is required, not stylistic: `onChange` runs INSIDE the mutation, so re-arming from
             // it would read half-written state. `assumeIsolated` is the honest spelling of what the main
@@ -633,41 +532,22 @@ final class TerminalLeafView: UIView {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, generation == self.generation else { return }
-                    self.follow()
+                    self.followTerminalState()
                 }
             }
         }
 
-        // The lock is reconciled only on the AUTO edge: the wiring re-syncs on a pane swap, so without
-        // this an engaged lock would linger past the user turning `controls.auto-secure-input` off.
-        // Inline rather than a callback, because this method IS the observation callback — a hop back
-        // through it would recurse.
-        if auto != autoSecureInput {
-            autoSecureInput = auto
-            wiring.reconcileSecureInput(live: live, autoSecureInput: auto)
-            conditions = pillConditions()
-        }
+        var conditions = reading.conditions
+        // Re-asked OUTSIDE the tracking block on purpose: this is the post-reconcile reading, and the
+        // dependency it would register was already registered by the one above.
+        if life.reconcileSecureInput(auto: reading.auto) { conditions = life.pillConditions() }
         place()
-        applyChrome(conditions: conditions, hintsToggled: hintsToggled, findVisible: findVisible)
-        applyNavigator(navigatorVisible)
-        applyTriggers(dial: dial, autotype: autotype)
-    }
-
-    /// Everything the pill gates read, taken once per pass.
-    ///
-    /// Every field is an OBSERVABLE mirror — never the `@ObservationIgnored` `isReadOnly` / `isCopyMode`
-    /// the renderer's key path reads — so reading them HERE is what makes the chips light and clear
-    /// reactively. A not-yet-live pane reads as all-false, which shows no chip.
-    private func pillConditions() -> PaneStatusConditions {
-        guard let model = live?.terminalModel else { return PaneStatusConditions() }
-        return PaneStatusConditions(
-            readOnly: model.readOnlyBadgeActive,
-            copyMode: model.copyModeBadgeActive,
-            hintMode: model.hintMode != nil,
-            secureInput: model.secureInputActive,
-            secureInputIndicator: secureInputIndicator,
-            syncInput: live.map { store.syncInputArmed(for: $0.id) } ?? false,
+        applyChrome(
+            conditions: conditions, hintsToggled: reading.hintsToggled,
+            findVisible: reading.findVisible,
         )
+        applyNavigator(reading.navigatorVisible)
+        life.applyTaskKeys(reading.keys)
     }
 
     // MARK: - The chrome
@@ -697,8 +577,8 @@ final class TerminalLeafView: UIView {
         _ conditions: PaneStatusConditions, findVisible: Bool,
     ) -> [LeafChipSlot] {
         var slots: [LeafChipSlot] = []
-        if isFocused, live != nil { slots.append(.fileImport) }
-        if PaneStatusPillPresentation.showsViModePill(conditions), live?.terminalModel != nil {
+        if life.isFocused, life.live != nil { slots.append(.fileImport) }
+        if PaneStatusPillPresentation.showsViModePill(conditions), life.live?.terminalModel != nil {
             slots.append(.viMode)
         }
         slots.append(contentsOf: PaneStatusPillPresentation.visible(conditions).map { .pill($0) })
@@ -714,14 +594,9 @@ final class TerminalLeafView: UIView {
         for slot in desired where mounted[slot] == nil {
             guard let view = makeChip(slot) else { continue }
             mounted[slot] = view
-            // The insertion point is measured against what is STILL in the stack, which includes anything
-            // currently animating out. Counting only the kept predecessors would put a new chip above a
-            // leaving one and make the column jump.
-            let index = desired.prefix(while: { $0 != slot })
-                .compactMap { mounted[$0] }
-                .compactMap { chipColumn.arrangedSubviews.firstIndex(of: $0) }
-                .max()
-                .map { $0 + 1 } ?? 0
+            let index = LeafChipColumn.insertionIndex(of: slot, in: desired) { other in
+                mounted[other].flatMap { chipColumn.arrangedSubviews.firstIndex(of: $0) }
+            }
             LeafChipReveal.present(view, in: chipColumn, at: index, from: .top)
         }
     }
@@ -734,14 +609,14 @@ final class TerminalLeafView: UIView {
             // `live` would send the file to a pane that is gone. The decision itself is the policy's and
             // is not touched here.
             return PaneFileImportPlateView { [weak self] urls in
-                guard let self, let live else { return }
+                guard let self, let live = life.live else { return }
                 PaneFileImportPolicy.actuate(
-                    picked: urls, store: store, terminalModel: live.terminalModel,
-                    overlay: overlay, paneID: live.id,
+                    picked: urls, store: life.store, terminalModel: live.terminalModel,
+                    overlay: life.overlay, paneID: live.id,
                 )
             }
         case .viMode:
-            guard let model = live?.terminalModel else { return nil }
+            guard let model = life.live?.terminalModel else { return nil }
             // `exitCopyMode()` is the SINGLE exit seam — it also resets the count, the visual mode and the
             // hint bar, so the `×`, `Esc`/`q` and a programmatic dismiss converge on one state rather than
             // on three nearly-identical teardowns.
@@ -749,10 +624,10 @@ final class TerminalLeafView: UIView {
         case let .pill(pill):
             return PaneStatusPillView(pill: pill, onDismiss: { [weak self] in
                 guard let self else { return }
-                TerminalPaneWiring.dismiss(pill, live: live, store: store)
+                TerminalPaneWiring.dismiss(pill, live: life.live, store: life.store)
             })
         case .find:
-            return TerminalFindBarView(model: wiring.findBar)
+            return TerminalFindBarView(model: life.wiring.findBar)
         }
     }
 
@@ -786,9 +661,9 @@ final class TerminalLeafView: UIView {
     /// says why a tracking-area shield has nothing to guard against here.
     private func applyNavigator(_ wanted: Bool) {
         if wanted, navigator == nil {
-            guard let model = live?.terminalModel else { return }
-            let card = PhoneCommandNavigatorView(model: model, store: store) { [weak self] in
-                self?.wiring.navigatorChrome.isVisible = false
+            guard let model = life.live?.terminalModel else { return }
+            let card = PhoneCommandNavigatorView(model: model, store: life.store) { [weak self] in
+                self?.life.wiring.navigatorChrome.isVisible = false
             }
             navigator = card
             card.translatesAutoresizingMaskIntoConstraints = false
@@ -804,7 +679,7 @@ final class TerminalLeafView: UIView {
             navigator = nil
             card.teardown()
             card.retire()
-            store.reclaimKeyboardFocusInActivePane()
+            life.store.reclaimKeyboardFocusInActivePane()
         }
     }
 
@@ -816,36 +691,27 @@ final class TerminalLeafView: UIView {
         card.teardown()
         card.removeFromSuperview()
     }
+}
 
-    // MARK: - The two triggers
+// MARK: - The lifecycle's framework half
 
-    /// The UIKit reading of two `.task(id:)`s: a task runs when its key MOVES, and a key that went to
-    /// `nil` cancels rather than starts.
-    private func applyTriggers(dial: PaneID?, autotype: PaneID?) {
-        if dial != dialKey {
-            dialKey = dial
-            dialTask?.cancel()
-            dialTask = nil
-            if dial != nil {
-                let live = live
-                let store = store
-                dialTask = Task { @MainActor in
-                    await TerminalPaneWiring.connectIfNeeded(live: live, store: store)
-                }
-            }
-        }
-        if autotype != autotypeKey {
-            autotypeKey = autotype
-            autotypeTask?.cancel()
-            autotypeTask = nil
-            if autotype != nil {
-                let live = live
-                autotypeTask = Task { @MainActor in
-                    await TerminalPaneWiring.runAutotypeIfRequested(live: live)
-                }
-            }
-        }
-    }
+extension TerminalLeafView: TerminalLeafHosting {}
+
+// MARK: - One pass of the arm
+
+/// Everything ``TerminalLeafView/followTerminalState()`` reads in one tracked pass.
+///
+/// A struct with defaults rather than seven `var`s declared above the tracking block: the block is a
+/// closure, so every value it produces has to be hoisted out of it, and seven hoisted declarations was
+/// most of the method. The two LETTERBOX reads are not here — they are stored properties of the leaf
+/// because ``TerminalLeafView/layoutSubviews()`` reads them again on every pass the arm does not drive.
+private struct LeafReading {
+    var auto = false
+    var conditions = PaneStatusConditions()
+    var hintsToggled = false
+    var findVisible = false
+    var navigatorVisible = false
+    var keys = TerminalLeafTaskKeys(dial: nil, autotype: nil)
 }
 
 // MARK: - The stage

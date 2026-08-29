@@ -36,6 +36,8 @@
 
 import CoreGraphics
 import Foundation
+import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// The pane resize scrim's reducer. Inputs are edges; ``isVisible(isDragging:awaitingReflow:)`` is
 /// the answer.
@@ -95,5 +97,74 @@ package struct PaneResizeScrimState: Equatable, Sendable {
     /// it is the store's fact about the whole workspace, not this pane's.
     package func isVisible(isDragging: Bool, awaitingReflow: Bool) -> Bool {
         resizing || (isDragging && resizedDuringDrag) || awaitingReflow
+    }
+}
+
+/// The reducer above PLUS the wait, and the two store reads that answer its parameters.
+///
+/// The header says "the `.task(id: size)` timer stays in the view — a sleep is the framework's, not the
+/// reducer's". That was true of SwiftUI, where the timer WAS a view modifier. In an imperative shell it
+/// is a `Task` and a `CGSize` the container has to remember by hand, and both shells wrote the identical
+/// eleven lines: the `size != lastSize` gate, the arm-or-not branch that still applies on the way out,
+/// the cancel-then-respawn of the settle task, and the `[weak self]` re-apply after the sleep. None of
+/// that names a view type — the only framework line left in each shell is the one that fades the veil.
+///
+/// SHAPE: a `@MainActor` class, because it owns a `Task` and a mutable reducer that the layout pass
+/// mutates in place. It holds the store and the pane it is about for exactly the two questions
+/// ``isVeilShown()`` asks: "is a drag in flight anywhere" and "is THIS pane still awaiting its reflow".
+///
+/// ⚠️ THE THREE EDGE CASES THIS MUST KEEP, all pinned by ``PaneResizeScrimState``'s own tests:
+///   • MOUNT IS NOT A RESIZE — a transition to or from `.zero` arms nothing, so nothing flashes at
+///     launch. That is the reducer's; what is here is that the un-armed path STILL calls `apply`, or a
+///     pane that settles while the veil is up never uncovers.
+///   • A continuous drag RESTARTS the wait on every step, so the cancel must precede the respawn.
+///   • The veil outlives the wait when the host has not sent fresh pixels yet — hence `isVeilShown()`
+///     re-reading `awaitingResizeReflow` live rather than latching it at arm time.
+@MainActor
+package final class PaneResizeScrimDriver {
+    private var scrim = PaneResizeScrimState()
+    private var lastSize: CGSize = .zero
+    private var settleTask: Task<Void, Never>?
+    private let store: WorkspaceStore
+    private let paneID: PaneID
+
+    package init(store: WorkspaceStore, paneID: PaneID) {
+        self.store = store
+        self.paneID = paneID
+    }
+
+    /// The shell's layout pass landed on `size`. Runs `apply` for every reading the veil could have
+    /// changed on — immediately, and again once the settle wait elapses with the size unchanged.
+    package func noteLayout(_ size: CGSize, apply: @escaping @MainActor () -> Void) {
+        guard size != lastSize else { return }
+        lastSize = size
+        guard scrim.noteSize(size, isDragging: store.isInteractiveResizeActive) else {
+            apply()
+            return
+        }
+        apply()
+        settleTask?.cancel()
+        settleTask = Task { [weak self] in
+            do { try await Task.sleep(for: PaneResizeScrimState.settle) } catch { return }
+            guard let self else { return }
+            scrim.noteSettled()
+            apply()
+        }
+    }
+
+    /// The pane left the window — drop the pending wait rather than letting it fire against a detached
+    /// view. Owed on every unmount, not only on teardown.
+    package func cancel() {
+        settleTask?.cancel()
+        settleTask = nil
+    }
+
+    /// Whether the veil should be up right now, from the reducer's three OR-ed signals.
+    package func isVeilShown() -> Bool {
+        let live = store.handle(for: paneID) as? LivePaneSession
+        return scrim.isVisible(
+            isDragging: store.isInteractiveResizeActive,
+            awaitingReflow: live?.awaitingResizeReflow ?? false,
+        )
     }
 }

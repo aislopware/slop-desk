@@ -27,6 +27,11 @@ const PHONE_SEARCH: &str = "Sources/SlopDeskPhoneUI/Overlays/PhoneGlobalSearchCa
 const MAC_PICKER: &str = "Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift";
 const PHONE_PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/PhoneOpenQuicklyCardView.swift";
 const JUMP_TO: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/JumpToModel.swift";
+/// The two halves of the close confirmation. Neither is a port of the other — an `NSAlert` sheet
+/// and a `UIAlertController` — and what they share is the WORDING, which is why both are pinned on
+/// the same call rather than on a shape.
+const MAC_CLOSE: &str = "Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift";
+const PHONE_CLOSE: &str = "Sources/SlopDeskPhoneUI/Overlays/PhoneCloseConfirmation.swift";
 const MAC_PALETTE: &str = "Sources/SlopDeskMacUI/Overlays/MacPalette.swift";
 const PHONE_PALETTE: &str = "Sources/SlopDeskPhoneUI/Overlays/PhonePaletteCardView.swift";
 /// RE-AIMED 2026-08-28. This read `App/MacWorkspaceRootView.swift` until the Mac shell finished
@@ -378,23 +383,46 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
         // deserves is three branches and a join; a half that respells any of them drifts silently,
         // because a dialog that says the wrong true-sounding thing looks exactly like one that says
         // the right thing.
-        Claim::Mentions {
-            path: "Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift",
-            names: &["CloseConfirmationCopy"],
-            message: "MacCloseConfirmation.swift stopped reading {entry} — two dialogs, and the drift would \
-                      be silent",
+        //
+        // ⚠️ THE CALL, NOT THE NAME. `Claim::Mentions` reads RAW, and both of these files spend a
+        // header paragraph explaining which type owns the wording — so a half that stopped CALLING it
+        // and started composing its own sentences would have gone on satisfying a mention with its own
+        // prose. `request(store:)` is the door both halves come through, and it is also the one that
+        // resolves every field LIVE, so pinning it pins the property the wording depends on.
+        Claim::Matches {
+            path: MAC_CLOSE,
+            pattern: r"CloseConfirmationCopy\.request\(",
+            view: View::Code,
+            message: "MacCloseConfirmation.swift stopped reading its park through \
+                      CloseConfirmationCopy.request — two dialogs, and the drift would be silent",
         },
-        Claim::Mentions {
-            path: PHONE_HOST,
-            names: &["CloseConfirmationCopy"],
-            message: "OverlayHostView.swift stopped reading {entry} — two dialogs, and the drift would be \
-                      silent",
+        Claim::Matches {
+            path: PHONE_CLOSE,
+            pattern: r"CloseConfirmationCopy\.request\(",
+            view: View::Code,
+            message: "PhoneCloseConfirmation.swift stopped reading its park through \
+                      CloseConfirmationCopy.request — a parked close the phone cannot answer is a swipe \
+                      that silently does nothing",
+        },
+        // Both halves RESOLVE the park they raise. A dialog that takes an answer and leaves the park
+        // armed is the exact failure this surface was built for: the store waits forever, and the unit
+        // the user pressed × on stays open with no way to ask again.
+        Claim::Matches {
+            path: PHONE_CLOSE,
+            pattern: r"confirmPendingClose\(\)",
+            view: View::Code,
+            message: "PhoneCloseConfirmation.swift no longer confirms the park — the alert would ask a \
+                      question whose Close button closes nothing",
+        },
+        Claim::Matches {
+            path: PHONE_CLOSE,
+            pattern: r"cancelPendingClose\(\)",
+            view: View::Code,
+            message: "PhoneCloseConfirmation.swift no longer cancels the park — a dismissed alert would \
+                      leave the store parked and every later close silent",
         },
         Claim::NoneOf {
-            paths: &[
-                "Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift",
-                PHONE_HOST,
-            ],
+            paths: &[MAC_CLOSE, PHONE_CLOSE, PHONE_HOST],
             pattern: r#""A process is still running|"This window has multiple tabs|Closing it will close the project"#,
             view: View::Code,
             message: "{files} respells the close-confirmation copy — every line of it is \
@@ -583,15 +611,17 @@ mod tests {
                     "slopdesk_ws_jump_to_rows(\nOpenQuicklyKind(jumpTo: self).badge\n",
                 )
                 .write(super::PHONE_PALETTE, "FuzzyMatcher.runs(\n")
-                .write(super::PHONE_HOST, "CloseConfirmationCopy\n")
+                .write(super::PHONE_HOST, "let cards = PhoneOverlayCardHostView()\n")
                 .write(super::MAC_ROOT, "MacSplitView()\n")
                 .write(
                     "Sources/SlopDeskMacUI/Overlays/MacOverlayPanels.swift",
                     "MacConnectSheet\nMacCloseConfirmation\n",
                 )
+                .write(super::MAC_CLOSE, "CloseConfirmationCopy.request(store: store)\n")
                 .write(
-                    "Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift",
-                    "CloseConfirmationCopy\n",
+                    super::PHONE_CLOSE,
+                    "CloseConfirmationCopy.request(store: \
+                     $0.store)\nstore.confirmPendingClose()\nstore.cancelPendingClose()\n",
                 )
                 .write(
                     "Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift",
@@ -613,6 +643,30 @@ mod tests {
         // The host re-mounted over the Mac's split.
         seed(&fixture);
         fixture.append(super::MAC_ROOT, "OverlayHostView(store: store)\n");
+        assert!(!super::the_stage_d_ledger_is_empty(&fixture.tree()).is_clean());
+
+        // ⚠️ THE VACUOUS-MENTION CASE, which is why these two are `Matches` on the CALL. A file whose
+        // header explains at length that `CloseConfirmationCopy` owns the wording, and which then
+        // composes its own sentences, satisfied the old `Mentions` claim on its prose alone.
+        seed(&fixture);
+        fixture.write(
+            super::PHONE_CLOSE,
+            "// The wording is CloseConfirmationCopy's, not ours.\nlet title = \"Close this \
+             pane?\"\nstore.confirmPendingClose()\nstore.cancelPendingClose()\n",
+        );
+        assert!(!super::the_stage_d_ledger_is_empty(&fixture.tree()).is_clean());
+
+        // A phone alert that asks and never resolves the park — the failure the surface exists for.
+        seed(&fixture);
+        fixture.write(
+            super::PHONE_CLOSE,
+            "CloseConfirmationCopy.request(store: $0.store)\nalert.dismiss(animated: true)\n",
+        );
+        assert!(!super::the_stage_d_ledger_is_empty(&fixture.tree()).is_clean());
+
+        // A half respelling a line the shared copy already owns.
+        seed(&fixture);
+        fixture.append(super::PHONE_CLOSE, "\"A process is still running\"\n");
         assert!(!super::the_stage_d_ledger_is_empty(&fixture.tree()).is_clean());
 
         // A fifth cut of the fzf mark.

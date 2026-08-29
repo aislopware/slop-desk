@@ -364,6 +364,51 @@ package enum GuiPaneReadout {
         package static let collapseControls = "Hide controls"
         package static let expandControls = "Window controls"
     }
+
+    // MARK: The words on the controls themselves
+
+    /// Every phrase the pane's own chrome PRINTS — the tune popover's captions, the two menus' rows,
+    /// and the stall banner's dismiss affordance.
+    ///
+    /// Separate from ``GuiPaneReadout/Tooltip`` because a tooltip is what a control says when asked and
+    /// these are what it says at rest, and the two registers are worded differently: a tooltip names the
+    /// verb and its chord in a sentence, a caption is the shortest noun that still identifies the
+    /// control. What they share is the reason they are here at all — each was typed once per shell, and
+    /// a sentence spelled twice is a translation bug that has already happened (docs/56 §3).
+    ///
+    /// ⚠️ NOT A READING. Nothing here depends on anything, so none of it crosses the FFI boundary the
+    /// way the choice LABELS above do (`0 → "Auto"` is a rule and lives in Rust). A constant with no
+    /// decision in it has nothing to put on the far side; what it needs is one speller, which is this.
+    package enum Word {
+        /// The stream-tune popover: its title, its two captions, and the note under them.
+        ///
+        /// The note is the one sentence in the popover that is not a label — it answers "does this take
+        /// effect now" and "what does Auto give me back", which are the two questions a cap control
+        /// raises and neither segmented control can answer.
+        package static let streamQuality = "Stream quality"
+        package static let fpsCap = "FPS cap"
+        package static let bitrateCeiling = "Bitrate ceiling"
+        package static let appliesLiveNote = "Applies live. Auto restores the adaptive governor/ABR."
+
+        /// The paste plate's menu: the verb, its empty state, and the submenu the ring hangs under.
+        ///
+        /// Title Case on all three, because they are MENU rows and that is the platform's register for
+        /// one — the sentence case the chips use belongs to the notice family, not to a menu.
+        package static let pasteAsKeystrokes = "Paste as Keystrokes"
+        package static let noRecentClips = "No recent clips"
+        package static let clipboardRing = "Clipboard Ring"
+
+        /// The display switcher's menu: the empty state, and the row that re-asks the host.
+        ///
+        /// The empty state names WHOSE list is missing. "No displays" would read as a host with no
+        /// monitors attached, which is a different fact and not one this pane can ever observe.
+        package static let noDisplayList = "No display list from host"
+        package static let refreshDisplays = "Refresh Displays"
+
+        /// The stall banner's close affordance — the only verb on a surface whose whole job is to be
+        /// gone once it has been read.
+        package static let dismiss = "Dismiss"
+    }
 }
 
 // MARK: - The upload actuator

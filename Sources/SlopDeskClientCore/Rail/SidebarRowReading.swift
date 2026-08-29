@@ -165,6 +165,20 @@ private extension AttentionRole {
 }
 
 package enum SidebarRowPresentation {
+    /// What the two trailing INDICATORS are called, for the surface that has to name them out loud.
+    ///
+    /// Both are glyphs — a padlock and a three-rectangle stack — so the only reader that ever sees these
+    /// words is VoiceOver, plus the Mac's hover. That is exactly why they belong beside the booleans
+    /// they name (``SidebarRowReading/readOnly``, ``SidebarRowReading/syncInput``) rather than in each
+    /// renderer: a label nobody looks at is a label nobody notices drifting, and it was typed once per
+    /// shell (docs/56 §3).
+    ///
+    /// The Mac's LONGER sync tooltip — the one that explains the fan-out in a sentence — stays in the
+    /// Mac's row. It has no phone twin (there is no pointer to hover), and a one-platform sentence
+    /// belongs in that platform's view.
+    package static let readOnlyLabel = "Read only"
+    package static let syncInputLabel = "Sync input"
+
     /// Resolve `row` against the live store.
     ///
     /// `fallbackTitle` is the KIND's generic name (`PaneChooserRegistry`), used when every rung of

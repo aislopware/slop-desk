@@ -79,7 +79,6 @@ final class MacAndroidSurface: NSViewController {
 
     private func drill(to isStage: Bool) {
         guard isStage != depth else { return }
-        let isFirst = depth == nil
         depth = isStage
 
         let outgoing: NSView? = isStage ? list : stage
@@ -93,18 +92,16 @@ final class MacAndroidSurface: NSViewController {
             stage = built
             incoming = built
         } else {
-            let built = MacAndroidDeviceList(model: model) { [weak self] device in
-                self?.enter(device)
-            }
+            let built = MacAndroidDeviceList(model: model) { [model] in model.drillIn(to: $0) }
             list = built
             incoming = built
         }
         mount(incoming)
+        // NOTHING TO LEAVE is the FIRST pass and only the first: from the second on, one of the two
+        // depths was up. The old spelling asked `depth == nil` as well, which was the same answer read
+        // a second way, and the two could drift apart.
+        guard let outgoing else { return }
 
-        guard !isFirst else {
-            outgoing?.removeFromSuperview()
-            return
-        }
         // Enter from `shift`, leave back to it — symmetric, because a view's side of the hierarchy does
         // not change with the direction of travel. The STAGE's side is trailing and the LIST's is
         // leading, ALWAYS, whichever way this particular move went: that is what makes "in" and "out"
@@ -113,9 +110,9 @@ final class MacAndroidSurface: NSViewController {
         // ⚠️ THE NUDGE IS A LAYER TRANSFORM, not a frame. Both depths are pinned to four edges, so a
         // frame written here is overwritten by the constraint engine on the next layout pass — which
         // in a resizing panel is immediately, and the drill silently becomes a cross-fade.
-        let shift = isStage ? Slate.Metric.space4 : -Slate.Metric.space4
+        let shift = DeviceDrill.shift(entering: isStage)
         incoming.wantsLayer = true
-        outgoing?.wantsLayer = true
+        outgoing.wantsLayer = true
         incoming.alphaValue = 0
         incoming.layer?.transform = CATransform3DMakeTranslation(shift, 0, 0)
         NSAnimationContext.runAnimationGroup { context in
@@ -124,10 +121,10 @@ final class MacAndroidSurface: NSViewController {
             context.allowsImplicitAnimation = true
             incoming.animator().alphaValue = 1
             incoming.layer?.transform = CATransform3DIdentity
-            outgoing?.animator().alphaValue = 0
-            outgoing?.layer?.transform = CATransform3DMakeTranslation(-shift, 0, 0)
+            outgoing.animator().alphaValue = 0
+            outgoing.layer?.transform = CATransform3DMakeTranslation(-shift, 0, 0)
         } completionHandler: {
-            outgoing?.removeFromSuperview()
+            outgoing.removeFromSuperview()
         }
     }
 
@@ -140,17 +137,5 @@ final class MacAndroidSurface: NSViewController {
             child.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             child.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-    }
-
-    /// The way IN. It lives here rather than in the list because the selection write is what CARRIES
-    /// the drill — the panel's transition vocabulary belongs to the surface that owns both depths, and
-    /// the two halves declare no animation of their own for it.
-    ///
-    /// The GUARD is ``AndroidPresentation/canEnter(_:)``, asked once here and once at the card's own
-    /// tap, because a card that lights under the pointer and then does nothing is worse than one that
-    /// never lit.
-    private func enter(_ device: AndroidDevice) {
-        guard AndroidPresentation.canEnter(device) else { return }
-        model.select(device.key)
     }
 }

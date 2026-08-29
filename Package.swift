@@ -540,8 +540,9 @@ let package = Package(
                 // resolves an ink and a silhouette for, decided one floor further down.
                 "SlopDeskWorkspaceModel",
                 "SlopDeskAgentDetect",
-                // `NerdSymbolFont.registered` — the nerd splice's AppKit half asks whether the
-                // bundled face resolved before it splices a run into it.
+                // `NerdSymbolFont.registered` — the nerd splice asks whether the bundled face
+                // resolved before it splices a run into it. ONE splice now, not an AppKit half:
+                // `SlateNativeText.swift` is a single body over `SlateNativeFont`/`SlateNativeColor`.
                 "SlopDeskFontFaces",
                 // The marks are named as `SFSymbol`s, so both renderers ask for the same artwork.
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),

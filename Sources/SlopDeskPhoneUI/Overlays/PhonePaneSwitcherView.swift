@@ -75,7 +75,6 @@ final class PhonePaneSwitcherView: UIView {
 
     /// The rows currently drawn, so a step can find the highlighted one without re-resolving.
     private var drawn: [PaneSwitcherRow] = []
-    private var generation = 0
 
     init(store: WorkspaceStore) {
         self.store = store
@@ -144,12 +143,8 @@ final class PhonePaneSwitcherView: UIView {
         column.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(column)
 
+        NSLayoutConstraint.activate(floor.slateEdges(of: self))
         NSLayoutConstraint.activate([
-            floor.topAnchor.constraint(equalTo: topAnchor),
-            floor.bottomAnchor.constraint(equalTo: bottomAnchor),
-            floor.leadingAnchor.constraint(equalTo: leadingAnchor),
-            floor.trailingAnchor.constraint(equalTo: trailingAnchor),
-
             card.centerXAnchor.constraint(equalTo: centerXAnchor),
             card.centerYAnchor.constraint(equalTo: centerYAnchor),
             cardWidth,
@@ -175,30 +170,22 @@ final class PhonePaneSwitcherView: UIView {
 
     // MARK: - The live read
 
-    /// The one tracked read. Both the gesture's PRESENCE and its highlight index are read inside the
-    /// closure, because a step changes only the second — an arm holding the first alone would draw the
-    /// card once and then never move its plate.
+    /// The one tracked read. Both the gesture's PRESENCE and its highlight index are read inside `read`,
+    /// because a step changes only the second — an arm holding the first alone would draw the card once
+    /// and then never move its plate.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var live: PaneSwitcher?
-        var model: [PaneSwitcherRow] = []
-        withObservationTracking {
-            live = store.paneSwitcher
+        ObservationFollow.arm(self) { view in
+            let live = view.store.paneSwitcher
             // The rows are rebuilt on every step because the STORE's ring is the source. The ring itself
             // is frozen for the gesture, so a step moves the plate rather than reordering anything — and
-            // resolving them inside the tracked block is what registers the highlight as a dependency.
-            model = live.map { PaneSwitcherRowsBuilder.rows(for: $0, store: store) } ?? []
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+            // resolving them inside `read` is what registers the highlight as a dependency.
+            return (
+                walking: live != nil,
+                model: live.map { PaneSwitcherRowsBuilder.rows(for: $0, store: view.store) } ?? [],
+            )
+        } apply: { view, reading in
+            view.reconcile(walking: reading.walking, model: reading.model)
         }
-        reconcile(walking: live != nil, model: model)
     }
 
     private func reconcile(walking: Bool, model: [PaneSwitcherRow]) {

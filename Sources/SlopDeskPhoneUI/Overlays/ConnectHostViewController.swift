@@ -11,7 +11,7 @@
 // A THIN VIEW OVER ``AppConnection``, which already owns the editable host/port strings, the parse, the
 // validation hint and the `connect()` lifecycle. Nothing here re-derives any of it: each field writes
 // through on every keystroke so `canConnect` gates the Connect button live, and everything drawn is read
-// back inside `withObservationTracking`, so a failed connect re-renders its own reason. What crossed into
+// back through an ``ObservationFollow``, so a failed connect re-renders its own reason. What crossed into
 // Rust is the WORDS and the one shared decision — ``ConnectForm`` and
 // ``ConnectPresentation/shouldCloseAfterConnect(status:)`` — so the two shells cannot drift on either.
 //
@@ -80,24 +80,20 @@ final class ConnectHostViewController: UIViewController {
     /// itself to VoiceOver) on every unrelated keystroke.
     private var warningText: String?
 
-    /// The in-flight connect Task. Stored so Cancel and teardown CANCEL it — a fire-and-forget one
-    /// outlives the sheet and, when a slow connect finally resolves, dismisses a freshly REOPENED sheet
-    /// mid-edit. Belt and braces with the ``OverlayCoordinator/connectGeneration`` guard below.
-    private var connectTask: Task<Void, Never>?
-    private var generation = 0
+    /// The commit, and both of its guards — ``OverlayConnectFlow``. The in-flight Task is stored there
+    /// rather than here so the Mac's sheet cannot spell the same ladder a second time; releasing this
+    /// controller releases the flow, whose own teardown cancels an attempt still in the air.
+    private let flow: OverlayConnectFlow
 
     init(connection: AppConnection, coordinator: OverlayCoordinator) {
         self.connection = connection
         self.coordinator = coordinator
+        flow = OverlayConnectFlow(connection: connection, coordinator: coordinator)
         super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
-
-    deinit {
-        connectTask?.cancel()
-    }
 
     // MARK: - The form
 
@@ -244,44 +240,34 @@ final class ConnectHostViewController: UIViewController {
 
     // MARK: - The live read
 
-    /// The one tracked read. ``withObservationTracking(_:onChange:)`` fires ONCE, so the re-arm IS the
-    /// subscription and every tracked read has to happen INSIDE the closure. `onChange` runs inside the
-    /// mutation, hence the hop; the generation counter drops an arm a later one has superseded.
+    /// The one tracked read, through ``ObservationFollow/arm(_:read:apply:)`` — docs/62 §3.1's prologue,
+    /// written once. `read` runs inside the tracking block and `apply` outside it, so the
+    /// reads-inside/work-outside rule is a type signature here rather than a comment.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var canConnect = false
-        var hint: String?
-        var status = ConnectionStatus.disconnected
-        withObservationTracking {
-            // ⚠️ ALL THREE ARE READ UNCONDITIONALLY, and the precedence is resolved afterwards. Deciding
-            // inside the block — `if let hint { … }` — would SHORT-CIRCUIT past `status`, and the arm
+        ObservationFollow.arm(self) { sheet in
+            // ⚠️ ALL THREE ARE READ UNCONDITIONALLY, and the precedence is resolved in `apply`. Deciding
+            // inside the read — `if let hint { … }` — would SHORT-CIRCUIT past `status`, and the arm
             // would then hold no dependency on it: a connect that failed while the form parsed cleanly
             // would change a property nobody is watching, and its reason would never appear.
-            canConnect = connection.canConnect
-            hint = connection.validationHint
-            status = connection.status
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
+            (
+                canConnect: sheet.connection.canConnect,
+                hint: sheet.connection.validationHint,
+                status: sheet.connection.status,
+            )
+        } apply: { sheet, reading in
+            sheet.footer.confirmDisabled = !reading.canConnect
+            // The hint WINS over the failure: an unparseable form is a question about what is typed, and
+            // a stale failure from the last attempt is not the answer to it. A failed connect leaves the
+            // sheet up (see `runConnect`), so the reason is carried here — run through the presenter so
+            // it reads as the actionable copy every other connection surface shows, never the raw
+            // transport dump.
+            if let hint = reading.hint {
+                sheet.show(warning: hint)
+            } else if case let .failed(reason) = reading.status {
+                sheet.show(warning: ConnectionPresenter.friendlyFailure(reason))
+            } else {
+                sheet.show(warning: nil)
             }
-        }
-
-        footer.confirmDisabled = !canConnect
-        // The hint WINS over the failure: an unparseable form is a question about what is typed, and a
-        // stale failure from the last attempt is not the answer to it. A failed connect leaves the sheet
-        // up (see `runConnect`), so the reason is carried here — run through the presenter so it reads as
-        // the actionable copy every other connection surface shows, never the raw transport dump.
-        if let hint {
-            show(warning: hint)
-        } else if case let .failed(reason) = status {
-            show(warning: ConnectionPresenter.friendlyFailure(reason))
-        } else {
-            show(warning: nil)
         }
     }
 
@@ -317,32 +303,20 @@ final class ConnectHostViewController: UIViewController {
         animator.startAnimation()
     }
 
-    /// Validate-then-connect: a no-op unless the form parses (the button is disabled then too), then fire
-    /// the app's `connect()`. Never force-unwraps — `canConnect` gates here and `connect()` re-guards the
-    /// parse internally. Only a SUCCESSFUL connect closes the sheet: a `.failed` result leaves it up with
-    /// the real reason inline, because a dropped sheet whose reason is reachable only through the status
-    /// pill is a silent failure. The close is DOUBLE-guarded — the Task is stored and cancelled on
-    /// Cancel/teardown, AND the completion only closes if the coordinator's generation still matches the
-    /// presentation this Task started under.
+    /// Validate-then-connect, through ``OverlayConnectFlow``. Only a SUCCESSFUL connect closes the sheet:
+    /// a `.failed` result leaves it up with the real reason inline, because a dropped sheet whose reason
+    /// is reachable only through the status pill is a silent failure. Both guards on that close live in
+    /// the flow — read its header.
     @objc
     private func runConnect() {
-        guard connection.canConnect else { return }
-        connectTask?.cancel()
-        let generation = coordinator.connectGeneration
-        connectTask = Task { [connection, coordinator] in
-            await connection.connect()
-            guard !Task.isCancelled else { return }
-            guard ConnectPresentation.shouldCloseAfterConnect(status: connection.status) else { return }
-            coordinator.closeConnect(ifCurrent: generation)
-        }
+        flow.start()
     }
 
-    /// Cancel: kill the in-flight connect Task (its completion must never fire) and flip the flag. The
-    /// shell's reconcile is what actually dismisses the sheet.
+    /// Cancel: kill the in-flight connect attempt (its completion must never fire) and flip the flag.
+    /// The shell's reconcile is what actually dismisses the sheet.
     @objc
     private func runCancel() {
-        connectTask?.cancel()
-        connectTask = nil
+        flow.cancel()
         coordinator.closeConnect()
     }
 }
@@ -350,9 +324,11 @@ final class ConnectHostViewController: UIViewController {
 extension ConnectHostViewController: UIAdaptivePresentationControllerDelegate {
     /// The swipe. Fires only for a user-driven dismissal — a programmatic `dismiss(animated:)` does not
     /// call it, which is exactly the distinction the shell needs to avoid a re-entrant close.
+    ///
+    /// It cancels WITHOUT closing, which is the half ``runCancel()`` does not want: the coordinator has
+    /// not been told yet, and `onDismiss` is the seam that tells it.
     func presentationControllerDidDismiss(_: UIPresentationController) {
-        connectTask?.cancel()
-        connectTask = nil
+        flow.cancel()
         onDismiss?()
     }
 }

@@ -95,11 +95,10 @@ final class MacSimulatorStageView: NSView {
     /// rebuilding the screen for one would drop the stream to re-acquire a keyframe.
     private var applyOrientation: ((SimulatorOrientation) -> Void)?
 
-    /// The veil's own state, which is the model's loading state DELAYED — see
-    /// ``SimulatorPresentation/veilDelay``.
-    private var showsLoading = false
+    /// The veil's delay, its `showsLoading` flag and the state it last drew — see ``DeviceStageVeil``,
+    /// which is that whole rule, once, for both shells.
+    private let veil = DeviceStageVeil()
     private var veilView: NSView?
-    private let veilLoop = MacDevicePanelLoop()
 
     private var consoleView: MacSimulatorConsoleView?
     /// Held so a second click on the plate reaches the same popover rather than stacking a new one over
@@ -266,18 +265,9 @@ final class MacSimulatorStageView: NSView {
                 inset = 0
             }
             stage.stageHost.addSubview(device, positioned: .below, relativeTo: stage.veilView)
-            NSLayoutConstraint.activate([
-                device.leadingAnchor.constraint(
-                    equalTo: stage.stageHost.leadingAnchor, constant: inset,
-                ),
-                device.trailingAnchor.constraint(
-                    equalTo: stage.stageHost.trailingAnchor, constant: -inset,
-                ),
-                device.topAnchor.constraint(equalTo: stage.stageHost.topAnchor, constant: inset),
-                device.bottomAnchor.constraint(
-                    equalTo: stage.stageHost.bottomAnchor, constant: -inset,
-                ),
-            ])
+            NSLayoutConstraint.activate(
+                DeviceStageLayout.pin(device, into: stage.stageHost, inset: inset),
+            )
         }
     }
 
@@ -295,13 +285,9 @@ final class MacSimulatorStageView: NSView {
             _ = stage.model.hasVideo
             _ = stage.model.selection
         } apply: { stage, _ in
-            // Keyed on the FLAG, which gives the delay `.task(id:)`'s cancellation for free: a wait
-            // for a stream that arrived in time is cancelled before its veil is ever written.
-            let isAwaiting = stage.model.isAwaitingStream
-            stage.veilLoop.keyed(on: isAwaiting ? "awaiting" : "settled") { [weak stage] in
-                guard let state = await SimulatorPresentation.loadingVeil(isAwaiting: isAwaiting)
-                else { return }
-                stage?.showsLoading = state
+            // The delay, the `showsLoading` flag it sets and the by-value guard are ``DeviceStageVeil``'s
+            // — the three of them were typed identically in both shells around one presentation rule.
+            stage.veil.settle(isAwaiting: stage.model.isAwaitingStream) { [weak stage] in
                 stage?.refreshVeil()
             }
             stage.refreshVeil()
@@ -314,15 +300,9 @@ final class MacSimulatorStageView: NSView {
     /// header, which keeps the way out reachable while it is up (user-directed 2026-08-04 — a load with
     /// no end and no exit was the reported bug).
     private func refreshVeil() {
-        let state = SimulatorPresentation.stage(
-            isSelected: model.selection != nil, showsLoading: showsLoading,
-            isAwaitingStream: model.isAwaitingStream, hasVideo: model.hasVideo,
-        )
-        // The GUARD comes before the build, and the comparison is by VALUE: this is called from two
-        // followers and from the end of every delayed sleep, so building first would restart the
-        // spinner several times a second for a veil that never changed.
-        guard veilState != state else { return }
-        veilState = state
+        // `nil` means "already wearing it" — the guard is by VALUE and it lives in the latch, because
+        // this is called from two followers and from the end of every delayed sleep.
+        guard let state = veil.reading(for: model) else { return }
 
         let wanted: NSView?
         switch state {
@@ -365,8 +345,6 @@ final class MacSimulatorStageView: NSView {
             MainActor.assumeIsolated { outgoing?.removeFromSuperview() }
         }
     }
-
-    private var veilState = SimulatorStageState.live
 
     // MARK: - The toolbar
 
@@ -545,7 +523,7 @@ final class MacSimulatorStageView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         setTargeted(false)
         guard model.selection != nil, let url = url(from: sender) else { return false }
-        Task { @MainActor in await install(url) }
+        Task { @MainActor [model] in await DeviceDropInstall.install(url, into: model) }
         return true
     }
 
@@ -560,18 +538,6 @@ final class MacSimulatorStageView: NSView {
             forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true],
         )
         return (found?.first as? URL).flatMap { $0.isFileURL ? $0 : nil }
-    }
-
-    private func install(_ url: URL) async {
-        // ⚠️ The URL carries a sandbox extension that has to be opened before the bytes can be read; the
-        // app is sandboxed, so without this the read fails on every drop from outside it.
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let contents = try? Data(contentsOf: url, options: .mappedIfSafe) else {
-            model.report(SimulatorPresentation.unreadableDrop(url.lastPathComponent))
-            return
-        }
-        await model.send(file: url, contents: contents)
     }
 
     /// The drop affordance is a BORDER, not a dimming veil: the point of dropping onto a live screen is

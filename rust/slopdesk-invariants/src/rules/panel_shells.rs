@@ -22,10 +22,34 @@ use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-const PHONE_SURFACES: &str = "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift";
+/// The phone's four-surface switch.
+///
+/// ⚠️ RE-AIMED 2026-08-28, and the DIRECTORY went with the file.
+/// `CodeSidebar/CodePanelSurfaces.swift` was the `SwiftUI` renderer and `3f11c6e6` took the whole
+/// tree with it; the phone has no `CodeSidebar/` at all now. What replaced it is a view controller
+/// under `Panel/` — same job, same name for the job, the settled `Phone*` convention — and it is
+/// where the four surfaces are chosen today (`PhonePanelSurfacesViewController.swift:178` folds the
+/// workbench phase through `CodePanelPresentation.workbench(…)`, which is exactly what this rule
+/// was written to keep down one floor).
+const PHONE_SURFACES: &str = "Sources/SlopDeskPhoneUI/Panel/PhonePanelSurfacesViewController.swift";
+/// The phone's empty states, which is where the open GATE is worded.
+///
+/// A second const rather than a second claim on [`PHONE_SURFACES`], because the `UIKit` rebuild
+/// SPLIT what the deleted file held: the surfaces controller picks the state and
+/// `PhonePanelEmptyStates` draws the three that have no workbench in them —
+/// `PhoneCodeOpenGateView` reads `CodeOpenGateReading`'s symbol, title and button word at
+/// `:163-190`. Pointing both claims at one path would have made one of them unsatisfiable by a tree
+/// that is correct, which is the failure this whole module's header is about, one register in.
+const PHONE_EMPTY_STATES: &str = "Sources/SlopDeskPhoneUI/Panel/PhonePanelEmptyStates.swift";
+/// The phone's panel subtree — the corpus the representable ban below reads.
+const PHONE_PANEL: &[&str] = &["Sources/SlopDeskPhoneUI/Panel"];
 const MAC_SURFACES: &str = "Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift";
 const MAC_EMPTY_STATES: &str = "Sources/SlopDeskMacUI/Panel/MacPanelEmptyStates.swift";
 const PRESENTATION: &str = "Sources/SlopDeskClientCore/CodeSidebar/CodePanelPresentation.swift";
+/// The non-drawing half of both code panels, typed once: the plan, the loops, the parking bracket
+/// and the device reports. Landed 2026-08-28 by the carve that took ~700 lines out of the two
+/// shells.
+const SURFACE_RUNTIME: &str = "Sources/SlopDeskClientCore/CodeSidebar/CodePanelSurfaceRuntime.swift";
 const MAC_SHARED_PARTS: &str = "Sources/SlopDeskMacUI/Panel/MacDevicePanelParts.swift";
 const MAC_CAPS_RECIPE: &str = "Sources/SlopDeskMacUI/Chrome/MacCapsLabel.swift";
 const KEY_EVENT: &str = "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift";
@@ -59,33 +83,79 @@ const KEY_EVENT: &str = "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift
 ///
 /// And the clip is measured once. Two `static let`s carrying one measurement is how the phone kept
 /// clipping 30pt after the workbench moved its title bar.
+///
+/// ## ⚠️ THE PHONE HALF RE-AIMED 2026-08-28, AND IT MOVED FROM ONE FILE TO TWO
+/// Every phone claim here named `CodeSidebar/CodePanelSurfaces.swift`, a directory the phone no
+/// longer has. The `UIKit` rebuild kept the responsibility and split the file: the SURFACE CHOICE
+/// is `PhonePanelSurfacesViewController`, and the words for the three states with no workbench in
+/// them are `PhonePanelEmptyStates`. Both still read down — the whole law — so the two claims that
+/// used to land on one path land on the file that actually does each thing. Re-aiming both to one
+/// path would have been the same lie in the other direction: a claim that no correct tree can
+/// satisfy.
+///
+/// The `Populated` floor moved with them, and it got a bigger number for a real reason. It was 1
+/// over a directory holding one file, which is a floor that only notices a total drain — and a
+/// total drain is what happened. Over `Panel/` the floor is 4 against the two dozen files there
+/// today: well below what a healthy tree holds, well above what a demolition leaves.
 #[must_use]
 pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
     let claims = [
-        // Per-root, and NOT on `Sources/SlopDeskPhoneUI` — the shell target globs thirty-odd files
+        // Per-root, and NOT on `Sources/SlopDeskPhoneUI` — the shell target globs a hundred-odd files
         // while this rule's whole phone half lives in one directory, so a floor on the parent is a
         // floor that cannot see the drain it exists for.
         Claim::Populated {
-            roots: &["Sources/SlopDeskPhoneUI/CodeSidebar"],
+            roots: PHONE_PANEL,
             extensions: SWIFT,
-            minimum: 1,
-            message: "only {found} Swift files under Sources/SlopDeskPhoneUI/CodeSidebar — the \
-                      representable ban below reads an empty tree and passes (docs/56, increment 51)",
+            minimum: 4,
+            message: "only {found} Swift files under Sources/SlopDeskPhoneUI/Panel — the representable ban \
+                      below reads an empty tree and passes (docs/56, increment 51)",
         },
-        Claim::Names {
+        // ⚠️ RE-AIMED 2026-08-28, and the OLD pair was worse than red — it was VACUOUS. Both claims
+        // read `Claim::Names` against the two shells, and `Names` reads the file RAW, so a shell that
+        // had stopped reading `CodePanelPresentation` in code still passed on the sentence in its own
+        // header explaining where the wording went. The shells are wrappers now: the whole non-drawing
+        // half (the plan, the loops, the parking bracket, the device reports) is
+        // ``CodePanelSurfaceRuntime``, one file for both, and each shell holds ONE dependency instead
+        // of the nine it used to list.
+        //
+        // So the pin follows the reading down. What each shell must still do is take its plan from the
+        // floor rather than compute one — that is `CodePanelSurfacePlan`, read as CODE so a header
+        // cannot satisfy it.
+        Claim::Matches {
             path: PHONE_SURFACES,
-            needle: "CodePanelPresentation",
-            message: "the phone's code panel stopped reading CodePanelPresentation — a panel surface \
-                      wording itself is the second speller (docs/56, increment 51)",
+            pattern: r"CodePanelSurfacePlan",
+            view: View::Code,
+            message: "the phone's code panel stopped taking a CodePanelSurfacePlan — a panel surface \
+                      deciding its own state is the second speller (docs/56, increment 51)",
         },
-        Claim::Names {
+        Claim::Matches {
             path: MAC_SURFACES,
-            needle: "CodePanelPresentation",
-            message: "the Mac's code panel stopped reading CodePanelPresentation — a panel surface wording \
-                      itself is the second speller (docs/56, increment 51)",
+            pattern: r"CodePanelSurfacePlan",
+            view: View::Code,
+            message: "the Mac's code panel stopped taking a CodePanelSurfacePlan — a panel surface deciding \
+                      its own state is the second speller (docs/56, increment 51)",
         },
-        Claim::Names {
+        // And neither shell reaches PAST the plan to the wording itself. A shell that reads
+        // `CodePanelPresentation.` again has grown a second decision beside the one the runtime makes
+        // — the exact shape the carve deleted, and the one a plan cannot stop by existing.
+        Claim::Lacks {
             path: PHONE_SURFACES,
+            pattern: r"CodePanelPresentation\.",
+            view: View::Code,
+            message: "the phone's code panel reads CodePanelPresentation directly again — the plan is the \
+                      only thing a shell asks for; the reading is the runtime's",
+        },
+        Claim::Lacks {
+            path: MAC_SURFACES,
+            pattern: r"CodePanelPresentation\.",
+            view: View::Code,
+            message: "the Mac's code panel reads CodePanelPresentation directly again — the plan is the \
+                      only thing a shell asks for; the reading is the runtime's",
+        },
+        // On the EMPTY STATES, not the surfaces controller — see the header. The gate is a card with
+        // a symbol, a title and a button word, and all three are the reading's.
+        Claim::Names {
+            path: PHONE_EMPTY_STATES,
             needle: "CodeOpenGateReading",
             message: "the phone's code panel stopped reading CodeOpenGateReading — the open gate is a \
                       decision, not a drawing (docs/56, increment 51)",
@@ -96,23 +166,24 @@ pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
             message: "the Mac's empty states stopped reading CodeOpenGateReading — the open gate is a \
                       decision, not a drawing (docs/56, increment 51)",
         },
-        Claim::Names {
-            path: PHONE_SURFACES,
-            needle: "CodePanelPresentation.workbench(",
-            message: "the phone's code panel folds the workbench phase itself — the four states are one \
-                      switch, one floor down",
-        },
-        Claim::Names {
-            path: MAC_SURFACES,
-            needle: "CodePanelPresentation.workbench(",
-            message: "the Mac's code panel folds the workbench phase itself — the four states are one \
-                      switch, one floor down",
+        // TWO CLAIMS COLLAPSED INTO ONE, which is the whole point of the carve: the fold used to be
+        // typed once per shell — the same four-state switch in AppKit and in UIKit — and it is now
+        // typed once, full stop. A rule that still asked each shell for it would be asking them to
+        // re-grow the clone.
+        Claim::Matches {
+            path: SURFACE_RUNTIME,
+            pattern: r"CodePanelPresentation\.workbench\(",
+            view: View::Code,
+            message: "the shared panel runtime folds the workbench phase somewhere else — the four states \
+                      are one switch, one floor down, for both shells",
         },
         // The macOS half of the webview mount stays deleted: it is `MacCodeWorkbenchView`, an `NSView`,
         // and a representable in the phone's target would be the second mount racing the same pooled
-        // page.
+        // page. Read as CODE since the re-aim: `PhoneCodeWorkbenchView.swift`'s header names the
+        // deleted `UIViewRepresentable` in prose, and a raw read over a wider corpus would fire on a
+        // file explaining what it stopped being.
         Claim::NoneUnder {
-            roots: &["Sources/SlopDeskPhoneUI/CodeSidebar"],
+            roots: PHONE_PANEL,
             extensions: SWIFT,
             pattern: "NSViewRepresentable",
             all: &[],
@@ -433,10 +504,19 @@ pub fn one_design_floor_two_renderers(tree: &Tree) -> Report {
             // ⚠️ The IMPERATIVE spellings are in this alternation too (docs/62 stage C). Every entry
             // to the left of them is SwiftUI's, so a floor that grew a `UIView` subclass — the one
             // shape the phone's port produces by the dozen — would have walked straight through a
-            // rule whose whole job is to keep this target values-only. `: UIView` also covers
-            // `: UIViewController`, and `: NSView` its controller, by prefix.
-            pattern: ": View|some View|NSViewRepresentable|UIViewRepresentable|: Shape|: UIView|: NSView|: \
-                      UIControl|: CALayer",
+            // rule whose whole job is to keep this target values-only.
+            //
+            // ⚠️ THE IMPERATIVE HALF IS ANCHORED TO A `class` DECLARATION, and the SwiftUI half is not,
+            // because they fail differently. `some View` and `…Representable` appear nowhere but a
+            // declaration; a bare `: CALayer` is also how a function TAKES one — `travel(_ plate:
+            // CALayer, …)` — and the floor is allowed to take one, because QuartzCore is ONE framework
+            // on both platforms and a shared animation that hands its layer back to the shell is
+            // exactly the de-duplication this floor exists for. Unanchored, the rule read that
+            // parameter as a subclass and fired on `SlatePlate.swift`: a false red, which costs a
+            // ratchet its credibility as surely as a vacuous green does. The prefix reach is kept —
+            // `UIView` still covers `UIViewController` and `NSView` its controller — because the
+            // alternation is not word-anchored on the right.
+            pattern: r": View|some View|NSViewRepresentable|UIViewRepresentable|: Shape|class \w+ *: *[\w, ]*(UIView|NSView|UIControl|CALayer)",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -469,17 +549,33 @@ pub fn one_design_floor_two_renderers(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
+    /// The phone's `Panel/` corpus, at the floor's own number.
+    ///
+    /// Two of the four are the claims' own subjects and two are filler, because the floor is a
+    /// statement about the DIRECTORY rather than about them: a fixture that met it with the
+    /// subjects alone could not tell "the corpus drained" from "the two files moved".
     fn surfaces(fixture: &Fixture) -> &Fixture {
         fixture
             .write(
                 super::PHONE_SURFACES,
-                "CodePanelPresentation \
-                 CodeOpenGateReading\nCodePanelPresentation.workbench(state)\n.task(id: pollKey) { await \
-                 poll() }\n",
+                "private func mount(_ plan: CodePanelSurfacePlan) {}\n",
+            )
+            .write(super::PHONE_EMPTY_STATES, "CodeOpenGateReading\n")
+            .write(
+                "Sources/SlopDeskPhoneUI/Panel/PhonePanelBar.swift",
+                "final class PhonePanelBar: UIView {}\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+                "final class PhoneCodeWorkbenchView: UIView {}\n",
             )
             .write(
                 super::MAC_SURFACES,
-                "CodePanelPresentation\nCodePanelPresentation.workbench(state)\n",
+                "private func mount(_ plan: CodePanelSurfacePlan) {}\n",
+            )
+            .write(
+                super::SURFACE_RUNTIME,
+                "let state = CodePanelPresentation.workbench(phase)\n",
             )
             .write(super::MAC_EMPTY_STATES, "CodeOpenGateReading\n")
             .write(
@@ -497,10 +593,17 @@ mod tests {
         // WHERE THE POLL CASE USED TO BE. It seeded `.task(id: pollKey)` twice — a task per branch,
         // restarting the loop it caused — and that claim is excised, because `.task(id:)` has no
         // UIKit spelling and the count would go to 0 for the port succeeding (see the header).
-        // What replaces it here is the failure the excision creates room for: a DRAINED
-        // `CodeSidebar/`, over which every claim below reads an absent file. That is the state the
-        // tree is in today, and it must be red rather than quiet.
-        fixture.remove(super::PHONE_SURFACES);
+        // What replaces it here is the failure the excision creates room for: a DRAINED `Panel/`,
+        // over which the representable ban walks nothing and passes. `3f11c6e6` is exactly this
+        // shape, one directory over, and it went a week unreported.
+        for drained in [
+            super::PHONE_SURFACES,
+            super::PHONE_EMPTY_STATES,
+            "Sources/SlopDeskPhoneUI/Panel/PhonePanelBar.swift",
+            "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+        ] {
+            fixture.remove(drained);
+        }
         let report = super::one_panel_vocabulary_four_surfaces(&fixture.tree());
         assert!(!report.is_clean());
         assert!(
@@ -518,11 +621,43 @@ mod tests {
         );
         assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
 
-        // And the phone re-folding the workbench phase itself.
+        // The shared runtime no longer folding the workbench phase. ONE claim since the carve, where
+        // there were two: the fold is typed once for both shells, so asking each shell for it would be
+        // asking them to re-grow the clone it deleted.
+        surfaces(&fixture);
+        fixture.write(super::SURFACE_RUNTIME, "switch phase { case .booting: break }\n");
+        assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
+
+        // A shell reaching PAST the plan to the wording — the second decision, growing back beside the
+        // runtime's. Naming the type in PROSE is still fine, and that is the arm the old `Claim::Names`
+        // pair got backwards: it read the file raw and a header sentence satisfied it.
+        surfaces(&fixture);
+        // ⚠️ `surfaces` re-WRITES its own files and removes nothing, so the second-owner seed above is
+        // still in the tree. Any case that asserts CLEAN has to undo it by hand.
+        fixture.remove("Sources/SlopDeskMacUI/Panel/MacPanelMetrics.swift");
+        fixture.append(
+            super::PHONE_SURFACES,
+            "// the wording is CodePanelPresentation.workbench(phase), one floor down\n",
+        );
+        assert!(super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
+        fixture.append(
+            super::PHONE_SURFACES,
+            "let state = CodePanelPresentation.workbench(phase)\n",
+        );
+        assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
+
+        // And a shell that stopped taking a plan at all.
+        surfaces(&fixture);
+        fixture.write(super::MAC_SURFACES, "private func mount(_ plan: Plan) {}\n");
+        assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
+
+        // And the representable back in the phone's panel — the second mount racing the pooled page.
+        // Over `Panel/` rather than the deleted `CodeSidebar/`, which is where a phone code mount
+        // lives now.
         surfaces(&fixture);
         fixture.write(
-            super::PHONE_SURFACES,
-            "CodePanelPresentation CodeOpenGateReading\nswitch phase { case .booting: break }\n",
+            "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+            "struct WorkbenchMount: NSViewRepresentable {}\n",
         );
         assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
     }
@@ -700,6 +835,30 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskSlate/SlatePlateControl.swift",
             "final class SlatePlateControl: UIControl {}\n",
+        );
+        assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
+
+        // ⚠️ AND THE FALSE RED, which is the case the anchoring exists for: a floor that TAKES a
+        // `CALayer` and hands it back is the shared QuartzCore de-duplication, not a view. A rule that
+        // fires here teaches its readers to ignore it.
+        //
+        // ⚠️ `floor` RE-WRITES ITS OWN FILES AND REMOVES NOTHING, so the two seeded subclasses above
+        // are still in the tree and would fail this CLEAN assertion for the wrong reason. Every case
+        // that asserts clean after an earlier red has to take the earlier seed back out by hand.
+        floor(&fixture);
+        fixture.remove("Sources/SlopDeskSlate/SlateStatusMark.swift");
+        fixture.remove("Sources/SlopDeskSlate/SlateStatusMarkView.swift");
+        fixture.remove("Sources/SlopDeskSlate/SlatePlateControl.swift");
+        fixture.write(
+            "Sources/SlopDeskSlate/SlatePlate.swift",
+            "public static func travel(_ plate: CALayer, to frame: CGRect) {}\n",
+        );
+        assert!(super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
+
+        // Subclassing one is still the collapse, spelled through the layer instead of the view.
+        fixture.write(
+            "Sources/SlopDeskSlate/SlatePlate.swift",
+            "final class SlatePlateLayer: CALayer {}\n",
         );
         assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
 

@@ -187,7 +187,7 @@ extension UIView {
     }
 
     @MainActor
-    fileprivate func slateInkFieldEdge() {
+    private func slateInkFieldEdge() {
         layer.borderColor = Slate.Native.Line.field.resolvedColor(with: traitCollection).cgColor
     }
 }

@@ -244,41 +244,13 @@ private final class MacTabIslandView: NSView {
             return
         }
         layoutSubtreeIfNeeded()
-        let frame = plateFrame(for: chip)
-        selection.isHidden = false
-        if igniting {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            selection.frame = frame
-            CATransaction.commit()
-            let grow = CABasicAnimation(keyPath: "transform.scale.y")
-            grow.fromValue = Slate.Anim.plateIgniteScale
-            grow.toValue = 1
-            grow.duration = Slate.Motion.selectionMorph.duration
-            grow.timingFunction = Slate.Motion.selectionMorph.timingFunction
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0
-            fade.toValue = 1
-            fade.duration = Slate.Motion.selectionMorph.duration
-            fade.timingFunction = Slate.Motion.selectionMorph.timingFunction
-            selection.add(grow, forKey: "ignite")
-            selection.add(fade, forKey: "igniteFade")
-            return
-        }
-        let travel = CABasicAnimation(keyPath: "frame")
-        travel.duration = Slate.Motion.selectionMorph.duration
-        travel.timingFunction = Slate.Motion.selectionMorph.timingFunction
-        selection.frame = frame
-        selection.add(travel, forKey: "travel")
+        SlatePlate.travel(selection, to: plateFrame(for: chip), igniting: igniting)
     }
 
     override func layout() {
         super.layout()
         guard let selected, let chip = chips[selected], !selection.isHidden else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        selection.frame = plateFrame(for: chip)
-        CATransaction.commit()
+        SlatePlate.place(selection, at: plateFrame(for: chip), animated: false)
     }
 
     /// Where the plate stands: the CHIP's own footprint. ⚠️ `stack.layoutSubtreeIfNeeded()` first — a

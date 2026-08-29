@@ -1,7 +1,7 @@
 // MacAndroidStageView — the whole mirroring surface, in AppKit (docs/56 stage D, increment 52b):
 // what device this is, the device itself, what you can do to it, and what it is saying.
 //
-// The Mac's half of ``AndroidStageView``. The veil's fold, both toolbar trays, the verb→model table
+// The Mac's half of ``PhoneAndroidStageView``. The veil's fold, both toolbar trays, the verb→model table
 // and every word are ``AndroidPresentation``'s and shared with the phone; what is here is the three
 // bands, the mount and the two latches AppKit has to hold itself.
 //
@@ -73,27 +73,11 @@ final class MacAndroidStageView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        for slot in [headerSlot, bed, consoleSlot] {
-            slot.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(slot)
-        }
-        let height = consoleSlot.heightAnchor.constraint(equalToConstant: 0)
-        consoleHeight = height
-        NSLayoutConstraint.activate([
-            headerSlot.topAnchor.constraint(equalTo: topAnchor),
-            headerSlot.leadingAnchor.constraint(equalTo: leadingAnchor),
-            headerSlot.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            bed.topAnchor.constraint(equalTo: headerSlot.bottomAnchor),
-            bed.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bed.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            consoleSlot.topAnchor.constraint(equalTo: bed.bottomAnchor),
-            consoleSlot.leadingAnchor.constraint(equalTo: leadingAnchor),
-            consoleSlot.trailingAnchor.constraint(equalTo: trailingAnchor),
-            consoleSlot.bottomAnchor.constraint(equalTo: bottomAnchor),
-            height,
-        ])
+        // The three bands and the drawer's height are ``DeviceStageLayout``'s — the twenty lines that
+        // used to stand here were character-identical to the phone stage's, loop variable aside.
+        consoleHeight = DeviceStageLayout.stackBands(
+            header: headerSlot, bed: bed, drawer: consoleSlot, in: self,
+        )
         follow()
     }
 

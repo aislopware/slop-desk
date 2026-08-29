@@ -34,8 +34,8 @@ final class MacSimulatorSurface: NSViewController {
     /// matters is "which surface, for which device" and the two answers have to compare as one value.
     private var mounted: String?
     private var mountedView: NSView?
-    private var mountedLeading: NSLayoutConstraint?
-    private var mountedTrailing: NSLayoutConstraint?
+    /// The horizontal pair the mounted depth slides on — see ``DeviceDrillSlide``.
+    private var mountedSlide: DeviceDrillSlide?
 
     init(model: SimulatorSidebarModel) {
         self.model = model
@@ -78,7 +78,7 @@ final class MacSimulatorSurface: NSViewController {
             // ENTERING: the stage arrives from the trailing edge. LEAVING: the list arrives from the
             // leading one. The same two numbers, negated, which is what makes the pair read as one
             // movement.
-            let shift = isEntering ? Slate.Metric.space4 : -Slate.Metric.space4
+            let shift = DeviceDrill.shift(entering: isEntering)
             let model = controller.model
             let surface: NSView = isEntering
                 ? MacSimulatorStageView(model: model)
@@ -91,28 +91,16 @@ final class MacSimulatorSurface: NSViewController {
     /// way. The FIRST mount has nothing to leave, so it lands without a beat — an app opening the panel
     /// should not watch its first surface arrive from off-screen.
     private func swap(to surface: NSView, from shift: CGFloat) {
-        let outgoing = mountedView
-        let outgoingLeading = mountedLeading
-        let outgoingTrailing = mountedTrailing
+        let leaving = mountedView
+        let leavingSlide = mountedSlide
 
-        surface.translatesAutoresizingMaskIntoConstraints = false
-        surface.alphaValue = outgoing == nil ? 1 : 0
-        view.addSubview(surface)
-        let leading = surface.leadingAnchor.constraint(
-            equalTo: view.leadingAnchor, constant: outgoing == nil ? 0 : shift,
-        )
-        let trailing = surface.trailingAnchor.constraint(
-            equalTo: view.trailingAnchor, constant: outgoing == nil ? 0 : shift,
-        )
-        NSLayoutConstraint.activate([
-            leading, trailing,
-            surface.topAnchor.constraint(equalTo: view.topAnchor),
-            surface.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
+        surface.alphaValue = leaving == nil ? 1 : 0
+        // The mount is ``DeviceDrill``'s; what stays here is the BEAT below, which is the one half the
+        // two shells genuinely disagree about.
+        let slide = DeviceDrill.mount(surface, in: view, offsetBy: leaving == nil ? 0 : shift)
         mountedView = surface
-        mountedLeading = leading
-        mountedTrailing = trailing
-        guard outgoing != nil else { return }
+        mountedSlide = slide
+        guard let outgoing = leaving else { return }
 
         // Laid out at the OFFSET before the animation starts, or the first frame of the beat is the
         // whole slide: an unresolved constraint animates from wherever the view happened to be.
@@ -121,18 +109,18 @@ final class MacSimulatorSurface: NSViewController {
             context.duration = Slate.Motion.standard.duration
             context.timingFunction = Slate.Motion.standard.timingFunction
             context.allowsImplicitAnimation = true
-            leading.animator().constant = 0
-            trailing.animator().constant = 0
-            outgoingLeading?.animator().constant = -shift
-            outgoingTrailing?.animator().constant = -shift
+            slide.leading.animator().constant = 0
+            slide.trailing.animator().constant = 0
+            leavingSlide?.leading.animator().constant = -shift
+            leavingSlide?.trailing.animator().constant = -shift
             surface.animator().alphaValue = 1
-            outgoing?.animator().alphaValue = 0
+            outgoing.animator().alphaValue = 0
             view.layoutSubtreeIfNeeded()
         } completionHandler: {
             // Main-actor isolated inside a `@Sendable` handler AppKit always runs on the main thread
             // without having annotated it — the assertion is the honest spelling, and it traps rather
             // than corrupting a view tree if that ever stops holding.
-            MainActor.assumeIsolated { outgoing?.removeFromSuperview() }
+            MainActor.assumeIsolated { outgoing.removeFromSuperview() }
         }
     }
 }

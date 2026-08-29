@@ -68,13 +68,9 @@ final class MacPaneSwitcherCardView: MacOverlayCardView {
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
         scroll.documentView = column
-        scroll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scroll)
+        NSLayoutConstraint.activate(scroll.slateEdges(of: self))
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             // Pinned to the CLIP view's width, so the rows lay out at the card's width and the scroll
             // is vertical only — a document view free in both axes scrolls sideways instead.
             column.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),

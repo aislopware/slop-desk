@@ -51,11 +51,14 @@ final class MacCodePanelColumn: NSViewController {
         self.chrome = chrome
         self.overlay = overlay
         strip = MacPanelStrip(chrome: chrome)
-        surfaces = MacCodePanelSurfaces(
+        // The surfaces' whole non-drawing half — the plan, the five loops, the parking bracket, the
+        // device reports — is `SlopDeskClientCore`'s and is built HERE, beside the models it reads,
+        // because the shell that draws it is not the thing that owns their lifetime.
+        surfaces = MacCodePanelSurfaces(runtime: CodePanelSurfaceRuntime(
             store: store, connection: connection, chrome: chrome, preferences: preferences,
             overlay: overlay, model: model, simulatorModel: simulatorModel,
             androidModel: androidModel,
-        )
+        ))
         super.init(nibName: nil, bundle: nil)
     }
 

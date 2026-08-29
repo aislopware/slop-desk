@@ -48,12 +48,7 @@ final class PaneFileImportPlateView: UIView, UIDocumentPickerDelegate {
             symbol: .documentBadgePlus, help: Self.help, tint: Slate.Native.Text.icon,
         )
         addSubview(button)
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
-            button.topAnchor.constraint(equalTo: topAnchor),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(button.slateEdges(of: self))
         button.addTarget(self, action: #selector(summon), for: .touchUpInside)
     }
 

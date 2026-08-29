@@ -29,7 +29,7 @@
 // What it does NOT own is what the card SAYS: ``PeekReplyPresentation`` decides the caption, the
 // counter, the stand-in note and the zero-state line, ``PeekReplyTarget`` decides which pane and
 // where it sits in the queue, and ``PendingToolSummary`` collapses the pending call. Every one of
-// them is shared with the phone's ``PeekReplyOverlay``.
+// them is shared with the phone's ``PhonePeekReplyCardView``.
 
 import AppKit
 import SlopDeskAgentDetect // ClaudeStatus — the header's own reading
@@ -119,10 +119,12 @@ final class MacPeekReplyView: NSView, NSTextFieldDelegate {
         field.bezelStyle = .roundedBezel
         field.controlSize = .large
         field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .large))
-        field.placeholderString = "Reply…"
+        field.placeholderString = PeekReplyCopy.replyPrompt
         field.delegate = self
 
-        send.image = NSImage(systemSymbolName: "paperplane.fill", accessibilityDescription: "Send reply")
+        send.image = NSImage(
+            systemSymbolName: "paperplane.fill", accessibilityDescription: PeekReplyCopy.sendReply,
+        )
         send.imagePosition = .imageOnly
         send.bezelStyle = .push
         send.controlSize = .large
@@ -180,12 +182,7 @@ final class MacPeekReplyView: NSView, NSTextFieldDelegate {
         for rule in [topRule, bottomRule] {
             rule.heightAnchor.constraint(equalToConstant: Slate.Metric.hairline).isActive = true
         }
-        NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(column.slateEdges(of: self))
         pendingTool.onToggle = { [weak self] in
             guard let self else { return }
             pendingToolExpanded.toggle()
@@ -420,14 +417,8 @@ final class MacPeekHeaderView: NSView {
         }
         trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
     }
 
     @available(*, unavailable)
@@ -593,7 +584,7 @@ final class MacPeekRecentView: NSView {
         super.init(frame: frameRect)
         // The caps micro-label in the instrument voice — the card NAMING a region.
         heading.attributedStringValue = macCapsString(
-            "Recent", color: Slate.Native.Overlay.tertiary,
+            PeekReplyCopy.recentHeading, color: Slate.Native.Overlay.tertiary,
         )
         heading.isSelectable = false
 
@@ -696,14 +687,8 @@ final class MacPeekCaughtUpView: NSView {
             top: Slate.Metric.space4, left: Slate.Metric.space4,
             bottom: Slate.Metric.space4, right: Slate.Metric.space4,
         )
-        stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(stack.slateEdges(of: self))
     }
 
     @available(*, unavailable)

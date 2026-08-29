@@ -1,6 +1,6 @@
 // MacPromptJumpFlashOverlay — the prompt-jump "landed" flash, in AppKit (docs/56 wave R, batch R3).
 //
-// The AppKit half of ``PromptJumpFlashOverlay`` (the vim-highlightedyank idiom). A ⌘PageUp/⌘PageDown
+// The AppKit half of ``PromptJumpFlashOverlayView`` (the vim-highlightedyank idiom). A ⌘PageUp/⌘PageDown
 // (or navigator) prompt jump replaces the whole viewport in one frame — the eye has no scroll motion
 // to follow, so the user lands with zero orientation. This overlay paints ONE accent fade over the
 // landed prompt row the instant the jump settles, anchoring the eye where the jump went. libghostty
@@ -41,15 +41,13 @@ final class MacPromptJumpFlashOverlay: NSView {
     /// the whole of the hold because the viewport is PINNED for it.
     private var flashRects: [CGRect] = []
 
-    /// The last epoch that reached ``flash(epoch:)``. Epoch 0 is the mount state — no jump has settled
-    /// — and the comparison is `>` so a re-arm that re-reads the same epoch cannot double-paint it.
-    private var paintedEpoch = 0
+    /// Which epochs may paint, what they paint, and the trace they leave — ``DecorationPromptFlash``,
+    /// one implementation for both shells. It holds the `paintedEpoch` counter this file used to.
+    private let gate = DecorationPromptFlash()
 
     /// The beat that unmounts the rects. Cancelled by a rapid re-jump, which repaints from scratch and
     /// owes the predecessor no cleanup.
     private var unmount: Task<Void, Never>?
-
-    private static let fadeKey = "slopdesk.promptFlash"
 
     init(model: TerminalViewModel) {
         self.model = model
@@ -97,14 +95,7 @@ final class MacPromptJumpFlashOverlay: NSView {
 
     /// One settled jump: paint at peak instantly, decay, then unmount the rects.
     private func flash(epoch: Int) {
-        guard epoch > paintedEpoch else { return }
-        paintedEpoch = epoch
-        let rects = landedPromptRects()
-        guard !rects.isEmpty else {
-            Self.debugLog("epoch \(epoch) settled but NO RECT (alt-screen / no seam / blank rows)")
-            return
-        }
-        Self.debugLog("painting epoch \(epoch) rows=\(rects.count) first=\(rects[0])")
+        guard let rects = gate.landing(epoch: epoch, model: model) else { return }
         unmount?.cancel()
         flashRects = rects
         needsDisplay = true
@@ -118,52 +109,17 @@ final class MacPromptJumpFlashOverlay: NSView {
         }
     }
 
-    /// The decay, on the layer's opacity — the AppKit view of the rung ``Slate/Anim/promptFlash``
-    /// names, which is why the curve is taken from `Slate.Motion` and never re-typed as control
-    /// points here.
-    ///
-    /// The peak is the animation's `fromValue` and nothing else: the layer's model opacity stays 0
-    /// throughout, so the presentation rises to the peak on the first frame (the hard cut ON), decays
-    /// over the curve, and lands back on a value that was already correct. Nothing to reset, nothing
-    /// to strand.
+    /// The decay, on the layer's opacity — ``DecorationPromptFlash/decay(on:)``, which owns the curve,
+    /// the peak and the key. An `NSView`'s `layer` is optional (this one asks for it with
+    /// `wantsLayer` at init), which is the whole of what this wrapper adds.
     private func decay() {
         guard let layer else { return }
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = Slate.Anim.promptFlashPeak
-        fade.toValue = 0
-        fade.duration = Slate.Motion.promptFlash.duration
-        fade.timingFunction = Slate.Motion.promptFlash.timingFunction
-        // A re-jump mid-fade restarts from the peak rather than cross-fading two decays — the flash is
-        // one cut per landing, and two overlapping curves read as a stutter.
-        layer.removeAnimation(forKey: Self.fadeKey)
-        layer.add(fade, forKey: Self.fadeKey)
+        DecorationPromptFlash.decay(on: layer)
     }
 
     private func clear() {
         guard !flashRects.isEmpty else { return }
         flashRects = []
         needsDisplay = true
-    }
-
-    /// The landed prompt line's rects, from the pure ``PromptJumpFlashGeometry/rects(rows:metrics:isAlternateScreen:)``
-    /// — the pinned prompt block's first TEXT row plus its soft-WRAP continuation rows, each spanning
-    /// that row's text extent (a full-grid-width bar reads as a selection band; the line's own width
-    /// reads as "this line"). Empty — no flash — for an alt-screen TUI, a placeholder surface (no
-    /// viewport seam), or a blank landing (nothing to anchor to).
-    private func landedPromptRects() -> [CGRect] {
-        guard let snapshot = model.surface as? TerminalViewportSnapshotting else { return [] }
-        return PromptJumpFlashGeometry.rects(
-            rows: snapshot.viewportTextRows(),
-            metrics: snapshot.cellMetrics(),
-            isAlternateScreen: model.isAlternateScreen,
-        )
-    }
-
-    /// stderr diagnostics gated by `SLOPDESK_BLOCKS_DEBUG == "1"` — the paint end of the one-flag jump
-    /// trace (issue → arm → scrollbar echo → settle → THIS paint / no-rect drop). One flag, both ends,
-    /// which is the point of it being one flag: a Mac renderer that dropped its half would make the
-    /// trace go quiet at exactly the step being debugged.
-    private static func debugLog(_ message: String) {
-        DebugTrace.blocks.write("flash", message)
     }
 }

@@ -1787,8 +1787,31 @@ live in `SlopDeskClientCore`, below both UI halves.
 
 **What made it possible was increment 43, and what nearly stopped it was one line of colour.** The
 mint had to travel with the pool — the pool calls it — and the mint set `underPageBackgroundColor`
-from `Slate.theme`. `SlopDeskSlate` *depends on* `SlopDeskClientCore`, so reading a token from down
-there is a dependency cycle, not a widening. The line did not have to travel, though: both mounts
+from `Slate.theme`.
+
+> ⚠️ **CORRECTION, and it is the origin of five wrong file headers.** This paragraph and two more
+> below (§ *"One thing stayed with each drawing"* and § *"What stayed with each half"*) assert that
+> `SlopDeskSlate` **depends on** `SlopDeskClientCore`, so an ink or a metric cannot descend without
+> making a cycle. **The edge runs the other way.** `Package.swift:475` lists `SlopDeskSlate` among
+> `SlopDeskClientCore`'s dependencies; `Package.swift:537-549` gives Slate's own dependencies as
+> `SlopDeskWorkspaceModel`, `SlopDeskAgentDetect`, `SlopDeskFontFaces` and `SFSafeSymbols`, with no
+> edge back. `SlopDeskClientCore` reads `Slate.Metric` in the clear today
+> (`Pane/DecorationDivider.swift`, `Pane/GuiLeafChromeLayout.swift`).
+>
+> The sentence was copied verbatim into five `SlopDeskClientCore` headers —
+> `Pane/GuiLeafChromeLayout.swift`, `Pane/PaneDropGeometry.swift`, `Overlays/OverlayCardLayout.swift`,
+> `CodeSidebar/CodePanelPresentation.swift`, `CodeSidebar/CodeSidebarPage.swift` — all now corrected,
+> and in `GuiLeafChromeLayout` it was load-bearing: because the design rungs were believed
+> unreachable they were passed in as parameters, and two callers spelling the same argument list is
+> what `no-cross-target-clone` eventually fired on. **A wrong fact in a header travels further than a
+> wrong line of code**, because the next author reads it as settled and writes the sixth copy.
+>
+> What survives the correction is every *decision* these passages defend — the ink stays with each
+> renderer because an ink is a RENDERING of an answer, not because the build forbids the import. That
+> argument never needed the cycle and reads better without it. `docs/62` §8 carries the ratchet
+> (`slate-is-below-clientcore`) that stops the claim coming back.
+
+The line did not have to travel, though: both mounts
 already re-apply that colour on the very update that creates the page, and they must, because a
 pooled page outlives a theme switch and a creation-time snapshot flashes the old tone on a scroll
 bounce. The mount's write was never redundant with the mint's — it **outranked** it, and the mint's
@@ -1906,8 +1929,10 @@ The `nil`-controller fallback went down with them: `AgentSettingsCard.installSta
 where the Mac cannot reach it — that fallback exists because the iOS sheet once shipped a card
 claiming an integration was installed, and it does not get to exist twice.
 
-**One thing stayed with each drawing, and only because it must.** `SlopDeskSlate` DEPENDS on
-`SlopDeskClientCore`, so an ink cannot descend to an answer without becoming a cycle. A badge names
+**One thing stayed with each drawing, and it is a choice rather than a wall.** ⚠️ This paragraph read
+"only because it must — `SlopDeskSlate` DEPENDS on `SlopDeskClientCore`, so an ink cannot descend to
+an answer without becoming a cycle." That cycle does not exist; see the correction above. An ink
+stays with the drawing because an ink IS the drawing's half of the answer. A badge names
 its own silhouette — one SF-Symbol name both halves ask for — and each renderer spells the hue:
 `Slate.StatusInk.ok` in SwiftUI, `Slate.Native.StatusInk.ok` in AppKit. The badge cases are two, so
 that is two lines per half. A `Slate.hooksInk(_:)` pair beside `attentionInk(_:)` would collapse even
@@ -2000,8 +2025,10 @@ them.
 
 **What stayed with each half is the same three things as every increment since 19**, and the list has
 not grown: the binding (`@Default` is a property wrapper, and SwiftUI observing the read is its whole
-point), the widget, and the hue — `SlopDeskSlate` depends on `SlopDeskClientCore`, so an ink cannot
-descend without becoming a cycle. `SettingsProseInk` is the role, resolved to `SettingsInk.ok` in
+point), the widget, and the hue — which stays because a hue is the renderer's half of a role, ⚠️ NOT
+because "`SlopDeskSlate` depends on `SlopDeskClientCore`, so an ink cannot descend without becoming a
+cycle", which is what this sentence used to say and is false; see the correction above.
+`SettingsProseInk` is the role, resolved to `SettingsInk.ok` in
 SwiftUI and `Slate.Native.StatusInk.ok` in AppKit. `os-integration`, `cli-install`, `raw-overrides`
 and `config-file` are `Platform::Mac` in the layout table and keep their words with their single
 renderer, exactly as `MacOSIntegrationRows`' and `MacCLIInstallCard`'s already do — a surface with
@@ -2062,7 +2089,7 @@ AppKit has no equivalent at all — so it carries `keyed(_:on:)`, a `[LoopID: (k
 that starts a loop when its key appears, leaves it alone while the key holds, and cancels it when the
 key goes nil. Five loops, one rule, and the rule is written once.
 
-**The mount identity excludes the load state on purpose.** `SurfacePlan.identity` folds the surface,
+**The mount identity excludes the load state on purpose.** `CodePanelSurfacePlan.identity` folds the surface,
 the project root and the collapse, and deliberately not the veil or the poll keys: remounting a
 pooled `WKWebView` mid-navigation unparents a live page in order to hand it straight back, so a key
 that included the first paint would remount at exactly the moment the pool exists to avoid. The veil

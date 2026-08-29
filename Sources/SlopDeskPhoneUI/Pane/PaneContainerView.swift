@@ -29,10 +29,9 @@ import UIKit
 
 @MainActor
 final class PaneContainerView: UIView {
-    private let store: WorkspaceStore
+    /// The pane cluster's whole injection list, in one value — see ``PaneCanvasDeps``.
+    private let deps: PaneCanvasDeps
     let paneID: PaneID
-    private let overlayCoordinator: OverlayCoordinator?
-    private let chrome: WorkspaceChromeState?
 
     // NOT `isFocused`, which `UIView` already declares: that one is the UIKit FOCUS ENGINE's state
     // (the Apple TV / hardware-keyboard focus system), read-only and unrelated to which pane this
@@ -62,38 +61,21 @@ final class PaneContainerView: UIView {
 
     // MARK: The live reads
 
-    private var scrim = PaneResizeScrimState()
-    private var settleTask: Task<Void, Never>?
-    private var lastSize: CGSize = .zero
+    /// The resize veil's reducer PLUS its settle wait — see ``PaneResizeScrimDriver``. `lazy` because
+    /// it needs the store and the pane id, which are only known once `self` is initialised.
+    private lazy var scrim = PaneResizeScrimDriver(store: deps.store, paneID: paneID)
     private var generation = 0
-    private var isWired = false
+    /// Idempotent attach/detach edges — see ``PaneMountGate``.
+    private var mount = PaneMountGate()
 
     // MARK: - Life
 
-    init(
-        store: WorkspaceStore,
-        paneID: PaneID,
-        isFocused: Bool,
-        isVisible: Bool,
-        overlay: OverlayCoordinator?,
-        chrome: WorkspaceChromeState?,
-    ) {
-        self.store = store
+    init(deps: PaneCanvasDeps, paneID: PaneID, isFocused: Bool, isVisible: Bool) {
+        self.deps = deps
         self.paneID = paneID
         isPaneFocused = isFocused
         self.isVisible = isVisible
-        overlayCoordinator = overlay
-        self.chrome = chrome
-        // The terminal model is a CLOSURE, not a value: it is resolved fresh at every drop, because a
-        // pane that materialised its session after this container was built would otherwise actuate
-        // against a `nil` captured at mount.
-        receiver = PaneDropReceiverView(
-            paneID: paneID,
-            model: dropModel,
-            store: store,
-            terminalModel: { (store.handle(for: paneID) as? LivePaneSession)?.terminalModel },
-            overlayCoordinator: overlay,
-        )
+        receiver = PaneDropReceiverView(paneID: paneID, model: dropModel, deps: deps)
         super.init(frame: .zero)
         build()
         // No separate mount: ``attach()`` runs ``follow()``, and the leaf is mounted from INSIDE that
@@ -117,14 +99,8 @@ final class PaneContainerView: UIView {
         // is the resting answer to a question the switcher is currently asking louder, so the veil
         // covers it too.
         for overlay in [receiver, resizeVeil, focusCorner, recedeVeil] as [UIView] {
-            overlay.translatesAutoresizingMaskIntoConstraints = false
             addSubview(overlay)
-            NSLayoutConstraint.activate([
-                overlay.topAnchor.constraint(equalTo: topAnchor),
-                overlay.bottomAnchor.constraint(equalTo: bottomAnchor),
-                overlay.leadingAnchor.constraint(equalTo: leadingAnchor),
-                overlay.trailingAnchor.constraint(equalTo: trailingAnchor),
-            ])
+            NSLayoutConstraint.activate(overlay.slateEdges(of: self))
         }
         // Both veils and the corner ride opacity, never `isHidden`: a layer-hosting leaf sizes its
         // surface in `layoutSubviews`, which does not run on a hidden subtree, so an un-hide after a
@@ -146,25 +122,18 @@ final class PaneContainerView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil, superview == nil {
-            detach()
-        } else if window != nil {
-            attach()
-        }
+        if window != nil { attach() } else if superview == nil { detach() }
     }
 
     private func attach() {
-        guard !isWired else { return }
-        isWired = true
+        guard mount.attach() else { return }
         follow()
     }
 
     private func detach() {
-        guard isWired else { return }
-        isWired = false
+        guard mount.detach() else { return }
         generation &+= 1
-        settleTask?.cancel()
-        settleTask = nil
+        scrim.cancel()
     }
 
     /// The pane is closed for good. Forwarded to the leaf, which owns the renderer that a mere unmount
@@ -183,7 +152,7 @@ final class PaneContainerView: UIView {
         isPaneFocused = isFocused
         (leaf as? TerminalLeafView)?.setFocused(isFocused)
         (leaf as? GuiLeafView)?.setFocused(isFocused)
-        if isWired { follow() }
+        if mount.isArmed { follow() }
     }
 
     func setVisible(_ isVisible: Bool) {
@@ -207,21 +176,7 @@ final class PaneContainerView: UIView {
     /// reducer's — what is left here is the wait.
     override func layoutSubviews() {
         super.layoutSubviews()
-        let size = bounds.size
-        guard size != lastSize else { return }
-        lastSize = size
-        guard scrim.noteSize(size, isDragging: store.isInteractiveResizeActive) else {
-            applyScrim()
-            return
-        }
-        applyScrim()
-        settleTask?.cancel()
-        settleTask = Task { [weak self] in
-            do { try await Task.sleep(for: PaneResizeScrimState.settle) } catch { return }
-            guard let self else { return }
-            scrim.noteSettled()
-            applyScrim()
-        }
+        scrim.noteLayout(bounds.size) { [weak self] in self?.applyScrim() }
     }
 
     /// The veil's answer, from the reducer, so the three OR-ed signals are stated once.
@@ -229,14 +184,7 @@ final class PaneContainerView: UIView {
     /// `awaitingReflow` is what HOLDS the veil past the geometry settle: on a slow link the timer alone
     /// would uncover the stretched frame about one RTT too early.
     private func applyScrim() {
-        let live = store.handle(for: paneID) as? LivePaneSession
-        PaneFade.set(
-            resizeVeil,
-            shown: scrim.isVisible(
-                isDragging: store.isInteractiveResizeActive,
-                awaitingReflow: live?.awaitingResizeReflow ?? false,
-            ),
-        )
+        PaneFade.set(resizeVeil, shown: scrim.isVeilShown())
     }
 
     // MARK: - The leaf
@@ -259,19 +207,19 @@ final class PaneContainerView: UIView {
         let built: UIView =
             if kind == .desktop {
                 GuiLeafView(
-                    live: live, isFocused: isPaneFocused, isVisible: isVisible, store: store, paneID: paneID,
+                    live: live, isFocused: isPaneFocused, isVisible: isVisible, store: deps.store, paneID: paneID,
                 )
             } else {
-                TerminalLeafView(
+                TerminalLeafView(TerminalLeafDependencies(
                     live: live,
                     isFocused: isPaneFocused,
                     // The host-reported cwd feeds the leaf's bottom status bar. The host is the app-global
                     // connection target: device-local, and it never rides the shared layout.
-                    cwd: store.paneCwd(for: paneID),
-                    store: store,
-                    overlay: overlayCoordinator,
-                    chrome: chrome,
-                )
+                    cwd: deps.store.paneCwd(for: paneID),
+                    store: deps.store,
+                    overlay: deps.overlay,
+                    chrome: deps.chrome,
+                ))
             }
         (built as? TerminalLeafView)?.setOccluded(!isVisible)
         leaf = built
@@ -299,10 +247,10 @@ final class PaneContainerView: UIView {
             // then keeps whatever handle happened to be current at mount, and on the ordinary launch —
             // where `reconcileTree()` has already run — nothing ever says otherwise, so the miss is
             // silent. Same reason the drop receiver takes a CLOSURE rather than a value (see `init`).
-            live = store.handle(for: paneID) as? LivePaneSession
+            live = deps.store.handle(for: paneID) as? LivePaneSession
             // Routed by KIND, and the fallback reads the spec, so a `.desktop` pane that arrives with
             // the document rebuilds into the video leaf instead of staying a terminal.
-            kind = live?.kind ?? store.tree.activeSession?.specs[paneID]?.kind ?? .terminal
+            kind = live?.kind ?? deps.store.tree.activeSession?.specs[paneID]?.kind ?? .terminal
             // Registers the resize veil's third signal. `applyScrim()` re-reads it — this read is what
             // makes a change to it INVALIDATE, which nothing else in this view was doing.
             _ = live?.awaitingResizeReflow
@@ -315,9 +263,9 @@ final class PaneContainerView: UIView {
             // Observing the switcher HERE is what repaints the veil on every step. It costs nothing at
             // rest, where the switcher is nil and the branch is a compare.
             recedes = PaneFocusPolicy.showsSwitcherRecede(
-                switcherIsOpen: store.paneSwitcher != nil, isFocused: isPaneFocused,
+                switcherIsOpen: deps.store.paneSwitcher != nil, isFocused: isPaneFocused,
             )
-            cwd = store.paneCwd(for: paneID)
+            cwd = deps.store.paneCwd(for: paneID)
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -344,7 +292,7 @@ final class PaneContainerView: UIView {
     /// inside ``follow()``'s tracking arm, which observes `store.paneSwitcher`, so every mounted
     /// container re-ran it on every switcher step: T+1 arrays per pane per keypress across the canvas.
     private var tabPaneCount: Int {
-        store.tree.activeSession?.tabs
+        deps.store.tree.activeSession?.tabs
             .first { $0.contains(paneID) }?
             .allPaneIDs().count ?? 1
     }
@@ -353,7 +301,7 @@ final class PaneContainerView: UIView {
 
     @objc
     private func handleTap() {
-        store.focusPaneTree(paneID)
+        deps.store.focusPaneTree(paneID)
     }
 }
 #endif

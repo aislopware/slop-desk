@@ -1,7 +1,7 @@
 // MacAndroidDeviceHeader — what device this is, and what is true about it right now, in AppKit
 // (docs/56 stage D, increment 52b).
 //
-// The Mac's half of ``AndroidDeviceHeader``. WHICH facts a device has, in what order, and which of
+// The Mac's half of ``PhoneAndroidDeviceHeader``. WHICH facts a device has, in what order, and which of
 // them was read off a machine is ``AndroidPresentation/facts(for:)``; this turns that list into a
 // ``MacAndroidFactLine`` and nothing else.
 //

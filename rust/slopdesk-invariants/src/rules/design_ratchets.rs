@@ -42,14 +42,27 @@ const MENU: &str = "Sources/SlopDeskMacUI/Commands/WorkspaceCommands.swift";
 ///   `boldSystemFont`, `italicSystemFont`), reached by `[A-Za-z]*[sS]ystemFont`;
 /// * radius — `layer.cornerRadius = N`, an ASSIGNMENT, which `cornerRadius[(:]` cannot match;
 /// * height/width — the Auto Layout constant, `constraint(equalToConstant: N)` and the
-///   `NSLayoutConstraint(…, constant: N)` argument, both reached by `[Cc]onstant: ?[0-9]`. This is
-///   the `UIKit` spelling of a fixed rhythm, and it covers the horizontal one the `SwiftUI` clause
-///   deliberately left out — Auto Layout has no square-glyph-box idiom to spare.
+///   `NSLayoutConstraint(…, constant: N)` argument, both reached by `[Cc]onstant: ?-?[0-9][0-9.]*
+///   *[,)]`. This is the `UIKit` spelling of a fixed rhythm, and it covers the horizontal one the
+///   `SwiftUI` clause deliberately left out — Auto Layout has no square-glyph-box idiom to spare.
+///
+/// ⚠️ THE `-?` IN THE CONSTANT CLAUSE IS LOAD-BEARING, and its absence was a false green for as
+/// long as the clause existed. Auto Layout spells a trailing or bottom inset as a NEGATIVE constant
+/// — `trailingAnchor.constraint(equalTo: …, constant: -12)` — so the one direction the rule could
+/// not see was the one half of every pinned pair. A rule that catches the leading inset and waves
+/// the trailing one through is not a partial ratchet; it is a ratchet that teaches the leak where
+/// to hide.
+///
+/// ⚠️ AND THE CLAUSE ENDS AT A `,` OR `)`, which is what keeps the fix from over-firing. The tree's
+/// idiom for a doubled inset is `constant: -2 * Slate.Metric.space4` — a token, multiplied, and the
+/// number in it is a COUNT rather than a dimension. Terminating the match at the argument's own end
+/// separates `constant: -6)` from `constant: -2 * …`, so the clause reads exactly one thing: a
+/// dimension that was typed rather than named.
 ///
 /// What is deliberately NOT matched is the token system itself: `.font(.system(size: size))` has no
 /// digit, `UIFont.systemFont(ofSize: Slate.Typeface.body)` has no digit, and
 /// `static let radiusCard: CGFloat = 8` is not `cornerRadius`-prefixed.
-const RAW_LITERALS: &str = r"\.font\(\.system\(size: ?[0-9]|cornerRadius[(:] *[0-9]|\.frame\(height: ?[0-9]|UIFont\.[A-Za-z]*[sS]ystemFont\(ofSize: ?[0-9]|\.cornerRadius *= *[0-9]|[Cc]onstant: ?[0-9]";
+const RAW_LITERALS: &str = r"\.font\(\.system\(size: ?[0-9]|cornerRadius[(:] *[0-9]|\.frame\(height: ?[0-9]|UIFont\.[A-Za-z]*[sS]ystemFont\(ofSize: ?[0-9]|\.cornerRadius *= *[0-9]|[Cc]onstant: ?-?[0-9][0-9.]* *[,)]";
 
 /// Every font size, corner radius and fixed height in the client UI rides the `Slate` scale.
 ///
@@ -168,6 +181,11 @@ mod tests {
             ".layer.cornerRadius=8",
             ".heightAnchor.constraint(equalToConstant: 28)",
             ".heightAnchor.constraint(equalToConstant:28)",
+            // ⚠️ THE NEGATIVE, which is half of every pinned pair and which the clause could not see
+            // until it grew a `-?`. A trailing or bottom inset is spelled this way and no other.
+            ".constraint(equalTo: view.trailingAnchor, constant: -12)",
+            ".constraint(equalTo: view.bottomAnchor, constant:-12)",
+            "NSLayoutConstraint(item: a, attribute: .top, constant: -6),",
         ] {
             fixture.write(
                 &format!("{}/View0.swift", super::PHONE_UI),
@@ -195,6 +213,29 @@ mod tests {
              .constraint(equalToConstant: 28)\nText(\"x\").font(Slate.Typeface.body)\n",
         );
         assert!(super::design_tokens_are_not_bypassed(&fixture.tree()).is_clean());
+    }
+
+    /// ⚠️ THE OVER-FIRE THE `-?` COULD HAVE BOUGHT. A count multiplied by a token is the tree's own
+    /// idiom for a doubled inset, and a clause that read the `2` in it as a dimension would have
+    /// turned a real fix into a rule nobody can leave green.
+    #[test]
+    fn a_token_multiplied_by_a_count_is_not_a_literal() {
+        let fixture = Fixture::new("design-ratchets-multiplied");
+        phone_tree(&fixture);
+        for kept in [
+            "view.widthAnchor.constraint(lessThanOrEqualTo: w, constant: -2 * Slate.Metric.space4),",
+            "view.widthAnchor.constraint(lessThanOrEqualTo: w, constant: 2 * Slate.Metric.space4),",
+            "label.trailingAnchor.constraint(equalTo: t, constant: -Slate.Metric.space3),",
+            "row.heightAnchor.constraint(equalToConstant: Slate.Metric.heightRow),",
+        ] {
+            fixture.write(&format!("{}/View0.swift", super::PHONE_UI), &format!("{kept}\n"));
+            let report = super::design_tokens_are_not_bypassed(&fixture.tree());
+            assert!(
+                report.is_clean(),
+                "{kept} was read as a raw literal: {:?}",
+                report.violations()
+            );
+        }
     }
 
     /// The shell's silent pass: a target directory that is not there.

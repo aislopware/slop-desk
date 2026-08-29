@@ -1889,6 +1889,28 @@ struct Site {
     site: String,
 }
 
+/// Whether a line is nothing but an argument forwarded under its own name — `controlBar:
+/// controlBar,`.
+///
+/// Written out rather than spelled as a pattern because the test is a BACK-REFERENCE (the label and
+/// the value must be the same word) and this crate's regex engine has none by design. The rules are
+/// exactly three: one `:`, an identifier on each side, and nothing else on the line but an optional
+/// trailing comma. `pad: Slate.Metric.space2,` fails on the dots, `let x: Int` on the keyword, and
+/// `foo: bar,` on the two names differing — each of which is a decision one half could get wrong.
+fn forwards_itself(line: &str) -> bool {
+    let line = line.strip_suffix(',').unwrap_or(line);
+    let Some((label, value)) = line.split_once(':') else {
+        return false;
+    };
+    let (label, value) = (label.trim(), value.trim());
+    let identifier = |word: &str| {
+        !word.is_empty()
+            && word.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && !word.starts_with(|c: char| c.is_ascii_digit())
+    };
+    label == value && identifier(label)
+}
+
 /// Every window of substantive lines under one root, and how many files it read.
 struct Shingles {
     /// The file count, for the vacuity floor.
@@ -1904,6 +1926,23 @@ struct Shingles {
 /// closing braces manufactures one. `import`, `@attribute` and `#if` lines go too — two view files
 /// legitimately import the same six modules, and that is a coincidence of the split rather than a
 /// duplicated decision.
+///
+/// ⚠️ AND A LINE THAT FORWARDS A LOCAL UNDER ITS OWN NAME GOES TOO — `controlBar: controlBar,` —
+/// for a reason this rule learned the hard way. The dedup campaign lifted the GUI leaf's chrome
+/// layout into one `GuiLeafChromeLayout.mount(…)` in `SlopDeskClientCore`, deleting twenty-eight
+/// identical lines from each shell; the rule then reported the CALL as the clone, because
+/// the two call sites forward the same six views under the same six labels. That is the rule
+/// counting the fix as the disease. The discriminator it needs is whether the shared text could
+/// DRIFT: two anchor blocks can disagree by two points with nothing going red, and two forwardings
+/// of a view into one implementation cannot disagree at all — change the callee and both change. A
+/// forwarding line carries no decision, so it is scaffolding in exactly the sense `import` is.
+///
+/// The test is deliberately narrow: `label: value` where the two are the SAME identifier, nothing
+/// else on the line. `pad: Slate.Metric.space2,` stays, because WHICH RUNG is a decision and two
+/// halves naming different rungs is precisely the drift worth catching. Raising the window instead
+/// — the other way to quiet this — would have blinded the rule everywhere at once to buy silence in
+/// one place; `two_shells.rs` has the measurement that says 73% of shared windows are ordinary
+/// logic.
 ///
 /// The first sighting wins, so the diagnostic names where a body was introduced rather than
 /// wherever the walk happened to end.
@@ -1930,7 +1969,7 @@ fn shingles(tree: &Tree, root: &str, extensions: &[&str], window: usize) -> Shin
             .lines()
             .enumerate()
             .map(|(index, line)| (index + 1, comment.replace(line, "").trim().to_owned()))
-            .filter(|(_, line)| !noise.is_match(line) && !carried.is_match(line))
+            .filter(|(_, line)| !noise.is_match(line) && !carried.is_match(line) && !forwards_itself(line))
             .collect();
         for start in 0..(body.len() + 1).saturating_sub(window.max(1)) {
             let joined = body[start..start + window]
@@ -2270,6 +2309,64 @@ mod tests {
         // Four lines of closing punctuation on each side, which is not a duplicated decision.
         shells(&fixture, "let p = 1\n}\n}\n)\n]\n", "let q = 2\n}\n}\n)\n]\n");
         assert!(check_all(&fixture.tree(), &claims).is_clean());
+    }
+
+    /// ⚠️ THE FIX MUST NOT READ AS THE DISEASE. Two shells calling ONE lifted implementation
+    /// forward the same locals under the same labels, and those lines are scaffolding: change
+    /// the callee and both change, so they cannot drift. What must still be caught is the label
+    /// bound to a DIFFERENT value — a rung, a corner, anything one half could name differently.
+    #[test]
+    fn forwarding_a_local_under_its_own_name_is_not_a_clone() {
+        let fixture = Fixture::new("clone-forwarding");
+        let claims = [Claim::NoCloneAcross {
+            left: "Sources/Left/",
+            right: "Sources/Right/",
+            extensions: SWIFT,
+            window: 4,
+            known: &[],
+            floor: 5,
+            message: "a body is written twice: {pairs}",
+        }];
+
+        // Four forwarding lines on each side, into one shared call. Not a duplicated decision.
+        let forwarding = "controlBar: controlBar,\ncollapsedChip: collapsedChip,\nstallCaption: \
+                          stallCaption,\nstatsReadout: statsReadout\n";
+        shells(
+            &fixture,
+            &format!("let mac = 1\n{forwarding}"),
+            &format!("let phone = 2\n{forwarding}"),
+        );
+        assert!(
+            check_all(&fixture.tree(), &claims).is_clean(),
+            "forwarding read as a clone"
+        );
+
+        // The same shape where the VALUES are decisions is still a clone — this is the half of the
+        // window that says which rung each corner takes, and two halves may not decide it twice.
+        let decided = "pad: Slate.Metric.space2,\ninset: Slate.Metric.space3,\nheight: \
+                       Slate.Metric.paneHeaderHeight,\nhairline: Slate.Metric.hairline\n";
+        shells(
+            &fixture,
+            &format!("let mac = 1\n{decided}"),
+            &format!("let phone = 2\n{decided}"),
+        );
+        assert!(
+            !check_all(&fixture.tree(), &claims).is_clean(),
+            "a decided value slipped through"
+        );
+
+        // And a label bound to a DIFFERENTLY-named local is not forwarding either.
+        let renamed =
+            "controlBar: bar,\ncollapsedChip: chip,\nstallCaption: caption,\nstatsReadout: readout\n";
+        shells(
+            &fixture,
+            &format!("let mac = 1\n{renamed}"),
+            &format!("let phone = 2\n{renamed}"),
+        );
+        assert!(
+            !check_all(&fixture.tree(), &claims).is_clean(),
+            "a rename slipped through"
+        );
     }
 
     #[test]

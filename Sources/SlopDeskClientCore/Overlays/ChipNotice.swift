@@ -71,3 +71,25 @@ public struct ChipNotice: Equatable, Sendable {
         self.dwell = dwell
     }
 }
+
+// MARK: - The copy chip's one word
+
+/// The label half of a clipboard-copy confirmation — the word that stands before
+/// ``SlopDeskWorkspaceCore/CopyReceipt/detail``'s count.
+///
+/// The chip draws the two halves at separate weights (label quiet, count semibold), which is why the
+/// pane's island cannot simply print ``SlopDeskWorkspaceCore/CopyReceipt/label``: that is the joined
+/// `Copied · 1,204 characters` sentence, and it exists for accessibility and for tests. So the word had
+/// to be spelled somewhere a renderer could reach it on its own — and it was spelled in BOTH shells,
+/// which is the translation bug `shared-vocabulary-ceiling` counts (docs/56 §3).
+///
+/// ⚠️ THIS IS THE SECOND SPELLING OF A WORD RUST ALREADY OWNS, and it is a compromise rather than the
+/// end state. `slopdesk_terminal::copy_receipt` builds the joined label from this same word; the clean
+/// fix is for that crate to answer the two halves separately, the way
+/// `slopdesk_ws_chip_notice` already answers a cut detail beside its spoken form. Until it does, ONE
+/// Swift constant read by both shells is strictly better than two, because the drift this file exists
+/// to prevent is between the two SHELLS.
+package enum CopyReceiptChip {
+    /// What the chip leads with. Sentence case, like every other notice on the paper surface.
+    package static let label = "Copied"
+}

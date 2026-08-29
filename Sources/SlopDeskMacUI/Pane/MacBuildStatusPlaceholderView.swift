@@ -75,11 +75,9 @@ final class MacBuildStatusPlaceholderView: NSView {
         title.textColor = Slate.Native.Text.primary
 
         // The one actionable line in the panel, and the reason the panel exists rather than a blank
-        // pane: it names the script that produces the renderer.
-        let hint = NSTextField(
-            wrappingLabelWithString:
-            "Run ThirdParty/ghostty/build-libghostty.sh — the headless build renders this panel.",
-        )
+        // pane: it names the script that produces the renderer. Spelled in the floor, because the
+        // path in it moves whenever that script does.
+        let hint = NSTextField(wrappingLabelWithString: BuildStatusPlaceholderCopy.buildHint)
         hint.font = .systemFont(ofSize: Slate.Typeface.footnote)
         hint.textColor = Slate.Native.Text.secondary
         hint.alignment = .center

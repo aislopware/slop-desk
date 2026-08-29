@@ -1,6 +1,6 @@
 // MacViCursorOverlay — the copy-mode BLOCK CURSOR, in AppKit (docs/56 wave R, batch R3).
 //
-// The AppKit half of ``ViCursorOverlay``. A DECORATION coincident with the terminal surface, drawing
+// The AppKit half of ``ViCursorOverlayView``. A DECORATION coincident with the terminal surface, drawing
 // ONE accent-outlined cell at the vi cursor while copy-mode is armed. The SELECTION is deliberately
 // NOT drawn here — a keyboard-started visual range goes through the fork's `set_selection` ABI and
 // libghostty paints it natively; only the cursor (client state by design) needs a view.
@@ -116,18 +116,14 @@ final class MacViCursorOverlay: NSView {
     /// the input.
     private func follow() {
         ObservationFollow.arm(self) { view in
-            (active: view.model.copyModeBadgeActive, cell: view.model.viCursorCell)
+            DecorationViCursor.track(view.model)
         } apply: { view, _ in
             view.refresh()
         }
     }
 
     private func refresh() {
-        let next = ViCursorGeometry.rect(
-            copyModeActive: model.copyModeBadgeActive,
-            cell: model.viCursorCell,
-            metrics: (model.surface as? TerminalViewportSnapshotting)?.cellMetrics(),
-        )
+        let next = DecorationViCursor.rect(for: model)
         guard next != cell else { return }
         cell = next
         needsDisplay = true

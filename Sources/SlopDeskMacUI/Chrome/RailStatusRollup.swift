@@ -193,8 +193,9 @@ enum RailStatusRollup {
     }
 
     /// The distance from the navigator's trailing edge to the marks' trailing edge: the COLUMN's
-    /// gutter, the one ``NavigatorColumn`` spends on both the search field's plate and the list of
-    /// project islands. The band therefore ends on the same line every surface under it ends on.
+    /// gutter, the one ``NavigatorColumnViewController`` spends on both the search field's plate and
+    /// the list of project islands. The band therefore ends on the same line every surface under it
+    /// ends on.
     ///
     /// ⚠️ It was `space2 + projectIslandInset + islandRail` (the rows' mark column, 18pt further in)
     /// until 2026-08-11 — see this file's header for why that lost. The search plate reads THIS

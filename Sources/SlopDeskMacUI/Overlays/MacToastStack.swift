@@ -65,14 +65,8 @@ final class MacToastColumnView: NSView {
         column.orientation = .vertical
         column.alignment = .trailing
         column.spacing = Slate.Metric.space2
-        column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
-        NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(column.slateEdges(of: self))
     }
 
     @available(*, unavailable)
@@ -152,12 +146,11 @@ final class MacToastCardView: MacOverlayCardView {
     private let bodyLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
 
-    /// Dwell CONSUMED, in seconds. Advanced by the tick below and FROZEN while hovering — a pointer
-    /// resting on a card stops its clock, so a notification can no longer be yanked away mid-read.
-    /// Nothing draws it: an earlier round put a depleting hairline along the bottom edge and it was
-    /// cut for reading as ornament. The pause is behaviour, not decoration.
-    private var spent: Double = 0
-    private var dwell: Timer?
+    /// The countdown, spent by ``OverlayDwell`` — the sampler both shells share. It is FROZEN while
+    /// hovering: a pointer resting on a card stops its clock, so a notification can no longer be yanked
+    /// away mid-read. Nothing draws the spend; an earlier round put a depleting hairline along the
+    /// bottom edge and it was cut for reading as ornament. The pause is behaviour, not decoration.
+    private let dwell = OverlayDwell()
     private var hovering = false
 
     init(
@@ -175,7 +168,10 @@ final class MacToastCardView: MacOverlayCardView {
         super.init(frame: .zero)
         build()
         apply(toast: toast, expanded: expanded)
-        restartDwell()
+        // The freeze is this platform's alone — a touch device has no hovering pointer to hold a clock.
+        dwell.isFrozen = { [weak self] in self?.hovering ?? false }
+        dwell.onExpire = { [weak self] in self?.onDismiss() }
+        dwell.restart(for: toast)
     }
 
     @available(*, unavailable)
@@ -227,17 +223,10 @@ final class MacToastCardView: MacOverlayCardView {
         // of its own, and centring it against a two-line card would float it beside the detail.
         row.alignment = .top
         row.spacing = Slate.Metric.space2
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space3),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space3),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space3),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Slate.Metric.space3),
-            // One UNIFORM column edge. Cards that hug their own content were tried and rendered as a
-            // ragged staircase — see ``Slate/Metric/toastWidth``.
-            widthAnchor.constraint(equalToConstant: Slate.Metric.toastWidth),
-        ])
+        OverlayCardLayout.pad(row, in: self, x: Slate.Metric.space3, y: Slate.Metric.space3)
+        // One UNIFORM column edge. Cards that hug their own content were tried and rendered as a
+        // ragged staircase — see ``Slate/Metric/toastWidth``.
+        widthAnchor.constraint(equalToConstant: Slate.Metric.toastWidth).isActive = true
         onClick = { [weak self] in self?.onJump?() }
     }
 
@@ -250,7 +239,7 @@ final class MacToastCardView: MacOverlayCardView {
         let restart = ToastPresentation.dwellKey(new) != ToastPresentation.dwellKey(toast)
         let reflows = expanded != self.expanded
         apply(toast: new, expanded: expanded)
-        if restart { restartDwell() }
+        if restart { dwell.restart(for: new) }
         if reflows { onResize() }
     }
 
@@ -317,33 +306,8 @@ final class MacToastCardView: MacOverlayCardView {
 
     // MARK: The dwell
 
-    /// Starts (or restarts) the countdown. A sticky card — `autoDismiss == nil` — gets no timer at
-    /// all, which is also why its ✕ is unconditional.
-    private func restartDwell() {
-        stopDwell()
-        spent = 0
-        let total = ToastPresentation.dwellSeconds(toast)
-        guard total > 0 else { return }
-        // Sampled rather than one `Timer` of `total`, because the sample is what a hover can FREEZE.
-        dwell = Timer.scheduledTimer(
-            withTimeInterval: ToastPresentation.dwellTick, repeats: true,
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                guard !self.hovering else { return }
-                self.spent = Swift.min(total, self.spent + ToastPresentation.dwellTick)
-                guard self.spent >= total else { return }
-                self.stopDwell()
-                self.onDismiss()
-            }
-        }
-    }
-
-    /// Stops the countdown. Idempotent, and called on teardown so no timer outlives its card.
-    func stopDwell() {
-        dwell?.invalidate()
-        dwell = nil
-    }
+    /// Stops the countdown, for the column that is retiring this card. Idempotent.
+    func stopDwell() { dwell.stop() }
 }
 
 // MARK: - The mark
@@ -375,20 +339,7 @@ final class MacToastMarkView: NSView {
         // `footnote`/medium puts the glyph at ~0.55 of the disc — the proportion the fused symbol
         // draws its inner layer at — where a bolder, smaller glyph floated lost.
         glyphConfiguration = .init(pointSize: Slate.Typeface.footnote, weight: .medium).applying(gradient)
-        for layer in [disc, glyph] {
-            layer.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(layer)
-            NSLayoutConstraint.activate([
-                layer.centerXAnchor.constraint(equalTo: centerXAnchor),
-                layer.centerYAnchor.constraint(equalTo: centerYAnchor),
-            ])
-        }
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: Self.discSize),
-            heightAnchor.constraint(equalToConstant: Self.discSize),
-        ])
-        setContentHuggingPriority(.required, for: .horizontal)
-        setContentCompressionResistancePriority(.required, for: .horizontal)
+        OverlayCardLayout.centre([disc, glyph], in: self, square: Self.discSize)
     }
 
     @available(*, unavailable)

@@ -74,7 +74,11 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
     private let row = UIStackView()
 
     private let previous: SlatePlateVerbButton
-    private let next: SlatePlateVerbButton
+    /// ⚠️ `nextMatch`, NOT `next`: `UIResponder` vends a `next` of its own, so a stored property under
+    /// that name is an attempted override and does not compile. The Mac half keeps the short name —
+    /// `NSResponder` spells its chain `nextResponder` — which is a genuine framework divergence rather
+    /// than a style choice.
+    private let nextMatch: SlatePlateVerbButton
     private let allTabs: SlatePlateVerbButton
     private let dismiss: SlatePlateVerbButton
 
@@ -84,8 +88,9 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
     /// read.
     private var focusToken: Int
 
-    /// Guards the observation re-arm against a stale `onChange` firing after this bar is gone.
-    private var generation = 0
+    /// The live following. Stored for ``teardown()`` alone — the bar can leave the chip column and stay
+    /// retained for a beat, which is the one case ``ObservationFollow/stop()`` exists for.
+    private var barFollow: ObservationFollow?
 
     init(model: TerminalFindBarModel) {
         // Everything below is built from LOCALS and only then stored: a class initialiser may not read its
@@ -104,7 +109,7 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
         // ``SlatePlateVerbButton``'s own defaults are the chrome ladder's, which agree with the POINTER
         // rung and are not the same decision.
         previous = Self.plate(.chevronUp, help: FindBarPresentation.previousMatchHelp, rung: rung)
-        next = Self.plate(.chevronDown, help: FindBarPresentation.nextMatchHelp, rung: rung)
+        nextMatch = Self.plate(.chevronDown, help: FindBarPresentation.nextMatchHelp, rung: rung)
         allTabs = Self.plate(.rectangleStack, help: FindBarPresentation.searchAllTabsHelp, rung: rung)
         dismiss = Self.plate(.xmark, help: FindBarPresentation.closeHelp, rung: rung)
         focusToken = model.focusToken
@@ -117,10 +122,11 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// Bump the generation so an already-scheduled re-arm drops itself. Called by the leaf when the bar
-    /// leaves the chip column.
+    /// End the following, so a wake already in flight cannot re-arm against a model this bar has
+    /// finished with. Called by the leaf when the bar leaves the chip column.
     func teardown() {
-        generation &+= 1
+        barFollow?.stop()
+        barFollow = nil
     }
 
     // MARK: Building
@@ -150,15 +156,10 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
         // it — `UITextField` does that by itself, where the Mac has to ask its cell for it.
         field.delegate = self
         field.addTarget(self, action: #selector(queryChanged), for: .editingChanged)
-        field.translatesAutoresizingMaskIntoConstraints = false
         well.addSubview(field)
-        NSLayoutConstraint.activate([
-            field.widthAnchor.constraint(equalToConstant: CGFloat(rung.fieldWidth)),
-            field.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: Slate.Metric.space2),
-            field.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -Slate.Metric.space2),
-            field.topAnchor.constraint(equalTo: well.topAnchor, constant: Slate.Metric.space1),
-            field.bottomAnchor.constraint(equalTo: well.bottomAnchor, constant: -Slate.Metric.space1),
-        ])
+        NSLayoutConstraint.activate(DecorationFindWell.constraints(
+            in: well, field: field, width: CGFloat(rung.fieldWidth),
+        ))
     }
 
     private func buildRow() {
@@ -194,12 +195,15 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
         tray.spacing = Slate.Metric.space1
         for mode in FindModePill.inPaneFindBar {
             guard let pill = pills[mode] else { continue }
-            pill.onToggle = { [weak self] in self?.toggle(mode) }
+            pill.onToggle = { [weak self] in
+                guard let self else { return }
+                DecorationFindBarRead.toggle(mode, in: model)
+            }
             tray.addArrangedSubview(pill)
         }
 
         previous.addAction(UIAction { [weak self] _ in self?.model.previous() }, for: .primaryActionTriggered)
-        next.addAction(UIAction { [weak self] _ in self?.model.next() }, for: .primaryActionTriggered)
+        nextMatch.addAction(UIAction { [weak self] _ in self?.model.next() }, for: .primaryActionTriggered)
         // Escalates the in-pane find to cross-tab Global Search (⇧⌘F), seeded with the current query.
         // Wired through ``TerminalFindBarModel/searchAllTabs()`` → ``OverlayCoordinator/openGlobalSearch``.
         allTabs.addAction(UIAction { [weak self] _ in self?.model.searchAllTabs() }, for: .primaryActionTriggered)
@@ -213,17 +217,11 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
             top: Slate.Metric.space1, leading: Slate.Metric.space2,
             bottom: Slate.Metric.space1, trailing: Slate.Metric.space2,
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
-        for part in [well, tray, counterBox, previous, next, allTabs, dismiss] as [UIView] {
+        for part in [well, tray, counterBox, previous, nextMatch, allTabs, dismiss] as [UIView] {
             row.addArrangedSubview(part)
         }
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
 
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (bar: Self, _: UITraitCollection) in
             bar.paintChrome()
@@ -282,47 +280,27 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
 
     // MARK: The live read
 
-    /// One tracked read of everything the bar draws. The model is `@Observable`, and every mutation it
-    /// makes — a keystroke's recount, a toggle, a ⌘G step, the re-open bump — lands in one of these.
+    /// One tracked read of everything the bar draws — ``DecorationFindBarRead/reading(_:)``, on the floor
+    /// because the DEPENDENCY SET is what must not drift between the two bars.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        var query = ""
-        var label: String?
-        var lit: [FindModePill: Bool] = [:]
-        var focus = 0
-        withObservationTracking {
-            let controller = model.controller
-            query = controller.query
-            label = FindBarPresentation.counterText(
-                position: controller.positionLabel, query: controller.query,
-            )
-            lit = Dictionary(
-                uniqueKeysWithValues: FindModePill.inPaneFindBar.map { ($0, isOn($0)) },
-            )
-            focus = model.focusToken
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+        barFollow = ObservationFollow.arm(self) { bar in
+            DecorationFindBarRead.reading(bar.model)
+        } apply: { bar, reading in
+            bar.apply(reading)
         }
-        apply(query: query, label: label, lit: lit, token: focus)
     }
 
-    private func apply(query: String, label: String?, lit: [FindModePill: Bool], token: Int) {
+    private func apply(_ reading: DecorationFindBarReading) {
         // Written back only when it actually DIFFERS. Assigning `text` on a field being edited resets the
         // insertion point to the end and discards any marked (IME) text — and every keystroke round-trips
         // through here, so an unguarded write would make the bar unusable in any language composed rather
         // than typed. The guard is false exactly when something OTHER than this field moved the query: a
         // close-and-reopen, or a future seed.
-        if field.text != query { field.text = query }
-        for (mode, pill) in pills { pill.setOn(lit[mode] ?? false) }
-        showCounter(label)
-        if token != focusToken {
-            focusToken = token
+        if field.text != reading.query { field.text = reading.query }
+        for (mode, pill) in pills { pill.setOn(reading.lit[mode] ?? false) }
+        showCounter(reading.label)
+        if reading.token != focusToken {
+            focusToken = reading.token
             focusQuery()
         }
     }
@@ -343,28 +321,6 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
         fade.timingFunction = Slate.Motion.smallFade.timingFunction
         counter.layer.add(fade, forKey: "counter")
         counter.text = label
-    }
-
-    // MARK: The mode chips
-
-    /// Whether `mode`'s chip is lit — the controller's own flag, never a mirror.
-    private func isOn(_ mode: FindModePill) -> Bool {
-        switch mode {
-        case .caseSensitive: model.controller.caseSensitive
-        case .wholeWord: model.controller.wholeWord
-        case .regex: model.controller.isRegex
-        }
-    }
-
-    /// Flip `mode` through the model, which refreshes the mirror and re-arms the highlight.
-    private func toggle(_ mode: FindModePill) {
-        switch mode {
-        case .caseSensitive: model.toggleCaseSensitive()
-        case .wholeWord: model.toggleWholeWord()
-        case .regex: model.toggleRegex()
-        }
-        // The pill's own lit state is redrawn by `follow()`, off the controller — a chip that painted
-        // itself on the tap would be a mirror of the flag rather than a reading of it.
     }
 
     // MARK: The keyboard

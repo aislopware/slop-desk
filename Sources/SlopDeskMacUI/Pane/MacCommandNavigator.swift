@@ -247,10 +247,9 @@ final class MacCommandNavigatorView: NSView {
 final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
     /// The pane's live terminal model — its pure block store is this card's data source and its
     /// bookmarks API backs the star. This is the pane the card floats over (the active one).
-    private let model: TerminalViewModel
-    /// The live store — performs the jump, the re-run and the output copy through the shared paths.
-    private let store: WorkspaceStore
-    private let onClose: () -> Void
+    /// The card's whole non-drawing half: the segment, the query, the clamped cursor, the reveal
+    /// arbiter and the four store paths a chosen row takes. Shared with the phone's card.
+    private let nav: CommandNavigatorSelection
 
     private let magnifier = NSImageView()
     private let field = NSTextField()
@@ -258,6 +257,8 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
     private let filterTray = NSStackView()
     private let filterRule = MacCardRuleView()
     private let scroll = NSScrollView()
+    /// The results viewport's own height, held because ``fitList()`` moves it on every draw.
+    private var listHeight: NSLayoutConstraint?
     private let column = NSStackView()
     private let zeroState = NSTextField(labelWithString: "")
     private let footerRule = MacCardRuleView()
@@ -267,20 +268,6 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
     /// The row views currently in the column, in draw order — kept so a selection step moves the
     /// plate without rebuilding a list that did not change.
     private var rows: [MacCommandNavigatorRowView] = []
-    /// The rows as last drawn, so the keyboard verbs act on what the eye is looking at.
-    private var visible: [CommandBlock] = []
-
-    private var query = ""
-    private var filter = BlockNavigatorFilter.all
-    private var selection = 0
-    /// The selection the viewport was last scrolled for. `-1` is "never", which no index can be, so
-    /// the first draw does not scroll a list that has not moved.
-    private var lastRevealed = -1
-    /// Hover→selection arbiter: a hover-driven selection must not auto-scroll, and a list scrolling
-    /// under a PARKED pointer must not steal the selection. One per presentation, shared by the rows.
-    private let hoverGate = HoverSelectionGate()
-
-    private var listHeight: NSLayoutConstraint?
 
     /// The tallest the whole card may be, pushed down by the container from the pane's height.
     var heightBudget: CGFloat = .greatestFiniteMagnitude {
@@ -291,17 +278,13 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
     }
 
     init(model: TerminalViewModel, store: WorkspaceStore, onClose: @escaping () -> Void) {
-        self.model = model
-        self.store = store
-        self.onClose = onClose
+        nav = CommandNavigatorSelection(model: model, store: store, onClose: onClose)
         super.init(frame: .zero)
-
-        buildQueryLine()
-        buildFilters()
+        buildHeader()
         buildResults()
         buildFooter()
         placeParts()
-        render()
+        nav.follow(self) { $0.draw() }
     }
 
     @available(*, unavailable)
@@ -309,7 +292,10 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
 
     // MARK: Building
 
-    private func buildQueryLine() {
+    /// The card's head: the query line, the status segment, and the two rules that separate them from
+    /// the list. One step because they are one band — the segment sits INSIDE the query's rule, and a
+    /// build that split them left the two rules in different methods from the parts they underline.
+    private func buildHeader() {
         magnifier.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
         magnifier.contentTintColor = Slate.Native.Overlay.secondary
         magnifier.symbolConfiguration = NSImage.SymbolConfiguration(
@@ -335,9 +321,7 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
 
         queryRule.translatesAutoresizingMaskIntoConstraints = false
         addSubview(queryRule)
-    }
 
-    private func buildFilters() {
         // A TRANSPARENT tray: each pill delineates itself, so the container only spaces them.
         filterTray.orientation = .horizontal
         filterTray.alignment = .centerY
@@ -345,7 +329,7 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
         filterTray.translatesAutoresizingMaskIntoConstraints = false
         for segment in BlockNavigatorFilter.allCases {
             let pill = MacCommandNavigatorFilterPill(segment)
-            pill.onSelect = { [weak self] in self?.choose(segment) }
+            pill.onSelect = { [weak self] in self?.nav.choose(segment) }
             pills[segment] = pill
             filterTray.addView(pill, in: .leading)
         }
@@ -487,52 +471,27 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
 
     // MARK: The live read
 
-    /// Draws the current state and re-arms itself on everything it read.
-    ///
-    /// The card reads the LIVE block model rather than a snapshot, which is the whole reason this is
-    /// an observation arm and not a one-shot draw: a command that finishes while the navigator is
-    /// open flips its own gutter, and a command that STARTS while it is open appears.
-    ///
-    /// ``ObservationFollow`` keeps the beat this needs: its wake is scheduled onto the next main turn
-    /// rather than run inside the change, which the card depends on because the callback fires BEFORE
-    /// the value it announces is stored.
-    ///
-    /// The work sits inside `read` rather than in `apply`, against that type's usual shape: the tracked
-    /// block IS the draw, so the transitive reads of ``draw()`` ARE the dependency set. Split the two and
-    /// the set empties — the card would draw once and then follow nothing. `apply` is empty for that
-    /// reason, not by omission.
-    private func render() {
-        ObservationFollow.arm(self) { $0.draw() } apply: { _, _ in }
-    }
-
+    /// One draw of everything the card shows. Armed by ``CommandNavigatorSelection/follow(_:drawing:)``
+    /// in `init`, which is also what re-runs it when the block store moves under the open card.
     private func draw() {
-        // The pane's blocks for the active segment (newest-first) BEFORE the text filter — the pure
-        // `TerminalBlockModel` query — then the shared ranking on top of it.
-        let base = model.blocks.blocks(filter: filter)
-        visible = CommandNavigatorModel.filtered(base, query: query)
-        selection = ListNavigation.clampedSelection(
-            current: selection, delta: 0, count: visible.count,
-        )
-        for (segment, pill) in pills { pill.setActive(segment == filter) }
-        zeroState.isHidden = !visible.isEmpty
-        if visible.isEmpty {
-            zeroState.stringValue = CommandNavigatorPresentation.emptyLine(
-                filter: filter, hasBlocks: !base.isEmpty,
-            )
-        }
+        let hasBlocks = nav.recut()
+        for (segment, pill) in pills { pill.setActive(nav.isActive(segment)) }
+        zeroState.isHidden = !nav.visible.isEmpty
+        if nav.visible.isEmpty { zeroState.stringValue = nav.emptyLine(hasBlocks: hasBlocks) }
         drawRows()
         fitList()
         revealSelection()
     }
 
     private func drawRows() {
-        if rows.count != visible.count {
+        let readings = nav.rowReadings()
+        if rows.count != readings.count {
             for row in rows {
                 column.removeArrangedSubview(row)
                 row.removeFromSuperview()
             }
-            rows = visible.map { _ in
-                let row = MacCommandNavigatorRowView(gate: hoverGate, actions: rowActions())
+            rows = readings.map { _ in
+                let row = MacCommandNavigatorRowView(gate: nav.hoverGate, actions: nav.rowActions())
                 column.addArrangedSubview(row)
                 row.widthAnchor.constraint(
                     equalTo: column.widthAnchor, constant: -Slate.Metric.space2 * 2,
@@ -540,28 +499,7 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
                 return row
             }
         }
-        for (index, block) in visible.enumerated() {
-            rows[index].show(
-                block,
-                index: index,
-                selected: index == selection,
-                starred: model.blocks.isBookmarked(block.index),
-                firstSeen: model.blocks.firstSeen(index: block.index),
-                query: query,
-            )
-        }
-    }
-
-    /// The five verbs a row can fire, bound ONCE per row rather than re-handed on every draw — a
-    /// closure rebuilt per keystroke is the one allocation on that path that is not a string.
-    private func rowActions() -> MacCommandNavigatorRowActions {
-        MacCommandNavigatorRowActions(
-            onHover: { [weak self] index in self?.hover(index) },
-            onJump: { [weak self] block in self?.act(block) },
-            onReRun: { [weak self] block in self?.reRun(block) },
-            onCopyOutput: { [weak self] block in self?.copyOutput(block) },
-            onToggleStar: { [weak self] block in self?.toggleStar(block) },
-        )
+        for (row, reading) in zip(rows, readings) { row.show(reading) }
     }
 
     /// Sizes the results viewport to what the list wants, capped by the token AND by the pane.
@@ -584,21 +522,12 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
         Slate.Metric.heightInput + Slate.Metric.heightRow * 2 + Slate.Metric.hairline * 3
     }
 
-    /// Scrolls the selected row into view — on a selection CHANGE, and for KEYBOARD navigation only.
-    ///
-    /// Two guards, and each answers a different way the list could move on its own. The first is the
-    /// phone's `.onChange(of: selection)`: a redraw the block model provoked — a command finishing,
-    /// a new one starting — is not a selection change, and scrolling on it would yank the list out
-    /// from under someone reading it. The second is the hover arbiter, without which the list follows
-    /// the mouse: hover selects → the scroll slides a new row under the pointer → hover selects that
-    /// one → forever. The arbiter is check-and-clear, so it is consumed only where a change happened.
+    /// Scrolls the selected row into view. WHETHER to is ``CommandNavigatorSelection/shouldReveal()``
+    /// — the two guards it keeps (a model-provoked redraw is not a selection change; a hover-driven
+    /// one must not auto-scroll) are the same on both shells, so only the scroll itself is here.
     private func revealSelection() {
-        guard selection != lastRevealed else { return }
-        lastRevealed = selection
-        guard hoverGate.shouldAutoScrollOnSelectionChange(), rows.indices.contains(selection) else {
-            return
-        }
-        let row = rows[selection]
+        guard nav.shouldReveal(), rows.indices.contains(nav.selection) else { return }
+        let row = rows[nav.selection]
         column.layoutSubtreeIfNeeded()
         row.scrollToVisible(row.bounds)
     }
@@ -620,111 +549,37 @@ final class MacCommandNavigatorCardView: NSView, NSTextFieldDelegate {
         switch event.specialKey {
         case .carriageReturn,
              .enter:
-            if let block = selectedBlock() { reRun(block) }
+            if let block = nav.selectedBlock() { nav.reRun(block) }
             return true
         default:
-            guard event.charactersIgnoringModifiers == "c", let block = selectedBlock() else {
+            guard event.charactersIgnoringModifiers == "c", let block = nav.selectedBlock() else {
                 return false
             }
-            copyOutput(block)
+            nav.copyOutput(block)
             return true
         }
     }
 
     func controlTextDidChange(_: Notification) {
-        query = field.stringValue
-        resetSelection()
+        nav.type(field.stringValue)
     }
 
     func control(_: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.moveUp(_:)):
-            move(-1)
+            nav.move(-1)
         case #selector(NSResponder.moveDown(_:)):
-            move(1)
+            nav.move(1)
         case #selector(NSResponder.insertNewline(_:)):
-            if let block = selectedBlock() { act(block) }
+            if let block = nav.selectedBlock() { nav.act(block) }
         case #selector(NSResponder.cancelOperation(_:)):
-            onClose()
+            nav.close()
         default:
             // Home/End and the page keys are deliberately left alone: in a focused field they belong
             // to the query's caret, and this list is one viewport tall by construction.
             return false
         }
         return true
-    }
-
-    // MARK: Acting
-
-    /// The clamp is ``ListNavigation``'s — the rule three overlays had each written for themselves.
-    private func move(_ delta: Int) {
-        selection = ListNavigation.clampedSelection(
-            current: selection, delta: delta, count: visible.count,
-        )
-        draw()
-    }
-
-    private func hover(_ index: Int) {
-        guard selection != index else { return }
-        hoverGate.noteHoverDrivenSelection()
-        selection = index
-        draw()
-    }
-
-    private func choose(_ segment: BlockNavigatorFilter) {
-        guard segment != filter else { return }
-        filter = segment
-        resetSelection()
-    }
-
-    /// A re-filter — by query or by segment — puts the selection back on the first row AND scrolls
-    /// there. `lastRevealed` is cleared rather than compared, because the selection may ALREADY be 0
-    /// while the viewport is parked halfway down the previous list, and "row 0 is selected" is not
-    /// the same fact as "row 0 is on screen".
-    private func resetSelection() {
-        selection = 0
-        lastRevealed = -1
-        draw()
-    }
-
-    private func selectedBlock() -> CommandBlock? {
-        visible.indices.contains(selection) ? visible[selection] : nil
-    }
-
-    /// Jumps the active pane's scrollback to `block` — the shared `BlockJump` re-anchor via the
-    /// store's active-pane jump, which finds the block's CURRENT position by index and is therefore
-    /// robust to a command arriving (or a block evicting) while the card was open — then closes.
-    private func act(_ block: CommandBlock) {
-        store.jumpToNavigatorBlockInActivePane(index: block.index)
-        onClose()
-    }
-
-    /// Re-runs `block`'s captured command verbatim in the active pane (the shared, injection-safe
-    /// store path). Closes, because the re-run's output is the thing to look at. An empty command is
-    /// a store-level no-op.
-    private func reRun(_ block: CommandBlock) {
-        guard !block.commandText.isEmpty else { return }
-        store.reRunCommandInActivePane(block.commandText)
-        onClose()
-    }
-
-    /// Copies `block`'s captured output (VT-stripped plain text) through the shared request path.
-    /// Stays OPEN — a copy is a side action, not a jump — so the pane's own copy receipt underneath
-    /// is the confirmation that a possibly huge block landed. The headless core owns no pasteboard,
-    /// so the write is the caller's.
-    private func copyOutput(_ block: CommandBlock) {
-        store.copyBlockOutputInActivePane(index: block.index) { [model] text in
-            guard let text, !text.isEmpty else { return }
-            ClientPasteboard.write(text)
-            model.noteClipboardCopy(text)
-        }
-    }
-
-    /// Flips `block`'s star through the block model, which persists it via the wired
-    /// `onBookmarksChanged`. The redraw comes off the observation arm, not off the click — a glyph
-    /// that painted itself here would be a mirror of the set rather than a reading of it.
-    private func toggleStar(_ block: CommandBlock) {
-        model.blocks.toggleBookmark(index: block.index)
     }
 }
 
@@ -750,6 +605,7 @@ final class MacCommandNavigatorFilterPill: NSView {
         // activated before the pill is ever added, and a constraint on a view still translating its
         // autoresizing mask is a conflict AppKit reports at runtime instead of at build time.
         translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: Slate.Metric.heightControl).isActive = true
         wantsLayer = true
         layer?.cornerRadius = Slate.Metric.radiusSmall
         layer?.cornerCurve = .continuous
@@ -771,7 +627,6 @@ final class MacCommandNavigatorFilterPill: NSView {
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Slate.Metric.heightControl),
             content.centerYAnchor.constraint(equalTo: centerYAnchor),
             content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space2),
             content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space2),
@@ -841,22 +696,6 @@ final class MacCommandNavigatorFilterPill: NSView {
     override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
 }
 
-// MARK: - What a row can fire
-
-/// The five verbs one navigator row hands back up.
-///
-/// A value rather than five parameters on `show(_:…)`, because they are bound ONCE when the row is
-/// built while the data is re-cut on every keystroke — and a `show` carrying both would re-hand five
-/// closures per row per keystroke.
-@MainActor
-struct MacCommandNavigatorRowActions {
-    let onHover: (Int) -> Void
-    let onJump: (CommandBlock) -> Void
-    let onReRun: (CommandBlock) -> Void
-    let onCopyOutput: (CommandBlock) -> Void
-    let onToggleStar: (CommandBlock) -> Void
-}
-
 // MARK: - One row
 
 /// One recent command: the exit-status gutter, the command line with the query's hit marked, the
@@ -864,7 +703,7 @@ struct MacCommandNavigatorRowActions {
 @MainActor
 final class MacCommandNavigatorRowView: NSView {
     private let gate: HoverSelectionGate
-    private let actions: MacCommandNavigatorRowActions
+    private let actions: CommandNavigatorRowActions
 
     private let gutter = NSImageView()
     private let title = NSTextField(labelWithString: "")
@@ -878,17 +717,22 @@ final class MacCommandNavigatorRowView: NSView {
     private var index = 0
     private var selected = false
 
-    init(gate: HoverSelectionGate, actions: MacCommandNavigatorRowActions) {
+    init(gate: HoverSelectionGate, actions: CommandNavigatorRowActions) {
         self.gate = gate
         self.actions = actions
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: Slate.Metric.heightRow).isActive = true
         wantsLayer = true
         layer?.cornerRadius = Slate.Metric.radiusCard
         layer?.cornerCurve = .continuous
         layer?.borderWidth = Slate.Metric.cardBorderWidth
 
         gutter.imageScaling = .scaleNone
+        // A fixed leading column so every command line starts at one x, whatever its own mark
+        // turned out to be.
+        gutter.translatesAutoresizingMaskIntoConstraints = false
+        gutter.widthAnchor.constraint(equalToConstant: Slate.Metric.iconSize).isActive = true
         title.lineBreakMode = .byTruncatingMiddle
         title.maximumNumberOfLines = 1
         title.isSelectable = false
@@ -924,48 +768,37 @@ final class MacCommandNavigatorRowView: NSView {
         addSubview(content)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Slate.Metric.heightRow),
             content.leadingAnchor.constraint(equalTo: leadingAnchor),
             content.trailingAnchor.constraint(equalTo: trailingAnchor),
             content.topAnchor.constraint(equalTo: topAnchor),
             content.bottomAnchor.constraint(equalTo: bottomAnchor),
-            // The gutter is a fixed leading column so every command line starts at one x, whatever
-            // its own mark turned out to be.
-            gutter.widthAnchor.constraint(equalToConstant: Slate.Metric.iconSize),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// Re-cuts this row for `block`.
-    func show(
-        _ block: CommandBlock,
-        index: Int,
-        selected: Bool,
-        starred: Bool,
-        firstSeen: Date?,
-        query: String,
-    ) {
-        self.block = block
-        self.index = index
-        self.selected = selected
-        showGutter(block)
-        title.attributedStringValue = Self.marked(block.commandText, query: query, selected: selected)
-        setAccessibilityLabel(block.commandText)
+    /// Re-cuts this row for one drawn block.
+    func show(_ reading: CommandNavigatorRowReading) {
+        block = reading.block
+        index = reading.index
+        selected = reading.selected
+        showGutter(reading.block)
+        title.attributedStringValue = Self.marked(reading)
+        setAccessibilityLabel(reading.block.commandText)
         // The two affordances live on the SELECTED (hover or keyboard) row only, so a resting list
         // stays clean; the meta collapses under them when they are up.
-        let line = Self.metaLine(block, firstSeen: firstSeen)
+        let line = CommandNavigatorPresentation.metaLine(reading.block, firstSeen: reading.firstSeen)
         meta.stringValue = line
-        meta.isHidden = selected || line.isEmpty
-        reRun.isHidden = !selected
-        copyOutput.isHidden = !selected
-        reRun.enabled = !block.commandText.isEmpty
+        meta.isHidden = reading.selected || line.isEmpty
+        reRun.isHidden = !reading.selected
+        copyOutput.isHidden = !reading.selected
+        reRun.enabled = !reading.block.commandText.isEmpty
         // Compared before assigning: `symbolName` repaints from its `didSet`, which fires on an equal
         // value too, and this runs for every row on every keystroke.
-        let glyph = starred ? "star.fill" : "star"
+        let glyph = reading.starred ? "star.fill" : "star"
         if star.symbolName != glyph { star.symbolName = glyph }
-        star.active = starred
+        star.active = reading.starred
         needsDisplay = true
     }
 
@@ -997,39 +830,28 @@ final class MacCommandNavigatorRowView: NSView {
         }
     }
 
-    /// `1.4s · 4m ago` — the duration the block reports and the age the Outline words, joined by the
-    /// app's one separator. Either half may be missing; both missing is an empty line.
-    private static func metaLine(_ block: CommandBlock, firstSeen: Date?) -> String {
-        var parts: [String] = []
-        if let duration = block.durationLabel { parts.append(duration) }
-        if let firstSeen {
-            parts.append(OutlinePresentation.relativeTime(from: firstSeen, now: Date()))
-        }
-        return parts.joined(separator: " · ")
-    }
-
     /// The command line with the query's matched runs marked by CONTRAST — the hit keeps the reading
     /// ink and goes a weight up while the letters around it step back. WHERE the cuts fall is
-    /// ``FuzzyMatcher/runs(of:ranges:)``'s; the ink is this renderer's, exactly as on the palette.
+    /// ``CommandNavigatorPresentation/markedCommand(_:query:)``'s; the ink is this renderer's,
+    /// exactly as on the palette.
     ///
     /// Monospaced, because a command line is terminal text and the Mac's other surface that shows
-    /// terminal text (``MacGlobalSearchRowView``) sets it in the same face. A still-forming block has
-    /// no command text yet and shows an em-dash; no real query can match it, so it appears only in
-    /// the zero-query list.
-    private static func marked(_ text: String, query: String, selected: Bool) -> NSAttributedString {
-        let line = text.isEmpty ? "—" : text
-        let base = NSFont.monospacedSystemFont(
-            ofSize: Slate.Typeface.body, weight: selected ? .medium : .regular,
+    /// terminal text (``MacGlobalSearchRowView``) sets it in the same face.
+    private static func marked(_ reading: CommandNavigatorRowReading) -> NSAttributedString {
+        let cut = CommandNavigatorPresentation.markedCommand(
+            reading.block.commandText, query: reading.query,
         )
-        let hit = NSFont.monospacedSystemFont(ofSize: Slate.Typeface.body, weight: .semibold)
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        let ranges = trimmed.isEmpty ? [] : FuzzyMatcher.score(trimmed, line)?.ranges ?? []
-        let runs = FuzzyMatcher.runs(of: line, ranges: ranges)
-        guard runs.count > 1 else {
-            return .slateNerdAware(line, font: base, color: Slate.Native.Overlay.primary)
+        let base = NSFont.monospacedSystemFont(
+            ofSize: Slate.Typeface.body, weight: reading.selected ? .medium : .regular,
+        )
+        guard cut.runs.count > 1 else {
+            return .slateNerdAware(cut.line, font: base, color: Slate.Native.Overlay.primary)
         }
+        // Built only once a hit exists, which is the common case's whole saving: a zero-query list is
+        // one run per row and never mints a second face.
+        let hit = NSFont.monospacedSystemFont(ofSize: Slate.Typeface.body, weight: .semibold)
         let spliced = NSMutableAttributedString()
-        for run in runs {
+        for run in cut.runs {
             spliced.append(.slateNerdAware(
                 run.text,
                 font: run.matched ? hit : base,

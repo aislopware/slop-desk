@@ -48,18 +48,17 @@ final class PromptJumpFlashOverlayView: UIView {
     /// because the viewport is PINNED for it.
     private let painter = CAShapeLayer()
 
-    /// The last epoch that reached ``flash(epoch:)``. Epoch 0 is the mount state — no jump has settled —
-    /// and the comparison is `>` so a re-arm that re-reads the same epoch cannot double-paint it.
-    private var paintedEpoch = 0
+    /// Which epochs may paint, what they paint, and the trace they leave — ``DecorationPromptFlash``,
+    /// one implementation for both shells. It holds the `paintedEpoch` counter this file used to.
+    private let gate = DecorationPromptFlash()
 
     /// The beat that unmounts the rects. Cancelled by a rapid re-jump, which repaints from scratch and
     /// owes the predecessor no cleanup.
     private var unmount: Task<Void, Never>?
 
-    /// Guards the observation re-arm against a stale `onChange` firing after this view is gone.
-    private var generation = 0
-
-    private static let fadeKey = "slopdesk.promptFlash"
+    /// The live following. Stored for ``teardown()`` alone — the overlay can outlive the pane it reads,
+    /// which is the one case ``ObservationFollow/stop()`` exists for.
+    private var flashFollow: ObservationFollow?
 
     init(model: TerminalViewModel) {
         self.model = model
@@ -82,14 +81,14 @@ final class PromptJumpFlashOverlayView: UIView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// Bump the generation so an already-scheduled re-arm drops itself, and cancel the beat that would
-    /// otherwise fire into a torn-down pane.
+    /// End the following, and cancel the beat that would otherwise fire into a torn-down pane.
     ///
     /// The `Task` is the one lifetime UIKit does not end for us — docs/62 hazard 6 is exactly this shape,
     /// and the countermeasure it names is a stored task cancelled from an explicit teardown rather than
     /// only from `deinit`.
     func teardown() {
-        generation &+= 1
+        flashFollow?.stop()
+        flashFollow = nil
         unmount?.cancel()
         unmount = nil
     }
@@ -107,35 +106,19 @@ final class PromptJumpFlashOverlayView: UIView {
 
     // MARK: The live read
 
-    /// ONE-SHOT observation, re-armed by its own `onChange`. Only the epoch is tracked: the viewport
-    /// snapshot and the alt-screen gate are read non-reactively at flash time.
+    /// The following, through ``ObservationFollow/arm(_:read:apply:)``. Only the epoch is tracked: the
+    /// viewport snapshot and the alt-screen gate are read non-reactively at flash time.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        var epoch = 0
-        withObservationTracking {
-            epoch = model.promptJumpFlashEpoch
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+        flashFollow = ObservationFollow.arm(self) { view in
+            view.model.promptJumpFlashEpoch
+        } apply: { view, epoch in
+            view.flash(epoch: epoch)
         }
-        flash(epoch: epoch)
     }
 
     /// One settled jump: paint at peak instantly, decay, then unmount the rects.
     private func flash(epoch: Int) {
-        guard epoch > paintedEpoch else { return }
-        paintedEpoch = epoch
-        let rects = landedPromptRects()
-        guard !rects.isEmpty else {
-            Self.debugLog("epoch \(epoch) settled but NO RECT (alt-screen / no seam / blank rows)")
-            return
-        }
-        Self.debugLog("painting epoch \(epoch) rows=\(rects.count) first=\(rects[0])")
+        guard let rects = gate.landing(epoch: epoch, model: model) else { return }
         unmount?.cancel()
         let path = UIBezierPath()
         for rect in rects { path.append(UIBezierPath(rect: rect)) }
@@ -143,7 +126,10 @@ final class PromptJumpFlashOverlayView: UIView {
         CATransaction.setDisableActions(true)
         painter.path = path.cgPath
         CATransaction.commit()
-        decay()
+        // The decay, on the layer's opacity — ``DecorationPromptFlash/decay(on:)``, which owns the curve,
+        // the peak and the animation key. A `UIView` always has its layer, so unlike the Mac half there is
+        // no optional to unwrap and no wrapper method to unwrap it in.
+        DecorationPromptFlash.decay(on: layer)
         // ONE DURATION, ONE SPELLING. `promptFlashHold` IS the fade's duration plus its slack, so the beat
         // that tears the rects out cannot stop being longer than the fade when the curve is retuned.
         // `Slate` owns the numbers; this file owns only the order they happen in.
@@ -153,53 +139,12 @@ final class PromptJumpFlashOverlayView: UIView {
         }
     }
 
-    /// The decay, on the layer's opacity — the UIKit view of the rung ``Slate/Anim/promptFlash`` names,
-    /// which is why the curve is taken from `Slate.Motion` and never re-typed as control points here.
-    ///
-    /// The peak is the animation's `fromValue` and nothing else: the layer's model opacity stays 0
-    /// throughout, so the presentation rises to the peak on the first frame (the hard cut ON), decays over
-    /// the curve, and lands back on a value that was already correct. Nothing to reset, nothing to strand.
-    private func decay() {
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = Slate.Anim.promptFlashPeak
-        fade.toValue = 0
-        fade.duration = Slate.Motion.promptFlash.duration
-        fade.timingFunction = Slate.Motion.promptFlash.timingFunction
-        // A re-jump mid-fade restarts from the peak rather than cross-fading two decays — the flash is one
-        // cut per landing, and two overlapping curves read as a stutter.
-        layer.removeAnimation(forKey: Self.fadeKey)
-        layer.add(fade, forKey: Self.fadeKey)
-    }
-
     private func clear() {
         guard painter.path != nil else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         painter.path = nil
         CATransaction.commit()
-    }
-
-    /// The landed prompt line's rects, from the pure
-    /// ``PromptJumpFlashGeometry/rects(rows:metrics:isAlternateScreen:)`` — the pinned prompt block's first
-    /// TEXT row plus its soft-WRAP continuation rows, each spanning that row's text extent (a
-    /// full-grid-width bar reads as a selection band; the line's own width reads as "this line"). Empty —
-    /// no flash — for an alt-screen TUI, a placeholder surface (no viewport seam), or a blank landing
-    /// (nothing to anchor to).
-    private func landedPromptRects() -> [CGRect] {
-        guard let snapshot = model.surface as? TerminalViewportSnapshotting else { return [] }
-        return PromptJumpFlashGeometry.rects(
-            rows: snapshot.viewportTextRows(),
-            metrics: snapshot.cellMetrics(),
-            isAlternateScreen: model.isAlternateScreen,
-        )
-    }
-
-    /// stderr diagnostics gated by `SLOPDESK_BLOCKS_DEBUG == "1"` — the paint end of the one-flag jump
-    /// trace (issue → arm → scrollbar echo → settle → THIS paint / no-rect drop). One flag, both ends,
-    /// which is the point of it being one flag: a renderer that dropped its half would make the trace go
-    /// quiet at exactly the step being debugged.
-    private static func debugLog(_ message: String) {
-        DebugTrace.blocks.write("flash", message)
     }
 }
 #endif

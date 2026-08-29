@@ -156,7 +156,10 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
                 equalTo: trailingAnchor, constant: -Slate.Metric.islandRail,
             ),
             trailing.centerYAnchor.constraint(equalTo: centerYAnchor),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -6),
+            title.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailing.leadingAnchor,
+                constant: -Slate.Metric.rowTitleGap,
+            ),
             // The close × stands on the MARK's own centre line rather than flush right: a bare glyph
             // is only as wide as itself, and at 18 it hung two points left of every ring and check,
             // so the swap read as the row shifting rather than as one column changing what it holds.
@@ -263,8 +266,8 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
         }
         if reading.readOnly {
             configure(lock, symbol: "lock.fill", ink: Slate.Native.Text.secondary)
-            lock.toolTip = "Read only"
-            lock.setAccessibilityLabel("Read only")
+            lock.toolTip = SidebarRowPresentation.readOnlyLabel
+            lock.setAccessibilityLabel(SidebarRowPresentation.readOnlyLabel)
             trailing.addArrangedSubview(lock)
         }
         if reading.syncInput {
@@ -272,7 +275,7 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
             // rail indicator has to be as unmissable as the pane's own pill.
             configure(sync, symbol: "rectangle.3.group", ink: Slate.Native.Status.syncInput)
             sync.toolTip = "Sync input — keystrokes mirror to every pane in this tab"
-            sync.setAccessibilityLabel("Sync input")
+            sync.setAccessibilityLabel(SidebarRowPresentation.syncInputLabel)
             trailing.addArrangedSubview(sync)
         }
         if let filled = slotContent(reading) {

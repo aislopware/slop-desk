@@ -20,8 +20,8 @@
 // be found. See ``PhoneAndroidParts`` for that judgement at length.
 
 #if os(iOS)
-import Observation
 import QuartzCore
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the model follow
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
 import UIKit
@@ -37,11 +37,6 @@ final class PhoneAndroidSurface: UIViewController {
     /// drill: the mirror is minted for one device's parameter sets, so the move between two devices is
     /// the same move as the move into the first. `nil` until the first pass.
     private var depth: String?
-
-    /// ⚠️ Hazard 2's counter. `withObservationTracking` fires once and the callback re-arms, so a
-    /// callback from a registration this controller has already replaced must be dropped rather than
-    /// allowed to drill a second time.
-    private var generation = 0
 
     init(model: AndroidSidebarModel) {
         self.model = model
@@ -75,27 +70,15 @@ final class PhoneAndroidSurface: UIViewController {
 
     // MARK: Following the model
 
-    /// ⚠️ `withObservationTracking` fires ONCE per registration, so the callback re-arms by calling
-    /// this again on the next main-queue turn. Only the SELECTION is read here: everything else either
-    /// depth draws is tracked by the depth itself, which is what keeps a log line arriving from
-    /// rebuilding the surface that contains the console.
+    /// Only the SELECTION is read here: everything else either depth draws is tracked by the depth
+    /// itself, which is what keeps a log line arriving from rebuilding the surface that contains the
+    /// console. Armed ONCE, from ``viewDidLoad()`` — the plain arm, since nothing re-follows.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var selection: String?
-        withObservationTracking {
-            selection = self.model.selection
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { surface in
+            surface.model.selection
+        } apply: { surface, selection in
+            surface.drill(to: selection.map { "stage:\($0)" } ?? Self.listDepth)
         }
-
-        drill(to: selection.map { "stage:\($0)" } ?? Self.listDepth)
     }
 
     private static let listDepth = "list"
@@ -104,7 +87,6 @@ final class PhoneAndroidSurface: UIViewController {
 
     private func drill(to next: String) {
         guard next != depth else { return }
-        let isFirst = depth == nil
         let isStage = next != Self.listDepth
         depth = next
 
@@ -126,18 +108,16 @@ final class PhoneAndroidSurface: UIViewController {
             stage = built
             incoming = built
         } else {
-            let built = PhoneAndroidDeviceList(model: model) { [weak self] device in
-                self?.enter(device)
-            }
+            let built = PhoneAndroidDeviceList(model: model) { [model] in model.drillIn(to: $0) }
             list = built
             incoming = built
         }
         mount(incoming)
+        // NOTHING TO LEAVE is the FIRST pass and only the first: from the second on, one of the two
+        // depths was up. The old spelling asked `depth == nil` as well, which was the same answer read
+        // a second way, and the two could drift apart.
+        guard let outgoing else { return }
 
-        guard !isFirst else {
-            outgoing?.removeFromSuperview()
-            return
-        }
         // Enter from `shift`, leave back to it — symmetric, because a view's side of the hierarchy does
         // not change with the direction of travel. The STAGE's side is trailing and the LIST's is
         // leading, ALWAYS, whichever way this particular move went: that is what makes "in" and "out"
@@ -150,19 +130,19 @@ final class PhoneAndroidSurface: UIViewController {
         // ⚠️ AND IT IS A `CATransaction`, not `UIView.animate`, for the reason ``SlateListRowView``
         // records: a `UIView` animation block carries a duration and a curve CASE, never this token's
         // own bezier. `opacity` is the layer property a fade lowers to anyway (docs/62 §3.2).
-        let shift = isStage ? Slate.Metric.space4 : -Slate.Metric.space4
+        let shift = DeviceDrill.shift(entering: isStage)
         incoming.layer.opacity = 0
         incoming.layer.transform = CATransform3DMakeTranslation(shift, 0, 0)
         CATransaction.begin()
         CATransaction.setAnimationDuration(Slate.Motion.standard.duration)
         CATransaction.setAnimationTimingFunction(Slate.Motion.standard.timingFunction)
         CATransaction.setCompletionBlock {
-            outgoing?.removeFromSuperview()
+            outgoing.removeFromSuperview()
         }
         incoming.layer.opacity = 1
         incoming.layer.transform = CATransform3DIdentity
-        outgoing?.layer.opacity = 0
-        outgoing?.layer.transform = CATransform3DMakeTranslation(-shift, 0, 0)
+        outgoing.layer.opacity = 0
+        outgoing.layer.transform = CATransform3DMakeTranslation(-shift, 0, 0)
         CATransaction.commit()
     }
 
@@ -175,18 +155,6 @@ final class PhoneAndroidSurface: UIViewController {
             child.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             child.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-    }
-
-    /// The way IN. It lives here rather than in the list because the selection write is what CARRIES
-    /// the drill — the panel's transition vocabulary belongs to the surface that owns both depths, and
-    /// the two halves declare no animation of their own for it.
-    ///
-    /// The GUARD is ``AndroidPresentation/canEnter(_:)``, asked once here and once at the card's own
-    /// tap, because a card that lights under the finger and then does nothing is worse than one that
-    /// never lit.
-    private func enter(_ device: AndroidDevice) {
-        guard AndroidPresentation.canEnter(device) else { return }
-        model.select(device.key)
     }
 }
 #endif

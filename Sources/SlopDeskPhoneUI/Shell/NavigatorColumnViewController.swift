@@ -90,7 +90,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
 
     private let plate = UIView()
     private let magnifier = UIImageView()
-    private let search = SlateSearchLine(placeholder: "Search tabs")
+    private let search = SlateSearchLine(placeholder: NavigatorChromeCopy.searchPrompt)
     private let clear = UIButton(type: .system)
     private let add = UIButton(type: .system)
     private let empty = UILabel()
@@ -170,12 +170,12 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         plate.addSubview(search)
 
         clear.isHidden = true
-        clear.accessibilityLabel = "Clear search"
+        clear.accessibilityLabel = NavigatorChromeCopy.clearSearch
         clear.addAction(UIAction { [weak self] _ in self?.clearQuery() }, for: .touchUpInside)
         clear.translatesAutoresizingMaskIntoConstraints = false
         plate.addSubview(clear)
 
-        add.accessibilityLabel = "New Tab"
+        add.accessibilityLabel = NavigatorChromeCopy.newTab
         add.addAction(
             UIAction { [weak self] _ in self?.store.newTerminalPane(.newTab) }, for: .touchUpInside,
         )
@@ -298,7 +298,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
             collection.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             collection.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            empty.topAnchor.constraint(equalTo: collection.topAnchor, constant: 6),
+            empty.topAnchor.constraint(equalTo: collection.topAnchor, constant: Self.emptyLineTop),
             empty.leadingAnchor.constraint(
                 equalTo: safe.leadingAnchor, constant: Slate.Metric.tabRowInset,
             ),
@@ -307,6 +307,12 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
             ),
         ])
     }
+
+    /// Where the zero-state line's first baseline block starts inside the list. NOT a spacing rung: it
+    /// is a MEASUREMENT of where the first row's title would have been, so the sentence replacing the
+    /// rows stands on the rail they stood on rather than a hand's breadth above it. The Mac's
+    /// ``SlopDeskMacUI/MacNavigatorColumn`` holds the same 6 for the same reason.
+    private static let emptyLineTop: CGFloat = 6
 
     /// Every dynamic ink this controller stamps into a `CALayer` or a `UIImage`, re-resolved for the
     /// live trait collection.
@@ -432,15 +438,20 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
     private func fold(_ key: String, collapsed isCollapsed: Bool) {
         if isCollapsed { collapsed.insert(key) } else { collapsed.remove(key) }
         DispatchQueue.main.async { [weak self] in
+            // ⚠️ EVERY MEMBER IS SPELLED `self.`, and splitting the `guard let self` out did NOT buy
+            // the implicit form. `MainActor.assumeIsolated`'s body is a second closure INSIDE the
+            // escaping one, so the unwrap here does not clear the outer capture the diagnostic is
+            // about — the compiler still asks for the explicit form on every member. Same shape as
+            // the console's deferred menu two files over.
             MainActor.assumeIsolated {
                 guard let self,
-                      let section = sectionsByKey[key],
-                      let path = dataSource?.indexPath(for: .header(key)),
-                      let cell = collection.cellForItem(at: path) as? NavigatorSectionHeaderCell
+                      let section = self.sectionsByKey[key],
+                      let path = self.dataSource?.indexPath(for: .header(key)),
+                      let cell = self.collection.cellForItem(at: path) as? NavigatorSectionHeaderCell
                 else { return }
                 cell.configure(
                     title: section.header ?? "", projectKey: section.projectKey, rows: section.rows,
-                    collapsed: collapsed.contains(key), store: store,
+                    collapsed: self.collapsed.contains(key), store: self.store,
                 )
             }
         }
@@ -512,7 +523,7 @@ final class NavigatorColumnViewController: UIViewController, UICollectionViewDel
         switch item {
         case let .header(key):
             guard let projectKey = sectionsByKey[key]?.projectKey else { return nil }
-            elements = [UIAction(title: "Refresh Git Status") { [weak self] _ in
+            elements = [UIAction(title: NavigatorChromeCopy.refreshGitStatus) { [weak self] _ in
                 self?.store.refreshGitSummary(forProject: projectKey)
             }]
         case let .row(id):

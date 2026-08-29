@@ -157,9 +157,8 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
         body.axis = .vertical
         body.alignment = .fill
         body.spacing = 0
-        body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
-        NSLayoutConstraint.activate(fill(body))
+        NSLayoutConstraint.activate(body.slateEdges(of: self))
     }
 
     /// A body block on the card's own horizontal padding. Every one of them takes the same two rungs, so
@@ -173,15 +172,6 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
             bottom: Slate.Metric.space3, trailing: Slate.Metric.space4,
         )
         return row
-    }
-
-    private func fill(_ view: UIView) -> [NSLayoutConstraint] {
-        [
-            view.topAnchor.constraint(equalTo: topAnchor),
-            view.bottomAnchor.constraint(equalTo: bottomAnchor),
-            view.leadingAnchor.constraint(equalTo: leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ]
     }
 
     /// The pending tool call, both ways round: a collapsed one-liner that expands on a tap, and the full
@@ -243,7 +233,7 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
             top: 0, leading: Slate.Metric.space4,
             bottom: Slate.Metric.space3, trailing: Slate.Metric.space4,
         )
-        recentBlock.addArrangedSubview(SlateCapsLabelView("Recent"))
+        recentBlock.addArrangedSubview(SlateCapsLabelView(PeekReplyCopy.recentHeading))
         recentBlock.addArrangedSubview(scroll)
 
         NSLayoutConstraint.activate([
@@ -267,7 +257,7 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
         // here and read as cramped beside a stock send button.
         field.borderStyle = .roundedRect
         field.font = .systemFont(ofSize: Slate.Typeface.body)
-        field.placeholder = "Reply…"
+        field.placeholder = PeekReplyCopy.replyPrompt
         field.returnKeyType = .send
         field.autocapitalizationType = .sentences
         field.delegate = self
@@ -277,7 +267,7 @@ final class PhonePeekReplyCardView: UIView, UITextFieldDelegate {
         filled.image = UIImage(systemSymbol: .paperplaneFill)
         send.configuration = filled
         send.addTarget(self, action: #selector(submit), for: .touchUpInside)
-        send.accessibilityLabel = "Send reply"
+        send.accessibilityLabel = PeekReplyCopy.sendReply
         send.setContentHuggingPriority(.required, for: .horizontal)
         // ↩ submits through the field's own delegate. NO key command for Return here: a chord and a
         // submit both firing would deliver one typed line TWICE.

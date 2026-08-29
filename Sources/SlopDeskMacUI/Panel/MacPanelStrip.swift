@@ -108,14 +108,12 @@ final class MacPanelStrip: NSView {
     /// Which verb the trailing plate carries, and whether it carries one at all. Desktop is announced
     /// but empty, so it has nothing to reload; the workbench has nothing to reload until it is open.
     private func applyActions() {
-        let shown: Bool =
-            switch chrome.panelSurface {
-            case .code: codeReloadable
-            case .simulators,
-                 .android: true
-            case .desktop: false
-            }
-        reload.isHidden = !shown
+        // ⚠️ THE RULE IS THE FLOOR'S TOO, not only the words. WHICH surfaces have something to reload
+        // was a four-armed switch typed once per shell, and a rule with two spellings is a rule that
+        // disagrees with itself the day a fifth surface arrives. Only the MOUNT is read up here.
+        reload.isHidden = !PanelChromeActions.reloadShown(
+            for: chrome.panelSurface, codeReloadable: codeReloadable,
+        )
         // ⚠️ FROM THE FLOOR, not typed here. The phone's bar carries the same four answers as its
         // trailing plate's accessibility label, and a sentence spelled once per shell is a translation
         // bug that has already happened — the day one half is reworded the two platforms ship different

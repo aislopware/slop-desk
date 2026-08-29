@@ -114,9 +114,7 @@ final class PhoneAndroidDeviceHeader: UIView {
             ),
             version.trailingAnchor.constraint(lessThanOrEqualTo: identity.trailingAnchor),
 
-            // `2`, and deliberately not a rung: the name and its facts are ONE object, and the
-            // smallest space on the ladder already reads as a gap between two.
-            facts.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 2),
+            facts.topAnchor.constraint(equalTo: name.bottomAnchor, constant: Self.registerGap),
             facts.leadingAnchor.constraint(equalTo: identity.leadingAnchor),
             facts.trailingAnchor.constraint(lessThanOrEqualTo: identity.trailingAnchor),
             facts.bottomAnchor.constraint(equalTo: identity.bottomAnchor),
@@ -125,5 +123,11 @@ final class PhoneAndroidDeviceHeader: UIView {
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
+
+    /// The gap between the name and the facts line under it. `2`, and deliberately not a rung: the
+    /// name and its facts are ONE object, and the smallest space on the ladder already reads as a gap
+    /// between two. Spelled here rather than in `Slate` for ``BuildStatusPlaceholderView/dotDiameter``'s
+    /// reason — a token nothing else reads only makes the ladder harder to scan.
+    private static let registerGap: CGFloat = 2
 }
 #endif

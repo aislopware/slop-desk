@@ -31,9 +31,11 @@ import SlopDeskWorkspaceCore
 
 @MainActor
 final class MacContentCanvas: NSView {
-    private let store: WorkspaceStore
+    /// The canvas cluster's whole injection list, in one value — see ``PaneCanvasDeps``.
+    private let deps: PaneCanvasDeps
+    /// NOT part of ``PaneCanvasDeps``: a satellite pane content has no connection to read a cause from,
+    /// so this is the content canvas's own dependency rather than the cluster's.
     private let connection: AppConnection
-    private let chrome: WorkspaceChromeState
     /// Opens the Connect-to-Host editor — the empty state's one next action for two of its four causes.
     private let onConnect: () -> Void
 
@@ -45,22 +47,12 @@ final class MacContentCanvas: NSView {
     /// ``ObservationFollow/stop()`` exists for.
     private var canvasFollow: ObservationFollow?
 
-    init(
-        store: WorkspaceStore,
-        connection: AppConnection,
-        chrome: WorkspaceChromeState,
-        onConnect: @escaping () -> Void,
-        paneDrag: PaneDragCoordinator?,
-        overlay: OverlayCoordinator?,
-    ) {
-        self.store = store
+    init(deps: PaneCanvasDeps, connection: AppConnection, onConnect: @escaping () -> Void) {
+        self.deps = deps
         self.connection = connection
-        self.chrome = chrome
         self.onConnect = onConnect
-        canvas = MacSplitCanvasView(
-            store: store, paneDrag: paneDrag, overlay: overlay, chrome: chrome,
-        )
-        chips = MacIslandChipStack(store: store, coordinator: overlay, chrome: chrome)
+        canvas = MacSplitCanvasView(deps: deps)
+        chips = MacIslandChipStack(store: deps.store, coordinator: deps.overlay, chrome: deps.chrome)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         build()
@@ -71,38 +63,26 @@ final class MacContentCanvas: NSView {
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
     private func build() {
-        canvas.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(canvas)
-        addSubview(empty)
-        addSubview(chips)
-
-        empty.onAction = { [weak self] cause in
-            guard let self else { return }
-            switch cause {
-            case .neverConnected,
-                 .connectFailed: onConnect()
-            case .noTabs: store.newTerminalPane(.newTab)
-            case .linkDown: break // redials itself; no user action offered
-            }
+        for view in [canvas, empty] as [NSView] {
+            addSubview(view)
+            NSLayoutConstraint.activate(view.slateEdges(of: self))
         }
-
+        // The deed behind the empty state's one button is the CAUSE's (``PaneEmptyCause/act(store:onConnect:)``),
+        // the same way its label already was. Captured by value rather than through `self`: nothing in
+        // it is this view's, so there is no cycle to weaken and no `guard let self` to write.
+        empty.onAction = { [store = deps.store, onConnect] cause in
+            cause.act(store: store, onConnect: onConnect)
+        }
+        addSubview(chips)
         NSLayoutConstraint.activate([
-            canvas.topAnchor.constraint(equalTo: topAnchor),
-            canvas.bottomAnchor.constraint(equalTo: bottomAnchor),
-            canvas.leadingAnchor.constraint(equalTo: leadingAnchor),
-            canvas.trailingAnchor.constraint(equalTo: trailingAnchor),
-            empty.topAnchor.constraint(equalTo: topAnchor),
-            empty.bottomAnchor.constraint(equalTo: bottomAnchor),
-            empty.leadingAnchor.constraint(equalTo: leadingAnchor),
-            empty.trailingAnchor.constraint(equalTo: trailingAnchor),
             // THE STACK IS CENTRED ON THE ISLAND AND STANDS OFF ITS FOOT — mounted here rather than on
             // the window root so it is centred on the canvas it is talking about (the window's own
             // centre includes the navigator and the code panel) and so its inset is measured from the
             // glass's bottom edge instead of the window's (user-directed 2026-08-09).
-            chips.centerXAnchor.constraint(equalTo: centerXAnchor),
             bottomAnchor.constraint(
                 equalTo: chips.bottomAnchor, constant: Slate.Metric.islandChipInset,
             ),
+            chips.centerXAnchor.constraint(equalTo: centerXAnchor),
             chips.widthAnchor.constraint(
                 lessThanOrEqualTo: widthAnchor, constant: -Slate.Metric.space4 * 2,
             ),
@@ -116,7 +96,7 @@ final class MacContentCanvas: NSView {
     private func follow() {
         canvasFollow = ObservationFollow.arm(self) { view in
             (
-                hasActiveTab: view.store.tree.activeSession?.activeTab != nil,
+                hasActiveTab: view.deps.store.tree.activeSession?.activeTab != nil,
                 // Read UNCONDITIONALLY, never inside a branch: a tracked read that only happens on one
                 // branch stops observing the connection the moment a tab exists, so the empty state
                 // would come back later still saying whatever it said the last time it was on screen.

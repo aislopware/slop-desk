@@ -4,9 +4,15 @@
 //! seven times: when two renderers must agree about a number or an ink, where does the agreement
 //! live? If the value has no framework in it — an alpha is a `Double`, a corner radius is a
 //! `CGFloat` — it goes DOWN to `SlopDeskSlate` and both halves read one token. If it resolves to a
-//! `Color`, it cannot descend, because `Color` is Slate's own and Slate sits above the logic floor
-//! that names the cases. Then the BRANCH descends and the LOOKUP stays per renderer, and what needs
-//! a gate is that every renderer still answers every rung.
+//! `Color`, the answer depends on where the ENUM lives, and this header used to get that backwards:
+//! it said such a value "cannot descend, because `Color` is Slate's own and Slate sits above the
+//! logic floor that names the cases". Slate sits BELOW — `Package.swift:475` — and the real test is
+//! whether Slate can NAME the enum. It can when the enum is in one of Slate's own dependencies
+//! (`PaneStatusPillInk` is in `SlopDeskWorkspaceModel`, which is why
+//! `Slate.Native.paneStatusPillFill` exists); it cannot when the enum is in `SlopDeskClientCore`,
+//! which is above Slate — and then the BRANCH descends, the LOOKUP stays per renderer, and what
+//! needs a gate is that every renderer still answers every rung. See
+//! [`one_drop_preview_two_drawings`] for the correction in full.
 //!
 //! The rest of the module is the same shape one layer up: a scene that injects environment nothing
 //! reads, a fold whose two halves must not import each other, a dead flag that must not be
@@ -74,8 +80,13 @@ pub fn a_frameworkless_value_goes_to_the_floor(tree: &Tree) -> Report {
         "Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift",
     ];
     /// The three files that draw the grab pill.
+    ///
+    /// ⚠️ THE PHONE ROW RE-AIMED 2026-08-28, to the `UIKit` affordance docs/62 stage E.2 rebuilds
+    /// at `PaneMoveAffordanceView.swift`. It is red until that file lands, and that is the reading
+    /// this rule wants: the two pills are compared inside ONE drag, so a missing half is a
+    /// comparison nobody can make rather than a comparison that passed.
     const PILL_DRAWINGS: &[&str] = &[
-        "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordance.swift",
+        "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
         "Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift",
         "Sources/SlopDeskMacUI/Pane/MacSatellitePaneContent.swift",
     ];
@@ -296,9 +307,20 @@ pub fn two_test_trees_one_relaxation(tree: &Tree) -> Report {
 /// not be pushed DOWN to meet the ink enum without the floor importing the ladder standing on it.
 /// `Slate/agentInk` already crosses that same edge the other way — the enum read UP into Slate,
 /// never a token pushed down — which is what a shared switch here is too.
-/// `Slate.paneStatusPillFill` and `Slate.Native.paneStatusPillFill` hold the ONE switch; each
-/// renderer only CALLS it, so a case dropped from either resolution is a Swift compile error at the
-/// switch itself.
+/// `Slate.Native.paneStatusPillFill` holds the ONE switch; each renderer only CALLS it, so a case
+/// dropped from the resolution is a Swift compile error at the switch itself.
+///
+/// ⚠️ ONE SWITCH, TWO READERS — RE-AIMED 2026-08-28, and the floor of TWO is what moved. This
+/// clause read `AtLeast { "static func paneStatusPillFill", 2 }`, because the floor vended the
+/// switch twice — a `Color` overload for the `SwiftUI` phone and a `Native` one for the `AppKit`
+/// Mac — and one of them alone meant the other framework had inlined its own table at the call
+/// site. docs/62 stage I retires that pair from the other end: the phone is `UIKit` now, both
+/// renderers read `Slate.Native.*`, the `Color` overload has no reader left and is deleted. So the
+/// count drops to one for the port SUCCEEDING, which is the shape of stale a floor cannot tell from
+/// a regression. The law never was "two overloads"; it was one switch that every renderer calls
+/// rather than restates. It is spelled that way now — `Exactly` one declaration in the floor, so a
+/// second overload growing back is red, and both halves pinned on the QUALIFIED `Slate.Native.`
+/// call, so a half that kept the name while re-deriving the table underneath it is red too.
 ///
 /// ⚠️ THE CASE NAMES ARE READ OUT OF THE ENUM, never spelled here. This gate shipped for an hour
 /// with `case \.(security|sync):` written inline, which is the defect increment 62 caught in the
@@ -314,8 +336,15 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
     /// The four numbers the capsule is made of.
     const RUNGS: &[&str] = &["glyphGap", "padH", "padV", "cancelRim"];
     /// The two files that draw the chip, in either framework.
+    ///
+    /// ⚠️ RE-AIMED 2026-08-28. `3f11c6e6` deleted the `SwiftUI` phone whole, and the chip's phone
+    /// half lands again at `PaneMoveAffordanceView.swift` under docs/62 stage E.2 — same drawing,
+    /// same two rects, `UIKit`. The path is named ahead of the file arriving on purpose: this row
+    /// goes red until stage E.2 lands, which is the honest report of a chip that is drawn once
+    /// today, and a row pointed at the dead name would have gone quietly green on nothing the day
+    /// somebody trimmed the list.
     const CHIP_HALVES: &[&str] = &[
-        "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordance.swift",
+        "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
         "Sources/SlopDeskMacUI/App/MacPaneDragChipPanel.swift",
     ];
 
@@ -328,14 +357,16 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
             path: PILL_INK_SRC,
             message: "PaneStatusPillInk is the name Slate's one switch reads (docs/56 §3.5)",
         },
-        // BOTH spellings, `Color` and `Native`. One of them alone is the pair growing back with the
-        // other framework's table inlined at its call site.
-        Claim::AtLeast {
+        // ONE spelling, and this is a ceiling as much as a floor — see the header. A SECOND
+        // declaration is a per-framework overload back beside the shared one, which is where a
+        // renderer's own table hides.
+        Claim::Exactly {
             path: SLATE_DESIGN,
             pattern: "static func paneStatusPillFill",
-            minimum: 2,
-            message: "{found} paneStatusPillFill spellings in the floor, not both (Color + Native) — the \
-                      one switch split back into a pair (docs/56 §3.5)",
+            count: 1,
+            view: View::Code,
+            message: "{found} paneStatusPillFill declarations in the floor, not the one native switch — the \
+                      switch split back into a per-renderer pair (docs/56 §3.5, docs/62 stage I)",
         },
         // The regression this guards: a renderer switching on `PaneStatusPillInk` ITSELF, rather
         // than handing the ink straight to the shared function, is the old per-renderer table
@@ -353,10 +384,13 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
     ];
     for half in PILL_HALVES {
         claims.push(Claim::Names {
+            // QUALIFIED, so the reader is pinned to the floor's switch rather than to the word. A
+            // half that kept a `paneStatusPillFill` of its own would satisfy the bare name while
+            // being exactly the table this replaced.
             path: half,
-            needle: "paneStatusPillFill",
-            message: "a pill renderer stopped calling Slate's paneStatusPillFill — a re-derived table is \
-                      exactly how the pair this replaced grows back (docs/56 §3.5)",
+            needle: "Slate.Native.paneStatusPillFill",
+            message: "a pill renderer stopped calling Slate.Native.paneStatusPillFill — a re-derived table \
+                      is exactly how the pair this replaced grows back (docs/56 §3.5, docs/62 stage I)",
         });
     }
     for half in CHIP_HALVES {
@@ -390,15 +424,112 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One drop preview, two drawings — and the pair that crossed a FRAMEWORK boundary
+///
+/// The five stroke figures of the drop preview (the rim on a whole-area mark, the finer rim on the
+/// re-split slab and its wash, the lifted source's wash, and the dash pattern) were declared in
+/// `MacPaneMoveAffordance.swift` and declared AGAIN in `PaneMoveAffordanceView.swift`, each half
+/// carrying a comment saying it was waiting for a `Slate.DropPreview` rung to be minted. docs/62
+/// stage I minted it (`Sources/SlopDeskSlate/PaneDropPreviewArt.swift`); this rule is the half of
+/// that mint which stops the split growing back.
+///
+/// ⚠️ THIS PAIR HAD A WORSE FAILURE MODE THAN ``one_drop_chip_two_drawings``'S, and it is the
+/// reason the rule exists rather than a preference for named numbers. The chip's two drawings are
+/// both `AppKit`, so a reader who opened both could at least diff them. These two are an `AppKit`
+/// file and a `UIKit` file: they share no import, no compiler ever sees both, and a rim that went 2
+/// → 1.5 on one platform reads as a preview that is simply softer on the phone rather than as two
+/// files disagreeing. That is a drift invisible even AFTER it ships, which is the case for a floor
+/// rather than a review.
+///
+/// Both halves are ASSERTED, not skipped — both ship today. The bans below are the ceiling half: a
+/// half that re-declares any of the five is the old arrangement returning one number at a time,
+/// which is exactly how the pair got here. The dropped names (`zoneRim`, `slabRimAlpha`,
+/// `liftedAlpha`) are in the ban too, because the `AppKit` half spelled three of the five under
+/// different names and a re-declaration under the OLD spelling is the likeliest way back.
+///
+/// BREAK-TEST: a half that stops naming one of the five ⇒ FAIL; a half that re-declares one under
+/// either the new or the retired spelling ⇒ FAIL; the art file deleted ⇒ FAIL.
+#[must_use]
+pub fn one_drop_preview_two_drawings(tree: &Tree) -> Report {
+    /// The five figures the preview is stroked with.
+    const RUNGS: &[&str] = &[
+        "DropPreview.wholeRim",
+        "DropPreview.slabRim",
+        "DropPreview.slabRimWash",
+        "DropPreview.liftedWash",
+        "DropPreview.liftedDash",
+    ];
+    /// The two files that draw the preview, one per framework.
+    const PREVIEW_HALVES: &[&str] = &[
+        "Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift",
+        "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
+    ];
+    /// A local re-declaration of any of the five, under the minted spelling or the retired `AppKit`
+    /// one.
+    const REDECLARES: &str = r"(?m)^\s*(?:(?:private|fileprivate|internal|package|public)\s+)?static\s+(?:let|var)\s+(?:wholeRim|zoneRim|slabRim|slabRimWash|slabRimAlpha|liftedWash|liftedAlpha|liftedDash)\b";
+
+    let mut claims = vec![Claim::Exists {
+        path: "Sources/SlopDeskSlate/PaneDropPreviewArt.swift",
+        message: "the drop preview's two drawings have nothing left to agree on, and they are on two \
+                  different frameworks (docs/62 stage I)",
+    }];
+    for half in PREVIEW_HALVES {
+        claims.push(Claim::Exists {
+            path: half,
+            message: "the drop preview has two drawings and this ratchet pins both (docs/62 stage I)",
+        });
+        for rung in RUNGS {
+            claims.push(Claim::Names {
+                path: half,
+                needle: rung,
+                message: "a drop-preview half stopped reading one of Slate.DropPreview's five figures — the \
+                          two previews then drift across a framework boundary, where nothing compares them \
+                          (docs/62 stage I)",
+            });
+        }
+        claims.push(Claim::Lacks {
+            path: half,
+            pattern: REDECLARES,
+            view: View::Code,
+            message: "a drop-preview half re-declares one of the five stroke figures — that is the \
+                      per-framework pair this mint replaced, growing back one number at a time (docs/62 \
+                      stage I)",
+        });
+    }
+    check_all(tree, &claims)
+}
+
 /// A named ink table is answered by every renderer present
 ///
 /// The pill inks were not the only pair of that shape — increment 56c ratcheted one of three and
-/// missed two. `DropZoneInk` and `GuiUploadTint` are the identical arrangement for the identical
-/// reason: each is a NAME in `SlopDeskClientCore` because its resolution is a `Color`, `Color` is
-/// `SlopDeskSlate`'s, and Slate sits ABOVE the logic floor — so the branch descends and the LOOKUP
-/// stays in each renderer, one four-line `switch` per framework. 56c's own sentence is why they are
-/// pinned now rather than after the canvas rewrite: *a ratchet written after the second renderer
-/// arrives is a ratchet written too late*.
+/// missed two. `DropZoneInk` and `GuiUploadTint` are the identical arrangement: each is a NAME in
+/// `SlopDeskClientCore`, the branch descends, and the LOOKUP stays in each renderer as one
+/// four-line `switch` per framework. 56c's own sentence is why they are pinned now rather than
+/// after the canvas rewrite: *a ratchet written after the second renderer arrives is a ratchet
+/// written too late*.
+///
+/// ## ⚠️ CORRECTED 2026-08-29 — the right conclusion off a backwards reason
+/// This used to say the lookup stays up "because its resolution is a `Color`, `Color` is
+/// `SlopDeskSlate`'s, and Slate sits ABOVE the logic floor". Slate sits BELOW: `Package.swift:475`
+/// makes `SlopDeskClientCore` depend on `SlopDeskSlate`, and Slate's own deps are
+/// `SlopDeskWorkspaceModel`, `SlopDeskAgentDetect`, `SlopDeskFontFaces` and `SFSafeSymbols`, with
+/// no edge back. That is the ninth place this stage found the same false edge asserted (`docs/56`
+/// was the origin; five `SlopDeskClientCore` headers and `GuiLeafChromeLayout`'s parameter list
+/// were the rest), and here as there it was load-bearing prose rather than a stray sentence.
+///
+/// The conclusion survives the correction, off the real constraint, which runs the other way: the
+/// blocker is not that Slate is too HIGH to be called, it is that these two ENUMS are too high to
+/// be NAMED. `DropZoneInk` and `GuiUploadTint` are declared in `SlopDeskClientCore`, which is above
+/// Slate, so a `Slate.Native.dropZoneInk(_:)` could not spell its own parameter type.
+/// `PaneStatusPillInk` is the control that proves it: it lives in `SlopDeskWorkspaceModel`, which
+/// is one of Slate's OWN dependencies, and that — not anything about colours — is why
+/// `Slate.Native.paneStatusPillFill` could exist while these two cannot.
+///
+/// Which also names the fix, for whoever wants it: move the two enums down to
+/// `SlopDeskWorkspaceModel` and both lookups descend exactly as the pill's did. It is not done here
+/// because `DropZoneInk` has an `init(ffiCode:)` (`DropZonePresentation.swift:132`), so the move
+/// carries an FFI decode across a target boundary — a design change with its own gate, not a
+/// closeout edit.
 ///
 /// The `\b` after the rung's name is load-bearing on the drop-zone table: without it `case
 /// \.accent` also matches `case .accentMuted:`, so a half that resolved only the muted rung would
@@ -468,7 +599,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
                 "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
             ],
-            template: r"case \.{needle}\b",
+            template: r"case (let |var )?\.{needle}\b",
             view: View::Code,
             message: "{half} does not resolve the DropZoneInk .{needle} rung — the renderers would ink it \
                       differently (docs/56 §3.5)",
@@ -483,7 +614,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift",
                 "Sources/SlopDeskMacUI/Pane/MacGuiPaneOverlays.swift",
             ],
-            template: r"case \.{needle}\b",
+            template: r"case (let |var )?\.{needle}\b",
             view: View::Code,
             message: "{half} does not resolve the GuiUploadTint .{needle} rung — the renderers would ink it \
                       differently (docs/56 §3.5)",
@@ -498,21 +629,27 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskPhoneUI/Pane/TerminalFindBarView.swift",
                 "Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift",
             ],
-            template: r"case \.{needle}\b",
+            template: r"case (let |var )?\.{needle}\b",
             view: View::Code,
             message: "{half} does not resolve the FindTogglePillAppearance .{needle} rung — the find bar \
                       and the global-search bar render the pills identically (docs/56 §3.5)",
         },
         // The first row whose enum has an ASSOCIATED VALUE (`fixed(PaneStatusPillInk)`). Both
-        // ends handle it without a change: the parse stops at the `(` and yields `fixed`, and
-        // `case \.fixed\b` matches `case .fixed:` and `case .fixed(let ink):` alike. Checked
-        // rather than assumed — a row that silently matched nothing would read as green while
-        // pinning air.
+        // ends handle it without a change: the parse stops at the `(` and yields `fixed`, and the
+        // template matches `case .fixed:` and `case .fixed(let ink):` alike. Checked rather than
+        // assumed — a row that silently matched nothing would read as green while pinning air.
+        //
+        // ⚠️ AND `case let .fixed(tone)` IS THE THIRD SPELLING, which is why the template carries an
+        // optional `let |var ` before the dot. Swift lets the binding hoist ahead of the case, and a
+        // renderer that binds every payload that way — the shorter form, and the one a formatter will
+        // not talk you out of — was resolving the rung in code the rule could not see. That is a false
+        // GREEN, the failure §4.8 is about: the row goes on reporting agreement it never checked, and
+        // the day the two halves diverge it says nothing.
         Claim::Resolved {
             label: "PaneStatusPillFill",
             needles: rungs_of(PILL_INK_SRC, "^package enum PaneStatusPillFill[:[:space:]{]"),
             halves: PILL_HALVES,
-            template: r"case \.{needle}\b",
+            template: r"case (let |var )?\.{needle}\b",
             view: View::Code,
             message: "{half} does not resolve the PaneStatusPillFill .{needle} rung — the renderers would \
                       ink it differently (docs/56 §3.5)",
@@ -527,7 +664,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlayView.swift",
                 "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
             ],
-            template: r"case \.{needle}\b",
+            template: r"case (let |var )?\.{needle}\b",
             view: View::Code,
             message: "{half} does not resolve the DropZoneLabelInk .{needle} rung — the renderers would ink \
                       it differently (docs/56 §3.5)",
@@ -590,7 +727,7 @@ mod tests {
                 "Slate.Opacity.accentRing\n",
             )
             .write(
-                "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordance.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
                 "Slate.GrabPill.width\n",
             )
             .write(
@@ -751,11 +888,39 @@ mod tests {
             );
         assert!(super::a_named_ink_table_answers_every_renderer(&fixture.tree()).is_clean());
 
-        // The `\b` hole: a half that resolves only the muted rung must NOT pass for `.accent`.
+        // ⚠️ THE HOISTED BINDING, which the template could not see until it grew its optional
+        // `let |var `. `case let .fixed(tone)` resolves the rung exactly as `case .fixed(let tone)`
+        // does, and a half that spells it the short way was reading as a half that had stopped
+        // answering — except the rule reported nothing, because the needle simply matched nowhere.
+        fixture
+            .write(
+                "Sources/SlopDeskPhoneUI/Pane/PaneStatusPillsView.swift",
+                "case .chrome: break\ncase let .fixed(tone): break\n",
+            )
+            .write(
+                "Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift",
+                "case .chrome: break\ncase var .fixed(tone): break\n",
+            );
+        assert!(super::a_named_ink_table_answers_every_renderer(&fixture.tree()).is_clean());
+
+        // And the hoist does not become a wildcard: a half that stopped answering the rung ALTOGETHER
+        // is still red.
         fixture.write(
-            "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
-            "case .ok: break\ncase .accentMuted: break\ncase .primary: break\n",
+            "Sources/SlopDeskPhoneUI/Pane/PaneStatusPillsView.swift",
+            "case .chrome: break\ncase let .chromeMuted(tone): break\n",
         );
+        assert!(!super::a_named_ink_table_answers_every_renderer(&fixture.tree()).is_clean());
+
+        // The `\b` hole: a half that resolves only the muted rung must NOT pass for `.accent`.
+        fixture
+            .write(
+                "Sources/SlopDeskPhoneUI/Pane/PaneStatusPillsView.swift",
+                "case .chrome: break\ncase .fixed(let ink): break\n",
+            )
+            .write(
+                "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
+                "case .ok: break\ncase .accentMuted: break\ncase .primary: break\n",
+            );
         assert!(!super::a_named_ink_table_answers_every_renderer(&fixture.tree()).is_clean());
     }
 
@@ -791,5 +956,283 @@ mod tests {
             "let body = content(staticMirror: false)\n",
         );
         assert!(!super::the_static_mirror_stays_deleted(&fixture.tree()).is_clean());
+    }
+
+    /// The two halves of the fold, not importing and not depending.
+    ///
+    /// The manifest is written in the shape `target_block` parses — a `name: "…",` line, then the
+    /// block, then the NEXT bare `name: "…",` line closes it. Seeding it any other way makes the
+    /// dependency half of this rule read an empty block, which is its own (correct) failure and not
+    /// the one a test of the ban is asking about.
+    fn fold(fixture: &Fixture) {
+        fixture
+            .write(
+                "Sources/SlopDeskMacUI/App/MacWorkspaceScene.swift",
+                "import AppKit\nimport SlopDeskSlate\n",
+            )
+            .write(
+                "Package.swift",
+                "        .target(\n            name: \"SlopDeskMacUI\",\n            dependencies: \
+                 [\"SlopDeskSlate\"]\n        ),\n        .target(\n            name: \
+                 \"SlopDeskPhoneUI\",\n            dependencies: [\"SlopDeskSlate\"]\n        ),\n",
+            );
+    }
+
+    /// The fold re-opened from either side is red, and a renamed target is not a satisfied ban.
+    ///
+    /// Written 2026-08-28 under docs/62 stage I: this rule shipped with no break-test at all, which
+    /// is the one shape a ratchet cannot self-report — a census over a target that no longer exists
+    /// reads zero files and agrees with everybody. Three seeds, because the rule has three ways to
+    /// go quiet: the import back, the manifest edge back, and the ledger pointed at a name the
+    /// manifest no longer holds.
+    #[test]
+    fn the_fold_re_opened_from_either_side_is_red() {
+        let fixture = Fixture::new("ink-fold");
+        fold(&fixture);
+        assert!(super::the_fold_is_shut_from_both_sides(&fixture.tree()).is_clean());
+
+        // The one-line import that compiles, passes every test, and puts the fold back.
+        fixture.append(
+            "Sources/SlopDeskMacUI/App/MacWorkspaceScene.swift",
+            "import SlopDeskPhoneUI\n",
+        );
+        assert!(!super::the_fold_is_shut_from_both_sides(&fixture.tree()).is_clean());
+
+        // And the edge in the manifest, which is the half a census cannot see: with it back, the
+        // import above is a keystroke rather than a compile error.
+        fold(&fixture);
+        fixture.write(
+            "Package.swift",
+            "        .target(\n            name: \"SlopDeskMacUI\",\n            dependencies: \
+             [\"SlopDeskSlate\", \"SlopDeskPhoneUI\"]\n        ),\n        .target(\n            name: \
+             \"SlopDeskAppKitShell\",\n            dependencies: []\n        ),\n",
+        );
+        assert!(!super::the_fold_is_shut_from_both_sides(&fixture.tree()).is_clean());
+
+        // The stale ledger: the target renamed out from under the ban, so the block parses empty.
+        // A ban over nothing is the quiet green this crate exists to refuse.
+        fold(&fixture);
+        fixture.write(
+            "Package.swift",
+            "        .target(\n            name: \"SlopDeskMacShell\",\n            dependencies: \
+             [\"SlopDeskSlate\"]\n        ),\n",
+        );
+        assert!(!super::the_fold_is_shut_from_both_sides(&fixture.tree()).is_clean());
+    }
+
+    /// One relaxation list, read by the second test tree through a link.
+    ///
+    /// The link is spelled the way the repository holds it — relative to the LINK — so the fixture
+    /// exercises the same resolution a clone does.
+    fn test_trees(fixture: &Fixture) {
+        fixture
+            .write("Tests/.swiftlint.yml", "disabled_rules:\n  - force_unwrapping\n")
+            .link(
+                "Apps/ClientApp-iOS/Tests/.swiftlint.yml",
+                "../../../Tests/.swiftlint.yml",
+            );
+    }
+
+    /// A second test tree that COPIES the relaxations is red, and so is one that links nowhere.
+    ///
+    /// Written 2026-08-28 under docs/62 stage I. The copy is the seed that matters: it holds the
+    /// right bytes on the day it is made, which is exactly why a bytes comparison would agree with
+    /// it and why the claim asserts the LINK. The other two seeds cover the ways a link stops being
+    /// one without anybody editing a rule — resolved somewhere else, and resolving nowhere.
+    #[test]
+    fn a_copied_relaxation_list_is_red() {
+        let fixture = Fixture::new("ink-test-trees");
+        test_trees(&fixture);
+        assert!(super::two_test_trees_one_relaxation(&fixture.tree()).is_clean());
+
+        // The copy, byte-identical today and drifted the first time somebody edits one list. The
+        // link is taken out FIRST, and that is not tidiness: a write onto a symlink follows it and
+        // lands in the target, so seeding the copy without removing the link leaves the link a link
+        // and the test green for the wrong reason. This break-test caught exactly that on its first
+        // run, which is the argument for writing it.
+        test_trees(&fixture);
+        fixture.remove("Apps/ClientApp-iOS/Tests/.swiftlint.yml").write(
+            "Apps/ClientApp-iOS/Tests/.swiftlint.yml",
+            "disabled_rules:\n  - force_unwrapping\n",
+        );
+        assert!(!super::two_test_trees_one_relaxation(&fixture.tree()).is_clean());
+
+        // A link, and to the wrong list — the drift wearing the shape the claim asks for.
+        test_trees(&fixture);
+        fixture
+            .write("Tests/.swiftlint-ios.yml", "disabled_rules:\n  - todo\n")
+            .link(
+                "Apps/ClientApp-iOS/Tests/.swiftlint.yml",
+                "../../../Tests/.swiftlint-ios.yml",
+            );
+        assert!(!super::two_test_trees_one_relaxation(&fixture.tree()).is_clean());
+
+        // And the dangling one, which a directory-entry check would call present.
+        test_trees(&fixture);
+        fixture.remove("Tests/.swiftlint.yml");
+        assert!(!super::two_test_trees_one_relaxation(&fixture.tree()).is_clean());
+    }
+
+    /// The chip's two drawings and the pill's one switch, all reading the shared source.
+    fn chip_and_pill(fixture: &Fixture) {
+        fixture
+            .write(
+                "Sources/SlopDeskSlate/PaneDropChipArt.swift",
+                "package enum DropChip {\n    package static let glyphGap: CGFloat = 6\n}\n",
+            )
+            .write(
+                super::PILL_INK_SRC,
+                "package enum PaneStatusPillInk {\n    case security\n    case sync\n}\n",
+            )
+            .write(
+                super::SLATE_DESIGN,
+                "package static func paneStatusPillFill(_ ink: PaneStatusPillInk) -> SlateNativeColor \
+                 {\n    switch ink {\n    case .security: .red\n    case .sync: .blue\n    }\n}\n",
+            );
+        for half in super::PILL_HALVES {
+            fixture.write(half, "fill = Slate.Native.paneStatusPillFill(ink)\n");
+        }
+        for half in [
+            "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
+            "Sources/SlopDeskMacUI/App/MacPaneDragChipPanel.swift",
+        ] {
+            fixture.write(
+                half,
+                "let gap = Slate.DropChip.glyphGap\nlet padH = Slate.DropChip.padH\nlet padV = \
+                 Slate.DropChip.padV\nlet rim = Slate.DropChip.cancelRim\n",
+            );
+        }
+    }
+
+    /// A re-derived chip number, a re-grown pill overload, and a renderer's own table are each red.
+    ///
+    /// Written 2026-08-28 under docs/62 stage I. The rule was one of three with no break-test
+    /// anywhere, and it is the one whose FLOOR moved in the same pass — `AtLeast { …, 2 }` became
+    /// `Exactly { …, 1 }` when the `Color` overload lost its last reader — so a seed for the second
+    /// declaration is what says the new count is a ceiling and not just a smaller floor.
+    ///
+    /// Note the fixture writes the chip's phone half. The LIVE tree does not have it yet (stage E.2
+    /// lands it), and that row is deliberately red there; a break-test seeds the tree the rule
+    /// describes, not the one the port is halfway through, or it would be asserting the port's
+    /// schedule rather than the rule.
+    #[test]
+    fn a_re_derived_chip_number_or_a_second_pill_switch_is_red() {
+        let fixture = Fixture::new("ink-chip-pill");
+        chip_and_pill(&fixture);
+        assert!(super::one_drop_chip_two_drawings(&fixture.tree()).is_clean());
+
+        // The overload back beside the shared switch — the per-renderer pair re-forming, which the
+        // old floor of two would have called healthy.
+        chip_and_pill(&fixture);
+        fixture.append(
+            super::SLATE_DESIGN,
+            "package static func paneStatusPillFill(_ ink: PaneStatusPillInk) -> Color {\n    .red\n}\n",
+        );
+        assert!(!super::one_drop_chip_two_drawings(&fixture.tree()).is_clean());
+
+        // A renderer switching on the ink itself: the shared switch still called, and a second
+        // table growing beside it one case at a time.
+        chip_and_pill(&fixture);
+        fixture.append(super::PILL_HALVES[0], "case .security: return .red\n");
+        assert!(!super::one_drop_chip_two_drawings(&fixture.tree()).is_clean());
+
+        // And a half that kept the NAME while re-deriving the table underneath it — which is what
+        // the qualified needle is for. An unqualified call satisfies the word and nothing else.
+        chip_and_pill(&fixture);
+        fixture.write(super::PILL_HALVES[1], "fill = paneStatusPillFill(ink)\n");
+        assert!(!super::one_drop_chip_two_drawings(&fixture.tree()).is_clean());
+
+        // A chip half back on a number of its own — the half-step of padding a user sees as the
+        // chip glitching, because both drawings can be on screen at once.
+        chip_and_pill(&fixture);
+        fixture.write(
+            "Sources/SlopDeskMacUI/App/MacPaneDragChipPanel.swift",
+            "let gap = Slate.DropChip.glyphGap\nlet padH: CGFloat = 10\nlet padV = Slate.DropChip.padV\nlet \
+             rim = Slate.DropChip.cancelRim\n",
+        );
+        assert!(!super::one_drop_chip_two_drawings(&fixture.tree()).is_clean());
+
+        // And a half that grew its own mark→artwork table, which is how `.beside` ends up as two
+        // different symbols in two chips that are drawn side by side.
+        chip_and_pill(&fixture);
+        fixture.append(
+            "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
+            "case .splitColumns: return \"rectangle.split.2x1\"\n",
+        );
+        assert!(!super::one_drop_chip_two_drawings(&fixture.tree()).is_clean());
+    }
+
+    /// The five drop-preview figures, and the two ways the pair grows back.
+    ///
+    /// Written 2026-08-29 under docs/62 stage I, in the same pass that minted the rung. The seeds
+    /// come in two shapes because the pair has two ways back: a half that stops READING a figure
+    /// (which is how it drifts) and a half that re-DECLARES one (which is how the old arrangement
+    /// returns). The retired `AppKit` spellings are seeded too — three of the five were named
+    /// differently on that side, so `zoneRim` is the likeliest single keystroke back.
+    #[test]
+    fn a_re_declared_drop_preview_figure_is_red() {
+        const ART: &str = "Sources/SlopDeskSlate/PaneDropPreviewArt.swift";
+        const HALVES: &[&str] = &[
+            "Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift",
+            "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
+        ];
+        const READS: &str = "let a = Slate.DropPreview.wholeRim\nlet b = Slate.DropPreview.slabRim\nlet c = \
+                             Slate.DropPreview.slabRimWash\nlet d = Slate.DropPreview.liftedWash\nlet e = \
+                             Slate.DropPreview.liftedDash\n";
+
+        let preview = |fixture: &Fixture| {
+            fixture.write(ART, "package extension Slate {\n    enum DropPreview {}\n}\n");
+            for half in HALVES {
+                fixture.write(half, READS);
+            }
+        };
+
+        let fixture = Fixture::new("ink-drop-preview");
+        preview(&fixture);
+        assert!(super::one_drop_preview_two_drawings(&fixture.tree()).is_clean());
+
+        // The rung deleted out from under both halves.
+        preview(&fixture);
+        fixture.remove(ART);
+        assert!(!super::one_drop_preview_two_drawings(&fixture.tree()).is_clean());
+
+        // A half that stopped reading ONE figure — the drift, and the reason it is invisible: this
+        // half is AppKit and the other is UIKit, so nothing compares them.
+        preview(&fixture);
+        fixture.write(
+            HALVES[0],
+            "let a: CGFloat = 2\nlet b = Slate.DropPreview.slabRim\nlet c = \
+             Slate.DropPreview.slabRimWash\nlet d = Slate.DropPreview.liftedWash\nlet e = \
+             Slate.DropPreview.liftedDash\n",
+        );
+        assert!(!super::one_drop_preview_two_drawings(&fixture.tree()).is_clean());
+
+        // A re-declaration under the MINTED spelling, and under the retired AppKit one. Both are the
+        // per-framework pair re-forming; the second is the likelier, which is why it is in the ban.
+        for seed in [
+            "    static let slabRimWash = 0.7\n",
+            "    private static let zoneRim: CGFloat = 2\n",
+            "    static let liftedAlpha = 0.55\n",
+        ] {
+            preview(&fixture);
+            fixture.append(HALVES[1], seed);
+            assert!(
+                !super::one_drop_preview_two_drawings(&fixture.tree()).is_clean(),
+                "{seed} passed the ban"
+            );
+        }
+
+        // And the arm that keeps the ban honest: a LOCAL of the same name is not a re-declaration,
+        // and neither is the doc prose that names the retired spellings while recanting them.
+        preview(&fixture);
+        fixture.append(
+            HALVES[1],
+            "func draw() {\n    let slabRim = Slate.DropPreview.slabRim\n    use(slabRim)\n}\n// this used \
+             to be `zoneRim`, declared here\n",
+        );
+        assert!(
+            super::one_drop_preview_two_drawings(&fixture.tree()).is_clean(),
+            "a local or a comment fired"
+        );
     }
 }

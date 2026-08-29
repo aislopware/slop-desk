@@ -15,9 +15,17 @@
 //
 // ## What is NOT here
 //
-// **No ink, no metric, no font.** `SlopDeskSlate` DEPENDS on this target, so a token read from here
-// would be a cycle rather than a widening. A surface names its own SILHOUETTE (an SF-Symbol name both
-// halves ask for) and each renderer spells the dim.
+// **No ink, no metric, no font — and NOT because a token is out of reach.** ⚠️ This header used to
+// say `SlopDeskSlate` "DEPENDS on this target, so a token read from here would be a cycle rather than
+// a widening". The edge runs the other way: `Package.swift:475` lists `SlopDeskSlate` among
+// `SlopDeskClientCore`'s dependencies, and `Package.swift:537-549` shows Slate's own dependencies as
+// `SlopDeskWorkspaceModel`/`SlopDeskAgentDetect`/`SlopDeskFontFaces`/`SFSafeSymbols` with no edge
+// back. `Pane/GuiLeafChromeLayout.swift` reads `Slate.Metric` from this target today. The real reason
+// is about this FILE rather than about the package graph: a presentation answers WHAT a surface is,
+// and an ink is a rendering of that answer — a surface names its own SILHOUETTE (an SF-Symbol name
+// both halves ask for) and each renderer spells the dim. Keeping the rendering out is a choice this
+// file makes, not a wall the build puts up, which matters because a wall needs no defending and a
+// choice does.
 //
 // **No `.task`, no poll, no generation.** Those are the model's, and how a renderer keeps a loop alive
 // across a mount is exactly the thing the two frameworks disagree about: SwiftUI cancels a `.task` on

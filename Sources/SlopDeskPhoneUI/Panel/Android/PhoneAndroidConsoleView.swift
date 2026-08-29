@@ -33,11 +33,15 @@
 // it draws an empty row rather than reaching for an index (hazard 3).
 
 #if os(iOS)
-import Observation
 import SFSafeSymbols
-import SlopDeskClientCore
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the model follow
 import SlopDeskDevicePanels
 import SlopDeskSlate
+
+// `ClientPasteboard` — the ONE clipboard funnel, shared with the Mac half. The copy verbs below are
+// the same two the Mac's console runs, so they go through the same writer rather than reaching for
+// `UIPasteboard.general` beside it.
+import SlopDeskWorkspaceCore
 import UIKit
 
 @MainActor
@@ -72,9 +76,6 @@ final class PhoneAndroidConsoleView: UIView {
     /// The ids as last applied, in order. The gate that keeps an unrelated model write from re-applying
     /// an identical snapshot.
     private var drawn: [UInt64] = []
-
-    /// ⚠️ Hazard 2's counter.
-    private var generation = 0
 
     init(model: AndroidSidebarModel) {
         self.model = model
@@ -218,7 +219,7 @@ final class PhoneAndroidConsoleView: UIView {
                 MainActor.assumeIsolated {
                     guard let self else { return complete([]) }
                     complete(AndroidLogLevel.allCases.map { level in
-                        slateMenuRow(level.title, checked: level == model.logLevel) { [weak self] in
+                        slateMenuRow(level.title, checked: level == self.model.logLevel) { [weak self] in
                             self?.model.setLogLevel(level)
                         }
                     })
@@ -314,31 +315,21 @@ final class PhoneAndroidConsoleView: UIView {
 
     // MARK: Following the model
 
-    /// ⚠️ `withObservationTracking` fires ONCE per registration, so the callback re-arms by calling
-    /// this again on the next main-queue turn. Three reads, all UNCONDITIONAL: a level that is only
-    /// read when there are lines stops being observed the moment the log empties.
+    /// ⚠️ THREE READS, ALL UNCONDITIONAL: a level that is only read when there are lines stops being
+    /// observed the moment the log empties. Armed ONCE, from `init` — the keystroke path is
+    /// ``redraw()``, which never re-follows, so the plain arm is right here where the SIMULATOR
+    /// console's twin needs `replacing:`.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var all: [DeviceLogLine] = []
-        var isStarted = false
-        var level = AndroidLogLevel.info
-        withObservationTracking {
-            all = self.model.logLines
-            isStarted = self.model.isLogStarted
-            level = self.model.logLevel
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { console in
+            (
+                all: console.model.logLines,
+                isStarted: console.model.isLogStarted,
+                level: console.model.logLevel,
+            )
+        } apply: { console, reading in
+            console.relabelLevel()
+            console.apply(reading.all, isLogStarted: reading.isStarted, level: reading.level)
         }
-
-        relabelLevel()
-        apply(all, isLogStarted: isStarted, level: level)
     }
 
     /// A filter keystroke, which changes what is DRAWN and nothing the model knows.
@@ -496,12 +487,7 @@ private final class PhoneAndroidLogRow: UIView {
         run.alignment = .top
         run.spacing = Slate.Metric.space1
         addSubview(run)
-        NSLayoutConstraint.activate([
-            run.leadingAnchor.constraint(equalTo: leadingAnchor),
-            run.trailingAnchor.constraint(equalTo: trailingAnchor),
-            run.topAnchor.constraint(equalTo: topAnchor),
-            run.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(run.slateEdges(of: self))
     }
 
     @available(*, unavailable)

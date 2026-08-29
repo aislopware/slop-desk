@@ -137,10 +137,23 @@ package final class PaneCanvasDragController {
     /// Push the container bounds to the store (the geometric ops' fallback before the first solved
     /// layout) AND to the drag coordinator (the canvas-local space a satellite-origin drag resolves its
     /// insert zones in). Renderer-driven, never reconciling: fires once at the container level.
+    ///
+    /// DEDUPED HERE rather than at the two renderers. An imperative shell's layout pass runs on every
+    /// pass, not only on a size change, so both shells had grown the same `lastReportedBounds` property
+    /// and the same three-line guard around this call — a cache of the ARGUMENT, kept beside the view
+    /// instead of beside the thing that is expensive to tell. One controller is built per canvas and it
+    /// is the only caller, so the last value it sent IS the store's reading; a shell that reports the
+    /// same rect twice now costs nothing and has to remember nothing.
     package func reportContainerBounds(_ bounds: CGRect) {
+        guard bounds != lastReportedBounds else { return }
+        lastReportedBounds = bounds
         store.updateContainerBounds(bounds)
         paneDrag?.canvasBounds = bounds
     }
+
+    /// The last rect ``reportContainerBounds(_:)`` actually pushed. `@ObservationIgnored` — it is the
+    /// dedupe's own memory and nothing renders from it.
+    @ObservationIgnored private var lastReportedBounds: CGRect?
 
     /// Forward the ACTIVE tab's solved frames to the store and mirror them to the drag coordinator, so a
     /// satellite-origin drag resolves its canvas insert zones against the same live geometry.

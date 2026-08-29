@@ -377,12 +377,9 @@ final class MacPaletteRowView: NSView {
 
         let height = heightAnchor.constraint(equalToConstant: Slate.Metric.heightRowTall)
         heightConstraint = height
+        NSLayoutConstraint.activate(content.slateEdges(of: self))
         NSLayoutConstraint.activate([
             height,
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.topAnchor.constraint(equalTo: topAnchor),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor),
             // The 20pt gutter is the row's leading column, and a header's caps label starts where a
             // row's title does — so headers and labels share one left margin, with the ✓ to their
             // left. A header carries no glyph, so on that row the gutter is width and nothing else.

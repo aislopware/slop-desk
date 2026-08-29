@@ -103,12 +103,7 @@ final class MacWindowSidebarToggleView: NSView {
         // beneath and the toggle is dead. The old comment here argued against the other two edges
         // because the representable above might hand down a frame that was not exactly one plate;
         // that seam is deleted, so there is no other frame to disagree with.
-        NSLayoutConstraint.activate([
-            plate.leadingAnchor.constraint(equalTo: leadingAnchor),
-            plate.topAnchor.constraint(equalTo: topAnchor),
-            plate.trailingAnchor.constraint(equalTo: trailingAnchor),
-            plate.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(plate.slateEdges(of: self))
     }
 
     @available(*, unavailable)

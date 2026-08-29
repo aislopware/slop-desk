@@ -143,22 +143,15 @@ final class SlateStatusMarkView: UIView {
     /// draw (``OttyIcon/hand``), scaled out of its 24-unit viewBox.
     private func drawHand(ink: UIColor) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
-        let icon = OttyIcon.hand
         let side = StatusDot.handSide
-        let rect = CGRect(
-            x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side,
+        SlateVectorDraw.stroke(
+            OttyIcon.hand,
+            in: CGRect(
+                x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side,
+                height: side,
+            ),
+            ink: ink.cgColor, into: context,
         )
-        let scale = side / icon.viewBox
-        context.saveGState()
-        context.setStrokeColor(ink.cgColor)
-        context.setLineWidth(icon.strokeWidth * scale)
-        context.setLineCap(.round)
-        context.setLineJoin(.round)
-        for outline in icon.outlines {
-            context.addPath(SVGPath.cgPath(outline, viewBox: icon.viewBox, in: rect))
-            context.strokePath()
-        }
-        context.restoreGState()
     }
 
     /// The THINKING mark: a braille cell with every dot lit and ONE hole running round it. The hole's
@@ -167,13 +160,13 @@ final class SlateStatusMarkView: UIView {
     private func drawSpinner(ink: UIColor, frozen: Bool) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         let phase = frozen ? 0 : AgentSpinner.phase(at: Date(), seed: seed)
-        SlateBrailleDraw.cell(
-            in: context, ink: ink, hole: phase * Double(BrailleCell.dotCount),
+        SlateVectorDraw.brailleCell(
+            into: context, ink: ink.cgColor, hole: phase * Double(BrailleCell.dotCount),
             box: CGSize(width: StatusDot.footprint, height: StatusDot.footprint),
-            origin: CGPoint(
+            anchor: CGPoint(
                 x: bounds.midX - StatusDot.footprint / 2, y: bounds.midY - StatusDot.footprint / 2,
             ),
-            zoom: 1,
+            step: 1, zoom: 1,
         )
     }
 }
@@ -250,42 +243,11 @@ final class SlateAgentSpinnerView: UIView {
         // Frozen at the head of the lap when the link is not running — the same still the render rig
         // photographs, so what a snapshot shows IS what Reduce Motion ships.
         let phase = pinnedPhase ?? (link == nil ? 0 : AgentSpinner.phase(at: Date(), seed: seed))
-        SlateBrailleDraw.cell(
-            in: context, ink: tint, hole: phase * Double(BrailleCell.dotCount),
+        SlateVectorDraw.brailleCell(
+            into: context, ink: tint.cgColor, hole: phase * Double(BrailleCell.dotCount),
             box: CGSize(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom),
-            origin: .zero, zoom: zoom,
+            anchor: .zero, step: 1, zoom: zoom,
         )
-    }
-}
-
-/// The braille cell's dots, drawn once for both `UIView`s above.
-///
-/// Shared rather than copied because the two spinners differ only in where the cell sits: the mark
-/// centres it in a wider column, the standalone spinner fills its own bounds. Everything else — which
-/// dots are lit, how bright, where they go — is ``AgentSpinner``'s and ``BrailleCell``'s.
-@MainActor
-enum SlateBrailleDraw {
-    /// ⚠️ `fillEllipse` rather than a `UIBezierPath(ovalIn:)` per dot: this loop runs on a display
-    /// link, so a path object per dot is EIGHT heap allocations (each with its own backing `CGPath`)
-    /// per frame per glyph, thrown away before the next tick — measured at 28.6 µs/frame with the
-    /// paths against 22.5 µs without, on the AppKit twin this is transliterated from. A navigator full
-    /// of thinking agents runs this once per mark per display refresh.
-    static func cell(
-        in context: CGContext, ink: UIColor, hole: Double, box: CGSize, origin: CGPoint, zoom: CGFloat,
-    ) {
-        let side = StatusDot.dotDiameter * zoom
-        for index in 0..<BrailleCell.dotCount {
-            let lit = AgentSpinner.lit(index, hole: hole)
-            guard lit > 0 else { continue }
-            // `BrailleCell.position` answers in a TOP-DOWN box, which is UIKit's own space — the
-            // AppKit twin mirrors the y here and this does not.
-            let point = BrailleCell.position(of: index, in: box, zoom: zoom)
-            ink.withAlphaComponent(lit).setFill()
-            context.fillEllipse(in: CGRect(
-                x: origin.x + point.x - side / 2, y: origin.y + point.y - side / 2,
-                width: side, height: side,
-            ))
-        }
     }
 }
 #endif

@@ -1,28 +1,41 @@
-// SlateNativeText — the nerd-font SPLICE in the platform's own text type.
+// SlateNativeText — the nerd-font SPLICE, once, for both frameworks.
 //
-// The face itself, its registration and the run classification are `SlopDeskClientCore`
+// The face itself, its registration and the run classification are `SlopDeskFontFaces`
 // (`NerdSymbolFont`); what a splice is FOR is that a starship segment or an nvim filetype glyph must
-// draw as itself rather than as a notdef dot. TWO SPLICES, ONE CLASSIFICATION: the AppKit half is
-// here because the Mac's chrome is `NSView` (docs/56 stage D); the UIKit half is the same-named
-// `NSAttributedString.slateNerdAware(_:font:color:)` in
-// `SlopDeskPhoneUI/DesignSystem/NerdAwareText.swift`, for the phone's own views. What neither may do
-// is decide for itself which runs are symbol runs — that is `NerdSymbolFont.runs(of:)`, below both.
+// draw as itself rather than as a notdef dot. What neither renderer may do is decide for itself which
+// runs are symbol runs — that is `NerdSymbolFont.runs(of:)`, below both.
+//
+// ⚠️ IT USED TO BE TWO SPLICES. This body sat here typed on `NSFont`/`NSColor`, and a
+// character-identical twin sat in the phone's own design-system directory (NerdAwareText, deleted in
+// the merge) typed on `UIFont`/`UIColor` — same name, same labels, same five statements, two `#if` arms that
+// could never both compile. The diff between them was TWO TYPE NAMES, and this floor already vends
+// both of them as one name each (``SlateNativeFont``, ``SlateNativeColor``, `SlateDesign.swift:72-81`).
+// Written on those, the two bodies are one body and the `#if` shrinks to what it was always really
+// gating: which framework declares `NSAttributedString.Key.foregroundColor`.
+//
+// `NSAttributedString` itself is Foundation on both platforms, and `init?(name:size:)` and
+// `pointSize` are spelled identically on `NSFont` and `UIFont` — which is why the merge is a deletion
+// and not a rewrite. This is the same finding as `SlateVectorDraw` and `SlatePlate`: the copy was
+// never paying for a framework difference, it was paying for a type name.
 
 #if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import SlopDeskFontFaces
 
 package extension NSAttributedString {
     /// An attributed string over `string` whose private-use runs (nerd-font glyphs) are set in the
     /// bundled Symbols Nerd Font at `font`'s size, while ordinary runs keep `font` itself.
     ///
-    /// The AppKit twin of the phone's `NSAttributedString.slateNerdAware(_:font:color:)`
-    /// (`SlopDeskPhoneUI/DesignSystem/NerdAwareText.swift`) — the two `#if` arms are disjoint, so the
-    /// NAME is deliberately the same and a Mac call site ports across verbatim. Both leave no run
-    /// FONTLESS: an `NSAttributedString` carries its own attributes all the way to the label, so the
-    /// caller's face is passed in rather than inherited.
+    /// THE CALLER'S FACE IS PASSED IN, NOT INHERITED. An `NSAttributedString` carries its own
+    /// attributes all the way to the label, so there is no outer style for a fontless run to pick up:
+    /// every run leaves here already dressed. Both shells' call sites read identically as a result —
+    /// `.slateNerdAware(title, font: base, color: ink)` is the same line in `MacPalette` and in
+    /// `PhonePaletteCardView`.
     static func slateNerdAware(
-        _ string: some StringProtocol, font: NSFont, color: NSColor,
+        _ string: some StringProtocol, font: SlateNativeFont, color: SlateNativeColor,
     ) -> NSAttributedString {
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let runs = NerdSymbolFont.runs(of: string)
@@ -30,7 +43,7 @@ package extension NSAttributedString {
         guard NerdSymbolFont.registered, runs.contains(where: \.isSymbol) else {
             return NSAttributedString(string: String(string), attributes: attributes)
         }
-        let symbol = NSFont(name: NerdSymbolFont.postScriptName, size: font.pointSize) ?? font
+        let symbol = SlateNativeFont(name: NerdSymbolFont.postScriptName, size: font.pointSize) ?? font
         let spliced = NSMutableAttributedString()
         for run in runs {
             spliced.append(NSAttributedString(
@@ -41,4 +54,3 @@ package extension NSAttributedString {
         return spliced
     }
 }
-#endif

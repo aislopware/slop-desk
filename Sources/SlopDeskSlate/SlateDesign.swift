@@ -1182,6 +1182,16 @@ package enum Slate {
         /// x-height so it reads as punctuation, not as a badge.
         package static let dot: CGFloat = 6
 
+        /// The minimum channel between a sidebar row's TITLE and the accessories on its trailing edge
+        /// (the status mark, the close ×). Off the 8pt grid on purpose and by half a rung: this is not
+        /// a layout inset but a CROWDING FLOOR, the last gap before an over-long title touches the mark
+        /// beside it, and at `space2` a row that is merely full reads as one with room to spare.
+        ///
+        /// Named here because both shells were carrying the same `-6` (`MacSidebarRow`,
+        /// `NavigatorRowCell`) — one figure, typed twice, which is the shape the design-token ratchet
+        /// exists to catch and could not see while its Auto Layout clause was blind to a negative.
+        package static let rowTitleGap: CGFloat = 6
+
         /// How far the island's transient chip stack (``SlopDeskMacUI/MacIslandChipStack`` /
         /// ``SlopDeskPhoneUI/IslandChipStackView`` — copy receipt, notice,
         /// connection indicator) stands off the island's FOOT. Two rungs of the scale, not one,

@@ -402,17 +402,16 @@ private final class MacAndroidMark: NSView, MacPanelMark {
         context.translateBy(x: bounds.midX, y: bounds.midY)
         context.rotate(by: -turn * .pi / 180)
         context.translateBy(x: -bounds.midX, y: -bounds.midY)
-        context.setFillColor(ink.cgColor)
-        context.setStrokeColor(ink.cgColor)
-        // The antennae go down FIRST and as their own path: the head is filled even-odd, and an antenna
-        // crossing the dome's rim inside that one path would subtract a notch from it exactly where the
-        // two meet.
-        context.setLineWidth(AndroidMarkPath.antennaLineWidth(in: bounds))
-        context.setLineCap(.round)
-        context.addPath(AndroidMarkPath.antennae(in: bounds))
-        context.strokePath()
-        context.addPath(AndroidMarkPath.head(in: bounds))
-        context.fillPath(using: .evenOdd)
+        // The GEOMETRY is asked here — the flip above is what makes `AndroidMarkPath`'s y-down angles
+        // land the right way up in this view — and the LADDER that paints it is the floor's
+        // (`SlateVectorDraw.androidMark`), which both shells had transcribed call for call.
+        SlateVectorDraw.androidMark(
+            head: AndroidMarkPath.head(in: bounds),
+            antennae: AndroidMarkPath.antennae(in: bounds),
+            lineWidth: AndroidMarkPath.antennaLineWidth(in: bounds),
+            ink: ink.cgColor,
+            into: context,
+        )
         context.restoreGState()
     }
 }

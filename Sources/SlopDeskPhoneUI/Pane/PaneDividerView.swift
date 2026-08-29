@@ -76,23 +76,14 @@ final class PaneDividerView: UIView {
     var handle: SplitTreeRenderModel.DividerHandle {
         didSet {
             guard handle != oldValue else { return }
-            handleUpdated()
+            applyReadout()
         }
     }
 
-    /// Drag start — wired to `store.setTerminalResizeSuspended(true)`, holding the host grid-resize for
-    /// the whole drag ("update the layout live, defer the server event to drag-end").
-    var onResizeBegin: () -> Void = {}
-    /// Each frame — the new ABSOLUTE leading-child weight (already clamped). Wired to
-    /// `store.setDividerWeightLive`, which re-solves the layout WITHOUT reconciling / persisting.
-    var onResizeChange: (_ leadingWeight: Double) -> Void = { _ in }
-    /// Drag end / interruption — wired to `store.setTerminalResizeSuspended(false)` (flush the settled
-    /// grid to the host) + `store.commitDividerResize()` (reconcile + persist ONCE). Called at most
-    /// ONCE per ``onResizeBegin``.
-    var onResizeEnd: () -> Void = {}
-    /// Double-tap → even out THIS seam (50/50, sum-preserving). Wired to `store.evenDividerTree` with
-    /// this handle's `(splitID, childIndex)` — never the whole-tab `balanceActivePaneSplits`.
-    var onReset: () -> Void = {}
+    /// What this seam's four gestures are wired to — ``DecorationDividerActions``, one vocabulary for
+    /// both shells. Each arm's meaning is documented there; what is decided here is only which gesture
+    /// reports which arm.
+    var actions = DecorationDividerActions()
 
     /// The drawn seam, centred in the band.
     ///
@@ -117,21 +108,12 @@ final class PaneDividerView: UIView {
     private let pan = UIPanGestureRecognizer()
     private let doubleTap = UITapGestureRecognizer()
 
-    init(
-        handle: SplitTreeRenderModel.DividerHandle,
-        onResizeBegin: @escaping () -> Void = {},
-        onResizeChange: @escaping (Double) -> Void = { _ in },
-        onResizeEnd: @escaping () -> Void = {},
-        onReset: @escaping () -> Void = {},
-    ) {
+    init(handle: SplitTreeRenderModel.DividerHandle, actions: DecorationDividerActions = .init()) {
         self.handle = handle
-        self.onResizeBegin = onResizeBegin
-        self.onResizeChange = onResizeChange
-        self.onResizeEnd = onResizeEnd
-        self.onReset = onReset
+        self.actions = actions
         super.init(frame: handle.rect)
         build()
-        handleUpdated()
+        applyReadout()
     }
 
     @available(*, unavailable)
@@ -190,12 +172,12 @@ final class PaneDividerView: UIView {
         case .began:
             gesture.setTranslation(.zero, in: space)
             startLead = handle.leadingWeight
-            onResizeBegin()
+            actions.onResizeBegin()
             setDragging(true)
         case .changed:
             guard startLead != nil else { return }
             let translation = gesture.translation(in: space)
-            onResizeChange(targetLeadingWeight(
+            actions.onResizeChange(targetLeadingWeight(
                 translation: handle.axis == .horizontal ? translation.x : translation.y,
             ))
         case .ended,
@@ -211,7 +193,7 @@ final class PaneDividerView: UIView {
     /// in-flight resize to unwind first.
     @objc
     private func handleDoubleTap() {
-        onReset()
+        actions.onReset()
     }
 
     /// THE TEARDOWN SAFETY NET, and the reason it is not redundant with the gesture's `.cancelled`:
@@ -238,7 +220,7 @@ final class PaneDividerView: UIView {
         guard startLead != nil else { return }
         startLead = nil
         setDragging(false)
-        onResizeEnd()
+        actions.onResizeEnd()
     }
 
     /// The absolute leading weight for a finger translation of `translation` points along the split
@@ -255,10 +237,11 @@ final class PaneDividerView: UIView {
 
     // MARK: - The drawing
 
-    /// A new solve arrived: refresh the readout's numbers.
-    private func handleUpdated() {
-        applyReadout()
-    }
+    // A new solve arrives at ``applyReadout()`` directly. The Mac half routes it through a
+    // `handleUpdated()` because AppKit also owes the window an `invalidateCursorRects(for:)` on a
+    // seam whose movability changed; there is no pointer here and so no second statement, and a
+    // one-line forwarder named after the other shell's two-line one was mirroring rather than
+    // sharing.
 
     /// The seam's two states, in one transaction: the accent line and the extra point of weight arrive
     /// together, on the hover rung.
@@ -395,22 +378,11 @@ private final class RatioReadoutView: UIView {
             addSubview(label)
         }
 
-        NSLayoutConstraint.activate([
-            leadPct.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space2),
-            leadPct.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space1),
-            leadPct.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Slate.Metric.space1),
-            dot.leadingAnchor.constraint(
-                equalTo: leadPct.trailingAnchor, constant: Slate.Metric.space1,
-            ),
-            dot.centerYAnchor.constraint(equalTo: leadPct.centerYAnchor),
-            trailPct.leadingAnchor.constraint(
-                equalTo: dot.trailingAnchor, constant: Slate.Metric.space1,
-            ),
-            trailPct.centerYAnchor.constraint(equalTo: leadPct.centerYAnchor),
-            trailPct.trailingAnchor.constraint(
-                equalTo: trailingAnchor, constant: -Slate.Metric.space2,
-            ),
-        ])
+        // Where the three runs sit is ``DecorationRatioReadout``'s — an arrangement, and the same one on
+        // both shells down to the rung each gap spends.
+        NSLayoutConstraint.activate(DecorationRatioReadout.constraints(
+            in: self, leading: leadPct, dot: dot, trailing: trailPct,
+        ))
         isAccessibilityElement = true
         accessibilityTraits = .staticText
         applyText()

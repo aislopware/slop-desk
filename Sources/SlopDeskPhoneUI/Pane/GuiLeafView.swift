@@ -1,28 +1,29 @@
 // GuiLeafView — the remote-window (PATH 2) pane leaf, in UIKit: the video parallel of
 // ``TerminalLeafView`` (docs/62 stage E, the pane-leaf cluster).
 //
-// It mounts the ``VideoWindowFactory`` seam over the stream's layer, drives the cap-enforced activation
-// lifecycle, and draws the chrome over the pixels. The DECISIONS are all somewhere else and unchanged:
+// THE LEAF IS ``GuiLeafCore``; THIS FILE IS ITS PIXELS. Everything that is not drawing — the seam's
+// session, the cap-enforced activation lifecycle, the three gates, the immersive tap, the drop's routing
+// and the whole tracked read — is in the floor and shared with `MacGuiLeafView`, which is the same leaf in
+// AppKit. What is left here is the chrome drawn over the stream, where it sits, and how it fades. The
+// DECISIONS were always somewhere else and are unchanged:
 // ``RemoteGUIDisplay/resolve(admitted:configured:hasFreeSlot:)`` picks live / entry-form / cap-gated,
 // ``GuiPaneReadout`` owns every gate and string, ``GuiPaneUploads`` routes a drop, ``ClipboardPasteMenu``
 // owns the paste enablement and the masked previews, ``BindingRowPlatform`` owns whether a verb exists on
-// this platform at all, and ``PaneImmersiveCapture`` owns the tap. What crossed is the drawing and the
-// lifecycle.
+// this platform at all, and ``PaneImmersiveCapture`` owns the tap.
 //
 // THREE display states: `.live` mounts the factory, `.entryForm` is the calm idle mirror of the
 // pre-admission beat, `.gated` is the cap-saturated notice. SEAM discipline: this target NEVER imports
 // `SlopDeskVideoClient`, VideoToolbox or Metal — only the seam types cross, and a headless build that
 // registers no factory gets the placeholder.
 //
-// TWO THINGS A RENDER PASS DID FOR FREE, and they are why this file is longer than the half it replaces:
+// THE ONE THING A RENDER PASS DID FOR FREE THAT STILL SHOWS HERE: there is no pass, so the chrome is
+// PUSHED. ``GuiLeafCore/read()`` gathers one ``GuiLeafChrome`` per pass and ``applyChrome(_:)`` paints it
+// — never half of one update and half of the next.
 //
-//   • THE GATES. `RemotePaneContext` was rebuilt on every pass, so a read-only flip re-published the
-//     injector sinks by simply being re-evaluated. There is no pass here, so ``push()`` calls
-//     `RemoteSurfaceHosting.setPaneGates` explicitly. Miss it and a lock stops reaching the host.
-//   • THE EDGES. Four `.onChange`s (focus, injectability, the immersive wish, visibility) and one
-//     `.task(id:)` become one tracked read plus remembered last-values. The activation key is the same
-//     pure ``GuiPaneReadout/activationKey(paneHash:promotionGeneration:isVisible:)`` string, so "did the
-//     key change" is still one comparison and not four.
+// ⚠️ THE TRACKED READ IS STILL WRITTEN HERE, not in the floor, and that is docs/62 §3.1 mid-conversion:
+// the Mac half arms through ``ObservationFollow`` and this one still carries the hand-written
+// `withObservationTracking` + generation guard. The floor takes no side — ``GuiLeafCore/read()`` is called
+// from inside whichever block this file arms, and ``GuiLeafCore/apply(_:)`` from outside it.
 //
 // EDGE-TO-EDGE, unlike the terminal leaf's inset: every point of a video pane is remote pixels, so a
 // gutter here is wasted stream area rather than a reading margin. The chrome floats over it.
@@ -43,7 +44,6 @@ import Foundation
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
-import SlopDeskVideoProtocol // ConfigRevision — the config-file edge the tracked read arms on
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import UIKit
@@ -54,26 +54,12 @@ import UIKit
 final class GuiLeafView: UIView {
     // MARK: What the leaf was handed
 
-    private let store: WorkspaceStore
-    private let paneID: PaneID
-    private var live: LivePaneSession?
-    private var isFocused: Bool
-    /// Whether this pane is ON-SCREEN (tab active AND not zoom-hidden). Under keep-all-mounted a hidden
-    /// tab's leaf is never unmounted, so this — not ``didMoveToWindow()`` — is what frees the
-    /// `liveVideoCap` slot and stops the UDP/VT/Metal pipeline off-screen.
-    private var isVisible: Bool
-
-    private var model: RemoteWindowModel? { live?.remoteWindow }
+    private let core: GuiLeafCore
 
     // MARK: The pixels
 
-    /// The seam's view, or the placeholder. Whichever is mounted fills the leaf.
-    private var surfaceView: UIView?
-    private var surfaceHost: RemoteSurfaceHosting?
+    /// Shows through whenever no surface is mounted. The seam's view goes in above it.
     private let placeholder = GuiPlaceholderView()
-    /// What ``mountSurface()`` last built for, so a ``follow()`` pass that changed nothing about the
-    /// descriptor does not tear a live decode stack down and rebuild it.
-    private var mountedDescriptor: RemoteWindowDescriptor?
 
     // MARK: The chrome — every piece STANDING, faded rather than absent
 
@@ -89,43 +75,17 @@ final class GuiLeafView: UIView {
     /// The paste banner clears the control bar when the bar is expanded, so this constant moves.
     private var pasteBannerBottom: NSLayoutConstraint?
 
-    // MARK: Per-pane view state — resets on remount, exactly like the `@State` it replaces
-
-    private var showStats = false
-    private var controlsExpanded = false
-    private var isDropTargeted = false
-    /// The tap must die with this MOUNT, while the on/off WISH lives on the model — which is what makes a
-    /// detach/reattach re-engage instead of silently dropping the mode.
-    private let immersiveCapture = PaneImmersiveCapture()
-
-    // MARK: The live reads
-
     /// Supersedes an armed observation. An arm cannot be cancelled, so a stale callback drops itself.
     private var generation = 0
-    private var isWired = false
-    /// `desktop.satellite-background-pointer`, re-read by ``follow()`` off ``ConfigRevision`` — it
-    /// re-pushes the GATE rather than remounting, which is the whole point of `setPaneGates`.
-    private var satelliteBackgroundPointer = SettingsKey.satelliteBackgroundPointerEnabled
-
-    /// Last values of the four things the deleted half gave an `.onChange` each. Optional-less: every one
-    /// has a well-defined false/empty reading for a pane with no model.
-    private var lastActivationKey: String?
-    private var lastInjectable = false
-    private var lastImmersiveWish = false
 
     // MARK: - Life
 
     init(live: LivePaneSession?, isFocused: Bool, isVisible: Bool, store: WorkspaceStore, paneID: PaneID) {
-        self.live = live
-        self.isFocused = isFocused
-        self.isVisible = isVisible
-        self.store = store
-        self.paneID = paneID
+        core = GuiLeafCore(live: live, isFocused: isFocused, isVisible: isVisible, store: store, paneID: paneID)
         readOnlyPill = PaneStatusPillView(pill: .readOnly) { store.setPaneReadOnly(paneID, false) }
         super.init(frame: .zero)
         build()
-        mountSurface()
-        attach()
+        core.start(host: self)
     }
 
     @available(*, unavailable)
@@ -144,272 +104,107 @@ final class GuiLeafView: UIView {
         // AppKit's destination walk goes UP from the deepest view and finds this one first.
         addInteraction(UIDropInteraction(delegate: self))
 
-        // THE FLOOR, added before everything else so it is at the BACK: the placeholder shows through
-        // whenever no surface is mounted, and the seam's view goes in above it.
-        addSubview(placeholder)
-        fill(placeholder)
+        core.wireControls(bar: controlBar, chip: collapsedChip)
 
-        // Pinned in z-order, bottom-up. The drop highlight sits ABOVE the chrome on purpose: it is a
-        // whole-leaf border and a control bar drawn over it would break the frame it is trying to draw.
-        controlBar.onCollapse = { [weak self] in self?.setControlsExpanded(false) }
-        controlBar.onToggleStats = { [weak self] in self?.setShowStats(!(self?.showStats ?? false)) }
-        controlBar.onToggleImmersive = { [weak self] in
-            guard let self else { return }
-            immersiveCapture.toggle(model: model)
-        }
-        collapsedChip.onExpand = { [weak self] in self?.setControlsExpanded(true) }
-
-        for overlay in [
-            controlBar,
-            collapsedChip,
-            stallCaption,
-            statsReadout,
-            uploadOverlay,
-            readOnlyPill,
-            dropHighlight,
-        ] as [UIView] {
-            overlay.translatesAutoresizingMaskIntoConstraints = false
-            overlay.layer.opacity = 0
-            overlay.accessibilityElementsHidden = true
-            addSubview(overlay)
-        }
-        fill(dropHighlight)
-
-        let pad = Slate.Metric.space2
-        NSLayoutConstraint.activate([
-            controlBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            controlBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            controlBar.bottomAnchor.constraint(equalTo: bottomAnchor),
-            trailingAnchor.constraint(equalTo: collapsedChip.trailingAnchor, constant: pad),
-            bottomAnchor.constraint(equalTo: collapsedChip.bottomAnchor, constant: pad),
-            // BOTTOM-LEADING for the stall caption: bottom-trailing is the chip's corner, and the two can
-            // be on screen at once (a stalled stream still has controls).
-            stallCaption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space3),
-            bottomAnchor.constraint(equalTo: stallCaption.bottomAnchor, constant: Slate.Metric.space3),
-            statsReadout.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            statsReadout.topAnchor.constraint(equalTo: topAnchor, constant: pad),
-            // TOP-CENTRE for uploads — clear of the read-only pill top-trailing and the stats readout
-            // top-leading, which is the only free corner-free edge left.
-            uploadOverlay.centerXAnchor.constraint(equalTo: centerXAnchor),
-            uploadOverlay.topAnchor.constraint(equalTo: topAnchor, constant: pad),
-            trailingAnchor.constraint(equalTo: readOnlyPill.trailingAnchor, constant: pad),
-            readOnlyPill.topAnchor.constraint(equalTo: topAnchor, constant: pad),
-        ])
+        // THE WHOLE MOUNT is ``GuiLeafChromeLayout``'s: z-order, which corner each overlay takes, and
+        // the two rungs the corners sit at. All three are readings of what is free rather than
+        // framework spellings, and they were twenty-eight character-identical lines in both shells
+        // until they went down. What stays here is the one word that genuinely differs — how UIKit
+        // takes an overlay out of the picture.
+        NSLayoutConstraint.activate(GuiLeafChromeLayout.mount(
+            in: self,
+            placeholder: placeholder,
+            overlays: GuiLeafChromeLayout.Overlays(
+                controlBar: controlBar,
+                collapsedChip: collapsedChip,
+                stallCaption: stallCaption,
+                statsReadout: statsReadout,
+                uploadOverlay: uploadOverlay,
+                readOnlyPill: readOnlyPill,
+            ),
+            dropHighlight: dropHighlight,
+            conceal: { overlay in
+                overlay.layer.opacity = 0
+                overlay.accessibilityElementsHidden = true
+            },
+        ))
     }
 
-    private func fill(_ view: UIView) {
-        view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: topAnchor),
-            view.bottomAnchor.constraint(equalTo: bottomAnchor),
-            view.leadingAnchor.constraint(equalTo: leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
-    }
+    // MARK: - Attach / detach
 
-    // MARK: - Attach / detach, and the one thing that is not symmetric
-
-    /// The UIKit spelling of `.onAppear` / `.onDisappear`, with the SAME asymmetry the terminal leaf
-    /// carries and for a stricter reason.
-    ///
-    /// The OBSERVATION detaches with the view tree; it is idempotent and re-installable.
-    ///
-    /// The CAP SLOT does not, because a leaf can leave the tree without its pane going away — a split
-    /// rearrange re-parents it, and detach/reattach mounts another hosting root for the SAME PaneID while
-    /// this one is still coming down. Deactivating here would close the model mid-handoff and race the
-    /// replacement's fresh session. Only ``teardown()`` frees the slot, and only after checking the pane
-    /// is gone from the tree AND from the detached set.
+    /// The UIKit spelling of `.onAppear` / `.onDisappear`. Only the OBSERVATION rides the view tree — the
+    /// cap slot does not, and ``GuiLeafCore/detach()`` records why.
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil, superview == nil {
-            detach()
+            core.detach()
         } else if window != nil {
-            attach()
+            core.attach()
         }
-    }
-
-    private func attach() {
-        guard !isWired else { return }
-        isWired = true
-        follow()
-    }
-
-    private func detach() {
-        guard isWired else { return }
-        isWired = false
-        generation &+= 1
     }
 
     /// The pane is closed for good.
     ///
-    /// The immersive tap comes down FIRST and unconditionally: an unmounted pane that keeps swallowing the
-    /// keyboard has no owner left to disengage it. ``PaneImmersiveCapture/teardown()`` is the verb that
-    /// drops the tap WITHOUT clearing the model's wish, so a reattach still re-engages.
-    ///
-    /// The chrome's own beats come down here too — the stall clock and the display refresh are stored
-    /// `Task`s, which is the one lifetime UIKit does not end for us (docs/62 hazard 6).
+    /// The core comes down FIRST, because the immersive tap is the one thing an unmounted pane must never
+    /// keep. The chrome's own beats follow — the stall clock and the display refresh are stored `Task`s,
+    /// which is the one lifetime UIKit does not end for us (docs/62 hazard 6).
     func teardown() {
-        detach()
-        immersiveCapture.teardown()
+        core.teardown()
         stallCaption.teardown()
         controlBar.teardown()
-        surfaceHost?.detachSurface()
-        surfaceHost = nil
-        surfaceView?.removeFromSuperview()
-        surfaceView = nil
-        mountedDescriptor = nil
-        // THE RELOCATION GUARD. Gone from the tree AND not detached is the only reading of "closed".
-        guard !store.tree.contains(paneID), !store.tree.isDetached(paneID) else { return }
-        store.deactivateVideo(paneID)
     }
 
     // MARK: - What the mounter pushes
 
-    func setLive(_ live: LivePaneSession?) {
-        guard live !== self.live else { return }
-        self.live = live
-        mountSurface()
-        if isWired { follow() }
-    }
+    func setLive(_ live: LivePaneSession?) { core.setLive(live) }
 
-    func setFocused(_ isFocused: Bool) {
-        guard isFocused != self.isFocused else { return }
-        self.isFocused = isFocused
-        push()
-        // IMMERSIVE SAFETY: focus drives a SUSPENSION, never a tear-down. Losing focus pauses swallowing;
-        // regaining it resumes by itself, so the user's toggle survives a popover blip.
-        immersiveCapture.setSuspended(!isFocused || model?.canInjectSystemKeys != true)
-        immersiveCapture.autoEngage(model: model, isFocused: isFocused)
-        if isWired { follow() }
-    }
+    func setFocused(_ isFocused: Bool) { core.setFocused(isFocused) }
 
-    func setVisible(_ isVisible: Bool) {
-        guard isVisible != self.isVisible else { return }
-        self.isVisible = isVisible
-        if isWired { follow() }
-    }
+    func setVisible(_ isVisible: Bool) { core.setVisible(isVisible) }
+}
 
-    // MARK: - The pixels
+// MARK: - The five sentences the shell owns
 
-    /// The video seam — the production renderer if the app registered a native factory, else the
-    /// placeholder. This target NEVER imports Metal or VideoToolbox: it only calls the factory.
-    private func mountSurface() {
-        let descriptor = model?.active
-        // A REBUILD IS A TEARDOWN. The hosting view owns UDP sockets, a decoder and a display link, so
-        // remounting for an unchanged descriptor would reset a live stream mid-frame — the identity hazard
-        // spelled as "never reconstruct the hosted view across panes".
-        if descriptor == mountedDescriptor, surfaceView != nil || descriptor == nil { return }
-        surfaceHost?.detachSurface()
-        surfaceHost = nil
-        surfaceView?.removeFromSuperview()
-        surfaceView = nil
-        mountedDescriptor = descriptor
-
-        guard let descriptor else { return }
-        guard let host = VideoWindowFactory.make(descriptor, context: paneContext()) else { return }
-        surfaceHost = host
-        fillSurface(host.surfaceView)
-    }
-
-    /// The per-render context the deleted half rebuilt on every pass. Built here at MOUNT, and its three
-    /// gates re-pushed by ``push()`` afterwards — the sinks below are bound once because they are bound to
-    /// the model, and it is `setPaneGates` that republishes them on a read-only flip.
-    private func paneContext() -> RemotePaneContext {
-        RemotePaneContext.videoLeaf(
-            isActive: isFocused,
-            readOnly: store.isReadOnly(for: paneID),
-            // A DETACHED pane's satellite window keeps taking pointer input while not key
-            // (setting-gated); a canvas pane never does.
-            backgroundPointer: store.tree.isDetached(paneID) && satelliteBackgroundPointer,
-            onActivate: { [weak self] in
-                guard let self else { return }
-                store.focusPaneTree(paneID)
-            },
-            onCanvasScroll: { _ in },
-            // `nil` letterboxes a TILED leaf via `.fit` instead of fighting the split solver.
-            onStreamNativeSize: nil,
-            bindKeyInjector: { [weak model] sink in model?.keyInjector = sink },
-            bindResizeInjector: { [weak model] sink in model?.resizeInjector = sink },
-            // VIEWPORT CONTROLS: zoom / pan-lock — pure CLIENT compositor ops, so the seam binds this sink
-            // even on a read-only pane (unlike the host-affecting key/resize sinks).
-            bindViewportInjector: { [weak model] sink in model?.viewportInjector = sink },
-            bindInputRelease: { [weak model] sink in model?.inputReleaseInjector = sink },
-            bindStreamSettingsInjector: { [weak model] sink in model?.streamSettingsInjector = sink },
-            bindAudioInjector: { [weak model] sink in model?.audioInjector = sink },
-            bindPrivacyInjector: { [weak model] sink in model?.privacyInjector = sink },
-            bindSystemKeyInjector: { [weak model] sink in model?.systemKeyInjector = sink },
-            onWindowGeometry: { [weak model] cw, ch, mw, mh in
-                model?.noteWindowGeometry(currentW: cw, currentH: ch, maxW: mw, maxH: mh)
-            },
-            onStreamCadence: { [weak model] fps in model?.noteStreamFps(fps) },
-            onStreamBitrate: { [weak model] kbps in model?.noteStreamKbps(kbps) },
-            onNetworkStats: { [weak model] fps, fec, unrecovered, holdMs, depth, rtt, enc, dec in
-                model?.noteNetworkStats(
-                    fps: fps, fecPerSec: fec, unrecoveredPerSec: unrecovered,
-                    holdMs: holdMs, pacerDepth: depth,
-                    rttMs: rtt, encodeMs: enc, decodeMs: dec,
-                )
-            },
-            onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
-            onSessionRejected: { [weak model] in model?.noteSessionRejected() },
-        )
-    }
-
-    /// THE ONLY WAY A READ-ONLY LOCK REACHES THE HOST on this canvas. A render pass got this for free;
-    /// here it is a call, and every edge that can change one of the three gates makes it.
-    private func push() {
-        surfaceHost?.setPaneGates(
-            isActive: isFocused,
-            inputEnabled: !store.isReadOnly(for: paneID),
-            backgroundPointer: store.tree.isDetached(paneID) && satelliteBackgroundPointer,
-        )
-    }
-
-    /// Mount the seam's view between the placeholder and the chrome.
-    ///
+extension GuiLeafView: GuiLeafHost {
     /// `insertSubview(_:belowSubview:)` rather than a plain `addSubview`, because the chrome was added in
     /// ``build()`` and a plain add would put the remote pixels ON TOP of the control bar — which would not
     /// merely look wrong, it would put an opaque stream layer over every overlay in the file.
-    private func fillSurface(_ view: UIView) {
-        insertSubview(view, belowSubview: controlBar)
-        surfaceView = view
-        fill(view)
+    func mountSurface(_ seam: RemoteSurfaceHosting) {
+        insertSubview(seam.surfaceView, belowSubview: controlBar)
+        NSLayoutConstraint.activate(seam.surfaceView.slateEdges(of: self))
         placeholder.isHidden = true
     }
 
-    // MARK: - The live read
+    func unmountSurface(_ seam: RemoteSurfaceHosting) { seam.surfaceView.removeFromSuperview() }
 
+    func stopFollowing() { generation &+= 1 }
+
+    func presentPlaceholder(_ display: RemoteGUIDisplay) {
+        placeholder.isHidden = false
+        placeholder.present(display)
+    }
+
+    func refollow() { follow() }
+}
+
+// MARK: - The live read
+
+private extension GuiLeafView {
     /// ONE tracked read of everything this leaf draws, activates on, or triggers an immersive edge from —
     /// re-armed by its own `onChange`, superseded by generation.
     ///
     /// One arm rather than one per concern for the same reason the terminal leaf gives:
     /// `withObservationTracking` fires on the FIRST change to anything it read, so N arms cost N callbacks
     /// for one edit and give nothing back.
-    private func follow() {
+    func follow() {
         generation &+= 1
         let generation = generation
-
-        var display = RemoteGUIDisplay.entryForm
-        var activationKey = ""
-        var injectable = false
-        var immersiveWish = false
-        var chrome = Chrome()
+        var reading = GuiLeafReading()
 
         withObservationTracking {
-            // The config-file edge — `AppConfig` is a plain locked global, so the setting below is
-            // observable only through the revision, and the read must stay INSIDE this block or the view
-            // silently unsubscribes. See ``ConfigRevision``.
-            _ = ConfigRevision.shared.generation
-            satelliteBackgroundPointer = SettingsKey.satelliteBackgroundPointerEnabled
-            display = self.display
-            activationKey = GuiPaneReadout.activationKey(
-                paneHash: live?.id.hashValue ?? 0,
-                promotionGeneration: store.videoPromotionGeneration,
-                isVisible: isVisible,
-            )
-            injectable = model?.canInjectSystemKeys ?? false
-            immersiveWish = model?.immersiveEffective ?? false
-            chrome = readChrome()
+            // ``GuiLeafCore/read()`` is written to be called from HERE and nowhere else: a tracked read
+            // that lands outside this block does not invalidate, and the leaf silently unsubscribes.
+            reading = core.read()
         } onChange: { [weak self] in
             // The hop is required: `onChange` runs INSIDE the mutation, so re-arming from it would read
             // half-written state.
@@ -421,151 +216,39 @@ final class GuiLeafView: UIView {
             }
         }
 
-        // ORDER MATTERS. Admission first (it can flip `model.active`, which the surface mounts on), then
-        // the pixels, then the gates, then the chrome that describes them.
-        applyActivation(key: activationKey)
-        if display == .live { mountSurface() } else { unmountSurface(display) }
-        push()
-        applyImmersiveEdges(injectable: injectable, wish: immersiveWish)
-        applyChrome(chrome)
-    }
-
-    /// The pure three-state display decision, unchanged from the deleted half.
-    private var display: RemoteGUIDisplay {
-        guard let model else { return .entryForm }
-        return RemoteGUIDisplay.resolve(
-            admitted: model.active != nil,
-            configured: model.canOpen,
-            hasFreeSlot: store.hasFreeVideoSlot(for: paneID),
-        )
-    }
-
-    /// CAP ADMISSION. The deleted half's `.task(id: activationKey)`: request a slot when on-screen, on
-    /// mount AND whenever a sibling frees one (`videoPromotionGeneration` bumps, which changes the key).
-    /// NEVER calls `live.setVideoActive` directly — the store enforces the cap and the `tearingDownVideo`
-    /// accounting. iOS resume re-activates `wasVideoActiveBeforePause` in `LivePaneSession.resume`, so
-    /// this is idempotent there.
-    private func applyActivation(key: String) {
-        guard key != lastActivationKey else { return }
-        lastActivationKey = key
-        guard model != nil else { return }
-        if isVisible {
-            _ = store.activateVideo(paneID)
-            // A remount may find the sinks ALREADY live, in which case neither the injectability nor the
-            // focus edge fires — so the mount itself has to attempt the re-engage.
-            immersiveCapture.autoEngage(model: model, isFocused: isFocused)
-        } else {
-            store.deactivateVideo(paneID)
-        }
-    }
-
-    private func unmountSurface(_ display: RemoteGUIDisplay) {
-        if surfaceView != nil {
-            surfaceHost?.detachSurface()
-            surfaceHost = nil
-            surfaceView?.removeFromSuperview()
-            surfaceView = nil
-            mountedDescriptor = nil
-        }
-        placeholder.isHidden = false
-        placeholder.present(display)
-    }
-
-    /// The two `.onChange`s that are about the tap rather than the drawing.
-    ///
-    /// A read-only flip withholds the system-key sink, which is a SUSPENSION exactly like losing focus;
-    /// the wish edge is a re-target or a fullscreen flip changing the wish under a mounted view, which
-    /// must move the tap both ways.
-    private func applyImmersiveEdges(injectable: Bool, wish: Bool) {
-        if injectable != lastInjectable {
-            lastInjectable = injectable
-            immersiveCapture.setSuspended(!injectable || !isFocused)
-            immersiveCapture.autoEngage(model: model, isFocused: isFocused)
-        }
-        if wish != lastImmersiveWish {
-            lastImmersiveWish = wish
-            immersiveCapture.wishChanged(to: wish, model: model, isFocused: isFocused)
-        }
+        core.apply(reading)
+        applyChrome(reading.chrome)
     }
 
     // MARK: - The chrome
 
-    /// Everything drawn over the stream, read once per pass so the bar can never show half of one update
-    /// and half of the next.
-    private struct Chrome {
-        var showControlBar = false
-        var hasLatchedMode = false
-        var readOnly = false
-        var stalled = false
-        var stalledAt: Date?
-        var telemetry = GuiStreamTelemetry()
-        var uploads: [FileUploadProgress] = []
-        var pasteFeedback: RemoteWindowModel.PasteFeedback?
-        var live = false
-    }
-
-    private func readChrome() -> Chrome {
-        var chrome = Chrome()
-        chrome.readOnly = GuiPaneReadout.showsReadOnlyPill(isReadOnly: store.isReadOnly(for: paneID))
-        guard let model else { return chrome }
-        chrome.live = model.active != nil
-        chrome.showControlBar = GuiPaneReadout.showsControlBar(hasLiveDescriptor: chrome.live)
-        chrome.hasLatchedMode = GuiPaneReadout.hasLatchedMode(
-            // The model's WISH, not the tap's state: a suspended or not-yet-re-engaged mode must still
-            // show its light, or the chip claims a mode is off while it is only paused.
-            immersive: model.immersiveEffective,
-            viewportLocked: model.viewportLocked,
-            audioEnabled: model.audioStreamEnabled,
-            streamFpsCap: model.streamFpsCap,
-            streamBitrateCeilingBps: model.streamBitrateCeilingBps,
-        )
-        chrome.stalled = model.isStreamStalled
-        chrome.stalledAt = model.streamStalledAt
-        chrome.telemetry = GuiStreamTelemetry(
-            streamFps: model.streamFps,
-            streamKbps: model.streamKbps,
-            statsFps: model.statsFps,
-            statsPacerDepth: model.statsPacerDepth,
-            statsFecPerSec: model.statsFecPerSec,
-            statsUnrecoveredPerSec: model.statsUnrecoveredPerSec,
-            statsRttMs: model.statsRttMs,
-            statsEncodeMs: model.statsEncodeMs,
-            statsDecodeMs: model.statsDecodeMs,
-            statsHoldMs: model.statsHoldMs,
-        )
-        chrome.uploads = model.activeUploads
-        chrome.pasteFeedback = model.pasteFeedback
-        return chrome
-    }
-
-    private func applyChrome(_ chrome: Chrome) {
+    func applyChrome(_ chrome: GuiLeafChrome) {
         controlBar.present(
-            model: model, store: store, paneID: paneID,
-            showStats: showStats, immersiveOn: chrome.hasLatchedMode && model?.immersiveEffective == true,
+            model: core.model, store: core.store, paneID: core.paneID,
+            showStats: chrome.showStats, immersiveOn: chrome.immersiveOn,
+            isDesktop: chrome.isDesktop,
         )
-        GuiOverlayFade.set(controlBar, shown: chrome.showControlBar && controlsExpanded)
+        GuiOverlayFade.set(controlBar, shown: chrome.showControlBar && chrome.controlsExpanded)
         collapsedChip.latched = chrome.hasLatchedMode
-        GuiOverlayFade.set(collapsedChip, shown: chrome.showControlBar && !controlsExpanded)
+        GuiOverlayFade.set(collapsedChip, shown: chrome.showControlBar && !chrome.controlsExpanded)
 
         stallCaption.present(since: chrome.stalledAt)
         GuiOverlayFade.set(stallCaption, shown: chrome.stalled && chrome.live)
 
         statsReadout.present(chrome.telemetry)
-        GuiOverlayFade.set(statsReadout, shown: showStats && chrome.live)
+        GuiOverlayFade.set(statsReadout, shown: chrome.showStats && chrome.live)
 
         uploadOverlay.present(chrome.uploads)
         GuiOverlayFade.set(uploadOverlay, shown: !chrome.uploads.isEmpty)
 
         GuiOverlayFade.set(readOnlyPill, shown: chrome.readOnly)
-        GuiOverlayFade.set(dropHighlight, shown: isDropTargeted)
-        applyPasteBanner(chrome.pasteFeedback, barExpanded: chrome.showControlBar && controlsExpanded)
+        GuiOverlayFade.set(dropHighlight, shown: chrome.dropTargeted)
+        applyPasteBanner(chrome.pasteFeedback, barExpanded: chrome.showControlBar && chrome.controlsExpanded)
     }
 
     /// The one rebuilt overlay: its copy is baked in at init, so a NEW feedback is a new banner.
-    private func applyPasteBanner(_ feedback: RemoteWindowModel.PasteFeedback?, barExpanded: Bool) {
-        let clearance = barExpanded
-            ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2
-            : Slate.Metric.space2
+    func applyPasteBanner(_ feedback: RemoteWindowModel.PasteFeedback?, barExpanded: Bool) {
+        let clearance = barExpanded ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2 : Slate.Metric.space2
         pasteBannerBottom?.constant = -clearance
         guard feedback != pasteBanner?.feedback else { return }
         if let banner = pasteBanner {
@@ -575,7 +258,7 @@ final class GuiLeafView: UIView {
         }
         guard let feedback else { return }
         let banner = PasteFeedbackBanner(feedback: feedback) { [weak self] in
-            self?.model?.dismissPasteFeedback()
+            self?.core.model?.dismissPasteFeedback()
         }
         banner.translatesAutoresizingMaskIntoConstraints = false
         banner.layer.opacity = 0
@@ -587,60 +270,9 @@ final class GuiLeafView: UIView {
         GuiOverlayFade.set(banner, shown: true)
     }
 
-    private func setControlsExpanded(_ expanded: Bool) {
-        guard expanded != controlsExpanded else { return }
-        controlsExpanded = expanded
-        if isWired { follow() }
-    }
-
-    private func setShowStats(_ show: Bool) {
-        guard show != showStats else { return }
-        showStats = show
-        if isWired { follow() }
-    }
-
-    // MARK: - The file drop (PATH 4)
-
-    /// Whether this pane accepts an upload at all, from the same pure gate: a LIVE DESKTOP pane only. A
-    /// window or dialog pane must never flash the border for a drag it will refuse.
-    private var isDesktopUploadTarget: Bool {
-        GuiPaneReadout.isDesktopUploadTarget(
-            kind: paneKind, hasLiveDescriptor: model?.active != nil,
-        )
-    }
-
-    /// This pane's KIND, resolved once and held.
-    ///
-    /// ⚠️ Only the KIND is cached; the LIVENESS half of ``isDesktopUploadTarget`` stays a fresh read,
-    /// because a stream can go down mid-drag and a pane that stops being able to receive the file has to
-    /// stop saying `.copy`. A kind cannot: it is fixed for the life of the pane id.
-    ///
-    /// The reason it may not be re-read is `sessionDidUpdate(_:)`, which UIKit fires CONTINUOUSLY while
-    /// the session is inside the view — including when the finger stops dead — and `TreeWorkspace.spec(for:)`
-    /// is a full DFS over every session, every tab and every split node. `nil` is deliberately NOT cached,
-    /// so a spec that has not landed yet is asked for again rather than latched absent.
-    private var paneKind: PaneKind? {
-        if let cachedPaneKind { return cachedPaneKind }
-        let kind = store.tree.spec(for: paneID)?.kind
-        cachedPaneKind = kind
-        return kind
-    }
-
-    private var cachedPaneKind: PaneKind?
-
-    private func setDropTargeted(_ targeted: Bool) {
-        let wanted = targeted && isDesktopUploadTarget
-        guard wanted != isDropTargeted else { return }
-        isDropTargeted = wanted
-        GuiOverlayFade.set(dropHighlight, shown: wanted)
-    }
-
-    /// Hand the dropped file urls to ``GuiPaneUploads/handleDrop(_:isUploadTarget:model:)``, which owns
-    /// the routing and the dedicated PATH-4 connection.
-    private func commitDrop(_ urls: [URL]) {
-        _ = GuiPaneUploads.handleDrop(
-            urls, isUploadTarget: isDesktopUploadTarget, model: model,
-        )
+    func setDropTargeted(_ targeted: Bool) {
+        guard let shown = core.dropTargeted(targeted) else { return }
+        GuiOverlayFade.set(dropHighlight, shown: shown)
     }
 }
 
@@ -654,7 +286,7 @@ final class GuiLeafView: UIView {
 /// session-owned and outlive the callback, which is also why nothing is copied out first.
 extension GuiLeafView: UIDropInteractionDelegate {
     func dropInteraction(_: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
-        isDesktopUploadTarget && session.canLoadObjects(ofClass: URL.self)
+        core.isDesktopUploadTarget && session.canLoadObjects(ofClass: URL.self)
     }
 
     func dropInteraction(_: UIDropInteraction, sessionDidEnter _: UIDropSession) {
@@ -662,7 +294,7 @@ extension GuiLeafView: UIDropInteractionDelegate {
     }
 
     func dropInteraction(_: UIDropInteraction, sessionDidUpdate _: UIDropSession) -> UIDropProposal {
-        UIDropProposal(operation: isDesktopUploadTarget ? .copy : .forbidden)
+        UIDropProposal(operation: core.isDesktopUploadTarget ? .copy : .forbidden)
     }
 
     func dropInteraction(_: UIDropInteraction, sessionDidExit _: UIDropSession) {
@@ -686,7 +318,7 @@ extension GuiLeafView: UIDropInteractionDelegate {
         session.loadObjects(ofClass: URL.self) { [weak self] objects in
             let urls = objects.filter(\.isFileURL)
             // `loadObjects` calls back on the main queue, which UIKit documents and the type does not say.
-            MainActor.assumeIsolated { self?.commitDrop(urls) }
+            MainActor.assumeIsolated { _ = self?.core.handleDrop(urls) }
         }
     }
 }
@@ -751,7 +383,9 @@ private final class GuiPastePlateMenu {
 
     /// The menu, built at OPEN so the ring it offers is the one recorded NOW.
     private func rows() -> [UIMenuElement] {
-        let paste = slateMenuRow("Paste as Keystrokes", enabled: canPasteCurrent) { [weak self] in
+        let paste = slateMenuRow(
+            GuiPaneReadout.Word.pasteAsKeystrokes, enabled: canPasteCurrent,
+        ) { [weak self] in
             guard let self else { return }
             // The CONTENT read lives HERE, inside the action. It is also the read that fills the ring —
             // `currentLocalClipboard()` records what it returns.
@@ -761,7 +395,7 @@ private final class GuiPastePlateMenu {
         }
         let clips = ClipboardPasteMenu.rows(store.clipboardRing)
         guard !clips.isEmpty else {
-            return [paste, slateMenuRow("No recent clips", enabled: false)]
+            return [paste, slateMenuRow(GuiPaneReadout.Word.noRecentClips, enabled: false)]
         }
         let ring = clips.map { row in
             // The LABEL is the masked / truncated preview; the full clip is what gets typed and is never
@@ -770,7 +404,7 @@ private final class GuiPastePlateMenu {
                 self?.model?.pasteAsKeystrokes(row.text)
             }
         }
-        return [paste, UIMenu(title: "Clipboard Ring", children: ring)]
+        return [paste, UIMenu(title: GuiPaneReadout.Word.clipboardRing, children: ring)]
     }
 }
 
@@ -831,7 +465,7 @@ private final class GuiDisplaySwitcherPlate {
         var listed: [UIMenuElement] = []
         let displays = model?.availableDisplays ?? []
         if displays.isEmpty {
-            listed.append(slateMenuRow("No display list from host", enabled: false))
+            listed.append(slateMenuRow(GuiPaneReadout.Word.noDisplayList, enabled: false))
         } else {
             for (index, display) in displays.enumerated() {
                 listed.append(slateMenuRow(
@@ -844,7 +478,7 @@ private final class GuiDisplaySwitcherPlate {
         // separator element — there is no divider OBJECT to place.
         return [
             slateMenuSection(listed),
-            slateMenuSection([slateMenuRow("Refresh Displays") { [weak self] in
+            slateMenuSection([slateMenuRow(GuiPaneReadout.Word.refreshDisplays) { [weak self] in
                 self?.refresh()
             }]),
         ]
@@ -873,7 +507,7 @@ private final class GuiDisplaySwitcherPlate {
 /// standing plates with mutually exclusive `isHidden`. Rebuilding one plate with the other glyph would
 /// have been the alternative, and it is the rebuild this bar exists to avoid.
 @MainActor
-private final class GuiPaneControlBar: UIView {
+private final class GuiPaneControlBar: UIView, GuiLeafControlBarWiring {
     /// Fold the bar back into the leaf's corner chip. The leaf owns that state, so this is a callback
     /// rather than something the bar decides.
     var onCollapse: () -> Void = {}
@@ -966,16 +600,7 @@ private final class GuiPaneControlBar: UIView {
         addSubview(hairline)
         hairline.backgroundColor = Slate.Native.Line.divider
 
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space2),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space2),
-            row.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalToConstant: Slate.Metric.paneHeaderHeight),
-            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.topAnchor.constraint(equalTo: topAnchor),
-            hairline.heightAnchor.constraint(equalToConstant: Slate.Metric.hairline),
-        ])
+        NSLayoutConstraint.activate(GuiLeafChromeLayout.controlBarConstraints(in: self, row: row, hairline: hairline))
     }
 
     private func wire() {
@@ -1066,7 +691,7 @@ private final class GuiPaneControlBar: UIView {
     /// Point the bar at a pane and settle every plate from one snapshot.
     func present(
         model: RemoteWindowModel?, store: WorkspaceStore, paneID: PaneID,
-        showStats: Bool, immersiveOn: Bool,
+        showStats: Bool, immersiveOn: Bool, isDesktop: Bool,
     ) {
         self.model = model
         self.store = store
@@ -1119,7 +744,6 @@ private final class GuiPaneControlBar: UIView {
         for plate in [audioOn, audioOff] { plate.isEnabled = model?.canToggleAudio == true }
 
         let privacyIsOn = model?.privacyEnabled == true
-        let isDesktop = store.tree.spec(for: paneID)?.kind == .desktop
         let privacyListed = isDesktop && (model?.canTogglePrivacy == true || privacyIsOn)
         privacyOn.isHidden = !(privacyListed && privacyIsOn)
         privacyOff.isHidden = !(privacyListed && !privacyIsOn)
@@ -1187,7 +811,7 @@ private final class GuiPaneControlBar: UIView {
 /// ``SlatePlateVerbButton``'s own header names the accent tint as the GUI control bar's idiom — and this
 /// chip inherits the bar's tint by construction, so it says what the bar would have said.
 @MainActor
-private final class GuiCollapsedControlsChip: UIView {
+private final class GuiCollapsedControlsChip: UIView, GuiLeafCollapsedChipWiring {
     var onExpand: () -> Void = {}
 
     var latched: Bool = false {
@@ -1210,12 +834,7 @@ private final class GuiCollapsedControlsChip: UIView {
 
         plate.addAction(UIAction { [weak self] _ in self?.onExpand() }, for: .touchUpInside)
         addSubview(plate)
-        NSLayoutConstraint.activate([
-            plate.topAnchor.constraint(equalTo: topAnchor),
-            plate.bottomAnchor.constraint(equalTo: bottomAnchor),
-            plate.leadingAnchor.constraint(equalTo: leadingAnchor),
-            plate.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(plate.slateEdges(of: self))
     }
 
     @available(*, unavailable)
@@ -1373,20 +992,20 @@ private final class GuiStreamTuneController: UIViewController {
         view.backgroundColor = Slate.Native.Surface.face
 
         let title = UILabel()
-        title.text = "Stream quality"
+        title.text = GuiPaneReadout.Word.streamQuality
         title.font = .systemFont(ofSize: Slate.Typeface.body, weight: .semibold)
         title.textColor = Slate.Native.Text.primary
 
         let note = UILabel()
-        note.text = "Applies live. Auto restores the adaptive governor/ABR."
+        note.text = GuiPaneReadout.Word.appliesLiveNote
         note.font = .systemFont(ofSize: Slate.Typeface.footnote)
         note.textColor = Slate.Native.Text.secondary
         note.numberOfLines = 0
 
         let column = UIStackView(arrangedSubviews: [
             title,
-            field("FPS cap", fpsChoice),
-            field("Bitrate ceiling", bitrateChoice),
+            field(GuiPaneReadout.Word.fpsCap, fpsChoice),
+            field(GuiPaneReadout.Word.bitrateCeiling, bitrateChoice),
             note,
         ])
         column.axis = .vertical
@@ -1579,7 +1198,7 @@ private final class PasteFeedbackBanner: UIControl {
 
         isAccessibilityElement = true
         accessibilityTraits = .button
-        slateHelp("Dismiss")
+        slateHelp(GuiPaneReadout.Word.dismiss)
         accessibilityValue = text.text
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _: UITraitCollection) in
             view.reink()

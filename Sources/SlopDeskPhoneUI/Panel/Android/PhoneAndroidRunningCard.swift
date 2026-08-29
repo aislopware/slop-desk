@@ -34,9 +34,9 @@
 // SIMULATOR's card, which owns a two-second thumbnail poll, from ever becoming one of these.
 
 #if os(iOS)
-import Observation
 import QuartzCore
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — a REUSED card re-follows, so it needs the replacing arm
 import SlopDeskDevicePanels
 import SlopDeskSlate
 import UIKit
@@ -59,9 +59,10 @@ final class PhoneAndroidRunningCard: UIControl {
         }
     }
 
-    /// ⚠️ Hazard 2's counter. A card is REUSED, so the arm made for the device it drew last must not
-    /// be able to redraw the one it draws now — every re-arm bumps this and every callback checks it.
-    private var generation = 0
+    /// ⚠️ THIS FOLLOW IS RE-ARMED PER `configure`, because a card is REUSED — hence the handle, and
+    /// hence `replacing:`. The arm made for the device this card drew last must not survive into the
+    /// one it draws now.
+    private var pendingFollow: ObservationFollow?
 
     init(model: AndroidSidebarModel) {
         self.model = model
@@ -267,44 +268,37 @@ final class PhoneAndroidRunningCard: UIControl {
 
     /// Collapses the slot when the card carries no verb — a physical device, which cannot be stopped.
     private lazy var controlWidth: NSLayoutConstraint = control.widthAnchor.constraint(
-        equalToConstant: 0,
+        equalToConstant: .zero,
     )
 
     /// ⚠️ Hazard 2, and the reason `pending` is followed HERE rather than in the list: a boot in
     /// flight for one device must not rebuild the whole list, which on a phone is the surface the
-    /// finger is on. `withObservationTracking` fires ONCE, so the callback re-arms by calling this
-    /// again on the next main-queue turn.
+    /// finger is on. THIS IS CALLED ONCE PER `configure(device:)` on a card the collection reuses, so
+    /// it arms `replacing:` the arm the previous device left behind.
     private func followPending() {
-        generation &+= 1
-        let generation = generation
-
-        guard let device else { return }
-        var isPending = false
-        withObservationTracking {
-            isPending = self.model.pending.contains(device.key)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.followPending()
-                }
-            }
+        guard let device else {
+            pendingFollow?.stop()
+            pendingFollow = nil
+            return
         }
-
-        if isPending {
-            setControl(phoneAndroidPendingSpinner())
-        } else if device.isEmulator, device.isRunning {
-            let stop = SlatePlateVerbButton(
-                symbol: .stopFill, help: AndroidPresentation.shutDownHelp(device),
-                size: Slate.Typeface.footnote, plate: Slate.Metric.heightControl,
-                tint: PhoneAndroidInk.color(.tertiary),
-            ) { [weak self] in
-                guard let self else { return }
-                Task { await self.model.shutdown(device) }
+        pendingFollow = ObservationFollow.arm(self, replacing: pendingFollow) { card in
+            card.model.pending.contains(device.key)
+        } apply: { card, isPending in
+            if isPending {
+                card.setControl(phoneAndroidPendingSpinner())
+            } else if device.isEmulator, device.isRunning {
+                let stop = SlatePlateVerbButton(
+                    symbol: .stopFill, help: AndroidPresentation.shutDownHelp(device),
+                    size: Slate.Typeface.footnote, plate: Slate.Metric.heightControl,
+                    tint: PhoneAndroidInk.color(.tertiary),
+                ) { [weak card] in
+                    guard let card else { return }
+                    Task { await card.model.shutdown(device) }
+                }
+                card.setControl(stop)
+            } else {
+                card.setControl(nil)
             }
-            setControl(stop)
-        } else {
-            setControl(nil)
         }
     }
 

@@ -853,12 +853,9 @@ final class MacOpenQuicklyRowView: NSView {
 
         let height = heightAnchor.constraint(equalToConstant: Slate.Metric.heightRowTall)
         heightConstraint = height
+        NSLayoutConstraint.activate(content.slateEdges(of: self))
         NSLayoutConstraint.activate([
             height,
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.topAnchor.constraint(equalTo: topAnchor),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor),
             symbol.widthAnchor.constraint(equalToConstant: 18),
             subtitle.widthAnchor.constraint(
                 lessThanOrEqualToConstant: OpenQuicklyMetrics.subtitleMaxWidth,
@@ -1304,12 +1301,9 @@ final class MacOpenQuicklyActionRowView: NSView {
         addSubview(content)
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        NSLayoutConstraint.activate(content.slateEdges(of: self))
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Slate.Metric.heightRow),
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.topAnchor.constraint(equalTo: topAnchor),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor),
             symbol.widthAnchor.constraint(equalToConstant: 16),
         ])
     }

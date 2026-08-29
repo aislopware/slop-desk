@@ -4,8 +4,9 @@
 // The CHROME did not — a program/agent title carrying a private-use glyph (Claude Code's mark, a
 // starship segment, an nvim filetype icon) fell through the system cascade to a notdef dot, because
 // private-use codepoints have no system fallback BY DESIGN (they mean nothing outside the font that
-// defines them). So the app bundles the same face the terminal answers with, and `Text.nerdAware`
-// splices it in for exactly the private-use runs — everything else keeps the caller's system font.
+// defines them). So the app bundles the same face the terminal answers with, and
+// `NSAttributedString.slateNerdAware` (`SlopDeskSlate/SlateNativeText.swift`) splices it in for
+// exactly the private-use runs — everything else keeps the caller's system font.
 //
 // Registration is process-scoped and lazy (first `nerdAware` call): no Info.plist coupling, works in
 // the macOS app, the iOS app, and headless tests alike. The run splitter is pure so it is unit-pinned.
@@ -109,9 +110,10 @@ package enum NerdSymbolFont {
     /// The scalar scan first. Almost every string that reaches this is an ordinary title with no nerd
     /// glyph anywhere, and the answer for one is a single run holding the whole string — so it is
     /// produced from one `Unicode.Scalar` walk and one `String` copy, without ever entering the
-    /// per-`Character` loop. Both splice sites (`slateNerdAware`, `Text.nerdAware`) already discard
-    /// that answer whole when nothing is a symbol; this makes producing it cost what discarding it
-    /// is worth. It is also what keeps the ordering of THEIR `registered` guard from mattering: an
+    /// per-`Character` loop. The splice — `slateNerdAware`, ONE site now that the SwiftUI
+    /// `Text.nerdAware` is gone and the two framework bodies have merged — already discards that
+    /// answer whole when nothing is a symbol; this makes producing it cost what discarding it is
+    /// worth. It is also what keeps the ordering of ITS `registered` guard from mattering: an
     /// unregistered face now short-circuits a scalar scan, not a character walk.
     ///
     /// The accumulator second. The obvious shape — read the last run back out of `out`, append to it,

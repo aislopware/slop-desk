@@ -708,7 +708,7 @@ enum MacPaneMovePreview {
 
     /// SWAP / whole-area wash: a wash + border over the WHOLE rect — "this entire area".
     static func wash(_ rect: CGRect) -> NSView {
-        let plate = MacMoveZonePlate(rim: zoneRim, rimAlpha: 1)
+        let plate = MacMoveZonePlate(rim: Slate.DropPreview.wholeRim, rimAlpha: 1)
         plate.frame = rect
         return plate
     }
@@ -720,7 +720,7 @@ enum MacPaneMovePreview {
         let slab = PaneDropGeometry.slabRect(in: rect, edge: edge)
         let seam = PaneDropGeometry.seamSize(slab, edge: edge)
         let centre = PaneDropGeometry.seamCenter(slab, edge: edge)
-        let plate = MacMoveZonePlate(rim: slabRim, rimAlpha: slabRimAlpha)
+        let plate = MacMoveZonePlate(rim: Slate.DropPreview.slabRim, rimAlpha: Slate.DropPreview.slabRimWash)
         plate.frame = slab.offsetBy(dx: -rect.minX, dy: -rect.minY)
         // The seam: an accent bar on the slab's INNER edge (the would-be new divider).
         let bar = MacMoveSeamBar(frame: .zero)
@@ -736,27 +736,18 @@ enum MacPaneMovePreview {
     /// DOCK: a full-length accent RAIL pinned to the whole container edge — "full span, tab-wide",
     /// visually distinct from the per-pane half-slab.
     static func rail(in container: CGRect, edge: PaneDropEdge) -> NSView {
-        let plate = MacMoveZonePlate(rim: zoneRim, rimAlpha: 1)
+        let plate = MacMoveZonePlate(rim: Slate.DropPreview.wholeRim, rimAlpha: 1)
         plate.frame = PaneDropGeometry.railRect(in: container, edge: edge)
         return plate
     }
 
-    // ⚠️ THESE FOUR ARE NOT ON THE LADDER YET, and they are the SECOND spelling of numbers the SwiftUI
-    // overlay already carries as literals (`PaneMoveAffordance.swift`, `washPreview` / `slabPreview` /
-    // `railPreview` / `sourceOutline`). They are reported for central minting as `Slate.DropPreview.*`
-    // rather than invented here — a rim width two renderers both need is a pair the day it is written,
-    // which is exactly what `Slate.GrabPill` and `Slate.DropChip` were minted for one dimension over.
-
-    /// The whole-area preview's border — a full-strength accent edge round a promise about a WHOLE pane.
-    static let zoneRim: CGFloat = 2
-    /// The half-slab's border, a step finer and a shade quieter than ``zoneRim``: the slab already
-    /// stands inside a pane whose own edge is right there, so a full-strength rim would read as two
-    /// borders rather than as one preview.
-    static let slabRim: CGFloat = 1.5
-    static let slabRimAlpha = 0.7
-    /// The dashed "lifted" outline on the SOURCE pane — the pane that is in the air.
-    static let liftedAlpha = 0.55
-    static let liftedDash: [CGFloat] = [5, 4]
+    // ⚠️ THE FIVE FIGURES ARE ON THE LADDER NOW — ``Slate/DropPreview``. They used to be declared here
+    // and declared again in the UIKit twin, and this comment used to say they were "reported for central
+    // minting as `Slate.DropPreview.*` rather than invented here". That rung exists; both halves read it.
+    // They were the LAST pair in the client still spelled across a framework boundary, which is a worse
+    // position than the pair `Slate.GrabPill` was minted for: those two renderers were both AppKit and
+    // could at least be diffed by a reader who opened both, where an AppKit file and a UIKit file share
+    // no import and no reviewer. `PaneDropPreviewArt.swift` carries the argument in full.
 }
 
 /// An accent wash with an accent border — the shape all three zone previews are drawn from, which is
@@ -850,16 +841,16 @@ private final class MacMoveLiftedOutline: NSView {
     override func draw(_: NSRect) {
         // A bezier strokes CENTRED on its path where SwiftUI's `.strokeBorder` strokes inside the
         // shape, so the path is inset by half the width to land on the same pixels.
-        let inset = MacPaneMovePreview.slabRim / 2
+        let inset = Slate.DropPreview.slabRim / 2
         let path = NSBezierPath(
             roundedRect: bounds.insetBy(dx: inset, dy: inset),
             xRadius: Slate.Metric.radiusCard, yRadius: Slate.Metric.radiusCard,
         )
-        path.lineWidth = MacPaneMovePreview.slabRim
+        path.lineWidth = Slate.DropPreview.slabRim
         path.setLineDash(
-            MacPaneMovePreview.liftedDash, count: MacPaneMovePreview.liftedDash.count, phase: 0,
+            Slate.DropPreview.liftedDash, count: Slate.DropPreview.liftedDash.count, phase: 0,
         )
-        Slate.Native.accent.slateScalingAlpha(MacPaneMovePreview.liftedAlpha).setStroke()
+        Slate.Native.accent.slateScalingAlpha(Slate.DropPreview.liftedWash).setStroke()
         path.stroke()
     }
 }

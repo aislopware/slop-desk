@@ -69,14 +69,7 @@ final class MacStreamStallCaption: NSView {
         row.orientation = .horizontal
         row.spacing = Slate.Metric.space2
         row.alignment = .centerY
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space2),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space2),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space1),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Slate.Metric.space1),
-        ])
+        OverlayCardLayout.pad(row, in: self, x: Slate.Metric.space2, y: Slate.Metric.space1)
     }
 
     @available(*, unavailable)
@@ -179,7 +172,7 @@ final class MacPasteFeedbackBanner: NSButton {
         layer?.cornerRadius = Slate.Metric.radiusControl
         layer?.borderWidth = Slate.Metric.hairline
         paint()
-        toolTip = "Dismiss"
+        toolTip = GuiPaneReadout.Word.dismiss
         target = self
         action = #selector(dismissTapped)
 

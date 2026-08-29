@@ -211,12 +211,25 @@ pub fn the_code_panel_crosses(tree: &Tree) -> Report {
         // have accepted from a comment anyway. What the phone's code mount must be is a WEB VIEW —
         // the panel mounting on both platforms is the law, and `WKWebView` is how the phone keeps it
         // (docs/56, docs/62 §4.8).
+        //
+        // RE-AIMED the same day, and RE-SPELLED again in the same edit — the second half matters more
+        // than the first. The wrapper this claim watched — `CodeSidebar/CodeSidebarWebView.swift`, a
+        // `UIViewRepresentable` — was DELETED by the UIKit port (commit `3f11c6e6`), so the claim was
+        // pointing at nothing; `Claim::Matches` on a missing file is red, so the row did report, but it
+        // reported the wrong fact.
+        //
+        // Moving the path alone would have left the row red anyway, and TRUTHFULLY: the mount
+        // (`Panel/PhoneCodeWorkbenchView.swift`) never writes `WKWebView` in code at all. It cannot —
+        // the pooled page is minted ONCE, in `SlopDeskClientCore`, and the mount only re-parents it
+        // (docs/56 increment 45). `WKWebView` as the needle was a fact about the deleted wrapper, which
+        // did mint its own. What the phone's mount must keep doing is ASK THE POOL, so that is what is
+        // pinned: the same needle the Mac half is held to, one file up.
         Claim::Matches {
-            path: "Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift",
-            pattern: r"WKWebView",
+            path: "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+            pattern: r"CodeSidebarWebViewPool\.shared\.webView\(",
             view: View::Code,
-            message: "the phone's code mount stopped hosting a WKWebView — the code panel mounts on both \
-                      platforms (docs/56, docs/62 §4.8)",
+            message: "the phone's code mount stopped taking its page from the pool — the code panel mounts \
+                      on both platforms, off ONE warm page each (docs/56 increment 45, docs/62 §4.8)",
         },
         Claim::Names {
             path: "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift",
@@ -248,10 +261,13 @@ pub fn the_code_panel_crosses(tree: &Tree) -> Report {
         // A gate INSIDE one of these four is fine. What is banned is the wrapper that makes the file
         // compile to nothing on the phone, and that shape is exactly "the first line of code is
         // `#if os(macOS)`".
+        // RE-AIMED 2026-08-28 with the row above: the phone's surfaces file moved out of `CodeSidebar/`
+        // and became `Panel/PhonePanelSurfacesViewController.swift` — a controller, since the UIKit port
+        // gave the surfaces a mount lifetime rather than a `body`.
         Claim::Opening {
-            path: "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift",
+            path: "Sources/SlopDeskPhoneUI/Panel/PhonePanelSurfacesViewController.swift",
             forbidden: &["#if os(macOS)"],
-            message: "CodePanelSurfaces.swift is wrapped in a macOS gate again — the code panel is the \
+            message: "the phone's panel surfaces are wrapped in a macOS gate again — the code panel is the \
                       phone's too",
         },
         Claim::Opening {
@@ -397,8 +413,9 @@ mod tests {
     fn code_panel(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift",
-                "final class CodeSidebarWebView: UIView {\n    let web = WKWebView()\n}\n",
+                "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
+                "final class PhoneCodeWorkbenchView: UIView {\n    let web = \
+                 CodeSidebarWebViewPool.shared.webView(for: root, url: url)\n}\n",
             )
             .write(
                 "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift",
@@ -406,8 +423,8 @@ mod tests {
             )
             .write(super::POOL, "func noteRemount(_ project: Project) {}\n")
             .write(
-                "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift",
-                "// a header\nimport SwiftUI\n",
+                "Sources/SlopDeskPhoneUI/Panel/PhonePanelSurfacesViewController.swift",
+                "// a header\nimport UIKit\n",
             )
             .write(
                 "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarProxy.swift",
@@ -431,15 +448,15 @@ mod tests {
 
         // A gate as the OPENING line — the wrapper. A gate further in is ordinary code.
         fixture.write(
-            "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift",
+            "Sources/SlopDeskPhoneUI/Panel/PhonePanelSurfacesViewController.swift",
             "// a header\n#if os(macOS)\nimport AppKit\n#endif\n",
         );
         assert!(!super::the_code_panel_crosses(&fixture.tree()).is_clean());
 
         code_panel(&fixture);
         fixture.write(
-            "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift",
-            "import SwiftUI\n#if os(macOS)\nimport AppKit\n#endif\n",
+            "Sources/SlopDeskPhoneUI/Panel/PhonePanelSurfacesViewController.swift",
+            "import UIKit\n#if os(macOS)\nimport AppKit\n#endif\n",
         );
         assert!(super::the_code_panel_crosses(&fixture.tree()).is_clean());
 
@@ -464,7 +481,7 @@ mod tests {
         // And a focus rule inline in the phone's half.
         code_panel(&fixture);
         fixture.write(
-            "Sources/SlopDeskPhoneUI/CodeSidebar/Focus.swift",
+            "Sources/SlopDeskPhoneUI/Pane/Focus.swift",
             "func shouldAcceptFocus() -> Bool { true }\n",
         );
         assert!(!super::the_code_panel_crosses(&fixture.tree()).is_clean());

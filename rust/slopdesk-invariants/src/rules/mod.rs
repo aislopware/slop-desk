@@ -44,6 +44,7 @@ pub mod panel_predicates;
 pub mod panel_shells;
 pub mod path_confinement;
 pub mod phone_parity;
+pub mod phoneui_memos;
 pub mod rate_and_range;
 pub mod repo_invariants;
 pub mod rust_boundaries;
@@ -1229,6 +1230,61 @@ pub fn registry() -> Vec<Rule> {
             check: macui_memos::the_divider_hides_before_it_cuts,
         },
         Rule {
+            name: "phone-sink-closures-are-weak",
+            origin: "docs/62 §4.1",
+            check: phoneui_memos::a_stored_closure_never_holds_its_view,
+        },
+        Rule {
+            name: "phone-observation-is-generation-guarded",
+            origin: "docs/62 §4.2",
+            check: phoneui_memos::a_hand_rolled_observation_is_guarded,
+        },
+        Rule {
+            name: "phone-rows-resolve-by-identifier",
+            origin: "docs/62 §4.3",
+            check: phoneui_memos::a_cell_resolves_its_row_by_identifier,
+        },
+        Rule {
+            name: "phone-assume-isolated-is-earned",
+            origin: "docs/62 §4.4",
+            check: phoneui_memos::the_phone_view_layer_never_leaves_the_main_queue,
+        },
+        Rule {
+            name: "phone-notification-tokens-are-retired",
+            origin: "docs/62 §4.5",
+            check: phoneui_memos::a_hand_registered_observation_is_retired,
+        },
+        Rule {
+            name: "phone-display-links-are-invalidated",
+            origin: "docs/62 §4.6",
+            check: phoneui_memos::a_display_link_is_invalidated,
+        },
+        Rule {
+            name: "phone-has-no-scheduled-timers",
+            origin: "docs/62 §4.6",
+            check: phoneui_memos::the_phone_shell_owns_no_timer,
+        },
+        Rule {
+            name: "phone-layout-does-not-write-the-store",
+            origin: "docs/62 §4.7",
+            check: phoneui_memos::a_layout_pass_writes_no_model,
+        },
+        Rule {
+            name: "slate-is-below-clientcore",
+            origin: "docs/56 increment 28",
+            check: phoneui_memos::slate_sits_below_the_client_core,
+        },
+        Rule {
+            name: "clientcore-places-never-draws",
+            origin: "docs/62 §8",
+            check: phoneui_memos::the_client_core_places_but_never_draws,
+        },
+        Rule {
+            name: "phone-members-avoid-responder-names",
+            origin: "docs/62 §4.9",
+            check: phoneui_memos::no_stored_property_shadows_the_responder,
+        },
+        Rule {
             name: "ops-daemon-container",
             origin: "docs/46",
             check: repo_invariants::an_ops_harness_that_starts_a_daemon_contains_it,
@@ -1487,6 +1543,11 @@ pub fn registry() -> Vec<Rule> {
             name: "drop-chip-and-pill",
             origin: "docs/56 §3.5",
             check: ink_floor::one_drop_chip_two_drawings,
+        },
+        Rule {
+            name: "drop-preview-figures",
+            origin: "docs/62 stage I",
+            check: ink_floor::one_drop_preview_two_drawings,
         },
         Rule {
             name: "named-ink-tables",

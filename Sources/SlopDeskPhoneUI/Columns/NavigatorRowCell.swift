@@ -7,8 +7,8 @@
 //
 // WHAT THIS CELL OWNS is the three things a framework has to answer for itself:
 //
-//   1. THE LIVE READ. The row re-resolves its own ``SidebarRowReading`` under
-//      `withObservationTracking`, so a pane's status tick repaints this leaf and never the list. That
+//   1. THE LIVE READ. The row re-resolves its own ``SidebarRowReading`` under an
+//      ``ObservationFollow``, so a pane's status tick repaints this leaf and never the list. That
 //      is the same leaf-scope contract the deleted SwiftUI rows kept — and the reason SELECTION is
 //      read here rather than passed in: a parameter-carried `active` strands the previously selected
 //      row lit, and a diffable snapshot keyed on the row's chrome would re-diff the whole list on
@@ -54,14 +54,14 @@ final class NavigatorRowCell: UICollectionViewListCell, UITextFieldDelegate {
     private var fallbackTitle = ""
     private var reading: SidebarRowReading?
 
-    /// ⚠️ THE RE-ARM IS THE SUBSCRIPTION, and a reused cell must not be woken by the pane it used to
-    /// show. `withObservationTracking` is one-shot, so a stale arm cannot be cancelled — only
-    /// SUPERSEDED. Every arm carries the generation it was made in; ``follow()`` bumps the counter on
-    /// the way in and ``prepareForReuse()`` bumps it on the way out, and either way the older arm's
-    /// callback finds itself out of date and returns without re-arming. `[weak self]` alone would not
-    /// do it: a reused cell IS live, so the stale callback would find a `self` and repaint it with the
-    /// previous pane's reading (docs/62 §4 hazard 2).
-    private var generation = 0
+    /// ⚠️ THE ARM IS THE SUBSCRIPTION, and a reused cell must not be woken by the pane it used to show.
+    /// ``ObservationFollow/arm(_:read:apply:)`` is NOT idempotent — a second arm does not displace the
+    /// first, it runs beside it — so this cell holds its following and names it on both edges:
+    /// ``follow()`` arms `replacing:` it (the cell registration re-configures a MOUNTED cell) and
+    /// ``prepareForReuse()`` calls ``ObservationFollow/stop()`` on it. The owner's weak capture alone
+    /// would not do it: a reused cell IS live, so a stale wake would find a `self` and repaint it with
+    /// the previous pane's reading (docs/62 §4 hazard 2).
+    private var rowFollow: ObservationFollow?
 
     private let title = UILabel()
     private let presence = UILabel()
@@ -168,7 +168,10 @@ final class NavigatorRowCell: UICollectionViewListCell, UITextFieldDelegate {
                 equalTo: contentView.trailingAnchor, constant: -Slate.Metric.space3,
             ),
             trailing.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            column.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -6),
+            column.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailing.leadingAnchor,
+                constant: -Slate.Metric.rowTitleGap,
+            ),
         ])
     }
 
@@ -188,9 +191,10 @@ final class NavigatorRowCell: UICollectionViewListCell, UITextFieldDelegate {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        // Disarm: the next callback from the arm made for the OLD pane finds a moved generation and
-        // returns without re-arming. Nothing else can stop a one-shot tracker.
-        generation &+= 1
+        // Disarm: a wake already scheduled for the OLD pane's arm lands on a stopped following and
+        // returns without re-arming. Nothing else can end a one-shot tracker.
+        rowFollow?.stop()
+        rowFollow = nil
         row = nil
         store = nil
         reading = nil
@@ -201,37 +205,28 @@ final class NavigatorRowCell: UICollectionViewListCell, UITextFieldDelegate {
 
     /// Re-resolve this row against the store and repaint, re-arming for the next change.
     ///
-    /// ⚠️ EVERY TRACKED READ IS INSIDE THE CLOSURE. Hoisting one out — reading `store.something` on
-    /// the line above — silently unsubscribes from it, and the row then goes stale on exactly that
+    /// ⚠️ EVERY TRACKED READ IS INSIDE `read`. Hoisting one into `apply` — which runs OUTSIDE the
+    /// tracking block — silently unsubscribes from it, and the row then goes stale on exactly that
     /// input with nothing to show for it.
+    ///
+    /// `replacing:`, never a bare `arm`: the cell registration runs this on every re-configure of an
+    /// already-mounted cell, and a second plain arm would leave the OLD pane's chain applying beside
+    /// the new one.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        guard let row, let store else { return }
-        var next: SidebarRowReading?
-        withObservationTracking {
+        rowFollow = ObservationFollow.arm(self, replacing: rowFollow) { cell -> SidebarRowReading? in
+            guard let row = cell.row, let store = cell.store else { return nil }
             // The flash tick FIRST, and read for its own sake: a completion flash is a store counter
             // rather than a field of the reading, so a row that only tracked the reading would not
             // re-read when the flash fires. The deleted SwiftUI row opened with the same line.
             _ = store.completionFlashTick
-            next = SidebarRowPresentation.reading(
-                for: row, store: store, fallbackTitle: fallbackTitle,
+            return SidebarRowPresentation.reading(
+                for: row, store: store, fallbackTitle: cell.fallbackTitle,
             )
-        } onChange: { [weak self] in
-            // ⚠️ `onChange` fires INSIDE the mutation, BEFORE the store's write lands, so the next
-            // read is SCHEDULED rather than run inline — a read inside the callback sees the OLD
-            // value and paints one frame stale. One hop per arming: the tracking is one-shot, so this
-            // cannot pile up.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        } apply: { cell, next in
+            guard let next, next != cell.reading else { return }
+            cell.reading = next
+            cell.apply(next)
         }
-        guard let next, next != reading else { return }
-        reading = next
-        apply(next)
     }
 
     /// Paint one reading.
@@ -325,14 +320,14 @@ final class NavigatorRowCell: UICollectionViewListCell, UITextFieldDelegate {
         }
         if reading.readOnly {
             configure(lock, symbol: "lock.fill", ink: Slate.Native.Text.secondary)
-            lock.accessibilityLabel = "Read only"
+            lock.accessibilityLabel = SidebarRowPresentation.readOnlyLabel
             trailing.addArrangedSubview(lock)
         }
         if reading.syncInput {
             // The FIXED sync amber, not the lock's muted tone: sync input is a fan-out mode, and its
             // rail indicator has to be as unmissable as the pane's own pill.
             configure(sync, symbol: "rectangle.3.group", ink: Slate.Native.Status.syncInput)
-            sync.accessibilityLabel = "Sync input"
+            sync.accessibilityLabel = SidebarRowPresentation.syncInputLabel
             trailing.addArrangedSubview(sync)
         }
         if let filled = slotContent(reading) {

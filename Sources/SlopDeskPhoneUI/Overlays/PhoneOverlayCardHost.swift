@@ -96,21 +96,14 @@ final class PhoneOverlayCardHostView: UIView {
     /// The mounted card, and which surface it draws. `nil` at rest, which is what makes this host inert.
     private var card: UIView?
     private var shown: PhoneOverlaySheet?
-    private var generation = 0
 
     init(store: WorkspaceStore, overlay: OverlayCoordinator) {
         self.store = store
         self.overlay = overlay
         super.init(frame: .zero)
         backgroundColor = .clear
-        floor.translatesAutoresizingMaskIntoConstraints = false
         addSubview(floor)
-        NSLayoutConstraint.activate([
-            floor.topAnchor.constraint(equalTo: topAnchor),
-            floor.bottomAnchor.constraint(equalTo: bottomAnchor),
-            floor.leadingAnchor.constraint(equalTo: leadingAnchor),
-            floor.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(floor.slateEdges(of: self))
         follow()
     }
 
@@ -127,45 +120,33 @@ final class PhoneOverlayCardHostView: UIView {
 
     // MARK: - The live read
 
-    /// The one tracked read. ``withObservationTracking(_:onChange:)`` fires ONCE, so the re-arm IS the
-    /// subscription, and every tracked read must happen INSIDE the closure.
+    /// The one tracked read, through ``ObservationFollow/arm(_:read:apply:)`` — docs/62 §3.1's prologue,
+    /// written once.
     ///
-    /// ⚠️ ALL FOUR FLAGS ARE READ UNCONDITIONALLY, and the priority is resolved afterwards. Resolving
-    /// inside the tracked block — `if paletteVisible { return .palette }` — would SHORT-CIRCUIT past the
-    /// other three, and the arm would then hold a dependency on one flag only: a chord that opened Global
-    /// Search while the palette was up changes a property nobody is watching, and the host never wakes.
+    /// ⚠️ ALL FIVE FLAGS ARE READ UNCONDITIONALLY, and the priority is resolved in `apply`. Resolving
+    /// inside `read` — `if paletteVisible { return .palette }` — would SHORT-CIRCUIT past the other four,
+    /// and the arm would then hold a dependency on one flag only: a chord that opened Global Search while
+    /// the palette was up changes a property nobody is watching, and the host never wakes. The split
+    /// between the two blocks is what makes that structural rather than a rule to remember.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var palette = false
-        var openQuickly = false
-        var peekReply = false
-        var globalSearch = false
-        var connect = false
-        withObservationTracking {
-            palette = overlay.paletteVisible
-            openQuickly = overlay.openQuicklyVisible
-            peekReply = overlay.peekReplyVisible
-            globalSearch = overlay.globalSearchVisible
-            connect = overlay.connectVisible
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { host in
+            (
+                palette: host.overlay.paletteVisible,
+                openQuickly: host.overlay.openQuicklyVisible,
+                peekReply: host.overlay.peekReplyVisible,
+                globalSearch: host.overlay.globalSearchVisible,
+                connect: host.overlay.connectVisible,
+            )
+        } apply: { host, flags in
+            let active: PhoneOverlaySheet? =
+                if flags.palette { .palette }
+                else if flags.openQuickly { .openQuickly }
+                else if flags.peekReply { .peekReply }
+                else if flags.globalSearch { .globalSearch }
+                else if flags.connect { .connect }
+                else { nil }
+            host.reconcile(active)
         }
-
-        let active: PhoneOverlaySheet? =
-            if palette { .palette }
-            else if openQuickly { .openQuickly }
-            else if peekReply { .peekReply }
-            else if globalSearch { .globalSearch }
-            else if connect { .connect }
-            else { nil }
-        reconcile(active)
     }
 
     private func reconcile(_ active: PhoneOverlaySheet?) {

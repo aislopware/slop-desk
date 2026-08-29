@@ -113,12 +113,40 @@ const OWNED: &[(&str, &str, &str)] = &[
 /// acts on. Every one of them is also a snapshot — four `UIKit` stages were landing files while it
 /// ran, and the pair count moved three times in one session.
 ///
-/// 1. **Whole-file copies — RED, and the rule working.** `MacGuiLeafView`↔`GuiLeafView` shares 194
-///    windows, `MacCodePanelSurfaces`↔`PhonePanelSurfacesViewController` 121,
-///    `MacTerminalLeafView`↔ `TerminalLeafView` 90, `MacSplitCanvasView`↔`SplitCanvasView` 70. A
+/// 1. **Whole-file copies — RED, and the rule working.** `MacGuiLeafView`↔`GuiLeafView` shared 194
+///    windows when this was written, `MacCodePanelSurfaces`↔`PhonePanelSurfacesViewController` 121,
+///    `MacTerminalLeafView`↔`TerminalLeafView` 90, `MacSplitCanvasView`↔`SplitCanvasView` 70. A
 ///    file that shares two hundred windows was COPIED, and no ledger row should make that quiet.
-///    They are not re-ledgered from the old list: the debt is real, it is the port's method, and it
-///    is owed by the stage that typed it.
+///    They were not re-ledgered from the old list: the debt was real, it was the port's method, and
+///    it was owed by the stage that typed it — and stage I paid it, by lifting the shared half into
+///    `SlopDeskClientCore` (`GuiLeafCore`, `CodePanelSurfaceRuntime`, `GuiLeafChromeLayout`,
+///    `Support/ViewEdges.swift`) rather than by ledgering it. The figures above are left as they
+///    were measured because what they price is the DEBT, and a paid debt is better read beside its
+///    original number than quietly restated.
+///
+/// ⚠️ 1a. **PAYING IT MOVED THE RULE'S OWN FLOOR, and that is the finding of the whole exercise.**
+///    Lift twenty identical anchor lines into one shared call and the two CALL SITES become the
+///    clone: both forward the same six views under the same six labels, which is eight lines of
+///    agreement the rule counted exactly as it counted the copy. The fix cannot be the window —
+///    point 4 below measures why — so the normaliser learned the discriminator instead: a line
+///    that forwards a local UNDER ITS OWN NAME carries no decision and cannot drift, because
+///    changing the callee changes both halves at once (`claim.rs`'s `forwards_itself`). A rung
+///    spelled at a call site is deliberately NOT covered: which one a corner takes is a decision,
+///    and two halves deciding it twice is the drift this rule is for.
+///
+/// ⚠️ 1b. **THEN IT FIRED ON THAT SAME PAIR TWICE MORE, AND WAS RIGHT BOTH TIMES.** This is the
+///    vindication of narrowing the normaliser rather than raising the window, so it is recorded
+///    here beside the decision it justifies. Firing #2: the rungs were PARAMETERS, on a header
+///    asserting that `SlopDeskSlate` sits above `SlopDeskClientCore` and the ladder "cannot be
+///    named from here". `Package.swift:475` says the edge runs the other way, and
+///    `Pane/DecorationDivider.swift` had been spending `Slate.Metric.space2` in the clear the
+///    whole time. `GuiLeafChromeLayout` reads the ladder itself now, and both callers lost an
+///    identical eight-line argument list — a rule firing on a duplication that a WRONG COMMENT
+///    was holding in place. Firing #3, once that cleared: the mount order underneath it, eight
+///    more identical lines. `addSubview` is one API on both frameworks and z-order is add-order
+///    on both, so floor-then-chrome-then-highlight was another shared DECISION, not a spelling;
+///    it is `GuiLeafChromeLayout::mount` now. Three firings, three real duplications, one
+///    false positive — and the false positive was the one the normaliser was taught to drop.
 /// 2. **One extracted surface — RED, addressed to stage F/H.** `MacSidebarHeader`↔
 ///    `SidebarGitLineView`, 38 windows over eleven regions. Same subject, two renderers, and the
 ///    fix deletes Mac code through the shared ladder. ⚠️ The Mac half has NO

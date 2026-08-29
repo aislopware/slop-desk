@@ -228,8 +228,7 @@ public final class PhoneAppDelegate: UIResponder, UIApplicationDelegate {
             // the developer's real pasteboard onto the test host (or vice versa).
             loops.append(Task { [weak self] in
                 guard let self else { return }
-                let env = WorkspaceStore.automationInputs()
-                if env["SLOPDESK_AUTOCONNECT_HOST"]?.isEmpty == false {
+                if ClientComposition.hasTerminalAutoconnectHost() {
                     await connection.connect()
                 } else {
                     // Video-only automation (the video host serves UDP only, no TCP listener): mark

@@ -73,23 +73,17 @@ final class MacCodeWorkbenchView: NSView {
     /// The pooled page, re-parented under this container and re-toned.
     ///
     /// The pool answers with the SAME `WKWebView` for a root it already holds, so a project switch back
-    /// is a re-parent rather than a load — which is the warm swap the pool exists for. Re-parenting an
-    /// `NSView` that still has a superview is legal and is what `addSubview` does; the explicit removal
-    /// is for the constraints, which do not follow it.
+    /// is a re-parent rather than a load — which is the warm swap the pool exists for. Both ends of that
+    /// swap are this view's: the ASK, and the `noteRemount` that may owe the keyboard back.
+    ///
+    /// The re-parenting in between is the floor's (``PanelChromeWorkbenchMount/pin(_:in:liftedBy:)``),
+    /// which the two shells had transcribed line for line — `WKWebView` is one class on both platforms
+    /// and the anchors are one Auto Layout. The lift it is given is ``CodePanelPresentation``'s one
+    /// number, named here because this is the view that clips to match it.
     private func mountPooledWebView() {
-        let webView = CodeSidebarWebViewPool.shared.webView(for: projectRoot, url: url)
-        webView.underPageBackgroundColor = SlateNativeColor(slateHex: Slate.theme.groundHexValue)
-        webView.removeFromSuperview()
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.topAnchor.constraint(
-                equalTo: topAnchor, constant: -CodePanelPresentation.clippedTitleBarHeight,
-            ),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        let page = CodeSidebarWebViewPool.shared.webView(for: projectRoot, url: url)
+        page.underPageBackgroundColor = SlateNativeColor(slateHex: Slate.theme.groundHexValue)
+        PanelChromeWorkbenchMount.pin(page, in: self, liftedBy: CodePanelPresentation.clippedTitleBarHeight)
         // A (re)mount may owe the keyboard back — the warm-swap focus restore. A first-ever mount has
         // no restore armed, so the call is then a no-op.
         CodeSidebarWebViewPool.shared.noteRemount(projectRoot: projectRoot)
@@ -103,12 +97,7 @@ final class MacCodeWorkbenchView: NSView {
         veil.wantsLayer = true
         veil.layer?.backgroundColor = Slate.Native.Surface.field.cgColor
         addSubview(veil)
-        NSLayoutConstraint.activate([
-            veil.leadingAnchor.constraint(equalTo: leadingAnchor),
-            veil.trailingAnchor.constraint(equalTo: trailingAnchor),
-            veil.topAnchor.constraint(equalTo: topAnchor),
-            veil.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(veil.slateEdges(of: self))
         followVeil()
     }
 

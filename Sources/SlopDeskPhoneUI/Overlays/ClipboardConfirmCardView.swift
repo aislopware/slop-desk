@@ -66,9 +66,6 @@ final class ClipboardConfirmCardView: UIView {
     private var card: ClipboardConfirmCard?
     private var shownID: Int?
 
-    /// Supersedes a stale observation arm — see ``follow()``.
-    private var generation = 0
-
     init(requests: ClipboardConfirmRequests = .shared) {
         self.requests = requests
         floor = SlateClickTargetView {}
@@ -80,12 +77,7 @@ final class ClipboardConfirmCardView: UIView {
         isUserInteractionEnabled = false
 
         addSubview(floor)
-        NSLayoutConstraint.activate([
-            floor.topAnchor.constraint(equalTo: topAnchor),
-            floor.bottomAnchor.constraint(equalTo: bottomAnchor),
-            floor.leadingAnchor.constraint(equalTo: leadingAnchor),
-            floor.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(floor.slateEdges(of: self))
         follow()
     }
 
@@ -106,33 +98,19 @@ final class ClipboardConfirmCardView: UIView {
 
     // MARK: - The drain
 
-    /// THE ONE READER OF THE MAILBOX. `withObservationTracking` fires its `onChange` EXACTLY ONCE, so
-    /// the re-arm at the bottom of the closure IS the subscription — and every tracked read has to be
-    /// INSIDE the tracking closure, because a read hoisted out of it silently unsubscribes this view
-    /// from the thing it exists to watch.
-    ///
-    /// `onChange` runs INSIDE the mutation (`ask` / `answer` are still on the stack), so the re-arm hops
-    /// a runloop rather than re-entering the observable mid-write. The generation counter is what makes
-    /// that hop safe: an arm scheduled before a teardown lands after it and must not resurrect the loop.
+    /// THE ONE READER OF THE MAILBOX. ``ObservationFollow/arm(_:read:apply:)`` is the one spelling of
+    /// the re-arm (docs/62 §3.1): the weak owner, the teardown guard and the reads-inside/work-outside
+    /// split are all structural there, and the arming call takes the first reading — so there is no
+    /// "drain once, then follow" for this view to get in the wrong order.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var pending: ClipboardConfirmRequests.Pending?
-        withObservationTracking {
+        ObservationFollow.arm(self) { card in
             // Only the OLDEST unanswered question is on screen. A second arriving behind it WAITS
             // rather than replacing it — see ``ClipboardConfirmRequests`` for why replacing would be
             // the same deciding-for-the-user this surface exists to stop.
-            pending = requests.current
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+            card.requests.current
+        } apply: { card, pending in
+            card.reconcile(pending)
         }
-        reconcile(pending)
     }
 
     /// Bring the view into agreement with the mailbox's head. Idempotent for an unchanged head, which is
@@ -275,14 +253,8 @@ final class ClipboardConfirmCard: UIView {
         // carry the card's padding themselves, and a divider here is the stacked-boxes look the grouped
         // form left behind.
         column.spacing = 0
-        column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
-        NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(column.slateEdges(of: self))
     }
 
     @available(*, unavailable)

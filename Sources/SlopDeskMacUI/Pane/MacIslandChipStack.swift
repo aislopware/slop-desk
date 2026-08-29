@@ -122,15 +122,7 @@ final class MacIslandChipStack: NSStackView {
             MacChipFade.insert(made, into: self, at: 0)
             return made
         }()
-        // Keyed on the WHOLE receipt, not on `epoch` alone: the single mount is fed by two independent
-        // counters, so two different copies can carry the same epoch and the chip would inherit the
-        // dead one's nearly-elapsed timer — the exact bug epoch exists to prevent, arriving by a new
-        // route. `CopyReceipt` is `Equatable` over its counts too, so a hand-off only fails to restart
-        // when the two receipts are indistinguishable, where restarting would change nothing.
-        chip.present(
-            label: "Copied", keycap: nil, detail: receipt.detail, accessibility: receipt.label,
-            identity: AnyHashable(receipt), dwell: CopyReceipt.dwell,
-        ) { [weak self] in self?.clearCopyReceipt() }
+        chip.present(.receipt(receipt)) { [weak self] in self?.clearCopyReceipt() }
     }
 
     private func applyNotice(_ notice: ChipNotice?) {
@@ -146,11 +138,7 @@ final class MacIslandChipStack: NSStackView {
             MacChipFade.insert(made, into: self, at: receiptChip == nil ? 0 : 1)
             return made
         }()
-        chip.present(
-            label: notice.label, keycap: notice.keycap, detail: notice.detail,
-            accessibility: notice.accessibilityText, identity: AnyHashable(notice.epoch),
-            dwell: notice.dwell,
-        ) { [weak self] in self?.coordinator?.clearNotice() }
+        chip.present(.notice(notice)) { [weak self] in self?.coordinator?.clearNotice() }
     }
 
     private func applyAlert(_ alert: WorkspaceConnectionAlert?) {
@@ -256,13 +244,9 @@ final class MacNoticeCapsuleView: NSView {
     private let keycap = MacNoticeKeycap()
     private let row = NSStackView()
 
-    /// What is on screen now, so a re-apply that changes nothing does not restart a running dwell.
-    private var identity: AnyHashable?
-    private var dwellTimer: Timer?
-    /// Held rather than captured: a `Timer` block is `@Sendable`, and a bare closure is not `Sendable`
-    /// even when this `@MainActor` class is. Reaching it back through `self` is what keeps the
-    /// obligation where it belongs.
-    private var onExpire: () -> Void = {}
+    /// The clock, and what is on screen now — on the floor, because neither a `Duration` nor a `Timer`
+    /// is a framework question and both shells were running the identity gate from their own copy.
+    private let dwell = DecorationChipDwell()
 
     init() {
         super.init(frame: .zero)
@@ -335,23 +319,16 @@ final class MacNoticeCapsuleView: NSView {
 
     /// Re-targets the chip and restarts its dwell when `identity` changed; a re-apply carrying the same
     /// identity leaves the running clock alone.
-    func present(
-        label: String,
-        keycap chord: String?,
-        detail: String,
-        accessibility: String,
-        identity: AnyHashable,
-        dwell: Duration,
-        onExpire: @escaping () -> Void,
-    ) {
-        labelField.stringValue = label
+    func present(_ copy: DecorationChipCopy, onExpire: @escaping () -> Void) {
+        let chord = copy.keycap
+        labelField.stringValue = copy.label
         keycap.chord = chord
         keycap.isHidden = chord == nil
-        detailField.stringValue = detail
-        detailField.isHidden = detail.isEmpty
+        detailField.stringValue = copy.detail
+        detailField.isHidden = copy.detail.isEmpty
         // The dot appears ONLY without a cap — a keycap is its own boundary object, so a dot beside one
         // is a second separator doing the first one's job.
-        separator.isHidden = chord != nil || detail.isEmpty
+        separator.isHidden = chord != nil || copy.detail.isEmpty
         // With a cap the emphasis has already been spent ON the cap, so the trailing verb drops to the
         // label's rung and the sentence has ONE hero. Without one, the detail IS the answer.
         detailField.font = .systemFont(
@@ -360,32 +337,11 @@ final class MacNoticeCapsuleView: NSView {
         detailField.textColor = chord == nil
             ? Slate.Native.Overlay.primary
             : Slate.Native.Overlay.secondary
-        setAccessibilityLabel(accessibility)
-
-        self.onExpire = onExpire
-        guard identity != self.identity else { return }
-        self.identity = identity
-        restartDwell(dwell)
+        setAccessibilityLabel(copy.accessibility)
+        dwell.arm(copy, onExpire: onExpire)
     }
 
-    func stopDwell() {
-        dwellTimer?.invalidate()
-        dwellTimer = nil
-    }
-
-    /// One shot, restarted per identity. A `Timer` rather than a `Task`, so a chip that is re-targeted
-    /// mid-dwell cannot leave a cancelled sleep to fire the OLD owner's expiry — the failure the
-    /// SwiftUI half spends its `guard await (try? …) != nil` on.
-    private func restartDwell(_ dwell: Duration) {
-        stopDwell()
-        let seconds = Double(dwell.components.seconds)
-            + Double(dwell.components.attoseconds) / 1e18
-        guard seconds > 0 else { return }
-        dwellTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            // AppKit fires a scheduled timer on the main run loop without saying so in the type.
-            MainActor.assumeIsolated { self?.onExpire() }
-        }
-    }
+    func stopDwell() { dwell.stop() }
 }
 
 // MARK: - The keycap
@@ -479,14 +435,8 @@ final class MacConnectionAlertChip: NSView {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Slate.Metric.space1
-        row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space4),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space4),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space2),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Slate.Metric.space2),
-        ])
+        NSLayoutConstraint.activate(DecorationAlertChipRow.constraints(in: self, row: row))
         setAccessibilityRole(.button)
     }
 

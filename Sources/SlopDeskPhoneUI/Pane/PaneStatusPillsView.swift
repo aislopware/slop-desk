@@ -111,18 +111,12 @@ final class PaneStatusPillView: UIView {
             top: Slate.Metric.space1, leading: Slate.Metric.space2,
             bottom: Slate.Metric.space1, trailing: Slate.Metric.space2,
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
         row.isUserInteractionEnabled = true
         row.addArrangedSubview(glyph)
         row.addArrangedSubview(label)
         if let close { row.addArrangedSubview(close) }
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
 
         // A semantic GROUP, not a combined element, and the difference is the `×`. SwiftUI's `.combine`
         // folded a child button's action into one element; UIKit has no equivalent that keeps the dismiss
@@ -180,8 +174,9 @@ final class PaneStatusPillView: UIView {
 /// against the accent — `secure-input.png` is the green-accent Paper theme yet the pill is the same
 /// royal blue), and only a NAME can say that, which is why ``PaneStatusPillFill`` is a kind rather
 /// than a colour in the first place.
-// `@MainActor` because every token it resolves is: `Slate.Native.*` is main-actor state, so a
-// nonisolated initialiser cannot read one. The struct is only ever built from a main-actor view.
+///
+/// `@MainActor` because every token it resolves is: `Slate.Native.*` is main-actor state, so a
+/// nonisolated initialiser cannot read one. The struct is only ever built from a main-actor view.
 @MainActor
 private struct Appearance {
     /// The chip's plate.
@@ -208,17 +203,31 @@ private struct Appearance {
     let glyphWeight: UIImage.SymbolWeight
     let labelWeight: UIFont.Weight
 
+    /// TWO passes over the same kind, and the split is the point rather than an accident of style.
+    ///
+    /// The plate is the ONE rung that spends the fixed kind's payload — the tone names which vivid
+    /// fill ``Slate/Native/paneStatusPillFill(_:)`` hands back. The other five rungs read the KIND
+    /// alone: a vivid chip is a vivid chip whether it is the security blue or the sync amber, so
+    /// binding a tone there would name a value none of them uses. Keeping the second pass free of a
+    /// binding is what lets it say `case .fixed` in the plain, and that literal is the whole rung —
+    /// it is how a reader (and the named-ink ratchet behind it) sees that this renderer answers the
+    /// fixed arm at all rather than falling through some default.
     init(fill: PaneStatusPillFill) {
         switch fill {
         case .chrome:
             plate = Slate.Native.Surface.raised
+        case let .fixed(tone):
+            plate = Slate.Native.paneStatusPillFill(tone)
+        }
+
+        switch fill {
+        case .chrome:
             hairlineWidth = Slate.Metric.hairline
             ink = Slate.Native.Text.primary
             closeInk = Slate.Native.Text.secondary
             glyphWeight = .semibold
             labelWeight = .medium
-        case let .fixed(tone):
-            plate = Slate.Native.paneStatusPillFill(tone)
+        case .fixed:
             hairlineWidth = 0
             ink = SlateNativeColor.white
             closeInk = SlateNativeColor.white

@@ -39,6 +39,36 @@ import SlopDeskWorkspaceModel
 /// to hold a non-`Sendable` `self` across the async classify that precedes the commit.
 @MainActor
 package enum PaneDropActuator {
+    /// The WHOLE commit, from a read-off pasteboard bundle to the actuated action.
+    ///
+    /// The two shells' `performDrop` differ only in how they get a ``PaneDropProviderBundle`` out of
+    /// their framework's drag session — after that line, the classify, the resolve and the actuate were
+    /// character-identical on both, `Task { @MainActor }` and capture list included. So the bundle is
+    /// the parameter and everything downstream of it is here.
+    ///
+    /// ⚠️ THE TERMINAL MODEL IS TAKEN, NOT RE-ASKED. It is read by the caller while the drop is still
+    /// the current event; resolving it inside the task would read it one hop later, after a close or a
+    /// pane swap could have moved it. The bundle carries its OWN authoritative copy of the payload for
+    /// the same reason — see ``PaneDropProviderBundle``.
+    @MainActor
+    package static func commit(
+        _ bundle: PaneDropProviderBundle,
+        zone: DropZone,
+        terminalModel: TerminalViewModel?,
+        deps: PaneCanvasDeps,
+        paneID: PaneID,
+    ) {
+        Task { @MainActor in
+            guard let content = await bundle.classify(),
+                  let action = DropActionResolver.resolve(zone: zone, content: content)
+            else { return }
+            actuate(
+                action, store: deps.store, terminalModel: terminalModel,
+                overlay: deps.overlay, paneID: paneID,
+            )
+        }
+    }
+
     /// Carry out a resolved ``DropAction`` against the store / live terminal / overlay. The pure policy
     /// (``DropActionResolver``) decided WHAT; this turns it into the concrete call, reusing the existing
     /// actuators — no new engine — and layers the host-resolved advisory toast on the

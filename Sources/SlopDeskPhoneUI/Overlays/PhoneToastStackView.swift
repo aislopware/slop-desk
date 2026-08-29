@@ -40,7 +40,7 @@
 // raised while the panel is up would be invisible rather than late. The panel therefore mounts a SECOND
 // stack over its own root (the deleted `PhonePanelSheet` did the same with an `.overlay`).
 //
-// Nothing here is shared, static or singleton: `cards`, `column` and `generation` are per-instance, and
+// Nothing here is shared, static or singleton: `cards`, `column` and the follow are per-instance, and
 // each instance builds its OWN card per toast, with its own dwell `Timer`. So a second stack cannot steal
 // the first's queue or cancel its countdowns. The ARBITER is the model both read — two cards for one toast
 // run two copies of the same countdown from the same ``ToastPresentation/dwellSeconds(_:)``, whichever
@@ -73,7 +73,6 @@ final class PhoneToastStackView: UIView {
     /// what lets a running dwell keep running while a second toast arrives beside it. Rebuilding here
     /// would restart a countdown the epoch says should be left alone.
     private var cards: [String: PhoneToastCardView] = [:]
-    private var generation = 0
 
     init(overlay: OverlayCoordinator) {
         self.overlay = overlay
@@ -116,26 +115,15 @@ final class PhoneToastStackView: UIView {
 
     // MARK: The live read
 
-    /// The one tracked read. ``withObservationTracking(_:onChange:)`` fires ONCE, so the re-arm below IS
-    /// the subscription — and every tracked read has to happen INSIDE the closure, or that property
-    /// silently stops being followed. `onChange` runs INSIDE the mutation, so the re-arm hops to the next
-    /// main-queue turn; the generation counter supersedes an arm left over from an earlier pass.
+    /// The one tracked read, through ``ObservationFollow/arm(_:read:apply:)`` — docs/62 §3.1's prologue,
+    /// written once. `read` returns the list and `apply` reconciles the column, so the one property this
+    /// corner follows cannot quietly stop being followed.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var live: [Toast] = []
-        withObservationTracking {
-            live = overlay.toasts
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { stack in
+            stack.overlay.toasts
+        } apply: { stack, live in
+            stack.sync(live)
         }
-        sync(live)
     }
 
     /// Reconciles the column against the coordinator's list.
@@ -235,11 +223,11 @@ final class PhoneToastCardView: SlateRowButton {
     private let detail = UILabel()
     private let close = UIButton(type: .system)
 
-    /// Dwell CONSUMED, in seconds. Nothing draws it: an earlier round put a depleting hairline along the
-    /// bottom edge and it was cut for reading as ornament. It is sampled rather than slept because the
-    /// Mac's half FREEZES it under the pointer, and the two halves must spend the same clock.
-    private var spent: Double = 0
-    private var dwell: Timer?
+    /// The countdown, spent by ``OverlayDwell`` — the sampler both shells share. Nothing draws the
+    /// spend: an earlier round put a depleting hairline along the bottom edge and it was cut for reading
+    /// as ornament. It is SAMPLED rather than slept because the Mac's half freezes it under the pointer,
+    /// and the two halves must spend the same clock even though only one of them can pause it.
+    private let dwell = OverlayDwell()
 
     init(
         toast: Toast, expanded: Bool,
@@ -254,13 +242,12 @@ final class PhoneToastCardView: SlateRowButton {
         isEnabled = key != nil
         build()
         apply(toast: toast, expanded: expanded)
-        restartDwell()
+        dwell.onExpire = { [weak self] in self?.onDismiss() }
+        dwell.restart(for: toast)
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
-
-    deinit { dwell?.invalidate() }
 
     /// ⚠️ THE WHOLE BODY IS THE DOOR, and a `UIControl` only tracks a touch it is itself the hit view for.
     /// Left alone, `super.hitTest` answers with whichever label or nested `UIStackView` the touch landed
@@ -342,17 +329,10 @@ final class PhoneToastCardView: SlateRowButton {
         // its own, and centring it against a two-line card would float it beside the detail instead.
         row.alignment = .top
         row.spacing = Slate.Metric.space2
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space3),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space3),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space3),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Slate.Metric.space3),
-            // One UNIFORM column edge. Cards that hug their own content were tried and rendered as a
-            // ragged staircase — see ``Slate/Metric/toastWidth``.
-            widthAnchor.constraint(equalToConstant: Slate.Metric.toastWidth),
-        ])
+        OverlayCardLayout.pad(row, in: self, x: Slate.Metric.space3, y: Slate.Metric.space3)
+        // One UNIFORM column edge. Cards that hug their own content were tried and rendered as a
+        // ragged staircase — see ``Slate/Metric/toastWidth``.
+        widthAnchor.constraint(equalToConstant: Slate.Metric.toastWidth).isActive = true
     }
 
     // MARK: Content
@@ -365,7 +345,7 @@ final class PhoneToastCardView: SlateRowButton {
     func update(toast new: Toast, expanded: Bool) {
         let restart = ToastPresentation.dwellKey(new) != ToastPresentation.dwellKey(toast)
         apply(toast: new, expanded: expanded)
-        if restart { restartDwell() }
+        if restart { dwell.restart(for: new) }
     }
 
     private func apply(toast: Toast, expanded: Bool) {
@@ -406,33 +386,8 @@ final class PhoneToastCardView: SlateRowButton {
 
     // MARK: The dwell
 
-    /// Starts (or restarts) the countdown. A sticky card — `autoDismiss == nil` — gets no timer at all,
-    /// which is also why its ✕ is unconditional.
-    private func restartDwell() {
-        stopDwell()
-        spent = 0
-        let total = ToastPresentation.dwellSeconds(toast)
-        guard total > 0 else { return }
-        // SAMPLED rather than one timer of `total`, because the sample is what the Mac's hover freezes —
-        // and the two halves spend the same clock even though only one of them can pause it.
-        dwell = Timer.scheduledTimer(
-            withTimeInterval: ToastPresentation.dwellTick, repeats: true,
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                spent = Swift.min(total, spent + ToastPresentation.dwellTick)
-                guard spent >= total else { return }
-                stopDwell()
-                onDismiss()
-            }
-        }
-    }
-
-    /// Stops the countdown. Idempotent, and called on removal so no timer outlives its card.
-    func stopDwell() {
-        dwell?.invalidate()
-        dwell = nil
-    }
+    /// Stops the countdown, for the corner that is retiring this card. Idempotent.
+    func stopDwell() { dwell.stop() }
 }
 
 // MARK: - The mark
@@ -464,22 +419,12 @@ final class PhoneToastMarkView: UIView {
             withConfiguration: UIImage.SymbolConfiguration(pointSize: Self.discSize),
         )
         // `footnote`/medium puts the glyph at ~0.55 of the disc — the proportion the fused symbol draws
-        // its inner layer at — where a bolder, smaller glyph floated lost.
-        for layer in [disc, glyph] {
-            layer.translatesAutoresizingMaskIntoConstraints = false
-            layer.contentMode = .center
-            addSubview(layer)
-            NSLayoutConstraint.activate([
-                layer.centerXAnchor.constraint(equalTo: centerXAnchor),
-                layer.centerYAnchor.constraint(equalTo: centerYAnchor),
-            ])
-        }
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: Self.discSize),
-            heightAnchor.constraint(equalToConstant: Self.discSize),
-        ])
-        setContentHuggingPriority(.required, for: .horizontal)
-        setContentCompressionResistancePriority(.required, for: .horizontal)
+        // its inner layer at — where a bolder, smaller glyph floated lost. `.center` rather than the
+        // default fill, so neither layer's symbol is stretched into the square the mark is pinned to;
+        // `NSImageView` centres by default, which is why only this half spells it.
+        disc.contentMode = .center
+        glyph.contentMode = .center
+        OverlayCardLayout.centre([disc, glyph], in: self, square: Self.discSize)
     }
 
     @available(*, unavailable)

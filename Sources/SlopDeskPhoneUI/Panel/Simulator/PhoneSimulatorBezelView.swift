@@ -42,6 +42,7 @@
 // drawing, not a missing modifier.
 
 #if os(iOS)
+import SlopDeskClientCore // `DeviceBezelGeometry` — where a piece of the artwork lands
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
 import UIKit
@@ -160,27 +161,20 @@ final class PhoneSimulatorBezelView: UIView {
         // NOT negated — see the header. Degrees in, radians out.
         assembly.transform = CGAffineTransform(rotationAngle: orientation.viewAngle * .pi / 180)
 
+        // Every piece is seated the same way — ``DeviceBezelGeometry/seat(_:in:scale:)`` — because the
+        // three of them differ only in which rectangle the artwork declares.
         let viewport = art.chrome.screen.viewport
-        let origin = bleed.origin
-        body.frame = CGRect(
-            x: -origin.x * scale, y: -origin.y * scale,
-            width: viewport.width * scale, height: viewport.height * scale,
+        body.frame = DeviceBezelGeometry.seat(
+            CGRect(origin: .zero, size: viewport), in: bleed, scale: scale,
         )
-
-        let rect = art.chrome.screen.rect
-        screen.frame = CGRect(
-            x: (rect.minX - origin.x) * scale, y: (rect.minY - origin.y) * scale,
-            width: rect.width * scale, height: rect.height * scale,
-        )
+        screen.frame = DeviceBezelGeometry.seat(art.chrome.screen.rect, in: bleed, scale: scale)
         // Clipped rather than merely placed: unclipped video overhangs the rounded corners and reads
         // as a rendering bug, which is exactly the "looks unfinished" the bezel is here to fix.
         screen.layer.cornerRadius = art.chrome.screen.clipRadius * scale
 
         for (index, button) in art.chrome.buttons.enumerated() where index < buttons.count {
-            let box = button.frame(in: viewport)
-            buttons[index].frame = CGRect(
-                x: (box.minX - origin.x) * scale, y: (box.minY - origin.y) * scale,
-                width: box.width * scale, height: box.height * scale,
+            buttons[index].frame = DeviceBezelGeometry.seat(
+                button.frame(in: viewport), in: bleed, scale: scale,
             )
         }
     }

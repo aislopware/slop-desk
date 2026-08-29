@@ -38,8 +38,8 @@
 // its TRUE PROPORTIONS and its facts, and a picture is taken when somebody asks for one.
 
 #if os(iOS)
-import Observation
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — a REUSED row re-follows, so it needs the replacing arm
 import SlopDeskDevicePanels
 import SlopDeskSlate
 import UIKit
@@ -77,9 +77,6 @@ final class PhoneAndroidDeviceList: UIView {
     /// What was last drawn — the query and every row identity, in order. The gate that keeps a poll
     /// returning the same devices from re-applying a snapshot.
     private var drawn: [String] = []
-
-    /// ⚠️ Hazard 2's counter, on the one re-arming observation this view owns.
-    private var generation = 0
 
     init(model: AndroidSidebarModel, enter: @escaping (AndroidDevice) -> Void) {
         self.model = model
@@ -302,27 +299,16 @@ final class PhoneAndroidDeviceList: UIView {
 
     // MARK: Following the model
 
-    /// ⚠️ `withObservationTracking` fires ONCE per registration, so the callback re-arms by calling
-    /// this again on the next main-queue turn. Only the DEVICE LIST is read here: a boot in flight is
-    /// followed by the row that draws its spinner (``PhoneAndroidRunningCard/followPending()``), which
-    /// is what keeps one device's lifecycle verb from re-applying a snapshot under the finger.
+    /// Only the DEVICE LIST is read here: a boot in flight is followed by the row that draws its
+    /// spinner (``PhoneAndroidRunningCard/followPending()``), which is what keeps one device's
+    /// lifecycle verb from re-applying a snapshot under the finger. Armed ONCE, from `init` — the
+    /// filter's own path is ``rebuild()``, which applies without re-following.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var devices: [AndroidDevice] = []
-        withObservationTracking {
-            devices = self.model.devices
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { list in
+            list.model.devices
+        } apply: { list, devices in
+            list.apply(devices)
         }
-
-        apply(devices)
     }
 
     private func rebuild() {
@@ -430,12 +416,7 @@ private final class PhoneAndroidHeadingView: UICollectionReusableView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         addSubview(header)
-        NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor),
-            header.topAnchor.constraint(equalTo: topAnchor),
-            header.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(header.slateEdges(of: self))
     }
 
     @available(*, unavailable)
@@ -530,21 +511,16 @@ private final class PhoneAndroidDeviceRow: UIView {
     private let subtitle = UILabel()
     private let verb = UIView()
     private var device: AndroidDevice?
-    /// ⚠️ Hazard 2's counter — a row is reused, so a boot's arm must not outlive the device it armed
-    /// for.
-    private var generation = 0
+    /// ⚠️ THIS ROW IS REUSED, so its follow is re-armed per `configure` and a boot's arm must not
+    /// outlive the device it armed for — hence the handle, and hence `replacing:`.
+    private var pendingFollow: ObservationFollow?
 
     init(model: AndroidSidebarModel) {
         self.model = model
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         addSubview(shell)
-        NSLayoutConstraint.activate([
-            shell.leadingAnchor.constraint(equalTo: leadingAnchor),
-            shell.trailingAnchor.constraint(equalTo: trailingAnchor),
-            shell.topAnchor.constraint(equalTo: topAnchor),
-            shell.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(shell.slateEdges(of: self))
 
         name.font = .systemFont(ofSize: Slate.Typeface.base)
         name.textColor = PhoneAndroidInk.color(.primary)
@@ -594,41 +570,35 @@ private final class PhoneAndroidDeviceRow: UIView {
     }
 
     /// The one verb that applies, at REST but quiet: a small solid glyph in the tertiary ink. Tracked
-    /// per row for ``PhoneAndroidRunningCard/followPending()``'s reason.
+    /// per row for ``PhoneAndroidRunningCard/followPending()``'s reason, and re-armed per `configure`
+    /// for its reason too.
     private func followPending() {
-        generation &+= 1
-        let generation = generation
-
-        guard let device else { return }
-        var isPending = false
-        withObservationTracking {
-            isPending = self.model.pending.contains(device.key)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.followPending()
-                }
-            }
+        guard let device else {
+            pendingFollow?.stop()
+            pendingFollow = nil
+            return
         }
-
-        for view in verb.subviews { view.removeFromSuperview() }
-        let control: UIView = isPending
-            ? phoneAndroidPendingSpinner()
-            : SlatePlateVerbButton(
-                symbol: .playFill, help: AndroidPresentation.startHelp(device),
-                size: Slate.Typeface.footnote, plate: Slate.Metric.heightControl,
-                tint: PhoneAndroidInk.color(.tertiary),
-            ) { [weak self] in
-                guard let self else { return }
-                Task { await self.model.boot(device) }
-            }
-        control.translatesAutoresizingMaskIntoConstraints = false
-        verb.addSubview(control)
-        NSLayoutConstraint.activate([
-            control.centerXAnchor.constraint(equalTo: verb.centerXAnchor),
-            control.centerYAnchor.constraint(equalTo: verb.centerYAnchor),
-        ])
+        pendingFollow = ObservationFollow.arm(self, replacing: pendingFollow) { row in
+            row.model.pending.contains(device.key)
+        } apply: { row, isPending in
+            for view in row.verb.subviews { view.removeFromSuperview() }
+            let control: UIView = isPending
+                ? phoneAndroidPendingSpinner()
+                : SlatePlateVerbButton(
+                    symbol: .playFill, help: AndroidPresentation.startHelp(device),
+                    size: Slate.Typeface.footnote, plate: Slate.Metric.heightControl,
+                    tint: PhoneAndroidInk.color(.tertiary),
+                ) { [weak row] in
+                    guard let row else { return }
+                    Task { await row.model.boot(device) }
+                }
+            control.translatesAutoresizingMaskIntoConstraints = false
+            row.verb.addSubview(control)
+            NSLayoutConstraint.activate([
+                control.centerXAnchor.constraint(equalTo: row.verb.centerXAnchor),
+                control.centerYAnchor.constraint(equalTo: row.verb.centerYAnchor),
+            ])
+        }
     }
 }
 #endif

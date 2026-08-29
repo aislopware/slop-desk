@@ -95,32 +95,13 @@ final class PhoneAndroidStageView: UIView {
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = Slate.Native.Surface.field
 
-        for band in [headerSlot, bed, consoleSlot] {
-            band.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(band)
-        }
         // The drawer is CLIPPED, so the console slides out of a band that is already zero-height rather
         // than drawing over the picture on its way in.
         consoleSlot.clipsToBounds = true
-        let height = consoleSlot.heightAnchor.constraint(equalToConstant: 0)
-        consoleHeight = height
-
-        NSLayoutConstraint.activate([
-            headerSlot.topAnchor.constraint(equalTo: topAnchor),
-            headerSlot.leadingAnchor.constraint(equalTo: leadingAnchor),
-            headerSlot.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            bed.topAnchor.constraint(equalTo: headerSlot.bottomAnchor),
-            bed.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bed.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            consoleSlot.topAnchor.constraint(equalTo: bed.bottomAnchor),
-            consoleSlot.leadingAnchor.constraint(equalTo: leadingAnchor),
-            consoleSlot.trailingAnchor.constraint(equalTo: trailingAnchor),
-            consoleSlot.bottomAnchor.constraint(equalTo: bottomAnchor),
-            height,
-        ])
-
+        // The three bands and the drawer's height are ``DeviceStageLayout``'s.
+        consoleHeight = DeviceStageLayout.stackBands(
+            header: headerSlot, bed: bed, drawer: consoleSlot, in: self,
+        )
         follow()
     }
 

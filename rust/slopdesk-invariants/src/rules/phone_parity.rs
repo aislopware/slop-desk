@@ -50,11 +50,17 @@ const INPUT_HOST: &str = "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift";
 const INTERCEPTOR: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Keybinding.swift";
 /// The code panel's shared model.
 const CODE_SIDEBAR: &str = "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarModel.swift";
-/// The phone's workspace root.
+/// The phone's panel control — the four plates, minted from `PanelTabs`.
 ///
-/// RE-AIMED 2026-08-28: `WorkspaceRootView.swift` went with `3f11c6e6`, and the root that replaced
-/// it is a `UISplitViewController` subclass under `Shell/` (docs/62 stage D).
-const PHONE_ROOT: &str = "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift";
+/// RE-AIMED 2026-08-28, and this module's `PHONE_ROOT` went with it. The root const pointed at the
+/// phone's workspace root because the `SwiftUI` root's TOOLBAR held the panel strip, so "minted,
+/// not hand-listed" was a fact about the root. Stage H gave the panel its own bar and the control
+/// left the root; `PhonePanelTabGroup` builds the plates in its initializer, which is where that
+/// fact is true or false today. The root const was kept for one pass on the belief that other
+/// claims still named it — they do not, this was its only reader, so it is gone rather than kept
+/// alive by an `allow`. `chrome_split`'s own `PHONE_ROOT` is a different const about the split
+/// controller's composition, and it is still read.
+const PHONE_TAB_GROUP: &str = "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabGroup.swift";
 /// The phone's panel subtree, where the device surfaces live.
 const PHONE_PANEL: &[&str] = &["Sources/SlopDeskPhoneUI/Panel/"];
 /// The one file allowed to draw a clear key.
@@ -302,15 +308,28 @@ pub fn the_code_panel_settles_once(tree: &Tree) -> Report {
 /// refills. It passed through the whole demolition without a word, so a `Populated` floor now runs
 /// first. That floor is RED today on purpose: the ban it guards is not checking anything until the
 /// panel comes back, and the honest report of that is a failure, not a silent pass.
+///
+/// ## ⚠️ AND RE-AIMED AGAIN, ONE CLAIM ONLY — the control moved, not the law
+/// The `PanelTabs.all` claim rode on a `PHONE_ROOT` const because the `SwiftUI` root's toolbar HELD
+/// the panel menu. Stage H landed the panel as its own bar, and the minting is now
+/// `PhonePanelTabGroup`'s initializer — `plates =
+/// PanelTabs.all.map(PhonePanelTabPlate.init(tab:))`, one plate per reading, in the reading's
+/// order. So this claim moves to [`PHONE_TAB_GROUP`], a const of its own rather than a re-pointed
+/// root: a name that means "wherever the thing I want happens to be this week" cannot go stale
+/// visibly, and the root's name has to keep meaning the root. It turned out to be this module's
+/// ONLY reader of that root, so the const went with the claim — see [`PHONE_TAB_GROUP`]. Both the
+/// floor and the ban below stay on `Panel/`, unchanged: the directory they read is the one that now
+/// holds the control too.
 #[must_use]
 pub fn the_panel_opens_on_a_named_surface(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::Matches {
-            path: PHONE_ROOT,
+            path: PHONE_TAB_GROUP,
             pattern: r"PanelTabs\.all",
             view: View::Code,
-            message: "the phone cannot open the panel on a named surface — the toolbar's panel control must \
-                      offer PanelTabs.all, which is the Mac rail's capability on a device with no rail",
+            message: "the phone cannot open the panel on a named surface — the panel bar's tab group must \
+                      mint its plates from PanelTabs.all, which is the Mac rail's capability on a device \
+                      with no rail",
         },
         // ⚠️ THE FLOOR BEFORE THE BAN — see the header. `Panel/` is empty until docs/62 stage H,
         // and a `NoneUnder` over an empty root passes while checking nothing.
@@ -689,9 +708,16 @@ pub fn the_pane_move_drop_is_one_rule(tree: &Tree) -> Report {
     /// The Swift face over the doors.
     const FACE: &str = "Sources/SlopDeskClientCore/Pane/PaneDropGeometry.swift";
     /// The two affordances that draw the preview.
+    ///
+    /// ⚠️ THE PHONE ROW RE-AIMED 2026-08-28. `3f11c6e6` took `PaneMoveAffordance.swift` with the
+    /// rest of the `SwiftUI` client; docs/62 stage E.2 rebuilds the same drawing as
+    /// `PaneMoveAffordanceView.swift`, `UIKit`, in the same directory. Naming the new path leaves
+    /// this row RED until that file lands, which is what it should say: a half that is not there
+    /// cannot be shown to read the shared answer, and a row pointed at the dead name would report
+    /// "is gone" about a subject that was rewritten rather than withdrawn.
     const AFFORDANCES: &[&str] = &[
         "Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift",
-        "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordance.swift",
+        "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
     ];
 
     let mut report = check_all(tree, &[
@@ -776,9 +802,15 @@ pub fn the_link_island_is_one_reading(tree: &Tree) -> Report {
     /// The state enum whose `label` is the door's third register.
     const STATUS: &str = "Sources/SlopDeskWorkspaceCore/Connection/ConnectionStatus.swift";
     /// The two shells' islands.
+    ///
+    /// ⚠️ THE PHONE ROW RE-AIMED 2026-08-28, and the file naming settled with it: the phone's link
+    /// island returns as `ConnectionIslandView.swift` (`UIKit`), which is the Mac's own noun rather
+    /// than the `SwiftUI` half's "pill". Red until it lands. That is the correct verdict for a rule
+    /// whose whole subject is *both* halves reading one ladder — with one half absent there is no
+    /// second reading to compare, and saying so beats a green over a list of one.
     const ISLANDS: &[&str] = &[
         "Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift",
-        "Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift",
+        "Sources/SlopDeskPhoneUI/Chrome/ConnectionIslandView.swift",
     ];
 
     let mut report = check_all(tree, &[
@@ -924,13 +956,18 @@ mod tests {
     /// The break-test for the 2026-08-28 re-aim. Three things it has to hold: the `UIKit` minting
     /// passes where the old `ForEach` needle would have failed it, a hand-listed strip is still
     /// red, and a DRAINED `Panel/` is red rather than silently unchecked.
+    ///
+    /// The subject moved with the second re-aim, and the fixture with it: the minting is the tab
+    /// GROUP's, not the root's. A fixture that kept writing `PHONE_ROOT` would have proved the rule
+    /// against a file the claim no longer reads — a green over nothing, which is the exact failure
+    /// this module's header is about.
     #[test]
     fn a_hand_listed_panel_strip_is_red_in_either_framework() {
         let fixture = Fixture::new("panel-named-surface");
         fixture
             .write(
-                super::PHONE_ROOT,
-                "for tab in PanelTabs.all {\n    strip.addArrangedSubview(button(for: tab))\n}\n",
+                super::PHONE_TAB_GROUP,
+                "plates = PanelTabs.all.map(PhonePanelTabPlate.init(tab:))\n",
             )
             .write(
                 "Sources/SlopDeskPhoneUI/Panel/PhonePanelViewController.swift",
@@ -944,16 +981,15 @@ mod tests {
 
         // Hand-listed instead of minted — the capability the Mac rail has and the phone would lose.
         fixture.write(
-            super::PHONE_ROOT,
-            "for tab in [PanelTab.code, PanelTab.simulator] {\n    strip.addArrangedSubview(button(for: \
-             tab))\n}\n",
+            super::PHONE_TAB_GROUP,
+            "plates = [PanelTab.code, PanelTab.simulator].map(PhonePanelTabPlate.init(tab:))\n",
         );
         assert!(!super::the_panel_opens_on_a_named_surface(&fixture.tree()).is_clean());
 
         // The demolition's own shape: the ban's corpus drains and nothing is checked.
         fixture.write(
-            super::PHONE_ROOT,
-            "for tab in PanelTabs.all {\n    strip.addArrangedSubview(button(for: tab))\n}\n",
+            super::PHONE_TAB_GROUP,
+            "plates = PanelTabs.all.map(PhonePanelTabPlate.init(tab:))\n",
         );
         fixture.remove("Sources/SlopDeskPhoneUI/Panel/PhonePanelViewController.swift");
         fixture.remove("Sources/SlopDeskPhoneUI/Panel/DevicePanelChrome.swift");

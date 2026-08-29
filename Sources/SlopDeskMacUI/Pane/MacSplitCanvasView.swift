@@ -38,36 +38,23 @@ import SlopDeskWorkspaceModel
 
 @MainActor
 final class MacSplitCanvasView: NSView {
-    private let store: WorkspaceStore
-    /// The cross-container drag rendezvous — resolves SIDEBAR / New-Tab / tear-off destinations once
-    /// the cursor leaves this view, and lets a satellite-origin drag preview its landing here. `nil`
-    /// keeps every drag canvas-only.
-    private let paneDrag: PaneDragCoordinator?
-    private let overlay: OverlayCoordinator?
-    private let chrome: WorkspaceChromeState?
+    /// The canvas cluster's whole injection list — the store, the cross-container drag rendezvous, the
+    /// overlay summoner and the chrome state — in one value. See ``PaneCanvasDeps``.
+    private let deps: PaneCanvasDeps
 
     /// The live pane-move drag and every decision it turns on. Built once with the store and the
     /// coordinator, both of which are app-lifetime and which this view holds for exactly as long.
     private let drag: PaneCanvasDragController
 
     private var layers: [TabID: MacTabLayer] = [:]
-    private var lastReportedBounds: CGRect = .zero
     /// The live follow. Stored so ``teardown()`` can END it while this view lives on, and armed with
     /// `replacing:` because a teardown clears `isWired` — a re-attach re-enters ``follow()``.
     private var canvasFollow: ObservationFollow?
     private var isWired = false
 
-    init(
-        store: WorkspaceStore,
-        paneDrag: PaneDragCoordinator?,
-        overlay: OverlayCoordinator?,
-        chrome: WorkspaceChromeState?,
-    ) {
-        self.store = store
-        self.paneDrag = paneDrag
-        self.overlay = overlay
-        self.chrome = chrome
-        drag = PaneCanvasDragController(store: store, coordinator: paneDrag)
+    init(deps: PaneCanvasDeps) {
+        self.deps = deps
+        drag = PaneCanvasDragController(store: deps.store, coordinator: deps.paneDrag)
         super.init(frame: .zero)
         wantsLayer = true
         paint()
@@ -120,11 +107,11 @@ final class MacSplitCanvasView: NSView {
                 // ones), in session-then-tab-bar order. Rendering all of them is what makes an A→B→A
                 // session switch a visibility flip rather than a teardown of every outgoing surface.
                 tabs: PaneCanvasMounting.mountedTabs(
-                    sessions: canvas.store.tree.sessions,
-                    retained: canvas.store.retainedSessionIDs,
-                    activeID: canvas.store.tree.activeSessionID,
+                    sessions: canvas.deps.store.tree.sessions,
+                    retained: canvas.deps.store.retainedSessionIDs,
+                    activeID: canvas.deps.store.tree.activeSessionID,
                 ),
-                activeTabID: canvas.store.tree.activeSession?.activeTab?.id,
+                activeTabID: canvas.deps.store.tree.activeSession?.activeTab?.id,
             )
         } apply: { canvas, reading in
             canvas.reconcile(tabs: reading.tabs, activeTabID: reading.activeTabID)
@@ -132,20 +119,16 @@ final class MacSplitCanvasView: NSView {
     }
 
     private func reconcile(tabs: [SlopDeskWorkspaceModel.Tab], activeTabID: TabID?) {
-        let wanted = Set(tabs.map(\.id))
-        for (id, layer) in layers where !wanted.contains(id) {
-            // A tab that left the mounted set is genuinely GONE — closed, or evicted from the retention
-            // window. This is the one place a pane's renderer may come down, and it must, or the
-            // sockets and threads behind it outlive every reference to them.
+        // A tab that left the mounted set is genuinely GONE — closed, or evicted from the retention
+        // window. This is the one place a pane's renderer may come down, and it must, or the sockets
+        // and threads behind it outlive every reference to them. Teardown BEFORE detach, always.
+        PaneCanvasMounting.drop(from: &layers, keeping: Set(tabs.map(\.id))) { layer in
             layer.teardown()
             layer.removeFromSuperview()
-            layers[id] = nil
         }
         for tab in tabs {
             let layer = layers[tab.id] ?? {
-                let made = MacTabLayer(
-                    store: store, paneDrag: paneDrag, overlay: overlay, chrome: chrome, drag: drag,
-                )
+                let made = MacTabLayer(deps: deps, drag: drag)
                 made.translatesAutoresizingMaskIntoConstraints = true
                 addSubview(made)
                 layers[tab.id] = made
@@ -160,11 +143,9 @@ final class MacSplitCanvasView: NSView {
         super.layout()
         let rect = CGRect(origin: .zero, size: bounds.size)
         // The container bounds are the geometric ops' fallback before the first SOLVED-layout report.
-        // Reported once at this level, never per tab.
-        if rect != lastReportedBounds {
-            lastReportedBounds = rect
-            drag.reportContainerBounds(rect)
-        }
+        // Reported once at this level, never per tab — and reported UNCONDITIONALLY, because the
+        // controller now drops a rect it has already pushed (``PaneCanvasDragController``).
+        drag.reportContainerBounds(rect)
         for layer in layers.values {
             layer.frame = rect
             layer.relayout(in: rect)
@@ -196,10 +177,7 @@ final class MacSplitCanvasView: NSView {
 /// grab handle whose gesture is still tracking the mouse.
 @MainActor
 private final class MacTabLayer: NSView {
-    private let store: WorkspaceStore
-    private let paneDrag: PaneDragCoordinator?
-    private let overlay: OverlayCoordinator?
-    private let chrome: WorkspaceChromeState?
+    private let deps: PaneCanvasDeps
     private let drag: PaneCanvasDragController
 
     private var panes: [PaneID: MacPaneContainer] = [:]
@@ -229,17 +207,8 @@ private final class MacTabLayer: NSView {
     /// reconcile of this layer, and ``teardown()`` must end it while the layer lives on.
     private var layerFollow: ObservationFollow?
 
-    init(
-        store: WorkspaceStore,
-        paneDrag: PaneDragCoordinator?,
-        overlay: OverlayCoordinator?,
-        chrome: WorkspaceChromeState?,
-        drag: PaneCanvasDragController,
-    ) {
-        self.store = store
-        self.paneDrag = paneDrag
-        self.overlay = overlay
-        self.chrome = chrome
+    init(deps: PaneCanvasDeps, drag: PaneCanvasDragController) {
+        self.deps = deps
         self.drag = drag
         super.init(frame: .zero)
         moveOverlay.translatesAutoresizingMaskIntoConstraints = true
@@ -282,7 +251,9 @@ private final class MacTabLayer: NSView {
         frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { first, _ in first })
         moveOverlay.frame = bounds
 
-        applyPanes(layout.compositorLeaves, tab: tab)
+        applyPanes(PaneCanvasMounting.place(
+            layout.compositorLeaves, tab: tab, store: deps.store, tabIsActive: isActive,
+        ))
         applyDividers(layout.dividers)
         applyHandles(layout.leaves)
         applyMoveOverlay()
@@ -294,92 +265,62 @@ private final class MacTabLayer: NSView {
         drag.reportSolvedLayout(frames, isActive: isActive)
     }
 
+    /// A pane leaving the mounted set: its renderer comes down FIRST, then the view detaches. The one
+    /// place a pane's libghostty surface / video session may be destroyed.
+    private func unmount(_ pane: MacPaneContainer) {
+        pane.teardown()
+        pane.removeFromSuperview()
+    }
+
     /// EVERY pane — visible AND zoom-hidden — from one list, so the hidden↔visible flip never
     /// reconstructs a surface across the boundary.
-    private func applyPanes(
-        _ entries: [SplitTreeRenderModel.CompositorLeaf], tab: SlopDeskWorkspaceModel.Tab,
-    ) {
-        let wanted = Set(entries.map(\.id))
-        for (id, pane) in panes where !wanted.contains(id) {
-            pane.teardown()
-            pane.removeFromSuperview()
-            panes[id] = nil
-        }
-        let activeTabID = store.tree.activeSession?.activeTab?.id
-        for entry in entries {
-            // A zoom-hidden pane must never claim first responder — the same guard keep-all-mounted
-            // needs for a hidden tab. And while the code panel's webview owns the keyboard, the
-            // workspace-focused pane renders UNFOCUSED, which through the terminal's focus-gated
-            // responder claim also stops it re-taking the keyboard the editor is using.
-            let focused = CodeSidebarKeyboardState.paneRendersFocused(
-                workspaceFocused: !entry.isHidden
-                    && PaneFocusPolicy.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
-                sidebarOwnsKeyboard: CodeSidebarKeyboardState.shared.ownsKeyboard,
-            )
-            // ON-SCREEN: this tab is the active one AND the pane is not zoom-collapsed. A video pane
-            // drives its `liveVideoCap` activation off exactly this.
-            let visible = isActive && !entry.isHidden
-            let pane = panes[entry.id] ?? {
+    ///
+    /// The three flags each pane is told about itself (focused, visible, zoom-hidden) are resolved by
+    /// ``PaneCanvasMounting/place(_:tab:store:tabIsActive:)``, which is where the focus rule and the
+    /// code sidebar's keyboard claim meet. What is left here is the mounting.
+    private func applyPanes(_ spots: [PaneCanvasMounting.PanePlacement]) {
+        PaneCanvasMounting.drop(from: &panes, keeping: Set(spots.map(\.id)), teardown: unmount)
+        for spot in spots {
+            let pane = panes[spot.id] ?? {
                 let made = MacPaneContainer(
-                    store: store, paneID: entry.id, isFocused: focused, isVisible: visible,
-                    overlay: overlay, chrome: chrome,
+                    deps: deps, paneID: spot.id, isFocused: spot.isFocused, isVisible: spot.isVisible,
                 )
                 made.translatesAutoresizingMaskIntoConstraints = true
                 // UNDER the move overlay, which is the top of this layer's z-band.
                 addSubview(made, positioned: .below, relativeTo: moveOverlay)
-                panes[entry.id] = made
+                panes[spot.id] = made
                 return made
             }()
-            pane.frame = entry.leaf.rect
-            pane.setFocused(focused)
-            pane.setVisible(visible)
+            pane.frame = spot.rect
+            pane.setFocused(spot.isFocused)
+            pane.setVisible(spot.isVisible)
             // ALPHA, NEVER `isHidden`: a layer-hosting leaf sizes its surface and picks its
             // `contentsScale` in `layout()`, which does not run on a hidden subtree — un-hiding after
             // a display change would present stale geometry.
-            pane.alphaValue = entry.isHidden ? 0 : 1
-            pane.setAccessibilityHidden(entry.isHidden)
+            pane.alphaValue = spot.isHidden ? 0 : 1
+            pane.setAccessibilityHidden(spot.isHidden)
         }
     }
 
     /// The dividers, drawn only for the active tab — a hidden tab is non-interactive, so it needs none.
     private func applyDividers(_ handles: [SplitTreeRenderModel.DividerHandle]) {
         let wanted = isActive ? handles : []
-        let keys = Set(wanted.map(\.key))
-        for (key, divider) in dividers where !keys.contains(key) {
+        PaneCanvasMounting.drop(from: &dividers, keeping: Set(wanted.map(\.key))) { divider in
             divider.removeFromSuperview()
-            dividers[key] = nil
         }
         for handle in wanted {
             let divider = dividers[handle.key] ?? {
-                let made = MacPaneDivider(
-                    handle: handle,
-                    // Live resize: hold the host grid-resize for the drag, set the leading weight
-                    // absolutely each frame so the panes move live, then flush and persist ONCE.
-                    onResizeBegin: { [store] in store.setTerminalResizeSuspended(true) },
-                    onResizeChange: { [store] leadingWeight in
-                        store.setDividerWeightLive(
-                            splitID: handle.splitID,
-                            leadingChildIndex: handle.childIndex,
-                            leadingWeight: leadingWeight,
-                        )
+                // What each gesture MEANS is ``PaneDividerActions``' — the live-weight write, the
+                // suspend/commit pair on release and the single-seam even on a double-click. What is
+                // here is only which gesture the seam reports.
+                let made = MacPaneDivider(handle: handle, actions: DecorationDividerActions(
+                    onResizeBegin: { [store = deps.store] in PaneDividerActions.begin(store) },
+                    onResizeChange: { [store = deps.store] leadingWeight in
+                        PaneDividerActions.change(store, handle, leadingWeight)
                     },
-                    // The release, and the ONE place the suspend comes back down. It arrives on an end,
-                    // on a cancel, AND on this seam's teardown — because the flag is workspace-wide
-                    // store state rather than this seam's, and a seam unmounting mid-drag (which
-                    // happens routinely: a neighbouring pane closing drops a handle) would otherwise
-                    // leave every terminal's grid send suspended for the rest of the session.
-                    onResizeEnd: { [store] in
-                        store.setTerminalResizeSuspended(false)
-                        store.commitDividerResize()
-                    },
-                    // Double-click evens ONLY this seam — never `balanceActivePaneSplits()`, which
-                    // rebalances the whole tab and wipes every other divider's dragged ratio.
-                    onReset: { [store] in
-                        store.evenDividerTree(
-                            splitID: handle.splitID, leadingChildIndex: handle.childIndex,
-                        )
-                    },
-                )
+                    onResizeEnd: { [store = deps.store] in PaneDividerActions.end(store) },
+                    onReset: { [store = deps.store] in PaneDividerActions.reset(store, handle) },
+                ))
                 addSubview(made, positioned: .below, relativeTo: moveOverlay)
                 dividers[handle.key] = made
                 return made
@@ -398,7 +339,7 @@ private final class MacTabLayer: NSView {
         // The exception in the type's header: the move layer of the tab OWNING a live drag stays
         // mounted through a spring-loaded tab switch.
         let mounted = isActive || drag.moveSourceIsIn(frames)
-        let wanted = mounted && (leaves.count > 1 || paneDrag != nil) ? leaves : []
+        let wanted = mounted && (leaves.count > 1 || deps.paneDrag != nil) ? leaves : []
         let ids = Set(wanted.map(\.id))
         for (id, handle) in handles where !ids.contains(id) {
             // A leaf torn out mid-drag can never fire its own release, so the safety net is spent
@@ -417,7 +358,7 @@ private final class MacTabLayer: NSView {
                     // frame it was measured in, and nothing else.
                     onChanged: { [weak self] id, point in self?.dragChanged(id, at: point) },
                     onEnded: { [weak self] id, point in self?.dragEnded(id, at: point) },
-                    onTap: { [store] id in store.focusPaneTree(id) },
+                    onTap: { [store = deps.store] id in store.focusPaneTree(id) },
                     onInterrupted: { [drag] _ in drag.interrupted() },
                 )
                 made.translatesAutoresizingMaskIntoConstraints = true
@@ -430,7 +371,7 @@ private final class MacTabLayer: NSView {
             // disappears, so it gains a contrast plate. Read through the memo — see
             // ``handleIsUnthemed`` for why the tree walk may not be in this loop.
             let unthemed = handleIsUnthemed[leaf.id] ?? {
-                let answer = store.tree.spec(for: leaf.id)?.kind == .desktop
+                let answer = deps.store.tree.spec(for: leaf.id)?.kind == .desktop
                 handleIsUnthemed[leaf.id] = answer
                 return answer
             }()
@@ -460,7 +401,7 @@ private final class MacTabLayer: NSView {
             moveOverlay.isHidden = false
             moveOverlay.show(
                 drag: move, frames: frames, container: container,
-                sourceTitle: store.tree.activeSession?.specs[move.source]?.title,
+                sourceTitle: deps.store.tree.activeSession?.specs[move.source]?.title,
             )
         } else {
             moveOverlay.clear()
@@ -475,7 +416,7 @@ private final class MacTabLayer: NSView {
     private func applyExternalPreview() {
         externalPreview?.removeFromSuperview()
         externalPreview = nil
-        guard isActive, let paneDrag, let published = paneDrag.drag,
+        guard isActive, let paneDrag = deps.paneDrag, let published = paneDrag.drag,
               frames[published.source] == nil
         else { return }
         let zone = PaneCanvasMetrics.canvasZone(of: published.destination)
@@ -494,7 +435,7 @@ private final class MacTabLayer: NSView {
     private func follow() {
         layerFollow = ObservationFollow.arm(self, replacing: layerFollow) { layer in
             _ = layer.drag.move
-            _ = layer.paneDrag?.drag
+            _ = layer.deps.paneDrag?.drag
             _ = CodeSidebarKeyboardState.shared.ownsKeyboard
         } apply: { layer, _ in
             layer.relayout(in: layer.container)

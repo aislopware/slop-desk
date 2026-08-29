@@ -312,14 +312,6 @@ final class SatelliteWindowsCoordinator {
     /// Cascade origin so a burst of detaches doesn't stack windows exactly on top of each other.
     private var cascadeStep = 0
 
-    /// Mirror of the app's automation gate (`SlopDeskClientApp.hasAutomationEnvironment`): an E2E
-    /// run must never enter fullscreen (deterministic geometry for pixel checks).
-    private static func hasAutomationEnvironment() -> Bool {
-        let env = WorkspaceStore.automationInputs()
-        return ["SLOPDESK_AUTOCONNECT_HOST", "SLOPDESK_VIDEO_AUTOCONNECT_HOST"]
-            .contains { (env[$0]?.isEmpty == false) }
-    }
-
     /// One sync pass. `overlay` is handed to each window's root as a plain value — it used to be an
     /// environment key an `NSHostingView` root could not inherit from the main scene, which is what the
     /// old seam existed to work around; with the content in AppKit there is no environment left to
@@ -379,7 +371,10 @@ final class SatelliteWindowsCoordinator {
             // STRAIGHT into native fullscreen (the Parsec model) or the dwell-gated borderless
             // cover (the Parallels model). Never under automation — an E2E run needs deterministic
             // window geometry (the window-size gate precedent).
-            if isDesktop, !Self.hasAutomationEnvironment() {
+            //
+            // The APP's own gate, not a mirror of it: this used to re-type both AUTOCONNECT variable
+            // names, so an E2E launch seam renamed on one side would have kept opening fullscreen here.
+            if isDesktop, !ClientComposition.hasAutomationEnvironment() {
                 switch SettingsKey.desktopWindowPresentation {
                 case .window: break
                 case .fullscreen: controller.window?.toggleFullScreen(nil)

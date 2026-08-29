@@ -37,12 +37,10 @@
 //
 // ## What this half spells that the deleted `.task`, `.overlay` and `.id` spelled for it
 //
-// ⚠️ FOUR OBSERVATIONS, EACH RE-ARMING ITSELF, EACH WITH ITS OWN GENERATION. `withObservationTracking`
-// fires ONCE, so every follower re-registers from inside its own `onChange`; and `[weak self]` stops a
-// chain when the view dies without SUPERSEDING a live arm, so a second call to a follower would leave
-// two chains multiplying on the same key path. They are split by what they REBUILD rather than by what
-// they read: a plate latching must not rebuild the header, and a device leaving the list must not tear
-// down the console.
+// ⚠️ FOUR ``ObservationFollow``S, EACH ARMED ONCE FROM `init`. They are split by what they REBUILD
+// rather than by what they read: a plate latching must not rebuild the header, and a device leaving the
+// list must not tear down the console. None of the four re-follows a new subject, so all four take the
+// plain arm and none of them keeps a handle.
 //
 // ⚠️ THE STAGE IS KEYED ON THE UDID, which is the deleted `.id(model.selection)` and load-bearing for
 // the same reason: a second device's frames must never reach a decoder configured with the first one's
@@ -56,6 +54,7 @@
 
 #if os(iOS)
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the model follow
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
 import UIKit
@@ -155,22 +154,15 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
     /// rebuilding the screen for one would drop the stream to re-acquire a keyframe.
     private var applyOrientation: ((SimulatorOrientation) -> Void)?
 
-    /// The veil's own state, which is the model's loading state DELAYED — see
-    /// ``SimulatorPresentation/veilDelay``.
-    private var showsLoading = false
+    /// The veil's delay, its `showsLoading` flag and the state it last drew — see ``DeviceStageVeil``,
+    /// which is that whole rule, once, for both shells.
+    private let veil = DeviceStageVeil()
     private var veilView: UIView?
-    private var veilState = SimulatorStageState.live
-    private let veilLoop = PhoneSimulatorLoop()
 
     private var consoleView: PhoneSimulatorConsoleView?
 
     private var isTargeted = false
     private let halo = UIView()
-
-    private var headerGeneration = 0
-    private var deviceGeneration = 0
-    private var stageGeneration = 0
-    private var controlsGeneration = 0
 
     init(model: SimulatorSidebarModel) {
         self.model = model
@@ -209,7 +201,7 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
         }
         // CLOSED to zero rather than removed from the column, so the drawer has one number to animate
         // and the stage's own bottom edge never becomes a different constraint.
-        let height = consoleHost.heightAnchor.constraint(equalToConstant: 0)
+        let height = consoleHost.heightAnchor.constraint(equalToConstant: .zero)
         consoleHeight = height
         NSLayoutConstraint.activate([
             headerHost.topAnchor.constraint(equalTo: topAnchor),
@@ -232,56 +224,49 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
     /// shuts it down from Xcode), which is the same case arriving from the other direction. The RAIL
     /// goes with it: verbs that act on a device the panel cannot name are verbs with no subject.
     private func followHeader() {
-        headerGeneration &+= 1
-        let generation = headerGeneration
-        var device: SimulatorDevice?
-        var resolution: CGSize?
-        var orientation = SimulatorOrientation.portrait
-        var pinned: SimulatorCoordinate?
-        withObservationTracking {
-            device = self.selected
-            resolution = self.model.resolution
-            orientation = self.model.orientation
-            pinned = self.model.pinnedLocation
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == headerGeneration else { return }
-                    followHeader()
-                }
-            }
-        }
-        // The mounted stage learns of the turn HERE rather than through a fifth observation: the header
-        // prints the orientation, so it is already reading the value the bezel needs.
-        applyOrientation?(orientation)
+        ObservationFollow.arm(self) { stage in
+            (
+                device: stage.selected, resolution: stage.model.resolution,
+                orientation: stage.model.orientation, pinned: stage.model.pinnedLocation,
+            )
+        } apply: { stage, reading in
+            // The mounted stage learns of the turn HERE rather than through a fifth observation: the
+            // header prints the orientation, so it is already reading the value the bezel needs. Before
+            // the nil-device guard, because a turn arriving while the list is catching up is still a
+            // turn the mounted bezel has to make.
+            stage.applyOrientation?(reading.orientation)
 
-        guard let device else {
-            fade(headerHost, to: 0)
-            fade(railHost, to: 0)
-            header?.removeFromSuperview()
-            header = nil
-            return
+            guard let device = reading.device else {
+                stage.fade(stage.headerHost, to: 0)
+                stage.fade(stage.railHost, to: 0)
+                stage.header?.removeFromSuperview()
+                stage.header = nil
+                return
+            }
+            stage.fade(stage.headerHost, to: 1)
+            stage.fade(stage.railHost, to: 1)
+            let band = PhoneSimulatorDeviceHeader.Reading(
+                device: device, resolution: reading.resolution, orientation: reading.orientation,
+                pinnedLocation: reading.pinned,
+            )
+            guard let header = stage.header else {
+                let model = stage.model
+                let built = PhoneSimulatorDeviceHeader(reading: band) { model.select(nil) }
+                stage.header = built
+                stage.headerHost.addSubview(built)
+                NSLayoutConstraint.activate([
+                    built.leadingAnchor.constraint(equalTo: stage.headerHost.leadingAnchor),
+                    built.trailingAnchor.constraint(equalTo: stage.headerHost.trailingAnchor),
+                    built.topAnchor.constraint(equalTo: stage.headerHost.topAnchor),
+                    built.bottomAnchor.constraint(equalTo: stage.headerHost.bottomAnchor),
+                ])
+                return
+            }
+            // RELABELLED, not rebuilt: the band's shape never changes, only the words in it, and a
+            // remount would drop each fact's own Copy interaction on every poll that ticked a state
+            // string.
+            header.reading = band
         }
-        fade(headerHost, to: 1)
-        fade(railHost, to: 1)
-        let reading = PhoneSimulatorDeviceHeader.Reading(
-            device: device, resolution: resolution, orientation: orientation, pinnedLocation: pinned,
-        )
-        guard let header else {
-            let band = PhoneSimulatorDeviceHeader(reading: reading) { [model] in model.select(nil) }
-            header = band
-            headerHost.addSubview(band)
-            NSLayoutConstraint.activate([
-                band.leadingAnchor.constraint(equalTo: headerHost.leadingAnchor),
-                band.trailingAnchor.constraint(equalTo: headerHost.trailingAnchor),
-                band.topAnchor.constraint(equalTo: headerHost.topAnchor),
-                band.bottomAnchor.constraint(equalTo: headerHost.bottomAnchor),
-            ])
-            return
-        }
-        // RELABELLED, not rebuilt: the band's shape never changes, only the words in it, and a remount
-        // would drop each fact's own Copy interaction on every poll that ticked a state string.
-        header.reading = reading
     }
 
     private var selected: SimulatorDevice? {
@@ -298,67 +283,60 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
     /// answer actually changed. Without the guard a chrome fetch that resolves to the same bundle would
     /// drop the stream for a keyframe.
     private func followDevice() {
-        deviceGeneration &+= 1
-        let generation = deviceGeneration
-        var udid: String?
-        var bundle: SimulatorChromeBundle?
-        withObservationTracking {
-            udid = self.model.selection
-            bundle = self.model.chrome
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == deviceGeneration else { return }
-                    followDevice()
-                }
+        ObservationFollow.arm(self) { stage in
+            (udid: stage.model.selection, bundle: stage.model.chrome)
+        } apply: { stage, reading in
+            let art = reading.bundle.flatMap { PhoneSimulatorChrome.art(for: $0) }
+            let udid = reading.udid
+            let wantsBody = art != nil
+            guard udid != stage.mountedDevice || wantsBody != stage.mountedBody else { return }
+            stage.mountedDevice = udid
+            stage.mountedBody = wantsBody
+
+            for view in stage.stageHost.subviews where view !== stage.veilView {
+                view.removeFromSuperview()
             }
-        }
-        let art = bundle.flatMap { PhoneSimulatorChrome.art(for: $0) }
-        let wantsBody = art != nil
-        guard udid != mountedDevice || wantsBody != mountedBody else { return }
-        mountedDevice = udid
-        mountedBody = wantsBody
+            stage.applyOrientation = nil
+            // The keyboard plate gates on the stage having mounted a MIRROR at all, which is a fact
+            // this pass already knows — see ``DeviceSoftKeyboard``'s note on the reader that was
+            // struck.
+            stage.keyboard.isEnabled = udid != nil
+            guard udid != nil else { return }
 
-        for view in stageHost.subviews where view !== veilView { view.removeFromSuperview() }
-        applyOrientation = nil
-        // The keyboard plate gates on the stage having mounted a MIRROR at all, which is a fact this
-        // function already knows — see ``DeviceSoftKeyboard``'s note on the reader that was struck.
-        keyboard.isEnabled = udid != nil
-        guard udid != nil else { return }
-
-        let orientation = model.orientation
-        let send: (SimulatorInputEnvelope) -> Void = { [model] in model.send($0) }
-        let observed: (CGSize) -> Void = { [model] in model.observed(resolution: $0) }
-        let inset: CGFloat
-        let device: UIView
-        if let art {
-            let bezel = PhoneSimulatorBezelView(
-                art: art, frames: model.frames, orientation: orientation,
-                send: send, onContentSize: observed,
+            // The orientation and the frames are read OUTSIDE the tracking on purpose: a turn is
+            // ``followHeader()``'s to deliver, and tracking them here would remount the stage for one.
+            let model = stage.model
+            let orientation = model.orientation
+            let send: (SimulatorInputEnvelope) -> Void = { model.send($0) }
+            let observed: (CGSize) -> Void = { model.observed(resolution: $0) }
+            let inset: CGFloat
+            let device: UIView
+            if let art {
+                let bezel = PhoneSimulatorBezelView(
+                    art: art, frames: model.frames, orientation: orientation,
+                    send: send, onContentSize: observed,
+                )
+                stage.applyOrientation = { [weak bezel] in bezel?.orientation = $0 }
+                device = bezel
+                // The body's own margin. A bezel drawn to the band's edge reads as a screenshot of a
+                // device rather than as a device standing on the panel.
+                inset = Slate.Metric.space3
+            } else {
+                let bare = PhoneSimulatorBareScreen(
+                    frames: model.frames, orientation: orientation,
+                    send: send, onContentSize: observed,
+                )
+                stage.applyOrientation = { [weak bare] in bare?.orientation = $0 }
+                device = bare
+                // NO margin without a body: the bare rect is the picture itself, and insetting it would
+                // be a frame drawn around a stream to stand in for the bezel that failed to load.
+                inset = 0
+            }
+            stage.stageHost.insertSubview(device, at: 0)
+            NSLayoutConstraint.activate(
+                DeviceStageLayout.pin(device, into: stage.stageHost, inset: inset),
             )
-            applyOrientation = { [weak bezel] in bezel?.orientation = $0 }
-            device = bezel
-            // The body's own margin. A bezel drawn to the band's edge reads as a screenshot of a device
-            // rather than as a device standing on the panel.
-            inset = Slate.Metric.space3
-        } else {
-            let bare = PhoneSimulatorBareScreen(
-                frames: model.frames, orientation: orientation,
-                send: send, onContentSize: observed,
-            )
-            applyOrientation = { [weak bare] in bare?.orientation = $0 }
-            device = bare
-            // NO margin without a body: the bare rect is the picture itself, and insetting it would be a
-            // frame drawn around a stream to stand in for the bezel that failed to load.
-            inset = 0
         }
-        stageHost.insertSubview(device, at: 0)
-        NSLayoutConstraint.activate([
-            device.leadingAnchor.constraint(equalTo: stageHost.leadingAnchor, constant: inset),
-            device.trailingAnchor.constraint(equalTo: stageHost.trailingAnchor, constant: -inset),
-            device.topAnchor.constraint(equalTo: stageHost.topAnchor, constant: inset),
-            device.bottomAnchor.constraint(equalTo: stageHost.bottomAnchor, constant: -inset),
-        ])
     }
 
     // MARK: - The stage's other two states
@@ -370,35 +348,24 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
     /// The ORDER is the part worth naming: asked in any other sequence the stage prints "no video" for
     /// the 90 ms before the first keyframe of every single selection.
     private func followStageState() {
-        stageGeneration &+= 1
-        let generation = stageGeneration
-        // All three are READ for the tracking edge and none is kept: ``refreshVeil`` asks the model for
-        // the current values, so a copy taken here would be one the cancelled sleep could return to
-        // stale.
-        withObservationTracking {
-            _ = self.model.isAwaitingStream
-            _ = self.model.hasVideo
-            _ = self.model.selection
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == stageGeneration else { return }
-                    followStageState()
-                }
+        // THREE READS, and only the first is used: the other two are here for the tracking EDGE alone,
+        // because ``refreshVeil()`` asks the model for their current values itself — it also runs from
+        // the delayed sleep below, and a copy taken on this pass would be stale by then.
+        ObservationFollow.arm(self) { stage in
+            (
+                isAwaiting: stage.model.isAwaitingStream, hasVideo: stage.model.hasVideo,
+                selection: stage.model.selection,
+            )
+        } apply: { stage, reading in
+            // The delay, the `showsLoading` flag it sets and the by-value guard are ``DeviceStageVeil``'s.
+            // The delay itself is ``SimulatorPresentation/loadingVeil(isAwaiting:)``'s — 400 ms measured
+            // against this server's 0.09 s first keyframe, which is why the panels share the RULE and
+            // not the figure.
+            stage.veil.settle(isAwaiting: reading.isAwaiting) { [weak stage] in
+                stage?.refreshVeil()
             }
+            stage.refreshVeil()
         }
-        // Keyed on the FLAG, which gives the delay `.task(id:)`'s cancellation for free: a wait for a
-        // stream that arrived in time is cancelled before its veil is ever written. The delay itself is
-        // ``SimulatorPresentation/loadingVeil(isAwaiting:)``'s — 400 ms measured against this server's
-        // 0.09 s first keyframe, which is why the panels share the RULE and not the figure.
-        let isAwaiting = model.isAwaitingStream
-        veilLoop.keyed(on: isAwaiting ? "awaiting" : "settled") { [weak self] in
-            guard let state = await SimulatorPresentation.loadingVeil(isAwaiting: isAwaiting)
-            else { return }
-            self?.showsLoading = state
-            self?.refreshVeil()
-        }
-        refreshVeil()
     }
 
     /// A stage with no picture on it says WHICH of the two reasons that is. Covering the stage rather
@@ -407,15 +374,9 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
     /// header, which keeps the way out reachable while it is up (user-directed 2026-08-04 — a load with
     /// no end and no exit was the reported bug).
     private func refreshVeil() {
-        let state = SimulatorPresentation.stage(
-            isSelected: model.selection != nil, showsLoading: showsLoading,
-            isAwaitingStream: model.isAwaitingStream, hasVideo: model.hasVideo,
-        )
-        // The GUARD comes before the build, and the comparison is by VALUE: this is called from two
-        // followers and from the end of every delayed sleep, so building first would restart the spinner
-        // several times a second for a veil that never changed.
-        guard veilState != state else { return }
-        veilState = state
+        // `nil` means "already wearing it" — the guard is by VALUE and it lives in the latch, because
+        // this is called from two followers and from the end of every delayed sleep.
+        guard let state = veil.reading(for: model) else { return }
 
         let wanted: UIView?
         switch state {
@@ -534,40 +495,36 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
 
     /// The latches, and the one plate whose glyph does not change with them.
     private func followControls() {
-        controlsGeneration &+= 1
-        let generation = controlsGeneration
-        var isOverridden = false
-        var pinned: SimulatorCoordinate?
-        var isSending = false
-        var isConsoleOpen = false
-        var isTyping = false
-        withObservationTracking {
-            isOverridden = self.model.isStatusBarOverridden
-            pinned = self.model.pinnedLocation
-            isSending = self.model.isSendingFile
-            isConsoleOpen = self.model.isConsoleOpen
-            // The soft keyboard is its OWN observable — the mirror writes `isTyping` back when the
-            // system's dismiss gesture takes the keyboard down, so a plate lit off the model's state
-            // alone would stay lit over a keyboard that is not there.
-            isTyping = DeviceSoftKeyboard.shared.isTyping
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == controlsGeneration else { return }
-                    followControls()
-                }
-            }
-        }
-        statusBar.active = isOverridden
-        statusBar.slateHelp(SimulatorPresentation.Toolbar.statusBar(isOverridden: isOverridden).help)
-        location.active = pinned != nil
-        location.slateHelp(SimulatorPresentation.Toolbar.location(isPinned: pinned != nil).help)
-        console.active = isConsoleOpen
-        console.slateHelp(SimulatorPresentation.Toolbar.console(isOpen: isConsoleOpen).help)
-        keyboard.active = isTyping
+        ObservationFollow.arm(self) { stage in
+            (
+                isOverridden: stage.model.isStatusBarOverridden,
+                pinned: stage.model.pinnedLocation,
+                isSending: stage.model.isSendingFile,
+                isConsoleOpen: stage.model.isConsoleOpen,
+                // The soft keyboard is its OWN observable — the mirror writes `isTyping` back when the
+                // system's dismiss gesture takes the keyboard down, so a plate lit off the model's
+                // state alone would stay lit over a keyboard that is not there.
+                isTyping: DeviceSoftKeyboard.shared.isTyping,
+            )
+        } apply: { stage, reading in
+            let isOverridden = reading.isOverridden
+            let isPinned = reading.pinned != nil
+            let isConsoleOpen = reading.isConsoleOpen
+            stage.statusBar.active = isOverridden
+            stage.statusBar.slateHelp(
+                SimulatorPresentation.Toolbar.statusBar(isOverridden: isOverridden).help,
+            )
+            stage.location.active = isPinned
+            stage.location.slateHelp(
+                SimulatorPresentation.Toolbar.location(isPinned: isPinned).help,
+            )
+            stage.console.active = isConsoleOpen
+            stage.console.slateHelp(SimulatorPresentation.Toolbar.console(isOpen: isConsoleOpen).help)
+            stage.keyboard.active = reading.isTyping
 
-        fade(sending, to: isSending ? 1 : 0)
-        setConsole(open: isConsoleOpen)
+            stage.fade(stage.sending, to: reading.isSending ? 1 : 0)
+            stage.setConsole(open: isConsoleOpen)
+        }
     }
 
     private func openLocation() {
@@ -677,21 +634,9 @@ final class PhoneSimulatorStageView: UIView, UIDropInteractionDelegate {
         session.loadObjects(ofClass: URL.self) { [weak self] items in
             MainActor.assumeIsolated {
                 guard let self, let url = items.first as? URL, url.isFileURL else { return }
-                Task { await self.install(url) }
+                Task { [model = self.model] in await DeviceDropInstall.install(url, into: model) }
             }
         }
-    }
-
-    private func install(_ url: URL) async {
-        // ⚠️ The URL carries a sandbox extension that has to be opened before the bytes can be read; the
-        // app is sandboxed, so without this the read fails on every drop from outside it.
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let contents = try? Data(contentsOf: url, options: .mappedIfSafe) else {
-            model.report(SimulatorPresentation.unreadableDrop(url.lastPathComponent))
-            return
-        }
-        await model.send(file: url, contents: contents)
     }
 
     /// The drop affordance is a BORDER, not a dimming veil: the point of dropping onto a live screen is

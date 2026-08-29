@@ -35,7 +35,6 @@
 // content and nothing with a lifetime longer than it.
 
 #if os(iOS)
-import Observation
 import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskVideoProtocol // ConfigRevision — the config-file edge the tracked read arms on
@@ -72,6 +71,13 @@ public final class WorkspaceRootViewController: UIViewController {
     /// ``CheatSheetContent``.
     private var cheatSheet: UIViewController?
 
+    /// The "are you sure you want to close this?" alert, driven off the store's park. The SECOND
+    /// natively-presented overlay, and presented for the reason the cheat sheet is: it is summoned by a
+    /// deliberate gesture rather than raised by a remote program, so the layer's drop-a-second-present
+    /// hazard cannot reach it. It follows the store itself — this controller only tells it where to
+    /// present from.
+    private let closeConfirmation: PhoneCloseConfirmation
+
     /// The values ``applyChrome()`` last actuated. A re-arm of the observation tracker fires on any
     /// touched field, and most re-arms change none of these.
     private var appliedSidebarCollapsed: Bool?
@@ -102,7 +108,13 @@ public final class WorkspaceRootViewController: UIViewController {
     /// while this is `false`, which is what makes ``viewDidAppear(_:)``'s single re-apply enough.
     private var canPresent = false
 
-    public init(
+    /// ⚠️ `package`, NOT `public`, and the compiler is the one that decided. `WorkspaceChromeState` is
+    /// `package` (`App/WorkspaceChromeState.swift:20`), so a `public init` taking one does not compile
+    /// — "initializer cannot be declared public because its parameter uses a package type". The right
+    /// fix is to lower the initializer rather than to raise the chrome: the only caller is
+    /// `PhoneSceneDelegate.swift:58`, inside this very module, so nothing outside the package ever
+    /// built one. The CLASS stays `public` because the app target names the type.
+    package init(
         store: WorkspaceStore, connection: AppConnection, overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState, preferences: PreferencesStore,
     ) {
@@ -116,6 +128,7 @@ public final class WorkspaceRootViewController: UIViewController {
             store: store, connection: connection, chrome: chrome, overlay: overlay,
         )
         overlayLayer = PhoneOverlayLayerView(store: store, connection: connection, overlay: overlay)
+        closeConfirmation = PhoneCloseConfirmation(store: store)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -129,6 +142,7 @@ public final class WorkspaceRootViewController: UIViewController {
         view.backgroundColor = Slate.Native.Surface.field
 
         mountSplit()
+        mountConnectionIsland()
         mountOverlayLayer()
 
         wireOverlayCwdResolver()
@@ -142,15 +156,18 @@ public final class WorkspaceRootViewController: UIViewController {
     /// policy and the split's display mode, both of which work on a view that has not been shown —
     /// but left the two presentations for here.
     ///
-    /// This deliberately re-applies rather than calling ``follow()`` again: `withObservationTracking`
-    /// arms ONE registration per call and the re-arm happens inside `onChange`, so a second `follow()`
-    /// would leave two live trackers and double every subsequent re-arm. The tracker armed at load is
-    /// still the live one; this just actuates what it already read.
+    /// This deliberately re-applies rather than calling ``follow()`` again: arming is NOT idempotent, so
+    /// a second `follow()` would leave two live chains and double every subsequent re-arm. The arm taken
+    /// at load is still the live one; this just actuates what it already read.
     override public func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard !canPresent else { return }
         canPresent = true
         reapply()
+        // Armed HERE and once, for the same reason `canPresent` exists: the first reading applies
+        // synchronously, and a park restored under a launch would try to present before there is a
+        // presenter in the hierarchy.
+        closeConfirmation.start(host: self)
     }
 
     /// Actuate against the CURRENT values, outside the tracker. Reading here does not subscribe, and
@@ -187,6 +204,29 @@ public final class WorkspaceRootViewController: UIViewController {
         split.didMove(toParent: self)
     }
 
+    /// The link island, into the CONTENT column's toolbar.
+    ///
+    /// Mounted from here rather than from `ContentColumnViewController` because the item belongs to the
+    /// chrome cluster and that controller is the canvas cluster's — it owns the `navigationItem` the
+    /// split gives it, and this owns what goes in it. The two halves meet at exactly this line, which is
+    /// the arrangement that file's own header describes.
+    ///
+    /// TRAILING, and alone there: it is the one item on the row that is a READING rather than a verb, and
+    /// the toolbar's leading edge belongs to the split's own column-toggle button on a compact width.
+    /// Held only by the bar item — a `UIBarButtonItem` retains its custom view, and the island's live
+    /// observation is retained by the subscription rather than by a handle, so a second stored reference
+    /// here would only be a second thing to keep in step.
+    private func mountConnectionIsland() {
+        let island = ConnectionIslandView(
+            store: store,
+            connection: connection,
+            // The tap opens the Connect editor, which is the same overlay the palette's "Connect to
+            // Host…" row reaches — one door, two ways in.
+            onConnect: { [overlay] in overlay.openConnect() },
+        )
+        content.navigationItem.rightBarButtonItem = UIBarButtonItem(customView: island)
+    }
+
     /// The overlay layer sits ABOVE the split and below nothing — it is the last thing in this
     /// controller's hierarchy, so a card always covers the columns. It is a passthrough view: hit
     /// testing falls through wherever it is not drawing, which is what lets it stay mounted while the
@@ -207,36 +247,39 @@ public final class WorkspaceRootViewController: UIViewController {
 
     // MARK: - Following the shared chrome
 
-    /// Re-arm on every field this controller actuates from, then actuate. The tree's UIKit idiom
-    /// (`MacTitlebarBand.follow()`): `withObservationTracking` fires ONCE, so the re-arm is the
-    /// subscription, and the `DispatchQueue.main.async` hop is required because `onChange` runs
-    /// INSIDE the mutation — reading a value there gets the old one.
+    /// Everything this controller actuates from, in one reading. A struct rather than a tuple because
+    /// five fields past three stop being readable at the `apply` end.
+    private struct Chrome {
+        let sidebarCollapsed: Bool
+        let panelCollapsed: Bool
+        let cheatSheetVisible: Bool
+        let tabCount: Int
+        let autoHide: AutoHideTabsPanelMode
+    }
+
+    /// Re-arm on every field this controller actuates from, then actuate — through the tree's one
+    /// spelling of that, ``ObservationFollow``. Armed once from `viewDidLoad`, and never re-armed: the
+    /// subject never moves, so the handle is discarded and the arm ends with this controller.
     private func follow() {
-        var sidebarCollapsed = false
-        var panelCollapsed = false
-        var cheatSheetVisible = false
-        var tabCount = 0
-        var autoHide = AutoHideTabsPanelMode.default
-        withObservationTracking {
-            sidebarCollapsed = chrome.sidebarCollapsed
-            panelCollapsed = chrome.codeSidebarCollapsed
-            cheatSheetVisible = overlay.cheatSheetVisible
-            tabCount = store.tree.activeSession?.tabs.count ?? 0
-            // ⚠️ INSIDE the tracked block, and that placement is the whole point — the read below is
-            // what arms the tracker on ``ConfigRevision``, the only observable edge a config-file edit
-            // has. Hoisted out (read where the policy runs, say) it observes nothing and a settings
-            // flip stays invisible until something unrelated happens to wake this.
-            autoHide = autoHideTabsPanel
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.follow() }
-            }
+        ObservationFollow.arm(self) { root in
+            Chrome(
+                sidebarCollapsed: root.chrome.sidebarCollapsed,
+                panelCollapsed: root.chrome.codeSidebarCollapsed,
+                cheatSheetVisible: root.overlay.cheatSheetVisible,
+                tabCount: root.store.tree.activeSession?.tabs.count ?? 0,
+                // ⚠️ INSIDE the read, and that placement is the whole point — this is what arms the
+                // tracker on ``ConfigRevision``, the only observable edge a config-file edit has. Moved
+                // into `apply` (read where the policy runs, say) it observes nothing and a settings flip
+                // stays invisible until something unrelated happens to wake this.
+                autoHide: root.autoHideTabsPanel,
+            )
+        } apply: { root, chrome in
+            root.applyAutoHidePolicy(mode: chrome.autoHide, tabCount: chrome.tabCount)
+            root.applyChrome(
+                sidebarCollapsed: chrome.sidebarCollapsed, panelCollapsed: chrome.panelCollapsed,
+                cheatSheetVisible: chrome.cheatSheetVisible,
+            )
         }
-        applyAutoHidePolicy(mode: autoHide, tabCount: tabCount)
-        applyChrome(
-            sidebarCollapsed: sidebarCollapsed, panelCollapsed: panelCollapsed,
-            cheatSheetVisible: cheatSheetVisible,
-        )
     }
 
     /// Actuate the split's display mode and the two presentations, each guarded against a value that

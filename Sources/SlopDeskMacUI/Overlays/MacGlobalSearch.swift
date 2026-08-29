@@ -42,8 +42,10 @@ final class MacGlobalSearchView: NSView, NSTextFieldDelegate {
     /// The live query and flags. Mirrors of the store's retained ones, restored on the way in so a
     /// re-open shows the last search rather than a blank field over stale results.
     private var query = ""
-    private var caseSensitive = false
-    private var isRegex = false
+    /// Which mode chips are lit, and what a tap on one means — ``OverlayFindModes``. The pill→flag map
+    /// and the "whole-word is not offered on a scrollback mirror" rule are ITS, so the phone's card
+    /// cannot answer either question differently.
+    private var modes = OverlayFindModes()
     /// Which tab groups are folded shut. Keyed by ``PaneID``, so a live re-run that re-orders or
     /// drops groups carries the intent to the panes that survived and lets a vanished one fall away.
     private var collapse = GlobalSearchCollapseState()
@@ -177,10 +179,11 @@ final class MacGlobalSearchView: NSView, NSTextFieldDelegate {
     /// spend a full cross-tab scan to arrive at what is already on screen.
     func begin() {
         query = store.globalSearchQuery
-        caseSensitive = store.globalSearchCaseSensitive
-        isRegex = store.globalSearchRegex
+        modes = OverlayFindModes(
+            caseSensitive: store.globalSearchCaseSensitive, isRegex: store.globalSearchRegex,
+        )
         field.stringValue = query
-        for (mode, pill) in pills { pill.setOn(isOn(mode)) }
+        for (mode, pill) in pills { pill.setOn(modes.isOn(mode)) }
         window?.makeFirstResponder(field)
         render()
     }
@@ -249,28 +252,17 @@ final class MacGlobalSearchView: NSView, NSTextFieldDelegate {
         return true
     }
 
+    /// A chip. `.wholeWord` moves nothing — the cross-tab search runs over a scrollback mirror rather
+    /// than over libghostty's own buffer, and the two do not agree about a word boundary — so the guard
+    /// is what stops an inert tap from re-running the query.
     private func toggle(_ mode: FindModePill) {
-        switch mode {
-        case .caseSensitive: caseSensitive.toggle()
-        case .regex: isRegex.toggle()
-        // Not offered here — the cross-tab search runs over a scrollback mirror rather than over
-        // libghostty's own buffer, and the two do not agree about a word boundary.
-        case .wholeWord: return
-        }
-        pills[mode]?.setOn(isOn(mode))
+        guard modes.toggle(mode) else { return }
+        pills[mode]?.setOn(modes.isOn(mode))
         rerun()
     }
 
-    private func isOn(_ mode: FindModePill) -> Bool {
-        switch mode {
-        case .caseSensitive: caseSensitive
-        case .regex: isRegex
-        case .wholeWord: false
-        }
-    }
-
     private func rerun() {
-        store.runGlobalSearch(query: query, caseSensitive: caseSensitive, isRegex: isRegex)
+        store.runGlobalSearch(query: query, caseSensitive: modes.caseSensitive, isRegex: modes.isRegex)
         // Straight to `draw()`, not left to the observation edge: the summary line and the zero state
         // are worded from the QUERY as well as from the results, and a keystroke that leaves the
         // result set identical — clearing the last character of a search that already matched nothing
@@ -516,12 +508,9 @@ final class MacGlobalSearchRowView: NSView {
 
         let height = heightAnchor.constraint(equalToConstant: Slate.Metric.heightRow)
         heightConstraint = height
+        NSLayoutConstraint.activate(content.slateEdges(of: self))
         NSLayoutConstraint.activate([
             height,
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.topAnchor.constraint(equalTo: topAnchor),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor),
             disclosure.widthAnchor.constraint(equalToConstant: Slate.Typeface.body),
         ])
     }

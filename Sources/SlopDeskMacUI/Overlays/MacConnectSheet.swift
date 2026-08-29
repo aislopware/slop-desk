@@ -73,23 +73,20 @@ final class MacConnectFormController: NSViewController, NSTextFieldDelegate {
     private let warningText = NSTextField(wrappingLabelWithString: "")
     private let connect = NSButton()
 
-    /// The in-flight connect Task. Stored so Cancel and teardown CANCEL it — a fire-and-forget one
-    /// outlives the sheet and, when a slow connect finally resolves, dismisses a freshly REOPENED sheet
-    /// mid-edit. Belt and suspenders with the ``OverlayCoordinator/connectGeneration`` guard below.
-    private var connectTask: Task<Void, Never>?
+    /// The commit, and both of its guards — ``OverlayConnectFlow``. The in-flight Task is stored there
+    /// rather than here so the phone's sheet cannot spell the same ladder a second time; releasing this
+    /// controller releases the flow, whose own teardown cancels an attempt still in the air.
+    private let flow: OverlayConnectFlow
 
     init(connection: AppConnection, coordinator: OverlayCoordinator) {
         self.connection = connection
         self.coordinator = coordinator
+        flow = OverlayConnectFlow(connection: connection, coordinator: coordinator)
         super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { nil }
-
-    deinit {
-        connectTask?.cancel()
-    }
 
     override func loadView() {
         let title = NSTextField(labelWithString: ConnectForm.title)
@@ -223,29 +220,18 @@ final class MacConnectFormController: NSViewController, NSTextFieldDelegate {
         )
     }
 
-    /// Validate-then-connect: no-op unless the form parses (the button is disabled then too), then fire
-    /// the app's `connect()`. Only a SUCCESSFUL connect closes the sheet. The close is DOUBLE-guarded —
-    /// the Task is stored and cancelled on Cancel/teardown, AND the completion only closes if the
-    /// coordinator's generation still matches the presentation this Task started under.
+    /// Validate-then-connect, through ``OverlayConnectFlow``. Only a SUCCESSFUL connect closes the sheet,
+    /// and the close is double-guarded there — read that type's header for both guards.
     @objc
     private func runConnect() {
-        guard connection.canConnect else { return }
-        connectTask?.cancel()
-        let generation = coordinator.connectGeneration
-        connectTask = Task { [connection, coordinator] in
-            await connection.connect()
-            guard !Task.isCancelled else { return }
-            guard ConnectPresentation.shouldCloseAfterConnect(status: connection.status) else { return }
-            coordinator.closeConnect(ifCurrent: generation)
-        }
+        flow.start()
     }
 
-    /// Cancel: kill the in-flight connect Task (its completion must never fire) and flip the flag. The
-    /// scene edge that follows orders the sheet out.
+    /// Cancel: kill the in-flight connect attempt (its completion must never fire) and flip the flag.
+    /// The scene edge that follows orders the sheet out.
     @objc
     private func runCancel() {
-        connectTask?.cancel()
-        connectTask = nil
+        flow.cancel()
         coordinator.closeConnect()
     }
 

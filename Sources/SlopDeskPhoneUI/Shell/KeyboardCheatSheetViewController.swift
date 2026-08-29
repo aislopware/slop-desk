@@ -15,8 +15,12 @@
 // presentation exists because a summoned card has to look like it belongs to the workspace it floats
 // over; on a phone there is no workspace visible around it — the sheet IS the screen — and the
 // platform's own sheet brings the grabber, the swipe-down dismissal and the safe-area insets a
-// hand-rolled card would have to re-earn. It is also why this one surface is a `UIViewController`
-// while every other overlay is a view in ``PhoneOverlayLayerView``.
+// hand-rolled card would have to re-earn. It is also why this surface is a `UIViewController` rather
+// than a view in ``PhoneOverlayLayerView`` — as is ``PhoneCloseConfirmation``, the other natively
+// presented one, for the sibling reason: a destructive confirmation should be the platform's own
+// modal. Both are SUMMONED by a deliberate gesture, which is what lets them be presented at all; the
+// layer exists for the surfaces a remote program can raise at any moment, and UIKit drops a second
+// `present(_:animated:)`.
 //
 // ⚠️ `cheatSheetVisible` IS `private(set)` ON THE COORDINATOR, so the shell can only ever be told
 // about a dismissal, never infer one. ``onDismiss`` must fire for the swipe and for a hardware Esc

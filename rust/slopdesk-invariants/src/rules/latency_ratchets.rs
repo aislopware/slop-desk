@@ -93,9 +93,9 @@ pub fn the_mirror_topology_is_projected_once(tree: &Tree) -> Report {
 ///    ms when it MISSES — and a miss is the state every keystroke passes through. Both views read
 ///    it three times per pass (the emptiness test, the `animation(value:)` key, the `ForEach`), so
 ///    one console repaint cost 2.3–4.5 ms of main thread, and the drawer repaints on every arriving
-///    line. The fix is one `let` threaded into `rows(_:)`; the gate is that `rows` stays a FUNCTION
-///    taking the derived rows, because a `private var rows` can only have reached for `visible`
-///    itself.
+///    line. The fix is one derivation threaded into whatever draws; the gate is that the shared
+///    predicate is CALLED once, because a second caller can only be a second reader that reached
+///    for the filter itself.
 ///
 /// 2. THE DEVICE LISTS. The same rule one register down — `matches` answered an emptiness test and
 ///    then built the sections from two separate derivations, at ~1.6 µs per
@@ -110,11 +110,14 @@ pub fn the_mirror_topology_is_projected_once(tree: &Tree) -> Report {
 /// The two `visible.isEmpty` readings are banned by SHAPE. A shape ban cannot see an intent, but
 /// here the shape IS the defect: there is no reading of this property that costs less than the
 /// whole filter, so asking it a yes/no question is asking for the 600-row scan and throwing the
-/// rows away. The ONE surviving read outside the `let` is the Copy-console verb, and that one is
-/// inside a `Button` ACTION closure, so it happens on a tap rather than on a pass.
+/// rows away. The ONE surviving read outside the binding is the Copy-console verb, and that one is
+/// inside an action closure, so it happens on a tap rather than on a pass.
 ///
-/// BREAK-TESTED against the real tree on 2026-08-22, each rule individually. All seven fire, each
-/// on its own file only, and the restored tree reads 0.
+/// BREAK-TESTED against the real tree on 2026-08-22, each rule individually. All seven fired, each
+/// on its own file only, and the restored tree read 0. Re-aimed and re-break-tested 2026-08-28 for
+/// the `UIKit` port: the six `SwiftUI`-shaped claims collapsed into FOUR counted derivations, and
+/// the framework-blind bans carried over word for word. The ⚠️ block below records why, and
+/// `a_projection_asked_twice_is_red` seeds the drift in its new spelling.
 #[must_use]
 pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
     /// The two device consoles, whose `visible` is a filter over 600 retained lines.
@@ -153,25 +156,41 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
                       derivation of `sections`",
         },
     ];
-    // ⚠️ THE SIX CLAIMS BELOW ARE SHAPE-STALE, NOT PATH-STALE, AND THAT IS A DIFFERENT DEBT. The
-    // 2026-08-28 re-aim moved them onto the live `Phone*` consoles and lists, and they went from
-    // "… is gone" to red on the real files — which is the honest verdict, but not yet the right
-    // one. `private func rows(_ shown:)` and `let shown = visible` are SwiftUI spellings: they pin
+    // ⚠️ THE SIX CLAIMS BELOW WERE SHAPE-STALE, AND 2026-08-28 CHOSE A FRAMEWORK-BLIND SHAPE RATHER
+    // THAN A SECOND FRAMEWORK'S ONE. `private func rows(_ shown:)` and `let shown = visible` pinned
     // "bind the projection once" by pinning the `@ViewBuilder` helper that took it as a parameter,
-    // because in a `body` there was nowhere else to put the binding. UIKit has somewhere else — the
-    // snapshot handed to a diffable data source — so the MEASUREMENT these rules protect
-    // (0.78–1.50 ms per reader over 600 rows) is still live while the shape it was pinned by is
-    // not. Re-aiming them means choosing the UIKit spelling of the same guarantee, which is a
-    // design call for whoever lands the console's data source, not a rename. The third claim in
-    // each loop, the `visible.isEmpty` ban, is framework-blind and PASSES on the UIKit halves
-    // already — proof that the guarantee survived the port and only its pin did not.
+    // because in a `body` there was nowhere else to put a binding. UIKit has somewhere else — the
+    // snapshot handed to a diffable data source — so the MEASUREMENT those rules protect
+    // (0.78–1.50 ms per reader over 600 rows) outlived the spelling that pinned it.
+    //
+    // The obvious re-aim, `^ *let shown = …Presentation\.visible\(`, was REJECTED: it is the same
+    // mistake one framework later. The four files already disagree about the binding's ARRANGEMENT
+    // for reasons that are not drift — the simulator console assigns into a `var shown` declared
+    // outside its `withObservationTracking` block so the tracked read is the projection itself,
+    // while the other three bind a `let` at the top of their apply/refill pass. Pinning the
+    // assignment would print red on a file that is correct.
+    //
+    // So the pin is the DERIVATION, counted: the shared predicate is called EXACTLY ONCE per file.
+    // That is what "read once per pass" always meant, and it is the one spelling neither framework
+    // owns. Zero means the file re-rolled its own filter or stopped consulting the shared one — the
+    // 1.6 µs-per-field scan back inline, where nobody measures it. Two means the second derivation
+    // is back, which is the original defect verbatim, whatever the arrangement around it. What the
+    // rows are threaded INTO is then free to be a `@ViewBuilder`, a diffable snapshot, or whatever
+    // the next port brings, because the cost this rule guards is paid at the call, not at the
+    // consumer. The `visible.isEmpty` ban stays exactly as written: it is already framework-blind,
+    // and it passed unchanged across the whole port — proof that the guarantee survived and only
+    // its pin did not.
     for console in CONSOLES {
-        claims.push(Claim::Matches {
+        claims.push(Claim::Exactly {
             path: console,
-            pattern: r"^ *private func rows\(_ shown: \[DeviceLogLine\]\)",
+            // `Console.visible` on the simulator side, bare `visible` on the android one — the
+            // optional segment is the two modules' own naming, not a wildcard over the predicate.
+            pattern: r"Presentation\.(Console\.)?visible\(",
+            count: 1,
             view: View::Code,
-            message: "a device console's rows() stopped taking the derived lines — a `private var rows` \
-                      re-runs the 600-row filter a second time",
+            message: "a device console derives its visible lines {found} times, not once — a second call is \
+                      the 0.78–1.50 ms filter back on a second reader, and none is the filter re-rolled \
+                      inline (docs/55 §4c)",
         });
         claims.push(Claim::Lacks {
             path: console,
@@ -180,21 +199,15 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
             message: "a device console asks `visible.isEmpty` — that runs the whole 600-row filter to \
                       answer a Bool (docs/55 §4c)",
         });
-        claims.push(Claim::Matches {
-            path: console,
-            pattern: r"^ *let shown = visible$",
-            view: View::Code,
-            message: "a device console's content() stopped binding `visible` once — the 0.78–1.50 ms filter \
-                      is back on every reader",
-        });
     }
     for list in LISTS {
-        claims.push(Claim::Matches {
+        claims.push(Claim::Exactly {
             path: list,
-            pattern: r"^ *private func list\(_ shown: \[(Simulator|Android)Device\]\)",
+            pattern: r"Presentation\.matches\(",
+            count: 1,
             view: View::Code,
-            message: "a device list's list() stopped taking the derived devices — a `private var list` \
-                      re-filters every device a second time",
+            message: "a device list derives its matching devices {found} times, not once — the emptiness \
+                      test and the sections must read ONE derivation, at ~1.6 µs per field per device",
         });
     }
     check_all(tree, &claims)
@@ -435,26 +448,36 @@ mod tests {
         assert!(!super::the_mirror_topology_is_projected_once(&fixture.tree()).is_clean());
     }
 
-    /// The three projections, each bound once.
+    /// The three projections, each derived once.
+    ///
+    /// RESEEDED 2026-08-28 with the `UIKit` spellings, and DELIBERATELY not the same one twice: the
+    /// simulator console assigns into a `var` declared outside its tracking block, the android one
+    /// binds a `let` in its apply pass, and the two lists bind at the top of a refill. A fixture
+    /// that wrote one arrangement four times would let an arrangement-pin back in without the
+    /// break-test noticing — the spread here is what proves the rule counts the DERIVATION rather
+    /// than recognising a line.
     fn projections(fixture: &Fixture) {
-        for console in [
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
-            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
-        ] {
-            fixture.write(
-                console,
-                "        let shown = visible\n    private func rows(_ shown: [DeviceLogLine]) -> some View \
-                 {\n",
-            );
-        }
         fixture
             .write(
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
+                "        var shown: [DeviceLogLine] = []\n        withObservationTracking {\n            \
+                 shown = SimulatorPresentation.Console.visible(all, filter: self.filter)\n        }\n        \
+                 refill(shown, level: chosen)\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
+                "        let shown = AndroidPresentation.visible(all, filter: filter)\n        \
+                 self.empty.alpha = shown.isEmpty ? 1 : 0\n",
+            )
+            .write(
                 "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
-                "    private func list(_ shown: [SimulatorDevice]) -> some View {\n",
+                "        let shown = SimulatorPresentation.matches(all, query: query)\n        if \
+                 shown.isEmpty { return }\n",
             )
             .write(
                 "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
-                "    private func list(_ shown: [AndroidDevice]) -> some View {\n",
+                "        let shown = AndroidPresentation.matches(devices, query: query)\n        let built \
+                 = AndroidDeviceSections.sections(for: shown)\n",
             )
             .write(
                 "Sources/SlopDeskPhoneUI/Overlays/PhoneOpenQuicklyCardView.swift",
@@ -468,11 +491,32 @@ mod tests {
         projections(&fixture);
         assert!(super::three_projections_read_once_per_pass(&fixture.tree()).is_clean());
 
-        // The emptiness test, which runs the whole 600-row filter to answer a Bool.
-        fixture.write(
+        // A SECOND derivation on a console — the emptiness test asking the filter for itself
+        // instead of reading the rows already bound. This is the original defect verbatim, and the
+        // shape it wears here is one no `let`-pin would have caught.
+        projections(&fixture);
+        fixture.append(
             "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
-            "        let shown = visible\n    private func rows(_ shown: [DeviceLogLine]) -> some View \
-             {\nif visible.isEmpty { return empty }\n",
+            "        if AndroidPresentation.visible(all, filter: filter).isEmpty { return }\n",
+        );
+        assert!(!super::three_projections_read_once_per_pass(&fixture.tree()).is_clean());
+
+        // And ZERO of them — the filter re-rolled inline, where nobody measures it. The count pins
+        // both sides, because a file that stopped consulting the shared predicate did not get
+        // faster, it just stopped being visible to this rule's other half.
+        projections(&fixture);
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
+            "        let shown = all.filter { $0.name.localizedCaseInsensitiveContains(query) }\n",
+        );
+        assert!(!super::three_projections_read_once_per_pass(&fixture.tree()).is_clean());
+
+        // The emptiness test on the property itself, which runs the whole 600-row filter to answer
+        // a Bool. Framework-blind, and it survived the port unchanged.
+        projections(&fixture);
+        fixture.append(
+            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidConsoleView.swift",
+            "        if visible.isEmpty { return empty }\n",
         );
         assert!(!super::three_projections_read_once_per_pass(&fixture.tree()).is_clean());
 

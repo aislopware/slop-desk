@@ -162,9 +162,7 @@ final class PaneDropOverlayRenderTests: XCTestCase {
         return MacPaneDropReceiver(
             paneID: PaneID(),
             model: PaneDropOverlayModel(),
-            store: store,
-            terminalModel: { nil },
-            overlayCoordinator: nil,
+            deps: PaneCanvasDeps(store: store),
         )
     }
 

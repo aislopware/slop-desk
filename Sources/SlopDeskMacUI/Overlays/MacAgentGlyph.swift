@@ -28,7 +28,7 @@ import SlopDeskWorkspaceModel
 /// moves.
 ///
 /// The characters are the terminal's own dialect — `·` for a resting prompt, `?` for a question
-/// waiting, `●` for an unread finish — exactly what the phone's ``StatusGlyph`` prints, because the
+/// waiting, `●` for an unread finish — exactly what the phone's ``SlateStatusMarkView`` prints, because the
 /// chrome's status voice IS the pane's voice on both platforms.
 @MainActor
 final class MacAgentGlyphView: NSView {
@@ -149,23 +149,13 @@ final class MacAgentSpinnerView: NSView {
         // photographs, so what a snapshot shows IS what Reduce Motion ships.
         let phase = link == nil ? 0 : AgentSpinner.phase(at: Date(), seed: seed)
         let hole = phase * Double(BrailleCell.dotCount)
-        let side = StatusDot.dotDiameter
-        // ⚠️ `fillEllipse` rather than `NSBezierPath(ovalIn:).fill()`: this loop runs on a display
-        // link, so a path object per dot is EIGHT heap allocations (each with its own backing
-        // `CGPath`) per frame per glyph, thrown away before the next tick. Measured in a scratch
-        // `swiftc -O` harness drawing the same eight dots: 28.6 µs/frame with the paths, 22.5 µs
-        // without — a fifth of the frame, for objects nothing reads. The INK still goes through
-        // `withAlphaComponent`/`setFill` on purpose: a `setFillColor(red:green:blue:alpha:)` would
-        // buy the rest of the gap and change the colour space the dot is filled in.
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        for index in 0..<BrailleCell.dotCount {
-            let lit = AgentSpinner.lit(index, hole: hole)
-            guard lit > 0 else { continue }
-            let centre = BrailleCell.position(of: index, in: bounds.size, zoom: 1)
-            tint.withAlphaComponent(lit).setFill()
-            context.fillEllipse(in: CGRect(
-                x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side,
-            ))
-        }
+        // This view IS flipped, so its dots step the same way the geometry numbers them and the walk
+        // needs no mirror — unlike the rail's mark, which is not. The measurement that chose
+        // `fillEllipse` over a path per dot lives with the loop now, in ``SlateVectorDraw``.
+        SlateVectorDraw.brailleCell(
+            into: context, ink: tint.cgColor, hole: hole, box: bounds.size, anchor: .zero,
+            step: 1, zoom: 1,
+        )
     }
 }

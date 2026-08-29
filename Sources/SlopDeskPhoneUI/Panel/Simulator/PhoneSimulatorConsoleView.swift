@@ -30,6 +30,7 @@
 
 #if os(iOS)
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — a keystroke re-follows, so it needs the replacing arm
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
 import SlopDeskWorkspaceCore
@@ -60,10 +61,10 @@ final class PhoneSimulatorConsoleView: UIView, UICollectionViewDelegate {
     private var lines: [UInt64: DeviceLogLine] = [:]
     private var order: [UInt64] = []
 
-    /// ⚠️ `[weak self]` stops the chain when the view dies; it does not SUPERSEDE a live arm. This
-    /// follower is re-run by a keystroke as well as by an arriving line, so without the counter a typed
-    /// filter would leave one extra chain per character, each re-arming on every log line.
-    private var generation = 0
+    /// ⚠️ THIS FOLLOWER IS RE-RUN BY A KEYSTROKE as well as by an arriving line, so it arms
+    /// `replacing:` and the handle is kept for it — without that, a typed filter would leave one extra
+    /// chain per character, each re-arming on every log line.
+    private var linesFollow: ObservationFollow?
 
     init(model: SimulatorSidebarModel) {
         self.model = model
@@ -250,29 +251,28 @@ final class PhoneSimulatorConsoleView: UIView, UICollectionViewDelegate {
 
     /// ONE follower, because one thing is rebuilt: the rows. The level menu and the empty sentence are
     /// both derived from the same pass, so splitting them would be two wake-ups for one arriving line.
+    ///
+    /// ⚠️ CALLED AGAIN BY ``retype(_:)``, which is why it arms `replacing:` — a keystroke re-follows a
+    /// filter, and a plain arm would leave the previous character's chain live.
+    ///
+    /// The `visible` derivation is in `apply` and not in `read`: it is work over an already-read array
+    /// plus the view's own non-observable `filter`, so doing it inside tracking would buy nothing and
+    /// spend the derivation with the registration open.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        var shown: [DeviceLogLine] = []
-        var hasLines = false
-        var isStarted = false
-        var chosen = SimulatorLogLevel.info
-        withObservationTracking {
-            let all = self.model.logLines
-            hasLines = !all.isEmpty
-            isStarted = self.model.isLogStarted
-            chosen = self.model.logLevel
-            shown = SimulatorPresentation.Console.visible(all, filter: self.filter)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        linesFollow = ObservationFollow.arm(self, replacing: linesFollow) { console in
+            (
+                all: console.model.logLines,
+                isStarted: console.model.isLogStarted,
+                chosen: console.model.logLevel,
+            )
+        } apply: { console, reading in
+            let shown = SimulatorPresentation.Console.visible(reading.all, filter: console.filter)
+            console.relevel(reading.chosen)
+            console.refill(
+                shown, hasLines: !reading.all.isEmpty, isStarted: reading.isStarted,
+                level: reading.chosen,
+            )
         }
-        relevel(chosen)
-        refill(shown, hasLines: hasLines, isStarted: isStarted, level: chosen)
     }
 
     /// The level's rows, rebuilt each pass so the check mark follows the model rather than a copy of it.

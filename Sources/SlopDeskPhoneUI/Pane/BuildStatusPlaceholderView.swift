@@ -27,6 +27,7 @@
 
 #if os(iOS)
 import SFSafeSymbols
+import SlopDeskClientCore // BuildStatusPlaceholderCopy — the hint is spelled once, in the floor
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import UIKit
@@ -41,10 +42,6 @@ final class BuildStatusPlaceholderView: UIView {
     /// change after construction — everything else in this panel is a constant string.
     private let dot = UIView()
     private let caption = UILabel()
-
-    /// Guards the observation re-arm against a stale `onChange` firing after this view is gone. Every
-    /// UIKit surface in this target carries one; see the idiom in ``TerminalLeafView``.
-    private var generation = 0
 
     init(model: TerminalViewModel) {
         self.model = model
@@ -88,9 +85,10 @@ final class BuildStatusPlaceholderView: UIView {
         title.textColor = Slate.Native.Text.primary
 
         // The one actionable line in the panel, and the reason the panel exists rather than a blank pane:
-        // it names the script that produces the renderer.
+        // it names the script that produces the renderer. Spelled in the floor, because the path in it
+        // moves whenever that script does.
         let hint = UILabel()
-        hint.text = "Run ThirdParty/ghostty/build-libghostty.sh — the headless build renders this panel."
+        hint.text = BuildStatusPlaceholderCopy.buildHint
         hint.font = .systemFont(ofSize: Slate.Typeface.footnote)
         hint.textColor = Slate.Native.Text.secondary
         hint.textAlignment = .center
@@ -125,8 +123,12 @@ final class BuildStatusPlaceholderView: UIView {
         NSLayoutConstraint.activate([
             column.centerXAnchor.constraint(equalTo: centerXAnchor),
             column.centerYAnchor.constraint(equalTo: centerYAnchor),
-            column.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
-            column.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+            column.leadingAnchor.constraint(
+                greaterThanOrEqualTo: leadingAnchor, constant: Self.sideClearance,
+            ),
+            column.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -Self.sideClearance,
+            ),
         ])
     }
 
@@ -135,6 +137,12 @@ final class BuildStatusPlaceholderView: UIView {
     /// the ladder harder to scan.
     private static let dotDiameter: CGFloat = 7
 
+    /// How far the sentence stays off the pane's edges. Not a spacing rung and not a pane inset: this is
+    /// a READING measure — the width the paragraph is allowed to reach before it starts touching the
+    /// glass — and the Mac twin (``SlopDeskMacUI/MacBuildStatusPlaceholderView``) holds the same 24, so
+    /// the one panel a developer meets when something is already wrong reads identically on both.
+    private static let sideClearance: CGFloat = 24
+
     // MARK: - Following the model
 
     /// Re-reads the two fields that can change and re-arms. `connectionStatus` and `bytesReceived` are the
@@ -142,25 +150,11 @@ final class BuildStatusPlaceholderView: UIView {
     /// and observing anything richer would make the fallback more expensive than the renderer it stands in
     /// for.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        var status: TerminalViewModel.ConnectionStatus?
-        var bytes = 0
-        withObservationTracking {
-            status = model.connectionStatus
-            bytes = model.bytesReceived
-        } onChange: { [weak self] in
-            // The re-arm has to leave the mutation `onChange` runs inside before it reads anything, which
-            // is what the hop buys; the generation is what makes a hop scheduled by a torn-down panel drop
-            // itself rather than resurrect one.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { panel in
+            (status: panel.model.connectionStatus, bytes: panel.model.bytesReceived)
+        } apply: { panel, reading in
+            panel.apply(status: reading.status, bytes: reading.bytes)
         }
-        apply(status: status, bytes: bytes)
     }
 
     private func apply(status: TerminalViewModel.ConnectionStatus?, bytes: Int) {

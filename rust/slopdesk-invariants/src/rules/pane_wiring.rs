@@ -12,6 +12,8 @@ use crate::report::Report;
 use crate::tree::Tree;
 
 const WIRING: &str = "Sources/SlopDeskClientCore/Pane/TerminalPaneWiring.swift";
+/// The leaf's lifecycle, one floor below both shells — and the one caller of the wiring above.
+const LIFECYCLE: &str = "Sources/SlopDeskClientCore/Pane/TerminalLeafLifecycle.swift";
 const ESCAPE_MONITOR: &str = "Sources/SlopDeskClientCore/Input/PaneMoveEscapeMonitorController.swift";
 /// The phone terminal pane's responder.
 ///
@@ -59,12 +61,30 @@ pub fn one_terminal_wiring_and_its_teardown_order(tree: &Tree) -> Report {
             message: "a terminal-wiring decision grew back in a renderer ({files}) — it is \
                       TerminalPaneWiring's, for BOTH halves",
         },
-        // And the leaf must actually drive it. A leaf that quietly re-inlined the wiring would pass
-        // the ban above by spelling the closures without the helper names.
-        Claim::Mentions {
-            path: "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift",
-            names: &["wiring.wire(", "wiring.clear("],
-            message: "the terminal leaf stopped calling {entry} — it wires nothing itself (docs/56 §3)",
+        // And SOMETHING outside the renderers must actually drive it. A leaf that quietly re-inlined
+        // the wiring would pass the ban above by spelling the closures without the helper names.
+        //
+        // ⚠️ RE-AIMED, and the move is the rule's own subject rather than a rename. This pinned the
+        // PHONE LEAF as the caller, which was true only while each shell drove the wiring itself; the
+        // leaf's whole lifecycle has since descended into `TerminalLeafLifecycle` for BOTH shells, so
+        // the caller the rule wants is one floor down and there is exactly one of it. Pinning a shell
+        // here now would be pinning the duplication the descent removed.
+        //
+        // `Matches` over `Mentions`: the latter reads RAW, so this file's own prose naming
+        // `wiring.wire(` would satisfy it — a rule that its own documentation can turn green.
+        Claim::Matches {
+            path: LIFECYCLE,
+            pattern: r"wiring\.wire\(",
+            view: View::Code,
+            message: "the terminal lifecycle stopped calling wiring.wire( — a renderer is wiring itself \
+                      again (docs/56 §3)",
+        },
+        Claim::Matches {
+            path: LIFECYCLE,
+            pattern: r"wiring\.clear\(",
+            view: View::Code,
+            message: "the terminal lifecycle stopped calling wiring.clear( — five wire/clear pairs are \
+                      retain-cycle obligations, not layout (docs/56 §3)",
         },
         Claim::Names {
             path: WIRING,
@@ -422,10 +442,9 @@ mod tests {
 ";
 
     fn wiring(fixture: &Fixture) {
-        fixture.write(super::WIRING, CLEAR).write(
-            "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift",
-            "wiring.wire(store)\nwiring.clear()\n",
-        );
+        fixture
+            .write(super::WIRING, CLEAR)
+            .write(super::LIFECYCLE, "wiring.wire(store)\nwiring.clear(live: live)\n");
     }
 
     #[test]
@@ -448,6 +467,19 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskMacUI/Terminal/MacTerminalLeaf.swift",
             "func connectIfNeeded() {}\n",
+        );
+        assert!(!super::one_terminal_wiring_and_its_teardown_order(&fixture.tree()).is_clean());
+
+        // The lifecycle stops driving it — the shape the ban above cannot see, because a leaf that
+        // re-inlined the five pairs by hand spells none of the banned names.
+        wiring(&fixture);
+        fixture.write(super::LIFECYCLE, "wiring.wire(store)\n");
+        assert!(!super::one_terminal_wiring_and_its_teardown_order(&fixture.tree()).is_clean());
+
+        // And the file's own PROSE does not count, which is what `Mentions` here used to allow.
+        fixture.write(
+            super::LIFECYCLE,
+            "// The two calls this file owns are `wiring.wire(` and `wiring.clear(`.\n",
         );
         assert!(!super::one_terminal_wiring_and_its_teardown_order(&fixture.tree()).is_clean());
     }

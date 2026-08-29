@@ -53,7 +53,7 @@
 // is what `onRequestBlockNavigator` is bound to — but the Mac had nothing that READ the flag, so
 // `view.commandNavigator` was taken away from the PTY to flip a `Bool` nobody drew. The reader is
 // ``MacCommandNavigatorView`` (`Pane/MacCommandNavigator.swift`), mounted by ``applyNavigator(_:)``
-// below off the same ``follow()`` arm every other piece of chrome rides. `CommandNavigatorView` is
+// below off the same ``followTerminalState()`` arm every other piece of chrome rides. `CommandNavigatorView` is
 // filed `Platform::Both` at `binding_rows.rs:131`, so the AppKit card JOINS the phone's SwiftUI one
 // rather than replacing it (docs/56 §3.5 step 4) — the decisions underneath (the list, the ranking,
 // the clamp, the jump, the words, the two measurements) are shared, and only the drawing is twice.
@@ -77,32 +77,10 @@ import SlopDeskWorkspaceModel // PaneID — the two task keys
 final class MacTerminalLeafView: NSView {
     // MARK: What the leaf was handed
 
-    /// The live workspace store — the dial gate, the per-tab sync-input arming, and what the wiring's
-    /// host-path actions resolve a project key against.
-    private let store: WorkspaceStore
-    /// The scene's overlay coordinator, for the ⇧⌘F escalation and the host-action failure toast.
-    /// `nil` outside the app scene (tests) ⇒ the failure is swallowed, never a crash.
-    private let overlay: OverlayCoordinator?
-    /// The shared chrome model, used ONLY to reveal the right code panel when an open-in-code-panel
-    /// action lands. `nil` ⇒ the file still opens host-side, the panel just is not auto-revealed.
-    private let chrome: WorkspaceChromeState?
-
-    /// This pane's wiring — the find bar, the Secure Keyboard Entry actuator and the Command
-    /// Navigator chrome, plus every callback they are driven by. The SwiftUI half holds the same
-    /// object as `@State`; an AppKit canvas holds it as a stored property. Neither owns a decision in
-    /// it.
-    private let wiring: TerminalPaneWiring
-
-    /// The pane's session handle, or `nil` for a not-yet-live / non-terminal pane. Settable because a
-    /// session ARRIVES under a stable pane id — the SwiftUI half sees that as `live?.id` moving off
-    /// `nil` and re-runs its wiring `.onChange`; this half sees it as ``setLive(_:)``.
-    private var live: LivePaneSession?
-    /// The host-reported working directory (`pane/cwd`, live-set from OSC 7), mirrored onto the model
-    /// so the renderer's ⌘-hover hit-test can resolve a RELATIVE detected path to its absolute form.
-    private var cwd: String?
-    /// The pane's WORKSPACE focus. Drives the renderer's first responder — only the focused pane
-    /// types — and never render-liveness, so an unfocused split sibling keeps repainting.
-    private var isFocused: Bool
+    /// The leaf's whole wiring life — the seven handles it was built with, the `isWired` latch, the
+    /// attach/detach pair, the three pushes and the two trigger keys. Shared with the phone's leaf;
+    /// this file implements ``TerminalLeafHosting`` for it and keeps no decision of its own.
+    private let life: TerminalLeafLifecycle
 
     // MARK: The tree
 
@@ -153,27 +131,8 @@ final class MacTerminalLeafView: NSView {
     /// by a re-attach — must END rather than keep applying beside its replacement. Without that the
     /// chains DOUBLE on every swap and quadruple on the next, which reads as the pane getting slower
     /// the longer it is open and has no crash to find it by. Hence `replacing:` on every arm, and
-    /// ``stop()`` in ``detach()``.
+    /// ``stop()`` in ``unfollowTerminalState()``.
     private var leafFollow: ObservationFollow?
-    /// `controls.auto-secure-input`, as last ACTED on. Kept because the lock is reconciled on the
-    /// EDGE, not on the reading: a config edit to an unrelated key re-runs ``follow()`` and must not
-    /// re-engage a process-global lock the user turned off.
-    private var autoSecureInput = SettingsKey.autoSecureInputEnabled
-    /// `controls.secure-input-indicator` — the chip gate. No edge to speak of; re-reading the pill
-    /// conditions is the whole of applying it.
-    private var secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
-
-    /// The two `.task(id:)` keys, as last acted on. A task fires when its key MOVES, which is the
-    /// whole of ``TerminalLeafPolicy``'s argument: a key that is already the pane's id while the gate
-    /// is shut is a task that ran once, too early, and never again.
-    private var dialKey: PaneID?
-    private var autotypeKey: PaneID?
-    private var dialTask: Task<Void, Never>?
-    private var autotypeTask: Task<Void, Never>?
-
-    /// Whether the wiring is installed. The wiring is idempotent, but re-installing it on every
-    /// window change would also re-arm the observation for no reason.
-    private var isWired = false
 
     // MARK: Occlusion (docs/56 risk 3)
 
@@ -185,32 +144,16 @@ final class MacTerminalLeafView: NSView {
 
     // MARK: - Life
 
-    init(
-        live: LivePaneSession?,
-        isFocused: Bool,
-        cwd: String?,
-        store: WorkspaceStore,
-        overlay: OverlayCoordinator?,
-        chrome: WorkspaceChromeState?,
-        wiring: TerminalPaneWiring = TerminalPaneWiring(),
-    ) {
-        self.live = live
-        self.isFocused = isFocused
-        self.cwd = cwd
-        self.store = store
-        self.overlay = overlay
-        self.chrome = chrome
-        self.wiring = wiring
+    init(_ dependencies: TerminalLeafDependencies) {
+        life = TerminalLeafLifecycle(dependencies)
         super.init(frame: .zero)
-        build()
-        mountSurface()
-        attach()
+        life.start(host: self)
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    private func build() {
+    func buildLeafTree() {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
 
@@ -299,49 +242,25 @@ final class MacTerminalLeafView: NSView {
     /// good.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil, superview == nil {
-            detach()
-        } else if window != nil {
-            attach()
-        }
+        life.viewTreeChanged(hasWindow: window != nil, hasSuperview: superview != nil)
     }
 
-    private func attach() {
-        guard !isWired else { return }
-        isWired = true
-        wiring.wire(
-            live: live, store: store, overlay: overlay, chrome: chrome,
-            autoSecureInput: autoSecureInput,
-        )
-        applyCwd()
-        follow()
-    }
-
-    private func detach() {
-        guard isWired else { return }
-        isWired = false
-        // End the armed observation FIRST: a callback that lands after the wiring is cleared would
-        // re-arm against a model this leaf no longer drives.
+    /// Ends this leaf's tracked read. ``TerminalLeafLifecycle/detach()``'s first step.
+    func unfollowTerminalState() {
         leafFollow?.stop()
         leafFollow = nil
-        dialTask?.cancel()
-        dialTask = nil
-        autotypeTask?.cancel()
-        autotypeTask = nil
-        dialKey = nil
-        autotypeKey = nil
-        // The card is a MODAL over this pane and the leaf is leaving the tree: it goes with it, and
-        // the shield it raised goes with it too. The chrome flag is left alone — it is the wiring's,
-        // and a re-attach re-reads it, so a pane re-parented by a split rearrange comes back with
-        // its navigator still open.
+    }
+
+    /// The card is a MODAL over this pane, so it goes down with the leaf — and the shield it raised
+    /// goes with it.
+    func dropPaneModals() {
         dropNavigator()
-        wiring.clear(live: live)
     }
 
     /// The pane is closed for good: drop the wiring AND the libghostty surface. See
-    /// ``viewDidMoveToWindow()`` for why the second half is not automatic.
+    /// ``TerminalLeafLifecycle`` for why the second half is not automatic.
     func teardown() {
-        detach()
+        life.detach()
         surfaceHost?.detachSurface()
         surfaceHost = nil
         surfaceView?.removeFromSuperview()
@@ -352,54 +271,34 @@ final class MacTerminalLeafView: NSView {
 
     // MARK: - What the mounter pushes
 
-    /// A session arrived, or was swapped under a stable pane id. Re-wires and rebuilds the pixels if
-    /// the model changed, which is the AppKit reading of the SwiftUI half's
-    /// `.onChange(of: live?.id, initial: true)`.
+    /// The model under this pane changed: drop the old pixels, build new ones, and drop the card.
+    ///
+    /// The card holds the OLD model — its block store, its bookmarks — so it cannot be left standing
+    /// over a pane whose session was swapped underneath it. Dropped rather than re-pointed:
+    /// ``followTerminalState()`` rebuilds it against the new model if the chrome flag is still set,
+    /// which is one path instead of two.
+    func mountTerminalSurface() {
+        surfaceHost?.detachSurface()
+        mountSurface()
+        dropNavigator()
+    }
+
+    /// A session arrived, or was swapped under a stable pane id.
     func setLive(_ live: LivePaneSession?) {
-        guard live !== self.live else { return }
-        let hadModel = self.live?.terminalModel
-        if isWired { wiring.clear(live: self.live) }
-        self.live = live
-        if live?.terminalModel !== hadModel {
-            surfaceHost?.detachSurface()
-            mountSurface()
-            // The card holds the OLD model — its block store, its bookmarks — so it cannot be left
-            // standing over a pane whose session was swapped underneath it. Dropped rather than
-            // re-pointed: ``follow()`` below rebuilds it against the new model if the chrome flag is
-            // still set, which is one path instead of two.
-            dropNavigator()
-        }
-        if isWired {
-            wiring.wire(
-                live: live, store: store, overlay: overlay, chrome: chrome,
-                autoSecureInput: autoSecureInput,
-            )
-            applyCwd()
-            follow()
-        }
+        life.setLive(live)
     }
 
     /// The pane's workspace focus moved. `updateNSView` is what SwiftUI would have re-run for this;
     /// an AppKit canvas has none, so the push is explicit (the seam says so at
     /// ``TerminalRendererFactory/make(model:isFocused:)``).
     func setFocused(_ isFocused: Bool) {
-        guard isFocused != self.isFocused else { return }
-        self.isFocused = isFocused
+        guard life.setFocused(isFocused) else { return }
         surfaceHost?.setPaneFocused(isFocused)
     }
 
-    /// The host reported a new cwd (OSC 7). It changes independently of the session id, which is why
-    /// the SwiftUI half gives it its own `onChange` rather than folding it into the wiring's.
+    /// The host reported a new cwd (OSC 7).
     func setCwd(_ cwd: String?) {
-        guard cwd != self.cwd else { return }
-        self.cwd = cwd
-        applyCwd()
-        // The link overlay resolves relative paths against this, and it reads the model rather than
-        // a copy — so nothing else has to be pushed.
-    }
-
-    private func applyCwd() {
-        live?.terminalModel?.linkCwd = cwd
+        life.setCwd(cwd)
     }
 
     // MARK: - Occlusion (docs/56 risk 3)
@@ -496,10 +395,10 @@ final class MacTerminalLeafView: NSView {
         decorations = []
         hintBar = nil
 
-        guard let model = live?.terminalModel else { return }
+        guard let model = life.live?.terminalModel else { return }
 
         let pixels: NSView
-        if let host = TerminalRendererFactory.make(model: model, isFocused: isFocused) {
+        if let host = TerminalRendererFactory.make(model: model, isFocused: life.isFocused) {
             surfaceHost = host
             pixels = host.surfaceView
         } else {
@@ -512,7 +411,7 @@ final class MacTerminalLeafView: NSView {
         // the surface area IS the surface's rect here, since a Mac pane is never letterboxed — so the
         // cell metrics (origin 0,0 = surface top-left) map straight onto them.
         for decoration in [
-            MacLinkHighlightOverlay(model: model, cwd: cwd) as NSView,
+            MacLinkHighlightOverlay(model: model, cwd: life.cwd) as NSView,
             MacPromptJumpFlashOverlay(model: model),
             MacViCursorOverlay(model: model),
             MacHintModeOverlay(model: model),
@@ -557,73 +456,37 @@ final class MacTerminalLeafView: NSView {
     /// to anything `read` touched, so N arms cost N callbacks for one edit and give nothing back —
     /// every read below is a property access on an object this leaf already holds.
     ///
-    /// `replacing:` because this method is also called from ``attach()`` and ``setLive(_:)``: a plain
+    /// `replacing:` because ``TerminalLeafLifecycle`` also calls it on attach and on a session push: a plain
     /// arm would leave the superseded chain live beside the new one. See ``leafFollow``.
-    private func follow() {
+    func followTerminalState() {
         leafFollow = ObservationFollow.arm(self, replacing: leafFollow) { leaf in
-            // The config-file edge. `AppConfig` is a plain locked global, so the two settings below
-            // are not observable on their own — the REVISION is, and reading it here is what makes
-            // a saved config file reconcile every open pane. See ``ConfigRevision``.
-            _ = ConfigRevision.shared.generation
-            // Stored rather than returned because ``pillConditions()`` reads it off `self` on the
-            // very next line — the one write in this block, and it must land before that call.
-            leaf.secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
-            return (
-                auto: SettingsKey.autoSecureInputEnabled,
-                conditions: leaf.pillConditions(),
-                hintsToggled: leaf.live?.terminalModel?.showViKeyHints ?? false,
-                findVisible: leaf.wiring.findBar.visible && leaf.live?.terminalModel != nil,
+            (
+                auto: leaf.life.readAutoSecureInput(),
+                conditions: leaf.life.pillConditions(),
+                hintsToggled: leaf.life.live?.terminalModel?.showViKeyHints ?? false,
+                findVisible: leaf.life.wiring.findBar.visible && leaf.life.live?.terminalModel != nil,
                 // ⌃⌘O toggles the chrome flag through `onRequestBlockNavigator`; THIS read is what
                 // makes the chord actuate. Gated on a live model for the find bar's reason — the
                 // card's whole data source is that model's block store, and a pane with no session
                 // has none.
-                navigatorVisible: leaf.wiring.navigatorChrome.isVisible
-                    && leaf.live?.terminalModel != nil,
-                dial: TerminalLeafPolicy.dialTaskKey(
-                    pane: leaf.live?.id, mayDial: leaf.store.panesMayDial,
-                ),
-                autotype: TerminalLeafPolicy.autotypeTaskKey(
-                    pane: leaf.live?.id,
-                    isTarget: leaf.live?.isAutotypeTarget ?? false,
-                    status: leaf.live?.connection?.status,
-                ),
+                navigatorVisible: leaf.life.wiring.navigatorChrome.isVisible
+                    && leaf.life.live?.terminalModel != nil,
+                keys: leaf.life.readTaskKeys(),
             )
         } apply: { leaf, reading in
             var conditions = reading.conditions
-            // The lock is reconciled only on the AUTO edge: the wiring re-syncs on a pane swap, so
-            // without this an engaged process-global lock would linger past the user turning
-            // `controls.auto-secure-input` off.
-            if reading.auto != leaf.autoSecureInput {
-                leaf.autoSecureInput = reading.auto
-                leaf.wiring.reconcileSecureInput(live: leaf.live, autoSecureInput: reading.auto)
-                // Re-asked OUTSIDE the tracking block on purpose: this is the post-reconcile reading,
-                // and the dependency it would register was already registered by the one in `read`.
-                conditions = leaf.pillConditions()
+            // Re-asked OUTSIDE the tracking block on purpose: this is the post-reconcile reading, and
+            // the dependency it would register was already registered by the one in `read`.
+            if leaf.life.reconcileSecureInput(auto: reading.auto) {
+                conditions = leaf.life.pillConditions()
             }
             leaf.applyChrome(
                 conditions: conditions, hintsToggled: reading.hintsToggled,
                 findVisible: reading.findVisible,
             )
             leaf.applyNavigator(reading.navigatorVisible)
-            leaf.applyTriggers(dial: reading.dial, autotype: reading.autotype)
+            leaf.life.applyTaskKeys(reading.keys)
         }
-    }
-
-    /// Everything the pill gates read, taken once per pass.
-    ///
-    /// Every field is an OBSERVABLE mirror — never the `@ObservationIgnored` `isReadOnly` /
-    /// `isCopyMode` the renderer's keyDown path reads — so reading them HERE is what makes the chips
-    /// light and clear reactively. A not-yet-live pane reads as all-false, which shows no chip.
-    private func pillConditions() -> PaneStatusConditions {
-        guard let model = live?.terminalModel else { return PaneStatusConditions() }
-        return PaneStatusConditions(
-            readOnly: model.readOnlyBadgeActive,
-            copyMode: model.copyModeBadgeActive,
-            hintMode: model.hintMode != nil,
-            secureInput: model.secureInputActive,
-            secureInputIndicator: secureInputIndicator,
-            syncInput: live.map { store.syncInputArmed(for: $0.id) } ?? false,
-        )
     }
 
     // MARK: - The chrome
@@ -647,7 +510,7 @@ final class MacTerminalLeafView: NSView {
         _ conditions: PaneStatusConditions, findVisible: Bool,
     ) -> [MacLeafChipSlot] {
         var slots: [MacLeafChipSlot] = []
-        if PaneStatusPillPresentation.showsViModePill(conditions), live?.terminalModel != nil {
+        if PaneStatusPillPresentation.showsViModePill(conditions), life.live?.terminalModel != nil {
             slots.append(.viMode)
         }
         slots.append(contentsOf: PaneStatusPillPresentation.visible(conditions).map { .pill($0) })
@@ -663,14 +526,9 @@ final class MacTerminalLeafView: NSView {
         for slot in desired where mounted[slot] == nil {
             guard let view = makeChip(slot) else { continue }
             mounted[slot] = view
-            // The insertion point is measured against what is STILL in the stack, which includes
-            // anything currently animating out. Counting only the kept predecessors would put a new
-            // chip above a leaving one and make the column jump.
-            let index = desired.prefix(while: { $0 != slot })
-                .compactMap { mounted[$0] }
-                .compactMap { chipColumn.arrangedSubviews.firstIndex(of: $0) }
-                .max()
-                .map { $0 + 1 } ?? 0
+            let index = LeafChipColumn.insertionIndex(of: slot, in: desired) { other in
+                mounted[other].flatMap { chipColumn.arrangedSubviews.firstIndex(of: $0) }
+            }
             MacLeafChipReveal.present(view, in: chipColumn, at: index, from: .top)
         }
     }
@@ -678,7 +536,7 @@ final class MacTerminalLeafView: NSView {
     private func makeChip(_ slot: MacLeafChipSlot) -> NSView? {
         switch slot {
         case .viMode:
-            guard let model = live?.terminalModel else { return nil }
+            guard let model = life.live?.terminalModel else { return nil }
             // `exitCopyMode()` is the SINGLE exit seam — it also resets the count, the visual mode
             // and the hint bar, so the `×`, `Esc`/`q` and a programmatic dismiss converge on one
             // state rather than on three nearly-identical teardowns.
@@ -686,10 +544,10 @@ final class MacTerminalLeafView: NSView {
         case let .pill(pill):
             return MacPaneStatusPillView(pill: pill, onDismiss: { [weak self] in
                 guard let self else { return }
-                TerminalPaneWiring.dismiss(pill, live: live, store: store)
+                TerminalPaneWiring.dismiss(pill, live: life.live, store: life.store)
             })
         case .find:
-            return MacTerminalFindBar(model: wiring.findBar)
+            return MacTerminalFindBar(model: life.wiring.findBar)
         }
     }
 
@@ -719,9 +577,9 @@ final class MacTerminalLeafView: NSView {
     /// would also strip the card's OWN rows of the tracking areas their hover selection runs on.
     private func applyNavigator(_ wanted: Bool) {
         if wanted, navigator == nil {
-            guard let model = live?.terminalModel else { return }
-            let card = MacCommandNavigatorView(model: model, store: store) { [weak self] in
-                self?.wiring.navigatorChrome.isVisible = false
+            guard let model = life.live?.terminalModel else { return }
+            let card = MacCommandNavigatorView(model: model, store: life.store) { [weak self] in
+                self?.life.wiring.navigatorChrome.isVisible = false
             }
             navigator = card
             cover(card)
@@ -737,13 +595,13 @@ final class MacTerminalLeafView: NSView {
             // The card held the keyboard; the pane has to be given it back explicitly, or the pane
             // the chord was fired from is left unable to type. The store's reclaim is the same seam
             // every other summoned surface closes through.
-            store.reclaimKeyboardFocusInActivePane()
+            life.store.reclaimKeyboardFocusInActivePane()
         }
     }
 
     /// Takes the card down NOW — no fade — and balances the shield.
     ///
-    /// Un-animated because its callers are the torn-down paths (``detach()`` and ``teardown()``),
+    /// Un-animated because its callers are the torn-down paths (``dropPaneModals()`` and ``teardown()``),
     /// where there is nothing left to animate over. A shield left raised by a card removed during
     /// teardown would leave the terminal permanently pointer-deaf, which is why the removal and the
     /// balance are one function rather than two statements anyone could separate.
@@ -753,37 +611,11 @@ final class MacTerminalLeafView: NSView {
         card.removeFromSuperview()
         MacPaneCardShield.lower()
     }
-
-    // MARK: - The two triggers
-
-    /// The AppKit reading of two `.task(id:)`s: a task runs when its key MOVES, and a key that went
-    /// to `nil` cancels rather than starts.
-    private func applyTriggers(dial: PaneID?, autotype: PaneID?) {
-        if dial != dialKey {
-            dialKey = dial
-            dialTask?.cancel()
-            dialTask = nil
-            if dial != nil {
-                let live = live
-                let store = store
-                dialTask = Task { @MainActor in
-                    await TerminalPaneWiring.connectIfNeeded(live: live, store: store)
-                }
-            }
-        }
-        if autotype != autotypeKey {
-            autotypeKey = autotype
-            autotypeTask?.cancel()
-            autotypeTask = nil
-            if autotype != nil {
-                let live = live
-                autotypeTask = Task { @MainActor in
-                    await TerminalPaneWiring.runAutotypeIfRequested(live: live)
-                }
-            }
-        }
-    }
 }
+
+// MARK: - The leaf's framework half
+
+extension MacTerminalLeafView: TerminalLeafHosting {}
 
 // MARK: - What can stand in the column
 

@@ -54,10 +54,10 @@ final class PhoneCodeWorkbenchView: UIView {
     /// Without it the boot reads as black → WebKit's white canvas → workbench.
     private let veil: PhonePanelWaitingView
 
-    /// Supersedes an already-scheduled observation callback after ``teardown()``. Without it a
-    /// dismissed panel's container re-arms tracking on the pool — which is app-lifetime — and keeps
-    /// itself alive to fade a veil nobody can see (docs/62 hazard 2).
-    private var generation = 0
+    /// The veil's following, kept for its ``ObservationFollow/stop()``. This is the case a weak owner
+    /// does not cover: the pool is APP-LIFETIME, so a dismissed panel's container would otherwise go on
+    /// re-arming against it to fade a veil nobody can see (docs/62 hazard 2).
+    private var veilFollow: ObservationFollow?
 
     init(projectRoot: String, url: URL, waitingLabel: String) {
         self.projectRoot = projectRoot
@@ -78,29 +78,25 @@ final class PhoneCodeWorkbenchView: UIView {
     /// Stop following. Called by the surface that mounted this before it lets go, so a swap to another
     /// tab does not leave a tracker armed on the pool.
     func teardown() {
-        generation &+= 1
+        veilFollow?.stop()
+        veilFollow = nil
     }
 
     /// The pooled page, re-parented under this container and re-toned.
     ///
     /// The pool answers with the SAME `WKWebView` for a root it already holds, so a project switch back
-    /// is a re-parent rather than a load — which is the warm swap the pool exists for. Re-parenting a
-    /// `UIView` that still has a superview is legal and is what `addSubview` does; the explicit removal
-    /// is for the constraints, which do not follow it.
+    /// is a re-parent rather than a load — which is the warm swap the pool exists for. Both ends of that
+    /// swap are this view's: the ASK, and the remount note that may owe the keyboard back.
+    ///
+    /// The re-parenting in between is the floor's (``PanelChromeWorkbenchMount/pin(_:in:liftedBy:)``),
+    /// which the two shells had transcribed line for line — nothing in it was UIKit, since `WKWebView`
+    /// is one class on both platforms and the anchors are one Auto Layout. The lift it is given is
+    /// ``CodePanelPresentation``'s one number, named here because this is the view that clips to match
+    /// it.
     private func mountPooledWebView() {
-        let webView = CodeSidebarWebViewPool.shared.webView(for: projectRoot, url: url)
-        webView.underPageBackgroundColor = SlateNativeColor(slateHex: Slate.theme.groundHexValue)
-        webView.removeFromSuperview()
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.topAnchor.constraint(
-                equalTo: topAnchor, constant: -CodePanelPresentation.clippedTitleBarHeight,
-            ),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        let page = CodeSidebarWebViewPool.shared.webView(for: projectRoot, url: url)
+        page.underPageBackgroundColor = SlateNativeColor(slateHex: Slate.theme.groundHexValue)
+        PanelChromeWorkbenchMount.pin(page, in: self, liftedBy: CodePanelPresentation.clippedTitleBarHeight)
         // A (re)mount may owe the keyboard back — the warm-swap focus restore. A first-ever mount has
         // no restore armed, so the call is then a no-op.
         CodeSidebarWebViewPool.shared.noteRemount(projectRoot: projectRoot)
@@ -113,35 +109,28 @@ final class PhoneCodeWorkbenchView: UIView {
     private func mountVeil() {
         veil.backgroundColor = Slate.Native.Surface.field
         addSubview(veil)
-        NSLayoutConstraint.activate([
-            veil.leadingAnchor.constraint(equalTo: leadingAnchor),
-            veil.trailingAnchor.constraint(equalTo: trailingAnchor),
-            veil.topAnchor.constraint(equalTo: topAnchor),
-            veil.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(veil.slateEdges(of: self))
         followVeil()
     }
 
     /// Follow the pooled load state until it lifts.
     ///
-    /// The observation re-arms itself the way every other surface in this target does — the read block
-    /// IS the dependency list, the hop is because `onChange` runs inside the mutation, and the
-    /// generation is what makes ``teardown()`` final.
+    /// ⚠️ `loadState(for:)` IS RESOLVED ONCE, HERE, and deliberately outside the tracked read: the pool
+    /// answers from a dictionary, and `Observation` tracks at property granularity, so looking the state
+    /// up inside `read` would put every OTHER project's load state in this veil's dependency set. What
+    /// the follow watches is the one state object's `veiled`, which is the whole question.
     private func followVeil() {
-        generation &+= 1
-        let generation = generation
         let state = CodeSidebarWebViewPool.shared.loadState(for: projectRoot)
-        var veiled = true
-        withObservationTracking {
-            veiled = state.veiled
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.followVeil()
-                }
-            }
-        }
+        veilFollow = ObservationFollow.arm(
+            self,
+            read: { _ in state.veiled },
+            apply: { view, veiled in view.applyVeil(veiled) },
+        )
+    }
+
+    /// Cross-fade the veil to match the pooled load state. Outside the tracked read, so the animation's
+    /// own reads register nothing.
+    private func applyVeil(_ veiled: Bool) {
         guard veil.isHidden != !veiled else { return }
         if veiled { veil.isHidden = false }
         UIView.animate(

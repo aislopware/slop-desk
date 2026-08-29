@@ -161,17 +161,7 @@ final class MacStatusMarkView: NSView {
             x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side,
         )
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let scale = side / icon.viewBox
-        context.saveGState()
-        context.setStrokeColor(ink.cgColor)
-        context.setLineWidth(icon.strokeWidth * scale)
-        context.setLineCap(.round)
-        context.setLineJoin(.round)
-        for outline in icon.outlines {
-            context.addPath(SVGPath.cgPath(outline, viewBox: icon.viewBox, in: rect))
-            context.strokePath()
-        }
-        context.restoreGState()
+        SlateVectorDraw.stroke(icon, in: rect, ink: ink.cgColor, into: context)
     }
 
     /// The THINKING mark: a braille cell with every dot lit and ONE hole running round it. The hole's
@@ -180,25 +170,15 @@ final class MacStatusMarkView: NSView {
     private func drawSpinner(ink: NSColor, frozen: Bool) {
         let phase = frozen ? 0 : AgentSpinner.phase(at: Date(), seed: seed)
         let hole = phase * Double(BrailleCell.dotCount)
-        let side = StatusDot.dotDiameter
         let box = CGSize(width: StatusDot.footprint, height: StatusDot.footprint)
-        // ⚠️ `fillEllipse` rather than `NSBezierPath(ovalIn:).fill()` — see
-        // ``MacAgentSpinnerView/draw(_:)`` for the measurement. This mark is on the rail, so a
-        // workspace of thinking agents runs this loop once per mark per display refresh.
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        for index in 0..<BrailleCell.dotCount {
-            // `BrailleCell.position` answers in a TOP-DOWN box (the SwiftUI convention it was
-            // written for); this view is bottom-up, so the y is mirrored inside the same box rather
-            // than the cell's geometry being restated.
-            let point = BrailleCell.position(of: index, in: box, zoom: 1)
-            let centre = CGPoint(
-                x: bounds.midX - box.width / 2 + point.x,
-                y: bounds.midY + box.height / 2 - point.y,
-            )
-            ink.withAlphaComponent(AgentSpinner.lit(index, hole: hole)).setFill()
-            context.fillEllipse(in: CGRect(
-                x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side,
-            ))
-        }
+        // `BrailleCell.position` answers in a TOP-DOWN box (the geometry's own convention); this view
+        // is bottom-up, so the dots step the other way from the box's TOP edge — which in this space
+        // is the larger y. The mirror is a sign, not a second copy of the cell.
+        SlateVectorDraw.brailleCell(
+            into: context, ink: ink.cgColor, hole: hole, box: box,
+            anchor: CGPoint(x: bounds.midX - box.width / 2, y: bounds.midY + box.height / 2),
+            step: -1, zoom: 1,
+        )
     }
 }

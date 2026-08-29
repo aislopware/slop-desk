@@ -56,8 +56,15 @@ package enum PaneDropMetrics {
     package static let dockRailMax = metric(SLOPDESK_PANE_DROP_METRIC_DOCK_RAIL_MAX)
 
     /// The RE-SPLIT preview's seam bar — the would-be new divider, drawn along the slab's inner
-    /// edge. A dimension rather than a token because the token ladder (`Slate.Metric`) sits ABOVE
-    /// `SlopDeskClientCore` and cannot be named from here; it is deliberately a step over the
+    /// edge. A dimension rather than a token because every other figure in this file is one and they
+    /// are decided together in Rust — NOT because the ladder is out of reach. ⚠️ This comment used to
+    /// say `Slate.Metric` "sits ABOVE `SlopDeskClientCore` and cannot be named from here", which is
+    /// false in the plainest way: `Package.swift:475` lists `SlopDeskSlate` among this target's
+    /// dependencies, and `Pane/DecorationDivider.swift` spends `Slate.Metric.space2` directly. The
+    /// same sentence was written into `Pane/GuiLeafChromeLayout.swift` and
+    /// `Overlays/OverlayCardLayout.swift`, and in the first it cost a `no-cross-target-clone` red —
+    /// a wrong fact in a header propagates further than a wrong line of code, because the next
+    /// author reads it as settled. It is deliberately a step over the
     /// divider's own dragging width, since this bar is a one-second promise about where a seam will
     /// land rather than the seam itself.
     package static let resplitSeamThickness =

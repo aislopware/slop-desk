@@ -11,10 +11,10 @@
 //   ▣ 34%       ▤ 61%       ▨ 240G      ← the MACHINE: how hard it is working
 //
 // BOTH mac layouts land here in ONE commit deliberately: they are one component seen on two axes, and
-// porting one of them would have left the other's identical ink ladder spelled a second time in
-// SwiftUI — the duplicate implementation `CLAUDE.md` bans. The phone's compact mount (the link line
-// alone, bedless, in a navigation toolbar) stays SwiftUI in ``ConnectionPill`` and is not a twin of
-// this: it is the OTHER PLATFORM's surface, and the decision both read is ``ConnectionReading``.
+// porting one of them would have left the other's identical ink ladder spelled a second time — the
+// duplicate implementation `CLAUDE.md` bans. The phone's compact mount (the link line alone, bedless,
+// in a navigation toolbar) is ``ConnectionIslandView`` and is not a twin of this: it is the OTHER
+// PLATFORM's surface, and the decision both read is ``ConnectionReading``.
 //
 // WHAT THIS FILE OWNS is drawing and events. Every WORD, every threshold and every alarm rung is
 // ``ConnectionReading``'s, one floor down — including which readings may climb at all (the link on its

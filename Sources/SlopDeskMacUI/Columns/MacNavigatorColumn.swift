@@ -133,7 +133,7 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
 
         search.delegate = self
         search.placeholderAttributedString = NSAttributedString(
-            string: "Search tabs",
+            string: NavigatorChromeCopy.searchPrompt,
             attributes: [
                 .foregroundColor: Slate.Native.Text.tertiary,
                 .font: NSFont.systemFont(ofSize: Slate.Typeface.footnote),
@@ -150,7 +150,7 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
         clear.target = self
         clear.action = #selector(clearQuery)
         clear.isHidden = true
-        clear.toolTip = "Clear search"
+        clear.toolTip = NavigatorChromeCopy.clearSearch
         clear.translatesAutoresizingMaskIntoConstraints = false
         plate.addSubview(clear)
     }
@@ -638,7 +638,7 @@ final class MacSidebarIslandView: NSView {
 @MainActor
 final class MacNewTabDropSlot: NSView {
     private let coordinator: PaneDragCoordinator
-    private let label = NSTextField(labelWithString: "New Tab")
+    private let label = NSTextField(labelWithString: NavigatorChromeCopy.newTab)
     private let glyph = NSImageView()
     private var active = false
 

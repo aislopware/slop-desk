@@ -2,30 +2,24 @@
 //
 // The workbench (code-server in a pooled `WKWebView`), the host's iOS Simulators, its Android devices,
 // and the announced-but-empty Desktop. The strip of tabs over them is this view's SIBLING under
-// ``MacCodePanelColumn``; what is here is the surfaces and the host conversations that keep them
-// alive.
+// ``MacCodePanelColumn``; what is here is the surfaces, and NOTHING ELSE.
 //
 // WHAT EACH SURFACE SAYS IS NOT HERE — it is ``CodePanelPresentation``, one floor down, because the
 // phone draws the same four surfaces on its own layout and the words are not a fact about either
-// drawing. What IS here is every part of the answer that is a framework: which `NSView` a state
-// mounts, and — the load-bearing half — the LIFETIME of the loops, because that is precisely where
-// SwiftUI and AppKit disagree.
+// drawing. WHICH SURFACE IS UP IS NOT HERE EITHER, and that is the newer half: the plan, the five
+// loops, the parking bracket and the device reports are ``CodePanelSurfaceRuntime``'s, beside the
+// words. This file had 116 eight-line windows in common with the phone's controller before that
+// carve, and only two of them were `NSView` spellings.
 //
-// ## The loops, which are the reason this file is not a switch statement
+// ## What is left, and why it could not descend
 //
-// The SwiftUI original hung five `.task(id:)`s off the surfaces and got their whole lifecycle for
-// free: a surface leaving cancelled its loops, and an id change restarted them. AppKit gives none of
-// that, so the rule is written out — `keyed(_:on:run:)` below is that `.task(id:)`, and every surface
-// swap cancels what it owned. Getting it wrong is not a crash: it is a host encoder and two sockets
-// left running for a panel nobody can see, which is exactly the bill ``SimulatorSidebarModel/park()``
-// exists to stop, or a poll that never restarts after a project switch and a panel stuck on a spinner.
+// Which `NSView` a plan mounts, how a child controller is parented, and the constraints that fill the
+// panel. The runtime hands a plan down and this file answers it with AppKit; the LIFETIME question —
+// what cancels when a surface leaves — is the runtime's, because it is the same answer on both shells
+// and only the frameworks' `.task(id:)`-shaped hole differs.
 //
-// ## Nothing here hosts SwiftUI any more
-//
-// The two device surfaces were the last thing this file reached into `SlopDeskClientUI` for — ~4,100
-// lines that increment 51's ledger entry had missed entirely, counting only the 632 lines of surface
-// switching above them. Increment 52 rewrote both, so all four surfaces are AppKit and this file's
-// import of the draining target is gone rather than narrowed.
+// The collapse animation stays too: it is one gesture on ONE clock with the column's width, and the
+// phone has no column to slide.
 
 import AppKit
 import SlopDeskClientCore
@@ -36,23 +30,8 @@ import SlopDeskWorkspaceCore
 
 @MainActor
 final class MacCodePanelSurfaces: NSViewController {
-    private let store: WorkspaceStore
-    /// The app-global connection — the workbench URL speaks to the SAME host every pane dials
-    /// (`target.host`), on the shared code-server port the ensure RPC reports.
-    private let connection: AppConnection
-    private let chrome: WorkspaceChromeState
-    /// The live preferences store (nil only in previews/automation shells) — the terminal font prefs
-    /// the panel pushes host-side (verb 20) so the editor reads like the terminal beside it.
-    private let preferences: PreferencesStore?
-    /// Where a device surface's reports go — the window's own notification stack, so the panel speaks
-    /// in the same card as everything else that has something to say.
-    private let overlay: OverlayCoordinator?
-
-    /// The three surface models, owned by ``MacCodePanelColumn`` because the strip's reload plate
-    /// drives them from outside this tree.
-    private let model: CodeSidebarModel
-    private let simulatorModel: SimulatorSidebarModel
-    private let androidModel: AndroidSidebarModel
+    /// The panel's decision, its loops and its reports — the shell's ONE dependency.
+    private let runtime: CodePanelSurfaceRuntime
 
     /// What is mounted, and under which identity. The identity is what makes an observation callback
     /// that changed nothing cost nothing — a surface rebuilt on every store write would tear down the
@@ -60,47 +39,13 @@ final class MacCodePanelSurfaces: NSViewController {
     private var mountedKey = ""
     private var mountedChild: NSViewController?
 
-    /// The five loops, by the key that owns each. A `nil` key means "no loop should be running".
-    private var loops: [LoopID: (key: String, task: Task<Void, Never>)] = [:]
-
-    /// The last text each device model reported, so an observation that re-fires without a new report
-    /// does not push the same card again.
-    private var lastSimulatorReport: (failure: String?, notice: String?) = (nil, nil)
-    private var lastAndroidReport: (failure: String?, notice: String?) = (nil, nil)
-
-    /// Which loop a key belongs to. Named rather than an array index because four of the five are
-    /// paired and the pairs must not be able to cancel each other.
-    private enum LoopID: CaseIterable {
-        case codePoll
-        case simulatorEnsure
-        case simulatorWatch
-        case androidEnsure
-        case androidWatch
-    }
-
-    init(
-        store: WorkspaceStore, connection: AppConnection, chrome: WorkspaceChromeState,
-        preferences: PreferencesStore?, overlay: OverlayCoordinator?,
-        model: CodeSidebarModel, simulatorModel: SimulatorSidebarModel,
-        androidModel: AndroidSidebarModel,
-    ) {
-        self.store = store
-        self.connection = connection
-        self.chrome = chrome
-        self.preferences = preferences
-        self.overlay = overlay
-        self.model = model
-        self.simulatorModel = simulatorModel
-        self.androidModel = androidModel
+    init(runtime: CodePanelSurfaceRuntime) {
+        self.runtime = runtime
         super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
-
-    deinit {
-        for entry in loops.values { entry.task.cancel() }
-    }
 
     override func loadView() {
         let root = NSView()
@@ -108,95 +53,9 @@ final class MacCodePanelSurfaces: NSViewController {
         root.translatesAutoresizingMaskIntoConstraints = false
         root.layer?.backgroundColor = Slate.Native.Surface.field.cgColor
         view = root
-        follow()
+        // The first plan arrives synchronously from this call, so the panel is never blank for a turn.
+        runtime.start { [weak self] plan in self?.mount(plan) }
         followCollapse()
-        followReports()
-        followFontSpec()
-    }
-
-    // MARK: - Which surface is up
-
-    /// The one observation that decides what is mounted.
-    ///
-    /// Everything the four surfaces switch on is read INSIDE `read` — the selected tab, the
-    /// workbench's phase, the two device phases, the active pane and its project key, the admitted-
-    /// projects set. A read left outside is a surface that stops updating for one reason only, which is
-    /// the failure mode that survives every test.
-    private func follow() {
-        ObservationFollow.arm(self) { surfaces in
-            surfaces.plan()
-        } apply: { surfaces, plan in
-            surfaces.apply(plan)
-        }
-    }
-
-    /// What should be on screen and which loops should be running, as ONE value.
-    ///
-    /// A plan rather than four `if`s because the loops and the mount have to be decided from the same
-    /// read: a mount that switched to Simulators while the loop decision still said Code is a surface
-    /// polling for the tab beside it.
-    private func plan() -> SurfacePlan {
-        switch chrome.panelSurface {
-        case .code:
-            let root = activeProjectRoot
-            let state = CodePanelPresentation.workbench(
-                phase: model.phase,
-                activeProjectRoot: root,
-                openedProjects: chrome.openedCodeProjects,
-                awaitingProjectKey: awaitingProjectKey,
-            )
-            // The poll runs for an ADMITTED root only. Behind the gate there is nothing to ensure, and
-            // polling there would boot the very thing the gate exists to defer.
-            let polls = root.map(chrome.openedCodeProjects.contains) ?? false
-            return SurfacePlan(
-                code: state,
-                codePollKey: polls ? root.map { "\($0)#\(model.generation)" } : nil,
-            )
-        case .simulators:
-            return SurfacePlan(
-                device: CodePanelPresentation.simulators(simulatorModel.phase),
-                which: .simulators,
-                ensureKey: "\(simulatorModel.generation)",
-                watchKey: CodePanelPresentation.readyKey(simulatorModel.phase),
-            )
-        case .android:
-            return SurfacePlan(
-                device: CodePanelPresentation.android(androidModel.phase),
-                which: .android,
-                ensureKey: "\(androidModel.generation)",
-                watchKey: CodePanelPresentation.readyKey(androidModel.phase),
-            )
-        case .desktop:
-            return SurfacePlan(desktop: CodePanelPresentation.desktop)
-        }
-    }
-
-    /// Mount what the plan asks for and run exactly the loops it names.
-    private func apply(_ plan: SurfacePlan) {
-        mount(plan)
-        keyed(.codePoll, on: plan.codePollKey) { [weak self] in await self?.runCodePoll() }
-        keyed(.simulatorEnsure, on: plan.which == .simulators ? plan.ensureKey : nil) { [weak self] in
-            await self?.simulatorModel.poll(
-                host: { [connection = self?.connection] in connection?.target.host ?? "" },
-                ensure: { [store = self?.store] in
-                    await store?.firstConnectedMetadataClient?.ensureSimulatorServer()
-                },
-            )
-        }
-        keyed(.simulatorWatch, on: plan.which == .simulators ? plan.watchKey : nil) { [weak self] in
-            await self?.simulatorModel.watchDevices()
-        }
-        keyed(.androidEnsure, on: plan.which == .android ? plan.ensureKey : nil) { [weak self] in
-            await self?.androidModel.poll(
-                host: { [connection = self?.connection] in connection?.target.host ?? "" },
-                ensure: { [store = self?.store] in
-                    await store?.firstConnectedMetadataClient?.ensureAndroidBridge()
-                },
-            )
-        }
-        keyed(.androidWatch, on: plan.which == .android ? plan.watchKey : nil) { [weak self] in
-            await self?.androidModel.watchDevices()
-        }
     }
 
     // MARK: - The mount
@@ -206,7 +65,7 @@ final class MacCodePanelSurfaces: NSViewController {
     /// ⚠️ THE WORKBENCH'S KEY IS ITS ROOT AND URL, NEVER ITS VEIL. A key that folded in the load state
     /// would remount the pooled webview when the first paint landed, which unparents a live page
     /// mid-navigation to hand it straight back.
-    private func mount(_ plan: SurfacePlan) {
+    private func mount(_ plan: CodePanelSurfacePlan) {
         let key = plan.identity
         guard key != mountedKey else { return }
         mountedKey = key
@@ -217,12 +76,17 @@ final class MacCodePanelSurfaces: NSViewController {
             mountedChild = nil
         }
         for subview in view.subviews { subview.removeFromSuperview() }
-        // Leaving a device surface parks its stream. The SwiftUI original spent an `.onDisappear` on
-        // this; here it is the same instant, said once for both devices.
-        if plan.which != .simulators { simulatorModel.park() }
-        if plan.which != .android { androidModel.park() }
+        // The bracket is the parking rule: the departing device stream stops before the swap and the
+        // arriving one starts after it, in one place for both shells.
+        runtime.swappingSurface(to: plan) {
+            fill(with: build(plan))
+        }
+    }
 
-        let surface = build(plan)
+    /// The panel has ONE way of holding a surface: all four edges, no inset. Said once here because
+    /// `NSLayoutConstraint` is the only spelling AppKit has for it and repeating it per branch is how
+    /// one branch ends up pinned to three edges.
+    private func fill(with surface: NSView) {
         surface.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(surface)
         NSLayoutConstraint.activate([
@@ -231,11 +95,9 @@ final class MacCodePanelSurfaces: NSViewController {
             surface.topAnchor.constraint(equalTo: view.topAnchor),
             surface.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        if plan.which == .simulators { simulatorModel.resume() }
-        if plan.which == .android { androidModel.resume() }
     }
 
-    private func build(_ plan: SurfacePlan) -> NSView {
+    private func build(_ plan: CodePanelSurfacePlan) -> NSView {
         if let empty = plan.desktop { return MacPanelEmptyStateView(empty) }
         if let device = plan.device {
             switch device {
@@ -246,7 +108,9 @@ final class MacCodePanelSurfaces: NSViewController {
         }
         switch plan.code {
         case let .gate(root):
-            return MacCodeOpenGateView(projectRoot: root) { [chrome] in chrome.openCodeProject(root) }
+            return MacCodeOpenGateView(projectRoot: root) { [chrome = runtime.chrome] in
+                chrome.openCodeProject(root)
+            }
         case let .workbench(root, url):
             return MacCodeWorkbenchView(projectRoot: root, url: url)
         case let .waiting(label):
@@ -263,51 +127,13 @@ final class MacCodePanelSurfaces: NSViewController {
     /// Both surfaces are two depths with a drill between them, and both have to hear `viewWillDisappear`
     /// to release a live mirror — an `NSView` added to a hierarchy with no controller above it never
     /// does, and the stream would run on into the tab beside it.
-    private func hostedDevices(_ which: SurfacePlan.Device?) -> NSView {
+    private func hostedDevices(_ which: CodePanelSurfacePlan.Device?) -> NSView {
         let controller: NSViewController = which == .android
-            ? MacAndroidSurface(model: androidModel)
-            : MacSimulatorSurface(model: simulatorModel)
+            ? MacAndroidSurface(model: runtime.androidModel)
+            : MacSimulatorSurface(model: runtime.simulatorModel)
         addChild(controller)
         mountedChild = controller
         return controller.view
-    }
-
-    // MARK: - The loops
-
-    /// `.task(id:)`, written out: cancel what was running under a different key, start the new one, and
-    /// run nothing at all for a `nil` key.
-    ///
-    /// The identity check is what keeps it from being a restart on every observation: a plan that names
-    /// the same key as the running loop leaves it strictly alone, which is the difference between a
-    /// poll that settles and one that re-ensures forever.
-    private func keyed(_ id: LoopID, on key: String?, run: @escaping () async -> Void) {
-        guard let key else {
-            loops.removeValue(forKey: id)?.task.cancel()
-            return
-        }
-        if let running = loops[id], running.key == key { return }
-        loops.removeValue(forKey: id)?.task.cancel()
-        loops[id] = (key, Task { await run() })
-    }
-
-    private func runCodePoll() async {
-        guard let root = activeProjectRoot else { return }
-        await model.poll(
-            projectRoot: root,
-            host: { [connection] in connection.target.host },
-            // The round itself is ``CodeServerEnsure``'s, below both shells: it names no view type, and
-            // the font dedupe it carries is a key against ONE host-global settings file, so a static
-            // per shell was two keys for one fact (docs/56 §3).
-            ensure: { [store, preferences] in
-                await CodeServerEnsure.round(projectRoot: $0, store: store, preferences: preferences)
-            },
-            // Front the remote endpoint with the loopback relay: a secure browser context (no
-            // insecure-context toast) on an origin that survives respawns. On bind failure the remote
-            // address rides through — the ATS arbitrary-loads exception keeps that fallback loadable.
-            localize: { host, port in
-                await CodeSidebarProxyPool.shared.endpoint(host: host, port: port) ?? (host, port)
-            },
-        )
     }
 
     // MARK: - The collapse
@@ -320,7 +146,7 @@ final class MacCodePanelSurfaces: NSViewController {
     /// One gesture, one clock — the same contract the titlebar strip and the rail keep.
     private func followCollapse() {
         ObservationFollow.arm(self) { surfaces in
-            surfaces.chrome.codeSidebarCollapsed
+            surfaces.runtime.chrome.codeSidebarCollapsed
         } apply: { surfaces, collapsed in
             // Leaving does not wait at all; ARRIVING waits out most of the column's slide, so the
             // content lands on a column that has already arrived rather than being dragged in with it.
@@ -330,7 +156,7 @@ final class MacCodePanelSurfaces: NSViewController {
                 let delay = Slate.Motion.columnSlide.duration * Self.revealShare
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak surfaces] in
                     MainActor.assumeIsolated {
-                        guard let surfaces, !surfaces.chrome.codeSidebarCollapsed else { return }
+                        guard let surfaces, !surfaces.runtime.chrome.codeSidebarCollapsed else { return }
                         surfaces.animateAlpha(to: 1, on: Slate.Motion.reveal)
                     }
                 }
@@ -348,170 +174,6 @@ final class MacCodePanelSurfaces: NSViewController {
             context.duration = curve.duration
             context.timingFunction = curve.timingFunction
             view.animator().alphaValue = alpha
-        }
-    }
-
-    // MARK: - What the device surfaces report
-
-    /// One card per surface, REPLACED rather than stacked (the fixed id is the same `object_id`
-    /// discipline the other window-level notices keep): these are reports about ONE panel, and three of
-    /// them queued behind each other would outlive the thing they describe.
-    ///
-    /// Here rather than on either surface, because the surfaces come and go under the message — a "no
-    /// longer running" verdict sets the text and clears the selection in one write, so a listener on
-    /// the stage would be torn down in the same transaction that fired it.
-    private func followReports() {
-        ObservationFollow.arm(self) { surfaces in
-            (
-                simulator: (
-                    failure: surfaces.simulatorModel.failure,
-                    notice: surfaces.simulatorModel.notice,
-                ),
-                android: (
-                    failure: surfaces.androidModel.failure,
-                    notice: surfaces.androidModel.notice,
-                ),
-            )
-        } apply: { surfaces, reading in
-            if reading.simulator.failure != surfaces.lastSimulatorReport.failure {
-                surfaces.announce(
-                    reading.simulator.failure,
-                    isFailure: true,
-                    id: CodePanelPresentation.simulatorToastID,
-                    subject: surfaces.simulatorSubject,
-                )
-            }
-            if reading.simulator.notice != surfaces.lastSimulatorReport.notice {
-                surfaces.announce(
-                    reading.simulator.notice,
-                    isFailure: false,
-                    id: CodePanelPresentation.simulatorToastID,
-                    subject: surfaces.simulatorSubject,
-                )
-            }
-            if reading.android.failure != surfaces.lastAndroidReport.failure {
-                surfaces.announce(
-                    reading.android.failure,
-                    isFailure: true,
-                    id: CodePanelPresentation.androidToastID,
-                    subject: surfaces.androidSubject,
-                )
-            }
-            if reading.android.notice != surfaces.lastAndroidReport.notice {
-                surfaces.announce(
-                    reading.android.notice,
-                    isFailure: false,
-                    id: CodePanelPresentation.androidToastID,
-                    subject: surfaces.androidSubject,
-                )
-            }
-            surfaces.lastSimulatorReport = reading.simulator
-            surfaces.lastAndroidReport = reading.android
-        }
-    }
-
-    /// The device is the SUBJECT and the sentence is the detail, not the other way round. A headline is
-    /// one middle-truncated line, and every one of these messages is longer than that line — put the
-    /// sentence there and the reader loses its middle, which is where the verb is.
-    private func announce(_ text: String?, isFailure: Bool, id: String, subject: String) {
-        guard let text, !text.isEmpty else { return }
-        overlay?.pushToast(Toast(
-            id: id,
-            flavor: isFailure ? .error : .success,
-            // An event at a device, not an agent's lifecycle — and with no pane to jump to, so the
-            // card renders as a plain notice rather than a door.
-            source: .command,
-            title: subject,
-            body: text,
-            headline: subject,
-        ))
-    }
-
-    private var simulatorSubject: String {
-        guard let udid = simulatorModel.selection,
-              let device = simulatorModel.devices.first(where: { $0.udid == udid })
-        else { return CodePanelPresentation.simulatorFallbackSubject }
-        return device.name
-    }
-
-    private var androidSubject: String {
-        androidModel.selectedDevice?.name ?? CodePanelPresentation.androidFallbackSubject
-    }
-
-    // MARK: - The font the workbench reads
-
-    /// A LIVE font-prefs change while the panel is open re-syncs immediately (the workbench's settings
-    /// watcher applies it without a reload). The ensure round below covers the panel-open path; this
-    /// covers Settings edits mid-session. Best-effort, reply ignored.
-    private func followFontSpec() {
-        ObservationFollow.arm(self) { surfaces -> MetadataCodec.CodeFontSpec? in
-            surfaces.preferences.map { CodeFontSync.spec(terminal: $0.terminal) }
-        } apply: { surfaces, spec in
-            guard let spec, spec != CodeServerEnsure.lastPushedFontSpec,
-                  let client = surfaces.store.firstConnectedMetadataClient
-            else { return }
-            // Records the push too, so the next ensure round does not re-send what just landed.
-            CodeServerEnsure.recordPushed(spec)
-            Task { await client.syncCodeFont(spec) }
-        }
-    }
-
-    // MARK: - What the panel resolves the focus to
-
-    /// The active pane's project root — the HOST-pushed `projectKey` (wire type 34) ONLY, never the cwd
-    /// fallback the sidebar sections tolerate. Ensuring on the transient pre-push cwd spawns a
-    /// code-server for a root the project does not have (observed: the shell's start directory vs the
-    /// git toplevel — two Node processes for one project, one stranded).
-    private var activeProjectRoot: String? {
-        guard let pane = store.tree.activeSession?.activeTab?.activePane else { return nil }
-        return store.hostPushedProjectKey(pane)
-    }
-
-    /// Whether the focused pane already has a SECTION identity (the cwd fallback) but no host-pushed
-    /// key yet — the first push is in flight, so a brief waiting surface beats the no-project
-    /// placeholder. The mirror write re-fires the observation the moment the key lands.
-    private var awaitingProjectKey: Bool {
-        guard let pane = store.tree.activeSession?.activeTab?.activePane,
-              activeProjectRoot == nil else { return false }
-        return store.paneProjectKey(pane) != nil
-    }
-}
-
-// MARK: - The plan
-
-/// What one read of the observed state says should be on screen, and which loops should be running.
-private struct SurfacePlan {
-    enum Device { case simulators, android }
-
-    var code: CodePanelWorkbenchState?
-    var codePollKey: String?
-    var device: DevicePanelSurfaceState?
-    var which: Device?
-    var ensureKey: String?
-    var watchKey: String?
-    var desktop: PanelEmptyState?
-
-    static let empty = Self()
-
-    /// What makes two plans the SAME MOUNT. Deliberately not `Equatable` over the whole struct: the
-    /// loop keys change without the surface changing (a reload bump keeps the workbench up), and
-    /// folding them in here would remount a live page to restart a poll.
-    var identity: String {
-        if let desktop { return "desktop:\(desktop.title)" }
-        if let device {
-            let side = which == .android ? "android" : "simulators"
-            switch device {
-            case .devices: return "\(side):devices"
-            case let .waiting(label): return "\(side):waiting:\(label)"
-            case let .empty(reading): return "\(side):empty:\(reading.title)"
-            }
-        }
-        switch code {
-        case let .gate(root): return "code:gate:\(root)"
-        case let .workbench(root, url): return "code:workbench:\(root)@\(url.absoluteString)"
-        case let .waiting(label): return "code:waiting:\(label)"
-        case let .empty(reading): return "code:empty:\(reading.title)"
-        case .none: return ""
         }
     }
 }

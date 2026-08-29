@@ -137,12 +137,12 @@ final class MacGuiStreamTunePopover: NSViewController {
     }
 
     override func loadView() {
-        let title = NSTextField(labelWithString: "Stream quality")
+        let title = NSTextField(labelWithString: GuiPaneReadout.Word.streamQuality)
         title.font = .systemFont(ofSize: Slate.Typeface.body, weight: .semibold)
         title.textColor = Slate.Native.Text.primary
 
         let note = NSTextField(
-            wrappingLabelWithString: "Applies live. Auto restores the adaptive governor/ABR.",
+            wrappingLabelWithString: GuiPaneReadout.Word.appliesLiveNote,
         )
         note.font = .systemFont(ofSize: Slate.Typeface.footnote)
         note.textColor = Slate.Native.Text.secondary
@@ -150,8 +150,8 @@ final class MacGuiStreamTunePopover: NSViewController {
 
         let column = NSStackView(views: [
             title,
-            field("FPS cap", fpsChoice),
-            field("Bitrate ceiling", bitrateChoice),
+            field(GuiPaneReadout.Word.fpsCap, fpsChoice),
+            field(GuiPaneReadout.Word.bitrateCeiling, bitrateChoice),
             note,
         ])
         column.orientation = .vertical
@@ -271,7 +271,7 @@ final class MacClosureMenuItem: NSMenuItem {
 /// entry point; it decides visibility and state for every plate from one snapshot of the model, so the
 /// bar can never show half of one update and half of the next.
 @MainActor
-final class MacGuiPaneControlBar: NSView {
+final class MacGuiPaneControlBar: NSView, GuiLeafControlBarWiring {
     /// Fold the bar back into the leaf's corner chip. The leaf owns that state, so this is a callback
     /// rather than something the bar decides.
     var onCollapse: () -> Void = {}
@@ -366,16 +366,7 @@ final class MacGuiPaneControlBar: NSView {
         addSubview(hairline)
         paint()
 
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space2),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space2),
-            row.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalToConstant: Slate.Metric.paneHeaderHeight),
-            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.topAnchor.constraint(equalTo: topAnchor),
-            hairline.heightAnchor.constraint(equalToConstant: Slate.Metric.hairline),
-        ])
+        NSLayoutConstraint.activate(GuiLeafChromeLayout.controlBarConstraints(in: self, row: row, hairline: hairline))
     }
 
     private func wire() {
@@ -425,7 +416,7 @@ final class MacGuiPaneControlBar: NSView {
             let clipboard = store.currentLocalClipboard()
             let menu = NSMenu()
             menu.addItem(macMenuItem(
-                "Paste as Keystrokes",
+                GuiPaneReadout.Word.pasteAsKeystrokes,
                 // Content in hand, so the enablement's `Bool` comes from the content itself — the
                 // phone's twin has to ask a probe instead, because it decides at RENDER time and a
                 // content read there raises iOS's "Allow Paste?" alert (increment 78).
@@ -437,7 +428,7 @@ final class MacGuiPaneControlBar: NSView {
 
             let rows = ClipboardPasteMenu.rows(store.clipboardRing)
             if rows.isEmpty {
-                menu.addItem(macMenuItem("No recent clips", enabled: false))
+                menu.addItem(macMenuItem(GuiPaneReadout.Word.noRecentClips, enabled: false))
             } else {
                 let ring = NSMenu()
                 for row in rows {
@@ -447,7 +438,9 @@ final class MacGuiPaneControlBar: NSView {
                         model.pasteAsKeystrokes(row.text)
                     })
                 }
-                let parent = NSMenuItem(title: "Clipboard Ring", action: nil, keyEquivalent: "")
+                let parent = NSMenuItem(
+                    title: GuiPaneReadout.Word.clipboardRing, action: nil, keyEquivalent: "",
+                )
                 parent.submenu = ring
                 menu.addItem(parent)
             }
@@ -464,7 +457,7 @@ final class MacGuiPaneControlBar: NSView {
             guard let self, let model else { return }
             let menu = NSMenu()
             if model.availableDisplays.isEmpty {
-                menu.addItem(macMenuItem("No display list from host", enabled: false))
+                menu.addItem(macMenuItem(GuiPaneReadout.Word.noDisplayList, enabled: false))
             } else {
                 for (index, display) in model.availableDisplays.enumerated() {
                     menu.addItem(macMenuItem(
@@ -474,7 +467,7 @@ final class MacGuiPaneControlBar: NSView {
                 }
             }
             menu.addItem(.separator())
-            menu.addItem(macMenuItem("Refresh Displays") {
+            menu.addItem(macMenuItem(GuiPaneReadout.Word.refreshDisplays) {
                 Task { await model.refreshDisplays() }
             })
             menu.popUp(
@@ -507,7 +500,7 @@ final class MacGuiPaneControlBar: NSView {
     /// Point the bar at a pane and settle every plate from one snapshot.
     func present(
         model: RemoteWindowModel?, store: WorkspaceStore, paneID: PaneID,
-        showStats: Bool, immersiveOn: Bool,
+        showStats: Bool, immersiveOn: Bool, isDesktop: Bool,
     ) {
         self.model = model
         self.store = store
@@ -554,7 +547,6 @@ final class MacGuiPaneControlBar: NSView {
         audio.toolTip = audioOn ? Tip.muteAudio : Tip.playAudio
 
         let privacyOn = model?.privacyEnabled == true
-        let isDesktop = store.tree.spec(for: paneID)?.kind == .desktop
         privacy.isHidden = !(isDesktop && (model?.canTogglePrivacy == true || privacyOn))
         privacy.symbolName = privacyOn ? SFSymbol.eyeSlashFill.rawValue : SFSymbol.eye.rawValue
         privacy.active = privacyOn

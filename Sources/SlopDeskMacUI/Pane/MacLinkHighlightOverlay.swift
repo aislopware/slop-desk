@@ -1,6 +1,6 @@
 // MacLinkHighlightOverlay — the ⌘-hold link underline, in AppKit (docs/56 wave R, batch R3).
 //
-// The AppKit half of ``LinkHighlightOverlay``. A DECORATION coincident with the terminal surface
+// The AppKit half of ``LinkHighlightOverlayView``. A DECORATION coincident with the terminal surface
 // (never a content branch — the libghostty-freeze guardrail): while the pane model reports ⌘ is held,
 // it runs the pure ``TerminalLinkDetector`` over the live VISIBLE viewport rows and draws a hairline
 // under every detected path / URL / `file://` / `mailto:` span, mapped to points by the
@@ -101,30 +101,14 @@ final class MacLinkHighlightOverlay: NSView {
 
     // MARK: The live read
 
-    /// ⚠️ THE DEPENDENCY IS CONDITIONAL AND THAT IS THE POINT. The three arm signals are read on every
-    /// arm, so the underlines reveal / clear the instant ⌘ is pressed or released. The two
-    /// viewport-change signals are read ONLY inside the armed branch, so an idle pane does not
-    /// re-detect once per ingest chunk while nobody is holding ⌘ — the same bargain the SwiftUI half
-    /// struck by putting them inside its `if`.
-    ///
-    /// BOTH signals, not just the loud one: `bytesReceived` covers new streaming output, and
-    /// `viewportRevision` covers a LOCAL scrollback scroll, which moves the viewport without a single
-    /// new wire byte. Observing only the first leaves the underlines stranded at their pre-scroll
-    /// screen rows, over unrelated text.
+    /// ⚠️ THE DEPENDENCY IS CONDITIONAL AND THAT IS THE POINT, and the conditional itself is
+    /// ``DecorationLinkUnderline/track(_:)``'s rather than this file's — the three arm signals, the
+    /// two viewport signals read only inside the armed branch, and the observable-twin trap are one
+    /// dependency set for both shells. `Observation` registers what a tracking block reads THROUGH a
+    /// call exactly as it registers a direct read, so the set does not widen by descending.
     private func follow() {
         ObservationFollow.arm(self) { view in
-            // `alternateScreenActive`, the OBSERVABLE twin — not `isAlternateScreen`, which reads through
-            // an `@ObservationIgnored` tracker and would register no dependency at all here. The `read`
-            // block is the one place the distinction bites: without the twin, a flip to a full-screen
-            // TUI under a held ⌘ only clears the underlines if MORE output happens to arrive.
-            if LinkUnderlineGeometry.isArmed(
-                highlightActive: view.model.linkHighlightActive,
-                detectionEnabled: SettingsKey.linkDetectionEnabled,
-                isAlternateScreen: view.model.alternateScreenActive,
-            ) {
-                _ = view.model.bytesReceived
-                _ = view.model.viewportRevision
-            }
+            DecorationLinkUnderline.track(view.model)
         } apply: { view, _ in
             view.refresh()
         }
@@ -134,28 +118,9 @@ final class MacLinkHighlightOverlay: NSView {
     /// per chunk while ⌘ is held, and most chunks do not touch a link's row — the detector still runs
     /// (it is the only way to know), but a redraw of the whole pane-sized layer does not.
     private func refresh() {
-        let next = detected()
+        let next = DecorationLinkUnderline.strokes(for: model, cwd: cwd)
         guard next != strokes else { return }
         strokes = next
         needsDisplay = true
-    }
-
-    private func detected() -> [TerminalStroke] {
-        guard LinkUnderlineGeometry.isArmed(
-            highlightActive: model.linkHighlightActive,
-            detectionEnabled: SettingsKey.linkDetectionEnabled,
-            isAlternateScreen: model.isAlternateScreen,
-        ),
-            let snapshot = model.surface as? TerminalViewportSnapshotting,
-            let metrics = snapshot.cellMetrics()
-        else { return [] }
-        return LinkUnderlineGeometry.strokes(
-            links: TerminalLinkDetector.detect(
-                rows: snapshot.viewportTextRows(),
-                cwd: cwd,
-                schemes: SettingsKey.linkSchemePolicy,
-            ),
-            metrics: metrics,
-        )
     }
 }

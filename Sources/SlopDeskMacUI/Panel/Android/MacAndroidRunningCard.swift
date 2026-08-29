@@ -1,7 +1,7 @@
 // MacAndroidRunningCard — an attached device in the list, drawn at its own proportions, in AppKit
 // (docs/56 stage D, increment 52b).
 //
-// The Mac's half of ``AndroidRunningCard``. Everything the card SAYS — the tooltip, the state
+// The Mac's half of ``PhoneAndroidRunningCard``. Everything the card SAYS — the tooltip, the state
 // sentence, the aspect clamp — is ``AndroidPresentation``'s and shared with the phone; what is here is
 // the box, the fills and the pointer.
 //

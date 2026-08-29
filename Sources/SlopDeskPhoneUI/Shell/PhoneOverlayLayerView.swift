@@ -86,14 +86,8 @@ final class PhoneOverlayLayerView: UIView {
     /// itself where inside that rectangle it draws — which is what lets each of them own its own
     /// dismiss floor, and what makes the stacking order simply the mount order.
     private func mount(_ child: UIView) {
-        child.translatesAutoresizingMaskIntoConstraints = false
         addSubview(child)
-        NSLayoutConstraint.activate([
-            child.topAnchor.constraint(equalTo: topAnchor),
-            child.bottomAnchor.constraint(equalTo: bottomAnchor),
-            child.leadingAnchor.constraint(equalTo: leadingAnchor),
-            child.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(child.slateEdges(of: self))
     }
 
     @available(*, unavailable)

@@ -470,12 +470,33 @@ package final class ClientComposition {
         }
     }
 
+    /// Whether the TERMINAL autoconnect host is named — the branch that decides whether an automation
+    /// launch DIALS or merely marks itself connected for a video-only run (the video host serves UDP
+    /// only, with no TCP listener to reach).
+    ///
+    /// ⚠️ THE GATE NAME IS SPELLED HERE AND NOWHERE ELSE IN A CLIENT (docs/46). Both app delegates asked
+    /// this question by typing the variable, which put one env key in two shells — the drift
+    /// `shared-vocabulary-ceiling` counts (docs/56 §3) and, worse than copy, a knob that could be
+    /// renamed on one platform and silently keep working on the other.
+    ///
+    /// It is NOT ``WorkspaceStore/terminalTarget(from:)`` `!= nil`, which is the neighbouring question
+    /// and a different one: that answers "do these variables describe a dialable target", so it also
+    /// requires `SLOPDESK_AUTOCONNECT_PORT` to parse. A host with an unusable port must still take the
+    /// dialing branch and fail there, rather than be mistaken for a video-only launch.
+    ///
+    /// SET-BUT-EMPTY IS UNSET, the same rule `slopdesk_workspace::store_shape::terminal_target` states:
+    /// a variable set to nothing is somebody's shell expanding an unset one.
+    package static func hasTerminalAutoconnectHost(
+        _ env: [String: String] = WorkspaceStore.automationInputs(),
+    ) -> Bool {
+        env["SLOPDESK_AUTOCONNECT_HOST"]?.isEmpty == false
+    }
+
     /// Whether any AUTOCONNECT env var is set (gates the bootstrap + the front-on-autoconnect path).
     package static func hasAutomationEnvironment(
         _ env: [String: String] = WorkspaceStore.automationInputs(),
     ) -> Bool {
-        let keys = ["SLOPDESK_AUTOCONNECT_HOST", "SLOPDESK_VIDEO_AUTOCONNECT_HOST"]
-        return keys.contains { (env[$0]?.isEmpty == false) }
+        hasTerminalAutoconnectHost(env) || env["SLOPDESK_VIDEO_AUTOCONNECT_HOST"]?.isEmpty == false
     }
 
     /// The connect gate's prefill, and the `host:port` the document cache is gated on.

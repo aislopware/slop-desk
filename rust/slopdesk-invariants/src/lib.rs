@@ -129,6 +129,22 @@ pub(crate) mod tests {
             self
         }
 
+        /// Links one path at another, so a break-test for [`crate::claim::Claim::Symlink`] can seed
+        /// the fact that claim asserts rather than a file that merely has the right bytes.
+        ///
+        /// `target` is spelled the way `ln -s` takes it — RELATIVE TO THE LINK, not to the root —
+        /// because that is what the repository holds and a break-test that seeded an absolute one
+        /// would be green on a link no clone could resolve. Any existing entry is taken out first:
+        /// the drift these tests seed is a link REPLACED by a copy, so the two directions have to
+        /// be writable over each other.
+        pub fn link(&self, path: &str, target: &str) -> &Self {
+            let full = self.0.join(path);
+            fs::create_dir_all(full.parent().expect("fixture parent")).expect("fixture dirs");
+            let _ = fs::remove_file(&full);
+            std::os::unix::fs::symlink(target, &full).expect("fixture link");
+            self
+        }
+
         /// Indexes what has been written so far.
         #[must_use]
         pub fn tree(&self) -> Tree {

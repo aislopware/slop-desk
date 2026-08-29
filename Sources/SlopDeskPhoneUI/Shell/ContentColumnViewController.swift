@@ -66,13 +66,10 @@ final class ContentColumnViewController: UIViewController {
         // through `overlay.openConnect()` (`MacWorkspaceRootView.swift:348`), and this controller
         // already holds the coordinator, so the fix is the port rather than a new argument.
         let made = PaneCanvasView(
-            store: store,
+            // `paneDrag` stays nil — canvas-local drags only, see the file header.
+            deps: PaneCanvasDeps(store: store, overlay: overlay, chrome: chrome),
             connection: connection,
-            chrome: chrome,
             onConnect: { [overlay] in overlay.openConnect() },
-            // Canvas-local drags only — see the file header.
-            paneDrag: nil,
-            overlay: overlay,
         )
         canvas = made
         view.addSubview(made)

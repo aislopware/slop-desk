@@ -1,6 +1,6 @@
 // MacAndroidDeviceList — the host's Android devices, in AppKit (docs/56 stage D, increment 52b).
 //
-// The Mac's half of ``AndroidDeviceList``. The filter, the two empty sentences, the row's subtitle,
+// The Mac's half of ``PhoneAndroidDeviceList``. The filter, the two empty sentences, the row's subtitle,
 // the stop-all's arithmetic and the whole context-menu table are ``AndroidPresentation``'s and shared
 // with the phone; what is here is the scroll view, the grids, the rows and the pointer.
 //

@@ -217,10 +217,9 @@ final class PhoneCommandNavigatorView: UIView {
 final class PhoneCommandNavigatorCardView: UIView {
     /// The pane's live terminal model — its pure block store is this card's data source and its
     /// bookmarks API backs the star. This is the pane the card floats over (the active one).
-    private let model: TerminalViewModel
-    /// The live store — performs the jump, the re-run and the output copy through the shared paths.
-    private let store: WorkspaceStore
-    private let onClose: () -> Void
+    /// The card's whole non-drawing half: the segment, the query, the clamped cursor, the reveal
+    /// arbiter and the four store paths a chosen row takes. Shared with the Mac's card.
+    private let nav: CommandNavigatorSelection
 
     private let search = SlateSearchBarView(
         prompt: CommandNavigatorPresentation.searchPlaceholder,
@@ -237,8 +236,6 @@ final class PhoneCommandNavigatorCardView: UIView {
     /// The row views currently in the column, in draw order — kept so a selection step moves the plate
     /// without rebuilding a list that did not change.
     private var rows: [PhoneCommandNavigatorRowView] = []
-    /// The rows as last drawn, so the keyboard verbs act on what the eye is looking at.
-    private var visible: [CommandBlock] = []
 
     /// The zero-state line, and the sentence it was built with.
     ///
@@ -249,24 +246,7 @@ final class PhoneCommandNavigatorCardView: UIView {
     private var zeroLine: SlateNoResultsLineView?
     private var zeroMessage: String?
 
-    private var query = ""
-    private var filter = BlockNavigatorFilter.all
-    private var selection = 0
-    /// The selection the viewport was last scrolled for. `-1` is "never", which no index can be, so the
-    /// first draw does not scroll a list that has not moved.
-    private var lastRevealed = -1
-    /// Hover→selection arbiter: a hover-driven selection must not auto-scroll, and a list scrolling
-    /// under a PARKED pointer must not steal the selection. One per presentation, shared by the rows.
-    ///
-    /// It is mounted UNCONDITIONALLY even though an iPhone has no pointer: the rows drive it from a
-    /// `UIHoverGestureRecognizer`, which only ever fires where a pointer exists (iPadOS with a
-    /// trackpad), so a touch-only device pays one unused object rather than a device check.
-    private let hoverGate = HoverSelectionGate()
-
     private var listHeight: NSLayoutConstraint?
-
-    /// Supersedes the observation arm — see ``render()``.
-    private var generation = 0
 
     /// The tallest the whole card may be, pushed down by the container from the pane's height.
     var heightBudget: CGFloat = .greatestFiniteMagnitude {
@@ -277,18 +257,14 @@ final class PhoneCommandNavigatorCardView: UIView {
     }
 
     init(model: TerminalViewModel, store: WorkspaceStore, onClose: @escaping () -> Void) {
-        self.model = model
-        self.store = store
-        self.onClose = onClose
+        nav = CommandNavigatorSelection(model: model, store: store, onClose: onClose)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-
-        buildQueryLine()
-        buildFilters()
+        buildHeader()
         buildResults()
         buildFooter()
         placeParts()
-        render()
+        nav.follow(self) { $0.draw() }
     }
 
     @available(*, unavailable)
@@ -296,25 +272,22 @@ final class PhoneCommandNavigatorCardView: UIView {
 
     // MARK: Building
 
-    private func buildQueryLine() {
+    /// The card's head: the query line, the status segment, and the two rules that separate them from
+    /// the list. One step because they are one band — the segment sits INSIDE the query's rule, and a
+    /// build that split them left the two rules in different methods from the parts they underline.
+    private func buildHeader() {
         // No plate and no bezel: the CARD is the surface, and a second plate drawn inside it would read
         // as an input sunk into paper rather than as the card's own first line. `SlateSearchBarView` is
         // exactly that shape already — a magnifier, a bare field, the input-strip height — and it also
         // owns the opening focus grab, which is why divergence 2 has nothing to say here.
-        search.onTextChange = { [weak self] text in
-            guard let self else { return }
-            query = text
-            resetSelection()
-        }
+        search.onTextChange = { [weak self] text in self?.nav.type(text) }
         search.onSubmit = { [weak self] in
-            guard let self, let block = selectedBlock() else { return }
-            act(block)
+            guard let self, let block = nav.selectedBlock() else { return }
+            nav.act(block)
         }
         addSubview(search)
         addSubview(queryRule)
-    }
 
-    private func buildFilters() {
         // A TRANSPARENT tray: each pill delineates itself, so the container only spaces them.
         filterTray.axis = .horizontal
         filterTray.alignment = .center
@@ -322,7 +295,7 @@ final class PhoneCommandNavigatorCardView: UIView {
         filterTray.translatesAutoresizingMaskIntoConstraints = false
         for segment in BlockNavigatorFilter.allCases {
             let pill = PhoneCommandNavigatorFilterPill(segment)
-            pill.onSelect = { [weak self] in self?.choose(segment) }
+            pill.onSelect = { [weak self] in self?.nav.choose(segment) }
             pills[segment] = pill
             filterTray.addArrangedSubview(pill)
         }
@@ -448,104 +421,55 @@ final class PhoneCommandNavigatorCardView: UIView {
 
     // MARK: The live read
 
-    /// Draws the current state and re-arms itself on everything it read.
-    ///
-    /// The card reads the LIVE block model rather than a snapshot, which is the whole reason this is an
-    /// observation arm and not a one-shot draw: a command that finishes while the navigator is open
-    /// flips its own gutter, and a command that STARTS while it is open appears.
-    ///
-    /// THE GENERATION GUARD IS THIS PLATFORM'S RULE (docs/62 §3.1) and the Mac's twin does without it.
-    /// It is not decoration: a card only fading out is still armed, and `onChange` fires INSIDE the
-    /// mutation — so the callback hops the main queue and then checks that the arm it came from is
-    /// still the current one. ``teardown()`` bumps the counter and is what makes a dismissed card stop.
-    private func render() {
-        generation &+= 1
-        let generation = generation
-        withObservationTracking {
-            draw()
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.render()
-                }
-            }
-        }
-    }
-
     /// Drops the arm. Idempotent, and the only thing this card owns that a `deinit` could not be relied
-    /// on to reach in time.
+    /// on to reach in time — a card only fading out is still armed.
     func teardown() {
-        generation &+= 1
+        nav.stopFollowing()
     }
 
+    /// One draw of everything the card shows. Armed by ``CommandNavigatorSelection/follow(_:drawing:)``
+    /// in `init`, which is also what re-runs it when the block store moves under the open card.
     private func draw() {
-        // The pane's blocks for the active segment (newest-first) BEFORE the text filter — the pure
-        // `TerminalBlockModel` query — then the shared ranking on top of it.
-        let base = model.blocks.blocks(filter: filter)
-        visible = CommandNavigatorModel.filtered(base, query: query)
-        selection = ListNavigation.clampedSelection(
-            current: selection, delta: 0, count: visible.count,
-        )
-        for (segment, pill) in pills { pill.setActive(segment == filter) }
+        let hasBlocks = nav.recut()
+        for (segment, pill) in pills { pill.setActive(nav.isActive(segment)) }
         drawRows()
-        drawZeroState(hasBlocks: !base.isEmpty)
+        drawZeroState(hasBlocks: hasBlocks)
         fitList()
         revealSelection()
     }
 
     private func drawRows() {
-        if rows.count != visible.count {
+        let readings = nav.rowReadings()
+        if rows.count != readings.count {
             for row in rows { row.removeFromSuperview() }
-            let actions = rowActions()
-            rows = visible.map { _ in
-                let row = PhoneCommandNavigatorRowView(gate: hoverGate, actions: actions)
+            let actions = nav.rowActions()
+            rows = readings.map { _ in
+                let row = PhoneCommandNavigatorRowView(gate: nav.hoverGate, actions: actions)
                 column.addArrangedSubview(row)
                 return row
             }
         }
-        for (index, block) in visible.enumerated() {
-            rows[index].show(
-                block,
-                index: index,
-                selected: index == selection,
-                starred: model.blocks.isBookmarked(block.index),
-                firstSeen: model.blocks.firstSeen(index: block.index),
-                query: query,
-            )
-        }
+        for (row, reading) in zip(rows, readings) { row.show(reading) }
     }
 
     /// The one zero-state voice for a list surface: a single centred line, text-only, no glyph. The
     /// SENTENCE is ``CommandNavigatorPresentation/emptyLine(filter:hasBlocks:)``'s — it answers "the
     /// query matched nothing" and "this segment is empty" differently, and neither is re-worded here.
     private func drawZeroState(hasBlocks: Bool) {
-        guard visible.isEmpty else {
+        guard nav.visible.isEmpty else {
             guard let line = zeroLine else { return }
             zeroLine = nil
             zeroMessage = nil
             line.removeFromSuperview()
             return
         }
-        let message = CommandNavigatorPresentation.emptyLine(filter: filter, hasBlocks: hasBlocks)
+        let message = nav.emptyLine(hasBlocks: hasBlocks)
         guard message != zeroMessage else { return }
         zeroMessage = message
         zeroLine?.removeFromSuperview()
         let line = SlateNoResultsLineView(message: message, ink: Slate.Native.Overlay.tertiary)
         zeroLine = line
         column.addArrangedSubview(line)
-    }
-
-    /// The five verbs a row can fire, bound ONCE per row rather than re-handed on every draw — a
-    /// closure rebuilt per keystroke is the one allocation on that path that is not a string.
-    private func rowActions() -> PhoneCommandNavigatorRowActions {
-        PhoneCommandNavigatorRowActions(
-            onHover: { [weak self] index in self?.hover(index) },
-            onJump: { [weak self] block in self?.act(block) },
-            onReRun: { [weak self] block in self?.reRun(block) },
-            onCopyOutput: { [weak self] block in self?.copyOutput(block) },
-            onToggleStar: { [weak self] block in self?.toggleStar(block) },
-        )
     }
 
     /// Sizes the results viewport to what the list wants, capped by the token AND by the pane.
@@ -578,21 +502,12 @@ final class PhoneCommandNavigatorCardView: UIView {
         Slate.Metric.heightInput + Slate.Metric.heightRow * 2 + Slate.Metric.hairline * 3
     }
 
-    /// Scrolls the selected row into view — on a selection CHANGE, and for KEYBOARD navigation only.
-    ///
-    /// Two guards, and each answers a different way the list could move on its own. The first: a redraw
-    /// the block model provoked — a command finishing, a new one starting — is not a selection change,
-    /// and scrolling on it would yank the list out from under someone reading it. The second is the
-    /// hover arbiter, without which the list follows the pointer: hover selects → the scroll slides a
-    /// new row under the pointer → hover selects that one → forever. The arbiter is check-and-clear, so
-    /// it is consumed only where a change happened.
+    /// Scrolls the selected row into view. WHETHER to is ``CommandNavigatorSelection/shouldReveal()``
+    /// — the two guards it keeps (a model-provoked redraw is not a selection change; a hover-driven
+    /// one must not auto-scroll) are the same on both shells, so only the scroll itself is here.
     private func revealSelection() {
-        guard selection != lastRevealed else { return }
-        lastRevealed = selection
-        guard hoverGate.shouldAutoScrollOnSelectionChange(), rows.indices.contains(selection) else {
-            return
-        }
-        let row = rows[selection]
+        guard nav.shouldReveal(), rows.indices.contains(nav.selection) else { return }
+        let row = rows[nav.selection]
         scroll.layoutIfNeeded()
         scroll.scrollRectToVisible(row.frame, animated: false)
     }
@@ -633,101 +548,28 @@ final class PhoneCommandNavigatorCardView: UIView {
         switch action {
         case #selector(reRunChord),
              #selector(copyOutputChord):
-            selectedBlock() != nil
+            nav.selectedBlock() != nil
         default:
             super.canPerformAction(action, withSender: sender)
         }
     }
 
     @objc
-    private func stepUp() { move(-1) }
+    private func stepUp() { nav.move(-1) }
 
     @objc
-    private func stepDown() { move(1) }
+    private func stepDown() { nav.move(1) }
 
     @objc
     private func reRunChord() {
-        guard let block = selectedBlock() else { return }
-        reRun(block)
+        guard let block = nav.selectedBlock() else { return }
+        nav.reRun(block)
     }
 
     @objc
     private func copyOutputChord() {
-        guard let block = selectedBlock() else { return }
-        copyOutput(block)
-    }
-
-    // MARK: Acting
-
-    /// The clamp is ``ListNavigation``'s — the rule three overlays had each written for themselves.
-    private func move(_ delta: Int) {
-        selection = ListNavigation.clampedSelection(
-            current: selection, delta: delta, count: visible.count,
-        )
-        draw()
-    }
-
-    private func hover(_ index: Int) {
-        guard selection != index else { return }
-        hoverGate.noteHoverDrivenSelection()
-        selection = index
-        draw()
-    }
-
-    private func choose(_ segment: BlockNavigatorFilter) {
-        guard segment != filter else { return }
-        filter = segment
-        resetSelection()
-    }
-
-    /// A re-filter — by query or by segment — puts the selection back on the first row AND scrolls
-    /// there. `lastRevealed` is cleared rather than compared, because the selection may ALREADY be 0
-    /// while the viewport is parked halfway down the previous list, and "row 0 is selected" is not the
-    /// same fact as "row 0 is on screen".
-    private func resetSelection() {
-        selection = 0
-        lastRevealed = -1
-        draw()
-    }
-
-    private func selectedBlock() -> CommandBlock? {
-        visible.indices.contains(selection) ? visible[selection] : nil
-    }
-
-    /// Jumps the active pane's scrollback to `block` — the shared `BlockJump` re-anchor via the store's
-    /// active-pane jump, which finds the block's CURRENT position by index and is therefore robust to a
-    /// command arriving (or a block evicting) while the card was open — then closes.
-    private func act(_ block: CommandBlock) {
-        store.jumpToNavigatorBlockInActivePane(index: block.index)
-        onClose()
-    }
-
-    /// Re-runs `block`'s captured command verbatim in the active pane (the shared, injection-safe store
-    /// path). Closes, because the re-run's output is the thing to look at. An empty command is a
-    /// store-level no-op.
-    private func reRun(_ block: CommandBlock) {
-        guard !block.commandText.isEmpty else { return }
-        store.reRunCommandInActivePane(block.commandText)
-        onClose()
-    }
-
-    /// Copies `block`'s captured output (VT-stripped plain text) through the shared request path. Stays
-    /// OPEN — a copy is a side action, not a jump — so the pane's own copy receipt underneath is the
-    /// confirmation that a possibly huge block landed. The headless core owns no pasteboard, so the
-    /// write is the caller's.
-    private func copyOutput(_ block: CommandBlock) {
-        store.copyBlockOutputInActivePane(index: block.index) { [model] text in
-            guard let text, !text.isEmpty else { return }
-            ClientPasteboard.write(text)
-            model.noteClipboardCopy(text)
-        }
-    }
-
-    /// Flips `block`'s star through the block model, which persists it via the wired
-    /// `onBookmarksChanged`. The redraw comes off the observation arm, not off the tap — a glyph that
-    /// painted itself here would be a mirror of the set rather than a reading of it.
-    private func toggleStar(_ block: CommandBlock) {
-        model.blocks.toggleBookmark(index: block.index)
+        guard let block = nav.selectedBlock() else { return }
+        nav.copyOutput(block)
     }
 }
 
@@ -755,6 +597,7 @@ final class PhoneCommandNavigatorFilterPill: UIControl {
     init(_ segment: BlockNavigatorFilter) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: Slate.Metric.heightControl).isActive = true
         layer.cornerRadius = Slate.Metric.radiusSmall
         layer.cornerCurve = .continuous
         layer.borderWidth = Slate.Metric.cardBorderWidth
@@ -781,7 +624,6 @@ final class PhoneCommandNavigatorFilterPill: UIControl {
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Slate.Metric.heightControl),
             content.centerYAnchor.constraint(equalTo: centerYAnchor),
             content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space2),
             content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space2),
@@ -841,22 +683,6 @@ final class PhoneCommandNavigatorFilterPill: UIControl {
     private func fire() { onSelect() }
 }
 
-// MARK: - What a row can fire
-
-/// The five verbs one navigator row hands back up.
-///
-/// A value rather than five parameters on `show(_:…)`, because they are bound ONCE when the row is
-/// built while the data is re-cut on every keystroke — and a `show` carrying both would re-hand five
-/// closures per row per keystroke.
-@MainActor
-struct PhoneCommandNavigatorRowActions {
-    let onHover: (Int) -> Void
-    let onJump: (CommandBlock) -> Void
-    let onReRun: (CommandBlock) -> Void
-    let onCopyOutput: (CommandBlock) -> Void
-    let onToggleStar: (CommandBlock) -> Void
-}
-
 // MARK: - One row
 
 /// One recent command: the exit-status gutter, the command line with the query's hit marked, the meta
@@ -871,7 +697,7 @@ struct PhoneCommandNavigatorRowActions {
 @MainActor
 final class PhoneCommandNavigatorRowView: UIControl {
     private let gate: HoverSelectionGate
-    private let actions: PhoneCommandNavigatorRowActions
+    private let actions: CommandNavigatorRowActions
 
     private let gutter = UIImageView()
     private let title = UILabel()
@@ -883,7 +709,7 @@ final class PhoneCommandNavigatorRowView: UIControl {
     private var block: CommandBlock?
     private var index = 0
 
-    init(gate: HoverSelectionGate, actions: PhoneCommandNavigatorRowActions) {
+    init(gate: HoverSelectionGate, actions: CommandNavigatorRowActions) {
         self.gate = gate
         self.actions = actions
         // ⚠️ THE THREE PLATES CARRY NO CLOSURE, and that is the ONE thing here that is not the Mac's
@@ -911,12 +737,17 @@ final class PhoneCommandNavigatorRowView: UIControl {
         star.addTarget(self, action: #selector(starTapped), for: .touchUpInside)
 
         translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: Slate.Metric.heightRow).isActive = true
         // The row's plate is the design floor's, not a hand-cut layer fill: `install` owns the corner
         // and the trait registration once, `apply` moves the fill and the border width per draw.
         SlateSelectionPlateSurface.install(on: self)
 
         gutter.contentMode = .center
         gutter.isUserInteractionEnabled = false
+        // A fixed leading column so every command line starts at one x, whatever its own mark turned
+        // out to be.
+        gutter.translatesAutoresizingMaskIntoConstraints = false
+        gutter.widthAnchor.constraint(equalToConstant: Slate.Metric.iconSize).isActive = true
         title.numberOfLines = 1
         // A command's TAIL is as load-bearing as its head — `just check` and `just check-ios` differ at
         // the end — so the squeeze comes out of the middle.
@@ -943,14 +774,10 @@ final class PhoneCommandNavigatorRowView: UIControl {
         addSubview(content)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Slate.Metric.heightRow),
             content.leadingAnchor.constraint(equalTo: leadingAnchor),
             content.trailingAnchor.constraint(equalTo: trailingAnchor),
             content.topAnchor.constraint(equalTo: topAnchor),
             content.bottomAnchor.constraint(equalTo: bottomAnchor),
-            // The gutter is a fixed leading column so every command line starts at one x, whatever its
-            // own mark turned out to be.
-            gutter.widthAnchor.constraint(equalToConstant: Slate.Metric.iconSize),
         ])
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hovered)))
         addTarget(self, action: #selector(tapped), for: .touchUpInside)
@@ -959,34 +786,27 @@ final class PhoneCommandNavigatorRowView: UIControl {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// Re-cuts this row for `block`.
-    func show(
-        _ block: CommandBlock,
-        index: Int,
-        selected: Bool,
-        starred: Bool,
-        firstSeen: Date?,
-        query: String,
-    ) {
-        self.block = block
-        self.index = index
-        SlateSelectionPlateSurface.apply(selected, to: self)
-        showGutter(block)
-        title.attributedText = Self.marked(block.commandText, query: query, selected: selected)
-        accessibilityLabel = block.commandText
+    /// Re-cuts this row for one drawn block.
+    func show(_ reading: CommandNavigatorRowReading) {
+        block = reading.block
+        index = reading.index
+        SlateSelectionPlateSurface.apply(reading.selected, to: self)
+        showGutter(reading.block)
+        title.attributedText = Self.marked(reading)
+        accessibilityLabel = reading.block.commandText
         // The two affordances live on the SELECTED (hover or keyboard) row only, so a resting list
         // stays clean; the meta collapses under them when they are up.
-        let line = Self.metaLine(block, firstSeen: firstSeen)
+        let line = CommandNavigatorPresentation.metaLine(reading.block, firstSeen: reading.firstSeen)
         meta.text = line
-        meta.isHidden = selected || line.isEmpty
-        reRun.isHidden = !selected
-        copyOutput.isHidden = !selected
+        meta.isHidden = reading.selected || line.isEmpty
+        reRun.isHidden = !reading.selected
+        copyOutput.isHidden = !reading.selected
         // `SlatePlateVerbButton` has no disabled ladder of its own — its glyph is drawn in the caller's
         // tint — so a re-run with nothing to run says so in the ink AND declines the tap.
-        reRun.isEnabled = !block.commandText.isEmpty
-        reRun.tint = block.commandText.isEmpty
+        reRun.isEnabled = !reading.block.commandText.isEmpty
+        reRun.tint = reading.block.commandText.isEmpty
             ? Slate.Native.Overlay.tertiary : Slate.Native.Overlay.secondary
-        star.active = starred
+        star.active = reading.starred
     }
 
     /// The status gutter — green ✓ / red ✗ / a grey dot — through the pure
@@ -1014,37 +834,26 @@ final class PhoneCommandNavigatorRowView: UIControl {
         }
     }
 
-    /// `1.4s · 4m ago` — the duration the block reports and the age the Outline words, joined by the
-    /// app's one separator. Either half may be missing; both missing is an empty line.
-    private static func metaLine(_ block: CommandBlock, firstSeen: Date?) -> String {
-        var parts: [String] = []
-        if let duration = block.durationLabel { parts.append(duration) }
-        if let firstSeen {
-            parts.append(OutlinePresentation.relativeTime(from: firstSeen, now: Date()))
-        }
-        return parts.joined(separator: " · ")
-    }
-
     /// The command line with the query's matched runs marked by CONTRAST — the hit keeps the reading
     /// ink and goes a weight up while the letters around it step back. WHERE the cuts fall is
-    /// ``FuzzyMatcher/runs(of:ranges:)``'s; the ink is this renderer's.
+    /// ``CommandNavigatorPresentation/markedCommand(_:query:)``'s; the ink is this renderer's.
     ///
-    /// Monospaced, because a command line is terminal text. A still-forming block has no command text
-    /// yet and shows an em-dash; no real query can match it, so it appears only in the zero-query list.
-    private static func marked(_ text: String, query: String, selected: Bool) -> NSAttributedString {
-        let line = text.isEmpty ? "—" : text
-        let base = UIFont.monospacedSystemFont(
-            ofSize: Slate.Typeface.body, weight: selected ? .medium : .regular,
+    /// Monospaced, because a command line is terminal text.
+    private static func marked(_ reading: CommandNavigatorRowReading) -> NSAttributedString {
+        let cut = CommandNavigatorPresentation.markedCommand(
+            reading.block.commandText, query: reading.query,
         )
-        let hit = UIFont.monospacedSystemFont(ofSize: Slate.Typeface.body, weight: .semibold)
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        let ranges = trimmed.isEmpty ? [] : FuzzyMatcher.score(trimmed, line)?.ranges ?? []
-        let runs = FuzzyMatcher.runs(of: line, ranges: ranges)
-        guard runs.count > 1 else {
-            return .slateNerdAware(line, font: base, color: Slate.Native.Overlay.primary)
+        let base = UIFont.monospacedSystemFont(
+            ofSize: Slate.Typeface.body, weight: reading.selected ? .medium : .regular,
+        )
+        guard cut.runs.count > 1 else {
+            return .slateNerdAware(cut.line, font: base, color: Slate.Native.Overlay.primary)
         }
+        // Built only once a hit exists, which is the common case's whole saving: a zero-query list is
+        // one run per row and never mints a second face.
+        let hit = UIFont.monospacedSystemFont(ofSize: Slate.Typeface.body, weight: .semibold)
         let spliced = NSMutableAttributedString()
-        for run in runs {
+        for run in cut.runs {
             spliced.append(.slateNerdAware(
                 run.text,
                 font: run.matched ? hit : base,

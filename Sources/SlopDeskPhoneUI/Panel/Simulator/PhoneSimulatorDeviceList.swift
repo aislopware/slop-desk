@@ -44,6 +44,7 @@
 
 #if os(iOS)
 import SFSafeSymbols
+import SlopDeskClientCore // `ObservationFollow` — the one spelling of the model follow
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
 import UIKit
@@ -72,13 +73,6 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
 
     /// The notice that stands in for the whole list: no devices at all, or none matching the query.
     private var notice: UIView?
-
-    /// ⚠️ ONE COUNTER PER FOLLOWER. `[weak self]` stops a chain when the view dies; it does not
-    /// SUPERSEDE a live arm, so a second `follow()` while the first is still registered leaves two
-    /// chains re-arming on every change, and they multiply rather than replace. Two counters and not
-    /// one, because a bump from either follower would otherwise silently unsubscribe the other.
-    private var generation = 0
-    private var pendingGeneration = 0
 
     init(model: SimulatorSidebarModel, onOpen: @escaping (String) -> Void) {
         self.model = model
@@ -300,51 +294,32 @@ final class PhoneSimulatorDeviceList: UIView, UICollectionViewDelegate {
 
     /// The list's structure — which devices exist, and therefore which sections and rows. Split from
     /// the pending follower below because they rebuild different things: this one re-snapshots, that
-    /// one repaints a plate.
+    /// one repaints a plate. TWO INDEPENDENT FOLLOWS, which is what keeps them from unsubscribing each
+    /// other; both are armed ONCE, from `init`, so neither keeps a handle. A retype goes to
+    /// ``refill(_:)`` directly and never through here.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        var seen: [SimulatorDevice] = []
-        withObservationTracking {
-            seen = self.model.devices
-        } onChange: { [weak self] in
-            // The hop is what makes this legal: `onChange` runs INSIDE the mutation, so touching the
-            // model or the view tree from it would re-enter the write that woke it. And it fires ONCE,
-            // which is why the follower re-registers from inside its own handler.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { list in
+            list.model.devices
+        } apply: { list, seen in
+            list.refill(seen)
         }
-        refill(seen)
     }
 
     /// The boot/shutdown fold, pushed into the cells that are on screen. ONE observation for the whole
     /// list rather than one per cell: `pending` changes twice per boot, and a dozen visible cards each
     /// watching it is a dozen wake-ups for one flag.
     private func followPending() {
-        pendingGeneration &+= 1
-        let generation = pendingGeneration
-        var pending: Set<String> = []
-        withObservationTracking {
-            pending = self.model.pending
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == pendingGeneration else { return }
-                    followPending()
-                }
+        ObservationFollow.arm(self) { list in
+            list.model.pending
+        } apply: { list, pending in
+            for cell in list.collection.visibleCells {
+                guard let indexPath = list.collection.indexPath(for: cell),
+                      let identity = list.source?.itemIdentifier(for: indexPath),
+                      let device = list.devices[identity] else { continue }
+                let isPending = pending.contains(device.udid)
+                (cell as? PhoneSimulatorRunningCard)?.showPending(isPending)
+                (cell as? PhoneSimulatorDeviceRowCell)?.showPending(isPending)
             }
-        }
-        for cell in collection.visibleCells {
-            guard let indexPath = collection.indexPath(for: cell),
-                  let identity = source?.itemIdentifier(for: indexPath),
-                  let device = devices[identity] else { continue }
-            let isPending = pending.contains(device.udid)
-            (cell as? PhoneSimulatorRunningCard)?.showPending(isPending)
-            (cell as? PhoneSimulatorDeviceRowCell)?.showPending(isPending)
         }
     }
 

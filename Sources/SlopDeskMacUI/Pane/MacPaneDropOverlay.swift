@@ -2,7 +2,7 @@
 // (docs/56 wave R, batch R7; `docs/ui-shell/spec/user-interface__drag-and-drop.md`,
 // `screenshots/drop-overlay-frame-action.png`).
 //
-// The AppKit half of ``PaneDropOverlay``. Everything it draws was already decided one floor down and
+// The AppKit half of ``PaneDropOverlayView``. Everything it draws was already decided one floor down and
 // none of it is re-derived here: the blob geometry is the SHARED ``PaneDropZoneLayout`` (the same
 // shapes ``MacPaneDropReceiver`` hit-tests against — draw == hit), and the wording, the
 // green-terminal-half / blue-pane-half partition, the label's offset on the two edge ellipses, the
@@ -146,23 +146,16 @@ final class MacPaneDropOverlay: NSView {
         repaint(active: active, allowed: allowed, animated: true)
     }
 
-    /// The rung → `NSColor` lookup applied to all five zones. Every branch below is
-    /// ``DropZonePresentation``'s; nothing here decides which zone is hot or what a hot one means.
+    /// The rung → `NSColor` lookup applied to all five zones. Which colour a zone wears is
+    /// ``DecorationDropOverlayInk``'s — the verdict, the alphas that travel with it and the ring's
+    /// one status rung — and the two `switch`es below are what this shell contributes to it.
     private func repaint(active: DropZone?, allowed: Set<DropZone>, animated: Bool) {
         for (zone, blob) in blobs {
-            let isActive = zone == active
-            let isAllowed = allowed.contains(zone)
-            let wash = DropZonePresentation.wash(zone, active: isActive, allowed: isAllowed)
-            blob.apply(
-                fill: Self.ink(wash.ink).slateScalingAlpha(wash.opacity),
-                // The ring says "release NOW", so it is only ever the status rung. An inactive zone
-                // gets that SAME colour at zero rather than no stroke at all, because a colour can
-                // cross-fade to a colour and cannot cross-fade to nothing — the ring would pop, and
-                // the zero is the crossing's own rather than a branch spelled here.
-                ring: Slate.Native.Status.ok.slateScalingAlpha(wash.strokeOpacity),
-                animated: animated,
+            let inks = DecorationDropOverlayInk.inks(
+                for: zone, active: active, allowed: allowed, ink: Self.ink, labelInk: Self.labelInk,
             )
-            labels[zone]?.textColor = Self.labelInk(wash.labelInk)
+            blob.apply(fill: inks.fill, ring: inks.ring, animated: animated)
+            labels[zone]?.textColor = inks.label
         }
     }
 
@@ -250,21 +243,19 @@ final class MacPaneDropOverlay: NSView {
 /// stays out of the top-left/bottom-left question its parent answers.
 @MainActor
 private final class MacPaneDropBlob: NSView {
-    private let wash = CAShapeLayer()
-    private let ring = CAShapeLayer()
+    /// The two shape layers, the cross-fade and the hairline inset — ``DecorationDropBlob``, one
+    /// implementation for both shells.
+    private let blob = DecorationDropBlob()
 
-    /// Held so an appearance change (which re-runs `apply` through the parent) and a resize (which
-    /// only re-paths) never have to guess what the current verdict was.
+    /// Held so an appearance change (which re-runs `paint`) and a resize (which only re-paths) never
+    /// have to guess what the current verdict was.
     private var fill: NSColor = .clear
     private var rim: NSColor = .clear
 
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        ring.fillColor = nil
-        ring.lineWidth = Slate.Metric.hairline
-        layer?.addSublayer(wash)
-        layer?.addSublayer(ring)
+        layer?.addSublayer(blob.node)
     }
 
     @available(*, unavailable)
@@ -279,34 +270,19 @@ private final class MacPaneDropBlob: NSView {
         paint(animated: animated)
     }
 
+    /// ⚠️ `effectiveAppearance` HAS TO BE THE CURRENT ONE while a dynamic colour resolves, or every
+    /// rung answers for whatever appearance happened to be drawing last. That is this shell's whole
+    /// half of the blob: a `CGColor` is flat, so WHERE it is read from is the decision, and the
+    /// layers it is read for are one floor down.
     private func paint(animated: Bool) {
-        CATransaction.begin()
-        if animated {
-            CATransaction.setAnimationDuration(Slate.Motion.reveal.duration)
-            CATransaction.setAnimationTimingFunction(Slate.Motion.reveal.timingFunction)
-        } else {
-            CATransaction.setDisableActions(true)
-        }
-        // `effectiveAppearance` has to be the CURRENT one while a dynamic colour resolves, or every
-        // rung answers for whatever appearance happened to be drawing last.
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            wash.fillColor = fill.cgColor
-            ring.strokeColor = rim.cgColor
+            blob.ink(fill: fill.cgColor, ring: rim.cgColor, animated: animated)
         }
-        CATransaction.commit()
     }
 
     override func layout() {
         super.layout()
-        let box = CGRect(origin: .zero, size: bounds.size)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        wash.frame = box
-        wash.path = CGPath(ellipseIn: box, transform: nil)
-        ring.frame = box
-        let inset = Slate.Metric.hairline / 2
-        ring.path = CGPath(ellipseIn: box.insetBy(dx: inset, dy: inset), transform: nil)
-        CATransaction.commit()
+        blob.place(in: CGRect(origin: .zero, size: bounds.size))
     }
 
     override func setFrameSize(_ newSize: NSSize) {

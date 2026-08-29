@@ -55,7 +55,6 @@ final class PhonePaletteCardView: UIView {
     /// The WORKING DIRECTORY header's contextual pill, or `nil` when the host has not answered for the
     /// focused pane's cwd yet — no pill rather than an empty one.
     private var badge: String?
-    private var generation = 0
 
     init(
         store: WorkspaceStore,
@@ -124,52 +123,39 @@ final class PhonePaletteCardView: UIView {
         // three-result query is a small card rather than a tall one with empty paper under the rows.
         tableHeight.isActive = true
 
-        NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        NSLayoutConstraint.activate(column.slateEdges(of: self))
     }
 
     // MARK: - The live read
 
-    /// The one tracked read: the ranked rows, the keyboard's index and the cwd badge, all INSIDE the
-    /// closure. ``OverlayCoordinator/rankedResults`` is memoised behind the query, the filter, the mixer
-    /// generation and the recents ring, so reading it here registers every one of those as a dependency
+    /// The one tracked read: the ranked rows, the keyboard's index and the cwd badge, all inside `read`.
+    /// ``OverlayCoordinator/rankedResults`` is memoised behind the query, the filter, the mixer
+    /// generation and the recents ring, so reading it there registers every one of those as a dependency
     /// and costs one array read per repeat.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-
-        var ranked: [RankedRow] = []
-        var selection = 0
-        var query = ""
-        var badge: String?
-        withObservationTracking {
-            ranked = overlay.rankedResults
-            selection = overlay.paletteSelection
-            // ⚠️ THE QUERY IS TWO-WAY, and the second direction is not decoration: the omnibar entry
-            // calls `openPalette(mode:query:)` with text, and `closePalette()` resets the query — both
-            // write the coordinator without going through the field, so a one-way binding would leave
-            // the field showing text the rows are no longer ranked for.
-            query = overlay.paletteQuery
-            badge = PalettePresentation.workingDirectoryBadge(store: store)
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        ObservationFollow.arm(self) { card in
+            (
+                ranked: card.overlay.rankedResults,
+                selection: card.overlay.paletteSelection,
+                // ⚠️ THE QUERY IS TWO-WAY, and the second direction is not decoration: the omnibar entry
+                // calls `openPalette(mode:query:)` with text, and `closePalette()` resets the query —
+                // both write the coordinator without going through the field, so a one-way binding would
+                // leave the field showing text the rows are no longer ranked for.
+                query: card.overlay.paletteQuery,
+                badge: PalettePresentation.workingDirectoryBadge(store: card.store),
+            )
+        } apply: { card, reading in
+            // ⚠️ ONLY ON A REAL DIFFERENCE. Assigning `UITextField.text` moves the caret to the end and
+            // discards any marked text an IME is mid-composition on, so a blind write on every arm — and
+            // this follow re-arms on a SELECTION move too — would fight the user's own typing. The write
+            // is otherwise loop-free: a programmatic `text` assignment does not fire `editingChanged`, so
+            // it cannot come back through `onTextChange`.
+            if card.search.text != reading.query { card.search.text = reading.query }
+            card.reconcile(
+                PalettePresentation.displayRows(reading.ranked),
+                selection: reading.selection, badge: reading.badge,
+            )
         }
-        // ⚠️ ONLY ON A REAL DIFFERENCE. Assigning `UITextField.text` moves the caret to the end and
-        // discards any marked text an IME is mid-composition on, so a blind write on every arm — and this
-        // block re-arms on a SELECTION move too — would fight the user's own typing. The write is
-        // otherwise loop-free: a programmatic `text` assignment does not fire `editingChanged`, so it
-        // cannot come back through `onTextChange`.
-        if search.text != query { search.text = query }
-        reconcile(PalettePresentation.displayRows(ranked), selection: selection, badge: badge)
     }
 
     private func reconcile(_ next: [PaletteDisplayRow], selection: Int, badge: String?) {
@@ -475,14 +461,7 @@ final class PhonePaletteCwdBadgeView: UIView {
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = Slate.Metric.space1
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space2),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space2),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: Slate.Metric.space1),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Slate.Metric.space1),
-        ])
+        OverlayCardLayout.pad(row, in: self, x: Slate.Metric.space2, y: Slate.Metric.space1)
     }
 
     @available(*, unavailable)

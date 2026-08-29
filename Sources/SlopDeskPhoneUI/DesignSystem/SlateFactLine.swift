@@ -30,6 +30,7 @@
 // spend.
 
 #if os(iOS)
+import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import UIKit
@@ -172,12 +173,7 @@ private final class SlateFactView: UIView, UIContextMenuInteractionDelegate {
         pair.addArrangedSubview(valueText)
 
         addSubview(pair)
-        NSLayoutConstraint.activate([
-            pair.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pair.trailingAnchor.constraint(equalTo: trailingAnchor),
-            pair.topAnchor.constraint(equalTo: topAnchor),
-            pair.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(pair.slateEdges(of: self))
 
         // Rule 2's tooltip — pointer-only, and that is the whole of it: the label names the fact for
         // whoever hovers it.

@@ -107,59 +107,34 @@ final class PhonePanelTabGroup: UIView {
         let igniting = selected == nil
         let moved = selected != surface
         selected = surface
+        // The invalidation comes FIRST and the ink after: both only mark, and the plate's travel below
+        // forces the layout that resolves them — so a repaint can never race the frame it lands on.
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
         for tab in plates {
             tab.apply(
                 selected: tab.tab.surface == surface,
                 showsLabel: PanelTabs.names(tab.tab, at: labelling, selected: surface),
             )
         }
-        invalidateIntrinsicContentSize()
-        setNeedsLayout()
-        guard moved else { return }
-        move(igniting: igniting)
+        if moved { move(igniting: igniting) }
     }
 
+    /// The travel and the ignite are ``SlatePlate``'s — one Core Animation block, on both shells, for
+    /// the one selection plate this design has. What is the strip's own is WHERE the plate stands.
     private func move(igniting: Bool) {
+        layoutIfNeeded()
         guard let target = plates.first(where: { $0.tab.surface == selected }) else {
             plate.isHidden = true
             return
         }
-        layoutIfNeeded()
-        let frame = target.frame
-        plate.isHidden = false
-        guard !igniting else {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            plate.frame = frame
-            CATransaction.commit()
-            let grow = CABasicAnimation(keyPath: "transform.scale.y")
-            grow.fromValue = Slate.Anim.plateIgniteScale
-            grow.toValue = 1
-            grow.duration = Slate.Motion.selectionMorph.duration
-            grow.timingFunction = Slate.Motion.selectionMorph.timingFunction
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0
-            fade.toValue = 1
-            fade.duration = Slate.Motion.selectionMorph.duration
-            fade.timingFunction = Slate.Motion.selectionMorph.timingFunction
-            plate.add(grow, forKey: "ignite")
-            plate.add(fade, forKey: "igniteFade")
-            return
-        }
-        let travel = CABasicAnimation(keyPath: "frame")
-        travel.duration = Slate.Motion.selectionMorph.duration
-        travel.timingFunction = Slate.Motion.selectionMorph.timingFunction
-        plate.frame = frame
-        plate.add(travel, forKey: "travel")
+        SlatePlate.travel(plate, to: target.frame, igniting: igniting)
     }
 
     private func layoutPlate(animated: Bool) {
         guard let target = plates.first(where: { $0.tab.surface == selected }), !plate.isHidden
         else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(!animated)
-        plate.frame = target.frame
-        CATransaction.commit()
+        SlatePlate.place(plate, at: target.frame, animated: animated)
     }
 
     // MARK: Paint

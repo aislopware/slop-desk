@@ -1,6 +1,6 @@
 // MacAndroidConsoleView — `logcat`, under the device, in AppKit (docs/56 stage D, increment 52b).
 //
-// The Mac's half of ``AndroidConsoleView``. The filter, the three empty sentences, the plain-text form
+// The Mac's half of ``PhoneAndroidConsoleView``. The filter, the three empty sentences, the plain-text form
 // a Copy hands over, the row menu and the severity→ink table are ``AndroidPresentation``'s and shared
 // with the phone.
 //

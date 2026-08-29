@@ -114,11 +114,14 @@ final class PhonePanelViewController: UIViewController {
             chrome: chrome, onReload: { reload.run?() }, onClose: { close.run?() },
         )
         let models = PhonePanelModels.shared
-        surfaces = PhonePanelSurfacesViewController(
+        // The surfaces' whole non-drawing half — the plan, the five loops, the parking bracket, the
+        // device reports — is `SlopDeskClientCore`'s and is built HERE, beside the models it reads,
+        // because the controller that draws it is dismissed and re-made while they are not.
+        surfaces = PhonePanelSurfacesViewController(runtime: CodePanelSurfaceRuntime(
             store: store, connection: connection, chrome: chrome, preferences: preferences,
             overlay: overlay, model: models.code, simulatorModel: models.simulator,
             androidModel: models.android,
-        )
+        ))
         super.init(nibName: nil, bundle: nil)
         // Weak, so a plate's stored verb cannot keep a dismissed panel alive (docs/62 hazard 1).
         reload.run = { [weak self] in self?.reloadShowingSurface() }

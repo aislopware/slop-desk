@@ -44,7 +44,7 @@ folded the first into `PhoneAppDelegate` and split the second in two):
 | the app delegate | already exists | `PhoneRootKeyResponder.swift:46` — `UIResponder, UIApplicationDelegate`, mounted by `@UIApplicationDelegateAdaptor` at `SlopDeskPhoneApp.swift:50` |
 | first-responder arbitration | already UIKit-shaped | `Sources/SlopDeskWorkspaceCore/iOS/PaneFocusCoordinator.swift:9-25` |
 | key repeat | already UIKit-shaped | `KeyRepeater.swift:4-6` — "UIKit fires `pressesBegan`/`pressesEnded` EXACTLY ONCE per physical key" |
-| `swiftui-introspect` | **0 call sites**, 1 declared dependency | `Package.swift:596` names the product; `git grep introspect -- Sources/SlopDeskPhoneUI` returns nothing. A dead manifest row, and §8 says what happens to it |
+| `swiftui-introspect` | **0 call sites, 0 declared dependencies** (was 0 and 1) | The manifest row and its `Package.resolved` pin went with the SwiftUI app scene — the dependency existed to reach the `NSWindow` a `WindowGroup` hides, so it had no subject left. `Package.swift:145` and `:604` keep the reason in prose |
 
 Every hard interaction on the phone has already fallen out of SwiftUI and landed in UIKit: the
 keyboard, the terminal surface, the video surface, both device screens, the code panel's webview, the
@@ -844,6 +844,26 @@ ledger; `Lacks{ OverlayHostView.swift, r"ToastStackView\(" }` (`split_surfaces.r
 citation across ~40,000 lines of header prose. That last one is not a defect — it is the campaign's
 free reference-integrity check, and it should be welcomed rather than worked around.
 
+### Hazard 9 (§4.9) — a member name `UIResponder` already owns
+
+**The one hazard on this list that SwiftUI could not have.** A `@State` lives in a struct that inherits
+from nothing, so any name was free. Every view in the UIKit shell inherits `UIResponder`'s vocabulary,
+and a stored property that reuses one of those names is not a shadow — it is an *override* against an
+incompatible type. The compiler catches it, so it never ships; what it costs is a build, and it has now
+cost two: `61eab344` unshadowed `UIView.isFocused`, and stage I found `TerminalFindBarView` storing
+`private let next: SlatePlateVerbButton`, which is `UIResponder.next`. Both were written by naming a
+button after what it does. Twice is this campaign's own bar for minting a rule, so
+`phone-members-avoid-responder-names` (`phoneui_memos.rs`) is that rule.
+
+**Its anchor is the interesting part, and it is §4.8's lesson pointed the other way.** `next` is a
+correct name for a *local*, and the shell holds six — a ban on the bare word would red on all six. That
+is precisely how this stage's first cut of H4 and of the §8 import ban died: a rule whose premise is
+false on live code gets suppressed, and a suppressed rule protects nothing. So the pattern requires a
+**four-space indent**, which under this tree's `swiftformat` config is the member level and nothing
+else. It under-reports — a stored property in a *nested* type sits at eight and is missed — and that is
+the right direction: a miss costs one compiler error, a false positive costs the rule. Measured
+2026-08-29: 0 matches at member level, 6 locals deeper.
+
 **One standing gap this campaign should close while it is in here.** `ink_floor.rs` registers seven
 rules and holds five test functions; `fold-gate-condition`, `two-test-trees` and `drop-chip-and-pill`
 have **no break-test anywhere** in the crate, against `CLAUDE.md`'s "each rule carries a break-test"
@@ -1338,7 +1358,15 @@ commit nobody can review.
 - **E.2 — the drag and the divider.** `PaneMoveAffordance.swift` (506) + `PaneDivider.swift` (200) +
   `PaneDropReceiver.swift` (182) + `PaneDropOverlay.swift` (97). `DragGesture` →
   `UIPanGestureRecognizer` with the same slop; `.onDrop` → `UIDropInteraction`.
-  `PaneMoveEscapeResponder.swift` (221) **dissolves** into the canvas controller's `pressesBegan`.
+  `PaneMoveEscapeResponder.swift` (221) **dissolves** into the canvas view — but NOT, as this plan
+  first wrote it, into its `pressesBegan` alone. ⚠️ **That door is unreachable for this key**: during a
+  drag the terminal is first responder and Escape is a byte it legitimately consumes (`\u{1b}`), so
+  `TerminalLeafView.pressesBegan` forwards on only what it did NOT take and the cancel never arrives.
+  The landed shape is a `UIKeyCommand` published while — and only while — a pane is in the air, because
+  UIKit resolves key commands up the responder chain BEFORE delivering the press, and the canvas is an
+  ancestor of every pane; `pressesBegan` stays as the second net for a focused pane that is not a
+  terminal. Both gates are the same gate, and it is not an optimisation: a command left installed at
+  rest would take Escape away from the shell for the whole session.
   `PaneDivider.resizePointer` (`:169-175`) and `View.panePointer` (`PaneMoveAffordance.swift:67-69`)
   are deleted as dead. **`phone-layout-does-not-write-the-store` lands here**, because
   `reportSolvedLayout`/`reportContainerBounds` are its subject.
@@ -1486,8 +1514,13 @@ default (`:32,92-94`) is either wired or deleted — it cannot stay as a button 
 **The last hosting controllers fall here**, and **the measurement §5.1(f) is taken**:
 `draw(_:)` override count, plus a Time Profiler sample of a rail scroll.
 
-**New invariant rule.** The phone's M1 equivalent — the git line stays MEASURED, not re-measured —
-lands in `phoneui_memos.rs` with the same three arms and the same break-test the Mac's has.
+**New invariant rule.** ~~The phone's M1 equivalent — the git line stays MEASURED, not re-measured —
+lands in `phoneui_memos.rs` with the same three arms and the same break-test the Mac's has.~~
+**PAID, AND NOT WHERE THIS PROMISED.** It landed inside `macui_memos::the_git_line_stays_measured`,
+which was re-aimed to cover `SidebarGitLineView.swift` alongside the Mac's half rather than cloned
+into a second file. That is the better shape and the same one this stage keeps arriving at: the rule
+is about the git line, not about a shell, so a second copy per shell would have been the very
+duplication the stage spent itself deleting. **No git-line rule is owed to `phoneui_memos.rs`.**
 
 **Invariant rules re-aimed.** `chrome_split::split-navigator` (`chrome_split.rs:39`) is name-based and
 survives. `two_shells::the_shared_vocabulary_only_shrinks` is re-derived for the second and last time,
@@ -1504,35 +1537,248 @@ whole point.
 
 ### Stage I — the ratchets flip, and the leftovers
 
-**Moves.** Nothing large. What lands:
+**Moves.** Nothing large, with ONE exception the stage found rather than planned:
 
-- The design-system carve-out retires: the SwiftUI spellings are gone, and
-  `phone-design-system-doubling-only-falls` becomes an equality at zero.
-- The hosting-controller ratchet becomes zero, and `import SwiftUI` under
-  `Sources/SlopDeskPhoneUI` becomes a `Claim::NoneUnder`. This is the point at which
-  `ui_split.rs`'s `rescued_by` can be narrowed from `(SwiftUI|AppKit|UIKit)` to `(AppKit|UIKit)`,
-  which is the fact that says the port is finished.
-- `SlopDeskSlate`'s **SwiftUI spelling loses its last consumer**: `Slate` vends `NSColor`/`UIColor` and
-  `Color`, and after this stage the Mac reads `NSColor` and the phone reads `UIColor`. The `Color`
-  half, `SlateDesign.swift`'s SwiftUI import, and `Text.nerdAware`'s SwiftUI splice
-  (`SlateNativeText.swift:5-7` names it as one of two) are deleted, and `SlateNativeText` gains the
-  UIKit half beside its AppKit one. **`SlopDeskSlate` ends this campaign importing no SwiftUI at all**,
-  which is a stronger statement of `docs/56` §2's floor than the floor currently makes.
-- `Package.swift:596`'s dead `SwiftUIIntrospect` dependency row is removed.
-- `ink_floor.rs:331`'s `AtLeast{ "static func paneStatusPillFill", 2 }` loses its subject: once both
-  renderers read `Slate.Native.*`, the `Color` overload has no reader and the count drops. Re-aim at
-  the two native spellings, which is what the rule always meant.
-- The three rules with **no break-test anywhere** — `fold-gate-condition`, `two-test-trees`,
-  `drop-chip-and-pill` — get one, because all three are rules this campaign touched and
-  `CLAUDE.md` requires it. This is the debt the port found rather than created, and it is cheaper to
-  pay while the tree is fresh in someone's head.
+- **The close confirmation had no phone half at all**, and that was a hang rather than a gap.
+  `WorkspaceStore.requestClosePaneTree(_:)` PARKS the close and returns, waiting for a UI answer;
+  the SwiftUI `.alert` on the deleted `OverlayHostView` was that answer, and nothing succeeded it.
+  Between the demolition and this stage a navigator swipe on a pane a policy gated simply did
+  nothing — no dialog, no close, and the park still armed for every later attempt.
+  `Overlays/PhoneCloseConfirmation.swift` is the successor: a `UIAlertController` reconciled off
+  `CloseConfirmationCopy.request(store:)` through one `ObservationFollow`, presented from
+  `WorkspaceRootViewController` rather than mounted in `PhoneOverlayLayerView`. It is the SECOND
+  natively-presented overlay, beside the cheat sheet, and for the sibling reason: it is summoned by a
+  deliberate gesture, so the layer's drop-a-second-`present` hazard cannot reach it. `stage-d-ledger`
+  is re-aimed off a `Claim::Mentions` — which the copy file's own header satisfied — onto
+  `Claim::Matches` on the CALL, plus two claims that both halves resolve the park they raise.
+  (This used to read "noted for a later stage, not fixed here: `pendingTabCloseID` has no phone caller,
+  so a phone tab close never parks". Resolved in stage I as a JUSTIFIED FLOOR, not a defect: the phone
+  has no tab-close VERB to route. `MacTabStrip.swift` is Mac-only, the phone registers no
+  `WorkspaceBindingRegistry` — its `UIKeyCommand`s are all local overlay confirm/dismiss — and its cheat
+  sheet lists no Close Tab. The `×` in `PaneStatusPillsView` is a status-pill dismiss, not a tab close;
+  its own comment merely COMPARES its plate to the tab row's. So the park has no caller because nothing
+  on the phone can ask for it, and minting a phone tab-close verb to give the park a caller would be
+  adding a feature to satisfy a ledger. The reconciler still answers it the day such a verb appears.)
+- **The edge pin descends, and the reason it had not was false.** `MacViewEdges.swift` and
+  `Pane/ViewEdges.swift` held character-identical bodies under a header explaining that
+  "`NSLayoutConstraint` and `UILayoutConstraint` are the same name on two frameworks that are not the
+  same type, so this cannot descend to the floor". There is no `UILayoutConstraint` — UIKit vends
+  `NSLayoutConstraint` and both layout anchors under those exact names, and Auto Layout is ONE API on
+  both platforms. The only differing word was the host's type. Both files are deleted for one
+  `Support/ViewEdges.swift` in `SlopDeskClientCore` over a `package typealias SlateHostView`; all six
+  call sites already imported ClientCore, so nothing else changed. Worth reading twice as a method
+  note: the duplication was not defended by inertia but by a HEADER, and a header that answers the
+  question convincingly is why nobody re-asked it for a week.
+
+  **`SlateHostView` unlocks the clone residue that was previously un-liftable**, and that is the more
+  valuable half. Every "these two anchor blocks are identical and cannot descend" verdict in this
+  campaign — the GUI leaf's seven chrome overlays, the control bar's `build()` block — rested on the
+  same premise as the header above, and it is the same premise. Auto Layout is one API; the only
+  per-shell word is the view type, and ClientCore now names it. A shared LAYOUT is worth lifting where
+  a shared CALL is not: two anchor blocks can drift by 2pt and nothing goes red, whereas two call
+  sites into one implementation cannot drift at all. Use that as the discriminator when clearing
+  `no-cross-target-clone`'s residue — lift what can drift, and widen the rule's noise set for the
+  scaffolding that cannot, rather than raising its window, which blinds it everywhere at once.
+- **THREE NAMES ARE THE WHOLE DIFFERENCE**, and `Support/SlateHostTypes.swift` now says so in one
+  place: `SlateHostView`, `SlateColor`, `SlateFont`. The alias above moved here from `ViewEdges.swift`
+  with two siblings, because every later "this cannot descend" in the residue turned out to be one of
+  the three wearing a longer sentence — a shared `NSAttributedString` build needs only the colour and
+  the font to have names, and `NSAttributedString`, `.font` and `.foregroundColor` are one API on both
+  platforms. ⚠️ Typealiases, NOT protocols, and the moment a shared body needs a member only one
+  framework has, that body has found a REAL divergence and belongs back in its shell. The alias is not
+  a licence to paper over one.
+- **Core Graphics was never two APIs either.** `SlopDeskSlate/SlateVectorDraw.swift` takes the two mark
+  drawings both shells had transcribed — the stroked lucide glyph and the braille cell's eight dots —
+  and the ink crosses as a `CGColor`, resolved at the call site because that is the only place the
+  trait environment is right. The braille half also retired a divergence nobody had named: the Mac's
+  rail mark is drawn in an UNFLIPPED view and mirrored its own y, the Mac's standalone spinner is
+  flipped and did not, and the phone's did neither — three loops, one geometry. The shared body takes
+  the `anchor` the dots are measured from and a `step` of ±1, so each shell's arithmetic survives
+  VERBATIM rather than being algebraically rearranged into a last-bit difference.
+- **The pane KIND stopped being asked for twice.** `macui-leaf-kind` pinned `cachedPaneKind` inside the
+  Mac leaf, so the day the leaf's logic descended into `GuiLeafCore` the rule went red for a cache that
+  had not moved — and it had been blind all along to the site that mattered as much: both control bars
+  ran `store.tree.spec(for:)?.kind == .desktop`, a full DFS over every session, tab and split node,
+  once per plate sync, for the privacy shield. The kind now rides to the bars inside `GuiLeafChrome`,
+  and the rule pins the pair that actually holds — the cache exists one floor down, and no shell
+  re-derives it above.
+- **The control bar's four callbacks descend as a protocol**, which is the clearest case yet for the
+  drift discriminator above: a forgotten wiring compiles, draws, and does nothing when pressed. Nothing
+  goes red and only a person tapping it finds out. `GuiLeafControlBarWiring` /
+  `GuiLeafCollapsedChipWiring` + `GuiLeafCore.wireControls(bar:chip:)` set all four at once, so the set
+  cannot go half-wired.
+- **⚠️ A RATCHET'S TWO FAILURE MODES ARE SYMMETRIC, and this stage hit both in one sitting.** A false
+  GREEN and a false RED destroy a rule's value equally, and every instance was fixed the same way — by
+  making the rule read the BEHAVIOUR instead of a text shape. False greens: `ink_floor`'s five
+  `case \.{needle}` templates were blind to `case let .fixed(tone)`; `design_ratchets`' Auto Layout
+  clause could not see a NEGATIVE `constant:`, which is half of every pinned pair; and three separate
+  `Claim::Mentions` were satisfiable by the guarded file's OWN PROSE, because `Mentions` reads raw —
+  including one whose subject, `CodePanelSurfaces`, had died with SwiftUI and whose bare needle was
+  matching the substring inside the class name `MacCodePanelSurfaces`. False reds: `panel_shells`'
+  `: CALayer` matched a function PARAMETER rather than a subclass, and `no-cross-target-clone` reported
+  the DEDUP FIX as a clone, because two call sites forwarding the same six views under the same six
+  labels are eight lines of agreement. That last one is fixed in the normaliser (`claim.rs`'s
+  `forwards_itself`) and NOT by raising the window — `two_shells.rs` measured 73% of shared windows as
+  ordinary logic, so a wider window blinds the rule everywhere at once. `pad: Slate.Metric.space2` is
+  deliberately still counted: which rung a corner takes is a decision two halves could get different.
+  ⚠️ AND THE RULE WAS RIGHT THE NEXT TWO TIMES IT FIRED ON THAT SAME PAIR, which is the reason the
+  normaliser was narrowed rather than the window raised. Firing #2: the rungs were parameters on a
+  header claiming `SlopDeskSlate` sat above `SlopDeskClientCore`; the edge runs the other way
+  (`Package.swift:475`), so `GuiLeafChromeLayout` reads `Slate.Metric` itself now and both callers
+  lost an identical eight-line call — a rule firing on a duplication a wrong comment was holding in
+  place. Firing #3, once that cleared: the MOUNT ORDER underneath it — floor, six overlays, drop
+  highlight last — eight more identical lines, and `addSubview` is one API with add-order z-order on
+  both frameworks, so it was another shared decision and not a spelling. It is `mount(…)` now; the
+  only word left in either shell is `conceal`, a closure, because `alphaValue`/`isHidden` and
+  `layer.opacity`/`accessibilityElementsHidden` are different states rather than one state twice.
+- **The `split-panel-chrome` park is paid.** A predecessor left the phone half red on purpose rather
+  than re-aim it, because its subject had been SPLIT rather than renamed — the controller stopped
+  reading the three symbols by handing each surface to a sibling — and "which file must read which
+  symbol" is the panel's architecture, not a gate's. Settled here as PER FILE on both shells: a file
+  that draws a tab reads the shared list, a file that draws the Android mark reads the shared path, and
+  each workbench reads the shared clipped-titlebar metric. The Mac gained two claims it never had.
+- ~~The design-system carve-out retires: the SwiftUI spellings are gone, and
+  `phone-design-system-doubling-only-falls` becomes an equality at zero.~~ **PAID, and the counter is
+  deliberately NOT written.** Stage C proposed it as the carve-out's own guard — a count of
+  `DesignSystem/` files holding BOTH spellings, allowed to fall and never rise. A file cannot hold
+  both spellings when one of them cannot be imported anywhere in the tree, so the rule would go in
+  measuring zero against a subject that no longer has a way to exist. That is the vacuous green this
+  crate's whole doctrine refuses, and writing it would leave a reader believing the doubling is
+  watched by a rule that is really watched by `no_declarative_framework_survives`. The carve-out
+  retires with its guard un-needed rather than with its guard at zero.
+- ~~The hosting-controller ratchet becomes zero, and `import SwiftUI` under
+  `Sources/SlopDeskPhoneUI` becomes a `Claim::NoneUnder`~~ **PAID, and it landed WIDER than this
+  bullet asked.** `ui_split::no_declarative_framework_survives` bans `^\s*import SwiftUI` AND
+  `canImport(SwiftUI)` across the whole Swift tree — `Sources`, `Apps` and `Tests`, all sixteen
+  targets — because a per-target ban is the right shape for a migration and the wrong shape for a
+  finished one: the next target to regress is by definition the one nobody has repaired. It reads
+  `View::Statements`, not `Code`: four files carry the import's name in PROSE recording that it is
+  gone, and the `canImport` half is not line-anchored, so a tokenizer that blanks comments while
+  keeping line structure is the only view that reads both halves right. The two narrow bans it
+  subsumes were DELETED rather than left underneath it. `ui_split.rs`'s `rescued_by` is narrowed to
+  `^import (AppKit|UIKit)\b`, which is the fact that says the port is finished.
+- ~~`SlopDeskSlate`'s **SwiftUI spelling loses its last consumer**~~ **PAID.** `Slate` vends
+  `NSColor`/`UIColor` and no `Color`; the Mac reads `NSColor` and the phone reads `UIColor`. The
+  `Color` half, `SlateDesign.swift`'s SwiftUI import and `Text.nerdAware`'s SwiftUI splice are gone.
+  ⚠️ And the UIKit half did not land BESIDE the AppKit one, it **replaced the need for one**.
+  `SlateNativeText.swift` held the splice typed on `NSFont`/`NSColor`, and a character-identical twin
+  (NerdAwareText, in the phone's own design-system directory, deleted in the merge — named without
+  backticks because the path is gone and a citation to it would go red) was typed on
+  `UIFont`/`UIColor` — same name, same labels, same five statements. The diff was TWO TYPE NAMES, and
+  this floor already vends both as one name each (`SlateNativeFont`, `SlateNativeColor`). One body
+  now, no twin, and the `#if` shrank to what it was really gating all along: which framework declares
+  `NSAttributedString.Key.foregroundColor`. `NSAttributedString` is Foundation on both platforms and
+  `init?(name:size:)`/`pointSize` are spelled identically on `NSFont` and `UIFont`, so the merge was a
+  deletion rather than a rewrite — the third instance of this stage's one finding, after
+  `SlateVectorDraw` and `SlatePlate`. `SlopDeskFontFaces` lost a stale claim in the same pass: its
+  header still named `Text.nerdAware`, a SwiftUI splice site that no longer exists, and its `runs(of:)`
+  note still said "both splice sites". `SlopDeskSlate` ends this
+  campaign importing no SwiftUI at all — every surviving occurrence of the word under that target is
+  prose recording what was deleted, which is exactly why the ban above had to read `Statements`.
+  `Slate.Native` keeps its name: it is a leftover of the SwiftUI era, and flattening it into `Slate`
+  would sweep ~400 call sites for a cosmetic win (`SlateDesign.swift:287-290` records the trade).
+- ~~`Package.swift:596`'s dead `SwiftUIIntrospect` dependency row is removed.~~ **PAID.** The row is
+  gone, its `Package.resolved` pin with it, and `Package.swift:145` and `:604` now carry the reason in
+  prose: the dependency existed to reach the `NSWindow` a `WindowGroup` hides, so it left with the
+  SwiftUI app scene rather than being deleted on its own. §2's census row (0 call sites, 1 declared
+  dependency) is now 0 and 0.
+- ~~`ink_floor.rs:331`'s `AtLeast{ "static func paneStatusPillFill", 2 }` loses its subject~~ **PAID,
+  and it landed as the opposite operator.** Once both renderers read `Slate.Native.*` the `Color`
+  overload had no reader, so the count dropped — but the fix is not a smaller floor, it is
+  `Exactly { count: 1 }`. A floor of one would still call the per-framework PAIR healthy, which is
+  the exact regression the rule exists for; the ceiling is the half that was always meant and could
+  not be written while two spellings were legitimate. The `Slate.Native.` prefix on the call-site
+  needle is load-bearing beside it: a half that kept a `paneStatusPillFill` of its own satisfies the
+  bare name and nothing else.
+- ~~The three rules with **no break-test anywhere** — `fold-gate-condition`, `two-test-trees`,
+  `drop-chip-and-pill` — get one~~ **PAID**, because all three are rules this campaign touched and
+  `CLAUDE.md` requires it. This was the debt the port found rather than created, and paying it while
+  the tree was fresh in someone's head is what let each seed be the drift the rule actually fears
+  rather than a syntactic negation of its claim. Three tests, thirteen seeds
+  (`the_fold_re_opened_from_either_side_is_red`, `a_copied_relaxation_list_is_red`,
+  `a_re_derived_chip_number_or_a_second_pill_switch_is_red`), and two findings that only writing them
+  could produce:
+  - **A write onto a symlink FOLLOWS it.** The first draft of the copy seed wrote the phone tree's
+    `.swiftlint.yml` without removing the link, so the bytes landed in the shared list, the link
+    stayed a link, and the test passed for the wrong reason — a break-test that agreed with the rule
+    while seeding nothing. The link is removed first now. This is the same false green the ⚠️ above
+    enumerates, caught in the tooling rather than in the tree.
+  - **A ban whose subject was renamed reads zero files and agrees with everybody.** The fold's third
+    seed points the ledger at a target name the manifest no longer holds, which is the failure a
+    census can never self-report — and it is not hypothetical: `split-panel-chrome` had SHIPPED it,
+    its `CodePanelSurfaces` needle satisfied by the SUBSTRING inside the class name
+    `MacCodePanelSurfaces` while the type itself had died with SwiftUI.
+- **The host-type vocabulary is reconciled to ONE spelling, and the second one was this stage's own
+  mistake.** `SlateHostTypes.swift` was written here to name the three genuinely-per-shell types —
+  and two of them, the colour and the font, `SlopDeskSlate` had ALREADY been vending for the whole
+  campaign as `SlateNativeColor`/`SlateNativeFont` (`SlateDesign.swift:72-81`). So a stage whose
+  finding is "the copies were paying for a type name" shipped a second name for two of them. The
+  fix is not symmetric between the three: `SlateNativeColor`/`SlateNativeFont` stay, because
+  `SlopDeskClientCore` DEPENDS ON `SlopDeskSlate` (`Package.swift:475`) and the lower floor wins;
+  `SlateHostView` stays in `ClientCore` alone, because the design floor's own rule is "a value,
+  never a drawing" (`panel_shells::one_design_floor_two_renderers`) and a view type has no business
+  there. Which leaves Slate vending the two VALUES and ClientCore the one VIEW, a split that reads
+  as an accident and is not. One file uses `SlateColor` (`Pane/DecorationDropBlob.swift`, five
+  sites) and nothing uses `SlateFont`.
+- **⚠️ AND THE OTHER HALF OF THAT SAME FACT WAS WRITTEN BACKWARDS IN THREE HEADERS.**
+  `Pane/GuiLeafChromeLayout.swift`, `Pane/PaneDropGeometry.swift` and `Overlays/OverlayCardLayout.swift`
+  each asserted that `SlopDeskSlate` sits ABOVE `SlopDeskClientCore` and `Slate.Metric` "cannot be named
+  from here" — the exact opposite of `Package.swift:475`, and falsified two directories over by
+  `Pane/DecorationDivider.swift` spending `Slate.Metric.space2` in the clear. All three are corrected,
+  each recording the old sentence so the correction cannot be re-reverted by someone reading only the
+  new one. **The cost was not cosmetic**: in `GuiLeafChromeLayout` the belief made the rungs
+  PARAMETERS, and two callers spelling the same argument list is what `no-cross-target-clone` then
+  fired on. A wrong fact in a header travels further than a wrong line of code, because the next
+  author reads it as settled and writes the third copy — which is what happened. Ratchet requested as
+  `slate-is-below-clientcore` in the `phoneui_memos.rs` family: the `Package.swift` edge itself, so the
+  ban cannot go vacuous, plus a `NoneUnder` prose ban narrow enough to admit the three corrections.
+- **A reported third duplication INSIDE `SlopDeskClientCore` was checked and is NOT one**, and the
+  check is worth keeping because the report was plausible. The parallel dedup landed
+  `Overlays/OverlayDwell.swift` and `Pane/DecorationChipDwell.swift` in one pass, and one agent
+  flagged them as the same sampler written twice — same `timer`/`onExpire` pair, same
+  `MainActor.assumeIsolated` tick. Read side by side they are two different clocks. `OverlayDwell`
+  SAMPLES at `dwellTick` and can be FROZEN, because the Mac holds a toast's countdown under the
+  pointer and a single `Timer(total)` has nothing to freeze. `DecorationChipDwell` is ONE SHOT with
+  an IDENTITY GATE, because a chip re-targeted mid-dwell must restart only when the content is a
+  different event. Neither behaviour is reachable from the other's shape, and what they actually
+  share is four lines of Foundation: a `Timer` field, a weak capture, `assumeIsolated`, and an
+  idempotent `stop()`. ⚠️ THIS IS THE FALSE-POSITIVE SIDE OF THE SAME COIN as the clone rule's
+  firing #1 — a shared SPELLING that carries no shared decision — and it is why the shingler was
+  NOT widened to compare within one target. Inside a single module that spelling coincidence is
+  the common case, not the exception; the cross-target rule earns its keep precisely because two
+  shells drawing the same surface have no innocent reason to agree line for line.
+- **One reconciliation genuinely left open**, and the parallel pass made it bigger rather than
+  smaller: `Support/SlateHostTypes.swift`'s `SlateColor`/`SlateFont` still duplicate
+  `SlopDeskSlate`'s `SlateNativeColor`/`SlateNativeFont`. When this was first logged, one file used
+  `SlateColor` and nothing used `SlateFont`; `Pane/DecorationHintLabel.swift` has since taken both.
+  The fix is mechanical — re-point the call sites at the Slate names and delete the two aliases,
+  leaving `SlateHostView` as the one thing `SlateHostTypes.swift` is for — and it is deferred only
+  because those files were owned by running agents.
 - `repo_invariants::source_comments_cite_files_that_exist` should be **green with no exemptions added**
   by the end of this stage. Nine stages of renames will have reddened it repeatedly; every fix was a
   real stale citation, and the final green is the campaign's cheapest proof that no header comment
   still describes a file that no longer exists.
-- The `phoneui_memos.rs` family is completed with the measurements §5 collected.
-- **Candidate, to MEASURE rather than assume: `check-ios` builds the `ClientApp-iOSTests` scheme
-  too.** Stage A found the iOS test bundle had not compiled since `43d3db6d`, because the only gate
+- ~~The `phoneui_memos.rs` family is completed with the measurements §5 collected.~~ **DONE**, ten
+  rules: `phone-sink-closures-are-weak`, `phone-observation-is-generation-guarded`,
+  `phone-rows-resolve-by-identifier`, `phone-assume-isolated-is-earned`,
+  `phone-notification-tokens-are-retired`, `phone-display-links-are-invalidated`,
+  `phone-has-no-scheduled-timers`, `phone-layout-does-not-write-the-store`,
+  `slate-is-below-clientcore` and `clientcore-places-never-draws`. Two hazards were re-cut against
+  what the tree actually holds rather than against §4's guess: §4.4's "an `assumeIsolated` must sit
+  near a `DispatchQueue.main.async`" is falsified by 29 live hop-free sites, so the rule bans the
+  off-main-queue family instead and every `assumeIsolated` is earned by construction; and §8's
+  "the shared floor imports neither AppKit nor UIKit" is falsified by 23 live files, so the rule
+  pins what the floor DOES — no view subclass, no `draw(_:)` override. H1 and H7 are brace-block
+  scans rather than line bans, because "inside a closure body" and "inside a `layoutSubviews`
+  body" are not line predicates. The two hazards §4 names as review-only are left ruleless.
+- ~~**Candidate, to MEASURE rather than assume: `check-ios` builds the `ClientApp-iOSTests` scheme
+  too.**~~ **TAKEN**, as a second `build-for-testing` inside `ios_typecheck` sharing the one
+  `.build/ios-dd`. The contention this was deferred over does not arise: the two invocations are
+  SEQUENTIAL within one gate rather than two gates racing a cache, which is what `.work/ios-test-dd`
+  was separated to avoid. It is the mirror image of the library scheme that was removed for being a
+  strict SUBSET of what the app already compiles — the test bundle is a strict SUPERSET, and it is
+  the half that went unbuildable for weeks with every gate green. RUNNING the assertions stays in
+  `check-ios-tests`, because that needs a booted simulator and `quick` must not. Stage A found the iOS test bundle had not compiled since `43d3db6d`, because the only gate
   that compiles it is the one gate nothing runs automatically (above). `stamp::Scope::Ios` already
   hashes all of `Apps/ClientApp-iOS`, `Tests/` included, so a second `build-for-testing` invocation
   inside `ios_typecheck` would put that compile into `just quick` for free on a warm stamp — and, if
@@ -1540,6 +1786,38 @@ whole point.
   cost the repo's bar says must be measured, not argued: `quick` grows a scheme, and one shared DD
   re-introduces the two-xcodebuilds-one-cache contention that the separate `.work/ios-test-dd` exists
   to avoid. Deferred to here rather than taken during a port stage for exactly that reason.
+
+**The last three leftovers, closed.** The stage's own list held three items it had recorded rather
+than fixed. All three are answered, and only one of them was a defect:
+
+- **`Slate.DropPreview` is minted** (`Sources/SlopDeskSlate/PaneDropPreviewArt.swift`). The five stroke
+  figures of the drop preview — the whole-area rim, the slab's finer rim and its wash, the lifted
+  source's wash, and the dash pattern — were declared in `MacPaneMoveAffordance.swift` and again in
+  `PaneMoveAffordanceView.swift`, each half carrying a comment saying it was waiting for exactly this
+  rung. They were the **last pair in the client spelled across a FRAMEWORK boundary**, which is a worse
+  position than the pair `Slate.GrabPill` was minted for: those two renderers are both AppKit and could
+  at least be diffed by a reader who opened both, where an AppKit file and a UIKit file share no import
+  and no compiler. Both halves now read the rung, both private enums are deleted, and
+  `drop-preview-figures` (`ink_floor.rs`) pins it from both ends — every half must READ all five, and
+  no half may re-DECLARE one, under the minted spelling or under the three retired AppKit names.
+- **`pendingTabCloseID`'s missing phone caller is a justified floor, not a gap** — see the stage-D entry
+  above. The phone has no tab-close verb to route.
+- **`TerminalFindBarView`'s `next` → `nextMatch` was a real pre-existing compile error at HEAD**, and it
+  is now verified rather than reported: `git show HEAD:` has `final class TerminalFindBarView: UIView`
+  storing `private let next: SlatePlateVerbButton`, and `next` is `UIResponder`'s. That is the second
+  time this shell has hit that hazard (`61eab344` was `UIView.isFocused`), so it earned Hazard 9 (§4.9)
+  and the rule `phone-members-avoid-responder-names`.
+
+**And a tenth site of the false dependency edge.** `ink_floor.rs` — its module header and the
+`named-ink-tables` rule — justified keeping `DropZoneInk`'s and `GuiUploadTint`'s lookups per-renderer
+"because `Color` is Slate's own and Slate sits above the logic floor". Slate sits below. The conclusion
+survives off the real constraint, which runs the other way: those two enums are declared in
+`SlopDeskClientCore`, which is above Slate, so Slate cannot NAME them. `PaneStatusPillInk` is the
+control that proves it — it lives in `SlopDeskWorkspaceModel`, one of Slate's own dependencies, and
+that is why `Slate.Native.paneStatusPillFill` could exist while these two cannot. Which also names a
+follow-on for whoever wants it: move the two enums down to `SlopDeskWorkspaceModel` and both lookups
+descend as the pill's did. Not done here — `DropZoneInk` has an `init(ffiCode:)`, so the move carries an
+FFI decode across a target boundary, and that is a design change with its own gate.
 
 **Un-landable if:** nothing. This stage is bookkeeping, and it is a stage rather than a footnote
 because `docs/61` §1 row 12 records the rule: *"removing a name is the last step of finishing the port,
@@ -1618,23 +1896,51 @@ platform measures, Rust decides, the view places.**
 
 ## 8. What this does NOT do
 
-- **`SlopDeskMacUI` is not in scope, and is not touched.** It is already AppKit; this campaign gives
-  the phone what the Mac has. The only thing that reaches across is the *method* — `withObservationTracking`,
-  the keyed reconcile, `alpha` over `isHidden`, the memo family — and a method is not an import.
-  `ui_split.rs`'s two "neither half imports the other" claims stay exactly as they are.
+- ~~**`SlopDeskMacUI` is not in scope, and is not touched.**~~ **THIS ONE DID NOT SURVIVE THE
+  CAMPAIGN, and the reason it did not is the campaign's central finding.** It was written on the
+  premise that the phone gets what the Mac has, so only the phone half moves. What stage I actually
+  found is that a great many Mac bodies had character-identical phone twins whose justification —
+  "these are two frameworks" — was factually false: Auto Layout, Core Graphics, QuartzCore,
+  `NSAttributedString` and Foundation are ONE API under one set of names on both platforms, and the
+  only genuinely two-typed things are the view, the colour and the font. Deleting a twin means
+  deleting BOTH copies into a shared floor, which is `CLAUDE.md`'s "one implementation, never two"
+  taken literally. So `SlopDeskMacUI` is edited throughout stage I — `MacGuiLeafView`,
+  `MacHintModeOverlay`, `MacToastStack`, `MacConnectSheet`, `MacGlobalSearch`, `MacGuiPaneOverlays`
+  and more. ⚠️ What still holds, and is the claim that mattered, is that **no Mac BEHAVIOUR changes
+  and no Mac surface is redesigned**: every edit replaces a body with a call to the same body on the
+  floor. `ui_split.rs`'s two "neither half imports the other" claims are untouched and still green —
+  the shared code went DOWN into `SlopDeskClientCore` and `SlopDeskSlate`, never sideways.
 
-- **`SlopDeskSlate` stays framework-free, and ends the campaign more so.** It imports SwiftUI in five
-  files and declares zero `View` types (`docs/56:3891-3893`), and `slopdesk-invariants` fails the build
-  if a `some View` lands there. The port consumes the same tokens the SwiftUI does and **never forks
+- **`SlopDeskSlate` declares zero view types, and ends the campaign with zero SwiftUI.** ⚠️ THE
+  MEASUREMENT THIS BULLET WAS WRITTEN ON IS SPENT: it said "imports SwiftUI in five files", and the
+  count is now **0** — the `Color` spelling and the `Text.nerdAware` splice lost their last consumers
+  and went. What replaced them is not nothing: **6 files import AppKit or UIKit** behind `#if`
+  (`SlateNativeText`, `SlateVectorDraw`, `SlatePlate` and the three around them), because a floor that
+  vends `NSColor`/`UIColor` and splices an `NSAttributedString` must name the framework that declares
+  them. So "framework-free" was never the invariant and should not be restated as one. The invariant
+  that IS load-bearing is narrower and unchanged: **zero `View` types, and no drawing** —
+  `slopdesk-invariants` fails the build if a `some View` lands here, and
+  `panel_shells::one_design_floor_two_renderers` keeps the floor to values. A `CGContext` ladder like
+  `SlateVectorDraw` is admitted because Core Graphics is one API and the ladder is a VALUE-to-path
+  decision; a view type is not, which is why `SlateHostView` lives in `SlopDeskClientCore` instead. The port consumes the same tokens the SwiftUI does and **never forks
   them** — the phone's adapters live in `Sources/SlopDeskPhoneUI/DesignSystem/`, where they already do
   (`slateGlyphAck`, `SlatePlateStyle`, `slateShadow`, `slatePaperCard` are all in `DesignSystem/`, not
   in `Slate`). What changes at stage I is a *removal*: the `Color` spelling and the SwiftUI splice lose
   their last consumer and go, leaving `NSColor`/`UIColor` and the two native halves.
 
-- **`SlopDeskClientCore` and `SlopDeskWorkspaceCore` do not become UIKit.** They import no view
-  framework today (`docs/56:3893`) and must not start. `PaneFocusCoordinator` and `PhoneKey` name
-  `UIKit` behind `#if os(iOS)` for a *type*, not a drawing — `PaneFocusCoordinator.swift:47-50` says
-  why, and that seam is unchanged.
+- **`SlopDeskWorkspaceCore` does not become UIKit. `SlopDeskClientCore` PARTLY DID, deliberately, and
+  the old wording did not survive either.** It said both "import no view framework today
+  (`docs/56:3893`) and must not start", with `PaneFocusCoordinator` and `PhoneKey` naming `UIKit`
+  behind `#if os(iOS)` for a *type* as the two exceptions. `SlopDeskWorkspaceCore` is still exactly
+  that. `SlopDeskClientCore` is not: **23 of its files now import AppKit or UIKit**, all behind `#if`,
+  and that is the shape stage I's dedup arrives in rather than a leak. The reason is the same one
+  everywhere in this section — a body that PLACES views (`GuiLeafChromeLayout`, `OverlayCardLayout`,
+  `ViewEdges`, the `Decoration*` family) needs `NSLayoutConstraint` and a host type, and Auto Layout
+  is one API, so the body is one body. ⚠️ The line that actually holds, and the one to defend, is
+  **placement and values, never drawing and never a view SUBCLASS**: nothing in `SlopDeskClientCore`
+  declares an `NSView`/`UIView` subclass or overrides `draw(_:)`. `SlateHostView` is a typealias, not
+  a class. When that line moves, this bullet is wrong again — so check it against the tree rather
+  than quoting it.
 
 - **`ThirdParty/ghostty` is vendored and is not rewritten.**
   `GhosttyTerminalView.swift:2953`'s `UIViewRepresentable` stays in the file. What changes is the seam
@@ -1671,7 +1977,7 @@ platform measures, Rust decides, the view places.**
   does instead is the only thing available: name the simulator run as every stage's exit condition,
   require each re-aimed rule to be **break-tested in its UIKit spelling before the stage lands**, and
   put the automated proof where it can exist — eleven test files, the two rigs that rasterise on every
-  run, and seven new `phoneui_memos.rs` rules.
+  run, and ten new `phoneui_memos.rs` rules.
 
 - **Three surveyed things that look in-scope and are not.** `Sources/SlopDeskDevicePanels` (9,662) is
   the panels' *domain* and stays — only its `SimulatorScreenSurface` (370) is a `UIView`, and it is

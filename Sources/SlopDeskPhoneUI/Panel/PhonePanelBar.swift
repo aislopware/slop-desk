@@ -41,9 +41,9 @@ final class PhonePanelBar: UIView {
     var codeReloadable = false { didSet { applyActions() } }
 
     private var labelling: PanelTabLabelling = .all
-    /// Supersedes a callback armed before ``teardown()``. The chrome state is app-lifetime, so without
-    /// it a dismissed panel's bar keeps re-arming on it forever (docs/62 hazard 2).
-    private var generation = 0
+    /// Held for ``teardown()`` ALONE — this is one of the few follows whose subject outlives it. The
+    /// chrome state is app-lifetime, so a dismissed panel's bar would keep re-arming on it forever.
+    private var surfaceFollow: ObservationFollow?
 
     /// Both verbs arrive at INIT, because ``SlatePlateIconButton`` takes its action at init — a plate
     /// whose verb could be re-pointed later would need the acknowledgement moved off the press, which
@@ -67,7 +67,8 @@ final class PhonePanelBar: UIView {
 
     /// Stop following. Called by the panel before it lets go.
     func teardown() {
-        generation &+= 1
+        surfaceFollow?.stop()
+        surfaceFollow = nil
     }
 
     private func build() {
@@ -108,22 +109,15 @@ final class PhonePanelBar: UIView {
 
     // MARK: The live read
 
+    /// Armed ONCE, from `init` — the plain arm. The handle is kept so ``teardown()`` can end it, which
+    /// is the one thing `[weak self]` cannot do for a bar whose subject is app-lifetime.
     private func follow() {
-        generation &+= 1
-        let generation = generation
-        var surface: PanelSurface = .code
-        withObservationTracking {
-            surface = chrome.panelSurface
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.generation else { return }
-                    self.follow()
-                }
-            }
+        surfaceFollow = ObservationFollow.arm(self) { bar in
+            bar.chrome.panelSurface
+        } apply: { bar, surface in
+            bar.tabs.select(surface, labelling: bar.labelling)
+            bar.applyActions()
         }
-        tabs.select(surface, labelling: labelling)
-        applyActions()
     }
 
     /// A tab tap animates through ONE beat: the plate's TRAVEL, the reload plate's arrival and the
@@ -148,14 +142,12 @@ final class PhonePanelBar: UIView {
     /// Which verb the trailing plate carries, and whether it carries one at all. Desktop is announced
     /// but empty, so it has nothing to reload; the workbench has nothing to reload until it is open.
     private func applyActions() {
-        let shown: Bool =
-            switch chrome.panelSurface {
-            case .code: codeReloadable
-            case .simulators,
-                 .android: true
-            case .desktop: false
-            }
-        reload.isHidden = !shown
+        // ⚠️ THE RULE IS THE FLOOR'S TOO, not only the words. WHICH surfaces have something to reload
+        // was a four-armed switch typed once per shell, and a rule with two spellings is a rule that
+        // disagrees with itself the day a fifth surface arrives. Only the MOUNT is read up here.
+        reload.isHidden = !PanelChromeActions.reloadShown(
+            for: chrome.panelSurface, codeReloadable: codeReloadable,
+        )
         // ⚠️ FROM THE FLOOR, not typed here. The Mac's strip carries the same four answers as its
         // trailing plate's tooltip, and a sentence spelled once per shell is a translation bug that
         // has already happened — the day one half is reworded the two platforms ship different copy

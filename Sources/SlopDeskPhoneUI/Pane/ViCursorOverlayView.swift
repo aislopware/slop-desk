@@ -54,8 +54,9 @@ final class ViCursorOverlayView: UIView {
     /// layout would make the block's truth depend on when UIKit felt like asking.
     private var cell: CGRect?
 
-    /// Guards the observation re-arm against a stale `onChange` firing after this view is gone.
-    private var generation = 0
+    /// The live following. Stored for ``teardown()`` alone: this view can be detached from the pane and
+    /// still be retained for a beat, which is the one case ``ObservationFollow/stop()`` exists for.
+    private var cursorFollow: ObservationFollow?
 
     init(model: TerminalViewModel) {
         self.model = model
@@ -87,9 +88,11 @@ final class ViCursorOverlayView: UIView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// Bump the generation so an already-scheduled re-arm drops itself.
+    /// End the following, so a wake already in flight cannot re-arm against a model this view has
+    /// finished with.
     func teardown() {
-        generation &+= 1
+        cursorFollow?.stop()
+        cursorFollow = nil
     }
 
     /// A terminal-authentic BLOCK cursor: one sharp-cornered accent block, exactly the glyph's cell
@@ -118,33 +121,24 @@ final class ViCursorOverlayView: UIView {
 
     // MARK: The live read
 
-    /// ONE-SHOT observation, re-armed by its own `onChange` — reading the two gates here is what makes the
-    /// block move the instant a motion lands. The geometry read stays out of the tracked closure:
+    /// The following, through ``ObservationFollow/arm(_:read:apply:)`` — reading the two gates in `read`
+    /// is what makes the block move the instant a motion lands. The geometry read stays OUT of `read`:
     /// `cellMetrics()` is a libghostty readback, not observable state, so tracking it would register
     /// nothing and cost a call per arm.
+    ///
+    /// `apply` discards the reading and asks ``refresh()`` for the values again, because `layoutSubviews`
+    /// needs that same recompute with no reading in hand — the tracked pair is the DEPENDENCY, not the
+    /// input.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        withObservationTracking {
-            _ = model.copyModeBadgeActive
-            _ = model.viCursorCell
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+        cursorFollow = ObservationFollow.arm(self) { view in
+            DecorationViCursor.track(view.model)
+        } apply: { view, _ in
+            view.refresh()
         }
-        refresh()
     }
 
     private func refresh() {
-        let next = ViCursorGeometry.rect(
-            copyModeActive: model.copyModeBadgeActive,
-            cell: model.viCursorCell,
-            metrics: (model.surface as? TerminalViewportSnapshotting)?.cellMetrics(),
-        )
+        let next = DecorationViCursor.rect(for: model)
         guard next != cell else { return }
         cell = next
         guard let next else {

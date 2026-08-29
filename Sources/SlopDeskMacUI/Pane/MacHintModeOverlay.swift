@@ -35,7 +35,7 @@
 // spec's "yellow background / black text", theme-independent so it reads over any terminal
 // background, the secure-input-pill rationale. Black and white are the two rungs ``Slate/Native``
 // deliberately does NOT carry (see its header): they are not colours the platform has an opinion
-// about, so `NSColor.black` reaches ``Slate/Text/onWarn`` without a token standing in the way.
+// about, so ``SlateNativeColor/black`` is reached directly, with no token standing in the way.
 
 import AppKit
 import SFSafeSymbols // the mark's name, spelled once on the floor and checked by the compiler
@@ -47,10 +47,9 @@ import SlopDeskWorkspaceCore
 /// The hint chrome's two PINNED values, spelled once for the file that draws them all.
 ///
 /// ``Slate/Native`` deliberately carries no rung for black or white — see its header: they are not
-/// colours the platform has an opinion about, so they are reached directly and ``Slate/Text/onWarn``
-/// is the SwiftUI view of this same value. Both the label badges and the mode badge stand on the
-/// SAME pinned yellow, so both read their ink from here rather than one of them reaching into the
-/// other's type for it.
+/// colours the platform has an opinion about, so ``SlateNativeColor/black`` is reached directly. Both
+/// the label badges and the mode badge stand on the SAME pinned yellow, so both read their ink from
+/// here rather than one of them reaching into the other's type for it.
 @MainActor
 private enum HintPlate {
     /// Ink ON the pinned yellow plate — theme-independent, so it reads over any terminal background
@@ -223,7 +222,7 @@ final class MacHintModeOverlay: NSView {
     /// `cancelHintMode()` once the terminal is first responder; this is the net for an Esc that lands
     /// in the OVERLAY's chain instead — a click on the `×` or on the dim plate leaves focus here.
     ///
-    /// `cancelOperation(_:)` is AppKit's spelling of what the phone spells ``View/slateCancelKey(perform:)``: AppKit walks Esc (and ⌘.) up the responder chain, so this fires from
+    /// `cancelOperation(_:)` is AppKit's spelling of what the phone spells ``UIKeyCommand/slateCancel(action:)``: AppKit walks Esc (and ⌘.) up the responder chain, so this fires from
     /// anywhere at or below the overlay without anyone installing a monitor. A local event monitor
     /// here would be a second reader of a key the renderer already consumes, and is banned in this
     /// directory for exactly that.
@@ -283,10 +282,6 @@ private final class MacHintDimPlate: NSView {
 /// after every keystroke.
 @MainActor
 private final class MacHintLabelBadge: NSView {
-    /// ⚠️ 14 is UNNAMED on the floor — the badge's minimum height, deliberately UNDER the keycap's 18
-    /// because a badge stands ON the grid rather than beside a label. It is the SECOND spelling: the
-    /// SwiftUI half carries the same literal with the same ⚠️. Proposed `Slate.Metric.hintBadge`.
-    private static let minHeight: CGFloat = 14
     /// ⚠️ 0.2 is UNNAMED on the floor — the ruled-out badge's opacity, a rung BELOW
     /// ``Slate/Opacity/dim`` (0.35) because this dims a whole PLATE rather than ink on one. Second
     /// spelling, same ⚠️ as the SwiftUI half. Proposed `Slate.Opacity.dimmedPlate`.
@@ -316,13 +311,7 @@ private final class MacHintLabelBadge: NSView {
         text.setAccessibilityElement(false)
         text.translatesAutoresizingMaskIntoConstraints = false
         addSubview(text)
-        NSLayoutConstraint.activate([
-            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Slate.Metric.space1),
-            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Slate.Metric.space1),
-            text.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minHeight),
-            heightAnchor.constraint(greaterThanOrEqualTo: text.heightAnchor),
-        ])
+        NSLayoutConstraint.activate(DecorationHintBadge.constraints(in: self, text: text))
 
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -335,32 +324,17 @@ private final class MacHintLabelBadge: NSView {
 
     /// Re-ink for the current typed prefix. The plate does not move and the label does not change —
     /// only which letters are faded, and whether the whole badge is still in the running.
+    ///
+    /// The 2-letter run itself is ``DecorationHintBadge/letters(label:typed:font:ink:)`` — WHICH letters
+    /// are faded, and that the label is uppercased at all, are ``HintPresentation``'s, and the drawing
+    /// of that answer is now one implementation rather than one per shell.
     func apply(typed: String, dimmed: Bool) {
-        text.attributedStringValue = Self.letters(label: label, typed: typed)
+        text.attributedStringValue = DecorationHintBadge.letters(
+            label: label, typed: typed,
+            font: .monospacedSystemFont(ofSize: Slate.Typeface.small, weight: .bold),
+            ink: HintPlate.ink,
+        )
         alphaValue = dimmed ? Self.ruledOut : 1
-    }
-
-    /// The 2 uppercase letters, already-typed ones faded (the progress cue), the rest solid black.
-    /// WHICH letters are faded, and that the label is uppercased at all, are ``HintPresentation``'s —
-    /// spelled as `offset < typed.count` there precisely because re-deriving it per renderer is a
-    /// place a half could fade the wrong letter and still look plausible (on the very common case,
-    /// nothing typed yet, every spelling agrees).
-    private static func letters(label: String, typed: String) -> NSAttributedString {
-        let run = NSMutableAttributedString()
-        let font = NSFont.monospacedSystemFont(ofSize: Slate.Typeface.small, weight: .bold)
-        for (offset, character) in HintPresentation.displayLabel(label).enumerated() {
-            let faded = HintPresentation.isFaded(offset: offset, typed: typed)
-            run.append(NSAttributedString(
-                string: String(character),
-                attributes: [
-                    .font: font,
-                    .foregroundColor: faded
-                        ? HintPlate.ink.withAlphaComponent(Slate.Opacity.dim)
-                        : HintPlate.ink,
-                ],
-            ))
-        }
-        return run
     }
 
     override var wantsUpdateLayer: Bool { true }
@@ -461,18 +435,12 @@ private final class MacHintModeBadge: NSView {
             top: Slate.Metric.space1, left: Slate.Metric.space2,
             bottom: Slate.Metric.space1, right: Slate.Metric.space2,
         )
-        row.translatesAutoresizingMaskIntoConstraints = false
         row.addArrangedSubview(title)
         row.addArrangedSubview(intentLabel)
         row.addArrangedSubview(typedLabel)
         row.addArrangedSubview(close)
         addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        NSLayoutConstraint.activate(row.slateEdges(of: self))
 
         // A GROUP, not SwiftUI's combined element, for the reason the status chip gives: `.combine`
         // folds a child button's action into one element and AppKit has no equivalent that keeps the

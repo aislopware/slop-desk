@@ -68,8 +68,9 @@ final class LinkHighlightOverlayView: UIView {
     /// ever varies by row.
     private var painters: [CGFloat: CAShapeLayer] = [:]
 
-    /// Guards the observation re-arm against a stale `onChange` firing after this view is gone.
-    private var generation = 0
+    /// The live following. Stored for ``teardown()`` alone — the overlay can outlive the pane it reads,
+    /// which is the one case ``ObservationFollow/stop()`` exists for.
+    private var linkFollow: ObservationFollow?
 
     init(model: TerminalViewModel, cwd: String?) {
         self.model = model
@@ -88,9 +89,11 @@ final class LinkHighlightOverlayView: UIView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
-    /// Bump the generation so an already-scheduled re-arm drops itself.
+    /// End the following, so a wake already in flight cannot re-arm against a model this view has
+    /// finished with.
     func teardown() {
-        generation &+= 1
+        linkFollow?.stop()
+        linkFollow = nil
     }
 
     /// A resize re-wraps the grid, so every detected span moves and several stop existing. No observable
@@ -105,76 +108,36 @@ final class LinkHighlightOverlayView: UIView {
 
     // MARK: The live read
 
-    /// ONE-SHOT observation, re-armed by its own `onChange`.
+    /// The following, through ``ObservationFollow/arm(_:read:apply:)``.
     ///
-    /// ⚠️ THE DEPENDENCY IS CONDITIONAL AND THAT IS THE POINT. The three arm signals are read on every
-    /// arm, so the underlines reveal / clear the instant ⌘ is pressed or released. The two
-    /// viewport-change signals are read ONLY inside the armed branch, so an idle pane does not re-detect
-    /// once per ingest chunk while nobody is holding ⌘ — the same bargain the SwiftUI half struck by
-    /// putting them inside its `if`.
+    /// ⚠️ THE DEPENDENCY IS CONDITIONAL AND THAT IS THE POINT, and the conditional itself is
+    /// ``DecorationLinkUnderline/track(_:)``'s rather than this file's — the three arm signals, the two
+    /// viewport signals read only inside the armed branch, and the observable-twin trap are one
+    /// dependency set for both shells. `Observation` registers what a tracking block reads THROUGH a call
+    /// exactly as it registers a direct read, so the set does not widen by descending.
     ///
-    /// BOTH signals, not just the loud one: `bytesReceived` covers new streaming output, and
-    /// `viewportRevision` covers a LOCAL scrollback scroll, which moves the viewport without a single new
-    /// wire byte. Observing only the first leaves the underlines stranded at their pre-scroll screen rows,
-    /// over unrelated text.
-    ///
-    /// A `SettingsKey` read needs the config's own observable edge in the SAME tracked block — turning
-    /// link detection off in Settings has to reach a pane that is otherwise idle.
+    /// ⚠️ THE CONFIG EDGE STAYS HERE, and it is the reason `track` is called rather than replaced. A
+    /// `SettingsKey` read needs the config's own observable edge in the SAME `read` block — turning link
+    /// detection off in Settings has to reach a pane that is otherwise idle — and the Mac shell does not
+    /// read it. Lifting a signal only one half observes would WIDEN the other's dependency set instead of
+    /// de-duplicating anything, so it is spelled at the call site that needs it.
     private func follow() {
-        generation &+= 1
-        let token = generation
-        withObservationTracking {
+        linkFollow = ObservationFollow.arm(self) { view in
             _ = ConfigRevision.shared.generation
-            // `alternateScreenActive`, the OBSERVABLE twin — not `isAlternateScreen`, which reads through
-            // an `@ObservationIgnored` tracker and would register no dependency at all here. The tracked
-            // closure is the one place the distinction bites: without the twin, a flip to a full-screen
-            // TUI under a held ⌘ only clears the underlines if MORE output happens to arrive.
-            if LinkUnderlineGeometry.isArmed(
-                highlightActive: model.linkHighlightActive,
-                detectionEnabled: SettingsKey.linkDetectionEnabled,
-                isAlternateScreen: model.alternateScreenActive,
-            ) {
-                _ = model.bytesReceived
-                _ = model.viewportRevision
-            }
-        } onChange: { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, token == self.generation else { return }
-                    self.follow()
-                }
-            }
+            DecorationLinkUnderline.track(view.model)
+        } apply: { view, _ in
+            view.refresh()
         }
-        refresh()
     }
 
     /// Re-detect, and re-path only if the answer moved. Streaming output bumps `bytesReceived` per chunk
     /// while ⌘ is held, and most chunks do not touch a link's row — the detector still runs (it is the
     /// only way to know), but the layers are left alone.
     private func refresh() {
-        let next = detected()
+        let next = DecorationLinkUnderline.strokes(for: model, cwd: cwd)
         guard next != strokes else { return }
         strokes = next
         repath()
-    }
-
-    private func detected() -> [TerminalStroke] {
-        guard LinkUnderlineGeometry.isArmed(
-            highlightActive: model.linkHighlightActive,
-            detectionEnabled: SettingsKey.linkDetectionEnabled,
-            isAlternateScreen: model.isAlternateScreen,
-        ),
-            let snapshot = model.surface as? TerminalViewportSnapshotting,
-            let metrics = snapshot.cellMetrics()
-        else { return [] }
-        return LinkUnderlineGeometry.strokes(
-            links: TerminalLinkDetector.detect(
-                rows: snapshot.viewportTextRows(),
-                cwd: cwd,
-                schemes: SettingsKey.linkSchemePolicy,
-            ),
-            metrics: metrics,
-        )
     }
 
     /// Rebuild one path per stroke width, and retire the layers no width needs any more.

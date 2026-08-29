@@ -203,4 +203,26 @@ package enum PaneEmptyCause: Equatable, Sendable {
         guard case let .connectFailed(reason) = self else { return nil }
         return reason
     }
+
+    // MARK: The one action
+
+    /// RUN the single next action ``actionLabel`` names.
+    ///
+    /// The label descended with the rest of the copy; the DEED did not, and so both shells wrote the
+    /// same four-arm switch under their empty state's callback. It is the same shape as the copy and
+    /// belongs in the same place: which of the two things a button does — reopen the Connect editor or
+    /// mint a tab — is a reading of the CAUSE, and `.linkDown` does nothing at all because it has no
+    /// button to press.
+    ///
+    /// `onConnect` stays a closure because summoning the Connect editor is the app shell's, not the
+    /// store's: on macOS it is a sheet on the key window, on iOS a presented controller.
+    @MainActor
+    package func act(store: WorkspaceStore, onConnect: () -> Void) {
+        switch self {
+        case .neverConnected,
+             .connectFailed: onConnect()
+        case .noTabs: store.newTerminalPane(.newTab)
+        case .linkDown: break
+        }
+    }
 }
