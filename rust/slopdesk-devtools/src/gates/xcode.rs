@@ -78,11 +78,21 @@ fn generate(root: &Path, spec: &str) -> Result<(), String> {
 
 /// The iOS-triple typecheck, cached against [`stamp`].
 ///
-/// ONE scheme, and the second one's removal was measured rather than assumed: the app target's own
-/// dependency dump showed `SlopDeskPhoneUI` as an explicit dependency, so the second scheme's graph
-/// was a strict SUBSET that compiled nothing the first had not — for ~85 s on every Swift edit. The
-/// one thing it would have caught, the app spec dropping that dependency, cannot happen quietly:
-/// the app does not build without it.
+/// The LIBRARY scheme's removal was measured rather than assumed: the app target's own dependency
+/// dump showed `SlopDeskPhoneUI` as an explicit dependency, so that scheme's graph was a strict
+/// SUBSET that compiled nothing the first had not — for ~85 s on every Swift edit. The one thing it
+/// would have caught, the app spec dropping that dependency, cannot happen quietly: the app does
+/// not build without it.
+///
+/// ⚠️ THE TEST BUNDLE IS THE OPPOSITE CASE, and it is why there are two builds here rather than
+/// one. `Apps/ClientApp-iOS/Tests` is a strict SUPERSET — its own sources compile in no other gate,
+/// since `swift build` never sees `Apps/` and `swift test` compiles the macOS branch of every
+/// `#if os(iOS)` fork. Left uncompiled it went unbuildable for weeks with every gate green, which
+/// is the same hole `check-macos-apps` exists to close on the other shell. `build-for-testing` is
+/// headless against `generic/platform=iOS Simulator`, so it belongs in this gate; RUNNING those
+/// assertions still needs a booted simulator and stays in `check-ios-tests`, out of `check`. The
+/// two builds share one derived-data path, so the second compiles the test sources and links — not
+/// the app graph again.
 ///
 /// # Errors
 /// When xcodegen is absent, the build fails, or the stamp cannot be written.
@@ -109,6 +119,24 @@ pub fn ios_typecheck(root: &Path, force: bool) -> Result<(), String> {
             ".build/ios-dd",
             "CODE_SIGNING_ALLOWED=NO",
             "build",
+        ],
+        root,
+    )?;
+
+    println!("==> iOS-triple build-for-testing: ClientApp-iOSTests");
+    proc::run(
+        "xcodebuild",
+        &[
+            "-project",
+            IOS_PROJECT,
+            "-scheme",
+            "ClientApp-iOSTests",
+            "-destination",
+            "generic/platform=iOS Simulator",
+            "-derivedDataPath",
+            ".build/ios-dd",
+            "CODE_SIGNING_ALLOWED=NO",
+            "build-for-testing",
         ],
         root,
     )?;
