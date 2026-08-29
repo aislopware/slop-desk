@@ -1,0 +1,116 @@
+# `slopdesk-clientdriver` — the DRIVER half of one pane's client session.
+#
+# ## Why a crate, and why not one of the two it sits between
+# `slopdesk-clientsession` opens by refusing this job: *"`SlopDeskClient` owns a transport, four
+# background tasks, an output inbox and a multicast event hub. None of that is here."* That refusal
+# is load-bearing and stays — that crate is `forbid(unsafe_code)` pure integer policy with NO
+# dependencies, linked by an iOS slice that wants the verdicts and not a runtime, and folding a
+# thread into it would drag one into every consumer of the pure doors.
+#
+# `slopdesk-clientnet` is scoped by DIRECTION to the mux CONNECTION — dial and pool. A pane session
+# is above it, not beside it: it decides WHEN to open a channel and what to do when one ends, which
+# is a question about a session rather than about a socket.
+#
+# So this is the third crate, and the host end already named the shape. `slopdesk-muxsession` is the
+# decisions of one hostd pane session; `slopdesk-hostsession` is "the SHELL around them — the
+# threads, the locks, the queues and the ladders". This crate stands to `slopdesk-clientsession`
+# exactly as `slopdesk-hostsession` stands to `slopdesk-muxsession`, from the other end of the wire.
+#
+# ## Four dependencies, each spent on one thing
+# `slopdesk-clientsession` is every verdict — dedup, ack, adoption, drop announcement, backoff.
+# `slopdesk-clientnet` is the pool and the channel over it. `slopdesk-muxnet` is the endpoint's
+# close reason and the send error the ladder reads. `slopdesk-wire` is `WireMessage`, which the
+# driver reads but never encodes: the frames are the sub-channel's.
+[package]
+name = "slopdesk-clientdriver"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The threads, the inbox and the reconnect campaign of one slopdesk pane's client session"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[workspace]
+
+[lib]
+name = "slopdesk_clientdriver"
+path = "src/lib.rs"
+
+[dependencies]
+slopdesk-clientnet = { path = "../slopdesk-clientnet" }
+slopdesk-clientsession = { path = "../slopdesk-clientsession" }
+slopdesk-muxnet = { path = "../slopdesk-muxnet" }
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# Every pane's byte path runs through this crate, and it links into the phone.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, copied rather than inherited — inheriting would mean being a workspace member,
+# which is what the profile above forbids.
+[lints.rust]
+# `forbid`, not `deny`: a supervisor thread, a mutex and a condvar need no `unsafe`, and this crate
+# is linked into the iOS client, where `forbid` is the form of the promise no downstream `allow` can
+# lift. The one `unsafe` in this lane is the FFI door's, and it lives in `slopdesk-ffi`.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+multiple_crate_versions = "allow"
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, the fused
+#   multiply-add `CLAUDE.md` forbids. The smoothed round trip is the value it would change, and the
+#   fold that produces it is `slopdesk-clientsession`'s for exactly that reason.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
