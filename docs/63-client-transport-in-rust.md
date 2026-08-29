@@ -30,6 +30,12 @@ A third target follows them rather than leads: `Sources/SlopDeskClient` (1,473 l
 are `rust/slopdesk-clientsession` already (`seq`, `gates`, `backoff`, `rtt`); what stays behind is
 four tasks and an inbox. §6.
 
+**Where it stands now.** The table above is the measurement this campaign was scoped against and is
+left as written; after G.3 and G.4 the same three targets read 1,471 / 2,595 / 1,473 across 9 / 11 /
+5 files. `SlopDeskTransport` lost the six socket files and kept the faces; `SlopDeskProtocol` lost
+the host diagonal of three channels. Neither number is a remaining-work estimate any more — G.5 is,
+and it names what is left of all three.
+
 ## 2. What is already Rust, and is not written twice
 
 Nothing in this campaign starts from a blank file. The wire and the host end of the mux landed with
@@ -425,7 +431,22 @@ The workspace half landed as:
   that assert on FIELDS of what the client put on the wire — where byte-equality would over-specify,
   because the client mints the UUIDs and the presence clock.
 
-### G.5 — the CLI and `Sources/SlopDeskClient`
+**What is left of `Sources/SlopDeskProtocol`, censused rather than assumed.** G.4's finish line is
+§6's — marshalling faces over doors — not an empty directory, so the eleven surviving files were read
+one by one and ten of them clear that bar. `WireMessageCodec` and `WireMessage` are the flatten/build
+marshalling between the enum the UI switches on and the flat FFI record, one arm per type byte.
+`MetadataVerb`, `MuxVocabulary`, `ProgressState`, `WatchNotificationMarker`, `CodecBytes` and
+`SlopDeskError` are vocabulary, faces and one shared buffer helper, each with live callers.
+
+The eleventh is not. **`ControlLine.swift` is a hand-written NDJSON grammar with no door behind it** —
+`JSONSerialization` in, `.sortedKeys` out, and a string literal for the encode-failure case. Its
+three call sites are all in `Sources/SlopDeskWorkspaceCore/Control/ClientControlDispatcher.swift`,
+and `rust/slopdesk-clientctl` already owns that lane's method vocabulary, its tokens and its NDJSON
+codec. So it is not protocol residue at all: it is the client control lane's codec, filed one module
+too low, and it retires with that lane rather than with this stage. Named here so the next census
+reads its survival as deferred rather than cleared.
+
+### G.5 — the CLI, `Sources/SlopDeskClient` and the last of `Sources/SlopDeskTransport`
 
 `Sources/slopdesk-client/main.swift` (552) is the last Swift executable in the tree that is not an
 app shell. It is not ported ahead of G.2–G.4 on purpose: written today it would be a second
@@ -437,6 +458,91 @@ the far side of G.4 it is a thin `main` over crates that already exist, and it b
 plus a thread, `EventBroadcaster` (79) is an `mpsc` fan-out, `BoundedInputPipe` (118) is a bounded
 channel whose only consumer is the CLI. `SlopDeskClient.swift` (984) is the four-task driver, and
 what survives it is the face that holds the handle.
+
+**The order inside the stage is driver first, CLI second, and the reason is who else calls it.**
+The paragraph above reads as though the CLI leads because it is the executable, but
+`git grep -lE '^import SlopDeskClient$' -- Sources` names seven files and only one of them is
+`main.swift`: `ConnectionViewModel`, `ConnectionPresenter`, `TerminalViewModel`, `TerminalBlockModel`,
+`LivePaneSession` and `WorkspaceStore` drive the same actor from the app. So the driver is not the
+CLI's private engine that a Rust `main` could quietly replace — it is the app's pane session, and
+porting it is the stage. The CLI is what falls out afterwards.
+
+#### The crate: `rust/slopdesk-clientdriver`
+
+`slopdesk-clientsession`'s own module doc refuses the job in its second sentence — *"`SlopDeskClient`
+owns a transport, four background tasks, an output inbox and a multicast event hub. None of that is
+here."* That refusal is load-bearing and stays: the crate is `forbid(unsafe_code)` pure integer
+policy, linked through `slopdesk_pane_session_*` and `slopdesk_pane_backoff_*` doors by an iOS slice
+that wants the verdicts and not a runtime. Folding a tokio driver into it drags the runtime into
+every consumer of the pure doors.
+
+The host end already made this exact carve and named both halves. `rust/slopdesk-muxsession` is the
+decisions of one hostd pane session; `rust/slopdesk-hostsession` is *"the SHELL around them — the
+threads, the locks, the queues and the ladders"*. The client end has the decision half and has never
+had the shell, so G.5 adds it: **`slopdesk-clientdriver`, the driver half of one client pane
+session**, standing to `slopdesk-clientsession` exactly as `slopdesk-hostsession` stands to
+`slopdesk-muxsession`. It is not `slopdesk-clientnet`, which §3 scoped by DIRECTION to the mux
+connection — dialler and registry — and which the driver sits above rather than beside.
+
+#### What crosses, and what stays Swift
+
+G.3's shape holds: one handle, one callback. The driver owns the transport, the four tasks, the
+inbox and the event hub; the face holds an opaque pointer and a `@Sendable` callback the driver
+calls with each event. Output bytes keep the batched path the actor already has — `outputWakeups`
+wakes the reader, `takeOutputBatch` drains — so the hot path stays one copy across the boundary and
+does not become one call per chunk.
+
+`SlopDeskClient` the Swift type survives with its public surface intact, because the surface is
+dictated by those six WorkspaceCore callers rather than chosen here: `Event`, `events`,
+`outputWakeups`, `takeOutputBatch`, `connect`/`pause`/`resume`/`close`, the four send verbs, the
+`setSurfaceFeed` seam and the read-only flags. Everything behind them goes.
+
+**`ClientTransporting` (97) does not survive, and that is the point of it.** The protocol exists so
+the driver can be handed a fake, and once the driver is Rust a Swift fake would be a second
+implementation wearing a test's clothes. What the app's own suites fake after G.5 is the face's
+EVENT SOURCE — a driver that is told what to emit — not a transport underneath a Swift driver that
+no longer exists.
+
+#### `Sources/SlopDeskTransport` dissolves with it, and two files relocate rather than retire
+
+Seven of its nine files are the session's and go behind the door: `MuxClientTransport` (491),
+`ReplayBuffer` (441) — whose only shipping caller is `SlopDeskClient.swift`, every other hit being a
+doc comment — `ConnectionRegistry` (145), `ClientTransporting` (97), `SlopDeskTransportError` (89),
+`MessageChannel` (26) and `RustHandle` (21).
+
+The other two never belonged to the mux and must not be deleted with it:
+
+- **`TransportParameters` (78)** is the module's last `import Network`, and its three shipping
+  callers are `CodeSidebarProxy`, `AndroidBridgeSocket` and `SimulatorStreamConnection` — the
+  code-server proxy, the Android bridge and the simulator stream, all §5 lanes. It moves to
+  `Sources/SlopDeskNet`, where the `NWConnection` lanes already live.
+- **`AltScreenCutScanner` (83)** is a face over `slopdesk_altscreen_reopen` whose one shipping caller
+  is `SlopDeskDevicePanels/Android/AndroidControlMessage.swift`. It moves there, with its suite.
+
+#### The CLI
+
+`slopdesk-posix` already holds every syscall the interactive mode needs, and holds them for this
+binary specifically: `rawmode::enter`/`restore`/`restore_on_signals` is the termios save-and-restore
+including the signal paths, and `rawmode`'s doors in `slopdesk-ffi/src/tty.rs` say so out loud —
+*"the raw-mode trio is `slopdesk-client`'s, a macOS command-line binary"*. A Rust CLI calls the crate
+directly, so `slopdesk_tty_enter_raw`, `slopdesk_tty_restore` and
+`slopdesk_tty_install_restore_on_signals` lose their only caller and retire in the same change. That
+is the whole reason the CLI is cheap on this side of the driver: arg parsing, a raw-mode guard, two
+byte pumps and a SIGWINCH resize, over crates that exist.
+
+It lands as its own bin rather than a `slopdesk` subcommand: the shipped name `slopdesk-client` is
+what `SubprocessE2ETests` execs and what `docs/49`'s pipeline signs, and a rename is a release-facing
+change this stage has no reason to make.
+
+#### The test migration is the bulk of the stage
+
+Twelve suites under `Tests/SlopDeskClientTests` drive the actor through fake transports — `Dedup`,
+`DetachResume`, `ReconnectRace`, `ReconnectInbox`, `ReconnectGiveUp`, `ReconnectClosed`, `BatchDrain`,
+`Blocks`, `RTT`, `ExitTerminal`, `Smoke`, `BoundedInputPipe`. Every one of them pins driver
+behaviour, so every one of them lands in `slopdesk-clientdriver` against a fake `ByteLink`, which is
+the stronger pin: the Swift versions could only reach the driver through a protocol the driver
+itself defined. `Tests/SlopDeskTransportTests` follows the files it covers — the seven that cross go
+to the crate, `TransportParametersTests` and `AltScreenCutScannerTests` move with their subjects.
 
 `SubprocessE2ETests` launches the shipped `slopdesk-client` binary; it is re-pointed at the Rust one
 in the same change, which is what keeps the crown-jewel end-to-end proof pointed at the thing that
@@ -477,8 +583,18 @@ ships.
 
 ## 6. The finish line, stated so it can be checked
 
-After G.5, `git grep -l 'import Network' -- 'Sources/*.swift'` names only the PATH-4/inspector/video
-lanes of §5, and the face-filtered census of undelegated non-UI Swift (the method in
-`docs/40`-adjacent notes: non-UI, no `slopdesk_` door, names no face) holds only the documented
-floor — CoreMedia display-layer feeds, WebKit, CoreGraphics drawing art, and the runtime half of the
-document/runtime seam.
+After G.5, `git grep -l 'import Network' -- 'Sources/*.swift'` names no mux file, and the
+face-filtered census of undelegated non-UI Swift (the method in `docs/40`-adjacent notes: non-UI, no
+`slopdesk_` door, names no face) holds only the documented floor — CoreMedia display-layer feeds,
+WebKit, CoreGraphics drawing art, and the runtime half of the document/runtime seam.
+
+**The `import Network` half is stated as a list rather than a description, because the description
+was wrong.** §5 names the PATH-4, inspector and video lanes, but the grep answers ten files today and
+three of them are lanes §5 never mentioned. The nine it may name after G.5 are: `NWByteChannel` and
+`FileTransferClient` (PATH-4 + the inspector's byte channel), `WorkspaceStore` (which dials that
+inspector channel — the `NWConnection` at `:3439` is its only `Network` use), `NWVideoMuxClientFlow`
+(PATH 2), `CodeSidebarProxy` (the code-server proxy), `AndroidBridgeSocket`, `SimulatorWebSocketLane`,
+`SimulatorLogConnection` and `SimulatorStreamConnection` (the device panels' own lanes, `docs/47`/`48`),
+plus `TransportParameters` at its new address in `Sources/SlopDeskNet`. None is the client mux, which
+is the claim this campaign actually gets to make. The device-panel and proxy lanes are their own
+campaigns and are not scoped here.
