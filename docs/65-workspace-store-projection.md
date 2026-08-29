@@ -235,11 +235,17 @@ being rewritten in place. So the differential here is narrower and must be named
 
 ## 5. The backlog this stage parks, deliberately
 
-- **`Sources/slopdesk-corevectors/main.swift` (919 lines) is a Swift BINARY**, which the standing
-  rule bans outright. It is parked rather than ported because a Rust generator would emit the corpus
-  through Rust and diff it against Rust: the corpus exists to catch a `#[repr(C)]` field reorder or a
-  length in the wrong unit as SWIFT sees it, and porting the generator deletes exactly that. The
-  resolution is a target-kind change, not a language change — `executableTarget` → a test target
-  `slopdesk-gate golden` invokes — and it belongs in its own change.
+- ~~**`Sources/slopdesk-corevectors/main.swift` is a Swift BINARY**, which the standing rule bans
+  outright.~~ **LANDED**, exactly as scoped: a target-kind change, not a language change. It is
+  `Tests/SlopDeskCoreVectorsTests/` now — `CoreVectors.mint()` plus the one suite that calls it — and
+  it was never a candidate for a port, because a Rust minter would emit the corpus through Rust and
+  diff it against Rust: the corpus exists to catch a `#[repr(C)]` field reorder or a length in the
+  wrong unit as SWIFT sees it, and porting the minter deletes exactly that. Two things the move
+  bought that the executable could not: the suite asserts its own mint against the committed corpus,
+  so a wire change is red under plain `swift test` rather than only under `just golden`; and the
+  mint reaches the gate as a file (`.work/golden/corevectors.json`) instead of stdout, which is also
+  the file a legitimate wire change merges FROM. The key sets stay typed in one language, in
+  `rust/slopdesk-devtools/src/gates/golden.rs` — the suite names none of them, deriving its check
+  from what it minted.
 - **`SerialFeedGate` (113), `NWByteChannel` (87), `BoundedInputPipe`** — the store seam in miniature,
   and they will read differently once §3's idiom exists. Re-triage them after stage 4, not before.

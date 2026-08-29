@@ -12,7 +12,7 @@ import XCTest
 /// when the daemon renamed a field. The corpus closes that: the daemon's crate asserts it encodes
 /// these exact bytes, and this suite asserts the shipped decoder still reads them.
 ///
-/// The vectors are HAND-AUTHORED rather than generated, because `slopdesk-corevectors` can only mint
+/// The vectors are HAND-AUTHORED rather than generated, because `CoreVectors.mint()` can only mint
 /// what a Swift encoder produces and this type's synthesized encode is not the wire: ``ToolCard``
 /// carries the two RENDERINGS the FFI door grafts on, not the wire's `input`.
 ///

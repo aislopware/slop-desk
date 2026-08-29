@@ -1,9 +1,16 @@
 //! The golden regression pin: the wire corpus, byte for byte.
 //!
-//! `golden/golden_vectors.json` is the FROZEN source of truth for every codec's exact bytes.
-//! `slopdesk-corevectors` regenerates the emitted subset from the live codecs; this gate asserts
+//! `golden/golden_vectors.json` is the FROZEN source of truth for every codec's exact bytes. The
+//! Swift suite [`MINTER`] regenerates the emitted subset from the live codecs; this gate asserts
 //! they are byte-identical to the committed corpus. It is a regression pin, not a parity proof —
 //! there is no second implementation to diff against since the Rust codecs were deleted.
+//!
+//! ## The minter is a SUITE, and the key sets stay here
+//! It used to be a Swift executable, which the standing "no Swift binaries" rule left no room for;
+//! only the target KIND changed, because what the corpus pins is how SWIFT marshals and a Rust
+//! minter would diff Rust against Rust. The suite therefore checks only what it can derive from
+//! what it minted — each minted key against the corpus's bytes for it — and never names a key set.
+//! Both sets below stay typed in ONE language, here, so the two halves cannot drift apart.
 //!
 //! ## The key sets are PINNED, not inferred
 //! Both buckets are exact: the generator must emit EXACTLY [`EMITTED_KEYS`], and the corpus must
@@ -29,8 +36,9 @@
 //! replayed from both sides, through the Swift face and through the rule.
 //!
 //! ## Updating the corpus
-//! Regenerate with NO `SLOPDESK_*` env set and merge surgically — never `>` over
-//! `golden/golden_vectors.json`, which drops the frozen keys the generator does not emit. A NEW
+//! Run `just golden`, which mints with NO `SLOPDESK_*` env set and leaves the result at
+//! [`SCRATCH`], then merge the changed keys out of that file surgically — never `>` it over
+//! `golden/golden_vectors.json`, which drops the frozen keys the minter cannot produce. A NEW
 //! vector key must also be added to [`EMITTED_KEYS`], or this gate fails by design.
 
 use std::collections::BTreeSet;
@@ -42,7 +50,13 @@ use serde_json::Value;
 /// The committed corpus.
 pub const CORPUS: &str = "golden/golden_vectors.json";
 
-/// Every key `slopdesk-corevectors` emits. Exact in both directions.
+/// The Swift suite that mints the emitted half, as `swift test --filter` spells it.
+pub const MINTER: &str = "SlopDeskCoreVectorsTests";
+
+/// Where that suite leaves the mint. Scratch, git-ignored, and the file a wire change merges FROM.
+pub const SCRATCH: &str = ".work/golden/corevectors.json";
+
+/// Every key [`MINTER`] mints. Exact in both directions.
 pub const EMITTED_KEYS: &[&str] = &[
     "adaptiveGroupSize",
     "adaptiveTier",
@@ -139,6 +153,17 @@ const READER_TREES: &[&str] = &["Tests"];
 
 /// The other half: each `rust/<crate>/tests` directory, one level down.
 const RUST_TESTS: &str = "rust";
+
+/// Directory names inside a reader tree that are NOT readers, however much they look like one.
+///
+/// [`MINTER`] is the whole list, and it is here because moving it under `Tests/` put it inside a
+/// reader tree. It says `golden_vectors` in its own prose and NAMES fourteen frozen keys, in the
+/// comments explaining why each stopped being minted — which is the
+/// `a_crates_own_source_is_not_a_reader` shape exactly: a file that mentions the key and opens the
+/// corpus, and replays neither. Left in, it would answer for those fourteen and the check could no
+/// longer notice a real replay suite being deleted. A minter is not a reader; it is the thing
+/// readers are read against.
+const NOT_A_READER: &[&str] = &[MINTER];
 
 /// One thing wrong with the pin, phrased for the author who has to fix it.
 pub type Failure = String;
@@ -288,17 +313,30 @@ pub fn readers(root: &Path) -> Result<Vec<String>, String> {
 
 /// Regenerate the emitted subset from the live codecs.
 ///
-/// Every `SLOPDESK_*` variable is stripped from the child's environment: the generator must resolve
-/// its compile-time-const defaults, and a developer's own override would silently regenerate a
-/// different corpus than the one committed.
+/// The minter is a TEST TARGET, not a binary — Swift has none — so this runs the suite rather than
+/// an executable and reads the mint off [`SCRATCH`] instead of stdout, which under `swift test`
+/// carries runner chatter the corpus cannot be parsed out of. The file is deleted first: the suite
+/// SKIPS rather than mints when the environment cannot produce reproducible bytes, and a stale file
+/// left over from an earlier run would read exactly like a fresh one.
+///
+/// Every `SLOPDESK_*` variable is stripped from the child's environment, which is the same
+/// condition the suite skips on: the minter must resolve its compile-time-const defaults, and a
+/// developer's own override would silently regenerate a different corpus than the one committed. So
+/// the gate never takes the skip branch, and if it somehow did, the missing file says so instead of
+/// passing.
 ///
 /// # Errors
-/// When the generator cannot be run, or exits non-zero.
+/// When the suite cannot be run, fails, or leaves no mint behind.
 pub fn regenerate(root: &Path) -> Result<String, String> {
+    let scratch = root.join(SCRATCH);
+    match fs::remove_file(&scratch) {
+        Ok(()) => {},
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => return Err(format!("{SCRATCH}: {error}")),
+    }
+
     let mut command = std::process::Command::new("swift");
-    command
-        .args(["run", "-q", "slopdesk-corevectors"])
-        .current_dir(root);
+    command.args(["test", "--filter", MINTER]).current_dir(root);
     for (name, _) in std::env::vars_os().filter_map(|(name, value)| {
         name.to_str()
             .filter(|text| text.starts_with("SLOPDESK_"))
@@ -306,17 +344,20 @@ pub fn regenerate(root: &Path) -> Result<String, String> {
     }) {
         command.env_remove(name);
     }
-    let output = command
+    let status = command
+        .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
-        .output()
-        .map_err(|error| format!("swift run slopdesk-corevectors: {error}"))?;
-    if !output.status.success() {
+        .status()
+        .map_err(|error| format!("swift test --filter {MINTER}: {error}"))?;
+    if !status.success() {
         return Err(format!(
-            "slopdesk-corevectors exited {}",
-            output.status.code().unwrap_or(-1)
+            "{MINTER} exited {} — the minter itself is red, so there is nothing to diff",
+            status.code().unwrap_or(-1)
         ));
     }
-    String::from_utf8(output.stdout).map_err(|_| "the generator wrote output that is not UTF-8".to_owned())
+    fs::read_to_string(&scratch).map_err(|error| {
+        format!("{SCRATCH}: {error} — {MINTER} ran green but left no mint (did every case SKIP?)")
+    })
 }
 
 /// The whole gate: regenerate, pin the key sets, byte-diff, then prove every frozen key has a
@@ -385,7 +426,7 @@ fn collect(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), String>
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         if path.is_dir() {
-            if name != "target" && name != ".build" {
+            if name != "target" && name != ".build" && !NOT_A_READER.contains(&name) {
                 collect(&path, into)?;
             }
         } else if matches!(
@@ -511,6 +552,34 @@ mod tests {
         );
 
         fs::write(root.join("rust/slopdesk-thing/tests/golden.rs"), claim).unwrap();
+        assert!(!super::readers(&root).unwrap().contains(&"naluJoin".to_owned()));
+    }
+
+    /// The MINTER must not be able to answer for a key it merely stopped minting.
+    ///
+    /// It lives under `Tests/` — a reader tree — says `golden_vectors` in its own prose and names
+    /// fourteen frozen keys in the comments recording why each was frozen. That is the same shape
+    /// as `a_crates_own_source_is_not_a_reader`, one tree over, and it arrived the day the
+    /// minter stopped being an executable. Seeded here so the exclusion cannot be dropped by
+    /// tidying.
+    #[test]
+    fn the_minter_is_not_a_reader_of_the_keys_it_stopped_minting() {
+        let root = std::env::temp_dir().join(format!("slopdesk-golden-minter-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Tests").join(super::MINTER)).unwrap();
+        let claim = "// naluJoin is frozen — see golden_vectors.json\n";
+        fs::write(
+            root.join("Tests").join(super::MINTER).join("CoreVectors.swift"),
+            claim,
+        )
+        .unwrap();
+        assert!(
+            super::readers(&root).unwrap().contains(&"naluJoin".to_owned()),
+            "the minter answered for a key it does not replay"
+        );
+
+        fs::create_dir_all(root.join("Tests/SlopDeskWireTests")).unwrap();
+        fs::write(root.join("Tests/SlopDeskWireTests/Replay.swift"), claim).unwrap();
         assert!(!super::readers(&root).unwrap().contains(&"naluJoin".to_owned()));
     }
 

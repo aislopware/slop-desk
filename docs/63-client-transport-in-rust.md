@@ -742,10 +742,12 @@ catch for itself, is caught.
 - **`Sources/SlopDeskVideoClient`'s `NWVideoMuxClientFlow`** is PATH 2 over UDP, a different wire
   with a different crate (`slopdesk-video`). Out of scope, named here so the next census does not
   read its absence as an oversight.
-- **`golden/golden_vectors.json`** is not regenerated at any stage, and
-  `Sources/slopdesk-corevectors` is not ported. Its whole value is being Swift: it pins the Swift
-  marshalling faces against the frozen corpus, so a Rust rewrite would be Rust pinning Rust. It
-  shrinks as the faces it exercises shrink, and it retires with the last of them — not before.
+- **`golden/golden_vectors.json`** is not regenerated at any stage, and the minter is not ported. Its
+  whole value is being Swift: it pins the Swift marshalling faces against the frozen corpus, so a
+  Rust rewrite would be Rust pinning Rust. It shrinks as the faces it exercises shrink, and it
+  retires with the last of them — not before. (It later stopped being a BINARY, which is a different
+  question and the one the standing rule asks: it is `Tests/SlopDeskCoreVectorsTests` now, same Swift,
+  same corpus, a target kind that is not an executable. `docs/65` §5 records that move.)
 
   **G.3 is where the first of them retires, and it costs a gate change this section originally did
   not budget.** `Sources/slopdesk-corevectors/main.swift` builds twelve `MuxFrame`s and emits the

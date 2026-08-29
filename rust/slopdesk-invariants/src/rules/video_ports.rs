@@ -468,6 +468,7 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
         "Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift",
         // Guards that must consult the REAL environment to SKIP when a knob is set outside the
         // overlay — the opposite of reading one past it.
+        "Tests/SlopDeskCoreVectorsTests/CoreVectorsGoldenTests.swift",
         "Tests/SlopDeskVideoClientTests/SharpenResolutionTests.swift",
         "Tests/SlopDeskVideoProtocolTests/SettingsReachConsumerTests.swift",
         // The behaviour-preservation proof: it has to spell the legacy expression to compare

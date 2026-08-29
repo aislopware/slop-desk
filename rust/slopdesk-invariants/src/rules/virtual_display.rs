@@ -33,7 +33,7 @@ const DAEMON: &str = "rust/slopdesk-videohostd";
 ///
 /// This one is worth a rule beyond the usual reason. Both deleted Swift types carried a header
 /// comment saying "Matches the core" — against a Rust core that DID NOT EXIST, which
-/// `slopdesk-corevectors` had also been asserting for a `slopdesk_core::virtual_display_geometry`
+/// The Swift minter had also been asserting for a `slopdesk_core::virtual_display_geometry`
 /// nothing ever built. Four keys of `golden/golden_vectors.json` were pinned by that comment and
 /// read by nothing, and one of them drifted for a year. A claim about where logic lives is worth
 /// exactly as much as the check that enforces it, so the claim is a check now.

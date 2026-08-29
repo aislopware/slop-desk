@@ -1322,7 +1322,7 @@ const GOLDEN: &str = include_str!(concat!(
     "/../../golden/golden_vectors.json"
 ));
 
-/// The vector group this file replays. Emitted by `Sources/slopdesk-corevectors`, from the SWIFT
+/// The vector group this file replays. Minted by `Tests/SlopDeskCoreVectorsTests`, from the SWIFT
 /// half of the same ladder — `LoopbackWorkspaceDocument`.
 const VECTOR: &str = "workspaceDocumentVersioning";
 

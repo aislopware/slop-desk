@@ -1454,7 +1454,7 @@ twice, and drift there is invisible to a suite that runs only one of the two. Th
 `rust/slopdesk-hostserver`'s `workspace.rs` now, which no Swift test can reach, so the pin is a
 CROSS-LANGUAGE one and lives where the tree already keeps those: the
 `workspaceDocumentVersioning` group in `golden/golden_vectors.json`, minted by
-`Sources/slopdesk-corevectors` through the real `LoopbackWorkspaceDocument` and replayed by
+`Tests/SlopDeskCoreVectorsTests` through the real `LoopbackWorkspaceDocument` and replayed by
 `rust/slopdesk-hostserver/tests/workspace.rs` through the real `WorkspaceDocument`. What it pins is
 the LADDER and the state bytes — per step, the op and its args, the verdict, `stateNum`, `pristine`,
 whether the step published at all, and the diff the two consecutive documents produce — never the

@@ -294,7 +294,7 @@ its own rule rather than a table cell):
 ### 5.1 Transport: `channelClass == 1`, zero envelope churn
 
 `MuxChannelOpen.channelClass: UInt8` is already encoded, decoded, and golden-pinned at values 0 and
-255 (`Sources/slopdesk-corevectors/main.swift:1281,1291`) — and read **nowhere** in
+255 (`Tests/SlopDeskCoreVectorsTests/CoreVectors.swift`) — and read **nowhere** in
 `rust/slopdesk-hostserver`. The seam is entirely free.
 
 ```
@@ -525,7 +525,7 @@ subscriber whose acked `stateNum` falls outside that window gets a snapshot.
 
 ### 5.7 Golden vectors, tests and docs — the exact work
 
-1. **`Sources/slopdesk-corevectors/main.swift`** — two new top-level keys:
+1. **`Tests/SlopDeskCoreVectorsTests/CoreVectors.swift`** — two new top-level keys:
    - `root["workspaceWireMessages"]` — type 17/37 envelope round-trips: empty payload, `UInt32.max`
      requestSeq, `Int64.min` / `Int64.max` state numbers, all five kinds, unknown verb/kind bytes.
    - `root["workspaceStateCodec"]` — key/entry/snapshot/diff payloads, a nested `layoutStructure` blob

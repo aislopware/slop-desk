@@ -837,35 +837,6 @@ let package = Package(
         // now, so the instrument drives the SAME capture object the daemon does rather than a second
         // one that could disagree about what it measured — docs/57, docs/61 §3.)
 
-        // Golden-vector dumper: regenerates the EMITTED half of `golden/golden_vectors.json` from the
-        // `SlopDeskVideoProtocol` codecs and the pure controllers, so `slopdesk-gate golden` can diff
-        // the live codecs against the committed bytes. Pure value types only — it constructs NO
-        // SCStream and no encoder, so it touches neither GUI nor TCC.
-        //
-        // ⚠️ NEVER `>` OVER THE CORPUS. It also holds the FROZEN keys this target does not emit, and a
-        // redirect drops every one of them — which `slopdesk-gate golden` then fails on by design.
-        // Regenerate to a scratch file and merge the emitted keys in.
-        //
-        // ⚠️ Run with NO `SLOPDESK_*` env set, so the controllers resolve their default tunables. The
-        // Rust crates pin those same defaults as compile-time consts, and an env-shifted run silently
-        // records a corpus that no default build reproduces.
-        .executableTarget(
-            name: "slopdesk-corevectors",
-            dependencies: [
-                "SlopDeskProtocol",
-                "SlopDeskWorkspaceModel",
-                // `LoopbackWorkspaceDocument` — the Swift half of the versioning ladder
-                // `workspaceDocumentVersioning` pins against `rust/slopdesk-hostserver`'s document.
-                // The vector runs the REAL class rather than a transcription of its ~30 lines,
-                // which is the only way the pin can catch this side drifting. No cycle (this is a
-                // leaf executable) and no GUI: the target holds the workspace DOMAIN and links no
-                // view framework.
-                "SlopDeskWorkspaceCore",
-                "SlopDeskVideoProtocol",
-                "SlopDeskVideoClient",
-            ],
-        ),
-
         // MARK: Tests
 
         // The clock every ceiling bench measures with. A TEST-ONLY library — it lives under
@@ -889,6 +860,40 @@ let package = Package(
         // (No `SlopDeskCLITests`. Every suite it held tested a Swift face over `rust/slopdesk-cli`,
         // and both the face and the executable are gone — the tests live in that crate now, where
         // they can drive a whole subcommand's exit code against a canned response.)
+
+        // The golden-vector minter, and the suite that is its only caller. It mints the EMITTED half
+        // of `golden/golden_vectors.json` from the `SlopDeskVideoProtocol` codecs and the pure
+        // controllers, asserts it against the committed bytes, and hands the mint to
+        // `slopdesk-gate golden`, which owns the key-set pin. Pure value types only — it constructs
+        // no SCStream and no encoder, so it touches neither GUI nor TCC.
+        //
+        // It was an `executableTarget` until the standing rule left Swift no binaries. Only the
+        // target KIND changed: what the corpus pins is how SWIFT marshals, so minting it from Rust
+        // would diff Rust against Rust and pin nothing.
+        //
+        // ⚠️ NEVER `>` OVER THE CORPUS. It also holds the FROZEN keys this side does not mint, and a
+        // redirect drops every one of them — which `slopdesk-gate golden` then fails on by design.
+        // Merge from the scratch file the suite writes (`.work/golden/corevectors.json`) by hand.
+        //
+        // ⚠️ The mint needs NO `SLOPDESK_*` env set, so the controllers resolve their default
+        // tunables. The Rust crates pin those same defaults as compile-time consts, and an
+        // env-shifted run records a corpus that no default build reproduces — so the suite SKIPS,
+        // naming the variable, rather than minting bytes nobody can reproduce.
+        .testTarget(
+            name: "SlopDeskCoreVectorsTests",
+            dependencies: [
+                "SlopDeskProtocol",
+                "SlopDeskWorkspaceModel",
+                // `LoopbackWorkspaceDocument` — the Swift half of the versioning ladder
+                // `workspaceDocumentVersioning` pins against `rust/slopdesk-hostserver`'s document.
+                // The vector runs the REAL class rather than a transcription of its ~30 lines,
+                // which is the only way the pin can catch this side drifting. No GUI: the target
+                // holds the workspace DOMAIN and links no view framework.
+                "SlopDeskWorkspaceCore",
+                "SlopDeskVideoProtocol",
+                "SlopDeskVideoClient",
+            ],
+        ),
 
         .testTarget(name: "SlopDeskProtocolTests", dependencies: ["SlopDeskProtocol", "SlopDeskBenchClock"]),
         // W7: the pure detection core — state-machine transitions (incl. injected-clock

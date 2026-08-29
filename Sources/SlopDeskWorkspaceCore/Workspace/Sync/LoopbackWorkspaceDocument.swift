@@ -13,7 +13,7 @@ import SlopDeskWorkspaceModel
 /// `WorkspaceStateCodec` and come back in through ``WorkspaceMirrorBox/apply(kind:epoch:baseStateNum:newStateNum:payload:)``,
 /// the same entry point a socket frame takes. What is reproduced here is only the ~30 lines of
 /// versioning around the decision — precisely the part a suite running only one of the two cannot
-/// see drift in, so it is pinned ACROSS the two: `Sources/slopdesk-corevectors` serves a fixed intent
+/// see drift in, so it is pinned ACROSS the two: `Tests/SlopDeskCoreVectorsTests` serves a fixed intent
 /// script through this class into `golden/golden_vectors.json`'s `workspaceDocumentVersioning`, and
 /// `rust/slopdesk-hostserver/tests/workspace.rs` replays the same script through the real host's
 /// `WorkspaceDocument` and asserts every step's verdict, version, pristine bit and diff bytes.

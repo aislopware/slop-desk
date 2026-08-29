@@ -196,7 +196,7 @@ final class LoopbackWorkspaceDocumentTests: XCTestCase {
     //
     // It now lives in the two places a two-ended wire fact does:
     //
-    //   - the SWIFT end MINTS it — `Sources/slopdesk-corevectors/main.swift`, the
+    //   - the SWIFT end MINTS it — `Tests/SlopDeskCoreVectorsTests/CoreVectors.swift`, the
     //     `workspaceDocumentVersioning` section, which serves the script through a REAL
     //     ``LoopbackWorkspaceDocument`` and emits, per step, the op and its args, the verdict,
     //     `stateNum`, `isPristine`, whether the step published, and the diff of the two consecutive

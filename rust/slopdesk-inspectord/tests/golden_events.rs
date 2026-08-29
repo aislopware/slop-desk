@@ -1,12 +1,12 @@
 //! The inspector event schema, pinned against `golden/golden_vectors.json`.
 //!
 //! ## Why this key is HAND-AUTHORED and frozen rather than emitted
-//! Every other wire key in that corpus was minted by `Sources/slopdesk-corevectors`, which can only
-//! emit what a Swift ENCODER produces. There is no such encoder here: the production client end
-//! (`Sources/SlopDeskInspector`) is DECODE-only, and its `ToolCard` does not even hold the wire's
-//! `input` — it holds the two RENDERINGS `slopdesk_inspector_tool_input_render` grafts on, both
-//! defaulted. Swift's synthesized encode is therefore not the wire, so the vectors were written
-//! from the shape THIS crate authors and the key is in `FROZEN_KEYS`.
+//! Every other wire key in that corpus was minted by `Tests/SlopDeskCoreVectorsTests`, which can
+//! only emit what a Swift ENCODER produces. There is no such encoder here: the production client
+//! end (`Sources/SlopDeskInspector`) is DECODE-only, and its `ToolCard` does not even hold the
+//! wire's `input` — it holds the two RENDERINGS `slopdesk_inspector_tool_input_render` grafts on,
+//! both defaulted. Swift's synthesized encode is therefore not the wire, so the vectors were
+//! written from the shape THIS crate authors and the key is in `FROZEN_KEYS`.
 //!
 //! ## What it protects that `event.rs`'s own unit tests cannot
 //! Those literals live beside the types they describe: renaming a field and its literal in one edit

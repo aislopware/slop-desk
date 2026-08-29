@@ -1,9 +1,9 @@
 //! Byte-for-byte parity against the committed golden corpus.
 //!
 //! `golden/golden_vectors.json` is generated from the SWIFT implementation
-//! (`Sources/slopdesk-corevectors/main.swift`) and predates this crate, so it is an oracle rather
-//! than a fixture written alongside the port: "did moving the FEC to Rust change the wire" is
-//! answered here by bytes nobody wrote for this test.
+//! (`Tests/SlopDeskCoreVectorsTests/CoreVectors.swift`) and predates this crate, so it is an oracle
+//! rather than a fixture written alongside the port: "did moving the FEC to Rust change the wire"
+//! is answered here by bytes nobody wrote for this test.
 //!
 //! ## What the corpus pins, and what it does not
 //! Both groups are generated from `XORParityFEC(groupSize: 5)` — which is
@@ -1505,7 +1505,7 @@ fn every_pinned_recovery_message_matches_in_both_directions() {
 
 // MARK: The seven keys that used to be pinned only by the round trip
 //
-// These are the keys `slopdesk-corevectors` emitted THROUGH a `SlopDeskVideoHost` face. Six of the
+// These are the keys the Swift minter emitted THROUGH a `SlopDeskVideoHost` face. Six of the
 // seven were already this crate's law behind an FFI door, and the seventh — the system-dialog
 // classifier — is `slopdesk_video::system_dialog` since the port. What none of them had was a
 // READER: not one Rust integration test and not one Swift suite named them, so the only thing

@@ -1,7 +1,7 @@
 //! The frozen `hostOutputSniffer` corpus, replayed through the sniffer that now produces it.
 //!
 //! ## What this closes
-//! `golden/golden_vectors.json` holds keys `slopdesk-corevectors` does not emit;
+//! `golden/golden_vectors.json` holds keys `Tests/SlopDeskCoreVectorsTests` does not mint;
 //! `slopdesk-gate golden` prints those as "frozen keys are XCTest-pinned, not emitted". This is
 //! one of them, and it sits directly on the title path (docs/45 §5.7, "The golden blind spot,
 //! named"). Without a replay, a change to the type-21/22/23/32 emission produces no signal at all

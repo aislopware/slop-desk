@@ -1397,8 +1397,12 @@ test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test
 test-touched: ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- test-touched
 
-# Golden regression pin: regenerate the wire corpus from the live native-Swift codecs and assert
+# Golden regression pin: mint the wire corpus from the live native-Swift codecs and assert
 # byte-identity to golden/golden_vectors.json (replaces the old cross-language Rust golden_parity).
+# The minter is `Tests/SlopDeskCoreVectorsTests`, a SUITE and not a binary — the gate runs it with
+# every SLOPDESK_* stripped and reads the mint off .work/golden/corevectors.json, which is also the
+# file a legitimate wire change merges FROM. NEVER `>` it over the corpus: the corpus also holds the
+# frozen keys the suite cannot mint.
 
 # Verify the wire codecs still reproduce golden/golden_vectors.json
 golden:
