@@ -813,11 +813,11 @@ let package = Package(
         // copy. The encode-wall findings it produced are recorded in
         // `docs/research/perf-2026-07-04-encode-wall.md`.)
 
-        // Frame-cadence watcher: SCK desktopIndependentWindow capture of ANY window (foreground
-        // or background) that logs per-frame arrival timestamps + content checksums and prints a
-        // stall histogram — the objective frame-level smoothness instrument (works on SlopDesk AND
-        // Parsec windows alike). GUI+TCC-gated at runtime; no video file is written.
-        .executableTarget(name: "slopdesk-framewatch"),
+        // (The frame-cadence watcher is `rust/slopdesk-instruments`'s `slopdesk-framewatch` bin. It
+        // was a Swift executable target here only because it drove `SCStream` and `VTDecompression`
+        // through Swift's own bindings; both are `slopdesk-apple-sck`'s and `slopdesk-apple-vt`'s
+        // now, so the instrument drives the SAME capture object the daemon does rather than a second
+        // one that could disagree about what it measured — docs/57, docs/61 §3.)
 
         // Golden-vector dumper: regenerates the EMITTED half of `golden/golden_vectors.json` from the
         // `SlopDeskVideoProtocol` codecs and the pure controllers, so `slopdesk-gate golden` can diff

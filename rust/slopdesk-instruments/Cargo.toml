@@ -8,13 +8,21 @@
 # `slopdesk-fuzzy`. An instrument written on the far side of a marshalling face measures the face;
 # written here it measures the thing.
 #
-# ## Why one crate with three bins and not three crates
+# ## Why one crate with four bins and not four crates
 # `slopdesk-devtools`'s argument, unchanged: these have nothing in common at the domain level — one
-# times a UNIX-socket round trip, one speaks UDP to a live daemon, one spawns `fzf` — but they share
-# the only property that decides where code lives, which is that they are short-lived operator tools
-# shipping in nothing. None is a gate (`slopdesk-invariants` is where a gate goes), none is linked
-# into the app, none is `execve`d by a daemon. Three workspaces would triple the `cargo fmt` and
-# clippy passes `just lint` walks to buy a boundary nobody crosses.
+# times a UNIX-socket round trip, one speaks UDP to a live daemon, one spawns `fzf`, one drives
+# `ScreenCaptureKit` — but they share the only property that decides where code lives, which is that
+# they are short-lived operator tools shipping in nothing. None is a gate (`slopdesk-invariants` is
+# where a gate goes), none is linked into the app, none is `execve`d by a daemon. Four workspaces
+# would quadruple the `cargo fmt` and clippy passes `just lint` walks to buy a boundary nobody
+# crosses.
+#
+# `slopdesk-framewatch` is the one whose dependencies are not free — it links three
+# `slopdesk-apple-*` crates — and it is here anyway, because that family is exactly what it is FOR:
+# the Swift original hand-rolled its own `SCStreamConfiguration` and its own `CVPixelBuffer` walk,
+# so it measured a second spelling of the host's capture rather than the host's capture. Asking
+# `slopdesk-apple-sck` the way `slopdesk-videohostd` asks it is the whole point of the port, and the
+# `objc2` tree it pulls in is compiled once per `just lint` either way.
 #
 # `slopdesk-fuzzybench` is a bin HERE rather than an example in `slopdesk-fuzzy` for one mechanical
 # reason: `examples/` is auto-discovered, so it would silently join that crate's own build and lint
@@ -36,7 +44,7 @@ name = "slopdesk-instruments"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The slopdesk command-line instruments — the reattach-compose bench, the swipe-nav status probe and the fuzzy-ranking parity bench"
+description = "The slopdesk command-line instruments — the reattach-compose bench, the swipe-nav status probe, the fuzzy-ranking parity bench and the frame-cadence watcher"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -52,6 +60,10 @@ path = "src/bin/swipestatus_probe.rs"
 name = "slopdesk-fuzzybench"
 path = "src/bin/fuzzybench.rs"
 
+[[bin]]
+name = "slopdesk-framewatch"
+path = "src/bin/framewatch.rs"
+
 [dependencies]
 # The screend wire, including where the socket is. The bench must dial it the way hostd does or it
 # is timing a different link.
@@ -62,6 +74,24 @@ slopdesk-video = { path = "../slopdesk-video" }
 # workspace nothing but itself — and measuring it through the FFI door instead would report the
 # marshalling, which `docs/55` already timed.
 slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
+
+# `slopdesk-framewatch`'s three, target-gated because every one of them compiles to nothing off
+# macOS and the other three bins must keep building where there is no window server.
+[target.'cfg(target_os = "macos")'.dependencies]
+# The capture stream itself — the SAME door `slopdesk-videohostd` opens, which is the whole reason
+# the port happened: an instrument that built its own `SCStreamConfiguration` measured a second
+# spelling of the host's, and a divergence between the two read as a cadence result. `docs/57` §3.5
+# names this crate as framewatch's.
+slopdesk-apple-sck = { path = "../slopdesk-apple-sck" }
+# The luma plane as a `&[u8]`. This workspace is `forbid(unsafe_code)`, and
+# `PixelBuffer::lock_read_only().plane_view(0)` — the sample-memory obligation carried where
+# `docs/57` §2 says it belongs — is what lets it walk pixels anyway.
+slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
+# `SCStream::startCapture` aborts with `CGS_REQUIRE_INIT` without a window-server connection, and
+# ScreenCaptureKit delivers several completions through the MAIN run loop. `become_accessory` is the
+# first, `drain_main_queue` is the second — together they are the Swift original's
+# `_ = NSApplication.shared` and its `RunLoop.main.run()`.
+slopdesk-apple-nsapp = { path = "../slopdesk-apple-nsapp" }
 
 [lints.rust]
 unsafe_code = "forbid"

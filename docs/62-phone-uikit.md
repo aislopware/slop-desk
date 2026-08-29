@@ -968,8 +968,9 @@ governing constraint.
   var is set (`:42,76,183,253,316,388`). **No pixel hashing, no diffing, no golden files.** The header
   says so at `:6`: *"It is NOT a pixel-diff CI gate."*
 - **`slopdesk-perfbench` and `slopdesk-framewatch` are host-side** (`docs/61` §1 rows 5–6), driving the
-  encoder and an `SCStream`, and both are scheduled for dissolution. Neither can measure a client frame
-  time.
+  encoder and an `SCStream`. Neither is Swift any more — `slopdesk-perfbench` dissolved into
+  `rust/slopdesk-loopback-validate` and `slopdesk-framewatch` is `rust/slopdesk-instruments`'
+  `slopdesk-framewatch` bin — and neither can measure a client frame time either way.
 
 - **The one piece of client frame instrumentation that exists measures the wrong layer.**
   `FramePacer.drainTelemetry()` (`:465-469`) → `PacerTelemetrySnapshot(lateFrames:presentGaps:depth:)`

@@ -15,9 +15,9 @@
 //! silently — a second canonical form keys one repository as two sidebar sections, and a second
 //! reading of "a turn ended" mints an unread badge nobody earned.
 //!
-//! **The nine command-line instruments.** They are the easiest second implementation to write and
+//! **The ten command-line instruments.** They are the easiest second implementation to write and
 //! the hardest to notice — nothing links one, no suite runs it, and its whole job is to re-ask a
-//! question about the tree, which means re-spelling whatever it asks about. Three are `[[bin]]`s of
+//! question about the tree, which means re-spelling whatever it asks about. Four are `[[bin]]`s of
 //! `rust/slopdesk-instruments` now and one is `rust/slopdesk-navprobe`; the other five came back as
 //! nothing at all, which is the stronger claim.
 //!
@@ -193,7 +193,7 @@ fn pane_truths() -> Vec<Claim> {
     }]
 }
 
-/// The nine Swift command-line instruments, and why each one staying gone is a RULE.
+/// The ten Swift command-line instruments, and why each one staying gone is a RULE.
 ///
 /// An instrument is the easiest second implementation to write and the hardest to notice: nothing
 /// links it, no suite runs it, and its whole job is to answer a question about the tree — so it
@@ -201,11 +201,11 @@ fn pane_truths() -> Vec<Claim> {
 /// asking a settled question when they were deleted, and the three benches were measuring a Swift
 /// path that no longer exists.
 ///
-/// Three came back as Rust and their names are the ones to look for, because a `swift run`
-/// respelling would compile: `slopdesk-replay-bench`, `slopdesk-swipestatus-probe` and
-/// `slopdesk-fuzzybench` are `[[bin]]`s of `rust/slopdesk-instruments`, and
-/// `slopdesk-navhistory-probe` is `rust/slopdesk-navprobe`. The other four came back as nothing at
-/// all, which is the stronger claim: the CPU-codec bench timed three codecs that are Rust's now,
+/// Four came back as Rust and their names are the ones to look for, because a `swift run`
+/// respelling would compile: `slopdesk-replay-bench`, `slopdesk-swipestatus-probe`,
+/// `slopdesk-fuzzybench` and `slopdesk-framewatch` are `[[bin]]`s of `rust/slopdesk-instruments`,
+/// and `slopdesk-navhistory-probe` is `rust/slopdesk-navprobe`. The other five came back as nothing
+/// at all, which is the stronger claim: the CPU-codec bench timed three codecs that are Rust's now,
 /// the virtual-display probe re-asked what
 /// `VirtualDisplayPlanner.refreshRates` already ships, the capture probe matched a window title
 /// with the very predicate `panel_predicates` bans, and the loopback and fake-client harnesses were
@@ -268,6 +268,13 @@ fn swift_instruments_stay_deleted() -> Vec<Claim> {
             message: "the ranking-parity bench is back in Swift — it is rust/slopdesk-instruments' \
                       slopdesk-fuzzybench bin, and a Swift one would score with a second matcher and order \
                       the same list two ways",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-framewatch",
+            message: "the frame-cadence watcher is back in Swift — it is rust/slopdesk-instruments' \
+                      slopdesk-framewatch bin, which drives slopdesk-apple-sck's CaptureStream; a Swift one \
+                      builds its own SCStreamConfiguration and its own pixel-buffer walk, so it reports the \
+                      cadence of a capture the host does not run (docs/61 §1 row 6)",
         },
         Claim::Absent {
             path: "Sources/slopdesk-navhistory-probe",
@@ -893,7 +900,7 @@ mod tests {
         assert!(deleted_host_swift(&fixture.tree()).is_clean());
     }
 
-    /// The nine retired instruments. Each ban is on the target DIRECTORY, so the seed is a source
+    /// The ten retired instruments. Each ban is on the target DIRECTORY, so the seed is a source
     /// file under it — a resurrection under any other filename fails the same way.
     #[test]
     fn a_revived_swift_instrument_is_red() {
@@ -902,6 +909,7 @@ mod tests {
             "slopdesk-replay-bench",
             "slopdesk-swipestatus-probe",
             "slopdesk-fuzzybench",
+            "slopdesk-framewatch",
             "slopdesk-navhistory-probe",
             "slopdesk-vd-probe",
             "slopdesk-capture-probe",

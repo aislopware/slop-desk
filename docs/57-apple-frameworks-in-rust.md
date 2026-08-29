@@ -557,11 +557,15 @@ through the runtime. It was implicit until this row, because `WindowCapturer.swi
 of every macOS product, long after both the crate and `just ffi` are green.
 
 **The ban this row earned had to be NARROWER than the two before it.** Nothing else in Swift touches
-VideoToolbox, so `hevc-encode-is-rusts` could sweep the whole framework. Here the window feed and
-`slopdesk-framewatch` both still enumerate through `SCShareableContent`,
-`SCWindow` and `SCDisplay` — a read of what exists, not a capture — so `capture-is-rusts` bans the
-STREAM vocabulary and exempts two files by name: the measurement harness, which runs two streams at
-once and would otherwise be measuring the port with the port, and the preview glue, which asks
-`SCScreenshotManager` for one still. The lifecycle method names are deliberately absent from the ban
-as well: `startCapture` and `stopCapture` are also two effect cases in `VideoSessionLogic`'s state
-machine, which is Swift's and staying.
+VideoToolbox, so `hevc-encode-is-rusts` could sweep the whole framework. Here the window feed still
+enumerates through `SCShareableContent`, `SCWindow` and `SCDisplay` — a read of what exists, not a
+capture — so `capture-is-rusts` bans the STREAM vocabulary and nothing else. It once exempted two
+files by name; both are gone. The preview glue, which asked `SCScreenshotManager` for one still, was
+deleted with its target (`docs/61` §1), and the glass-to-glass measurement harness
+`slopdesk-framewatch` — exempted on the reading that porting it would mean measuring the port with
+the port — is `rust/slopdesk-instruments`' `slopdesk-framewatch` bin (`docs/61` §1 row 6). That
+reading assumed the port would be a second capture; it drives THIS crate's `CaptureStream`, the same
+one the daemon drives, so the instrument measures the shipping path instead of a Swift twin of it.
+The lifecycle method names are deliberately absent from the ban as well: `startCapture` and
+`stopCapture` are also two effect cases in `VideoSessionLogic`'s state machine, which is Swift's and
+staying.

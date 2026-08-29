@@ -623,17 +623,21 @@ pub fn hevc_decode_is_rusts(tree: &Tree) -> Report {
 /// pipeline grows back: everything downstream of it — the pacer, the adaptive quantiser, the scroll
 /// reprojection — is already here, and only the SOURCE moved.
 ///
-/// ## The Swift ban outlived its subject, and lost an exemption
+/// ## The Swift ban outlived its subject, and now has no exemptions at all
 /// `docs/61` deleted the Swift video host's `WindowCapturer` and the whole Swift `videohostd`
 /// entry point, so the preview glue that used to be exempted — it
 /// asked `SCScreenshotManager` for ONE still image, a different API that happens to take a filter
 /// and a configuration to describe the shot — is gone with them. Removing a dead exemption is not
 /// bookkeeping: an exemption list that outlives its file is a hole any new file can be named into.
 ///
-/// ONE exemption survives, and it is a decision on the record rather than a grep that misses.
-/// `Sources/slopdesk-framewatch/main.swift` is the glass-to-glass measurement harness: it runs two
-/// streams at once and compares their delivery, so porting it would mean measuring the port with
-/// the port.
+/// The LAST exemption went the same way, and the argument that held it up was the wrong argument.
+/// The Swift `slopdesk-framewatch` target was the glass-to-glass measurement harness, kept in
+/// Swift on the reading that porting it would mean measuring the port with the port. That reading
+/// assumed the port would be a second capture — but the port asks `slopdesk-apple-sck` for the SAME
+/// `CaptureStream` the daemon asks for, so the instrument now measures the shipping capture instead
+/// of a hand-rolled Swift twin of it, which is the stronger measurement and not a compromised one.
+/// It is `rust/slopdesk-instruments`' `slopdesk-framewatch` bin (`docs/61` §1 row 6), and the
+/// directory ban in [`crate::rules::deleted_host_swift`] keeps its Swift spelling from returning.
 ///
 /// ## What the CONTENT half re-aimed onto
 /// The old rule checked the Swift face by content: it must call the door, and it must not hold the
@@ -679,11 +683,10 @@ pub fn capture_is_rusts(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            // ONE file names the stream vocabulary without being a capture stream. `framewatch` is
-            // the glass-to-glass measurement harness: it runs two streams at once and compares
-            // their delivery, so porting it would mean measuring the port with the port. The
-            // preview glue that used to sit beside it was deleted with its target (docs/61).
-            exempt: &["Sources/slopdesk-framewatch/main.swift"],
+            // NO exemptions. Both files that used to hold one are gone: the preview glue with its
+            // target, and `framewatch` to `rust/slopdesk-instruments`, which asks the same
+            // `CaptureStream` the daemon asks (docs/61 §1 rows 4 and 6).
+            exempt: &[],
             message: "a Swift capture stream is back in {files} — slopdesk-apple-sck holds the filter, the \
                       configuration and the whole lifecycle, slopdesk_video::capture_config resolves every \
                       clamp, and rust/slopdesk-videohostd links both as ordinary Rust. Enumerating through \
@@ -1217,18 +1220,25 @@ mod tests {
         }
     }
 
-    /// The measurement harness keeps its two streams. Porting `framewatch` would mean measuring the
-    /// port with the port, so its exemption is a decision on the record — and the same line proves
-    /// the ban is not vacuous, because an ordinary target with the same call is red.
+    /// The measurement harness no longer keeps its two streams, and the exemption that let it is
+    /// gone with the file. `framewatch` is `rust/slopdesk-instruments`' bin, asking the SAME
+    /// `CaptureStream` the daemon asks — so the seed that used to prove the exemption now proves
+    /// its removal, and the ordinary target beside it proves the ban was never vacuous.
     #[test]
-    fn the_glass_to_glass_harness_keeps_its_streams() {
+    fn the_glass_to_glass_harness_lost_its_exemption() {
         let fixture = Fixture::new("capture-framewatch");
         daemon(&fixture);
+        assert!(super::capture_is_rusts(&fixture.tree()).is_clean());
+
         fixture.write(
             "Sources/slopdesk-framewatch/main.swift",
             "final class Collector: NSObject, SCStreamOutput {}\nlet cfg = SCStreamConfiguration()\n",
         );
-        assert!(super::capture_is_rusts(&fixture.tree()).is_clean());
+        let report = super::capture_is_rusts(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("framewatch")),
+            "the exemption outlived the port: {report:?}"
+        );
 
         fixture.write(
             "Sources/SlopDeskVideoClientMac/MacPreview.swift",
