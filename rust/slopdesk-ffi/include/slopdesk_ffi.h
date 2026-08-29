@@ -1065,24 +1065,54 @@ bool slopdesk_palette_row_shown(const uint8_t *id, size_t len, bool mac);
 size_t slopdesk_palette_row_count(void);
 size_t slopdesk_palette_row_id(size_t index, uint8_t *out, size_t cap);
 
-// ---- Which half lists a KEYBINDING ----
+// ---- The WHOLE keybinding table (docs/64) ----
 //
-// The same rule one surface further in. The registry behind these rows is not one list — it is the
-// cheat sheet, the keybindings editor, the `ctl` verb list, and the CHORD TABLE the dispatcher
-// resolves against. That last one is why a listed-and-inert binding is worse than a listed-and-inert
-// palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken away from the PTY to run
-// a macOS-only `#if` with nothing in its else. Dropping the row drops the chord, and the key falls
-// through to the pane the way an unbound chord should.
+// This used to be three doors carrying ONE column of a row — which half lists it — while the other
+// six lived in a Swift array literal that `just lint-invariants` held equal to the Rust one with a
+// regex on each side. That is a join maintained by hand across a language boundary, so the whole row
+// crosses now and the Swift side has no table to drift from.
 //
-// A SECOND table rather than a shared one because these are two id spaces over two vocabularies with
-// partial overlap in both directions (`pane.detach` here is `action.detachPane` there; ~45 rows here
-// have no palette entry at all). Each table is complete over its own space and pinned to its own
-// Swift list; a shared one would be a join maintained by hand.
+// The platform column is still the load-bearing one, and the reason is unchanged: the registry is
+// not one list — it is the cheat sheet, the keybindings editor, the `ctl` verb list, and the CHORD
+// TABLE the dispatcher resolves against. That last one is why a listed-and-inert binding is worse
+// than a listed-and-inert palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken
+// away from the PTY to run a macOS-only `#if` with nothing in its else. Dropping the row drops the
+// chord, and the key falls through to the pane the way an unbound chord should.
 //
-// An id no row declares is SHOWN, for the same reason as above.
-bool slopdesk_binding_row_shown(const uint8_t *id, size_t len, bool mac);
-size_t slopdesk_binding_row_count(void);
-size_t slopdesk_binding_row_id(size_t index, uint8_t *out, size_t cap);
+// A SECOND table rather than one shared with the palette because these are two id spaces over two
+// vocabularies with partial overlap in both directions (`pane.detach` here is `action.detachPane`
+// there; ~45 rows here have no palette entry at all).
+//
+// THREE doors answer the whole table in one crossing each, because the registry walks them once
+// building a `static let` and never again — and nothing on the per-keystroke path comes through
+// here at all (the chord lookup is a Swift hash over the assembled table). The scalars cross as
+// records; the four strings per row cross as one length-prefixed blob in row order, cut by `wsRuns`.
+typedef struct {
+    uint16_t action;           // the WorkspaceAction tag — its case POSITION
+    int16_t  chord_named;      // the named-key index, or -1 for a printable key
+    int32_t  arg;              // the action's payload, or 0; only selectPane uses it
+    uint32_t chord_char;       // the printable key's scalar; meaningless unless chord_named is -1
+    uint8_t  category;         // 0 panes · 1 tabs · 2 focus · 3 view
+    uint8_t  chord_modifiers;  // shift 1 · control 2 · option 4 · command 8
+    uint8_t  kind;             // 0 a declared row · 1 the collapsed ⌘1…⌘9 representative
+    bool     has_chord;
+    bool     shown;            // does the half that ASKED list this row
+} SlopDeskWsBindingRow;
+
+// A second chord that fires an existing action without minting a display row.
+typedef struct {
+    uint16_t action;
+    int16_t  chord_named;
+    uint32_t chord_char;
+    uint8_t  chord_modifiers;
+} SlopDeskWsBindingAlias;
+
+size_t slopdesk_ws_binding_count(void);
+size_t slopdesk_ws_binding_rows(bool mac, SlopDeskWsBindingRow *out, size_t cap);
+size_t slopdesk_ws_binding_text(uint8_t *out, size_t cap);
+size_t slopdesk_ws_binding_aliases(SlopDeskWsBindingAlias *out, size_t cap);
+// A tag this build does not know answers false — the palette LISTS such a row rather than hiding it.
+bool slopdesk_ws_action_requires_active_pane(uint16_t action);
 
 // ---- The keybindings editor's search filter ----
 //

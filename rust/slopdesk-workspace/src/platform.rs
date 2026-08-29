@@ -1,6 +1,6 @@
 //! Which UI half draws a row.
 //!
-//! Two tables in this crate answer the same question about their own rows — [`crate::binding_rows`]
+//! Two tables in this crate answer the same question about their own rows — [`crate::bindings`]
 //! for a chord, [`crate::palette_rows`] for a palette verb — and both need the same three-valued
 //! answer, so it is spelled once here.
 //!

@@ -202,10 +202,10 @@ Two invariants from the old paragraph DID survive, and are worth keeping:
   terminal; no two bindings share a chord. Both pinned by `TreeCommandRoutingTests`
   (`WorkspaceBindingRegistry.swift:349-352`).
 
-New since the split, and not in the old text: the shipped table is `declared` **filtered by platform**,
-and the platform list is data owned by Rust (`slopdesk_workspace::binding_rows`), read through
-`BindingRowPlatform` — `WorkspaceBindingRegistry.swift:357`, `:364`;
-`Sources/SlopDeskWorkspaceCore/Workspace/Domain/BindingRowPlatform.swift:24`.
+New since the split, and rewritten again by docs/64: the whole table is data owned by Rust
+(`slopdesk_workspace::bindings` — id, action, title, category, chord, symbol, keywords, platform),
+read once through `WorkspaceBindingTable` and already filtered for the half that asked.
+`WorkspaceBindingRegistry` holds no rows; what it holds is the derived shape each surface wants.
 
 ## Env seams honored
 

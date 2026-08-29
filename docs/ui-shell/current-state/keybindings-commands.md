@@ -32,10 +32,12 @@ every overlay closure supplied. Both overlay views exist and are mounted on both
 
 Two structural additions post-date the survey and shape every row below:
 
-- **A platform row filter.** `WorkspaceBindingRegistry.bindings` is `declared.filter { BindingRowPlatform.lists($0.id) }`
-  (`WorkspaceBindingRegistry.swift:364`). The rule is `rust/slopdesk-workspace/src/binding_rows.rs`
-  (`ROWS`, 77 ids). A row the running half cannot execute is dropped *before* the chord table is built,
-  so its chord falls through to the terminal rather than being stolen to do nothing.
+- **The whole table is Rust's.** `WorkspaceBindingRegistry.bindings` is
+  `WorkspaceBindingTable.current.listed` — every row (id, action, title, category, chord, symbol,
+  keywords, platform) comes from `rust/slopdesk-workspace/src/bindings.rs` (`ROWS`, 77 rows), read
+  once through four whole-table doors (docs/64). A row the running half cannot execute never crosses,
+  so it is gone *before* the chord table is built and its chord falls through to the terminal rather
+  than being stolen to do nothing.
 - **iOS dispatches chords.** Two rungs — the focused pane's `TerminalInputHost` and the responder
   chain's tail `PhoneAppDelegate` — resolve the same override-aware table the Mac's NSEvent monitor
   does, through the same `WorkspaceBindingRegistry.route`.
@@ -48,7 +50,7 @@ Two structural additions post-date the survey and shape every row below:
 |---|---|---|
 | Binding registry — single source of truth | done | `WorkspaceBindingRegistry.swift:355` — `declared` (76 `WorkspaceBinding` rows, :375–963) → `bindings` (platform-filtered, :364) → `allBindings` (:985, plus the nine `selectPaneBindings` at :967). Read by the menu, the palette, the cheat sheet, both dispatchers and the tests |
 | Default keymap (full set) | done | 76 declared rows + ⌘1…⌘9 generated; `WorkspaceBindingRegistry.swift:375–963`. The `allBindings` `let` is load-bearing and pinned by `scripts/check-supervisor.sh` (:979–985 explains the 210 µs/keystroke it cost as a `var`) |
-| Per-platform row filter | done (new since the survey) | `BindingRowPlatform.lists(_:)` at `BindingRowPlatform.swift:40`, over `slopdesk_binding_row_shown`. Five rows are `Platform::Mac` — `pane.detach`, `pane.reattachAll`, `window.close`, `view.secureKeyboardEntry`, `view.pinWindow` (`binding_rows.rs:77,78,101,129,141`). Everything else is `Both`. `BindingRowPlatformTests` + `check-supervisor.sh` pin the two id sets equal |
+| Per-platform row filter | done (new since the survey) | `BindingRowPlatform.lists(_:)` at `BindingRowPlatform.swift:40`, over `slopdesk_binding_row_shown`. Five rows are `Platform::Mac` — `pane.detach`, `pane.reattachAll`, `window.close`, `view.secureKeyboardEntry`, `view.pinWindow` (`bindings.rs`, the five `Platform::Mac` rows). Everything else is `Both`. `BindingRowPlatformTests` + `check-supervisor.sh` pin the two id sets equal |
 | NSEvent prefix monitor (tmux-style, default ⌃B) | **REMOVED by ruling** | Shipped 2026-07-14 (`docs/DECISIONS.md:804`), deleted 2026-07-22 (`docs/DECISIONS.md:1404`). The `.keyDown` monitor survives without it — `WorkspaceKeyDispatcher.swift:221` |
 | Prefix state machine (arm/resolve/timeout/disarm) | **REMOVED by ruling** | `CommandInterpreter.swift` and `PrefixStateMachineTests.swift` are both gone from the tree (same ruling) |
 | Configurable prefix chord | **REMOVED by ruling** | `KeybindingPreferences` carries no `prefixKey`; :129–136 records that the schema deliberately stayed at v3 because only fields were removed, so a stale blob still decodes and the retired keys are simply never read |
@@ -86,9 +88,14 @@ Two structural additions post-date the survey and shape every row below:
 ## Key Files
 
 - `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift` — the `WorkspaceAction`
-  enum, the `WorkspaceBinding` table, `chordTable`, `aliasChords`, `groupedForDisplay`, `glyph()`
-- `Sources/SlopDeskWorkspaceCore/Workspace/Domain/BindingRowPlatform.swift` — the per-half row filter over
-  `rust/slopdesk-workspace/src/binding_rows.rs`
+  enum and the derived shape each surface reads: `chordTable`, `aliasChords`, `groupedForDisplay`,
+  `glyph()`. It declares NO row
+- `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingTable.swift` — the one read of the
+  whole table, per half
+- `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceActionTag.swift` — the one site where a
+  `WorkspaceAction` and its Rust tag are the same thing
+- `Sources/SlopDeskWorkspaceCore/Workspace/Domain/BindingRowPlatform.swift` — which half lists one row,
+  asked by id
 - `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingOverrides.swift` — the override layer:
   `resolvedChordTable`, `resolvedChord(for:)`, `textBinding(for:)`, `isUnbound(_:)`, the
   `KeyChord ⇄ KeybindingPreferences.KeyChord` bridges
@@ -121,7 +128,8 @@ Two structural additions post-date the survey and shape every row below:
   `Sources/SlopDeskPhoneUI/Settings/KeybindingCaptureHost.swift` — the two editors
 - `Sources/SlopDeskVideoProtocol/Settings/KeybindingPreferences.swift` — the serialisable override model
   (v3: `overrides` + `textBindings` + `unbinds`)
-- `rust/slopdesk-workspace/src/binding_rows.rs` — which half lists which row
+- `rust/slopdesk-workspace/src/bindings.rs` — the whole table: 77 rows, the three alias chords, and
+  `requires_active_pane`
 - `rust/slopdesk-workspace/src/keybind.rs` — the chord grammar / canonical spellings
 - `Tests/SlopDeskWorkspaceCoreTests/Workspace/TreeCommandRoutingTests.swift` — routing + chord uniqueness
 - `Tests/SlopDeskWorkspaceCoreTests/Workspace/E1KeymapParityTests.swift` — the documented default keymap
@@ -155,7 +163,7 @@ Two structural additions post-date the survey and shape every row below:
 divergence below has a stated cause.
 
 - **Five Mac-only binding rows** — `pane.detach`, `pane.reattachAll`, `window.close`,
-  `view.secureKeyboardEntry`, `view.pinWindow` (`binding_rows.rs:77,78,101,129,141`). The module's own
+  `view.secureKeyboardEntry`, `view.pinWindow` (`bindings.rs`, the five `Platform::Mac` rows). The module's own
   doc names the reason: an own-window satellite, a window level, the AppKit secure-input call and a
   window close are things iOS does not have. Dropping the ROW rather than emptying the run arm is the
   design — the chord goes back to the terminal instead of being bound to nothing. `PaletteRowPlatform`

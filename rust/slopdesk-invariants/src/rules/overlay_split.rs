@@ -51,7 +51,7 @@ const MAC_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceWindowController.s
 /// The ⌃⇥ CARD is NOT that hazard and is no longer forbidden. It was, on the reading that "the
 /// phone has no modifier stream to open the gesture with, so a second half could never render" —
 /// which was about the OPENING CHORD and was never the only way in: the binding row is
-/// `Platform::Both` (`rust/slopdesk-workspace/src/binding_rows.rs`) and the palette carries the
+/// `Platform::Both` (`rust/slopdesk-workspace/src/bindings.rs`) and the palette carries the
 /// same row. The phone opened the gesture, `PaneRecedeScrim` veiled every pane off
 /// `store.paneSwitcher`, and nothing drew — a veiled workspace with no way to step, commit or
 /// cancel. So the gate is inverted: the phone's half must EXIST, and both halves must keep reading

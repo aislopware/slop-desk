@@ -250,49 +250,103 @@ pub fn every_keybinding_is_reachable_from_the_palette(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// …and a keybinding names its platform once, in the other id space
+/// …and the KEYBINDING TABLE is Rust's, with no Swift half to drift from
 ///
-/// The registry is four surfaces at once — cheat sheet, keybindings editor, `ctl` verb list, and
-/// the CHORD TABLE. That last one is why a listed-and-inert binding is worse than a
-/// listed-and-inert palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken from
-/// the PTY to run a macOS-only `#if` with nothing in its else. Same pin as the palette's, over
-/// `binding_rows.rs`.
+/// This rule used to be a `SameSet` holding a Swift array literal equal to a Rust one over the same
+/// 77 ids. That is a join maintained by hand across a language boundary — the cross-language mirror
+/// `CLAUDE.md` forbids by name — and the claim that held it was the tell rather than the safeguard.
+/// docs/64 moved the whole row (title, category, chord, symbol, keywords, platform) into
+/// `slopdesk_workspace::bindings`, so the join has nothing left to join and becomes a FLOOR: the
+/// registry declares no row at all.
 ///
-/// The nine generated `pane.select.N` slots are minted by a loop and are deliberately undeclared —
-/// they are `Both`, and the table declares the ONE collapsed representative `pane.selectN` — so the
-/// id pattern excludes them by SHAPE (no second dot) rather than by a grep that quietly does not
-/// match them.
+/// The nine generated `pane.select.N` slots are the one exception, and they are exempt by SHAPE
+/// rather than by name: they are minted by a `(1...9).map` whose id is INTERPOLATED, so a pattern
+/// matching a literal `<noun>.<verb>` cannot see them. A loop over a formula has no Rust twin to
+/// drift from, which is why it stayed.
 ///
-/// And the gate does not come back, in either the table or its routing. `.detachPane`'s routing arm
-/// carried the `#if` this table replaced; re-adding one would make a chord half-bound again.
+/// The platform column is still what the table is FOR, and the gate does not come back — in the
+/// table or in its routing. `.detachPane`'s routing arm carried the `#if` this column replaced;
+/// re-adding one would make a chord half-bound again.
 #[must_use]
 pub fn a_keybinding_names_its_platform_once(tree: &Tree) -> Report {
     /// Where a chord's action is routed to the store.
     const BINDING_ROUTING: &str =
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift";
+    /// The near side of the one table.
+    const BINDING_TABLE: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingTable.swift";
 
     check_all(tree, &[
-        Claim::SameSet {
-            label: "binding row ids",
-            swift: Extract::raw(SWIFT_BINDINGS, r#"id: "([a-z]+\.[A-Za-z0-9]+)""#),
-            rust: Extract::raw(
-                "rust/slopdesk-workspace/src/binding_rows.rs",
-                r#"row\("([a-z]+\.[A-Za-z0-9]+)""#,
-            ),
+        Claim::Lacks {
+            path: SWIFT_BINDINGS,
+            pattern: r#"id: "[a-z]+\.[A-Za-z0-9]+""#,
+            view: View::Code,
+            message: "the registry declares a binding row again — every row is DATA in \
+                      `slopdesk_workspace::bindings`, and a Swift literal beside it is the cross-language \
+                      mirror docs/64 deleted",
+        },
+        Claim::Matches {
+            path: SWIFT_BINDINGS,
+            pattern: r"static let bindings: \[WorkspaceBinding\] = WorkspaceBindingTable\.current\.listed",
+            view: View::Code,
+            message: "the shipped table no longer comes from the one read — a registry that assembles its \
+                      own rows is a second table however it is spelled",
+        },
+        Claim::Matches {
+            path: BINDING_TABLE,
+            pattern: r"slopdesk_ws_binding_rows\(mac, buffer\.baseAddress, buffer\.count\)",
+            view: View::Code,
+            message: "the table is not read through the whole-table door — a call per row per field is what \
+                      the one crossing exists to replace",
         },
         Claim::Lacks {
             path: SWIFT_BINDINGS,
             pattern: r"^[[:space:]]*#if os\(",
             view: View::Raw,
             message: "a platform gate is back in the binding registry — a row's platform is DATA \
-                      (binding_rows.rs)",
+                      (slopdesk_workspace::bindings)",
         },
         Claim::Lacks {
             path: BINDING_ROUTING,
             pattern: r"^[[:space:]]*#if os\(",
             view: View::Raw,
             message: "a platform gate is back in the binding routing — a row's platform is DATA \
-                      (binding_rows.rs)",
+                      (slopdesk_workspace::bindings)",
+        },
+    ])
+}
+
+/// …and the ACTION vocabulary is one enum, typed in two languages at one site
+///
+/// `WorkspaceAction` stays Swift because the UI `switch`es over it to reach a store op, and
+/// `slopdesk_workspace::bindings::Action` names the same vocabulary because a row has to say which
+/// action it runs. That is the sanctioned "constant typed in both languages" (`pane_kind.rs` is the
+/// precedent), and what makes it safe is that the join is a POSITION and there is exactly ONE site
+/// that spells it: `WorkspaceActionTag.swift`.
+///
+/// The pin is the tag SET. A case added on one side only changes the numbers that side spells, so
+/// the sets stop matching. The Rust file's other two enums (`Category`, `NamedKey`) number 0–3 and
+/// 0–10, which are already inside the action range, so they widen nothing — and the Swift side's
+/// `init?(tag:)` arm spells `case 0:` rather than `case .x: 0`, so only the forward direction is
+/// extracted and the two directions cannot pin each other into agreement about a wrong number.
+#[must_use]
+pub fn the_action_vocabulary_is_typed_once(tree: &Tree) -> Report {
+    /// The one site where a `WorkspaceAction` and its tag are the same thing.
+    const ACTION_TAG: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceActionTag.swift";
+    /// The Rust half of the vocabulary.
+    const RUST_BINDINGS: &str = "rust/slopdesk-workspace/src/bindings.rs";
+
+    check_all(tree, &[
+        Claim::SameSet {
+            label: "workspace action tags",
+            swift: Extract::raw(ACTION_TAG, r"case \.[a-zA-Z]+: ([0-9]+)$"),
+            rust: Extract::raw(RUST_BINDINGS, r"^    [A-Z][A-Za-z]* = ([0-9]+),$"),
+        },
+        Claim::Lacks {
+            path: SWIFT_BINDINGS,
+            pattern: r"case \.[a-zA-Z]+: [0-9]+$",
+            view: View::Code,
+            message: "a second tag mapping grew outside WorkspaceActionTag.swift — the single site is the \
+                      whole reason a two-language enum is safe here",
         },
     ])
 }
@@ -503,5 +557,95 @@ mod tests {
             )
             .write(super::BINDING_OVERRIDES, "return chordTable(from: bindings)\n");
         assert!(!super::the_chord_table_is_held_not_rebuilt(&fixture.tree()).is_clean());
+    }
+
+    /// The registry read from the one table, and nowhere else.
+    fn one_table(fixture: &Fixture) {
+        fixture
+            .write(
+                super::SWIFT_BINDINGS,
+                "public static let bindings: [WorkspaceBinding] = \
+                 WorkspaceBindingTable.current.listed\nWorkspaceBinding(id: \"pane.select.\\(n)\", action: \
+                 .selectPane(n))\n",
+            )
+            .write(
+                "Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingTable.swift",
+                "slopdesk_ws_binding_rows(mac, buffer.baseAddress, buffer.count)\n",
+            )
+            .write(
+                "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift",
+                "case .splitRight: store.splitActivePane(.right)\n",
+            );
+    }
+
+    #[test]
+    fn a_swift_row_literal_puts_the_mirror_back() {
+        let fixture = Fixture::new("surface-binding-table");
+        one_table(&fixture);
+        assert!(super::a_keybinding_names_its_platform_once(&fixture.tree()).is_clean());
+
+        // One row typed back into the registry is the whole defect: a second table, however short.
+        fixture.write(
+            super::SWIFT_BINDINGS,
+            "public static let bindings: [WorkspaceBinding] = \
+             WorkspaceBindingTable.current.listed\nWorkspaceBinding(id: \"pane.splitRight\", action: \
+             .splitRight)\n",
+        );
+        assert!(!super::a_keybinding_names_its_platform_once(&fixture.tree()).is_clean());
+
+        // And the interpolated nine stay legal — a loop has no twin to drift from.
+        one_table(&fixture);
+        assert!(super::a_keybinding_names_its_platform_once(&fixture.tree()).is_clean());
+
+        // A registry that assembles its own rows is a second table under another name.
+        fixture.write(
+            super::SWIFT_BINDINGS,
+            "public static let bindings: [WorkspaceBinding] = declared.filter { $0.shown }\n",
+        );
+        assert!(!super::a_keybinding_names_its_platform_once(&fixture.tree()).is_clean());
+
+        // The gate does not come back in the routing either.
+        one_table(&fixture);
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift",
+            "#if os(macOS)\ncase .detachPane: store.detachPaneToWindow()\n#endif\n",
+        );
+        assert!(!super::a_keybinding_names_its_platform_once(&fixture.tree()).is_clean());
+    }
+
+    #[test]
+    fn an_action_added_on_one_side_only_is_red() {
+        const ACTION_TAG: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceActionTag.swift";
+        const RUST_BINDINGS: &str = "rust/slopdesk-workspace/src/bindings.rs";
+
+        let fixture = Fixture::new("surface-action-tags");
+        fixture
+            .write(
+                ACTION_TAG,
+                "        case .splitRight: 0\n        case .splitDown: 1\n        case 0: self = \
+                 .splitRight\n",
+            )
+            .write(RUST_BINDINGS, "    SplitRight = 0,\n    SplitDown = 1,\n")
+            .write(
+                super::SWIFT_BINDINGS,
+                "public static let bindings: [WorkspaceBinding] = []\n",
+            );
+        assert!(super::the_action_vocabulary_is_typed_once(&fixture.tree()).is_clean());
+
+        // A verb the crate grew and the enum has not: the tag sets stop matching.
+        fixture.write(
+            RUST_BINDINGS,
+            "    SplitRight = 0,\n    SplitDown = 1,\n    SplitSideways = 2,\n",
+        );
+        assert!(!super::the_action_vocabulary_is_typed_once(&fixture.tree()).is_clean());
+
+        // A second mapping site is the drift the single site exists to prevent.
+        fixture
+            .write(RUST_BINDINGS, "    SplitRight = 0,\n    SplitDown = 1,\n")
+            .write(
+                super::SWIFT_BINDINGS,
+                "public static let bindings: [WorkspaceBinding] = []\n        case .splitRight: 0\n",
+            );
+        assert!(!super::the_action_vocabulary_is_typed_once(&fixture.tree()).is_clean());
     }
 }

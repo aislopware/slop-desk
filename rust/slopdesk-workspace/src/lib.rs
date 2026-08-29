@@ -119,8 +119,8 @@
 //!   Nothing here indexes, unwraps or panics — the lint table denies all three.
 
 pub mod attention_fold;
-pub mod binding_rows;
 pub mod binding_search;
+pub mod bindings;
 pub mod channel_run;
 pub mod cheat_sheet;
 pub mod chip_notice;

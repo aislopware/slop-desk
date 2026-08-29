@@ -1517,8 +1517,13 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "keybinding-platform",
-            origin: "docs/56 §3.6",
+            origin: "docs/64 §5",
             check: command_surface::a_keybinding_names_its_platform_once,
+        },
+        Rule {
+            name: "action-vocabulary-once",
+            origin: "docs/64 §2",
+            check: command_surface::the_action_vocabulary_is_typed_once,
         },
         Rule {
             name: "chord-table-held",

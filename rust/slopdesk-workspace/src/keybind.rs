@@ -3,8 +3,8 @@
 //! [`slopdesk_terminal::keybind`](../../slopdesk-terminal/src/keybind.rs) turns one config line
 //! into a chord plus a named action; this is the other half, and the two are deliberately in
 //! different crates. The grammar knows what a line LOOKS like. It does not know which actions
-//! exist, because the actions are this crate's — `binding_rows` declares the same family — and a
-//! grammar that knew them would have to be rebuilt every time a binding was added.
+//! exist, because the actions are this crate's — [`crate::bindings`] declares the same family — and
+//! a grammar that knew them would have to be rebuilt every time a binding was added.
 //!
 //! ## Validate then drop, on untrusted config text
 //!
@@ -25,7 +25,7 @@
 ///
 /// The LIST is the bound. `⌘1`…`⌘9` is nine chords because there are nine of these rows — a tenth
 /// digit is not a chord the platform delivers — so resolving by position means there is no separate
-/// range to keep in step with the table it guards. `binding_rows` writes only the collapsed
+/// range to keep in step with the table it guards. [`crate::bindings`] writes only the collapsed
 /// representative (`pane.selectN`) because these nine are minted from a loop on the near side.
 const SELECT_PANE_BINDING_IDS: [&str; 9] = [
     "pane.select.1",
@@ -124,6 +124,27 @@ mod tests {
     #[test]
     fn a_stray_argument_on_a_bare_name_does_not_change_which_action_it_is() {
         assert_eq!(binding_id_for_config_name("new_tab", Some("7")), Some("tab.new"));
+    }
+
+    /// Every id this module can answer with must name a row the table declares — otherwise a
+    /// config line resolves to a binding the registry has never heard of, and the rebind lands on
+    /// nothing. The nine per-digit ids are the exception the table itself documents: they are
+    /// minted from a loop on the near side, so only their collapsed representative is written out.
+    #[test]
+    fn every_id_this_module_answers_with_names_a_row_that_exists() {
+        for (name, id) in CONFIG_NAME_BINDING_IDS {
+            assert!(
+                crate::bindings::ROWS.iter().any(|row| row.id == id),
+                "{name} resolves to {id}, which no binding row declares",
+            );
+        }
+        for id in SELECT_PANE_BINDING_IDS {
+            let digit = id.strip_prefix("pane.select.");
+            assert!(
+                digit.is_some_and(|digit| ("1"..="9").contains(&digit)),
+                "{id} is outside the nine per-digit ids the loop mints on the near side",
+            );
+        }
     }
 
     #[test]

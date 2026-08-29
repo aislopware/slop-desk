@@ -6,7 +6,7 @@ import XCTest
 /// ⌃⇥ pane switcher.
 ///
 /// Both modes were already drawn on the phone — `TerminalLeafView` mounts the vi pill and the key-hint
-/// bar, and both bindings are `Platform::Both` in `rust/slopdesk-workspace/src/binding_rows.rs` — while
+/// bar, and both bindings are `Platform::Both` in `rust/slopdesk-workspace/src/bindings.rs` — while
 /// the only adapters that could turn a press into the modes' abstract keys took an `NSEvent`. The mode
 /// engaged, said so, and swallowed everything. What is pinned here is the peer adapter and the seam the
 /// responder offers a press through, on the macOS runner, which is the whole point of both being

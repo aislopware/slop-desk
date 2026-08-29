@@ -63,8 +63,8 @@ pub mod audio_codec;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub mod audio_player;
 pub mod binding_config;
-pub mod binding_rows;
 pub mod binding_search;
+pub mod bindings;
 pub mod blob;
 pub mod block_rerun;
 pub mod blocks;
