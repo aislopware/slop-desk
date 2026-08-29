@@ -419,11 +419,6 @@ fn echo_loop<E: Enumerates, O: SendsFeed>(shared: &Arc<Shared<E, O>>) {
             }
         }
         lane.echoes = keep;
-        let soonest = lane
-            .echoes
-            .iter()
-            .map(|echo| echo.due)
-            .fold(f64::INFINITY, f64::min);
         drop(lane);
 
         for echo in due {
@@ -434,6 +429,28 @@ fn echo_loop<E: Enumerates, O: SendsFeed>(shared: &Arc<Shared<E, O>>) {
         if lane.stop {
             return;
         }
+        // ⚠️ COMPUTED HERE, UNDER THE RE-ACQUIRED LOCK, AND NEVER CARRIED ACROSS THE BLAST. This
+        // used to be folded before the `drop(lane)` above and read again down here, which is a lost
+        // wakeup with a 10-second tell. `deliver` pushes an echo and then calls `notify_all`; a push
+        // that lands while this thread is inside `blast` — holding no lock and not yet waiting —
+        // signals a condvar nobody is on, so the notification is dropped on the floor. The stale
+        // fold then still said `INFINITY`, so the thread took the UNBOUNDED arm and slept until the
+        // next unrelated push or the stop. The duplicate never went out.
+        //
+        // Re-reading the queue here closes it: an echo queued during the blast is visible, `soonest`
+        // is finite, and the wait is bounded — or already elapsed, so the next turn of the loop
+        // delivers it immediately. The lost notification stops mattering because the state it was
+        // announcing is read directly.
+        //
+        // It reproduced at ~20% on an idle machine (`a_snapshot_goes_out_twice_a_short_time_apart`,
+        // 2 failures in 10 runs), and the shape is the tell: a pass took 0.1s and a failure burned
+        // the helper's whole 10s ceiling. Bimodal, never slow-but-arriving — which is a lost wakeup
+        // rather than a loaded machine, and is why this was fixed rather than re-run.
+        let soonest = lane
+            .echoes
+            .iter()
+            .map(|echo| echo.due)
+            .fold(f64::INFINITY, f64::min);
         if soonest.is_finite() {
             let wait = Duration::from_secs_f64((soonest - shared.now()).max(0.0));
             let (guard, _) = shared
