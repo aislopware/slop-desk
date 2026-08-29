@@ -178,14 +178,20 @@ public extension WorkspaceStore {
     /// that cannot be taken back: the host spawns a fresh shell for any session id it does not know,
     /// and a refusal then replaces every one of those panes with host truth.
     func runArmedLaunchAdoptIfPossible() {
-        guard let topology = pendingLaunchAdopt, armedBootstrapEnvironment == nil, canMutate,
-              workspaceMirror.knownEpoch != Self.seedEpoch else { return }
+        guard let topology = pendingLaunchAdopt,
+              WorkspaceCoreHandle.launchOfferReady(
+                  coreInputs,
+                  knownEpochIsSeed: workspaceMirror.knownEpoch == Self.seedEpoch,
+                  canMutate: canMutate,
+              )
+        else { return }
         pendingLaunchAdopt = nil
-        // Claimed BEFORE the stage, and that ordering is load-bearing. Staging ANNOUNCES itself on the
-        // mirror, and the mirror's change hook re-runs the dial gate — so an id recorded afterwards
-        // would leave the gate reading "no offer outstanding" for exactly the turn in which the offer
-        // became a prediction, and every restored pane would dial inside it. `beginPending` runs
-        // before that announcement, so the id claimed here is already answerable when it fires.
+        // Claimed BEFORE the stage, and that ordering is load-bearing. The gate reads the offer off
+        // this id and the mirror TOGETHER (``WorkspaceStore/coreInputs``), and staging ANNOUNCES
+        // itself on the mirror — so an id recorded afterwards would leave the gate reading "no offer
+        // outstanding" for exactly the turn in which the offer became a prediction, and every
+        // restored pane would dial inside it. `beginPending` runs before that announcement, so the id
+        // claimed here is already answerable when the change hook fires.
         let intentID = UUID()
         launchAdoptIntentID = intentID
         if !stageAdopt(topology, intentID: intentID) { launchAdoptIntentID = nil }

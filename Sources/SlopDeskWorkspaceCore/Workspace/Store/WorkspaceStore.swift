@@ -155,16 +155,15 @@ public final class WorkspaceStore {
     @ObservationIgnored
     var launchAdoptIntentID: UUID?
 
-    /// Whether the panes on screen may open their host channels — see ``panesMayDial``.
+    /// The store's own decisions: the launch dial gate, the save-generation guard, the document
+    /// cache's provenance rule and the revision every projection of the document is keyed on. A Rust
+    /// handle (``WorkspaceCoreHandle``) rather than a dozen stored properties, because each of them
+    /// is state AND the decisions over that state — see its own doc-comment for why the four share
+    /// one handle rather than four.
     ///
-    /// STORED and observed, recomputed by ``refreshPaneDialGate()`` at each of the four points that
-    /// can move it. It has to be stored: the inputs are `@ObservationIgnored` launch state and the
-    /// channel's own state (a plain class), so a computed property reading them would register NOTHING
-    /// with Observation and never wake the arm whose connect keys on it — the release edge would reach
-    /// no one and the panes would stay dark.
-    ///
-    /// Written by ``refreshPaneDialGate()`` and nowhere else; read through ``panesMayDial``.
-    var paneDialGate = true
+    /// A `let` to a reference type, so nothing about mutating it is `@Observable`;
+    /// ``workspaceMirrorRevision`` is what carries every change back into the view graph.
+    let core: WorkspaceCoreHandle
 
     /// How long the hold may stand with no answer of any kind before it opens anyway.
     ///
@@ -174,33 +173,6 @@ public final class WorkspaceStore {
     /// connect — strictly worse than the churn it prevents. Injectable so a test can pin the release
     /// without spending it.
     var paneDialHoldBackstop: Duration = .seconds(WorkspaceMirrorBox.pendingTimeout)
-
-    /// The `host:port` whose OWN document is what the panes on screen came from, or `nil` while
-    /// nothing a host published has landed.
-    ///
-    /// The provenance half of ``panesMayDial``: an id may be dialled at the host that named it and
-    /// nowhere else. Stamped by ``noteFoldedDocumentProvenance()`` when a document frame folds — the
-    /// fold, not any other reason the mirror announces itself, because between committing a new
-    /// target and the re-subscribe that answers it the mirror still holds the PREVIOUS host's
-    /// document, and stamping there would file one machine's layout under the other's name.
-    @ObservationIgnored
-    var dialConfirmedHostKey: String?
-
-    /// The fold count ``noteFoldedDocumentProvenance()`` last acted on, so a repaint is told from a
-    /// frame. Goes backwards on a `reset()`, which is what makes a re-subscribe unconfirmed again.
-    @ObservationIgnored
-    var lastFoldedDocumentFrames: UInt64 = 0
-
-    /// Whether ``paneDialHoldBackstop`` has run out on the CURRENT hold episode. Cleared by a connect
-    /// to a different host (``commitConnectionTarget(_:)``), which starts a new one.
-    @ObservationIgnored
-    var paneDialHoldExpired = false
-
-    /// Whether an app-connection establish still owes its panes a fan-out — see
-    /// ``armPaneRedialOnDocument()``. Set on every establish, spent by the first document frame the
-    /// attached host folds.
-    @ObservationIgnored
-    var paneRedialAwaitsDocument = false
 
     /// The armed backstop, cancelled the moment the hold releases on an answer.
     @ObservationIgnored
@@ -214,12 +186,12 @@ public final class WorkspaceStore {
 
     /// Records (or clears) the divider preview.
     ///
-    /// Bumps ``workspaceMirrorRevision`` even though nothing in the document moved: that counter is
+    /// Moves ``workspaceMirrorRevision`` even though nothing in the document did: that counter is
     /// both the projection cache's key and the Observation shadow every `tree` reader binds to, so a
     /// drag frame that skipped it would neither repaint nor invalidate.
     func setLiveDividerWeight(_ next: (split: SplitNodeID, index: Int, weight: Double)?) {
         liveDividerWeight = next
-        workspaceMirrorRevision &+= 1
+        publishRevision(core.bumpRevision())
     }
 
     /// The table of liveness: 1:1 with ``tree``'s leaves. It used to be 1:1 with whichever of two models
@@ -350,20 +322,6 @@ public final class WorkspaceStore {
     /// `nil` (the test/automation default) never touches disk.
     private let documentCache: WorkspaceCacheStore?
 
-    /// The `host:port` the cache was SEEDED from — the connect gate's launch target, and the only
-    /// host this run's picture can honestly be filed under.
-    private let documentCacheSeedHostKey: String
-
-    /// The `host:port` the cache is written under. EMPTY reads as nothing and writes nothing: a
-    /// picture with no host on it can never be shown to the right one.
-    ///
-    /// Cleared for the rest of the run by a connect to a DIFFERENT host than the seed
-    /// (``commitConnectionTarget(_:)``). The facts are absolute paths on ONE machine's filesystem, so
-    /// after a mid-session host switch the mirror holds a mix of two — and a mixed picture belongs to
-    /// neither. The next launch seeds from whichever host the MRU then names, so this self-heals in
-    /// one launch rather than persisting a blend forever.
-    private var documentCacheHostKey: String
-
     /// The ``ConnectionTarget`` this app run is talking to — seeded by the app shell from the
     /// ``AppConnection`` MRU at launch and re-stamped by ``commitConnectionTarget(_:)`` on every
     /// successful connect. Purely presentational (the pane status bar names the host); the live
@@ -397,27 +355,6 @@ public final class WorkspaceStore {
     /// own task because a fact change and a layout change are different edges (see
     /// ``scheduleDocumentCacheSave()``).
     @ObservationIgnored var documentCacheSaveTask: Task<Void, Never>?
-
-    /// A monotonic save-generation guard (mirrors ``FocusGenerationGuard``). Each `scheduleSave()` bumps it
-    /// and captures the value; the debounced write re-checks it on a MainActor hop BEFORE writing and skips
-    /// if superseded, and the trailing `saveTask = nil` clears the handle ONLY if still current — so
-    /// a superseded (already-past-sleep) prior task can neither clobber the file with a stale snapshot NOR
-    /// nil out the newest handle and strand it uncancellable. Pure MainActor Int bookkeeping.
-    /// `internal private(set)`: only the store bumps it, but the guard is observable to the `@testable`
-    /// tests via ``isCurrentSaveGeneration(_:)``.
-    private(set) var saveGeneration = 0
-
-    /// The pure generation-guard predicate the debounced write consults before writing: a
-    /// captured `generation` is still current iff it equals the live ``saveGeneration``. Mirrors
-    /// `FocusGenerationGuard.isCurrent(_:)`. Factored out so the production write path and the test
-    /// assert the EXACT SAME logic (not a re-implementation). MainActor-isolated; pure read.
-    func isCurrentSaveGeneration(_ generation: Int) -> Bool {
-        saveGeneration == generation
-    }
-
-    /// Suppresses the debounced save during construction (the initial `reconcile()` would otherwise
-    /// re-write a just-loaded file with identical bytes). Flipped off once init completes.
-    private var savingEnabled = false
 
     /// In-flight teardown tasks spawned by ``reconcile()`` (teardown is `async`; reconcile is called inline
     /// by synchronous mutations). Tracked so tests — and a deliberate shutdown — can `await` every orphaned
@@ -518,8 +455,7 @@ public final class WorkspaceStore {
         devicePreferencesStore = devicePreferences
         self.devicePreferences = devicePreferences?.load() ?? DevicePreferences()
         self.documentCache = documentCache
-        documentCacheSeedHostKey = cacheHostKey
-        documentCacheHostKey = cacheHostKey
+        core = WorkspaceCoreHandle(cacheHostKey: cacheHostKey)
         self.saveDebounce = saveDebounce
         self.videoTeardownSettle = videoTeardownSettle
         // The mirror is a plain value in a plain box — nothing about folding a frame into it is
@@ -527,23 +463,18 @@ public final class WorkspaceStore {
         // one place a host frame can move a completion counter with no local edge firing at all.
         workspaceMirror.onChange = { [weak self] in
             guard let self else { return }
-            workspaceMirrorRevision &+= 1
+            publishRevision(core.bumpRevision())
             reconcileSeenCompletionEpochDocument()
             refreshUnseenDoneForAllPanes()
             // …and the one place the TABLE OF LIVENESS learns of a leaf nothing local asked for.
             reconcileTreeFromDocument()
             // …and the one place a host's own document arrives, which is what makes the ids in it
-            // dialable at that host and no other.
-            noteFoldedDocumentProvenance()
-            // …and where the launch offer's verdict arrives: an `intentResult` snaps its patch away
-            // (refused) or the frame behind it retires the patch (accepted). Either answer releases
-            // the dial hold, and it has to be AFTER the reconcile above — the panes that then dial
-            // are the ones that pass just materialized.
-            refreshPaneDialGate()
-            // …and the one place a reconnect whose fan-out found an EMPTY document gets its panes
-            // back: this frame is what puts them on screen, and the two lines above are what make
-            // them dialable at the host that just sent it.
-            redialArmedPanesOnConfirmedDocument()
+            // dialable at that host and no other; where the launch offer's verdict arrives, since an
+            // `intentResult` snaps its patch away and the frame behind it retires the patch; and
+            // where a reconnect whose fan-out found an EMPTY document gets its panes back. One fold
+            // in the core answers all three, and it runs AFTER the reconcile above because the panes
+            // that then dial are the ones that pass just materialized.
+            applyDocumentFrame()
         }
         // Seed the mirror with the tree the store just restored, so `workspaceMirror.topology` is a
         // real layout from the first instant rather than `nil` until a host frame happens to arrive.
@@ -572,7 +503,7 @@ public final class WorkspaceStore {
         // The init reconcile materializes the tree's leaves through the registry diff every later
         // mutation goes through, so a restored layout and a live one take the exact same path.
         reconcileTree()
-        savingEnabled = true // arm debounced saves only AFTER the restore reconcile
+        core.enableSaving() // arm debounced saves only AFTER the restore reconcile
     }
 
     // MARK: - Accessors
@@ -2218,15 +2149,30 @@ public final class WorkspaceStore {
     /// supplies. One instance is the point — two would let the two producers disagree forever.
     public let workspaceMirror = WorkspaceMirrorBox()
 
-    /// The mirror's `@Observable` shadow: bumped on every change the box reports, and READ by every
-    /// store funnel that answers from the mirror.
+    /// The `@Observable` shadow of ``WorkspaceCoreHandle/revision``: republished on every move the
+    /// core makes, and READ by every store funnel that answers from the mirror.
     ///
     /// Without it a mirror read registers no Observation dependency at all, and the row would sit on
     /// its old value until some unrelated mutation happened to repaint it. That is precisely the
     /// multi-client case: a client whose only source of news is the document changes nothing of its
     /// own, so "some unrelated mutation" never comes. Carries no data — it exists only to invalidate,
     /// exactly like ``completionFlashTick``.
+    ///
+    /// Nothing on this side ever ADDS to it. The core owns the counter — it moves it itself for
+    /// every decision it makes, and ``WorkspaceCoreHandle/bumpRevision()`` is the door for the
+    /// changes it cannot see (a folded frame, the two local overlays). A number incremented in two
+    /// languages is a memo key neither of them can be held to.
     public internal(set) var workspaceMirrorRevision: UInt = 0
+
+    /// Republishes the core's counter into the view graph.
+    ///
+    /// Assignment, never arithmetic — see ``workspaceMirrorRevision``. Guarded on the value having
+    /// actually moved because `@Observable` fires on every write, equal or not, and a no-op frame
+    /// that repainted every tracked arm would be the cost this memo exists to avoid.
+    func publishRevision(_ revision: UInt) {
+        guard workspaceMirrorRevision != revision else { return }
+        workspaceMirrorRevision = revision
+    }
 
     /// Registers the caller's Observation dependency on ``workspaceMirror``. Every store read funnel
     /// that answers from the mirror opens with this — a funnel that forgets it renders once and then
@@ -2891,34 +2837,33 @@ public final class WorkspaceStore {
     /// Schedules a debounced save of the value tree (docs/22 §6): cancels any pending save and starts a
     /// fresh one, so a burst of mutations writes exactly once after the quiet period. Cancel-safe (a
     /// superseded task's `Task.sleep` throws `CancellationError`, which `try?` swallows before any write). A
-    /// no-op until `savingEnabled` (set after the init reconcile) and when no `persistence` is configured
+    /// no-op until the core's saving guard is armed (after the init reconcile) and when no `persistence` is configured
     /// (the fake/test seam never touches disk). The supersession-guard-plus-atomic-write critical section
     /// lives in the body below.
     private func scheduleSave() {
-        guard savingEnabled, let persistence else { return }
+        guard let persistence else { return }
         saveTask?.cancel()
         // Snapshot the (Sendable, value-typed) PERSISTABLE tree now, so the write reflects this mutation.
         guard let snapshot = persistableSnapshot() else { return }
+        guard let generation = core.beginSave() else { return }
         let debounce = saveDebounce
-        saveGeneration &+= 1
-        let generation = saveGeneration
         saveTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: debounce)
             } catch {
                 return // superseded by a newer mutation (cancelled) — that one will write.
             }
-            // The supersession re-check AND the atomic write are ONE main-actor critical
-            // section: `await MainActor.run` re-checks `saveGeneration` and, only if still current, writes,
-            // never releasing the actor between guard and rename. `saveImmediately()` also writes on the main
-            // actor under a bumped generation, so the two RENAMES serialize there and a stale snapshot's
-            // rename can never interleave between a newer write's guard and rename. `Task.cancel()` cannot
-            // stop a task already past its sleep, so the generation guard — decided on the actor where every
-            // `saveGeneration` mutation happens — is what lets `saveImmediately()` / a newer write win.
+            // The supersession re-check AND the atomic write are ONE main-actor critical section:
+            // `await MainActor.run` asks the core whether this generation is still current and, only if it
+            // is, writes — never releasing the actor between guard and rename. `saveImmediately()` also
+            // writes on the main actor under a superseded generation, so the two RENAMES serialize there and
+            // a stale snapshot's rename can never interleave between a newer write's guard and rename.
+            // `Task.cancel()` cannot stop a task already past its sleep, so the guard — decided on the actor
+            // where every claim on it is made — is what lets `saveImmediately()` / a newer write win.
             // Encoding the small layout tree on the main actor is acceptable; the (now-current) handle clear
             // happens in the same block.
             await MainActor.run { [weak self] in
-                guard let self, isCurrentSaveGeneration(generation) else { return }
+                guard let self, core.isCurrentSaveGeneration(generation) else { return }
                 // A failed save keeps the previous good file (best-effort).
                 try? persistence.save(snapshot)
                 saveTask = nil
@@ -2934,7 +2879,7 @@ public final class WorkspaceStore {
         guard let persistence else { return }
         // Bump the generation so any in-flight (already-past-sleep) debounced task reliably loses the
         // trailing-clear guard and cannot resurrect/nil the handle after this explicit save.
-        saveGeneration &+= 1
+        core.supersedeSave()
         saveTask?.cancel()
         saveTask = nil
         guard let snapshot = persistableSnapshot() else { return }
@@ -2950,7 +2895,7 @@ public final class WorkspaceStore {
     /// sharing a timer would make each one pay for the other's churn. The window is the same, and
     /// both are best-effort: a failed write keeps the previous good picture.
     func scheduleDocumentCacheSave() {
-        guard savingEnabled, documentCache != nil else { return }
+        guard core.savingEnabled, documentCache != nil else { return }
         documentCacheSaveTask?.cancel()
         let debounce = saveDebounce
         documentCacheSaveTask = Task { [weak self] in
@@ -2977,7 +2922,7 @@ public final class WorkspaceStore {
         // document there are no facts to write, only the absence of them. Same rule as
         // ``persistableSnapshot()``, for the same window.
         guard mirroredTopology != nil else { return }
-        try? documentCache.save(documentFactsSnapshot(), hostKey: documentCacheHostKey)
+        try? documentCache.save(documentFactsSnapshot(), hostKey: core.cacheHostKey)
     }
 
     // MARK: - Tree lookups
@@ -3008,21 +2953,14 @@ public final class WorkspaceStore {
     /// `host:port`, so re-dialling a known host restores the video ports it was reached on, and the
     /// layout — which every attached client shares — carries no host association at all.
     public func commitConnectionTarget(_ target: ConnectionTarget) {
-        let previousHostKey = attachedHostKey
         committedConnectionTarget = target
         let key = DevicePreferences.hostKey(for: target)
-        // The cache is a picture of ONE host. A connect to a different one than this run was
-        // seeded from leaves the mirror holding facts about two machines, so it stops being
-        // written rather than filing one host's folders under the other's name.
-        documentCacheHostKey = key == documentCacheSeedHostKey ? key : ""
-        // …and so is the LAYOUT. This is the one place that can see the document being projected
-        // belongs to a machine other than the one now being dialled, and it runs BEFORE the
-        // connection reports up (``AppConnection`` commits the target first), so the hold is in
-        // place by the time the establish fan-out asks every pane to dial.
-        if key != previousHostKey {
-            paneDialHoldExpired = false // a new host is a new hold, with its own full window
-            refreshPaneDialGate()
-        }
+        // The core retires the cached picture (it is a picture of ONE machine, and a connect to
+        // another leaves the mirror holding a mix of two) and starts a new hold with its own full
+        // window when the host actually moved. This runs BEFORE the connection reports up
+        // (``AppConnection`` commits the target first), so the hold is in place by the time the
+        // establish fan-out asks every pane to dial.
+        applyGateEdge(core.commitConnectionTarget(coreInputs, hostKey: key))
         guard devicePreferences.connectionByHostKey[key] != target else { return }
         mutateDevicePreferences { $0.connectionByHostKey[key] = target }
     }

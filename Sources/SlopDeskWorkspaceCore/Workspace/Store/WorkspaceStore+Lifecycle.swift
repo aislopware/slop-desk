@@ -53,98 +53,105 @@ extension WorkspaceStore {
     /// Every OTHER intent that mints a pane (a split, a new tab, a reopened one) stays instant: the
     /// client proposes those ids (DECISIONS, Multi-client Phase 5 ruling 1) and its own applier has
     /// already agreed the host will take them, so their panes dial on the frame the user asked for.
-    public var panesMayDial: Bool { paneDialGate }
+    public var panesMayDial: Bool {
+        observeWorkspaceMirror()
+        return core.panesMayDial
+    }
 
     /// The `host:port` this run is attached to now, or `""` before any target is committed (headless,
-    /// a unit test) — the same "no host on it" reading ``documentCacheHostKey`` gives the empty key.
+    /// a unit test) — the same "no host on it" reading the cache's empty key gives.
     var attachedHostKey: String {
         committedConnectionTarget.map { DevicePreferences.hostKey(for: $0) } ?? ""
     }
 
-    /// Records which host confirmed the document now on screen, on the fold that delivered it.
+    /// What the core reads the live channel as.
     ///
-    /// Driven by the mirror's change hook, and gated on the FOLD COUNT rather than on the hook
-    /// firing: an optimistic patch, a fast-path push and a presence roster all announce themselves
-    /// through the same callback, and any of them landing after a new target is committed but before
-    /// the re-subscribe answers would stamp the previous host's layout with the new host's name.
-    ///
-    /// A `reset()` takes the count back to zero, which is exactly right — the subscription that
-    /// vouched for those entries is gone.
-    func noteFoldedDocumentProvenance() {
-        let frames = workspaceMirror.documentFramesApplied
-        guard frames != lastFoldedDocumentFrames else { return }
-        lastFoldedDocumentFrames = frames
-        // The store's own seed is not a host's answer; it is the question.
-        guard frames > 0, workspaceMirror.documentEpoch != Self.seedEpoch else { return }
-        dialConfirmedHostKey = attachedHostKey
-    }
-
-    /// Recomputes the hold and, on the RELEASING edge, dials everything it was holding.
-    ///
-    /// Called from the five places that can move it: the mirror's own change hook (an `intentResult`
-    /// or the frame that supersedes a patch), the channel's state changes, the offer going out, the
-    /// automation bootstrap taking over the launch, and a connect committing a new target.
-    func refreshPaneDialGate() {
-        let next = resolvedPaneDialGate()
-        // The backstop belongs to the HOLD, not to the gate's edges: it is armed for as long as one
-        // stands and cancelled the moment any answer arrives, so a hold that releases and re-engages
-        // at a second host gets its own full window rather than the remainder of the first.
-        if next {
-            paneDialHoldBackstopTask?.cancel()
-            paneDialHoldBackstopTask = nil
-        } else {
-            armPaneDialHoldBackstop()
-        }
-        guard next != paneDialGate else { return }
-        paneDialGate = next
-        // The release is a STORE-level fan-out, not something only a mounted leaf can do. The leaf's
-        // own arm re-fires on this same edge (its connect key moves off `nil`), but a pane in a satellite
-        // window — or any leaf the canvas has not mounted yet — would otherwise wait for an unrelated
-        // event to nudge it. `connectIfNeeded()` no-ops on a healthy channel, so the overlap is free.
-        if next { redialDisconnectedPanes() }
-    }
-
-    /// The rule behind ``panesMayDial``. See that doc for why each arm answers the way it does.
-    private func resolvedPaneDialGate() -> Bool {
-        // This launch's proposal is on the wire. What is on screen is a PREDICTION until the verdict
-        // lands, so nothing in it may open a PTY. Bounded by the mirror's own pending sweep, which
-        // drops the patch — and with it the layout nobody confirmed.
-        if let launchAdoptIntentID, workspaceMirror.isPending(launchAdoptIntentID) { return false }
-        // Nothing is coming, so nothing is waited for.
-        guard let workspaceChannel else { return true }
-        guard armedBootstrapEnvironment == nil else { return true }
-        guard !workspaceChannel.servesLocalDocument else { return true }
+    /// The collapse is deliberate and its reasoning lives on ``WorkspaceCoreHandle/Channel``: a
+    /// `.closed` subscription is not an answer about whose ids are on screen, so it rides with the
+    /// live states rather than with `.refused`.
+    private var coreChannel: WorkspaceCoreHandle.Channel {
+        guard let workspaceChannel else { return .absent }
+        if workspaceChannel.servesLocalDocument { return .localDocument }
         switch workspaceChannelState {
-        // A host that does not serve `channelClass 1` is a host that will never publish a document,
-        // so nothing about the layout on screen can ever be confirmed and holding for it would hold
-        // for the life of the process.
-        case .refused: return true
-        // `.closed` is NOT that answer, and reading it as one is what makes a host switch churn: the
-        // app tears the shared connection down BEFORE it commits the new target, so the state at the
-        // moment ``WorkspaceStore/commitConnectionTarget(_:)`` recomputes the gate is `.closed` with
-        // the PREVIOUS host's document still on screen. A dead subscription says nothing about whose
-        // ids these are — the provenance below does, and a close with no reconnect behind it is what
-        // ``paneDialHoldBackstop`` bounds.
+        case .refused: return .refused
         case .closed,
              .idle,
              .live,
-             .opening: break
+             .opening: return .attached
         }
-        // PROVENANCE: the ids on screen were named by the host this run is attached to NOW.
-        if dialConfirmedHostKey == attachedHostKey { return true }
-        return paneDialHoldExpired
     }
 
-    /// Arms the wall clock the current hold may not outlive. Idempotent: one timer per episode.
+    /// The three facts the gate needs whose owners the core has never seen, read fresh.
+    ///
+    /// A computed property and never a stored one: each of these moves without announcing itself to
+    /// anything the core could observe, so the reading has to be taken at the call rather than
+    /// pushed. The offer's in particular — a frame retiring the optimistic patch and an
+    /// `intentResult` snapping it away are both verdicts, and neither writes anything else down.
+    var coreInputs: WorkspaceCoreHandle.Inputs {
+        WorkspaceCoreHandle.Inputs(
+            channel: coreChannel,
+            bootstrapArmed: armedBootstrapEnvironment != nil,
+            offerPending: launchAdoptIntentID.map { workspaceMirror.isPending($0) } ?? false,
+        )
+    }
+
+    /// Recomputes the hold against the inputs as they stand, and performs whatever the core answers.
+    ///
+    /// Called from the four places that move an input without folding a frame: the channel's own
+    /// state changes, the offer settling, the automation bootstrap taking over the launch, and a
+    /// connect committing a new target. The fifth — the mirror's change hook — goes through
+    /// ``applyDocumentFrame()``, which folds this in.
+    func refreshPaneDialGate() {
+        applyGateEdge(core.refreshDialGate(coreInputs))
+    }
+
+    /// Folds one document frame: the core stamps the provenance, recomputes the hold, and answers
+    /// whether the booked re-dial came due. This side runs the effects and nothing else.
+    func applyDocumentFrame() {
+        let edge = core.noteDocumentFrame(
+            coreInputs,
+            framesApplied: workspaceMirror.documentFramesApplied,
+            epochIsSeed: workspaceMirror.documentEpoch == Self.seedEpoch,
+        )
+        applyGateEdge(edge.gate)
+        // Fired at the one instant a fan-out is both possible and legitimate — the pane set is back
+        // on screen and its provenance is settled — rather than on whichever of the two arrived last.
+        if edge.redialBookingFired { redialDisconnectedPanes() }
+    }
+
+    /// Performs a gate edge: the timer this side owns, and the fan-out only this side can walk.
+    ///
+    /// The release is a STORE-level fan-out, not something only a mounted leaf can do. A mounted
+    /// leaf's own arm re-fires on this same edge (its connect key moves off `nil`), but a pane in a
+    /// satellite window — or any leaf the canvas has not mounted yet — would otherwise wait for an
+    /// unrelated event to nudge it. `connectIfNeeded()` no-ops on a healthy channel, so the overlap
+    /// is free.
+    func applyGateEdge(_ edge: WorkspaceCoreHandle.GateEdge) {
+        switch edge.backstop {
+        case .arm: armPaneDialHoldBackstop()
+        case .cancel:
+            paneDialHoldBackstopTask?.cancel()
+            paneDialHoldBackstopTask = nil
+        case .leave: break
+        }
+        guard edge.changed else { return }
+        // The core already moved its counter for this edge — `panesMayDial` is read through the same
+        // memo key the document's projections are. All that is left here is republishing it.
+        publishRevision(core.revision)
+        if edge.opened { redialDisconnectedPanes() }
+    }
+
+    /// Arms the wall clock the current hold may not outlive. One timer per episode — the core answers
+    /// ``WorkspaceCoreHandle/Backstop/arm`` exactly once, so this needs no idempotence guard of its
+    /// own beyond the handle it replaces.
     private func armPaneDialHoldBackstop() {
-        guard paneDialHoldBackstopTask == nil, !paneDialHoldExpired else { return }
         let delay = paneDialHoldBackstop
+        paneDialHoldBackstopTask?.cancel()
         paneDialHoldBackstopTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
             paneDialHoldBackstopTask = nil
-            paneDialHoldExpired = true
-            refreshPaneDialGate()
+            applyGateEdge(core.noteBackstopExpired(coreInputs))
         }
     }
 
@@ -184,21 +191,7 @@ extension WorkspaceStore {
     /// answered) has no pane set to fan across and no gate edge coming, because the host that
     /// confirmed those ids is still the host being dialled. This is the missing edge.
     func armPaneRedialOnDocument() {
-        paneRedialAwaitsDocument = true
-    }
-
-    /// Fires that booking the moment the pane set is back on screen AND its provenance is settled —
-    /// the one instant at which a fan-out is both possible and legitimate.
-    ///
-    /// Driven by the mirror's change hook, after the reconcile that materializes the leaves and after
-    /// ``refreshPaneDialGate()``, so `handle(for:)` answers and the gate is current. Left armed while
-    /// either half is missing: a hold released by ``paneDialHoldBackstop`` with no document behind it
-    /// dials an empty tree, and disarming there would spend the booking on nothing.
-    func redialArmedPanesOnConfirmedDocument() {
-        guard paneRedialAwaitsDocument, panesMayDial else { return }
-        guard dialConfirmedHostKey == attachedHostKey else { return }
-        paneRedialAwaitsDocument = false
-        redialDisconnectedPanes()
+        core.armRedialOnDocument()
     }
 
     // MARK: - Session-retention LRU (R-lifecycle #3)

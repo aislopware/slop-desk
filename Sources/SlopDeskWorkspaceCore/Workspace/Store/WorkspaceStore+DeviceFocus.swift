@@ -84,7 +84,7 @@ extension WorkspaceStore {
     @discardableResult
     func setDeviceFocus(_ next: DeviceFocus?) -> Bool {
         deviceFocus = next
-        workspaceMirrorRevision &+= 1
+        publishRevision(core.bumpRevision())
         return true
     }
 

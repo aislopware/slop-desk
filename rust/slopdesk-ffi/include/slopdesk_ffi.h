@@ -10449,6 +10449,120 @@ void slopdesk_ws_video_slots_clear_releasing(SlopDeskWsVideoSlots *handle);
 // The promotion generation as it stands.
 int64_t slopdesk_ws_video_slots_generation(SlopDeskWsVideoSlots *handle);
 
+// ---- The workspace store's own decisions --------------------------------------------------------
+//
+// Whether a pane may dial, which of two racing writes of the layout wins, whose picture the document
+// cache holds, and the revision every projection of the document is keyed on.
+//
+// A HANDLE for the same reason the ledger above is one: state that outlives every call, mutated from
+// a dozen sites, living exactly as long as the store. The revision is why the four subjects share
+// ONE handle — it is both the projection cache's key and the Observation shadow every reader of the
+// tree binds to, and a counter with two owners is a layout that either repaints for nothing or
+// freezes.
+//
+// THE EDGES ARE RETURNED, NOT OBSERVED. Every mutating door answers what the caller now owes the
+// world — arm or cancel the backstop timer, fan the re-dials out, write the file. The near side
+// holds the tasks and walks its own panes; it is never asked to decide whether to.
+//
+// IDENTITY DOES NOT CROSS. A pane, a tab and a session are UUIDs the near side owns and none appears
+// here. The one string that does is a `host:port`, which is a VALUE the store prints and persists.
+
+typedef struct SlopDeskWsCore SlopDeskWsCore;
+
+// The near-side facts the gate cannot know on its own, handed in on every call rather than pushed
+// and remembered: each lives on an object the far side has never seen, and a remembered copy goes
+// stale between the write that moves it and the call that pushes it.
+//
+// `channel`: 0 none, 1 refused, 2 an in-process document, 3 a real host channel in ANY live state —
+// `closed` included, because a dead subscription says nothing about whose ids these are, and reading
+// it as an answer is what made a host switch churn.
+typedef struct {
+    uint8_t channel;
+    bool bootstrap_armed;
+    bool offer_pending;
+} SlopDeskWsCoreInputs;
+
+// What one gate recomputation asks the caller to do. `backstop`: 0 leave the timer alone, 1 arm it,
+// 2 cancel it. `opened` is the RELEASING edge — dial everything the hold was holding, which is a
+// store-level fan-out because a pane in a satellite window has no arm of its own to wake.
+typedef struct {
+    bool changed;
+    bool opened;
+    uint8_t backstop;
+} SlopDeskWsCoreGateEdge;
+
+// What one folded document frame asks for, past the effects the caller already ran.
+typedef struct {
+    SlopDeskWsCoreGateEdge gate;
+    bool provenance_stamped;
+    bool redial_booking_fired;
+} SlopDeskWsCoreFrameEdge;
+
+// A core for a store whose cache was seeded from the `host_key_len` bytes at `host_key` (empty for
+// the headless and test paths, which never touch disk).
+SlopDeskWsCore *slopdesk_ws_core_new(const uint8_t *host_key, size_t host_key_len);
+void slopdesk_ws_core_free(SlopDeskWsCore *handle);
+// The projection key as it stands, and the door that moves it. The two LOCAL overlays that touch no
+// document — the divider drag preview and this device's own focus — bump it themselves, because a
+// frame that skipped it would neither repaint nor invalidate.
+uint64_t slopdesk_ws_core_revision(SlopDeskWsCore *handle);
+uint64_t slopdesk_ws_core_bump_revision(SlopDeskWsCore *handle);
+// Whether the panes on screen may open their host channels. The rule is PROVENANCE: a pane may dial
+// an id at the host that named it and nowhere else, because the host spawns a fresh shell for any
+// session id it does not know. A NULL core dials — no core is no channel, which waits for nothing.
+bool slopdesk_ws_core_panes_may_dial(SlopDeskWsCore *handle);
+// Recomputes the gate against `inputs` — the ONE door for every site that moves a near-side fact
+// without folding a frame: the channel's own state changes, the launch offer going out and coming
+// back, the automation bootstrap taking over the launch.
+SlopDeskWsCoreGateEdge slopdesk_ws_core_refresh_dial_gate(SlopDeskWsCore *handle,
+                                                          SlopDeskWsCoreInputs inputs);
+// The backstop ran out with no answer of any kind. A hold with no release is a window of panes that
+// never connect, which is strictly worse than the churn it prevents.
+SlopDeskWsCoreGateEdge slopdesk_ws_core_note_backstop_expired(SlopDeskWsCore *handle,
+                                                              SlopDeskWsCoreInputs inputs);
+// A connect committed the `host_key_len` bytes at `host_key` as this run's target. A DIFFERENT host
+// is a new hold with its own full window, and it also retires the cached picture for the rest of the
+// run: the facts in it are absolute paths on ONE machine, so a mix of two belongs to neither.
+SlopDeskWsCoreGateEdge slopdesk_ws_core_commit_connection_target(SlopDeskWsCore *handle,
+                                                                 SlopDeskWsCoreInputs inputs,
+                                                                 const uint8_t *host_key,
+                                                                 size_t host_key_len);
+// Books the establish fan-out a second run on the first document frame the attached host folds — the
+// missing edge for an establish that finds the mirror already empty.
+void slopdesk_ws_core_arm_redial_on_document(SlopDeskWsCore *handle);
+// A document frame folded. Gated on the FRAME COUNT rather than on being called: a patch, a fast-path
+// push and a presence roster all announce themselves through the same hook, and one landing after a
+// new target is committed would stamp the previous host's layout with the new host's name.
+// `epoch_is_seed` is the mirror's own reading: the store's seed is the QUESTION, never a host's
+// answer, so a frame carrying it stamps no provenance.
+SlopDeskWsCoreFrameEdge slopdesk_ws_core_note_document_frame(SlopDeskWsCore *handle,
+                                                             SlopDeskWsCoreInputs inputs,
+                                                             uint64_t frames_applied,
+                                                             bool epoch_is_seed);
+// Whether the armed launch offer may go out now. The seed IS the tree the offer carries, so offering
+// it back to a document that already adopted it spends the host's one pristine chance on a no-op.
+// A pure fold: every input is the caller's, so no core is asked for.
+bool slopdesk_ws_core_launch_offer_ready(SlopDeskWsCoreInputs inputs, bool known_epoch_is_seed,
+                                         bool can_mutate);
+// Arms the debounced write, after the construction reconcile that would otherwise re-write a
+// just-loaded file with its own bytes.
+void slopdesk_ws_core_enable_saving(SlopDeskWsCore *handle);
+// Claims a generation for a debounced write into `out`, answering false while writes are disarmed.
+// The write re-checks it before touching the file, because cancellation cannot stop a task already
+// past its sleep — so a superseded one may neither clobber the file nor strand the newest handle.
+bool slopdesk_ws_core_begin_save(SlopDeskWsCore *handle, uint64_t *out);
+// Claims a generation for a write happening RIGHT NOW, whatever is in flight — the backgrounding
+// path, which has already decided it is writing.
+uint64_t slopdesk_ws_core_supersede_save(SlopDeskWsCore *handle);
+bool slopdesk_ws_core_is_current_save_generation(SlopDeskWsCore *handle, uint64_t generation);
+// The live generation as a VALUE — what an observer asks to see whether a mutation moved the guard at
+// all, which the predicate above cannot answer without also claiming.
+uint64_t slopdesk_ws_core_save_generation(SlopDeskWsCore *handle);
+bool slopdesk_ws_core_saving_enabled(SlopDeskWsCore *handle);
+// The `host:port` the cached picture is written under, as UTF-8. Answers the byte count NEEDED, so an
+// under-sized `cap` writes nothing and asks again; ZERO means the cache may not be written at all.
+size_t slopdesk_ws_core_cache_host_key(SlopDeskWsCore *handle, uint8_t *out, size_t cap);
+
 // ---- The git line's cadence, and the keys it files a reply under --------------------------------
 //
 // Which project section a pane's git line belongs to, when that line is stale enough to re-fetch,

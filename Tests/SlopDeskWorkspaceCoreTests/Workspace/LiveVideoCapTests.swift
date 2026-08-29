@@ -322,7 +322,7 @@ final class LiveVideoCapTests: XCTestCase {
     /// main-actor critical section (`await MainActor.run`) — the guard and the rename never release the
     /// actor between them, so a stale snapshot can never interleave and win the last rename.
     ///
-    /// The pure-predicate assertions stay (pinning the SAME ``WorkspaceStore/isCurrentSaveGeneration(_:)``
+    /// The pure-predicate assertions stay (pinning the SAME ``WorkspaceCoreHandle/isCurrentSaveGeneration(_:)``
     /// the production path consults); F5 strengthens it: a SHORT debounce so the parked task actually
     /// FIRES past its sleep WHILE a superseding `saveImmediately()` (then a newer `scheduleSave`) runs,
     /// then we assert the ON-DISK tree equals the NEWEST snapshot — not the stale one — by pane count.
@@ -345,10 +345,10 @@ final class LiveVideoCapTests: XCTestCase {
         // STALE snapshot: a mutation schedules a debounced save capturing the 2-leaf tree (gen0). The
         // task parks on its short 40ms sleep — its write has NOT run yet.
         store.splitActivePane(axis: .horizontal, kind: .terminal)
-        let gen0 = store.saveGeneration
+        let gen0 = store.core.saveGeneration
         let staleCount = store.tree.allPaneIDs().count // 2 — must NEVER be the final on-disk shape
         XCTAssertEqual(staleCount, 2)
-        XCTAssertTrue(store.isCurrentSaveGeneration(gen0), "the just-scheduled debounced write would write")
+        XCTAssertTrue(store.core.isCurrentSaveGeneration(gen0), "the just-scheduled debounced write would write")
 
         // NEWEST snapshot: a second mutation (3 leaves) then a synchronous `saveImmediately()`, which
         // bumps the generation and writes the 3-leaf tree NOW; the parked gen0 task is now STALE.
@@ -358,16 +358,16 @@ final class LiveVideoCapTests: XCTestCase {
         store.saveImmediately()
         let newestCount = store.tree.allPaneIDs().count // 3 — the snapshot that must win on disk
         XCTAssertEqual(newestCount, 3)
-        let genAfterImmediate = store.saveGeneration
+        let genAfterImmediate = store.core.saveGeneration
         XCTAssertGreaterThan(genAfterImmediate, gen0, "saveImmediately bumped the generation past the debounced one")
 
         // The PURE generation-guard predicate (the production write path consults the very same one):
         // the stale gen0 is superseded; only the newest generation is current.
         XCTAssertFalse(
-            store.isCurrentSaveGeneration(gen0),
+            store.core.isCurrentSaveGeneration(gen0),
             "the superseded debounced write is no longer current — it will skip its write",
         )
-        XCTAssertTrue(store.isCurrentSaveGeneration(genAfterImmediate), "only the latest generation is current")
+        XCTAssertTrue(store.core.isCurrentSaveGeneration(genAfterImmediate), "only the latest generation is current")
 
         // Let the parked gen0 task WAKE past its 40ms sleep and reach its critical section while
         // superseded — well past the debounce so it genuinely fires (not merely cancelled). Its
@@ -393,8 +393,8 @@ final class LiveVideoCapTests: XCTestCase {
         // current (the guard is monotone).
         store.splitActivePane(axis: .horizontal, kind: .terminal)
         let finalCount = store.tree.allPaneIDs().count // 4
-        XCTAssertGreaterThan(store.saveGeneration, genAfterImmediate, "a new mutation bumps the generation again")
-        XCTAssertFalse(store.isCurrentSaveGeneration(gen0), "an old generation never becomes current again")
+        XCTAssertGreaterThan(store.core.saveGeneration, genAfterImmediate, "a new mutation bumps the generation again")
+        XCTAssertFalse(store.core.isCurrentSaveGeneration(gen0), "an old generation never becomes current again")
 
         try? await Task.sleep(for: .milliseconds(200)) // let the latest debounced save complete
         XCTAssertEqual(

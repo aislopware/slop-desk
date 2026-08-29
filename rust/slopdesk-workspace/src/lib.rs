@@ -180,6 +180,7 @@ pub mod sidebar_row;
 pub mod split_zoom;
 pub mod state_codec;
 pub mod status_pill;
+pub mod store_core;
 pub mod store_git_cadence;
 pub mod store_rollup;
 pub mod store_seed;
