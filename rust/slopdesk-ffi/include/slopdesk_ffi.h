@@ -3963,6 +3963,20 @@ size_t slopdesk_block_duration_label(SlopDeskBlockFields fields, uint8_t *out, s
 bool   slopdesk_block_adjacent_failed(const SlopDeskBlockFields *newest_first, size_t count,
                                       bool has_from, uint32_t from_index, bool forward,
                                       uint32_t *out_index);
+// Landing the viewport on an ABSOLUTE prompt ordinal out of a RELATIVE binding: scroll to the bottom,
+// reach back by the re-anchor delta past every prompt there could be, then count forward by the hops.
+// The delta is a constant rather than a literal on each side because the two must agree — an anchor
+// that does not out-reach the scrollback leaves every jump landing short.
+//
+// `slopdesk_block_jump_plan` answers false when the ordinal names no position at all (a mid-stream
+// join, for which the host stamped no ordinal), which is NOT the empty plan of ordinal 1, where the
+// re-anchor has already landed. Otherwise it reports the hop count in `*out_count` and writes them
+// when `cap` allows, the usual counted-door contract.
+uint32_t slopdesk_block_jump_re_anchor_delta(void);
+// The largest single forward hop the binding accepts, for a caller ASSERTING the bound rather than
+// planning against it — the plan door already chunks to it.
+uint32_t slopdesk_block_jump_max_step(void);
+bool   slopdesk_block_jump_plan(uint32_t ordinal, uint32_t *out, size_t cap, size_t *out_count);
 
 SlopDeskBlockStore *slopdesk_block_store_new(void);
 void   slopdesk_block_store_free(SlopDeskBlockStore *handle);

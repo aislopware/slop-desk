@@ -295,6 +295,46 @@ pub fn adjacent_failed<'a>(
     }
 }
 
+/// How far back the re-anchor jump reaches before counting forward.
+///
+/// Larger than any scrollback a prompt ordinal can name, which is the point: it lands the cursor at
+/// the OLDEST prompt whatever the scrollback holds, so the forward count below starts from a known
+/// position rather than from wherever the viewport happened to be.
+pub const JUMP_RE_ANCHOR_DELTA: u32 = 32_000;
+
+/// The largest single forward hop the terminal's own binding accepts.
+pub const JUMP_MAX_STEP: u32 = 32_000;
+
+/// The sequence of binding actions that lands the viewport on a prompt ordinal.
+///
+/// Absolute positioning built out of a RELATIVE binding: scroll to the bottom, reach back past
+/// every prompt there could be, then count forward. `ordinal` is 1-based and the re-anchor already
+/// sits on the first prompt, so the count is one short of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JumpPlan {
+    /// The forward hops, each within [`JUMP_MAX_STEP`]. Empty means the re-anchor already landed.
+    pub hops: Vec<u32>,
+}
+
+/// The hops that land on `ordinal`, or `None` when there is nothing to land on.
+///
+/// A zero ordinal is a mid-stream join — the host stamped no prompt ordinal for that block — and
+/// there is no position to jump to, which is different from "jump nowhere".
+#[must_use]
+pub fn jump_plan(ordinal: u32) -> Option<JumpPlan> {
+    if ordinal == 0 {
+        return None;
+    }
+    let mut remaining = ordinal - 1;
+    let mut hops = Vec::new();
+    while remaining > 0 {
+        let hop = remaining.min(JUMP_MAX_STEP);
+        hops.push(hop);
+        remaining -= hop;
+    }
+    Some(JumpPlan { hops })
+}
+
 /// What [`OutputRequests::request`] decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputRequest {
@@ -460,6 +500,55 @@ pub fn rerun_bytes(command_text: &str) -> Option<Vec<u8>> {
 /// scalar of difference is worth naming rather than rounding off.
 const fn is_foundation_whitespace(scalar: char) -> bool {
     scalar.is_whitespace() || scalar == '\u{200B}'
+}
+
+#[cfg(test)]
+mod jump_plan_tests {
+    use super::{JUMP_MAX_STEP, jump_plan};
+
+    #[test]
+    fn a_mid_stream_join_has_no_position_to_land_on() {
+        assert!(
+            jump_plan(0).is_none(),
+            "the host stamped no prompt ordinal for that block"
+        );
+    }
+
+    /// The hops for `ordinal`, or an empty vec — which is also the honest answer for a plan that
+    /// asks for none, so every assertion below states the hops it expects rather than the shape.
+    fn hops(ordinal: u32) -> Vec<u32> {
+        jump_plan(ordinal).map(|plan| plan.hops).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_first_prompt_is_where_the_re_anchor_already_is() {
+        assert!(
+            jump_plan(1).is_some(),
+            "ordinal 1 is a position, it just needs no hop"
+        );
+        assert_eq!(hops(1), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn the_count_is_one_short_of_the_ordinal() {
+        assert_eq!(hops(5), vec![4]);
+    }
+
+    #[test]
+    fn a_count_past_the_binding_s_ceiling_is_chunked_and_still_sums() {
+        let ordinal = JUMP_MAX_STEP * 2 + 7;
+        let hops = hops(ordinal);
+        assert_eq!(hops, vec![JUMP_MAX_STEP, JUMP_MAX_STEP, 6]);
+        assert_eq!(
+            hops.iter().sum::<u32>(),
+            ordinal - 1,
+            "the hops land exactly on the ordinal"
+        );
+        assert!(
+            hops.iter().all(|hop| *hop <= JUMP_MAX_STEP),
+            "no hop exceeds the binding's ceiling"
+        );
+    }
 }
 
 #[cfg(test)]

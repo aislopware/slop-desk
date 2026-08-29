@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import os
 import SlopDeskTerminal
 import SlopDeskWorkspaceModel
@@ -84,52 +85,40 @@ public struct BlockBookmarkSeam {
 /// prompt is no longer ordinal #1 and the landing shifts by the evicted count — the long-session edge;
 /// every jump in a normal session lands exactly.
 enum BlockJump {
-    /// Larger than any real scrollback's prompt count — exhausts ghostty's upward `PromptIterator` so the
-    /// viewport pins to the OLDEST retained prompt row (see the type doc).
+    /// The anchor delta, read from `slopdesk_terminal::blocks` rather than typed twice.
     ///
-    /// MUST fit ghostty's binding parameter type: `jump_to_prompt` is declared `i16` (`Binding.zig`,
-    /// pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the whole binding silently
-    /// no-ops — the jump then degenerates to bare `scroll_to_bottom` (a round value like 1_000_000 fails
-    /// this way on hardware). 32_000 stays inside `i16` while far beyond any retained scrollback's prompt
-    /// count.
-    nonisolated static let reAnchorDelta = 32000
+    /// It MUST be larger than any real scrollback's prompt count — that is what exhausts ghostty's
+    /// upward `PromptIterator` and pins the viewport to the OLDEST retained prompt row (see the type
+    /// doc) — and it must fit ghostty's binding parameter type: `jump_to_prompt` is declared `i16`
+    /// (`Binding.zig`, pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the
+    /// whole binding silently no-ops. Both bounds are stated where the value lives; a second literal
+    /// here is a second place for them to be wrong.
+    nonisolated static var reAnchorDelta: UInt32 { slopdesk_block_jump_re_anchor_delta() }
 
-    /// The largest single DOWNWARD `jump_to_prompt` step that fits ghostty's binding parameter.
-    ///
-    /// `jump_to_prompt` is declared `i16` (`Binding.zig`, pinned v1.3.1 — max 32767), so a single step
-    /// whose delta exceeds that fails the ACTION-STRING PARSE and silently no-ops the WHOLE binding — the
-    /// same i16 trap ``reAnchorDelta`` guards against. The step delta `ordinal − 1` is unbounded (a
-    /// long-lived detached session stamps ever-growing ordinals — every Enter counts), so past ordinal
-    /// 32768 the raw step would silently land on the anchor (oldest prompt) instead of the target. A step
-    /// beyond this bound is therefore SPLIT into in-range hops: each positive `jump_to_prompt` re-counts
-    /// from the NEW viewport-top's `down(1)` (that row's own prompt is never re-counted), so consecutive
-    /// hops COMPOSE to the full delta and land the exact prompt — saturation would land short, chunking
-    /// lands true. 32000 matches the re-anchor magnitude and stays inside i16.
-    nonisolated static let maxStep = 32000
+    /// The largest single forward hop the binding accepts, for a caller ASSERTING the bound. Nothing
+    /// here plans against it — ``plan(for:)`` already comes back chunked.
+    nonisolated static var maxStep: UInt32 { slopdesk_block_jump_max_step() }
 
     /// Anchors on the oldest retained prompt row, then jumps `actions` DOWN to 1-based prompt ordinal
     /// `ordinal`. `0` (unknown — a mid-stream join stamped no ordinal) is a graceful no-op: better no
-    /// jump than a mis-landing. The `ordinal − 1` downward delta is emitted as one or more in-range hops
-    /// (see ``maxStep``) so an ordinal beyond ghostty's i16 range still lands exactly instead of no-opping.
-    /// Returns whether the whole choreography ran (every binding action accepted) — the callers arm the
-    /// landed flash only then, so a skipped/rejected jump never leaves a pending flash arm.
+    /// jump than a mis-landing. Returns whether the whole choreography ran (every binding action
+    /// accepted) — the callers arm the landed flash only then, so a skipped/rejected jump never
+    /// leaves a pending flash arm.
+    ///
+    /// The PLAN is `slopdesk_terminal::blocks::jump_plan`'s: which hops, and how many. Chunking is a
+    /// decision, not choreography — each positive `jump_to_prompt` re-counts from the NEW viewport
+    /// top's `down(1)`, so consecutive hops COMPOSE to the full delta and land the exact prompt where
+    /// a single saturated step would land short. What is left here is the effect: issuing them.
     @discardableResult
     nonisolated static func toPromptOrdinal(_ ordinal: UInt32, using actions: TerminalSurfaceActions) -> Bool {
-        guard ordinal >= 1 else {
+        guard let hops = plan(for: ordinal) else {
             debugLog("jump SKIPPED: ordinal 0 (mid-stream join — host stamped no prompt ordinal)")
             return false
         }
         let anchor1 = actions.performBindingAction("scroll_to_bottom")
         let anchor2 = actions.performBindingAction("jump_to_prompt:-\(reAnchorDelta)")
-        var remaining = Int(ordinal) - 1
         var stepsOK = true
-        var hops: [Int] = []
-        while remaining > 0 {
-            let hop = Swift.min(remaining, maxStep)
-            hops.append(hop)
-            if !actions.performBindingAction("jump_to_prompt:\(hop)") { stepsOK = false }
-            remaining -= hop
-        }
+        for hop in hops where !actions.performBindingAction("jump_to_prompt:\(hop)") { stepsOK = false }
         // A `false` from a REAL surface (out-of-range/rejected delta, or a headless/placeholder surface)
         // means the viewport did NOT move to the target. Log at DEFAULT level — not only the debug-gated
         // trace — so a silently-failed navigator / Jump-to-Failed jump is diagnosable in the field without
@@ -142,6 +131,21 @@ enum BlockJump {
                 + "anchor(-\(reAnchorDelta))=\(anchor2) steps=\(hops)=\(stepsOK)",
         )
         return anchor1 && anchor2 && stepsOK
+    }
+
+    /// The forward hops for `ordinal`, or `nil` when it names no position at all.
+    ///
+    /// `nil` and `[]` are different answers and the door keeps them apart: an ordinal of 1 is already
+    /// where the re-anchor left the viewport, while an ordinal of 0 is a block the host never stamped.
+    private nonisolated static func plan(for ordinal: UInt32) -> [UInt32]? {
+        var needed = 0
+        guard slopdesk_block_jump_plan(ordinal, nil, 0, &needed) else { return nil }
+        guard needed > 0 else { return [] }
+        var hops = [UInt32](repeating: 0, count: needed)
+        _ = hops.withUnsafeMutableBufferPointer {
+            slopdesk_block_jump_plan(ordinal, $0.baseAddress, $0.count, nil)
+        }
+        return hops
     }
 
     /// Default-level diagnostics for a jump that failed to move the viewport (see ``toPromptOrdinal``).

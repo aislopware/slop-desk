@@ -39,8 +39,8 @@
 use core::ffi::c_uchar;
 
 use slopdesk_terminal::blocks::{
-    BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, OutputRequest, OutputRequests,
-    adjacent_failed,
+    BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, JUMP_MAX_STEP, JUMP_RE_ANCHOR_DELTA,
+    OutputRequest, OutputRequests, adjacent_failed, jump_plan,
 };
 
 use crate::{borrow, deliver, records_of};
@@ -431,6 +431,66 @@ pub unsafe extern "C" fn slopdesk_block_adjacent_failed(
     }
     // SAFETY: non-null and writable for one `u32` by the caller's obligation.
     unsafe { out_index.write(found.index) };
+    true
+}
+
+/// How far back the re-anchor jump reaches before the hops count forward.
+///
+/// A constant rather than a literal on each side, because the two must agree: the anchor has to
+/// out-reach any scrollback a prompt ordinal can name, or the count below starts from the wrong
+/// place and every jump lands short.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_block_jump_re_anchor_delta() -> u32 {
+    JUMP_RE_ANCHOR_DELTA
+}
+
+/// The largest single forward hop the terminal's binding accepts, for a caller asserting the bound
+/// rather than planning against it — [`slopdesk_block_jump_plan`] already chunks to it.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_block_jump_max_step() -> u32 {
+    JUMP_MAX_STEP
+}
+
+/// The forward hops that land the viewport on prompt `ordinal`, after the re-anchor.
+///
+/// Answers `false` when the ordinal names no position at all — a mid-stream join, for which the
+/// host stamped no ordinal — which is a different answer from the EMPTY plan of `ordinal == 1`,
+/// where the re-anchor has already landed. Otherwise writes `*out_count` hops and answers `true`; a
+/// `cap` short of that writes nothing and still reports the count, the usual counted-door contract.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` `uint32_t`s, and `out_count` null or writable for one
+/// `size_t`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_block_jump_plan(
+    ordinal: u32,
+    out: *mut u32,
+    cap: usize,
+    out_count: *mut usize,
+) -> bool {
+    let Some(plan) = jump_plan(ordinal) else {
+        return false;
+    };
+    if !out_count.is_null() {
+        // SAFETY: non-null and writable for one `usize` by the caller's obligation.
+        unsafe { out_count.write(plan.hops.len()) };
+    }
+    if !out.is_null() && cap >= plan.hops.len() {
+        // SAFETY: non-null and writable for `cap >= len` `u32`s by the caller's obligation.
+        unsafe { core::ptr::copy_nonoverlapping(plan.hops.as_ptr(), out, plan.hops.len()) };
+    }
     true
 }
 

@@ -295,7 +295,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     func testReAnchorDeltaFitsGhosttyI16BindingParameter() {
         XCTAssertLessThanOrEqual(
             BlockJump.reAnchorDelta,
-            Int(Int16.max) + 1,
+            UInt32(Int16.max) + 1,
             "-reAnchorDelta must parse as ghostty's i16 binding parameter",
         )
         XCTAssertGreaterThanOrEqual(
@@ -361,14 +361,14 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     /// threshold is `> maxStep`, not `>=`.
     func testBlockJumpSingleHopAtBoundaryTwoHopsJustBeyond() {
         let single = RecordingSurfaceActions()
-        BlockJump.toPromptOrdinal(UInt32(BlockJump.maxStep + 1), using: single) // step = maxStep exactly
+        BlockJump.toPromptOrdinal(BlockJump.maxStep + 1, using: single) // step = maxStep exactly
         XCTAssertEqual(
             Array(single.actions[2...]), ["jump_to_prompt:\(BlockJump.maxStep)"],
             "a step of exactly maxStep is one in-range hop",
         )
 
         let split = RecordingSurfaceActions()
-        BlockJump.toPromptOrdinal(UInt32(BlockJump.maxStep + 2), using: split) // step = maxStep + 1
+        BlockJump.toPromptOrdinal(BlockJump.maxStep + 2, using: split) // step = maxStep + 1
         XCTAssertEqual(
             Array(split.actions[2...]),
             ["jump_to_prompt:\(BlockJump.maxStep)", "jump_to_prompt:1"],
