@@ -672,7 +672,7 @@ fn connect(
     // told where to resume from cannot resume.
     let ack = transport.await_open_ack(handshake_timeout);
     if !ack.accepted {
-        transport.close();
+        discard(shared, transport);
         return Err(ConnectError::NoVerdict);
     }
 
@@ -685,7 +685,7 @@ fn connect(
         false,
         false,
     ) {
-        transport.close();
+        discard(shared, transport);
         return Err(ConnectError::Superseded);
     }
 
@@ -834,6 +834,27 @@ fn teardown(shared: &Arc<Shared>) {
     if let Some(Some(transport)) = retired {
         transport.close();
     }
+}
+
+/// Throws away a transport a dial built but will not adopt, and makes its end silent.
+///
+/// The epoch bump is the whole point, and it is NOT optional bookkeeping. A discarded transport is
+/// still closed, its sink still fires [`InboundSink::ended`](slopdesk_clientnet::InboundSink), and
+/// that end still carries the epoch the dial minted — which is the CURRENT one, because the dial
+/// bumped it on the way in. Without a second bump, [`ended`] reads a self-inflicted close as a live
+/// drop, announces a disconnect for a transport nobody ever had, and starts a campaign that resets
+/// the attempt counter to zero.
+///
+/// That is not a cosmetic miscount. A campaign whose every failed attempt restarts it never reaches
+/// the give-up ceiling, so a host that refuses the channel — a version skew, say — is dialled
+/// forever instead of twenty times. The bug the Swift's `connectGeneration` was really guarding was
+/// this one, and one supervisor thread does not dissolve it: the stale epoch is what does.
+fn discard(shared: &Arc<Shared>, transport: ChannelTransport) {
+    let _bumped = shared.with_state(|state| state.epoch += 1);
+    transport.close();
+    // BY VALUE and dropped here rather than borrowed: a discarded transport has no second reader,
+    // and taking ownership is what says so at the signature.
+    drop(transport);
 }
 
 /// One inbound stream ended.

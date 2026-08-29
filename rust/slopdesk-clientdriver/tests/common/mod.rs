@@ -379,6 +379,28 @@ impl Host {
         });
     }
 
+    /// Every window credit the client granted on this connection, summed over both lanes.
+    ///
+    /// The reconnect reset's whole hazard, in one number: bytes carried over from a channel that
+    /// died must credit ZERO on the new one, whose peer never sent them. A grant larger than what
+    /// this connection actually delivered is the phantom over-grant.
+    pub fn credited(&self) -> u64 {
+        self.locked(|inner| {
+            inner
+                .control
+                .frames
+                .iter()
+                .chain(inner.data.frames.iter())
+                .filter_map(|frame| {
+                    match *frame {
+                        MuxFrame::WindowAdjust { bytes_to_add, .. } => Some(u64::from(bytes_to_add)),
+                        _ => None,
+                    }
+                })
+                .sum()
+        })
+    }
+
     /// Closes the current channel from the host's side, with the reason it names.
     pub fn close_channel(&self, reason: MuxCloseReason) {
         let channel = self.channel_id(self.opens().len().saturating_sub(1));
