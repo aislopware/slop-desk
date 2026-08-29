@@ -25,12 +25,20 @@
 //! dirty `scripts/` is a green about text nobody ran.
 //!
 //! ## The sidecars must EXIST before the suite runs
-//! Eighteen suites start a real daemon — superd, screend, dropd — and every one `XCTSkip`s by name
-//! when its binary is missing. That is right inside a test and wrong for a GATE: `swift build`
-//! never sees cargo, so nothing in the Swift graph builds those binaries, and a push on a tree that
-//! has not had `just test` against it reports green over the whole supervised, screen and file-drop
-//! surface. The list is DERIVED from the fixtures rather than written here, so a nineteenth suite
-//! booting a new daemon is covered the day it lands.
+//! A Swift suite that starts a real daemon `XCTSkip`s by name when its binary is missing. That is
+//! right inside a test and wrong for a GATE: `swift build` never sees cargo, so nothing in the
+//! Swift graph builds those binaries, and a push on a tree that has not had `just test` against it
+//! reports green over exactly the surface a daemon is needed to reach. The list is DERIVED from the
+//! fixtures rather than written here, so a new suite booting a new daemon is covered the day it
+//! lands.
+//!
+//! What this covers has NARROWED, and the derivation is why that is safe rather than silent. It
+//! once read superd, screend and dropd out of eighteen suites; `docs/60` and `docs/63` ported all
+//! but one of those to Rust, and today it derives `dropd` alone, from `DropdE2ETests`. The Rust
+//! replacements are not this gate's business: cargo builds a test's own crate, `just client-e2e`
+//! builds the host and superd it then starts, and neither can be reached by a `swift test` that
+//! skipped. The moment Swift boots a daemon again the derivation sees it, which is the property
+//! worth keeping — a hand-written list would have gone stale in the other, dangerous direction.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -112,7 +120,11 @@ pub fn recorded(root: &Path, marker: &str) -> String {
 /// The daemons the Swift fixtures look for, derived from the fixtures themselves.
 ///
 /// Each fixture spells `rust/slopdesk-<name>/target` and then looks for
-/// `{release,debug}/slopdesk-<name>`.
+/// `{release,debug}/slopdesk-<name>`. The REPO-ROOT-relative spelling is what makes this scan
+/// possible and it is not a coincidence: a Swift test bundle's working directory is not the
+/// package root, so a fixture has to resolve from the root anyway. A Rust test writes
+/// `../slopdesk-<name>/target` off `CARGO_MANIFEST_DIR` instead and is deliberately NOT matched —
+/// cargo builds that crate's own binaries, so there is nothing here to guard.
 ///
 /// # Errors
 /// When `Tests/` cannot be walked.

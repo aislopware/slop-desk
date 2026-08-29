@@ -707,3 +707,20 @@ inspector channel — the `NWConnection` at `:3439` is its only `Network` use), 
 plus `TransportParameters` at its new address in `Sources/SlopDeskNet`. None is the client mux, which
 is the claim this campaign actually gets to make. The device-panel and proxy lanes are their own
 campaigns and are not scoped here.
+
+**Porting the E2E suite exposed an isolation hole the Swift original had all along, and it was not a
+Swift problem.** `SubprocessE2ETests` set a sandbox `HOME` and, later, the four container variables —
+so its journals, its workspace state and its drops were its own. Its screen ENGINE never was. hostd
+renders a state-transfer restore through screend, and an engine that does not answer is not an error:
+the restore demotes to the distilled path, which is the right answer for a user and an invisible one
+for a test. So the two composer scenarios dialled whichever screend the developer's live host had
+already started — a binary from some other commit — and the suite passed or failed on which machine
+ran it. The Rust port made that visible only because it ran somewhere the Swift never had: the same
+two scenarios were 6/6 green under one developer's live daemons and 4/6 an hour later under none.
+The fix belongs to the sandbox and not to the assertions — `Sandbox::build` now aims
+`SLOPDESK_SCREEND_SOCKET` at a private path, names `SLOPDESK_SCREEND_BIN` from this tree, and sets a
+short `SLOPDESK_SCREEND_IDLE_EXIT` because hostd starts the engine DETACHED and no test guard can
+reap it. The general lesson is the one that made the four container variables necessary in the first
+place: a sandbox is the set of things a daemon would otherwise resolve from the developer's machine,
+and every sidecar it dials is one of them. `just client-e2e` gained a `screend` dependency to match,
+which is also what makes the absent-binary case a SKIP rather than a false red.

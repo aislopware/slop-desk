@@ -816,17 +816,25 @@ client-test:
 # surviving a hostd restart, a cold reattach keeping the cursor shape, two clients on one PTY, and
 # the count from the PROCESS TABLE that a second client forks no second shell.
 #
-# hostd and superd are SEPARATE cargo workspaces, so an integration test in `slopdesk-client` cannot
-# ask cargo where either binary is. This recipe builds both: hostd is NAMED in the environment,
-# superd is FOUND beside its own manifest. Without `SLOPDESK_E2E_HOSTD_BIN` the suite SKIPS rather
-# than fails, which is what keeps `client-test` cheap and honest.
+# hostd, superd and screend are SEPARATE cargo workspaces, so an integration test in
+# `slopdesk-client` cannot ask cargo where any of them is. This recipe builds all three: hostd is
+# NAMED in the environment, the other two are FOUND beside their own manifests. Without
+# `SLOPDESK_E2E_HOSTD_BIN` the suite SKIPS rather than fails, which is what keeps `client-test` cheap
+# and honest.
 #
 # The variable is deliberately not `SLOPDESK_HOSTD_BIN`: `docs/46` records THAT name as having no
 # reader, and the absence is the claim — a search order for hostd beside the installer's is exactly
 # what the row rules out. This one is scoped to the harness by its name.
+#
+# screend is here for a reason worth stating, because it is not obvious from the assertions: hostd's
+# state-transfer composer renders a journal THROUGH the screen engine, and an engine that does not
+# answer is not an error — the restore quietly demotes to the distilled path. So an unaimed run does
+# not skip and does not fail cleanly; it dials whichever screend the developer's live host started,
+# which is how these two scenarios passed on one machine and failed on the next. The suite now points
+# at a PRIVATE engine from this tree, and this dependency is what puts it there.
 
-# The two SHIPPED binaries against a real PTY (rust/slopdesk-client/tests)
-client-e2e: host superd
+# The three SHIPPED binaries against a real PTY (rust/slopdesk-client/tests)
+client-e2e: host superd screend
     cd rust/slopdesk-client && \
         SLOPDESK_E2E_HOSTD_BIN="$PWD/../slopdesk-hostd/target/release/slopdesk-hostd" \
         cargo test --test subprocess_e2e -- --test-threads=1 --nocapture
@@ -1338,20 +1346,41 @@ host-status:
 # Swift inputs alone (Package.swift Sources Tests Apps golden), so a rust/ change would hit the
 # cache and skip everything. Warm cargo costs ~0.07s and fails before the ~60s Swift run.
 #
-# `superd` is BUILT here, not merely tested, and that is load-bearing: hostd cannot fork a shell
-# any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
-# the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
-# sees cargo — it just reports those tests skipped, by name.
+# The six sidecars at the END of the list are BUILT here, not merely tested, and the reason has
+# CHANGED even though the list has not. It used to be the Swift fixtures: `SuperdFixture` and
+# `ScreendFixture` booted a real daemon and `XCTSkip`ped by name without one, so a `swift test` that
+# never sees cargo reported green over the whole supervised surface. `docs/60` F.9 deleted those
+# fixtures and every suite they skipped, and `docs/63` G.5 took the last Swift subprocess suite.
+#
+# What actually launches a real binary today is two files, and neither is reached from here:
+# `rust/slopdesk-screend/tests/idle_exit.rs` (its own crate, so `screend-test` builds it) and
+# `rust/slopdesk-client/tests/subprocess_e2e.rs` (`just client-e2e`, which builds `host` and
+# `superd` itself). Every other daemon-shaped test uses a FAKE — `slopdesk-screenclient`'s answers
+# on a real `AF_UNIX` socket with the wire crate's own encoder, and hostserver's spell paths like
+# `/opt/slopdesk-ctl` that are never executed.
+#
+# The builds STAY because `just test` is also what leaves a tree you can run: `just host-restart`
+# and `slopdesk-ops` want the sidecars present. Removing them is a separate change with its own
+# argument, not a tidy-up of this comment.
+#
+# `client-e2e` is in this list and NOT in `quick`, and the asymmetry is deliberate. It is the one
+# suite that proves the shipped binaries talk to each other over a real socket against a real PTY,
+# so a full run that skipped it would be green about everything except the product. It is also ~11s
+# of daemon boots on top of two release builds, which is the whole inner loop's budget — `quick`
+# answers "did my edit compile and hold", and this answers "does it still ship", and those are
+# different questions asked at different moments. It went missing from the gate for exactly one
+# stage: it used to ride `swift test` as `SubprocessE2ETests`, `docs/63` G.5 made it a cargo test,
+# and `client-test` runs it with the env var unset — a vacuous green by design. This line is what
+# closes that.
 
 # cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + one client pane session's driver + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test ctl superd screend dropd androidd inspectord
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
-# `superd` for the same load-bearing reason as `test` above, and it matters MORE here: this is the
-# gate CLAUDE.md tells you to run after a Swift edit, and the code most of those edits touch is the
-# supervised pty path. Without the binary `SuperdFixture` throws `XCTSkip` from its initialiser, so
-# SupervisedPaneSurvivalTests, HostRestartSurvivalTests, PaneOutputStreamTests and PTYProcessTests
-# all report green having run nothing — a fast gate that cannot see the regressions it exists for.
+# The same six sidecars, for the same reason as `test` above and with more at stake: this is the
+# gate CLAUDE.md tells you to run after every edit, and a daemon-backed suite that cannot find its
+# binary reports green having run nothing — a fast gate that cannot see the regressions it exists
+# for. The build is what makes the skip impossible rather than merely unlikely.
 
 # Fast inner loop: incremental build + only the test targets the change set reaches
 test-touched: ctl superd screend dropd androidd inspectord

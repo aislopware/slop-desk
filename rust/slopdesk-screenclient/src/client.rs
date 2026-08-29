@@ -577,8 +577,8 @@ fn dial(path: &Path) -> Option<std::os::unix::net::UnixStream> {
 /// Where a started screend's stdout and stderr go.
 ///
 /// A FILE, never this process's stdio: a screend that outlives its parent while holding the write
-/// end of an inherited pipe is how a test harness hangs reading for an EOF that cannot arrive
-/// (`SuperdFixture` documents the same trap at length). When the file cannot be opened the answer
+/// end of an inherited pipe is how a test harness hangs reading for an EOF that cannot arrive.
+/// When the file cannot be opened the answer
 /// is `/dev/null` rather than inheritance — the Swift original fell through to inheriting, which is
 /// the hang it had just finished explaining.
 ///

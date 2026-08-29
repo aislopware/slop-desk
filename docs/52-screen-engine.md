@@ -307,15 +307,30 @@ copy's lifetime and `KeepAlive` would otherwise turn every idle period into a re
 | `just screend` | build (release) |
 | `just screend-test` | 364 Rust tests: 180 unit (the parser, the passes, and the ladder / regions / trackers / manifests), 42 model, 53 replay passes, 34 render, 44 overprint, 8 cross-region gate, 3 idle-exit (which run the real binary) |
 | `just lint-rust` | clippy `-D warnings` + `rustfmt --check`, third workspace |
-| `swift test --filter SlopDeskScreenTests` | hostd's wire end, the paths, the unavailable path |
+| `just screenclient-test` | `tests/screend.rs`: hostd's end of the wire, the paths, the unavailable path |
+| `just client-e2e` | the composer through the SHIPPED hostd, against a private engine (`docs/63`) |
 | `just test` / `just test-touched` | both, and they BUILD screend first |
 
-The Swift tests that drive the engine (`MuxChannelSessionSnapshotReplayTests`, the three
-`PaneScreenScanner` suites, `LineOverprintCollapserTests`) go through `ScreendFixture`, which skips
-BY NAME when the binary is absent rather than passing vacuously — the same discipline as
-`SuperdFixture`, for the same reason.
+The client end no longer needs a real engine to be exercised, and that is a deliberate change of
+shape rather than a loss of coverage. It used to: the Swift suites that drove it
+(`MuxChannelSessionSnapshotReplayTests`, the `PaneScreenScanner` suites, `LineOverprintCollapserTests`)
+went through a `ScreendFixture` that started the built binary and skipped BY NAME without one, so the
+gate's honesty depended on a fixture remembering to skip. `docs/60` and `docs/63` deleted every one of
+those suites along with the Swift they tested. What replaced them asks a smaller question and answers
+it with no daemon at all: `tests/screend.rs` stands up a real `AF_UNIX` listener and replies with
+[`slopdesk_screenwire`]'s own encoder, so the client's framing, its timeouts and its unavailable path
+are pinned against the WIRE rather than against a process.
+
+Two suites still run the real binary, and neither needs a fixture that might forget to skip.
+`tests/idle_exit.rs` lives in screend's OWN crate, so cargo builds what it launches. `client-e2e`
+(`docs/63`) reaches the engine the long way round — through a shipped hostd composing a real journal
+— and it is where the fixture discipline actually got harder, because a missing engine is not an
+error on that path: hostd demotes the restore to distilled bytes and the run stays green about the
+wrong thing. So the E2E sandbox aims `SLOPDESK_SCREEND_SOCKET` at a private path, names
+`SLOPDESK_SCREEND_BIN` from this tree, and resolves that binary UP FRONT so "not built" is a skip
+with a name. The `SLOPDESK_SCREEND_IDLE_EXIT` above is what reaps the result: hostd starts the engine
+detached, so no test guard holds a handle to it.
 
 The behaviour of the engine is pinned in Rust and only in Rust: the 300-seed render idempotence
 fuzz, the 2000-stream overprint differential against the model, every VT vocabulary test, and the
-deliberate herdr divergences (`tests/cross_region_gate.rs`). The Swift
-suite pins the WIRE and the fallbacks, which is what a client end is answerable for.
+deliberate herdr divergences (`tests/cross_region_gate.rs`).

@@ -462,9 +462,6 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/SettingsKey.swift",
         // SEAM: `environment:` default argument on the store's bootstrap.
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift",
-        // A CHILD process's environment, built to be handed to a spawn. The suite pins it to
-        // exactly one occurrence with a counting test of its own.
-        "Tests/SlopDeskClientTests/SubprocessE2ETests.swift",
         // Harness: which `slopdesk-dropd` binary the E2E spawns.
         "Tests/SlopDeskFileTransferTests/DropdE2ETests.swift",
         // Harness: where the two snapshot renderers write their PNGs.
