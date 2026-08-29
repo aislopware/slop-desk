@@ -106,7 +106,7 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// `MetadataCodec.encodeClipboardReadRequest` (`Int64` last-seen host `changeCount`; `-1` =
     /// baseline probe — the host replies count-only so a fresh connection never overwrites the
     /// client clipboard with stale host state). Response:
-    /// `MetadataCodec.encodeClipboardReadResponse` (`[Int64 changeCount][UInt8 kind][content]`;
+    /// ``MetadataCodec/decodeClipboardReadResponse(_:)`` (`[Int64 changeCount][UInt8 kind][content]`;
     /// kind 0 = unchanged/empty/none — no content follows, also used when the current clip is the
     /// one the client itself pushed via ``setClipboard``). Ships host clipboard CONTENT to the
     /// client — deliberately unconfined like the mesh-trusted read verbs (both ends are the same
@@ -116,7 +116,7 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// percent, and the kernel's memory-pressure level. Host-global and pane-agnostic like
     /// ``hostInfo`` (any connected pane's channel carries it); no path argument, no confinement —
     /// three aggregate numbers about the machine, never a byte of its content. Request payload:
-    /// empty. Response: status `.ok` + ``MetadataCodec/encodeHostVitals`` (3 bytes).
+    /// empty. Response: status `.ok` + ``MetadataCodec/decodeHostVitals(_:)`` (7 bytes).
     ///
     /// `.error` means "no reading yet", NOT a failure: the CPU percent is the delta between two tick
     /// snapshots, so the first request only primes the baseline (and a baseline older than the

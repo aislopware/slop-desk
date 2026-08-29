@@ -6153,46 +6153,25 @@ uint32_t slopdesk_metadata_decode_processes(const unsigned char *payload, size_t
                                             unsigned char *arena, size_t arena_cap,
                                             size_t *out_count);
 
-size_t slopdesk_metadata_encode_processes(const SlopDeskMetadataProcess *records, size_t count,
-                                          const unsigned char *arena, size_t arena_len,
-                                          unsigned char *out, size_t cap);
-
 uint32_t slopdesk_metadata_decode_ports(const unsigned char *payload, size_t payload_len,
                                         SlopDeskMetadataPort *records, size_t records_cap,
                                         unsigned char *arena, size_t arena_cap, size_t *out_count);
-
-size_t slopdesk_metadata_encode_ports(const SlopDeskMetadataPort *records, size_t count,
-                                      const unsigned char *arena, size_t arena_len,
-                                      unsigned char *out, size_t cap);
 
 uint32_t slopdesk_metadata_decode_dir_listing(const unsigned char *payload, size_t payload_len,
                                               SlopDeskMetadataDirEntry *records, size_t records_cap,
                                               unsigned char *arena, size_t arena_cap,
                                               size_t *out_count);
 
-size_t slopdesk_metadata_encode_dir_listing(const SlopDeskMetadataDirEntry *records, size_t count,
-                                            const unsigned char *arena, size_t arena_len,
-                                            unsigned char *out, size_t cap);
-
 uint32_t slopdesk_metadata_decode_agent_sessions(const unsigned char *payload, size_t payload_len,
                                                  SlopDeskMetadataAgentSession *records,
                                                  size_t records_cap, unsigned char *arena,
                                                  size_t arena_cap, size_t *out_count);
-
-size_t slopdesk_metadata_encode_agent_sessions(const SlopDeskMetadataAgentSession *records,
-                                               size_t count, const unsigned char *arena,
-                                               size_t arena_len, unsigned char *out, size_t cap);
 
 uint32_t slopdesk_metadata_decode_git_status(const unsigned char *payload, size_t payload_len,
                                              SlopDeskMetadataGitStatus *out,
                                              SlopDeskMetadataGitFile *records, size_t records_cap,
                                              unsigned char *arena, size_t arena_cap,
                                              size_t *out_count);
-
-size_t slopdesk_metadata_encode_git_status(const SlopDeskMetadataGitStatus *head,
-                                           const SlopDeskMetadataGitFile *records, size_t count,
-                                           const unsigned char *arena, size_t arena_len,
-                                           unsigned char *out, size_t cap);
 
 // The fold takes the CODES, not the records: a caller folds far more often
 // than it decodes — once per render of a pane's summary — and one byte per file
@@ -6204,9 +6183,6 @@ void slopdesk_metadata_fold_git_codes(const unsigned char *codes, size_t count,
 // the payload and only says WHERE it is, because a clip runs to 12 MiB and the
 // caller is holding those bytes already. So `out.content` names a range in the
 // PAYLOAD on decode, and a range in the caller's own arena on encode.
-uint32_t slopdesk_metadata_decode_clipboard_set(const unsigned char *payload, size_t payload_len,
-                                                SlopDeskMetadataClip *out);
-
 size_t slopdesk_metadata_encode_clipboard_set(const SlopDeskMetadataClip *clip,
                                               const unsigned char *arena, size_t arena_len,
                                               unsigned char *out, size_t cap);
@@ -6214,31 +6190,16 @@ size_t slopdesk_metadata_encode_clipboard_set(const SlopDeskMetadataClip *clip,
 size_t slopdesk_metadata_encode_clipboard_read_request(int64_t last_seen_change_count,
                                                        unsigned char *out, size_t cap);
 
-uint32_t slopdesk_metadata_decode_clipboard_read_request(const unsigned char *payload,
-                                                         size_t payload_len, int64_t *out);
-
 uint32_t slopdesk_metadata_decode_clipboard_read_response(const unsigned char *payload,
                                                           size_t payload_len, int64_t *count_out,
                                                           SlopDeskMetadataClip *out);
 
-size_t slopdesk_metadata_encode_clipboard_read_response(int64_t change_count,
-                                                        const SlopDeskMetadataClip *clip,
-                                                        const unsigned char *arena,
-                                                        size_t arena_len, unsigned char *out,
-                                                        size_t cap);
-
 uint32_t slopdesk_metadata_decode_host_vitals(const unsigned char *payload, size_t payload_len,
                                               SlopDeskMetadataVitals *out);
-
-size_t slopdesk_metadata_encode_host_vitals(const SlopDeskMetadataVitals *vitals,
-                                            unsigned char *out, size_t cap);
 
 uint32_t slopdesk_metadata_decode_service_endpoint(const unsigned char *payload,
                                                    size_t payload_len,
                                                    SlopDeskMetadataEndpoint *out);
-
-size_t slopdesk_metadata_encode_service_endpoint(const SlopDeskMetadataEndpoint *endpoint,
-                                                 unsigned char *out, size_t cap);
 
 /* Verb 13. A flag is true for the byte 1 and nothing else, and a MISSING second byte — a reply
  * predating the listener flag — reads INACTIVE. An EMPTY body is not a status and decodes as an
@@ -6247,14 +6208,8 @@ uint32_t slopdesk_metadata_decode_agent_hook_status(const unsigned char *payload
                                                     size_t payload_len,
                                                     SlopDeskMetadataHookStatus *out);
 
-size_t slopdesk_metadata_encode_agent_hook_status(bool installed, bool listener_active,
-                                                  unsigned char *out, size_t cap);
-
 uint32_t slopdesk_metadata_decode_code_open_disposition(const unsigned char *payload,
                                                         size_t payload_len, unsigned char *out);
-
-size_t slopdesk_metadata_encode_code_open_disposition(uint8_t disposition, unsigned char *out,
-                                                      size_t cap);
 
 /* The two vitals/endpoint bytes that are LEVELS rather than numbers cross RAW, because the field is
  * the wire's and a re-encode has to put back exactly what came in. What each byte MEANS — which
@@ -6267,10 +6222,6 @@ size_t slopdesk_metadata_encode_code_open_disposition(uint8_t disposition, unsig
  * that byte has no raw field to preserve. */
 uint8_t slopdesk_metadata_memory_pressure(uint8_t pressure_byte);
 uint8_t slopdesk_metadata_service_state(uint8_t state_byte);
-
-uint32_t slopdesk_metadata_decode_code_font_spec(const unsigned char *payload, size_t payload_len,
-                                                 SlopDeskMetadataFontSpec *out,
-                                                 unsigned char *arena, size_t arena_cap);
 
 size_t slopdesk_metadata_encode_code_font_spec(const SlopDeskMetadataFontSpec *spec,
                                                const unsigned char *arena, size_t arena_len,

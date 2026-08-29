@@ -1,6 +1,6 @@
 import CoreGraphics // CGRect/CGPoint/CGSize for the host geometry deciders
 import Foundation
-import SlopDeskProtocol // WireMessage (the terminal/PTY path)
+import SlopDeskProtocol // WorkspaceIntent (the workspace document ladder)
 import SlopDeskVideoClient // TrendlineEstimator, OwdLateDetector, PacerDepthPolicy
 import SlopDeskVideoProtocol
 
@@ -740,100 +740,15 @@ do {
 // beside the hex, re-encodes and asserts byte-identical output. That is a STRONGER pin than the
 // emission was: a generator can only ever agree with itself, and the replay checks the hex against
 // the fields rather than against another run of the same encoder.
-//
-// `metadataCodecPayloads` below stays EMITTED — `MetadataCodec` is still Swift's face, and the
-// per-verb payloads that ride INSIDE the (now frozen) type-30 envelope are its own bytes.
 
-// The per-verb MetadataCodec payload encodings that ride INSIDE the opaque metadataResponse
-// payload. These PIN the exact bytes of every structured list codec (manual BE, [UInt16 count]-prefixed,
-// length-prefixed UTF-8 strings) so a refactor cannot silently shift a field. The cwd / gitDiff /
-// readAgentSession verbs carry RAW bytes (no nested codec) and so have no sample here.
-func mcRecord(_ kind: String, _ hexStr: String, _ note: String) -> [String: Any] {
-    ["kind": kind, "hex": hexStr, "note": note]
-}
-
-root["metadataCodecPayloads"] = [
-    // ProcessList ([UInt16 count] then [UInt32 pid][UInt32 uptimeSec][UInt16 nameLen][name]).
-    mcRecord("processList", hex(MetadataCodec.encodeProcessList([])), "empty"),
-    mcRecord(
-        "processList",
-        hex(MetadataCodec.encodeProcessList([
-            .init(pid: 0x0102_0304, uptimeSec: 42, name: "-zsh"),
-            .init(pid: 0xDEAD_BEEF, uptimeSec: 3600, name: "claude 🚀"),
-        ])),
-        "two entries; unicode name",
-    ),
-    // PortList ([UInt16 count] then [UInt16 port][UInt8 proto][UInt16 nameLen][procName]).
-    mcRecord("portList", hex(MetadataCodec.encodePortList([])), "empty (No listening ports)"),
-    mcRecord(
-        "portList",
-        hex(MetadataCodec.encodePortList([
-            .init(port: 8080, proto: 0, procName: "node"),
-            .init(port: 53, proto: 1, procName: "mDNSResponder"),
-        ])),
-        "tcp + udp entries",
-    ),
-    // DirListing ([UInt16 count] then [UInt8 isDir][UInt16 nameLen][leafName]).
-    mcRecord(
-        "dirListing",
-        hex(MetadataCodec.encodeDirListing([
-            .init(isDir: true, name: "Sources"),
-            .init(isDir: false, name: "README.md"),
-            .init(isDir: true, name: "docs"),
-        ])),
-        "dir/file leaf names",
-    ),
-    // GitStatus ([UInt8 hasRepo]; if repo: branch, remote, repoRoot, [Int32 ahead][Int32 behind][Int32 stash], files).
-    mcRecord("gitStatus", hex(MetadataCodec.encodeGitStatus(.noRepo)), "no repo (single 0x00 byte)"),
-    mcRecord(
-        "gitStatus",
-        hex(MetadataCodec.encodeGitStatus(.init(
-            hasRepo: true,
-            branch: "main",
-            remoteURL: "git@github.com:aislopware/slop-desk.git",
-            repoRoot: "/Users/me/slopdesk",
-            ahead: 3,
-            behind: 0,
-            stashCount: 2,
-            files: [
-                .init(statusCode: 0x12, path: "Sources/main.swift"),
-                .init(statusCode: 0xFF, path: "docs/x.md"),
-            ],
-        ))),
-        "repo: branch+remote+repoRoot+ahead/behind+stash+files",
-    ),
-    // AgentSessionList ([UInt16 count] then kind, id, title, cwd, [Int64 mtimeMS]).
-    mcRecord(
-        "agentSessionList",
-        hex(MetadataCodec.encodeAgentSessionList([
-            .init(
-                agentKindByte: 0,
-                id: "9f3c",
-                title: "Fix the wire codec",
-                cwd: "/Users/me/project",
-                mtimeMS: 1_749_700_000_123,
-            ),
-            .init(agentKindByte: 1, id: "c42", title: "", cwd: "/tmp/x", mtimeMS: -1),
-        ])),
-        "claude + codex sessions",
-    ),
-    // HostVitals ([UInt8 cpu%][UInt8 mem%][UInt8 pressure][UInt32 disk free MiB]) — fixed 7 bytes,
-    // no count prefix. `UInt32.max` in the disk field is the "host could not read it" sentinel.
-    mcRecord(
-        "hostVitals",
-        hex(MetadataCodec.encodeHostVitals(
-            .init(cpuPercent: 34, memoryPercent: 61, pressure: .normal, diskFreeMiB: 245_760),
-        )),
-        "cpu/mem percents, pressure normal, 240 GiB free",
-    ),
-    mcRecord(
-        "hostVitals",
-        hex(MetadataCodec.encodeHostVitals(
-            .init(cpuPercent: 250, memoryPercent: 100, pressure: .critical, diskFreeMiB: nil),
-        )),
-        "percent clamped at the source; pressure critical; disk unreadable sentinel",
-    ),
-]
+// NOTE: metadataCodecPayloads vectors are FROZEN in golden_vectors.json — `docs/63` §G.4 deleted
+// `MetadataCodec`'s response-side encoders. The client encodes REQUESTS and decodes RESPONSES, and
+// the host half of the codec had no Swift caller left once `Sources/` lost its host target, so this
+// generator can no longer produce these bytes. They are replayed by
+// `the_pinned_metadata_payloads_decode_to_the_pinned_fields_and_re_encode_identically` in
+// `rust/slopdesk-wire/tests/golden_vectors.rs`, which decodes each payload, asserts every field
+// against the values written beside the hex, and re-encodes byte-identically — a STRONGER pin than
+// the emission was, since a generator can only ever agree with itself.
 
 // NOTE: muxEnvelopes vectors are FROZEN in golden_vectors.json — this generator no longer imports
 // `MuxEnvelopeCodec`, because `docs/63` G.3 deleted it along with the rest of the Swift client mux.

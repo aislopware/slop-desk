@@ -127,14 +127,11 @@ public final class MetadataClient {
         return (try? MetadataCodec.decodeAgentSessionList(payload)) ?? []
     }
 
-    /// One agent session's raw transcript bytes (``MetadataVerb/readAgentSession``) — opaque JSONL for
-    /// the caller to interpret. `nil` on any failure. Still has no caller: the LIVE inspector reads a
-    /// transcript through `slopdesk-inspectord`, which tails the file itself (`docs/54`).
-    public func readAgentSession(id: String) async -> Data? {
-        let (status, payload) = await request(.readAgentSession, payload: Data(id.utf8))
-        guard status == .ok else { return nil }
-        return payload
-    }
+    // `MetadataVerb.readAgentSession` (verb 8) has no method here on purpose. It had one, and its own
+    // doc comment said it had no caller: the LIVE inspector reads a transcript through
+    // `slopdesk-inspectord`, which tails the file itself (`docs/54`). The VERB stays — the host still
+    // answers it and the table is pinned against `slopdesk-wire`'s — but a client door nothing opens
+    // is the shape `docs/63` §G.4 is retiring, so it went with the rest of it.
 
     /// Opens `path` in its default app / Finder ON THE HOST (``MetadataVerb/openPath``; the
     /// ⌘click action). `path` is the resolved ABSOLUTE host path. Returns `true` only on a host

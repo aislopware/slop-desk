@@ -19,8 +19,9 @@ final class MetadataClientHostVitalsTests: XCTestCase {
         responder.client = client
         responder.replies[MetadataVerb.hostVitals.rawValue] = (
             status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodeHostVitals(
-                .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn, diskFreeMiB: 245_760),
+            payload: MetadataFixtureBytes.hostVitals(
+                cpu: 34, memory: 61, pressure: MetadataCodec.MemoryPressure.warn.rawValue,
+                diskFreeMiB: 245_760,
             ),
         )
 
@@ -40,7 +41,13 @@ final class MetadataClientHostVitalsTests: XCTestCase {
             responder.client = client
             responder.replies[MetadataVerb.hostVitals.rawValue] = (
                 status: status.rawValue,
-                payload: MetadataCodec.encodeHostVitals(.init(cpuPercent: 9, memoryPercent: 9, pressure: .normal)),
+                // `0xFFFF_FFFF` is the "host could not read the disk" sentinel — `DISK_FREE_UNKNOWN`
+                // in `rust/slopdesk-wire/src/metadata/codec.rs`, which the FFI exposes as
+                // `slopdesk_metadata_constant(2)`. It decodes back to a nil `diskFreeMiB`.
+                payload: MetadataFixtureBytes.hostVitals(
+                    cpu: 9, memory: 9, pressure: MetadataCodec.MemoryPressure.normal.rawValue,
+                    diskFreeMiB: 0xFFFF_FFFF,
+                ),
             )
             let vitals = await client.hostVitals()
             XCTAssertNil(vitals, "\(status): a non-ok reply is never read as a reading, even with a body")

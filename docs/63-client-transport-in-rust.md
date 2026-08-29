@@ -359,6 +359,57 @@ The first half landed as:
   drift where it would actually be written (a second frame buffer in the Rust receive loop) and pin
   the one copy positively, so the ban cannot go green by everything vanishing.
 
+**The metadata half had the same fault under a different name.** `MetadataCodec` looked bidirectional
+and was not. It carried an encoder AND a decoder for all thirteen structured verbs because `Sources/`
+once held a host target that answered them in Swift; that target is gone, and the host half is
+`slopdesk-hostd`'s over `rust/slopdesk-wire`. A per-door census settled it in one pass: every
+`decode*` but three is reached from `MetadataClient.swift`, every `encode*` but three is reached only
+from `Sources/slopdesk-corevectors/main.swift` and from suites fabricating host bytes. The line is
+exactly the diagonal — **a client encodes REQUESTS and decodes RESPONSES** — and it is now a rule
+rather than an observation.
+
+The second half landed as:
+
+- **Deleted.** Ten response encoders (`encodeProcessList`, `encodePortList`, `encodeDirListing`,
+  `encodeGitStatus`, `encodeAgentSessionList`, `encodeAgentHookStatus`,
+  `encodeClipboardReadResponse`, `encodeHostVitals`, `encodeServiceEndpoint`,
+  `encodeCodeOpenDisposition`) and three request decoders (`decodeClipboardSet`,
+  `decodeClipboardReadRequest`, `decodeCodeFontSpec`); the 13 C entry points behind them, with their
+  header declarations; the list-encode helper and the `present:` arm of `ClipboardClip.lent`;
+  `MetadataClient.readAgentSession(id:)`, whose own doc comment said it had no caller (the live
+  inspector tails the transcript through `slopdesk-inspectord`); and four
+  `Tests/SlopDeskProtocolTests` round-trip suites that duplicated `rust/slopdesk-wire`'s own.
+- **Three value-type mirrors went with them.** `MetadataCodec.PortProtocol` and
+  `PortInfo.portProtocol` had no reader outside their own test — a port row prints the number and the
+  process, never the protocol — and `GitStatusPayload.noRepo` had none once the decode stopped
+  re-deciding `hasRepo`. `AgentKind` STAYED: `OpenQuicklyModel.swift` switches on it.
+- **One re-decision removed.** `decodeGitStatus` ended with `guard head.has_repo else { return
+  .noRepo }`, a second answer to a question `decode_git_status` had already answered by returning
+  `GitStatusPayload::no_repo()` without reading a further byte. Two answers can only ever disagree by
+  one of them being wrong; the head is transcribed as-is now.
+- **The fixture strategy is the repo's existing one.** Three `Tests/SlopDeskWorkspaceCoreTests`
+  suites genuinely test client plumbing and need host-shaped bytes. They hand-spell them, the way
+  `BigEndianFixtureBytes.swift` and `VideoWireFixtureBytes.swift` already do: a second SPELLER of the
+  wire in `Tests/` is allowed, a second IMPLEMENTATION is not — which is precisely the distinction
+  that keeping the encoders "just for the tests" would have lost.
+- **`metadataCodecPayloads` went `EMITTED` → `FROZEN`**, for the reason the four wire-message keys
+  did: the generator's encoders are gone. `rust/slopdesk-wire/tests/golden_vectors.rs` replays it
+  against the pinned FIELDS and re-encodes byte-identically, which an emission cannot do.
+- **The `payload_channels` rule split into a positive half and a ban.** The `Mentions` list is now
+  the seventeen doors the client's own diagonal opens; a `Lacks` bans the other thirteen BY NAME. The
+  ban is the load-bearing half — without it the host encoders grow back one verb at a time, each one
+  justified by a test that wanted bytes.
+
+**The workspace channel owes the same census, and it is `WorkspaceChannelCodec`'s batch to pay.** The
+diagonal does not answer it by symmetry: `LoopbackWorkspaceDocument` really does serve intents on the
+client, so the intent pair is live in BOTH directions and the workspace channel is not one-sided the
+way the metadata one turned out to be. But three doors there have the metadata half's exact shape —
+`WorkspaceSubscribe`'s decoder, `WorkspacePresenceUpdate`'s and `WorkspacePresenceRoster`'s encoder
+are host-shaped and reachable only from tests — and `maxRecords` has no reader at all. They are left
+standing here rather than swept in passing, because the sweep is only sound behind a per-door census
+of that file, and a census is the batch. Until it runs, `payload_channels` keeps that half a
+`Mentions` list rather than a diagonal, and the doc comment says so.
+
 ### G.5 — the CLI and `Sources/SlopDeskClient`
 
 `Sources/slopdesk-client/main.swift` (552) is the last Swift executable in the tree that is not an

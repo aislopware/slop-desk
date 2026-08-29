@@ -24,22 +24,17 @@ use core::ffi::c_uchar;
 use core::ops::Range;
 
 use slopdesk_wire::metadata::{
-    AGENT_SESSION_FIXED_BYTES, AgentHookStatus, AgentSessionInfo, CLIPBOARD_BASELINE_PROBE, CodeFontSpec,
-    CodeOpenDisposition, DIR_ENTRY_FIXED_BYTES, DISK_FREE_UNKNOWN, DirEntry, GIT_FILE_FIXED_BYTES,
-    GitFileChange, GitStatusPayload, HostVitals, MAX_CLIPBOARD_CONTENT_BYTES, PORT_ENTRY_FIXED_BYTES,
-    PROCESS_ENTRY_FIXED_BYTES, PortInfo, ProcessInfo, ServiceEndpoint, decode_agent_hook_status,
-    decode_agent_session_list, decode_clipboard_read_request, decode_clipboard_read_response_leaving_content,
-    decode_clipboard_set_leaving_content, decode_code_font_spec, decode_code_open_disposition,
-    decode_dir_listing, decode_git_status, decode_host_vitals, decode_port_list, decode_process_list,
-    decode_service_endpoint, encode_agent_hook_status_into, encode_agent_session_list_into,
-    encode_clipboard_read_request_into, encode_clipboard_read_response_into, encode_clipboard_set_into,
-    encode_code_font_spec_into, encode_code_open_disposition_into, encode_dir_listing_into,
-    encode_git_status_into, encode_host_vitals_into, encode_port_list_into, encode_process_list_into,
-    encode_service_endpoint_into, fold_status_codes,
+    AGENT_SESSION_FIXED_BYTES, CLIPBOARD_BASELINE_PROBE, CodeFontSpec, DIR_ENTRY_FIXED_BYTES,
+    DISK_FREE_UNKNOWN, GIT_FILE_FIXED_BYTES, HostVitals, MAX_CLIPBOARD_CONTENT_BYTES, PORT_ENTRY_FIXED_BYTES,
+    PROCESS_ENTRY_FIXED_BYTES, ServiceEndpoint, decode_agent_hook_status, decode_agent_session_list,
+    decode_clipboard_read_response_leaving_content, decode_code_open_disposition, decode_dir_listing,
+    decode_git_status, decode_host_vitals, decode_port_list, decode_process_list, decode_service_endpoint,
+    encode_clipboard_read_request_into, encode_clipboard_set_into, encode_code_font_spec_into,
+    fold_status_codes,
 };
 
 use crate::wire_message::{WIRE_DECODE_AGAIN, WIRE_DECODE_OK, verdict};
-use crate::{TextArena, arena_span, arena_text, borrow, deliver, lend, records_of};
+use crate::{TextArena, arena_span, arena_text, borrow, deliver, lend};
 
 /// A text field, as an `(offset, length)` pair into the call's arena.
 #[repr(C)]
@@ -308,40 +303,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_processes(
     }
 }
 
-/// Encodes a process list. Returns the byte count under the §4 convention.
-///
-/// # Safety
-/// Every input pair must describe live memory for the call and `out` must be writable for `cap`.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_processes(
-    records: *const SlopDeskMetadataProcess,
-    count: usize,
-    arena: *const c_uchar,
-    arena_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let items: Vec<ProcessInfo> = records_of(records, count)
-            .iter()
-            .map(|record| {
-                ProcessInfo {
-                    pid: record.pid,
-                    uptime_sec: record.uptime_sec,
-                    name: text(arena, record.name),
-                }
-            })
-            .collect();
-        lend(out, cap, |writer| encode_process_list_into(writer, &items))
-    }
-}
-
 /// Decodes a port list.
 ///
 /// # Safety
@@ -378,40 +339,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_ports(
             })
             .collect();
         deliver_list(&built, &pool, records, records_cap, arena, arena_cap, out_count)
-    }
-}
-
-/// Encodes a port list.
-///
-/// # Safety
-/// As [`slopdesk_metadata_encode_processes`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_ports(
-    records: *const SlopDeskMetadataPort,
-    count: usize,
-    arena: *const c_uchar,
-    arena_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let items: Vec<PortInfo> = records_of(records, count)
-            .iter()
-            .map(|record| {
-                PortInfo {
-                    port: record.port,
-                    proto: record.proto,
-                    proc_name: text(arena, record.proc_name),
-                }
-            })
-            .collect();
-        lend(out, cap, |writer| encode_port_list_into(writer, &items))
     }
 }
 
@@ -453,39 +380,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_dir_listing(
     }
 }
 
-/// Encodes a one-level directory listing.
-///
-/// # Safety
-/// As [`slopdesk_metadata_encode_processes`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_dir_listing(
-    records: *const SlopDeskMetadataDirEntry,
-    count: usize,
-    arena: *const c_uchar,
-    arena_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let items: Vec<DirEntry> = records_of(records, count)
-            .iter()
-            .map(|record| {
-                DirEntry {
-                    is_dir: record.is_dir,
-                    name: text(arena, record.name),
-                }
-            })
-            .collect();
-        lend(out, cap, |writer| encode_dir_listing_into(writer, &items))
-    }
-}
-
 /// Decodes an agent-session list.
 ///
 /// # Safety
@@ -524,42 +418,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_agent_sessions(
             })
             .collect();
         deliver_list(&built, &pool, records, records_cap, arena, arena_cap, out_count)
-    }
-}
-
-/// Encodes an agent-session list.
-///
-/// # Safety
-/// As [`slopdesk_metadata_encode_processes`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_agent_sessions(
-    records: *const SlopDeskMetadataAgentSession,
-    count: usize,
-    arena: *const c_uchar,
-    arena_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let items: Vec<AgentSessionInfo> = records_of(records, count)
-            .iter()
-            .map(|record| {
-                AgentSessionInfo {
-                    agent_kind_byte: record.agent_kind,
-                    id: text(arena, record.id),
-                    title: text(arena, record.title),
-                    cwd: text(arena, record.cwd),
-                    mtime_ms: record.mtime_ms,
-                }
-            })
-            .collect();
-        lend(out, cap, |writer| encode_agent_session_list_into(writer, &items))
     }
 }
 
@@ -620,89 +478,14 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_git_status(
     }
 }
 
-/// Encodes a git status.
-///
-/// # Safety
-/// `head` must point at one live struct and the rest as [`slopdesk_metadata_encode_processes`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_git_status(
-    head: *const SlopDeskMetadataGitStatus,
-    records: *const SlopDeskMetadataGitFile,
-    count: usize,
-    arena: *const c_uchar,
-    arena_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let head = *head;
-        let status = GitStatusPayload {
-            has_repo: head.has_repo,
-            branch: text(arena, head.branch),
-            remote_url: text(arena, head.remote_url),
-            repo_root: text(arena, head.repo_root),
-            ahead: head.ahead,
-            behind: head.behind,
-            stash_count: head.stash_count,
-            files: records_of(records, count)
-                .iter()
-                .map(|record| {
-                    GitFileChange {
-                        status_code: record.status_code,
-                        path: text(arena, record.path),
-                    }
-                })
-                .collect(),
-        };
-        lend(out, cap, |writer| encode_git_status_into(writer, &status))
-    }
-}
-
-/// Decodes a set-clipboard payload, answering WHERE its content sits rather than copying it.
-///
-/// `out.content` names a range in the PAYLOAD, not in an arena — the two address spaces the
-/// envelope door already distinguishes. It is the one place here that elides, and for a reason no
-/// other payload has: a clip runs to 12 MiB, and the caller is holding those bytes already.
-///
-/// # Safety
-/// `payload` must describe live memory and `out` must be writable for one struct.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_decode_clipboard_set(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut SlopDeskMetadataClip,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let (kind, content) = match decode_clipboard_set_leaving_content(borrow(payload, payload_len)) {
-            Ok(answer) => answer,
-            Err(error) => return verdict(&error),
-        };
-        if !out.is_null() {
-            out.write(SlopDeskMetadataClip {
-                content: located(&content),
-                kind,
-                present: true,
-            });
-        }
-        WIRE_DECODE_OK
-    }
-}
-
 /// Encodes a set-clipboard payload, reading the content out of the caller's arena.
 ///
+/// `clip.content` names a range in the caller's OWN arena, not in any payload: 12 MiB of clip is
+/// never copied through this door, it is read where the caller already holds it.
+///
 /// # Safety
-/// `clip` must point at one live struct; the rest as [`slopdesk_metadata_encode_processes`].
+/// `clip` must point at one live struct, `arena` must describe live memory for the call, and `out`
+/// must be writable for `cap` bytes.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -748,34 +531,6 @@ pub unsafe extern "C" fn slopdesk_metadata_encode_clipboard_read_request(
     }
 }
 
-/// Decodes a read-clipboard REQUEST into `out`.
-///
-/// # Safety
-/// `payload` must describe live memory and `out` must be writable for one `i64`.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_decode_clipboard_read_request(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut i64,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        match decode_clipboard_read_request(borrow(payload, payload_len)) {
-            Ok(count) => {
-                if !out.is_null() {
-                    out.write(count);
-                }
-                WIRE_DECODE_OK
-            },
-            Err(error) => verdict(&error),
-        }
-    }
-}
-
 /// A payload range, as the `(offset, length)` pair the boundary carries.
 fn located(run: &Range<usize>) -> SlopDeskMetadataText {
     SlopDeskMetadataText {
@@ -786,8 +541,10 @@ fn located(run: &Range<usize>) -> SlopDeskMetadataText {
 
 /// Decodes a read-clipboard RESPONSE: the change count into `count_out`, the clip into `out`.
 ///
-/// Elides its content exactly as [`slopdesk_metadata_decode_clipboard_set`] does — `out.content`
-/// names a range in the PAYLOAD. A response with no clip writes `present: false` and an empty run.
+/// The one decode here that ELIDES: `out.content` names a range in the PAYLOAD rather than in an
+/// arena — the two address spaces the envelope door already distinguishes — for a reason no other
+/// payload has, which is that a clip runs to 12 MiB and the caller is holding those bytes already.
+/// A response with no clip writes `present: false` and an empty run.
 ///
 /// # Safety
 /// `payload` must describe live memory, `count_out` must be null or writable for one `i64`, and
@@ -828,34 +585,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_clipboard_read_response(
     }
 }
 
-/// Encodes a read-clipboard RESPONSE, reading the content out of the caller's arena.
-///
-/// # Safety
-/// `clip` must point at one live struct; the rest as [`slopdesk_metadata_encode_processes`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_clipboard_read_response(
-    change_count: i64,
-    clip: *const SlopDeskMetadataClip,
-    arena: *const c_uchar,
-    arena_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let arena = borrow(arena, arena_len);
-        let clip = *clip;
-        let content = clip.present.then(|| (clip.kind, span(arena, clip.content)));
-        lend(out, cap, |writer| {
-            encode_clipboard_read_response_into(writer, change_count, content);
-        })
-    }
-}
-
 /// Decodes host vitals.
 ///
 /// # Safety
@@ -889,33 +618,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_host_vitals(
     }
 }
 
-/// Encodes host vitals.
-///
-/// # Safety
-/// `vitals` must point at one live struct and `out` be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_host_vitals(
-    vitals: *const SlopDeskMetadataVitals,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let vitals = *vitals;
-        let built = HostVitals {
-            cpu_percent: vitals.cpu_percent,
-            memory_percent: vitals.memory_percent,
-            pressure_byte: vitals.pressure,
-            disk_free_mib: vitals.has_disk.then_some(vitals.disk_free_mib),
-        };
-        lend(out, cap, |writer| encode_host_vitals_into(writer, &built))
-    }
-}
-
 /// Decodes a service endpoint.
 ///
 /// # Safety
@@ -943,31 +645,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_service_endpoint(
             });
         }
         WIRE_DECODE_OK
-    }
-}
-
-/// Encodes a service endpoint.
-///
-/// # Safety
-/// `endpoint` must point at one live struct and `out` be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_service_endpoint(
-    endpoint: *const SlopDeskMetadataEndpoint,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let endpoint = *endpoint;
-        let built = ServiceEndpoint {
-            state_byte: endpoint.state,
-            port: endpoint.port,
-        };
-        lend(out, cap, |writer| encode_service_endpoint_into(writer, &built))
     }
 }
 
@@ -1006,29 +683,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_agent_hook_status(
     }
 }
 
-/// Encodes an agent-hook status — the verb-13 reply the host answers with.
-///
-/// # Safety
-/// `out` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_agent_hook_status(
-    installed: bool,
-    listener_active: bool,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    let status = AgentHookStatus {
-        installed,
-        listener_active,
-    };
-    // SAFETY: the caller's obligation is `lend`'s.
-    unsafe { lend(out, cap, |writer| encode_agent_hook_status_into(writer, status)) }
-}
-
 /// Decodes a code-open disposition into `out`.
 ///
 /// # Safety
@@ -1054,31 +708,6 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_code_open_disposition(
             },
             Err(error) => verdict(&error),
         }
-    }
-}
-
-/// Encodes a code-open disposition.
-///
-/// # Safety
-/// `out` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_encode_code_open_disposition(
-    disposition: u8,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation is `deliver`'s.
-    unsafe {
-        // Swift's own enum has no unknown case, so the fallback is unreachable from it; the
-        // workbench is the disposition a caller that reached it would have meant.
-        let typed = CodeOpenDisposition::from_byte(disposition).unwrap_or(CodeOpenDisposition::Workbench);
-        lend(out, cap, |writer| {
-            encode_code_open_disposition_into(writer, typed);
-        })
     }
 }
 
@@ -1137,51 +766,14 @@ pub const extern "C" fn slopdesk_metadata_service_state(state_byte: u8) -> u8 {
     endpoint.state().as_byte()
 }
 
-/// Decodes a code-font spec.
-///
-/// # Safety
-/// `payload` must describe live memory, `out` must be writable for one struct, and `arena` for
-/// `arena_cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_metadata_decode_code_font_spec(
-    payload: *const c_uchar,
-    payload_len: usize,
-    out: *mut SlopDeskMetadataFontSpec,
-    arena: *mut c_uchar,
-    arena_cap: usize,
-) -> u32 {
-    // SAFETY: the caller's obligations are this function's.
-    unsafe {
-        let spec = match decode_code_font_spec(borrow(payload, payload_len)) {
-            Ok(spec) => spec,
-            Err(error) => return verdict(&error),
-        };
-        let family = spec.family.as_bytes();
-        if family.len() > arena_cap || out.is_null() {
-            return WIRE_DECODE_AGAIN;
-        }
-        deliver(family, arena, arena_cap);
-        out.write(SlopDeskMetadataFontSpec {
-            // The doubles cross as BITS, never as a value the boundary could round.
-            size_bits: spec.size.to_bits(),
-            line_height_bits: spec.line_height.to_bits(),
-            family: SlopDeskMetadataText {
-                offset: 0,
-                length: u32::try_from(family.len()).unwrap_or(u32::MAX),
-            },
-        });
-        WIRE_DECODE_OK
-    }
-}
-
 /// Encodes a code-font spec.
 ///
+/// The two doubles are read as BITS out of the caller's record, never as a value this boundary
+/// could round.
+///
 /// # Safety
-/// `spec` must point at one live struct; the rest as [`slopdesk_metadata_encode_processes`].
+/// `spec` must point at one live struct, `arena` must describe live memory for the call, and `out`
+/// must be writable for `cap` bytes.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -1295,8 +887,9 @@ mod tests {
     )]
 
     use slopdesk_wire::metadata::{
-        ClipboardClip, MemoryPressure, ServiceState, encode_clipboard_read_response, encode_clipboard_set,
-        encode_code_font_spec, encode_git_status, encode_host_vitals, encode_process_list,
+        ClipboardClip, GitFileChange, GitStatusPayload, MemoryPressure, ProcessInfo, ServiceState,
+        encode_clipboard_read_response, encode_clipboard_set, encode_code_font_spec, encode_git_status,
+        encode_host_vitals, encode_process_list,
     };
 
     use super::*;
@@ -1343,22 +936,6 @@ mod tests {
         assert_eq!(records[1].uptime_sec, 0);
         assert_eq!(text(&arena, records[0].name), "zsh");
         assert_eq!(text(&arena, records[1].name), "cargo");
-
-        // And back, through the caller's own arena.
-        let mut out = vec![0u8; payload.len()];
-        // SAFETY: the records and arena are the ones just written; `out` is sized for the payload.
-        let written = unsafe {
-            slopdesk_metadata_encode_processes(
-                records.as_ptr(),
-                count,
-                arena.as_ptr(),
-                arena.len(),
-                out.as_mut_ptr(),
-                out.len(),
-            )
-        };
-        assert_eq!(written, payload.len());
-        assert_eq!(out, payload);
     }
 
     #[test]
@@ -1432,22 +1009,6 @@ mod tests {
         assert_eq!(text(&arena, head.branch), "main");
         assert_eq!(text(&arena, head.repo_root), "/tmp/repo");
         assert_eq!(text(&arena, records[1].path), "docs/new.md");
-
-        let mut out = vec![0u8; payload.len()];
-        // SAFETY: the head, records and arena are the ones just written.
-        let written = unsafe {
-            slopdesk_metadata_encode_git_status(
-                &raw const head,
-                records.as_ptr(),
-                count,
-                arena.as_ptr(),
-                arena.len(),
-                out.as_mut_ptr(),
-                out.len(),
-            )
-        };
-        assert_eq!(written, payload.len());
-        assert_eq!(out, payload);
     }
 
     #[test]
@@ -1470,6 +1031,9 @@ mod tests {
         assert_eq!(clip.content.length, 0);
     }
 
+    /// The door carries the two doubles as BITS, so the bytes it writes are the bytes the wire's
+    /// own encoder writes for the same `f64` — a boundary that rounded either value would
+    /// differ here.
     #[test]
     fn a_font_spec_crosses_its_doubles_bit_for_bit() {
         let spec = CodeFontSpec {
@@ -1478,22 +1042,28 @@ mod tests {
             line_height: 1.234_567_890_123_456_7,
         };
         let payload = encode_code_font_spec(&spec);
-        let mut flat = SlopDeskMetadataFontSpec::default();
-        let mut arena = vec![0u8; payload.len()];
-        // SAFETY: every buffer is live and sized as the call is told.
-        let verdict = unsafe {
-            slopdesk_metadata_decode_code_font_spec(
-                payload.as_ptr(),
-                payload.len(),
-                &raw mut flat,
-                arena.as_mut_ptr(),
-                arena.len(),
+        let family = spec.family.as_bytes();
+        let flat = SlopDeskMetadataFontSpec {
+            size_bits: spec.size.to_bits(),
+            line_height_bits: spec.line_height.to_bits(),
+            family: SlopDeskMetadataText {
+                offset: 0,
+                length: u32::try_from(family.len()).unwrap_or(u32::MAX),
+            },
+        };
+        let mut out = vec![0u8; payload.len()];
+        // SAFETY: `flat`, the family arena and `out` are all live and sized as the call is told.
+        let written = unsafe {
+            slopdesk_metadata_encode_code_font_spec(
+                &raw const flat,
+                family.as_ptr(),
+                family.len(),
+                out.as_mut_ptr(),
+                out.len(),
             )
         };
-        assert_eq!(verdict, WIRE_DECODE_OK);
-        assert_eq!(flat.size_bits, spec.size.to_bits());
-        assert_eq!(flat.line_height_bits, spec.line_height.to_bits());
-        assert_eq!(text(&arena, flat.family), "SF Mono");
+        assert_eq!(written, payload.len());
+        assert_eq!(out, payload);
     }
 
     #[test]
@@ -1514,13 +1084,6 @@ mod tests {
             assert_eq!(verdict, WIRE_DECODE_OK);
             assert_eq!(flat.has_disk, disk.is_some());
             assert_eq!(flat.disk_free_mib, disk.unwrap_or(0));
-
-            let mut out = vec![0u8; payload.len()];
-            // SAFETY: `flat` and `out` are live and sized as the call is told.
-            let written =
-                unsafe { slopdesk_metadata_encode_host_vitals(&raw const flat, out.as_mut_ptr(), out.len()) };
-            assert_eq!(written, payload.len());
-            assert_eq!(out, payload);
         }
     }
 
@@ -1537,6 +1100,10 @@ mod tests {
     }
 
     /// The one payload that elides: the clip stays in the payload, and the door only says where.
+    ///
+    /// The two directions the client actually has are exercised against the SAME clip — the read
+    /// response inbound, the set outbound — so the offset the decode reports and the bytes the
+    /// encode writes are checked against one fixture rather than two.
     #[test]
     fn a_clip_is_left_in_the_payload_rather_than_copied_out_of_it() {
         let content = vec![0xA5; 64 * 1024];
@@ -1544,68 +1111,53 @@ mod tests {
             kind_byte: 2,
             bytes: content.clone(),
         };
-        for (payload, skip) in [
-            (encode_clipboard_set(&clip), 1usize),
-            (encode_clipboard_read_response(9, Some(&clip)), 9),
-        ] {
-            let mut flat = SlopDeskMetadataClip::default();
-            let mut change_count = 0i64;
-            // SAFETY: every output is live for the call.
-            let verdict = unsafe {
-                if skip == 1 {
-                    slopdesk_metadata_decode_clipboard_set(payload.as_ptr(), payload.len(), &raw mut flat)
-                } else {
-                    slopdesk_metadata_decode_clipboard_read_response(
-                        payload.as_ptr(),
-                        payload.len(),
-                        &raw mut change_count,
-                        &raw mut flat,
-                    )
-                }
-            };
-            assert_eq!(verdict, WIRE_DECODE_OK);
-            assert!(flat.present);
-            assert_eq!(flat.kind, 2);
-            assert_eq!(
-                flat.content.offset as usize, skip,
-                "the run starts where the header ends, in the PAYLOAD's own address space",
-            );
-            assert_eq!(span(&payload, flat.content), &content[..]);
 
-            // And back: the arena is the caller's, and the encode reads the content out of it.
-            let mut out = vec![0u8; payload.len()];
-            let arena = SlopDeskMetadataClip {
-                content: SlopDeskMetadataText {
-                    offset: 0,
-                    length: u32::try_from(content.len()).unwrap_or(u32::MAX),
-                },
-                kind: 2,
-                present: true,
-            };
-            // SAFETY: the clip, the arena and `out` are all live and sized as the call is told.
-            let written = unsafe {
-                if skip == 1 {
-                    slopdesk_metadata_encode_clipboard_set(
-                        &raw const arena,
-                        content.as_ptr(),
-                        content.len(),
-                        out.as_mut_ptr(),
-                        out.len(),
-                    )
-                } else {
-                    slopdesk_metadata_encode_clipboard_read_response(
-                        9,
-                        &raw const arena,
-                        content.as_ptr(),
-                        content.len(),
-                        out.as_mut_ptr(),
-                        out.len(),
-                    )
-                }
-            };
-            assert_eq!(written, payload.len());
-            assert_eq!(out, payload);
-        }
+        // Inbound: the run names a range in the PAYLOAD, and the 64 KiB is never copied out of it.
+        let payload = encode_clipboard_read_response(9, Some(&clip));
+        let mut flat = SlopDeskMetadataClip::default();
+        let mut change_count = 0i64;
+        // SAFETY: every output is live for the call.
+        let verdict = unsafe {
+            slopdesk_metadata_decode_clipboard_read_response(
+                payload.as_ptr(),
+                payload.len(),
+                &raw mut change_count,
+                &raw mut flat,
+            )
+        };
+        assert_eq!(verdict, WIRE_DECODE_OK);
+        assert_eq!(change_count, 9);
+        assert!(flat.present);
+        assert_eq!(flat.kind, 2);
+        assert_eq!(
+            flat.content.offset as usize, 9,
+            "the run starts where the header ends, in the PAYLOAD's own address space",
+        );
+        assert_eq!(span(&payload, flat.content), &content[..]);
+
+        // Outbound: the arena is the caller's, and the encode reads the content out of it.
+        let expected = encode_clipboard_set(&clip);
+        let mut out = vec![0u8; expected.len()];
+        let arena = SlopDeskMetadataClip {
+            content: SlopDeskMetadataText {
+                offset: 0,
+                length: u32::try_from(content.len()).unwrap_or(u32::MAX),
+            },
+            kind: 2,
+            present: true,
+        };
+        // SAFETY: the clip, the arena and `out` are all live and sized as the call is told.
+        let written = unsafe {
+            slopdesk_metadata_encode_clipboard_set(
+                &raw const arena,
+                content.as_ptr(),
+                content.len(),
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        assert_eq!(written, expected.len());
+        assert_eq!(out, expected);
     }
 
     #[test]

@@ -56,7 +56,7 @@ final class PathActionRoutingTests: XCTestCase {
         let target = "/Users/me/project/main.swift:42:5"
         responder.replies[MetadataVerb.openInCodeServer.rawValue] = (
             status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodeCodeOpenDisposition(.workbench),
+            payload: MetadataFixtureBytes.codeOpenDisposition(0), // 0 = workbench
         )
 
         let disposition = await client.openInCodeServer(target)
@@ -78,7 +78,7 @@ final class PathActionRoutingTests: XCTestCase {
         responder.client = client
         responder.replies[MetadataVerb.openInCodeServer.rawValue] = (
             status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodeCodeOpenDisposition(.hostDefault),
+            payload: MetadataFixtureBytes.codeOpenDisposition(1), // 1 = hostDefault
         )
         var disposition = await client.openInCodeServer("/some/dir")
         XCTAssertEqual(disposition, .hostDefault, "a directory open reports hostDefault — no panel reveal")

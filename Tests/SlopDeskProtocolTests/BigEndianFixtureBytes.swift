@@ -1,5 +1,4 @@
 import Foundation
-@testable import SlopDeskProtocol
 
 // Tiny big-endian read/write helpers, for TESTS that spell the wire out by hand.
 //
@@ -30,10 +29,6 @@ extension Data {
         append(UInt8(truncatingIfNeeded: value))
     }
 
-    mutating func appendBE(_ value: Int32) {
-        appendBE(UInt32(bitPattern: value))
-    }
-
     mutating func appendBE(_ value: Int64) {
         appendBE(UInt64(bitPattern: value))
     }
@@ -48,3 +43,7 @@ extension Data {
 // The READER half was a second copy of `VideoWireFixtureBytes`' `BigEndianReader`, one test target
 // over, and nothing in this target ever built one — every decode here goes through the Rust codec.
 // The append half stays: a test that hand-builds the bytes it expects is the point.
+//
+// The `Int32` overload went the same way in `docs/63` §G.4. Its only callers spelled a `gitStatus`
+// body's ahead/behind/stash, in the round-trip suite that retired with `MetadataCodec`'s host-side
+// encoders — and this file carries only the widths its remaining callers actually write.

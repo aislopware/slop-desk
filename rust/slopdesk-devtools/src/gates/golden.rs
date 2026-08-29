@@ -54,7 +54,6 @@ pub const EMITTED_KEYS: &[&str] = &[
     "fecRecover",
     "fragmentEncode",
     "inputEvent",
-    "metadataCodecPayloads",
     "muxBare",
     "muxFragment",
     "owdLateDrive",
@@ -93,6 +92,16 @@ pub const FROZEN_KEYS: &[&str] = &[
     "hostOutputSniffer",
     "inputMotionCoalesce",
     "inspectorEvents",
+    // Frozen by `docs/63` G.4 for its own reason, one step below the four keys above: G.4 deleted
+    // `MetadataCodec`'s RESPONSE-side encoders. The client encodes requests and decodes responses,
+    // so the host half of the codec had no Swift caller left once `Sources/` lost its host target,
+    // and the generator that reached through it is gone with it.
+    //
+    // `the_pinned_metadata_payloads_decode_to_the_pinned_fields_and_re_encode_identically` in
+    // `rust/slopdesk-wire/tests/golden_vectors.rs` replays all ten payloads, and it is the STRONGER
+    // pin the emission was not: it decodes each payload, asserts every field against the values the
+    // generator wrote beside the hex, and re-encodes byte-identically.
+    "metadataCodecPayloads",
     "metadataWireMessages",
     // Frozen by the deletion of `MuxEnvelopeCodec`, not by a module the generator cannot reach:
     // the Swift codec that emitted this block is gone, so the block's bytes are now Rust's to hold.
@@ -484,7 +493,7 @@ mod tests {
 
     /// The gate must not be able to read ITSELF.
     ///
-    /// This module names all thirteen frozen keys and mentions the corpus, so a reader walk over
+    /// This module names EVERY frozen key and mentions the corpus, so a reader walk over
     /// `rust/` rather than `rust/*/tests` finds it as the reader for every one of them and the
     /// check can never fail again — a gate that cannot fail, found by break-test, pinned here.
     #[test]

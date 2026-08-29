@@ -131,9 +131,9 @@ final class MetadataClientTests: XCTestCase {
         responder.client = client
         responder.replies[MetadataVerb.processes.rawValue] = (
             status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodeProcessList([
-                .init(pid: 42, uptimeSec: 7, name: "claude"),
-                .init(pid: 9, uptimeSec: 0, name: "-zsh"),
+            payload: MetadataFixtureBytes.processList([
+                (pid: 42, uptimeSec: 7, name: "claude"),
+                (pid: 9, uptimeSec: 0, name: "-zsh"),
             ]),
         )
         let processes = await client.processes()
@@ -150,7 +150,7 @@ final class MetadataClientTests: XCTestCase {
         responder.client = client
         responder.replies[MetadataVerb.ports.rawValue] = (
             status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodePortList([]),
+            payload: MetadataFixtureBytes.portList([]),
         )
         let ports = await client.ports()
         XCTAssertTrue(ports.isEmpty, "an empty ok PortList decodes to [] (the 'No listening ports' state)")
@@ -175,10 +175,15 @@ final class MetadataClientTests: XCTestCase {
         responder.client = client
         responder.replies[MetadataVerb.gitStatus.rawValue] = (
             status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodeGitStatus(.noRepo),
+            payload: MetadataFixtureBytes.gitStatusNoRepo,
         )
         let status = await client.gitStatus()
-        XCTAssertEqual(status, .noRepo)
+        XCTAssertEqual(
+            status,
+            MetadataCodec.GitStatusPayload(
+                hasRepo: false, branch: "", remoteURL: "", ahead: 0, behind: 0, files: [],
+            ),
+        )
         XCTAssertEqual(status?.hasRepo, false)
     }
 
@@ -202,7 +207,7 @@ final class MetadataClientTests: XCTestCase {
         // the payload, decides).
         responder.replies[MetadataVerb.processes.rawValue] = (
             status: MetadataStatus.error.rawValue,
-            payload: MetadataCodec.encodeProcessList([.init(pid: 1, uptimeSec: 1, name: "x")]),
+            payload: MetadataFixtureBytes.processList([(pid: 1, uptimeSec: 1, name: "x")]),
         )
         let processes = await client.processes()
         XCTAssertTrue(processes.isEmpty, "a non-ok status returns empty regardless of payload")
@@ -215,7 +220,7 @@ final class MetadataClientTests: XCTestCase {
         // An unknown future status byte (99) is forward-tolerantly clamped to .error → empty.
         responder.replies[MetadataVerb.ports.rawValue] = (
             status: 99,
-            payload: MetadataCodec.encodePortList([.init(port: 8080, proto: 0, procName: "node")]),
+            payload: MetadataFixtureBytes.portList([(port: 8080, proto: 0, procName: "node")]),
         )
         let ports = await client.ports()
         XCTAssertTrue(ports.isEmpty, "an unknown status byte clamps to error → empty (never trusts the payload)")
@@ -252,9 +257,9 @@ final class MetadataClientTests: XCTestCase {
         responder.client = client
         responder.replies[MetadataVerb.processes.rawValue] = (
             MetadataStatus.ok.rawValue,
-            MetadataCodec.encodeProcessList([]),
+            MetadataFixtureBytes.processList([]),
         )
-        responder.replies[MetadataVerb.ports.rawValue] = (MetadataStatus.ok.rawValue, MetadataCodec.encodePortList([]))
+        responder.replies[MetadataVerb.ports.rawValue] = (MetadataStatus.ok.rawValue, MetadataFixtureBytes.portList([]))
         responder.replies[MetadataVerb.cwd.rawValue] = (MetadataStatus.ok.rawValue, Data("/x".utf8))
         _ = await client.processes()
         _ = await client.ports()
@@ -272,7 +277,7 @@ final class MetadataClientTests: XCTestCase {
         responder.client = client
         responder.replies[MetadataVerb.listDirectory.rawValue] = (
             status: MetadataStatus.ok.rawValue,
-            payload: MetadataCodec.encodeDirListing([.init(isDir: true, name: "Sources")]),
+            payload: MetadataFixtureBytes.dirListing([(isDir: true, name: "Sources")]),
         )
         let first = await client.listDirectory(path: "a")
         XCTAssertEqual(first, [MetadataCodec.DirEntry(isDir: true, name: "Sources")])
@@ -293,7 +298,7 @@ final class MetadataClientTests: XCTestCase {
 
     func testEndToEndEchoedReplyDecodesThroughClientAndFold() async throws {
         let transport = RecordingMetadataTransport()
-        let canned = MetadataCodec.encodeProcessList([.init(pid: 42, uptimeSec: 7, name: "claude")])
+        let canned = MetadataFixtureBytes.processList([(pid: 42, uptimeSec: 7, name: "claude")])
         await transport.setReply(
             verb: MetadataVerb.processes.rawValue, status: MetadataStatus.ok.rawValue, payload: canned,
         )

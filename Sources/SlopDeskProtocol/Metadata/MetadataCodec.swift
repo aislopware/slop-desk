@@ -12,9 +12,19 @@ import SlopDeskArena
 /// Every layout, every clamp and every validation lives in `rust/slopdesk-wire`'s `metadata::codec`.
 /// This type is the Swift face of it: the value types below and the calls that flatten them across
 /// the boundary. The codecs live in this caseless `enum` namespace so the value type
-/// ``MetadataCodec/ProcessInfo`` does NOT shadow `Foundation.ProcessInfo` at module scope (the host
-/// reads `Foundation.ProcessInfo.processInfo` and imports this module — a top-level `ProcessInfo`
-/// would make that reference ambiguous and break the build).
+/// ``MetadataCodec/ProcessInfo`` does NOT shadow `Foundation.ProcessInfo` at module scope (a
+/// top-level `ProcessInfo` would make every `Foundation.ProcessInfo.processInfo` in an importing
+/// module ambiguous and break the build).
+///
+/// **It faces ONE way: the client's.** A client ENCODES requests and DECODES responses, and by
+/// `docs/63` §G.4 that is all this namespace does. It used to carry the other diagonal too — a
+/// response encoder and a request decoder per verb — because `Sources/` once held a host target that
+/// answered these verbs in Swift. That target is gone; the host half is `slopdesk-hostd`'s and rides
+/// `rust/slopdesk-wire` directly. What was left here had no caller but the golden generator and the
+/// suites checking it worked, which is residue rather than a face, so it went the way
+/// ``WireMessage``'s encoder went in the same stage. Three encoders survive
+/// (``encodeClipboardSet(_:)``, ``encodeClipboardReadRequest(lastSeenChangeCount:)``,
+/// ``encodeCodeFontSpec(_:)``) because those three verbs carry a structured REQUEST.
 ///
 /// **How a payload crosses.** A record — a LIST of them where the payload is a list — plus one
 /// ARENA holding every text field, each named by an `(offset, length)` pair into it. The same shape
@@ -61,7 +71,12 @@ public enum MetadataCodec {
         /// The port number.
         public var port: UInt16
         /// The transport protocol as a RAW byte (0 = tcp, 1 = udp); carried forward-tolerantly so an
-        /// unknown future value never drops the entry. See ``PortProtocol`` / ``portProtocol``.
+        /// unknown future value never drops the entry.
+        ///
+        /// It stays a byte all the way to the surface that renders it. A typed `PortProtocol` mirror
+        /// lived here until `docs/63` §G.4 and no client code ever asked for it — the port row shows
+        /// the number and the process, never the protocol — so it was a second spelling of
+        /// `slopdesk_wire`'s table that only its own test read.
         public var proto: UInt8
         /// The owning process basename.
         public var procName: String
@@ -71,9 +86,6 @@ public enum MetadataCodec {
             self.proto = proto
             self.procName = procName
         }
-
-        /// The transport protocol, or `nil` for an unknown future ``proto`` byte (forward-tolerant).
-        public var portProtocol: PortProtocol? { PortProtocol(rawValue: proto) }
     }
 
     /// One entry of a single host directory level (``MetadataVerb/listDirectory`` → `DirListing`).
@@ -152,18 +164,6 @@ public enum MetadataCodec {
             self.files = files
         }
 
-        /// The canonical "not a git repo" payload (all fields at their wire-default).
-        public static let noRepo = Self(
-            hasRepo: false,
-            branch: "",
-            remoteURL: "",
-            repoRoot: "",
-            ahead: 0,
-            behind: 0,
-            stashCount: 0,
-            files: [],
-        )
-
         /// The porcelain breakdown folded from ``files``' packed `XY` status codes (high nibble = X /
         /// index, low = Y / worktree; space=0 M=1 A=2 D=3 R=4 C=5 U=6 ?=7 !=8 T=9 — the host probe's
         /// packing). Each file counts INDEPENDENTLY per axis — an `MM` file is BOTH staged and
@@ -228,12 +228,6 @@ public enum MetadataCodec {
         public var agentKind: AgentKind? { AgentKind(rawValue: agentKindByte) }
     }
 
-    /// The transport protocol of a ``PortInfo`` (the RAW ``PortInfo/proto`` byte's meaning).
-    public enum PortProtocol: UInt8, Sendable, Equatable, CaseIterable {
-        case tcp = 0
-        case udp = 1
-    }
-
     /// The agent that owns an ``AgentSessionInfo`` (the RAW ``AgentSessionInfo/agentKindByte`` byte).
     public enum AgentKind: UInt8, Sendable, Equatable, CaseIterable {
         case claude = 0
@@ -242,15 +236,6 @@ public enum MetadataCodec {
     }
 
     // MARK: - ProcessList  ([UInt16 count] then [UInt32 pid][UInt32 uptimeSec][UInt16 nameLen][name])
-
-    /// Encodes a process list. Count clamped to ≤ 65535; each name clamped to ≤ 65535 UTF-8 bytes.
-    public static func encodeProcessList(_ items: [ProcessInfo]) -> Data {
-        var pool: [UInt8] = []
-        let records = items.map {
-            SlopDeskMetadataProcess(pid: $0.pid, uptime_sec: $0.uptimeSec, name: intern($0.name, &pool))
-        }
-        return encode(records, pool, slopdesk_metadata_encode_processes)
-    }
 
     /// Decodes a process list, validating the declared count before allocating and dropping a truncated
     /// or non-UTF-8 body (throws), never trapping.
@@ -262,15 +247,6 @@ public enum MetadataCodec {
 
     // MARK: - PortList  ([UInt16 count] then [UInt16 port][UInt8 proto][UInt16 nameLen][procName])
 
-    /// Encodes a port list. An empty list ("No listening ports") encodes as `[UInt16 0]`.
-    public static func encodePortList(_ items: [PortInfo]) -> Data {
-        var pool: [UInt8] = []
-        let records = items.map {
-            SlopDeskMetadataPort(proc_name: intern($0.procName, &pool), port: $0.port, proto: $0.proto)
-        }
-        return encode(records, pool, slopdesk_metadata_encode_ports)
-    }
-
     /// Decodes a port list (validate-then-drop, count-before-alloc).
     public static func decodePortList(_ data: Data) throws -> [PortInfo] {
         try decode(data, entryBytes: 4, "portList", slopdesk_metadata_decode_ports) { record, pool in
@@ -279,15 +255,6 @@ public enum MetadataCodec {
     }
 
     // MARK: - DirListing  ([UInt16 count] then [UInt8 isDir][UInt16 nameLen][leafName])
-
-    /// Encodes a one-level directory listing (leaf names only). Count clamped to ≤ 65535.
-    public static func encodeDirListing(_ items: [DirEntry]) -> Data {
-        var pool: [UInt8] = []
-        let records = items.map {
-            SlopDeskMetadataDirEntry(name: intern($0.name, &pool), is_dir: $0.isDir)
-        }
-        return encode(records, pool, slopdesk_metadata_encode_dir_listing)
-    }
 
     /// Decodes a one-level directory listing (validate-then-drop, count-before-alloc). The `isDir`
     /// discriminator is read as `byte != 0` (never assumed `{0,1}`).
@@ -299,39 +266,14 @@ public enum MetadataCodec {
 
     // MARK: - GitStatus  ([UInt8 hasRepo]; if repo: branch, remote, repoRoot, [Int32 ahead][Int32 behind][Int32 stash], files)
 
-    /// Encodes a git status. When `hasRepo` is `false` only the single `0` byte is written (the
-    /// remaining fields are not on the wire); otherwise branch + remote + repoRoot + ahead/behind + the
-    /// changed-file list follow. Strings clamped to ≤ 65535 bytes, file count clamped to ≤ 65535.
-    public static func encodeGitStatus(_ status: GitStatusPayload) -> Data {
-        var pool: [UInt8] = []
-        // The head's three strings intern FIRST so a long file list cannot move their offsets.
-        var head = SlopDeskMetadataGitStatus(
-            branch: intern(status.branch, &pool),
-            remote_url: intern(status.remoteURL, &pool),
-            repo_root: intern(status.repoRoot, &pool),
-            ahead: status.ahead,
-            behind: status.behind,
-            stash_count: status.stashCount,
-            file_count: UInt32(clamping: status.files.count),
-            has_repo: status.hasRepo,
-        )
-        let records = status.files.map {
-            SlopDeskMetadataGitFile(path: intern($0.path, &pool), status_code: $0.statusCode)
-        }
-        return records.withUnsafeBufferPointer { list in
-            pool.withUnsafeBufferPointer { arena in
-                sized { out, cap in
-                    slopdesk_metadata_encode_git_status(
-                        &head, list.baseAddress, list.count, arena.baseAddress, arena.count, out,
-                        cap,
-                    )
-                }
-            }
-        }
-    }
-
-    /// Decodes a git status (validate-then-drop, count-before-alloc). `hasRepo` is read as `byte != 0`;
-    /// `hasRepo == false` returns ``GitStatusPayload/noRepo`` regardless of any trailing bytes.
+    /// Decodes a git status (validate-then-drop, count-before-alloc).
+    ///
+    /// `hasRepo` is read as `byte != 0` INSIDE the door, and a `false` one short-circuits there:
+    /// `decode_git_status` returns `GitStatusPayload::no_repo()` without reading a further byte, so
+    /// every field below already arrives at its wire-default and the head is transcribed as-is. This
+    /// used to re-decide it on the way out — `guard head.has_repo else { return .noRepo }`, a second
+    /// answer to a question the crate had already answered, and the only way the two could ever
+    /// disagree was a bug in one of them.
     public static func decodeGitStatus(_ data: Data) throws -> GitStatusPayload {
         var head = SlopDeskMetadataGitStatus()
         let (files, strings) = try decode(
@@ -348,9 +290,8 @@ public enum MetadataCodec {
             // The head's strings live in the same arena, and are read before it is released.
             (text(pool, head.branch), text(pool, head.remote_url), text(pool, head.repo_root))
         }
-        guard head.has_repo else { return .noRepo }
         return GitStatusPayload(
-            hasRepo: true,
+            hasRepo: head.has_repo,
             branch: strings.0,
             remoteURL: strings.1,
             repoRoot: strings.2,
@@ -362,21 +303,6 @@ public enum MetadataCodec {
     }
 
     // MARK: - AgentSessionList  ([UInt16 count] then kind, id, title, cwd, [Int64 mtimeMS])
-
-    /// Encodes an agent-session list. Count clamped to ≤ 65535; each string clamped to ≤ 65535 bytes.
-    public static func encodeAgentSessionList(_ items: [AgentSessionInfo]) -> Data {
-        var pool: [UInt8] = []
-        let records = items.map {
-            SlopDeskMetadataAgentSession(
-                mtime_ms: $0.mtimeMS,
-                id: intern($0.id, &pool),
-                title: intern($0.title, &pool),
-                cwd: intern($0.cwd, &pool),
-                agent_kind: $0.agentKindByte,
-            )
-        }
-        return encode(records, pool, slopdesk_metadata_encode_agent_sessions)
-    }
 
     /// Decodes an agent-session list (validate-then-drop, count-before-alloc).
     public static func decodeAgentSessionList(_ data: Data) throws -> [AgentSessionInfo] {
@@ -406,13 +332,6 @@ public enum MetadataCodec {
         public init(installed: Bool, listenerActive: Bool) {
             self.installed = installed
             self.listenerActive = listenerActive
-        }
-    }
-
-    /// Encodes a ``MetadataVerb/agentHookStatus`` response payload: `[UInt8 installed][UInt8 active]`.
-    public static func encodeAgentHookStatus(_ status: AgentHookStatus) -> Data {
-        sized { out, cap in
-            slopdesk_metadata_encode_agent_hook_status(status.installed, status.listenerActive, out, cap)
         }
     }
 
@@ -489,55 +408,11 @@ public enum MetadataCodec {
         }
     }
 
-    /// Decodes a ``MetadataVerb/setClipboard`` request payload (validate-then-drop): an empty payload
-    /// throws `truncated`, an over-cap content throws `malformedBody`. The kind byte is carried RAW
-    /// (an unknown future kind decodes fine; the applier refuses it with `.error`).
-    public static func decodeClipboardSet(_ data: Data) throws -> ClipboardClip {
-        var flat = SlopDeskMetadataClip()
-        try throwIfFaulted(
-            data.spanning { payload, length in
-                slopdesk_metadata_decode_clipboard_set(
-                    payload?.assumingMemoryBound(to: UInt8.self), length, &flat,
-                )
-            },
-            "clipboardSet",
-        )
-        return ClipboardClip(kindByte: flat.kind, bytes: content(flat, in: data))
-    }
-
     /// Encodes a ``MetadataVerb/readClipboard`` request payload: the `Int64` (BE) host `changeCount`
     /// the client last saw (``clipboardBaselineProbe`` = none yet — baseline probe).
     public static func encodeClipboardReadRequest(lastSeenChangeCount: Int64) -> Data {
         sized { out, cap in
             slopdesk_metadata_encode_clipboard_read_request(lastSeenChangeCount, out, cap)
-        }
-    }
-
-    /// Decodes a ``MetadataVerb/readClipboard`` request payload (throws `truncated` on a short body).
-    public static func decodeClipboardReadRequest(_ data: Data) throws -> Int64 {
-        var count: Int64 = 0
-        try throwIfFaulted(
-            data.spanning { payload, length in
-                slopdesk_metadata_decode_clipboard_read_request(
-                    payload?.assumingMemoryBound(to: UInt8.self), length, &count,
-                )
-            },
-            "clipboardReadRequest",
-        )
-        return count
-    }
-
-    /// Encodes a ``MetadataVerb/readClipboard`` response payload:
-    /// `[Int64 changeCount][UInt8 kind][content]`, where a `nil` clip writes kind `0` ("unchanged /
-    /// empty / client's own push") and no content.
-    public static func encodeClipboardReadResponse(changeCount: Int64, clip: ClipboardClip?) -> Data {
-        let carried = clip ?? ClipboardClip(kindByte: 0, bytes: Data())
-        return carried.lent(present: clip != nil) { flat, content, contentLength in
-            sized { out, cap in
-                slopdesk_metadata_encode_clipboard_read_response(
-                    changeCount, flat, content, contentLength, out, cap,
-                )
-            }
         }
     }
 
@@ -634,26 +509,6 @@ public enum MetadataCodec {
         case critical = 2
     }
 
-    /// The wire value for "the host could not read the disk". Free space is a real `0` when a volume
-    /// is genuinely full, so the unreadable case needs its own value rather than borrowing zero —
-    /// the client hides the metric on ``diskFreeUnknown`` and would otherwise draw a full-disk alarm
-    /// for a failed syscall.
-    public static let diskFreeUnknown = UInt32(truncatingIfNeeded: slopdesk_metadata_constant(2))
-
-    /// Encodes a ``MetadataVerb/hostVitals`` response payload: `[UInt8 cpu%][UInt8 mem%][UInt8
-    /// pressure][UInt32 disk free MiB]`. Both percents are clamped to `0...100` at the SOURCE; a nil
-    /// disk reading goes out as ``diskFreeUnknown``.
-    public static func encodeHostVitals(_ vitals: HostVitals) -> Data {
-        var flat = SlopDeskMetadataVitals(
-            disk_free_mib: vitals.diskFreeMiB ?? 0,
-            cpu_percent: vitals.cpuPercent,
-            memory_percent: vitals.memoryPercent,
-            pressure: vitals.pressureByte,
-            has_disk: vitals.diskFreeMiB != nil,
-        )
-        return sized { out, cap in slopdesk_metadata_encode_host_vitals(&flat, out, cap) }
-    }
-
     /// Decodes a ``MetadataVerb/hostVitals`` response payload (validate-then-drop): a body shorter
     /// than 7 bytes throws ``SlopDeskError/truncated``; an out-of-range percent is CLAMPED (not
     /// thrown — the reading is still usable and a status row must not vanish over one wild byte); a
@@ -726,12 +581,6 @@ public enum MetadataCodec {
         case unavailable = 2
     }
 
-    /// Encodes an ensure-verb response payload: `[UInt8 state][UInt16 BE port]`.
-    public static func encodeServiceEndpoint(_ endpoint: ServiceEndpoint) -> Data {
-        var flat = SlopDeskMetadataEndpoint(port: endpoint.port, state: endpoint.stateByte)
-        return sized { out, cap in slopdesk_metadata_encode_service_endpoint(&flat, out, cap) }
-    }
-
     /// Decodes an ensure-verb response payload (validate-then-drop): a body
     /// shorter than 3 bytes throws ``SlopDeskError/truncated``; a longer body is tolerated, its
     /// trailer ignored, so a future field can be appended without breaking this reader.
@@ -758,13 +607,6 @@ public enum MetadataCodec {
         case workbench = 0
         /// Opened in the host's default app / Finder (the verb-9 behavior).
         case hostDefault = 1
-    }
-
-    /// Encodes a ``MetadataVerb/openInCodeServer`` response payload: `[UInt8 disposition]`.
-    public static func encodeCodeOpenDisposition(_ disposition: CodeOpenDisposition) -> Data {
-        sized { out, cap in
-            slopdesk_metadata_encode_code_open_disposition(disposition.rawValue, out, cap)
-        }
     }
 
     /// Decodes a ``MetadataVerb/openInCodeServer`` response payload (validate-then-drop): an empty
@@ -832,33 +674,6 @@ public enum MetadataCodec {
         }
     }
 
-    /// Decodes a ``MetadataVerb/syncCodeFont`` request payload (validate-then-drop): truncated bodies
-    /// and invalid UTF-8 throw, and so do out-of-range values — an empty family, a size outside
-    /// `4…128` pt, or a ratio outside `0.5…4` (NaN fails every comparison → throws). The host writes
-    /// these into a file the workbench trusts; hostile bytes must die here, not there. A longer body
-    /// is tolerated (trailer ignored) so a future field can be appended.
-    public static func decodeCodeFontSpec(_ data: Data) throws -> CodeFontSpec {
-        var flat = SlopDeskMetadataFontSpec()
-        // The family cannot outgrow the payload that carried it length-prefixed.
-        let room = Swift.max(data.count, 1)
-        return try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: room) { arena in
-            try throwIfFaulted(
-                data.spanning { payload, length in
-                    slopdesk_metadata_decode_code_font_spec(
-                        payload?.assumingMemoryBound(to: UInt8.self), length, &flat,
-                        arena.baseAddress, arena.count,
-                    )
-                },
-                "codeFontSpec",
-            )
-            return CodeFontSpec(
-                family: text(UnsafeRawBufferPointer(arena), flat.family),
-                size: Double(bitPattern: flat.size_bits),
-                lineHeight: Double(bitPattern: flat.line_height_bits),
-            )
-        }
-    }
-
     // MARK: - Crossing the boundary
 
     /// Appends `string`'s UTF-8 to `pool` and answers where it landed.
@@ -878,10 +693,19 @@ public enum MetadataCodec {
     }
 
     /// The clip content an eliding decode left in `payload`, as its own `Data`.
+    ///
+    /// The span is the DOOR's answer about the very buffer it was handed, so it is in range by
+    /// construction; the check says so out loud rather than letting a boundary bug arrive as a
+    /// `Data` subscript trap with nothing in it naming the codec.
     private static func content(_ flat: SlopDeskMetadataClip, in payload: Data) -> Data {
         guard flat.content.length > 0 else { return Data() }
         let start = payload.startIndex + Int(flat.content.offset)
-        return Data(payload[start..<start + Int(flat.content.length)])
+        let end = start + Int(flat.content.length)
+        precondition(
+            start >= payload.startIndex && end <= payload.endIndex,
+            "the metadata codec placed a clip's content outside the payload it decoded",
+        )
+        return Data(payload[start..<end])
     }
 
     /// Size, then fill — the §4 convention. `call` answers the bytes NEEDED and writes only when the
@@ -893,23 +717,6 @@ public enum MetadataCodec {
             precondition(
                 written == needed, "the metadata codec sized a payload differently than it wrote it",
             )
-        }
-    }
-
-    /// Encodes a list of records plus the arena their text fields live in.
-    private static func encode<Record>(
-        _ records: [Record],
-        _ pool: [UInt8],
-        _ call: (
-            UnsafePointer<Record>?, Int, UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<UInt8>?, Int,
-        ) -> Int,
-    ) -> Data {
-        records.withUnsafeBufferPointer { list in
-            pool.withUnsafeBufferPointer { arena in
-                sized { out, cap in
-                    call(list.baseAddress, list.count, arena.baseAddress, arena.count, out, cap)
-                }
-            }
         }
     }
 
@@ -980,15 +787,12 @@ public enum MetadataCodec {
 private extension MetadataCodec.ClipboardClip {
     /// Lends the clip's content to `body` without copying it, alongside the flat record that names
     /// it — a clip runs to 12 MiB, and an encode must not begin by duplicating them.
-    func lent<R>(
-        present: Bool = true,
-        _ body: (UnsafePointer<SlopDeskMetadataClip>, UnsafePointer<UInt8>?, Int) -> R,
-    ) -> R {
+    func lent<R>(_ body: (UnsafePointer<SlopDeskMetadataClip>, UnsafePointer<UInt8>?, Int) -> R) -> R {
         bytes.spanning { content, contentLength in
             var flat = SlopDeskMetadataClip(
                 content: SlopDeskMetadataText(offset: 0, length: UInt32(clamping: contentLength)),
                 kind: kindByte,
-                present: present,
+                present: true,
             )
             return body(&flat, content?.assumingMemoryBound(to: UInt8.self), contentLength)
         }

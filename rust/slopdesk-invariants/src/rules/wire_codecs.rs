@@ -365,9 +365,20 @@ pub fn git_dialect(tree: &Tree) -> Report {
 
 /// The metadata RPC's payloads and the workspace CHANNEL's, both `rust/slopdesk-wire`'s.
 ///
-/// Eleven encode/decode pairs plus the porcelain fold the sidebar and the host status push must
-/// agree on; five more pairs for the workspace channel. The Swift is the value types and the
-/// flatten.
+/// The metadata face is ONE-directional now, and the claim below is two halves for that reason. The
+/// client ENCODES requests and DECODES responses, so `MetadataCodec.swift` calls three encode doors
+/// and ten decode ones plus the porcelain fold, the constant table and the two byte-reading doors.
+/// The OPPOSITE diagonal — a response encoder and a request decoder per verb — is now BANNED by
+/// name: `Sources/` had a host target once, and when `docs/63` §G.4 confirmed it was gone those
+/// thirteen doors had no caller but the golden generator and the suites checking they worked. They
+/// retired with the Swift, so this rule is what keeps a "just for a test fixture" encoder from
+/// growing the host half back one verb at a time. Five encode/decode pairs for the workspace
+/// channel are unchanged for now: its loopback document really does serve intents on the client, so
+/// the intent pair is live in BOTH directions — but `WorkspaceSubscribe`'s decoder,
+/// `WorkspacePresenceUpdate`'s and `WorkspacePresenceRoster`'s encoder are the same host-shaped
+/// residue one codec over, reachable only from tests. That is the `WorkspaceChannelCodec` batch's
+/// census to settle, not this one's, and until it does this half stays a `Mentions` list rather
+/// than a diagonal.
 ///
 /// A payload validated in two languages is two validations, and the lenient one is the one a
 /// hostile body finds — which is why the readers, the writers and the clamps are banned rather than
@@ -381,37 +392,42 @@ pub fn payload_channels(tree: &Tree) -> Report {
         Claim::Mentions {
             path: SWIFT_METADATA,
             names: &[
-                "slopdesk_metadata_encode_processes",
                 "slopdesk_metadata_decode_processes",
-                "slopdesk_metadata_encode_ports",
                 "slopdesk_metadata_decode_ports",
-                "slopdesk_metadata_encode_dir_listing",
                 "slopdesk_metadata_decode_dir_listing",
-                "slopdesk_metadata_encode_git_status",
                 "slopdesk_metadata_decode_git_status",
-                "slopdesk_metadata_encode_agent_sessions",
                 "slopdesk_metadata_decode_agent_sessions",
-                "slopdesk_metadata_encode_clipboard_set",
-                "slopdesk_metadata_decode_clipboard_set",
-                "slopdesk_metadata_encode_clipboard_read_request",
-                "slopdesk_metadata_decode_clipboard_read_request",
-                "slopdesk_metadata_encode_clipboard_read_response",
-                "slopdesk_metadata_decode_clipboard_read_response",
-                "slopdesk_metadata_encode_host_vitals",
-                "slopdesk_metadata_decode_host_vitals",
-                "slopdesk_metadata_encode_service_endpoint",
-                "slopdesk_metadata_decode_service_endpoint",
-                "slopdesk_metadata_encode_agent_hook_status",
                 "slopdesk_metadata_decode_agent_hook_status",
-                "slopdesk_metadata_encode_code_open_disposition",
+                "slopdesk_metadata_encode_clipboard_set",
+                "slopdesk_metadata_encode_clipboard_read_request",
+                "slopdesk_metadata_decode_clipboard_read_response",
+                "slopdesk_metadata_decode_host_vitals",
+                "slopdesk_metadata_decode_service_endpoint",
                 "slopdesk_metadata_decode_code_open_disposition",
                 "slopdesk_metadata_encode_code_font_spec",
-                "slopdesk_metadata_decode_code_font_spec",
                 "slopdesk_metadata_fold_git_codes",
+                "slopdesk_metadata_memory_pressure",
+                "slopdesk_metadata_service_state",
                 "slopdesk_metadata_constant",
             ],
             message: "MetadataCodec.swift no longer calls {entry} — the metadata payloads are \
                       rust/slopdesk-wire's",
+        },
+        // The other diagonal, banned by name. Each of these is a door the client would only want in
+        // order to fabricate a HOST message, and the moment one comes back the payload has two
+        // encoders again — the shape docs/63 §G.4 retired. A test that needs host-shaped bytes
+        // spells them, the way `BigEndianFixtureBytes.swift` does: a second speller is allowed, a
+        // second implementation is not.
+        Claim::Lacks {
+            path: SWIFT_METADATA,
+            pattern: "slopdesk_metadata_encode_(processes|ports|dir_listing|git_status|\
+                      agent_sessions|agent_hook_status|clipboard_read_response|host_vitals|\
+                      service_endpoint|code_open_disposition)|\
+                      slopdesk_metadata_decode_(clipboard_set|clipboard_read_request|code_font_spec)",
+            view: View::Code,
+            message: "MetadataCodec.swift opened a host-side metadata door again — the client encodes \
+                      REQUESTS and decodes RESPONSES, and the opposite diagonal retired with the Swift \
+                      host target (docs/63 §G.4)",
         },
         Claim::Lacks {
             path: SWIFT_METADATA,
@@ -685,6 +701,100 @@ mod tests {
         let report = super::git_dialect(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("minted a sigil")),
+            "{report:?}"
+        );
+    }
+
+    /// Every name `payload_channels` requires of the two codec faces, in one string each, so a
+    /// break-test can seed exactly the drift it is about and nothing else.
+    fn metadata_face() -> String {
+        [
+            "slopdesk_metadata_decode_processes",
+            "slopdesk_metadata_decode_ports",
+            "slopdesk_metadata_decode_dir_listing",
+            "slopdesk_metadata_decode_git_status",
+            "slopdesk_metadata_decode_agent_sessions",
+            "slopdesk_metadata_decode_agent_hook_status",
+            "slopdesk_metadata_encode_clipboard_set",
+            "slopdesk_metadata_encode_clipboard_read_request",
+            "slopdesk_metadata_decode_clipboard_read_response",
+            "slopdesk_metadata_decode_host_vitals",
+            "slopdesk_metadata_decode_service_endpoint",
+            "slopdesk_metadata_decode_code_open_disposition",
+            "slopdesk_metadata_encode_code_font_spec",
+            "slopdesk_metadata_fold_git_codes",
+            "slopdesk_metadata_memory_pressure",
+            "slopdesk_metadata_service_state",
+            "slopdesk_metadata_constant",
+        ]
+        .map(|name| format!("_ = {name}\n"))
+        .concat()
+    }
+
+    fn workspace_face() -> String {
+        [
+            "slopdesk_workspace_encode_subscribe",
+            "slopdesk_workspace_decode_subscribe",
+            "slopdesk_workspace_encode_presence",
+            "slopdesk_workspace_decode_presence",
+            "slopdesk_workspace_encode_intent",
+            "slopdesk_workspace_decode_intent",
+            "slopdesk_workspace_encode_intent_result",
+            "slopdesk_workspace_decode_intent_result",
+            "slopdesk_workspace_encode_roster",
+            "slopdesk_workspace_decode_roster",
+            "slopdesk_workspace_constant",
+        ]
+        .map(|name| format!("_ = {name}\n"))
+        .concat()
+    }
+
+    /// The metadata face points ONE way after `docs/63` §G.4: the client encodes requests and
+    /// decodes responses. A response ENCODER coming back is the Swift host half regrowing — most
+    /// plausibly to fabricate bytes for a test — so the ban is by name and the seed is the single
+    /// most tempting one.
+    #[test]
+    fn a_host_side_metadata_encoder_coming_back_is_caught() {
+        let fixture = Fixture::new("metadata-host-diagonal");
+        fixture
+            .write(super::SWIFT_METADATA, &metadata_face())
+            .write(super::SWIFT_WS_CHANNEL, &workspace_face());
+        assert!(super::payload_channels(&fixture.tree()).is_clean());
+
+        fixture.write(
+            super::SWIFT_METADATA,
+            &format!("{}_ = slopdesk_metadata_encode_host_vitals\n", metadata_face()),
+        );
+        let report = super::payload_channels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("host-side metadata door")),
+            "{report:?}"
+        );
+    }
+
+    /// And the request decoders are the same ban from the other end — `decodeClipboardSet` reads a
+    /// message only a host receives.
+    #[test]
+    fn a_host_side_metadata_decoder_coming_back_is_caught() {
+        let fixture = Fixture::new("metadata-host-decoder");
+        fixture
+            .write(super::SWIFT_METADATA, &metadata_face())
+            .write(super::SWIFT_WS_CHANNEL, &workspace_face());
+        assert!(super::payload_channels(&fixture.tree()).is_clean());
+
+        fixture.write(
+            super::SWIFT_METADATA,
+            &format!("{}_ = slopdesk_metadata_decode_clipboard_set\n", metadata_face()),
+        );
+        let report = super::payload_channels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("host-side metadata door")),
             "{report:?}"
         );
     }
