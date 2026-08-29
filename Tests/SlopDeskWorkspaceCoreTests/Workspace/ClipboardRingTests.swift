@@ -137,9 +137,9 @@ final class ClipboardRingTests: XCTestCase {
     /// `clipboardHasTextProbe` is wired to (``ClientPasteboard/hasText()``).
     ///
     /// No `#if os(macOS)` any more: the board is one Rust surface with a framework chosen at compile
-    /// time, so this reads the phone's `UIPasteboard` in the iOS bundle and the Mac's `NSPasteboard`
-    /// here — and the PROBE is the half iOS answers without the "Allow Paste?" alert, which is why
-    /// it can be asked unconditionally while the content read below cannot.
+    /// time, so the same lines compile on both triples rather than vanishing on one. This suite only
+    /// ever RUNS on macOS — the iOS bundle compiles `Apps/ClientApp-iOS/Tests` and nothing from here
+    /// — so what it pins is the `NSPasteboard` half; `ClientPasteboardOnIOSTests` pins the other.
     func testTheBoardProbeSeesTextWithoutReadingIt() {
         let board = ClientPasteboard(name: "slopdesk-test-\(UUID().uuidString)")
         board.clear()
@@ -149,10 +149,11 @@ final class ClipboardRingTests: XCTestCase {
         XCTAssertEqual(board.plainText, "copied", "the content read agrees with the probe")
     }
 
-    /// The monitor's changeCount gate. The COUNT half runs on both triples; the ring only fills
-    /// where the platform permits an unattended content read, which is exactly the branch
-    /// ``ClipboardMonitor/poll()`` takes — so the assertion branches with it rather than the file
-    /// carrying an `#if` that would stop testing the phone's half altogether.
+    /// The monitor's changeCount gate. The ring only fills where the platform permits an unattended
+    /// content read, which is exactly the branch ``ClipboardMonitor/poll()`` takes, so the expected
+    /// ring is derived from that same fact rather than written as a macOS constant — the assertion
+    /// then says WHY the ring holds what it holds, and would fail here if the door ever changed its
+    /// mind about this platform. The phone's arm of that branch is pinned in the iOS bundle.
     func testMonitorPollCapturesNewClipsOnly() {
         let store = makeStore()
         let board = ClientPasteboard(name: "slopdesk-test-\(UUID().uuidString)")
