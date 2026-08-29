@@ -35,8 +35,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use slopdesk_apple_vt::{
-    CFRetained, CVImageBuffer, DecodedSink, DecompressionSession, FormatDescription, INVALID_SESSION, NO_ERR,
-    PixelBuffer, SampleBuffer,
+    Attachments, CFRetained, CVImageBuffer, DecodedSink, DecompressionSession, FormatDescription,
+    INVALID_SESSION, NO_ERR, PixelBuffer, SampleBuffer,
 };
 use slopdesk_video::decoder_state::{Admission, DecoderState, display_immediate};
 use slopdesk_video::hevc_parameter_sets;
@@ -329,7 +329,14 @@ impl SlopDeskVideoDecoder {
             // the two locks can produce. Asking for a keyframe is the recoverable reading.
             return SLOPDESK_DECODE_NEEDS_KEYFRAME;
         };
-        let sample = match SampleBuffer::from_avcc(avcc, &live.format, self.display_immediately) {
+        // `not_sync` stays false on this path, and deliberately: a `VTDecompressionSession` reads
+        // sync-ness out of the bitstream, so the attachment would say nothing it does not already
+        // know. It is the display-layer panels that must state it.
+        let attachments = Attachments {
+            display_immediately: self.display_immediately,
+            not_sync: false,
+        };
+        let sample = match SampleBuffer::from_avcc(avcc, &live.format, attachments) {
             Ok(sample) => sample,
             Err(status) => {
                 *status_out = status;

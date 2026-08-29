@@ -172,8 +172,11 @@ pub mod pane_session;
 pub mod pane_switcher;
 pub mod pane_title_freshness;
 pub mod panel_key;
+// UNGATED for `decoder`'s reason, and the same crate answers it: every client that can show a phone
+// builds these objects, and both the Mac panel and the phone one do. See the module.
 pub mod panel_scroll;
 pub mod panel_tabs;
+pub mod panel_video;
 pub mod paste_menu;
 pub mod paste_safety;
 pub mod peek_reply;

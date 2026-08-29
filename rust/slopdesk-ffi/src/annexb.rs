@@ -41,37 +41,11 @@ pub unsafe extern "C" fn slopdesk_annexb_split(
     unsafe { write_spans(&annexb::split_ranges(buffer), out, cap) }
 }
 
-/// Where an Annex-B configuration buffer's parameter sets sit, under the same convention.
-///
-/// `hevc` picks the reading: H.265 takes the NAL type from bits 1..6 and looks for VPS/SPS/PPS,
-/// H.264 from the low five and looks for SPS/PPS. A boolean rather than a codec byte because those
-/// are the only two the panel decodes — AV1 never reaches this door.
-///
-/// # Safety
-/// `annexb` must be null or point to `len` readable bytes, and `out` must be null or point to `cap`
-/// writable, aligned [`SlopDeskNalSpan`]s, both for the whole call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_annexb_parameter_sets(
-    annexb: *const c_uchar,
-    len: usize,
-    hevc: bool,
-    out: *mut SlopDeskNalSpan,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, discharged by Swift's `withUnsafeBytes`.
-    let buffer = unsafe { borrow(annexb, len) };
-    let units = if hevc {
-        annexb::h265_parameter_sets(buffer)
-    } else {
-        annexb::h264_parameter_sets(buffer)
-    };
-    // SAFETY: the caller's obligation for `out`/`cap`, restated above.
-    unsafe { write_spans(&units, out, cap) }
-}
+// NOTE: `slopdesk_annexb_parameter_sets` LEFT (2026-08-29). Its one caller walked a config packet
+// for the sets `CMVideoFormatDescriptionCreateFromH264ParameterSets` wanted, and both halves of
+// that — the walk AND the framework call — are `slopdesk_panel_video_configure_annexb` now, on one
+// side of the boundary. `slopdesk_video::annexb::h{264,265}_parameter_sets` is still the walk; it
+// simply has no reason to cross.
 
 /// An Annex-B access unit rewritten as AVCC, under §4's convention.
 ///
@@ -132,7 +106,7 @@ unsafe fn write_spans(units: &[core::ops::Range<usize>], out: *mut SlopDeskNalSp
               just built is the assertion"
 )]
 mod tests {
-    use super::{slopdesk_annexb_parameter_sets, slopdesk_annexb_split, slopdesk_annexb_to_avcc};
+    use super::{slopdesk_annexb_split, slopdesk_annexb_to_avcc};
     use crate::cursor_wire::SlopDeskNalSpan;
 
     /// A three-unit buffer mixing both start-code lengths.
@@ -198,32 +172,5 @@ mod tests {
         // SAFETY: the buffer is a live local.
         let refused = unsafe { slopdesk_annexb_to_avcc(bare.as_ptr(), bare.len(), core::ptr::null_mut(), 0) };
         assert_eq!(refused, 0, "already length-prefixed is not Annex-B");
-    }
-
-    /// The two codecs read the type from different bits, and the flag is what picks.
-    #[test]
-    fn the_hevc_flag_picks_the_reading() {
-        let mut config = vec![0, 0, 0, 1, 0x67, 0x64];
-        config.extend_from_slice(&[0, 0, 0, 1, 33 << 1, 0x02]);
-
-        // SAFETY: the buffer is a live local; a null `out` with `cap` 0 is the measuring call.
-        let avc = unsafe {
-            slopdesk_annexb_parameter_sets(config.as_ptr(), config.len(), false, core::ptr::null_mut(), 0)
-        };
-        // SAFETY: as above.
-        let hevc = unsafe {
-            slopdesk_annexb_parameter_sets(config.as_ptr(), config.len(), true, core::ptr::null_mut(), 0)
-        };
-        assert_eq!((avc, hevc), (1, 1), "each keeps its own, and only its own");
-
-        let mut spans = [SlopDeskNalSpan::default(); 1];
-        // SAFETY: both buffers are live locals.
-        unsafe {
-            slopdesk_annexb_parameter_sets(config.as_ptr(), config.len(), true, spans.as_mut_ptr(), 1);
-        }
-        assert_eq!(
-            &config[spans[0].offset as usize..][..spans[0].length as usize],
-            &[66, 0x02]
-        );
     }
 }

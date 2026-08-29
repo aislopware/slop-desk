@@ -196,18 +196,11 @@ package enum AndroidAnnexB {
         }
     }
 
-    /// The parameter sets a config packet carries, in the order CoreMedia wants them (SPS first).
-    ///
-    /// Filtered by NAL type rather than taking every unit: `MediaCodec` is free to put an access
-    /// unit delimiter or SEI in the same buffer, and
-    /// `CMVideoFormatDescriptionCreateFromH264ParameterSets` rejects the whole set if one member is
-    /// not a parameter set.
-    package static func parameterSets(inConfiguration data: Data, codec: AndroidVideoCodec) -> [Data] {
-        let hevc = codec == .h265
-        return spans(in: data) { bytes, count, out, cap in
-            slopdesk_annexb_parameter_sets(bytes, count, hevc, out, cap)
-        }
-    }
+    // NOTE: `parameterSets(inConfiguration:codec:)` LEFT (2026-08-29), and took the door it called
+    // with it. It walked a config packet for the sets a format description wanted, and both halves
+    // of that — the walk AND the framework call — are `slopdesk_panel_video_configure_annexb` now,
+    // in one door. The packet travels whole; the walk itself is still
+    // `slopdesk_video::annexb`, it simply has no reason to cross.
 
     /// How many units the first array offers, before the retry.
     ///

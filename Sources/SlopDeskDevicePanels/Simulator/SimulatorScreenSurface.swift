@@ -4,7 +4,7 @@
 // KIND 2, not kind 1 (docs/56 stage D, increment 52a, and the ledger's own §"Kind 2 — not views at
 // all"). This class was already a plain `NSView` sitting in `SlopDeskClientUI` with a four-line
 // `NSViewRepresentable` on top of it, and it imported this target for everything it actually does —
-// ``SimulatorScreenLayout``, ``SimulatorScrollGesture``, ``SimulatorVideoFormat``,
+// ``SimulatorScreenLayout``, ``SimulatorScrollGesture``, ``DevicePanelVideoStream``,
 // ``SimulatorInputEnvelope``, ``SimulatorKeyMap``. So the move DELETES an import edge rather than
 // adding one, and there is no rewrite in it at all: the body below is the body it had, plus the
 // access levels its new callers need.
@@ -40,7 +40,8 @@
 // ⚠️ Hang-safety: this file builds a display layer, which spins up a decompression session on first
 // enqueue. Nothing here may be constructed in a unit test — the geometry it depends on lives in
 // ``SimulatorScreenLayout``, the gesture machine in ``SimulatorScrollGesture`` and the sample
-// construction in ``SimulatorVideoFormat``, all pure and all testable without it.
+// construction behind ``DevicePanelVideoStream``, all testable without it — the first two because
+// they are pure, the third because a stream is a Rust handle and needs no window server.
 
 // ⚠️ THE GATE IS `canImport(AppKit)`, NEVER `os(macOS)`. This target is the phone's floor too, and
 // `slopdesk-invariants` fails the build on an `os(macOS)` here for exactly that reason: the question
@@ -122,21 +123,19 @@ package final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
 
     // MARK: Frames
 
-    package func apply(configuration: SimulatorWireProtocol.AVCConfiguration) {
-        guard let description = SimulatorVideoFormat.formatDescription(for: configuration) else { return }
-        formatDescription = description
-        contentSize = SimulatorVideoFormat.dimensions(of: description)
+    package func apply(configuration: Data) {
+        guard let stream, stream.configure(avcc: configuration),
+              let size = stream.contentSize else { return }
+        contentSize = size
         needsLayout = true
     }
 
     package func enqueue(accessUnit: Data, isKeyframe: Bool) {
-        guard let formatDescription else { return }
+        guard let stream else { return }
         // A failed decode leaves the renderer in `.failed` forever; flushing and waiting for the next
         // keyframe is the documented recovery, and the server sends one on request.
         if renderer.status == .failed { renderer.flush() }
-        guard let sample = SimulatorVideoFormat.sampleBuffer(
-            accessUnit: accessUnit, formatDescription: formatDescription, isKeyframe: isKeyframe,
-        ) else { return }
+        guard let sample = stream.sample(accessUnit, isKeyframe: isKeyframe) else { return }
         renderer.enqueue(sample)
         // The seed has done its job the moment real pixels exist. Kept until here rather than
         // dropped on connect so a stream that never produces a keyframe still shows something.
@@ -162,7 +161,7 @@ package final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
     package func reset() {
         renderer.flush(removingDisplayedImage: true) {}
         seedLayer.contents = nil
-        formatDescription = nil
+        stream = DevicePanelVideoStream()
         contentSize = .zero
         needsLayout = true
     }
@@ -172,7 +171,8 @@ package final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
     /// the two on one layer is the documented way to get an inconsistent status.
     private var renderer: AVSampleBufferVideoRenderer { displayLayer.sampleBufferRenderer }
 
-    private var formatDescription: CMVideoFormatDescription?
+    /// Every CoreMedia object this view shows, and the only place one is built.
+    private var stream = DevicePanelVideoStream()
 
     // MARK: Pointer
 

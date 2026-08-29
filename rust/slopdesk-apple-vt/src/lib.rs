@@ -50,11 +50,16 @@ mod session;
 mod status;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub use decompress::{DecodedSink, DecompressionSession, FormatDescription, NAL_LENGTH_PREFIX, SampleBuffer};
+pub use decompress::{
+    Attachments, DecodedSink, DecompressionSession, FormatDescription, NAL_LENGTH_PREFIX, ParameterSetCodec,
+    SampleBuffer,
+};
 #[cfg(target_os = "macos")]
 pub use keys::{Key, StringValue};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use objc2_core_foundation::CFRetained;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use objc2_core_media::CMSampleBuffer;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use objc2_core_video::CVImageBuffer;
 #[cfg(any(target_os = "macos", target_os = "ios"))]

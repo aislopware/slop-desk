@@ -71,32 +71,10 @@ final class SimulatorWireProtocolTests: XCTestCase {
         return record
     }
 
-    /// The delivery is `set_count` runs of `[UInt32 big-endian length][bytes]`, and the count in the
-    /// header must cut it EXACTLY: an off-by-one in that walk builds a format description out of two
-    /// sets spliced together, which decodes nothing and blames the stream.
-    func testTheDeliveryIsCutOnTheBoundariesTheHeaderNames() {
-        let parsed = SimulatorWireProtocol.parseAVCConfiguration(avcCRecord())
-        XCTAssertEqual(parsed?.parameterSets, [Data([0x27, 0x64, 0x00, 0x33]), Data([0x28, 0xEE])])
-        XCTAssertEqual(parsed?.nalUnitHeaderLength, 4)
-        XCTAssertEqual(parsed?.profile, 0x64)
-        XCTAssertEqual(parsed?.levelIndication, 0x33)
-    }
-
-    /// A record the door refuses answers `nil` rather than a configuration with no sets — the caller
-    /// reads that as "no configuration" and keeps the decoder it had.
-    func testARefusedRecordCrossesAsNilRatherThanAnEmptyOne() {
-        XCTAssertNil(SimulatorWireProtocol.parseAVCConfiguration(avcCRecord(version: 2)))
-        XCTAssertNil(SimulatorWireProtocol.parseAVCConfiguration(Data()))
-    }
-
-    func testEveryTruncationOfARealRecordIsRefusedRatherThanTrapping() {
-        // The untrusted-input invariant, exhaustively, and across the boundary: no prefix of a valid
-        // record may read past its end on either side. A crash here is remotely triggerable by
-        // anything that can reach the port.
-        let record = avcCRecord()
-        for length in 0..<record.count {
-            _ = SimulatorWireProtocol.parseAVCConfiguration(record.prefix(length))
-        }
-    }
+    // NOTE: the three avcC PARSE tests left with the door they drove (2026-08-29). The record
+    // reaches `slopdesk_panel_video_configure_avcc` whole now, so there is no Swift-side parse to
+    // assert on — and the claims themselves did not go anywhere: the boundary cut, the refusal, and
+    // the every-truncation-of-a-real-record walk are `slopdesk-ffi`'s `panel_video` tests and
+    // `slopdesk_devicepanel::sim_stream`'s, against the SAME measured record.
 }
 #endif

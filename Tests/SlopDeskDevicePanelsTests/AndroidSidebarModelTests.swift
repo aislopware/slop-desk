@@ -244,11 +244,11 @@ final class AndroidSidebarRulesTests: XCTestCase {
 final class AndroidFrameSinkTests: XCTestCase {
     /// A renderer that records rather than decodes. No `VTDecompressionSession`, no display layer.
     private final class Recorder: AndroidFrameRenderer {
-        var applied: [[Data]] = []
+        var applied: [Data] = []
         var enqueued: [(Data, Bool)] = []
         var resets = 0
 
-        func apply(parameterSets: [Data], codec _: AndroidVideoCodec) { applied.append(parameterSets) }
+        func apply(configuration: Data, codec _: AndroidVideoCodec) { applied.append(configuration) }
         func enqueue(accessUnit: Data, isKeyframe: Bool) { enqueued.append((accessUnit, isKeyframe)) }
         func reset() { resets += 1 }
     }
@@ -259,13 +259,13 @@ final class AndroidFrameSinkTests: XCTestCase {
         // with a single keyframe for a whole session. Without the replay the panel sits black until
         // the user happens to touch something.
         let sink = AndroidFrameSink()
-        sink.deliver(parameterSets: [Data([0x67])], codec: .h264)
+        sink.deliver(configuration: Data([0x67]), codec: .h264)
         sink.deliver(accessUnit: Data([0x65]), isKeyframe: true)
         sink.deliver(accessUnit: Data([0x41]), isKeyframe: false)
 
         let recorder = Recorder()
         sink.attach(recorder)
-        XCTAssertEqual(recorder.applied, [[Data([0x67])]])
+        XCTAssertEqual(recorder.applied, [Data([0x67])])
         // The keyframe and only the keyframe: a delta frame replayed against a decoder that never
         // saw its reference is noise.
         XCTAssertEqual(recorder.enqueued.count, 1)
@@ -276,13 +276,13 @@ final class AndroidFrameSinkTests: XCTestCase {
         // It was encoded against the old ones — replaying it after a rotation would hand the decoder
         // a frame its format description cannot describe.
         let sink = AndroidFrameSink()
-        sink.deliver(parameterSets: [Data([0x67])], codec: .h264)
+        sink.deliver(configuration: Data([0x67]), codec: .h264)
         sink.deliver(accessUnit: Data([0x65]), isKeyframe: true)
-        sink.deliver(parameterSets: [Data([0x67, 0x01])], codec: .h264)
+        sink.deliver(configuration: Data([0x67, 0x01]), codec: .h264)
 
         let recorder = Recorder()
         sink.attach(recorder)
-        XCTAssertEqual(recorder.applied, [[Data([0x67, 0x01])]])
+        XCTAssertEqual(recorder.applied, [Data([0x67, 0x01])])
         XCTAssertTrue(recorder.enqueued.isEmpty)
     }
 
@@ -290,7 +290,7 @@ final class AndroidFrameSinkTests: XCTestCase {
         let sink = AndroidFrameSink()
         let recorder = Recorder()
         sink.attach(recorder)
-        sink.deliver(parameterSets: [Data([0x67])], codec: .h264)
+        sink.deliver(configuration: Data([0x67]), codec: .h264)
         sink.deliver(accessUnit: Data([0x41]), isKeyframe: false)
         XCTAssertEqual(recorder.applied.count, 1)
         XCTAssertEqual(recorder.enqueued.count, 1)
@@ -302,7 +302,7 @@ final class AndroidFrameSinkTests: XCTestCase {
         let sink = AndroidFrameSink()
         let recorder = Recorder()
         sink.attach(recorder)
-        sink.deliver(parameterSets: [Data([0x67])], codec: .h264)
+        sink.deliver(configuration: Data([0x67]), codec: .h264)
         sink.deliver(accessUnit: Data([0x65]), isKeyframe: true)
         sink.reset()
         XCTAssertEqual(recorder.resets, 1)
@@ -320,7 +320,7 @@ final class AndroidFrameSinkTests: XCTestCase {
         let sink = AndroidFrameSink()
         let recorder = Recorder()
         sink.attach(recorder)
-        sink.deliver(parameterSets: [Data([0x67])], codec: .h264)
+        sink.deliver(configuration: Data([0x67]), codec: .h264)
         sink.deliver(accessUnit: Data([0x65]), isKeyframe: true)
         sink.discard()
         XCTAssertEqual(recorder.resets, 0)

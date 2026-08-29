@@ -48,7 +48,8 @@
 //
 // Hang-safety: this file builds a display layer, which spins up a decompression session on first
 // enqueue. Nothing here may be constructed in a unit test — the geometry it depends on lives in
-// ``SimulatorScreenLayout`` and the sample construction in ``SimulatorVideoFormat``, both pure.
+// ``SimulatorScreenLayout`` and the sample construction behind ``DevicePanelVideoStream``, both
+// testable without it.
 
 #if os(iOS)
 import AVFoundation
@@ -111,19 +112,17 @@ final class PhoneSimulatorScreenView: UIView, SimulatorFrameRenderer {
 
     // MARK: Frames
 
-    func apply(configuration: SimulatorWireProtocol.AVCConfiguration) {
-        guard let description = SimulatorVideoFormat.formatDescription(for: configuration) else { return }
-        formatDescription = description
-        contentSize = SimulatorVideoFormat.dimensions(of: description)
+    func apply(configuration: Data) {
+        guard let stream, stream.configure(avcc: configuration),
+              let size = stream.contentSize else { return }
+        contentSize = size
         setNeedsLayout()
     }
 
     func enqueue(accessUnit: Data, isKeyframe: Bool) {
-        guard let formatDescription else { return }
+        guard let stream else { return }
         if renderer.status == .failed { renderer.flush() }
-        guard let sample = SimulatorVideoFormat.sampleBuffer(
-            accessUnit: accessUnit, formatDescription: formatDescription, isKeyframe: isKeyframe,
-        ) else { return }
+        guard let sample = stream.sample(accessUnit, isKeyframe: isKeyframe) else { return }
         renderer.enqueue(sample)
         if seedLayer.contents != nil { seedLayer.contents = nil }
     }
@@ -141,14 +140,15 @@ final class PhoneSimulatorScreenView: UIView, SimulatorFrameRenderer {
     func reset() {
         renderer.flush(removingDisplayedImage: true) {}
         seedLayer.contents = nil
-        formatDescription = nil
+        stream = DevicePanelVideoStream()
         contentSize = .zero
         setNeedsLayout()
     }
 
     private var renderer: AVSampleBufferVideoRenderer { displayLayer.sampleBufferRenderer }
 
-    private var formatDescription: CMVideoFormatDescription?
+    /// Every CoreMedia object this view shows, and the only place one is built.
+    private var stream = DevicePanelVideoStream()
 
     // MARK: Touch
 

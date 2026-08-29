@@ -17259,3 +17259,58 @@ reads as a finished port to every future reader and to every gate. *Deleting
 last Swift caller died in `08d33f2e` is the second way to ask what
 `CaptureGates::should_self_heal` already answers, so both halves went; the daemon calls the values
 form, and re-adding the door costs one declaration.
+
+## The panels' CoreMedia was never per-panel, and the language boundary was in the wrong place (2026-08-29)
+
+The 2026-08-15 pass gave both device panels one `DevicePanelSampleBuffer` and left
+`formatDescription` behind as "genuinely per-panel: the simulator is asked for `format=avcc` and
+parses a record, `scrcpy` forwards raw `MediaCodec` output". That reading was right about the two
+DIALECTS and wrong about the boundary it drew around them. What differs between the panels is how
+each one's server states its parameter sets. What is identical — and identical to what
+`rust/slopdesk-apple-vt` was already doing for the desktop decoder, in the same three calls in the
+same order — is everything after that: `CMVideoFormatDescriptionCreateFrom*ParameterSets`, a block
+buffer over a copy of the access unit, `CMSampleBufferCreateReady`, and the attachment array.
+
+So the split was one function down from where it belonged. Two implementations of one framework
+contract in two languages, and only ONE of them under a leak test: the Swift copy carried its own
+`unsafeBitCast` on the attachment dictionary, which is raw-pointer work in the language that has no
+way to state the obligation, and `docs/57` §2 does not admit it because §2 is about the crates that
+can.
+
+**All 286 lines went, and the dialects went with them.** `AndroidVideoFormat`,
+`SimulatorVideoFormat` and `DevicePanelSampleBuffer` are deleted; `Shared/DevicePanelVideoStream` is
+a handle over six `slopdesk_panel_video_*` doors. `slopdesk-apple-vt` grew the one generalisation
+that made the desktop builder serve three streams — `from_parameter_sets(codec, sets, nal_length)`,
+with `from_hevc_parameter_sets` as the wrapper that PINS the prefix at four because only the host
+guarantees it — plus `dimensions()`, an `Attachments` pair, and `into_raw`.
+
+**The config packet is now opaque to Swift end to end, and that is the load-bearing half.** The
+stream event, the frame sink and both sidebar models carry the record or the packet as `Data`. Its
+parameter sets and its `nalUnitHeaderLength` never become Swift values, so nothing on this side can
+disagree with the description built from them — which is what let BOTH Swift parsers go, and the two
+doors that existed only to feed them (`slopdesk_sim_avcc_parse`, `slopdesk_annexb_parameter_sets`)
+with them.
+
+**One behaviour changed, and a test caught it.** The sidebar models used to call
+`noteVideoArrived()` on the configuration arm, because back when the model parsed the record it
+could tell a malformed one apart and drop it. It cannot now, and it should not: a config packet is a
+promise, not a frame. Calling it there would clear the loading indicator over a panel that will
+never render. The arm no longer calls it, and
+`testAConfigurationRecordTravelsWholeButIsNotVideoOnItsOwn` pins that.
+
+**The gate moved up a layer with the code.** `device-panel-law` used to say both panels read their
+size through one shared law; the two files it named that through are gone, so it now says all four
+SCREEN VIEWS hold the shared stream. The new `one-coremedia-builder` states the stronger half
+positively and TREE-WIDE, with no exemption list: no Swift file under `Sources`, `Apps` or `Tests`
+may name `CMVideoFormatDescriptionCreate*`, `CMBlockBufferCreate*`, `CMSampleBufferCreate*` or
+`CMSampleBufferGetSampleAttachmentsArray`. A path list would have to grow an entry per new panel;
+the answer for every new panel is the same door, so the corpus is the tree.
+
+**Rejected.** *A second Rust format builder for H.264* — the HEVC one differs from it in the entry
+point and nothing else, so the fork is an enum and the flattening is written once. *Keeping
+`CMBlockBufferCreateWithMemoryBlock` in `device-panel-law`'s ban with its `Shared/` exemption* — the
+new rule bans it everywhere with no exemption, and leaving the weaker spelling in place would mark
+one directory as permitted. *`takeUnretainedValue()` on the returned sample* — the door hands over
+at +1 (the Create rule, pointed outwards), so an unretained take renders correct pixels, passes
+every test, and leaks one sample buffer per frame at sixty a second; the invariant pins the retained
+spelling by name and bans the unretained one.

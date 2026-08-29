@@ -824,7 +824,7 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorEndpoints.swift` | face over `slopdesk_devicepanel::sim_routes`: the whole route table |
 | `Simulator/SimulatorScreenLayout.swift` | fitted rect ↔ device point, edge bands, pinch pair — a face over `slopdesk_devicepanel::geometry` |
 | `Simulator/SimulatorScrollGesture.swift` | handle over `slopdesk_panel_scroll_accept`: wheel scale, un-rotation, plant, re-grip |
-| `Simulator/SimulatorVideoFormat.swift` | `CMFormatDescription` + `CMSampleBuffer` construction |
+| `Shared/DevicePanelVideoStream.swift` | handle over `slopdesk_panel_video_*`: the avcC record in, the encoded size out, one `CMSampleBuffer` per access unit — the ONE face over `slopdesk-apple-vt`, shared with the Android panel |
 | `Simulator/SimulatorStreamConnection.swift` | the one socket (`NWConnection` + websocket) |
 | `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |
 | `Simulator/SimulatorDeviceKind.swift` | face over `slopdesk_simulator_device_kind(s)`: the family, its glyph name and its heading |

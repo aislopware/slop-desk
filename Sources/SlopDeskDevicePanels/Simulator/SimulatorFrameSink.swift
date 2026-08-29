@@ -34,7 +34,7 @@ import Foundation
 /// delivery order — replay first, then live frames — is testable without an `AVSampleBufferDisplayLayer`.
 @MainActor
 package protocol SimulatorFrameRenderer: AnyObject {
-    func apply(configuration: SimulatorWireProtocol.AVCConfiguration)
+    func apply(configuration: Data)
     func enqueue(accessUnit: Data, isKeyframe: Bool)
     func showSeed(_ jpeg: Data)
     func reset()
@@ -48,7 +48,10 @@ package final class SimulatorFrameSink {
 
     /// The two messages a cold decoder needs, kept for whoever mounts next. The seed is kept as well
     /// so a stream that has not produced a keyframe yet still shows the still the server sent.
-    private var configuration: SimulatorWireProtocol.AVCConfiguration?
+    /// The last avcC record, held whole for the replay. Whether it describes a decodable stream is
+    /// not asked here — the renderer's door answers that, and a sink that pre-judged it would be a
+    /// second opinion on the same bytes.
+    private var configuration: Data?
     private var keyframe: Data?
     private var seed: Data?
 
@@ -61,7 +64,7 @@ package final class SimulatorFrameSink {
         if let keyframe { renderer.enqueue(accessUnit: keyframe, isKeyframe: true) }
     }
 
-    package func deliver(configuration: SimulatorWireProtocol.AVCConfiguration) {
+    package func deliver(configuration: Data) {
         self.configuration = configuration
         // A new parameter set invalidates the held keyframe — it was encoded against the old one.
         keyframe = nil

@@ -35,8 +35,8 @@
 //
 // Hang-safety: this file builds a display layer, which spins up a decompression session on first
 // enqueue. Nothing here may be constructed in a unit test — the geometry lives in
-// ``AndroidScreenLayout``, the sample construction in ``AndroidVideoFormat`` and the byte layouts in
-// ``AndroidControlMessage``, all pure.
+// ``AndroidScreenLayout``, the sample construction behind ``DevicePanelVideoStream`` and the byte
+// layouts in ``AndroidControlMessage``, all testable without it.
 
 #if os(iOS)
 import AVFoundation
@@ -101,12 +101,10 @@ final class PhoneAndroidScreenView: UIView, AndroidFrameRenderer {
 
     // MARK: Frames
 
-    func apply(parameterSets: [Data], codec: AndroidVideoCodec) {
-        guard let description = AndroidVideoFormat.formatDescription(
-            parameterSets: parameterSets, codec: codec,
-        ) else { return }
-        formatDescription = description
-        contentSize = AndroidVideoFormat.dimensions(of: description)
+    func apply(configuration: Data, codec: AndroidVideoCodec) {
+        guard let stream, stream.configure(annexB: configuration, hevc: codec == .h265),
+              let size = stream.contentSize else { return }
+        contentSize = size
         // A rotation arrives as new parameter sets describing the swapped axes, and the frames encoded
         // against the OLD ones are still in the renderer's queue.
         renderer.flush()
@@ -114,27 +112,26 @@ final class PhoneAndroidScreenView: UIView, AndroidFrameRenderer {
     }
 
     func enqueue(accessUnit: Data, isKeyframe: Bool) {
-        guard let formatDescription else { return }
+        guard let stream else { return }
         if renderer.status == .failed {
             renderer.flush()
             send?(AndroidControlMessage.simple(.resetVideo))
         }
-        guard let sample = AndroidVideoFormat.sampleBuffer(
-            accessUnit: accessUnit, formatDescription: formatDescription, isKeyframe: isKeyframe,
-        ) else { return }
+        guard let sample = stream.sample(accessUnit, isKeyframe: isKeyframe) else { return }
         renderer.enqueue(sample)
     }
 
     func reset() {
         renderer.flush(removingDisplayedImage: true) {}
-        formatDescription = nil
+        stream = DevicePanelVideoStream()
         contentSize = .zero
         setNeedsLayout()
     }
 
     private var renderer: AVSampleBufferVideoRenderer { displayLayer.sampleBufferRenderer }
 
-    private var formatDescription: CMVideoFormatDescription?
+    /// Every CoreMedia object this view shows, and the only place one is built.
+    private var stream = DevicePanelVideoStream()
 
     // MARK: Touch
 

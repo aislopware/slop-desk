@@ -565,16 +565,23 @@ final class SimulatorSidebarModelTests: XCTestCase {
         XCTAssertTrue(model.hasVideo)
     }
 
-    func testAMalformedConfigurationRecordIsDroppedRatherThanRendered() async {
+    /// A config packet is a PROMISE, not a frame. The record travels to the renderer whole — the
+    /// door is the only thing that reads an avcC layout now, and `DevicePanelVideoStream.configure`
+    /// answers `false` for a malformed one — but the loading state must not end on the promise, or a
+    /// record that will never render drops the indicator over a panel that stays black.
+    func testAConfigurationRecordTravelsWholeButIsNotVideoOnItsOwn() async {
         let (model, stream) = await readyModel(FakeControl())
         model.select("A")
         let renderer = FakeRenderer()
         model.frames.attach(renderer)
         stream()?.sink(.message(.configuration(Data([0x01, 0x02]))))
-        // Untrusted input: validate then drop. A half-parsed avcC would build a format description
-        // that fails every decode after it.
-        XCTAssertTrue(renderer.calls.isEmpty)
-        XCTAssertFalse(model.hasVideo)
+        XCTAssertEqual(renderer.calls, ["config"], "the record is the door's to judge, not this file's")
+        XCTAssertFalse(model.hasVideo, "nothing decodable has arrived yet")
+        // And the refusal itself, through the face the renderer would have used.
+        XCTAssertEqual(
+            DevicePanelVideoStream()?.configure(avcc: Data([0x01, 0x02])), false,
+            "a two-byte record describes no stream",
+        )
     }
 
     func testTheSeedIsShownButIsNotVideo() async {

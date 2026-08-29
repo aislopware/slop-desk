@@ -67,52 +67,72 @@ const SIMULATOR_SECTIONS: &str = "Sources/SlopDeskDevicePanels/Simulator/Simulat
 /// `docs/DECISIONS.md` and written down twice. The measured veil DELAYS stay per panel (400 ms vs
 /// 600 ms, two pieces of hardware). Checked positively, because the veil and the notice are
 /// ordinary `SwiftUI` whose ingredients are used everywhere else.
+/// Every view that shows a device, and the shared law it must still be asking for.
+///
+/// A TABLE rather than a run of claims, and lifted out of [`one_device_panel_law`] because it grew
+/// past what one function may be: the four screen views owe two laws each now, so the list is
+/// twelve rows and the rule around it is the six bans that cannot be phrased as a row.
+const CALLERS: &[(&str, &str)] = &[
+    (
+        "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
+        "SimulatorScreenLayout.clampedDevicePoint",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
+        "SimulatorScreenLayout.clampedDevicePoint",
+    ),
+    (
+        "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
+        "AndroidScreenLayout.clampedDevicePoint",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
+        "AndroidScreenLayout.clampedDevicePoint",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidStageView.swift",
+        "DevicePanelChrome.veil",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorStageView.swift",
+        "DevicePanelChrome.veil",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
+        "DevicePanelChrome.notice",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
+        "DevicePanelChrome.notice",
+    ),
+    // The video law used to be `DevicePanelSampleBuffer.dimensions`, asked by a per-panel
+    // `*VideoFormat` file on each side. Both of those and the shared file under them are gone
+    // (2026-08-29): the whole `CoreMedia` contract is `slopdesk-apple-vt`'s now, and what the FOUR
+    // views share is the one face over it. So the law moved a layer up — from "both panels read
+    // their size the same way" to "no panel builds a sample buffer at all", which
+    // `device_frames::one_builder_for_every_coremedia_object` states positively and tree-wide. What
+    // stays here is the half this rule is for: every view that shows a device asks the SHARED
+    // stream, and a fifth panel that hand-rolled its own would fail on the day it landed.
+    (
+        "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
+        "DevicePanelVideoStream(",
+    ),
+    (
+        "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
+        "DevicePanelVideoStream(",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
+        "DevicePanelVideoStream(",
+    ),
+    (
+        "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
+        "DevicePanelVideoStream(",
+    ),
+];
+
 #[must_use]
 pub fn one_device_panel_law(tree: &Tree) -> Report {
-    /// A file that must still ask a shared law for its answer.
-    const CALLERS: &[(&str, &str)] = &[
-        (
-            "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
-            "SimulatorScreenLayout.clampedDevicePoint",
-        ),
-        (
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
-            "SimulatorScreenLayout.clampedDevicePoint",
-        ),
-        (
-            "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
-            "AndroidScreenLayout.clampedDevicePoint",
-        ),
-        (
-            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
-            "AndroidScreenLayout.clampedDevicePoint",
-        ),
-        (
-            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidStageView.swift",
-            "DevicePanelChrome.veil",
-        ),
-        (
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorStageView.swift",
-            "DevicePanelChrome.veil",
-        ),
-        (
-            "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidDeviceList.swift",
-            "DevicePanelChrome.notice",
-        ),
-        (
-            "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
-            "DevicePanelChrome.notice",
-        ),
-        (
-            "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift",
-            "DevicePanelSampleBuffer.dimensions",
-        ),
-        (
-            "Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift",
-            "DevicePanelSampleBuffer.dimensions",
-        ),
-    ];
-
     let mut report = Report::new();
     for (caller, law) in CALLERS {
         Claim::Names {
@@ -130,7 +150,12 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
         Claim::NoneUnder {
             roots: PANEL_ROOTS,
             extensions: SWIFT,
-            pattern: r"bounds.width / contentSize.width|CMBlockBufferCreateWithMemoryBlock|2\.0\.squareRoot",
+            // `CMBlockBufferCreateWithMemoryBlock` was a third alternative here, exempt under
+            // `Shared/`. It left with the file that earned the exemption:
+            // `device_frames::one_builder_for_every_coremedia_object` bans it across every Swift
+            // tree with NO exemption at all, so keeping the weaker spelling would leave one
+            // directory where the stronger ban reads as permitted.
+            pattern: r"bounds.width / contentSize.width|2\.0\.squareRoot",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -380,7 +405,10 @@ mod tests {
     use crate::tests::Fixture;
 
     fn panels(fixture: &Fixture) -> &Fixture {
-        for (path, law) in [
+        // TWO passes, and the second APPENDS: the four screen views each owe two laws now — the
+        // clamp and the shared video stream — so a single write pass would leave each of them
+        // holding whichever one the table listed last.
+        let laws = [
             (
                 "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
                 "SimulatorScreenLayout.clampedDevicePoint",
@@ -414,15 +442,27 @@ mod tests {
                 "DevicePanelChrome.notice",
             ),
             (
-                "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift",
-                "DevicePanelSampleBuffer.dimensions",
+                "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
+                "DevicePanelVideoStream(",
             ),
             (
-                "Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift",
-                "DevicePanelSampleBuffer.dimensions",
+                "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
+                "DevicePanelVideoStream(",
             ),
-        ] {
-            fixture.write(path, &format!("{law}(point, in: fitted)\n"));
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
+                "DevicePanelVideoStream(",
+            ),
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
+                "DevicePanelVideoStream(",
+            ),
+        ];
+        for (path, _) in laws {
+            fixture.write(path, "kept so the ban has a haystack\n");
+        }
+        for (path, law) in laws {
+            fixture.append(path, &format!("{law}(point, in: fitted)\n"));
         }
         // Past the vacuity floor, which the ten above do not reach on their own.
         for index in 0..12 {
@@ -445,10 +485,21 @@ mod tests {
         panels(&fixture);
         assert!(super::one_device_panel_law(&fixture.tree()).is_clean());
 
-        // The live bug this was written for: a hand-rolled clamp, one point past the end.
-        fixture.write(
+        // The live bug this was written for: a hand-rolled clamp, one point past the end. Both laws
+        // are still spelled, so the ONE thing failing is the respelling.
+        fixture.append(
             "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
-            "SimulatorScreenLayout.clampedDevicePoint(p)\nlet x = max(point.x - fitted.minX, 0)\n",
+            "let x = max(point.x - fitted.minX, 0)\n",
+        );
+        assert!(!super::one_device_panel_law(&fixture.tree()).is_clean());
+
+        // And the video law, dropped on its own: a view that builds its own stream is the second
+        // implementation this table exists to name, on the day it lands rather than the day it
+        // diverges.
+        panels(&fixture);
+        fixture.write(
+            "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
+            "AndroidScreenLayout.clampedDevicePoint(p)\n",
         );
         assert!(!super::one_device_panel_law(&fixture.tree()).is_clean());
 

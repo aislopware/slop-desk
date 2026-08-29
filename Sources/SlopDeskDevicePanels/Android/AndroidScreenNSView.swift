@@ -41,8 +41,9 @@
 //
 // Hang-safety: this file builds a display layer, which spins up a decompression session on first
 // enqueue. Nothing here may be constructed in a unit test — the geometry lives in
-// ``AndroidScreenLayout``, the gesture machine in ``AndroidScrollGesture``, the sample construction in
-// ``AndroidVideoFormat`` and the byte layouts in ``AndroidControlMessage``, all pure.
+// ``AndroidScreenLayout``, the gesture machine in ``AndroidScrollGesture``, the sample construction
+// behind ``DevicePanelVideoStream`` and the byte layouts in ``AndroidControlMessage``, all testable
+// without it — the stream because it is a Rust handle and needs no window server.
 
 #if canImport(AppKit)
 import AppKit
@@ -128,12 +129,10 @@ package final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
 
     // MARK: Frames
 
-    package func apply(parameterSets: [Data], codec: AndroidVideoCodec) {
-        guard let description = AndroidVideoFormat.formatDescription(
-            parameterSets: parameterSets, codec: codec,
-        ) else { return }
-        formatDescription = description
-        contentSize = AndroidVideoFormat.dimensions(of: description)
+    package func apply(configuration: Data, codec: AndroidVideoCodec) {
+        guard let stream, stream.configure(annexB: configuration, hevc: codec == .h265),
+              let size = stream.contentSize else { return }
+        contentSize = size
         // A rotation arrives as new parameter sets describing the swapped axes, and the frames encoded
         // against the OLD ones are still in the renderer's queue. Flushing here is what keeps the
         // first moments after a turn from decoding a portrait frame into a landscape description.
@@ -142,16 +141,14 @@ package final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
     }
 
     package func enqueue(accessUnit: Data, isKeyframe: Bool) {
-        guard let formatDescription else { return }
+        guard let stream else { return }
         // A failed decode leaves the renderer in `.failed` forever; flushing and waiting for the next
         // keyframe is the documented recovery, and `RESET_VIDEO` asks the device for one.
         if renderer.status == .failed {
             renderer.flush()
             send?(AndroidControlMessage.simple(.resetVideo))
         }
-        guard let sample = AndroidVideoFormat.sampleBuffer(
-            accessUnit: accessUnit, formatDescription: formatDescription, isKeyframe: isKeyframe,
-        ) else { return }
+        guard let sample = stream.sample(accessUnit, isKeyframe: isKeyframe) else { return }
         renderer.enqueue(sample)
     }
 
@@ -159,7 +156,10 @@ package final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
     /// device's first frames decode against the previous device's parameter sets.
     package func reset() {
         renderer.flush(removingDisplayedImage: true) {}
-        formatDescription = nil
+        // A NEW stream rather than an unconfigure door: forgetting a format description is exactly
+        // what dropping the handle does, and a door whose only job was to put one back in the state
+        // `new` already produces would be a second way to spell the same thing.
+        stream = DevicePanelVideoStream()
         contentSize = .zero
         needsLayout = true
     }
@@ -169,7 +169,8 @@ package final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
     /// the two on one layer is the documented way to get an inconsistent status.
     private var renderer: AVSampleBufferVideoRenderer { displayLayer.sampleBufferRenderer }
 
-    private var formatDescription: CMVideoFormatDescription?
+    /// Every CoreMedia object this view shows, and the only place one is built.
+    private var stream = DevicePanelVideoStream()
 
     // MARK: Pointer
 

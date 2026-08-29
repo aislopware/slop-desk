@@ -25,7 +25,6 @@
 
 import CSlopDeskFFI
 import Foundation
-import SlopDeskArena
 
 /// One decoded downstream message. `unknown` is a first-class case on purpose: a newer server that
 /// adds a type must degrade to "ignore that message" rather than to a dropped connection.
@@ -69,68 +68,12 @@ package enum SimulatorWireProtocol {
         }
     }
 
-    // MARK: avcC
-
-    /// The parameter sets and NAL length size carried by an avcC record — everything
-    /// `CMVideoFormatDescriptionCreateFromH264ParameterSets` needs, and nothing else.
-    package struct AVCConfiguration: Equatable {
-        package var parameterSets: [Data]
-        /// 1, 2 or 4. Every observed stream uses 4; the field is parsed rather than assumed because
-        /// a wrong guess here decodes as garbage instead of failing loudly.
-        package var nalUnitHeaderLength: Int
-        /// Profile / compatibility / level, kept only so a mismatch is diagnosable from a log.
-        package var profile: UInt8
-        package var levelIndication: UInt8
-    }
-
-    /// Parse an avcC record. Returns `nil` on any truncation, an unknown configuration version, or a
-    /// record carrying no SPS — each of which would otherwise become a format description that
-    /// decodes nothing, which is far harder to diagnose than a refusal at the door.
-    ///
-    /// The record arrives ONCE per stream, so the delivery copy here is paid once and buys a single
-    /// cut on this side instead of a reader walking the layout in two languages.
-    package static func parseAVCConfiguration(_ record: Data) -> AVCConfiguration? {
-        var header = SlopDeskAvcHeader()
-        let blob = record.withUnsafeBytes { raw -> [UInt8] in
-            ffiAnswerBytes(capacity: 512) { out, cap in
-                slopdesk_sim_avcc_parse(
-                    raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count,
-                    &header, out, cap,
-                )
-            }
-        }
-        guard header.set_count > 0 else { return nil }
-
-        let sets = parameterSets(blob, count: Int(header.set_count))
-        guard sets.count == Int(header.set_count) else { return nil }
-        return AVCConfiguration(
-            parameterSets: sets,
-            nalUnitHeaderLength: Int(header.nal_unit_header_length),
-            profile: header.profile,
-            levelIndication: header.level_indication,
-        )
-    }
-
-    /// The delivery's own framing: `count` runs of `[UInt32 big-endian length][bytes]`.
-    ///
-    /// A run that would read past the end ends the walk rather than shifting into whatever follows —
-    /// a short delivery means the door and this file disagree about the layout, and the caller reads
-    /// the shortfall as a refusal rather than building a decoder from half a record.
-    private static func parameterSets(_ blob: [UInt8], count: Int) -> [Data] {
-        var sets: [Data] = []
-        sets.reserveCapacity(count)
-        var cursor = blob.startIndex
-        for _ in 0..<count {
-            guard cursor + 4 <= blob.endIndex else { break }
-            let length = Int(
-                UInt32(blob[cursor]) << 24 | UInt32(blob[cursor + 1]) << 16
-                    | UInt32(blob[cursor + 2]) << 8 | UInt32(blob[cursor + 3]),
-            )
-            cursor += 4
-            guard cursor + length <= blob.endIndex else { break }
-            sets.append(Data(blob[cursor..<(cursor + length)]))
-            cursor += length
-        }
-        return sets
-    }
+    // NOTE: the avcC record's parse LEFT (2026-08-29). `AVCConfiguration`, `parseAVCConfiguration`
+    // and the run-length walk that split the door's delivery all existed to feed
+    // `CMVideoFormatDescriptionCreateFromH264ParameterSets`, which is now
+    // `slopdesk_panel_video_configure_avcc`'s to call. The record travels to that door WHOLE, so
+    // neither its parameter sets nor its `nalUnitHeaderLength` becomes a Swift value that could
+    // disagree with the description built from them, and `slopdesk_sim_avcc_parse` — the door this
+    // read through — went with it. `slopdesk_devicepanel::sim_stream` still owns the layout, and
+    // pins it.
 }

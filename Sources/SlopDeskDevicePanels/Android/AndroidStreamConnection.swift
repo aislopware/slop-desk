@@ -25,8 +25,10 @@ package enum AndroidStreamEvent {
     /// screen rotates or the app resizes it — `scrcpy` restarts its encoder rather than signalling a
     /// rotation, so this is the only notice a turn gives.
     case size(width: Int, height: Int)
-    /// Parameter sets, ready for a format description.
-    case parameterSets([Data], codec: AndroidVideoCodec)
+    /// The device's Annex-B config packet, UNPARSED — `slopdesk_panel_video_configure_annexb` walks
+    /// it for parameter sets and builds the description in one call, so the sets never become a
+    /// Swift value that could disagree with the description made from them.
+    case configuration(Data, codec: AndroidVideoCodec)
     /// One access unit, already rewritten from Annex-B into the length-prefixed form CoreMedia wants.
     case accessUnit(Data, isKeyframe: Bool)
     /// The stream ended. `reason` is nil for a clean close.
@@ -117,8 +119,10 @@ package final class AndroidStreamConnection: AndroidStreaming {
             case let .session(width, height):
                 sink(.size(width: width, height: height))
             case let .configuration(payload):
-                let sets = AndroidAnnexB.parameterSets(inConfiguration: payload, codec: codec)
-                if !sets.isEmpty { sink(.parameterSets(sets, codec: codec)) }
+                // Forwarded whole and unexamined. Whether the packet holds usable parameter sets is
+                // the door's answer, one layer on, and asking it twice is what a second walk here
+                // would be.
+                sink(.configuration(payload, codec: codec))
             case let .accessUnit(payload, isKeyframe):
                 guard let rewritten = AndroidAnnexB.avccAccessUnit(from: payload) else { continue }
                 sink(.accessUnit(rewritten, isKeyframe: isKeyframe))

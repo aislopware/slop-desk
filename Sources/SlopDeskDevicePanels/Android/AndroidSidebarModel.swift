@@ -739,9 +739,11 @@ package final class AndroidSidebarModel {
             // The session packet names the geometry BEFORE the decoder can, which is what lets the
             // stage draw a correctly-shaped frame during the beat before the first keyframe.
             observed(streamSize: CGSize(width: width, height: height))
-        case let .parameterSets(sets, codec):
-            noteVideoArrived()
-            frames.deliver(parameterSets: sets, codec: codec)
+        case let .configuration(packet, codec):
+            // Not `noteVideoArrived()`: a config packet is a promise, not a frame, and the loading
+            // state ends when something DECODABLE lands — the arm below. See the simulator model's
+            // matching arm for the whole of the reason.
+            frames.deliver(configuration: packet, codec: codec)
         case let .accessUnit(data, isKeyframe):
             noteVideoArrived()
             frames.deliver(accessUnit: data, isKeyframe: isKeyframe)

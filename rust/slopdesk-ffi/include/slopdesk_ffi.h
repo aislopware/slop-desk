@@ -7104,10 +7104,10 @@ bool slopdesk_android_stream_decodable_codec(const unsigned char *identifier, si
 
 size_t slopdesk_annexb_split(const unsigned char *annexb, size_t len,
                              SlopDeskNalSpan *out, size_t cap);
-// `hevc` picks the reading: bits 1..6 and VPS/SPS/PPS, or the low five and
-// SPS/PPS. A boolean because those are the only two the panel decodes.
-size_t slopdesk_annexb_parameter_sets(const unsigned char *annexb, size_t len, bool hevc,
-                                      SlopDeskNalSpan *out, size_t cap);
+// NOTE: `slopdesk_annexb_parameter_sets` LEFT (2026-08-29). Its one caller walked
+// a config packet for the sets a format description wanted, and both halves of
+// that — the walk AND the framework call — are
+// `slopdesk_panel_video_configure_annexb` now, on one side of the boundary.
 // 0 means REFUSED, not "did not fit": a buffer holding no start code at all is
 // not Annex-B, and passing it through would silently mis-frame a payload that is
 // already length-prefixed. A real rewrite is never empty.
@@ -7446,20 +7446,65 @@ bool slopdesk_panel_scroll_finger(const SlopDeskPanelScroll *handle,
 bool slopdesk_sim_stream_kind(const uint8_t *message, size_t len,
                               uint8_t *kind);
 
-typedef struct {
-  uint32_t set_count;
-  uint8_t nal_unit_header_length;
-  uint8_t profile;
-  uint8_t level_indication;
-} SlopDeskAvcHeader;
+// NOTE: `slopdesk_sim_avcc_parse` and `SlopDeskAvcHeader` LEFT (2026-08-29).
+// The only thing that ever wanted an avcC record's parameter sets was a
+// `CMVideoFormatDescription`, and `slopdesk_panel_video_configure_avcc` below
+// now takes the record whole and builds one — so the sets no longer cross at
+// all, and the layout keeps its single reader in
+// `slopdesk_devicepanel::sim_stream`.
 
-// Parse an avcC record. Answers the bytes NEEDED for the parameter-set
-// delivery — `set_count` blobs, each four big-endian length bytes then that
-// many bytes. 0 is a record that could only build a decoder that decodes
-// nothing, which is far harder to diagnose than a refusal here.
-size_t slopdesk_sim_avcc_parse(const uint8_t *record, size_t len,
-                               SlopDeskAvcHeader *header, uint8_t *out,
-                               size_t cap);
+// ---------------------------------------------------------------------------
+// A DEVICE PANEL'S VIDEO STREAM — `slopdesk_ffi::panel_video` over
+// `slopdesk-apple-vt`.
+//
+// Both panels show a phone by feeding an `AVSampleBufferDisplayLayer`, and
+// everything between the device's bytes and that layer is here: the format
+// description a config packet describes, and the sample buffer each access unit
+// becomes. Swift's whole remaining share is `layer.enqueue(sample)`.
+//
+// The HANDLE exists because the format description outlives the frame — a
+// stream is configured once and then fed thousands of access units, every one
+// of which is wrapped against THAT description.
+typedef struct SlopDeskPanelVideo SlopDeskPanelVideo;
+
+// A stream with no format description yet. Free it exactly once.
+SlopDeskPanelVideo *slopdesk_panel_video_new(void);
+
+void slopdesk_panel_video_free(SlopDeskPanelVideo *handle);
+
+// Configure from the simulator server's avcC record; H.264, and the record's
+// own `nalUnitHeaderLength` field is honoured rather than assumed. `false`
+// leaves the RUNNING description in place — a malformed record mid-stream is a
+// reason to keep showing frames against the one that was working.
+bool slopdesk_panel_video_configure_avcc(SlopDeskPanelVideo *handle,
+                                         const uint8_t *record, size_t len);
+
+// Configure from `scrcpy`'s Annex-B config packet. `hevc` picks BOTH the
+// parameter-set walk and the framework entry point, because the two must agree:
+// an H.264 walk over an HEVC packet finds nothing, and finding nothing is what
+// this refuses.
+bool slopdesk_panel_video_configure_annexb(SlopDeskPanelVideo *handle,
+                                           const uint8_t *config, size_t len,
+                                           bool hevc);
+
+// The stream's encoded pixel size; `false` — outputs untouched — before a
+// config packet. Read off the DESCRIPTION rather than any session header the
+// device advertised: the encoded frame is routinely smaller than the device,
+// and it is the frame the view has to fit.
+bool slopdesk_panel_video_dimensions(SlopDeskPanelVideo *handle,
+                                     int32_t *width_out, int32_t *height_out);
+
+// One AVCC access unit as a CMSampleBufferRef at +1, or NULL when there is
+// nothing to show (no config packet yet, an empty unit, or a framework
+// refusal — a caller drops the frame for all three).
+//
+// ⚠️ THE ANSWER IS RETAINED. The Create rule pointed outwards, the same terms
+// the decoder's pixel buffers cross under: Swift's `takeRetainedValue()` IS the
+// matching release, and `takeUnretainedValue()` would leak one sample buffer
+// per frame.
+void *slopdesk_panel_video_sample(SlopDeskPanelVideo *handle,
+                                  const uint8_t *avcc, size_t len,
+                                  bool is_keyframe);
 
 #define SLOPDESK_SIM_TOUCH_DOWN 0
 #define SLOPDESK_SIM_TOUCH_MOVE 1

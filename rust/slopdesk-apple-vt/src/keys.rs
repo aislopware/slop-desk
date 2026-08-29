@@ -181,7 +181,9 @@ impl StringValue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Attachment {
     /// `kCMSampleAttachmentKey_NotSync` — present and true on a frame that is NOT a keyframe.
-    #[cfg(target_os = "macos")]
+    ///
+    /// On EVERY slice, unlike the `VideoToolbox` key below it: the encoder reads this one on the
+    /// host, and the device panels write it on whatever client is showing a phone.
     NotSync,
     /// `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken` — the token a client must ack.
     #[cfg(target_os = "macos")]
@@ -205,7 +207,6 @@ impl Attachment {
         // SAFETY: framework rule, above.
         unsafe {
             match self {
-                #[cfg(target_os = "macos")]
                 Self::NotSync => objc2_core_media::kCMSampleAttachmentKey_NotSync,
                 #[cfg(target_os = "macos")]
                 Self::RequireLtrAcknowledgementToken => {

@@ -214,20 +214,10 @@ final class AndroidAnnexBTests: XCTestCase {
         XCTAssertNil(AndroidAnnexB.avccAccessUnit(from: Data([0x00, 0x00, 0x00, 0x04, 0x65])))
     }
 
-    /// The codec argument reaches the door as the flag that picks the NAL-type reading — the one
-    /// place a swapped boolean would hand CoreMedia the wrong parameter sets.
-    func testTheCodecPicksTheReading() {
-        var config = fourByte
-        config.append(Data([0x67, 0x64])) // an H.264 SPS
-        config.append(fourByte)
-        config.append(Data([33 << 1, 0x02])) // an H.265 SPS
-
-        XCTAssertEqual(
-            AndroidAnnexB.parameterSets(inConfiguration: config, codec: .h264), [Data([0x67, 0x64])],
-        )
-        XCTAssertEqual(
-            AndroidAnnexB.parameterSets(inConfiguration: config, codec: .h265), [Data([66, 0x02])],
-        )
-    }
+    // NOTE: `testTheCodecPicksTheReading` left with `AndroidAnnexB.parameterSets` (2026-08-29).
+    // The codec flag still picks the NAL-type reading — it just picks the framework entry point in
+    // the same call now, which is why the claim is asserted where both choices are made:
+    // `slopdesk-ffi`'s `panel_video` proves an H.264 packet read as HEVC is REFUSED rather than
+    // silently handed to the wrong builder.
 }
 #endif

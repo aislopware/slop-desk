@@ -691,9 +691,16 @@ package final class SimulatorSidebarModel {
     private func apply(_ message: SimulatorStreamMessage) {
         switch message {
         case let .configuration(record):
-            guard let configuration = SimulatorWireProtocol.parseAVCConfiguration(record) else { return }
-            noteVideoArrived()
-            frames.deliver(configuration: configuration)
+            // Forwarded whole and unexamined. Whether the record describes a decodable stream is the
+            // door's answer, one layer on, and parsing it here to find out would be a second reader
+            // of a layout that already has one.
+            //
+            // And NOT `noteVideoArrived()`, which it used to be. A config packet is a promise, not a
+            // frame: the loading state ends when something DECODABLE lands, which is the arm below.
+            // While this file parsed the record itself, calling it here was a near-enough proxy —
+            // now that the parse is the door's, keeping it would drop the indicator over a malformed
+            // record that will never render.
+            frames.deliver(configuration: record)
         case let .accessUnit(data, isKeyframe):
             // DECODABLE VIDEO ends the loading state; the JPEG seed below does NOT. The seed is a
             // still the server sends while its encoder starts, so treating it as arrival would drop

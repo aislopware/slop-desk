@@ -701,6 +701,11 @@ pub fn registry() -> Vec<Rule> {
             check: device_frames::one_dialect_for_the_simulator_server,
         },
         Rule {
+            name: "one-coremedia-builder",
+            origin: "docs/57-apple-frameworks-in-rust.md",
+            check: device_frames::one_builder_for_every_coremedia_object,
+        },
+        Rule {
             name: "panel-virtual-finger",
             origin: "docs/47-simulator-panel.md",
             check: device_frames::one_virtual_finger_for_both_panels,

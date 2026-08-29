@@ -14,7 +14,7 @@ import XCTest
 final class FakeRenderer: SimulatorFrameRenderer {
     private(set) var calls: [String] = []
 
-    func apply(configuration _: SimulatorWireProtocol.AVCConfiguration) { calls.append("config") }
+    func apply(configuration _: Data) { calls.append("config") }
     func enqueue(accessUnit _: Data, isKeyframe: Bool) {
         calls.append(isKeyframe ? "enqueue(key)" : "enqueue(delta)")
     }
@@ -27,12 +27,11 @@ final class FakeRenderer: SimulatorFrameRenderer {
 final class SimulatorFrameSinkTests: XCTestCase {
     private let configuration = SimulatorFrameSinkTests.record([0x67, 0x64])
 
-    /// An avcC value object — no bytes are parsed here, so any well-formed one will do.
-    private static func record(_ sps: [UInt8]) -> SimulatorWireProtocol.AVCConfiguration {
-        SimulatorWireProtocol.AVCConfiguration(
-            parameterSets: [Data(sps), Data([0x68, 0xEE])], nalUnitHeaderLength: 4,
-            profile: 0x64, levelIndication: 0x33,
-        )
+    /// An avcC record, held whole. Nothing here parses it — this suite is about the ORDER a late
+    /// mount is replayed in, and the record is an opaque payload to every line of it.
+    private static func record(_ sps: [UInt8]) -> Data {
+        Data([0x01, 0x64, 0x00, 0x33, 0xFF, 0xE1, 0x00, UInt8(sps.count)]) + Data(sps)
+            + Data([0x01, 0x00, 0x02, 0x68, 0xEE])
     }
 
     func testAViewMountingLateIsHandedWhatADecoderNeedsToStart() {

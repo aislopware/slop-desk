@@ -36,7 +36,7 @@ import Foundation
 /// What a mounted screen view can do with a frame.
 @MainActor
 package protocol AndroidFrameRenderer: AnyObject {
-    func apply(parameterSets: [Data], codec: AndroidVideoCodec)
+    func apply(configuration: Data, codec: AndroidVideoCodec)
     func enqueue(accessUnit: Data, isKeyframe: Bool)
     func reset()
 }
@@ -47,23 +47,26 @@ package final class AndroidFrameSink {
     /// must not keep a display layer alive.
     private weak var renderer: AndroidFrameRenderer?
 
-    private var parameterSets: [Data] = []
+    /// The last config packet, held whole for the replay. Whether it holds usable parameter sets is
+    /// not asked here — the renderer's door answers that, and a sink that pre-judged it would be a
+    /// second opinion on the same bytes.
+    private var configuration: Data?
     private var codec: AndroidVideoCodec = .h264
     private var keyframe: Data?
 
     /// Called from the view's `makeNSView`. Replays in the order a decoder needs it.
     package func attach(_ renderer: AndroidFrameRenderer) {
         self.renderer = renderer
-        if !parameterSets.isEmpty { renderer.apply(parameterSets: parameterSets, codec: codec) }
+        if let configuration { renderer.apply(configuration: configuration, codec: codec) }
         if let keyframe { renderer.enqueue(accessUnit: keyframe, isKeyframe: true) }
     }
 
-    package func deliver(parameterSets sets: [Data], codec: AndroidVideoCodec) {
-        parameterSets = sets
+    package func deliver(configuration packet: Data, codec: AndroidVideoCodec) {
+        configuration = packet
         self.codec = codec
-        // New parameter sets invalidate the held keyframe — it was encoded against the old ones.
+        // A new config packet invalidates the held keyframe — it was encoded against the old sets.
         keyframe = nil
-        renderer?.apply(parameterSets: sets, codec: codec)
+        renderer?.apply(configuration: packet, codec: codec)
     }
 
     package func deliver(accessUnit: Data, isKeyframe: Bool) {
@@ -82,7 +85,7 @@ package final class AndroidFrameSink {
     /// layer would spend that transition fading out a device with its screen switched off. That trap
     /// cost the simulator panel a debugging round; it is not being rebuilt here.
     package func discard() {
-        parameterSets = []
+        configuration = nil
         keyframe = nil
     }
 }

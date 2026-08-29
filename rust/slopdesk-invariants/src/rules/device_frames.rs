@@ -6,7 +6,7 @@
 //! end drops without a word, an access unit that decodes to green, or a gesture the device reads as
 //! a system swipe.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -88,8 +88,13 @@ pub fn one_reader_for_scrcpy_stream(tree: &Tree) -> Report {
                 "slopdesk_android_stream_append",
                 "slopdesk_android_stream_next",
                 "slopdesk_android_stream_decodable_codec",
+                // `slopdesk_annexb_parameter_sets` was a third door here until 2026-08-29. It left
+                // with its caller: the parameter-set walk and the format-description call it fed
+                // are ONE door now (`slopdesk_panel_video_configure_annexb`), so the config packet
+                // never splits on this side and the walk never crosses. That half is held by
+                // `one_builder_for_every_coremedia_object`; the two below are the ones this file
+                // still reaches for, per access unit.
                 "slopdesk_annexb_split",
-                "slopdesk_annexb_parameter_sets",
                 "slopdesk_annexb_to_avcc",
             ],
             message: "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift no longer asks \
@@ -149,7 +154,12 @@ pub fn one_dialect_for_the_simulator_server(tree: &Tree) -> Report {
         },
         Claim::Mentions {
             path: "Sources/SlopDeskDevicePanels/Simulator/SimulatorWireProtocol.swift",
-            names: &["slopdesk_sim_stream_kind", "slopdesk_sim_avcc_parse"],
+            // `slopdesk_sim_avcc_parse` was the second door here until 2026-08-29, and it left the
+            // way its Swift caller did: the record now travels WHOLE to
+            // `slopdesk_panel_video_configure_avcc`, which parses it and builds the description
+            // without either half becoming a value on this side. The BAN above is untouched by
+            // that — the layout may not come back to Swift whoever ends up reading it.
+            names: &["slopdesk_sim_stream_kind"],
             message: "Sources/SlopDeskDevicePanels/Simulator/SimulatorWireProtocol.swift no longer asks \
                       {entry} — the simulator's downstream dialect is one implementation",
         },
@@ -254,6 +264,106 @@ fn the_control_table_is_not_typed_at_a_call_site() -> Vec<Claim> {
                       end its own parameter is a 400 nobody traces back to the filename",
         },
     ]
+}
+
+/// EVERY `CoreMedia` object this app has is built in one crate
+///
+/// Three Swift files — `AndroidVideoFormat`, `SimulatorVideoFormat` and the
+/// `DevicePanelSampleBuffer` they shared — made the same three framework calls in the same order
+/// that `rust/slopdesk-apple-vt` was already making for the desktop decoder:
+/// `CMVideoFormatDescriptionCreateFrom*ParameterSets`, then a block buffer, then a ready sample.
+/// Two implementations of one framework contract, in two languages, and only one of them under a
+/// leak test. The Swift copy carried its own `unsafeBitCast` on the attachment array, which is
+/// raw-pointer work in the language with no way to state the obligation.
+///
+/// The ban is a TREE rather than a list, and that is the one place this file departs from
+/// [`Claim::NoneOf`]'s reasoning: "which files may build a sample buffer" is not a set anybody
+/// curates — a new panel, a new preview, a new thumbnail path is a new file, and the answer for
+/// every one of them is the same door. So the roots are every Swift tree, the exemption list is
+/// empty, and adding a face costs nothing because a face calls rather than builds.
+///
+/// The `+1` claim is the sharpest one here and the only one no test can see.
+/// `slopdesk_panel_video_sample` hands over a RETAINED buffer — the Create rule, pointed outwards —
+/// so `takeRetainedValue()` IS the release the contract requires. `takeUnretainedValue()` compiles,
+/// renders correctly, passes every test, and leaks one sample buffer per frame at sixty a second.
+#[must_use]
+pub fn one_builder_for_every_coremedia_object(tree: &Tree) -> Report {
+    const FACE: &str = "Sources/SlopDeskDevicePanels/Shared/DevicePanelVideoStream.swift";
+    let claims = [
+        Claim::NoneUnder {
+            roots: &["Sources", "Apps", "Tests"],
+            extensions: SWIFT,
+            pattern: r"CMVideoFormatDescriptionCreate|CMBlockBufferCreate|CMBlockBufferReplaceDataBytes|CMSampleBufferCreate|CMSampleBufferGetSampleAttachmentsArray",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} builds a CoreMedia object in Swift again — slopdesk-apple-vt makes every \
+                      format description, block buffer and sample buffer this app has, and it is the half \
+                      that is under a leak test (docs/57 §3)",
+        },
+        Claim::Doors {
+            path: FACE,
+            entries: &[
+                "slopdesk_panel_video_new",
+                "slopdesk_panel_video_free",
+                "slopdesk_panel_video_configure_avcc",
+                "slopdesk_panel_video_configure_annexb",
+                "slopdesk_panel_video_dimensions",
+                "slopdesk_panel_video_sample",
+            ],
+            message: "Sources/SlopDeskDevicePanels/Shared/DevicePanelVideoStream.swift no longer calls \
+                      {entry} — the device panels' CoreMedia is one implementation",
+        },
+        Claim::Names {
+            path: FACE,
+            needle: "package final class DevicePanelVideoStream",
+            message: "Sources/SlopDeskDevicePanels/Shared/DevicePanelVideoStream.swift: the stream stopped \
+                      being a class — a copied handle is a double free, and the format description has to \
+                      outlive the frame that reads it",
+        },
+        Claim::Names {
+            path: FACE,
+            needle: "takeRetainedValue",
+            message: "Sources/SlopDeskDevicePanels/Shared/DevicePanelVideoStream.swift stopped taking the \
+                      sample buffer RETAINED — the door hands over at +1, so an unretained take leaks one \
+                      buffer per frame with green tests and correct pixels",
+        },
+        Claim::NoneOf {
+            paths: &[FACE],
+            pattern: r"takeUnretainedValue",
+            view: View::Code,
+            message: "{files} takes the sample buffer unretained — the door hands over at +1 (the Create \
+                      rule, pointed outwards), and this is the leak nobody traces back to a frame",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift",
+            message: "the Android panel's format builder came back — its three framework calls are \
+                      slopdesk-apple-vt's",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift",
+            message: "the simulator panel's format builder came back — its three framework calls are \
+                      slopdesk-apple-vt's",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskDevicePanels/Shared/DevicePanelSampleBuffer.swift",
+            message: "the panels' sample-buffer builder came back — with it comes the `unsafeBitCast` on \
+                      the attachment array that Swift cannot state an obligation for",
+        },
+        Claim::Mentions {
+            path: "rust/slopdesk-apple-vt/src/decompress.rs",
+            names: &[
+                "pub fn from_parameter_sets",
+                "pub fn dimensions",
+                "pub fn from_avcc",
+                "pub fn into_raw",
+            ],
+            message: "rust/slopdesk-apple-vt/src/decompress.rs lost '{entry}' — the desktop decoder and \
+                      both device panels build their CoreMedia here or they build it twice",
+        },
+    ];
+    check_all(tree, &claims)
 }
 
 /// ONE virtual finger, planted by both panels
@@ -373,7 +483,7 @@ mod tests {
         fixture
             .write(
                 "Sources/SlopDeskDevicePanels/Simulator/SimulatorWireProtocol.swift",
-                "slopdesk_sim_stream_kind\nslopdesk_sim_avcc_parse\nkept so the ban has a haystack\n",
+                "slopdesk_sim_stream_kind\nkept so the ban has a haystack\n",
             )
             .write(
                 "Sources/SlopDeskDevicePanels/Simulator/SimulatorInputEnvelope.swift",
@@ -490,6 +600,92 @@ mod tests {
         assert!(!super::one_dialect_for_the_simulator_server(&fixture.tree()).is_clean());
     }
 
+    /// The one face over the panels' `CoreMedia`, and the crate behind it.
+    const VIDEO_FACE: &str = "Sources/SlopDeskDevicePanels/Shared/DevicePanelVideoStream.swift";
+
+    fn write_one_builder_for_every_coremedia_object(fixture: &Fixture) {
+        fixture
+            .write(
+                VIDEO_FACE,
+                "slopdesk_panel_video_new()\nslopdesk_panel_video_free()\\
+                 nslopdesk_panel_video_configure_avcc()\nslopdesk_panel_video_configure_annexb()\\
+                 nslopdesk_panel_video_dimensions()\nslopdesk_panel_video_sample()\npackage final class \
+                 DevicePanelVideoStream\ntakeRetainedValue\nkept so the ban has a haystack\n",
+            )
+            .write(
+                "rust/slopdesk-apple-vt/src/decompress.rs",
+                "pub fn from_parameter_sets\npub fn dimensions\npub fn from_avcc\npub fn into_raw\nkept so \
+                 the ban has a haystack\n",
+            );
+    }
+
+    #[test]
+    fn one_builder_for_every_coremedia_object_holds_its_face_to_its_doors() {
+        let fixture = Fixture::new("one-builder-for-every-coremedia-object");
+        write_one_builder_for_every_coremedia_object(&fixture);
+        assert!(super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+
+        // The face stopped asking — an implementation grew back where the call used to be.
+        fixture.write(
+            VIDEO_FACE,
+            "package final class DevicePanelVideoStream\ntakeRetainedValue\n",
+        );
+        assert!(!super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+
+        // A format description built in Swift again, in a file nobody would think to list — which
+        // is why the ban walks the tree rather than a set of paths.
+        write_one_builder_for_every_coremedia_object(&fixture);
+        fixture.write(
+            "Sources/SlopDeskSomethingNew/PreviewThumbnail.swift",
+            "CMVideoFormatDescriptionCreateFromH264ParameterSets(allocator, 2, &pointers, &sizes, 4, &out)\n",
+        );
+        assert!(!super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+
+        // And a test tree is a Swift tree: a hand-built fixture sample buffer is the same second
+        // implementation, kept alive by the one place nobody watches for drift.
+        write_one_builder_for_every_coremedia_object(&fixture);
+        fixture.write(
+            "Tests/SlopDeskDevicePanelsTests/FakeSample.swift",
+            "CMSampleBufferCreateReady(allocator, block, format, 1, 0, nil, 1, &size, &out)\n",
+        );
+        assert!(!super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+
+        // The +1 taken as a borrow — correct pixels, green tests, one buffer a frame.
+        write_one_builder_for_every_coremedia_object(&fixture);
+        fixture.append(
+            VIDEO_FACE,
+            "Unmanaged<CMSampleBuffer>.fromOpaque(raw).takeUnretainedValue()\n",
+        );
+        assert!(!super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+
+        // The handle back in a value type, which frees it once per copy.
+        write_one_builder_for_every_coremedia_object(&fixture);
+        fixture.write(
+            VIDEO_FACE,
+            "slopdesk_panel_video_new()\nslopdesk_panel_video_free()\\
+             nslopdesk_panel_video_configure_avcc()\nslopdesk_panel_video_configure_annexb()\\
+             nslopdesk_panel_video_dimensions()\nslopdesk_panel_video_sample()\npackage struct \
+             DevicePanelVideoStream\ntakeRetainedValue\n",
+        );
+        assert!(!super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+
+        // And one of the three deleted builders, back.
+        write_one_builder_for_every_coremedia_object(&fixture);
+        fixture.write(
+            "Sources/SlopDeskDevicePanels/Shared/DevicePanelSampleBuffer.swift",
+            "enum DevicePanelSampleBuffer {}\n",
+        );
+        assert!(!super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+
+        // And the crate that took the contract over, thinned.
+        write_one_builder_for_every_coremedia_object(&fixture);
+        fixture.write(
+            "rust/slopdesk-apple-vt/src/decompress.rs",
+            "pub fn from_parameter_sets\nkept so the ban has a haystack\n",
+        );
+        assert!(!super::one_builder_for_every_coremedia_object(&fixture.tree()).is_clean());
+    }
+
     fn write_one_virtual_finger_for_both_panels(fixture: &Fixture) {
         let doors = "slopdesk_panel_scroll_new\nslopdesk_panel_scroll_free\\
                      nslopdesk_panel_scroll_accept\nslopdesk_panel_scroll_lift\\
@@ -547,8 +743,8 @@ mod tests {
                 "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift",
                 "slopdesk_android_stream_new\nslopdesk_android_stream_free\nslopdesk_android_stream_append\\
                  nslopdesk_android_stream_next\nslopdesk_android_stream_decodable_codec\\
-                 nslopdesk_annexb_split\nslopdesk_annexb_parameter_sets\nslopdesk_annexb_to_avcc\nfinal \
-                 class AndroidStreamParser\nkept so the ban has a haystack\n",
+                 nslopdesk_annexb_split\nslopdesk_annexb_to_avcc\nfinal class AndroidStreamParser\nkept so \
+                 the ban has a haystack\n",
             )
             .write(
                 "rust/slopdesk-video/src/annexb.rs",
