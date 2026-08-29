@@ -27,6 +27,18 @@
 //
 // Hang-safety: this file touches no network and builds no decoder. It is the seam BETWEEN the model
 // and the display layer, which is what lets a test drive frame delivery without either.
+//
+// ## Why the replay is NOT a door, audited 2026-08-29
+//
+// The same verdict ``AndroidFrameSink`` recorded on 2026-08-27, restated here so the two sinks are
+// not each re-opened in turn. `docs/55` §4b's test is not how big the value is, it is whether the far
+// side READS the part that is big. Rust would only HOLD these three payloads — the avcC record, the
+// JPEG seed and the last keyframe — and never look inside one, which is `decode_admission`'s and
+// `present_queue`'s case exactly: the law names which payload to hand back, and the payload stays on
+// the side that owns it. The seed slot changes nothing about that; it is a third thing held, not a
+// third thing read. What is left once the bytes are excluded is a handful of lines of bookkeeping
+// welded to a weak renderer reference and a SwiftUI lifetime, neither of which crosses. A handle here
+// would copy an IDR in and out to be told which one it was.
 
 import Foundation
 

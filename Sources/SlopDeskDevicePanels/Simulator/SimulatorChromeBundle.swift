@@ -17,6 +17,16 @@
 // The old shape validated the body by decoding it (`NSImage(data:) != nil` ⇒ fetch succeeded). That
 // check moves with the decoding: a body whose bytes are not an image now produces a bundle the UI
 // declines to draw, and the panel falls back to the bare screen — the same screen the old nil did.
+//
+// ## Why ``load(udid:host:port:control:)`` is not a door, audited 2026-08-29
+//
+// The two rules it applies — all-or-nothing on the body, best-effort on the buttons — descend
+// already, in ``SimulatorChromeArt``, which is where both renderers read them. What is left in this
+// function is the FETCH: three awaits on a `SimulatorControlling` whose lifetime is the caller's
+// `URLSession` (`docs/55` §1), over references `slopdesk_devicepanel::sim_chrome` handed this side in
+// the first place. A door that answered "which references to ask for" would hand back the paths the
+// chrome decode already delivered — the copy `lib.rs`'s "answers, not identities" rule exists to
+// refuse.
 
 import Foundation
 
