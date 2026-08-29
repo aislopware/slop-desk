@@ -2,15 +2,27 @@
 // and every host-side setting (orientation, status bar, screenshot, file drop, simulated GPS).
 //
 // Behind a protocol so the model that drives it is testable without a server: the real client is the
-// only thing here that touches `URLSession`, and a test supplies its own. That split is the reason
-// this file is three lines of logic and a lot of stated intent — the logic worth testing lives in
-// the decoder and the endpoint table, both of which are already pure.
+// only thing here that touches `URLSession`, and a test supplies its own.
 //
 // `URLSession` rather than an `NWConnection`, unlike the stream: these are three request/response
 // round-trips per poll on a link that is already fast, with no latency-critical write pattern for
 // `TCP_NODELAY` to protect. Reaching for the lower-level API here would be cost with no return.
+//
+// ## What is left in Swift, and why exactly this much
+//
+// The `URLSession` LIFETIME is the reason this file exists at all — `docs/55` §1 picks by lifetime,
+// and a session owned by a Swift model, cancelled with its task, is in-process by necessity. What
+// is NOT a lifetime is everything the file used to spell around it: a verb, a timeout, a cache
+// policy, a content type, the 2xx window, the thumbnail's operating point, and the two JSON bodies
+// it posts. Those were eleven call sites each choosing for itself, and they are now
+// `slopdesk_devicepanel::sim_control` — one table, read through ``SimulatorControlPlan``.
+//
+// So the shape is: the endpoint table says WHERE (`SimulatorEndpoints`), the plan says HOW, and this
+// file does the one thing neither can — hold the session and await the round trip.
 
+import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// What the panel can ask of the host's simulator server. Throwing rather than optional-returning:
 /// the caller renders the failure, and an error that says which step failed is worth more than a
@@ -32,10 +44,12 @@ package protocol SimulatorControlling: Sendable {
     /// rather than a parameter on it because the two have opposite budgets: one is captured once and
     /// kept, the other arrives every couple of seconds for as long as the list is on screen.
     func thumbnail(host: String, port: UInt16, udid: String) async throws -> Data
-    /// Override the status bar, or clear every override when `overrides` is empty.
-    func setStatusBar(
-        host: String, port: UInt16, udid: String, overrides: [String: String],
-    ) async throws
+    /// Apply the demo status bar, or clear every override.
+    ///
+    /// A flag rather than the dictionary this used to take: the panel ships ONE preset — the only
+    /// reason anyone overrides a status bar is a clean capture — and the eight pairs that make it
+    /// are `slopdesk_sim_status_bar_body`'s, so there is nothing left for a caller to compose.
+    func setStatusBar(host: String, port: UInt16, udid: String, demo: Bool) async throws
     /// Hand the device a file: `.app`/`.ipa` installs, image/video lands in Photos.
     func sendFile(
         host: String, port: UInt16, udid: String, name: String, contents: Data,
@@ -51,20 +65,60 @@ package enum SimulatorControlError: Error, Equatable {
     case noEndpoint
     /// The server answered something other than 2xx.
     case status(Int)
-    /// The body was not the envelope this build knows.
+    /// The body was not the envelope this build knows — or, for one unreachable arm, the linked
+    /// library had no plan for an operation this header declares, which is a stale artifact rather
+    /// than anything the server did.
     case malformedResponse
 }
 
+/// Which request is being made. The codes are the crate's own discriminants, in its order, so the
+/// enum is a Swift spelling of `slopdesk_devicepanel::sim_control::Operation` rather than a second
+/// list that has to be kept beside it.
+package enum SimulatorControlOperation: UInt32, CaseIterable, Sendable {
+    case devices = 0
+    case boot = 1
+    case shutdown = 2
+    case chrome = 3
+    case resource = 4
+    case orientation = 5
+    case screenshot = 6
+    case thumbnail = 7
+    case statusBar = 8
+    case files = 9
+    case location = 10
+}
+
+/// Everything about one request that is not its URL.
+///
+/// Read from `slopdesk_sim_control_plan` rather than written at the call site, because these four
+/// fields are where the panel's HTTP dialect actually lives and eleven call sites each spelling
+/// their own was eleven chances to give a poll a cache or an install eight seconds.
+package struct SimulatorControlPlan: Equatable, Sendable {
+    package let method: String
+    /// The `Content-Type` for a request that carries a body, and `nil` for one that does not — most
+    /// of these routes take the UDID from the path and read no body at all.
+    package let contentType: String?
+    package let timeout: TimeInterval
+    /// Whether the request must bypass the URL cache. True for the polls, false for the bezel
+    /// artwork, which is per MODEL and never changes.
+    package let ignoresCache: Bool
+
+    /// `nil` only when the linked library has no case for this operation — impossible for a value of
+    /// ``SimulatorControlOperation``, and a stale `.xcframework` if it ever happens.
+    package init?(_ operation: SimulatorControlOperation, hasPayload: Bool = false) {
+        var blob = DevicePanelBlob { out, cap in
+            slopdesk_sim_control_plan(operation.rawValue, hasPayload, out, cap)
+        }
+        guard !blob.isRefusal else { return nil }
+        ignoresCache = blob.byte() != 0
+        timeout = blob.number()
+        method = blob.text()
+        let type = blob.text()
+        contentType = type.isEmpty ? nil : type
+    }
+}
+
 package struct SimulatorControlClient: SimulatorControlling {
-    /// A short timeout on purpose. These calls sit behind a poll loop that will simply ask again, so
-    /// a request hanging on a wedged server costs a round of freshness rather than a stuck panel —
-    /// and the default 60 seconds would keep a dead endpoint looking alive for a minute.
-    package static let timeout: TimeInterval = 8
-
-    /// Uploads get their own budget: an `.app` bundle is megabytes over the mesh, and the control
-    /// timeout would abort an install that is simply still running.
-    package static let uploadTimeout: TimeInterval = 300
-
     private let session: URLSession
 
     package init(session: URLSession = .shared) {
@@ -72,65 +126,51 @@ package struct SimulatorControlClient: SimulatorControlling {
     }
 
     package func devices(host: String, port: UInt16) async throws -> [SimulatorDevice] {
-        guard let url = SimulatorEndpoints.deviceList(host: host, port: port)
-        else { throw SimulatorControlError.noEndpoint }
-        // `reloadIgnoringLocalCacheData`: the whole point of asking again is to see a boot land, and
-        // a cached device list would show the state the panel already believed.
-        var request = URLRequest(
-            url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: Self.timeout,
+        let data = try await fetch(
+            .devices, SimulatorEndpoints.deviceList(host: host, port: port),
         )
-        request.httpMethod = "GET"
-        let (data, response) = try await session.data(for: request)
-        try Self.check(response)
         guard let devices = SimulatorDevice.decodeList(data)
         else { throw SimulatorControlError.malformedResponse }
         return devices
     }
 
     package func boot(host: String, port: UInt16, udid: String) async throws {
-        try await post(SimulatorEndpoints.boot(host: host, port: port, udid: udid))
+        try await send(.boot, SimulatorEndpoints.boot(host: host, port: port, udid: udid))
     }
 
     package func shutdown(host: String, port: UInt16, udid: String) async throws {
-        try await post(SimulatorEndpoints.shutdown(host: host, port: port, udid: udid))
+        try await send(.shutdown, SimulatorEndpoints.shutdown(host: host, port: port, udid: udid))
     }
 
     package func chrome(host: String, port: UInt16, udid: String) async throws -> SimulatorChrome {
-        let data = try await get(SimulatorEndpoints.definition(host: host, port: port, udid: udid))
+        let data = try await fetch(
+            .chrome, SimulatorEndpoints.definition(host: host, port: port, udid: udid),
+        )
         guard let chrome = SimulatorChrome.decode(data)
         else { throw SimulatorControlError.malformedResponse }
         return chrome
     }
 
     package func resource(host: String, port: UInt16, reference: String) async throws -> Data {
-        // Bezel artwork is per MODEL and never changes, so this one is deliberately left on the
-        // default cache policy — the opposite of the device list, which must not be cached at all.
-        try await get(SimulatorEndpoints.resolve(reference, host: host, port: port), fresh: false)
+        try await fetch(.resource, SimulatorEndpoints.resolve(reference, host: host, port: port))
     }
 
     package func setOrientation(host: String, port: UInt16, udid: String, value: String) async throws {
-        try await post(SimulatorEndpoints.orientation(
+        try await send(.orientation, SimulatorEndpoints.orientation(
             host: host, port: port, udid: udid, value: value,
         ))
     }
 
     package func screenshot(host: String, port: UInt16, udid: String) async throws -> Data {
-        try await get(SimulatorEndpoints.screenshot(
+        try await fetch(.screenshot, SimulatorEndpoints.screenshot(
             host: host, port: port, udid: udid, nonce: Self.captureNonce(),
         ))
     }
 
-    /// The divisor and quality a list card is captured at. Chosen by measuring the server rather than
-    /// by taste — see ``SimulatorEndpoints/screenshot(host:port:udid:nonce:scale:quality:)`` for the
-    /// three points on that curve. One rung finer would triple the bytes for pixels the card's 176pt
-    /// box cannot show.
-    package static let thumbnailScale = 6
-    package static let thumbnailQuality = 0.5
-
     package func thumbnail(host: String, port: UInt16, udid: String) async throws -> Data {
-        try await get(SimulatorEndpoints.screenshot(
+        try await fetch(.thumbnail, SimulatorEndpoints.screenshot(
             host: host, port: port, udid: udid, nonce: Self.captureNonce(),
-            scale: Self.thumbnailScale, quality: Self.thumbnailQuality,
+            scale: Int(slopdesk_sim_thumbnail_scale()), quality: slopdesk_sim_thumbnail_quality(),
         ))
     }
 
@@ -141,107 +181,87 @@ package struct SimulatorControlClient: SimulatorControlling {
         UInt64(Date().timeIntervalSince1970 * 1000)
     }
 
-    package func setStatusBar(
-        host: String, port: UInt16, udid: String, overrides: [String: String],
-    ) async throws {
+    package func setStatusBar(host: String, port: UInt16, udid: String, demo: Bool) async throws {
         let url = SimulatorEndpoints.statusBar(host: host, port: port, udid: udid)
-        guard !overrides.isEmpty else {
-            try await send(Self.statusBarMethod(for: [:]), url)
+        guard demo else {
+            try await send(.statusBar, url)
             return
         }
         try await send(
-            Self.statusBarMethod(for: overrides), url,
-            body: try? JSONSerialization.data(withJSONObject: overrides),
-            contentType: "application/json",
+            .statusBar, url,
+            body: Data(wsAnswerBytes { out, cap in slopdesk_sim_status_bar_body(out, cap) }),
         )
     }
 
     package func sendFile(
         host: String, port: UInt16, udid: String, name: String, contents: Data,
     ) async throws {
-        try await post(
-            SimulatorEndpoints.files(host: host, port: port, udid: udid, name: name),
+        try await send(
+            .files, SimulatorEndpoints.files(host: host, port: port, udid: udid, name: name),
             body: contents,
-            contentType: "application/octet-stream",
-            // Uploading an .app is orders of magnitude more than a control call, and timing it out at
-            // eight seconds would fail every install that is actually working.
-            timeout: Self.uploadTimeout,
         )
     }
 
-    /// One route, two verbs again — and for the same reason the status bar has two: clearing carries
-    /// no body, and the server answers a bodyless POST here with a 400 naming the three shapes it
-    /// accepts. `DELETE` is the documented clear.
     package func setLocation(
         host: String, port: UInt16, udid: String, coordinate: SimulatorCoordinate?,
     ) async throws {
         let url = SimulatorEndpoints.location(host: host, port: port, udid: udid)
         guard let coordinate else {
-            try await send("DELETE", url)
+            try await send(.location, url)
             return
         }
         try await send(
-            "POST", url,
-            body: try? JSONSerialization.data(withJSONObject: coordinate.body),
-            contentType: "application/json",
+            .location, url,
+            body: Data(wsAnswerBytes { out, cap in
+                slopdesk_sim_location_body(coordinate.latitude, coordinate.longitude, out, cap)
+            }),
         )
     }
 
-    private func get(_ url: URL?, fresh: Bool = true) async throws -> Data {
-        guard let url else { throw SimulatorControlError.noEndpoint }
-        let request = URLRequest(
-            url: url,
-            cachePolicy: fresh ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy,
-            timeoutInterval: Self.timeout,
-        )
-        let (data, response) = try await session.data(for: request)
-        try Self.check(response)
-        return data
+    /// One round trip whose BODY is the answer.
+    private func fetch(_ operation: SimulatorControlOperation, _ url: URL?) async throws -> Data {
+        try await round(operation, url, body: nil).0
     }
 
-    private func post(
-        _ url: URL?,
-        body: Data? = nil,
-        contentType: String? = nil,
-        timeout: TimeInterval = Self.timeout,
-    ) async throws {
-        try await send("POST", url, body: body, contentType: contentType, timeout: timeout)
-    }
-
+    /// One round trip whose STATUS is the answer. A body, where there is one, decides the verb: the
+    /// status bar and the location each have a set form and a clear form on the same route.
     private func send(
-        _ method: String,
-        _ url: URL?,
-        body: Data? = nil,
-        contentType: String? = nil,
-        timeout: TimeInterval = Self.timeout,
+        _ operation: SimulatorControlOperation, _ url: URL?, body: Data? = nil,
     ) async throws {
+        _ = try await round(operation, url, body: body)
+    }
+
+    private func round(
+        _ operation: SimulatorControlOperation, _ url: URL?, body: Data?,
+    ) async throws -> (Data, URLResponse) {
         guard let url else { throw SimulatorControlError.noEndpoint }
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = method
-        // Most of these routes take the UDID from the path and read no body at all; the ones that do
-        // say so by passing one. Sending an unwanted body would be ignored at best.
+        guard let plan = SimulatorControlPlan(operation, hasPayload: body != nil)
+        else { throw SimulatorControlError.malformedResponse }
+        var request = URLRequest(
+            url: url,
+            cachePolicy: plan.ignoresCache ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy,
+            timeoutInterval: plan.timeout,
+        )
+        request.httpMethod = plan.method
         if let body {
             request.httpBody = body
-            if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+            if let contentType = plan.contentType {
+                request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            }
         }
-        let (_, response) = try await session.data(for: request)
-        try Self.check(response)
-    }
-
-    /// One route, two verbs. Clearing is a DELETE, not a flag in the body — measured 2026-08-04, the
-    /// server answers an empty or flag-only POST with 400 "set at least one status-bar field", so an
-    /// override-shaped clear does not merely no-op, it fails. Pure so a test pins the rule rather
-    /// than only the one line that spells it.
-    package static func statusBarMethod(for overrides: [String: String]) -> String {
-        overrides.isEmpty ? "DELETE" : "POST"
+        let answer = try await session.data(for: request)
+        try Self.check(answer.1)
+        return answer
     }
 
     /// A non-2xx answer is an error even when the body parses: the server reports a refused boot
     /// that way, and treating it as success would leave the panel claiming a device is starting when
-    /// nothing happened.
+    /// nothing happened. The WINDOW is `slopdesk_sim_control_status_ok`'s — `files` answers 201 for
+    /// an install, so a `== 200` here would fail every upload that worked.
     package static func check(_ response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else { throw SimulatorControlError.malformedResponse }
-        guard (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse
+        else { throw SimulatorControlError.malformedResponse }
+        guard slopdesk_sim_control_status_ok(UInt16(clamping: http.statusCode)) else {
             throw SimulatorControlError.status(http.statusCode)
         }
     }

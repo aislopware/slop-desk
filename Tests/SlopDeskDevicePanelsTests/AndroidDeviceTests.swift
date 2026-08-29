@@ -14,10 +14,6 @@ import XCTest
 @testable import SlopDeskDevicePanels
 
 final class AndroidDeviceTests: XCTestCase {
-    private func listReply(_ object: [String: Any]) -> Data {
-        (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
-    }
-
     private func device(
         key: String = "k", name: String = "Pixel 8", serial: String? = nil,
         state: String = "device", isEmulator: Bool = true, release: String? = "16",
@@ -32,49 +28,45 @@ final class AndroidDeviceTests: XCTestCase {
         )
     }
 
-    // MARK: Decoding
+    // MARK: The crossing
 
-    func testAWellFormedReplyDecodesEveryField() {
-        let data = listReply([
-            "ok": true,
-            "devices": [[
-                "key": "emulator-5554", "name": "Pixel_8_API_36", "serial": "emulator-5554",
-                "avd": "Pixel_8_API_36", "state": "device", "isEmulator": true,
-                "manufacturer": "Google", "model": "sdk_gphone64_arm64", "release": "16",
-                "api": 36, "abi": "arm64-v8a", "width": 1080, "height": 2400, "density": 420,
-                "formFactor": "emulator,nosdcard",
-            ]],
-        ])
-        let devices = try? XCTUnwrap(AndroidDevice.decodeList(data))
-        XCTAssertEqual(devices?.count, 1)
-        XCTAssertEqual(devices?.first?.serial, "emulator-5554")
-        XCTAssertEqual(devices?.first?.apiLevel, 36)
-        XCTAssertEqual(devices?.first?.width, 1080)
-        XCTAssertTrue(devices?.first?.isRunning == true)
-    }
+    // The GRAMMAR is not asserted here any more. Which envelope is refused, which row is dropped,
+    // and what degrades to what are `slopdesk_devicepanel::android_bridge::decode_list`'s, pinned
+    // in that crate's own tests. What is left for this side is the MARSHALLING — that the walk in
+    // `AndroidDevice.decodeList` agrees with the layout the door wrote — which is the one claim
+    // neither language can make alone.
 
-    func testAFailedOrMalformedEnvelopeIsRefused() {
-        XCTAssertNil(AndroidDevice.decodeList(listReply(["ok": false, "error": "no adb"])))
-        XCTAssertNil(AndroidDevice.decodeList(listReply(["ok": true])))
-        XCTAssertNil(AndroidDevice.decodeList(Data("not json".utf8)))
-    }
-
-    func testOneBadEntryCannotBlankThePanel() {
-        // Validate then drop, per device: a host that renames a field still lists the rest.
-        let data = listReply([
-            "ok": true,
-            "devices": [["name": "no key here"], ["key": "good"]],
-        ])
-        XCTAssertEqual(AndroidDevice.decodeList(data)?.map(\.key), ["good"])
-    }
-
-    func testEveryFieldButTheKeyDegrades() {
-        let data = listReply(["ok": true, "devices": [["key": "bare"]]])
-        let bare = try? XCTUnwrap(AndroidDevice.decodeList(data)?.first)
-        XCTAssertEqual(bare?.name, "bare") // falls back to the key rather than to a blank row
-        XCTAssertNil(bare?.serial)
-        XCTAssertFalse(bare?.isRunning == true)
-        XCTAssertNil(bare?.aspectRatio)
+    func testAReplyCrossesWholeAndARefusalIsNotAnEmptySet() {
+        let full = """
+        {"key":"emulator-5554","name":"Pixel_8_API_36","serial":"emulator-5554",
+        "avd":"Pixel_8_API_36","state":"device","isEmulator":true,"manufacturer":"Google",
+        "model":"sdk_gphone64_arm64","release":"16","api":36,"abi":"arm64-v8a","width":1080,
+        "height":2400,"density":420,"formFactor":"emulator,nosdcard"}
+        """
+        let reply = Data(#"{"ok":true,"devices":[\#(full),{"key":"bare"}]}"#.utf8)
+        XCTAssertEqual(
+            AndroidDevice.decodeList(reply),
+            [
+                AndroidDevice(
+                    key: "emulator-5554", name: "Pixel_8_API_36", serial: "emulator-5554",
+                    avdName: "Pixel_8_API_36", state: "device", isEmulator: true,
+                    manufacturer: "Google", model: "sdk_gphone64_arm64", release: "16",
+                    apiLevel: 36, abi: "arm64-v8a", width: 1080, height: 2400, density: 420,
+                    formFactor: "emulator,nosdcard",
+                ),
+                // Every field but the key degrades, and the name falls back to the key rather than
+                // to a blank row. An ABSENT figure arrives absent, not as a zero.
+                AndroidDevice(
+                    key: "bare", name: "bare", serial: nil, avdName: nil, state: "",
+                    isEmulator: false, manufacturer: nil, model: nil, release: nil, apiLevel: nil,
+                    abi: nil, width: nil, height: nil, density: nil, formFactor: nil,
+                ),
+            ],
+        )
+        // A refused envelope is NIL and an empty device set is an empty array, and the panel draws
+        // a different thing for each: the last list it saw, or an empty rail.
+        XCTAssertNil(AndroidDevice.decodeList(Data(#"{"ok":false,"error":"no adb"}"#.utf8)))
+        XCTAssertEqual(AndroidDevice.decodeList(Data(#"{"ok":true,"devices":[]}"#.utf8)), [])
     }
 
     // MARK: State

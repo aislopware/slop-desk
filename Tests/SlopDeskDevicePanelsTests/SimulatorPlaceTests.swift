@@ -6,6 +6,8 @@
 // separator this file does not recognise.
 
 #if os(macOS)
+import CSlopDeskFFI
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskDevicePanels
 
@@ -58,11 +60,16 @@ final class SimulatorPlaceTests: XCTestCase {
 
     // MARK: The wire and the readout
 
+    /// The body is `slopdesk_sim_location_body`'s — the field names, the six decimals, and the fact
+    /// that the rounding is the SAME call the readout beside it makes, so a pin and the figure the
+    /// header echoes cannot disagree. Asserted here as the bytes that cross rather than as a
+    /// dictionary, because a dictionary is what the panel no longer builds.
     func testTheBodyUsesTheServersFieldNamesAndStopsAtSixDecimals() {
-        let body = SimulatorCoordinate(latitude: 37.3348861234, longitude: -122.0089881234).body
-        XCTAssertEqual(body["latitude"], 37.334886)
-        XCTAssertEqual(body["longitude"], -122.008988)
-        XCTAssertEqual(Set(body.keys), ["latitude", "longitude"])
+        // swiftlint:disable:next optional_data_string_conversion
+        let body = String(decoding: wsAnswerBytes { out, cap in
+            slopdesk_sim_location_body(37.3348861234, -122.0089881234, out, cap)
+        }, as: UTF8.self)
+        XCTAssertEqual(body, #"{"latitude":37.334886,"longitude":-122.008988}"#)
     }
 
     func testTheReadoutIsFixedWidthSoTheHeaderDoesNotReflowOnEveryPin() {

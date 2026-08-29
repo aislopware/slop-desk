@@ -10,10 +10,15 @@
 // envelope per ~50 ms rather than sending a message per line, so the socket's message rate is
 // bounded whatever the device is doing.
 
+import CSlopDeskFFI
 import Foundation
 
-/// What arrives on the log socket. Two shapes and a catch-all, decoded the same validate-then-drop
-/// way as every other untrusted payload here.
+/// What arrives on the log socket. Two shapes and a catch-all.
+///
+/// The CASES stay here, because they are what the connection's `switch` reads. The GRAMMAR is
+/// `slopdesk_devicepanel::sim_log`, reached through the door below: an untrusted payload parsed on
+/// this side was the last `JSONSerialization` call in the simulator's half of the panel, and a
+/// decoder for a wire this side does not control belongs where the rest of them already are.
 package enum SimulatorLogMessage: Equatable {
     /// The server has the `log stream` child up. Worth its own case: it is the only signal that
     /// separates "connected but the device is quiet" from "connected and nothing works".
@@ -22,15 +27,20 @@ package enum SimulatorLogMessage: Equatable {
     case unknown
 
     package static func decode(_ text: String) -> Self {
-        guard let data = text.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = root["type"] as? String
-        else { return .unknown }
-        switch type {
-        case "log_started": return .started
-        case "log": return .lines(root["lines"] as? [String] ?? [])
-        default: return .unknown
+        var blob = DevicePanelBlob { out, cap in
+            devicePanelLend(text) { bytes, count in
+                slopdesk_sim_log_message(bytes, count, out, cap)
+            }
         }
+        // A refusal is a `type` this build has no case for — or a payload that is not the envelope
+        // at all. It costs the panel that MESSAGE and never the socket: a newer server that adds a
+        // shape must not read as a console that connected and then died.
+        guard !blob.isRefusal else { return .unknown }
+        guard blob.byte() == UInt8(SLOPDESK_SIM_LOG_LINES) else { return .started }
+        // The count rides inside the blob because an EMPTY batch is a real answer — the server
+        // sends one when a filter matches nothing — and it must not read as the refusal.
+        let count = blob.count32()
+        return .lines(blob.texts(count))
     }
 }
 

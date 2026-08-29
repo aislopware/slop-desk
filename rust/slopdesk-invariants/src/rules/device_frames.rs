@@ -118,12 +118,21 @@ pub fn one_reader_for_scrcpy_stream(tree: &Tree) -> Report {
 
 /// The simulator server's dialect is spoken ONCE, and not in Swift
 ///
-/// Three faces, one crate. `baguette serve` defines this wire and this side speaks it, so there are
+/// Five faces, one crate. `baguette serve` defines this wire and this side speaks it, so there are
 /// no golden vectors to pin and no version byte anyone here controls — which is exactly why a
-/// second speller is undetectable until a device stops responding. Each of the three had its own
+/// second speller is undetectable until a device stops responding. Each of the five had its own
 /// way to fail quietly: an avcC record walked by hand builds a format description that decodes
-/// nothing, a hand-built JSON object drops a gesture the server ignores without an error, and a
-/// route assembled from `URLComponents` sends a request to an endpoint nobody asked for.
+/// nothing, a hand-built JSON object drops a gesture the server ignores without an error, a route
+/// assembled from `URLComponents` sends a request to an endpoint nobody asked for, a verb or a
+/// timeout typed at a call site gives a poll a cache or an install eight seconds, and a log
+/// envelope parsed here reads a `type` this build has no case for as a dead socket.
+///
+/// The CONTROL bans are about a table rather than a grammar, and that is the point: eleven
+/// `URLSession` call sites each choosing their own verb, budget, cache policy and content type were
+/// eleven chances to get one wrong in a way only a live server reports. `slopdesk_sim_control_plan`
+/// answers all four at once, and the two request BODIES the panel posts — the status-bar preset the
+/// server rejects whole on one bad field, and the rounded coordinate that must agree with the
+/// readout beside it — come from the same crate rather than from a dictionary literal.
 ///
 /// The ROUTE bans are the sharpest of the three. A query value assembled here escaped `&` only
 /// because Foundation did it silently; the Rust set spells the four sub-delimiters out, and a
@@ -180,14 +189,71 @@ pub fn one_dialect_for_the_simulator_server(tree: &Tree) -> Report {
             message: "Sources/SlopDeskDevicePanels/Simulator/SimulatorEndpoints.swift no longer asks \
                       {entry} — every route is one table lookup a caller cannot mis-spell",
         },
+    ];
+    let mut claims = Vec::from(claims);
+    claims.extend(the_control_table_is_not_typed_at_a_call_site());
+    check_all(tree, &claims)
+}
+
+/// The HOW half of the dialect: the request table, the two bodies, and the console envelope.
+///
+/// Split out because the rule outgrew one function, not because it is a different claim — a table
+/// read at eleven call sites and a batch parsed on the near side fail the same way, quietly and
+/// only against a live server.
+fn the_control_table_is_not_typed_at_a_call_site() -> Vec<Claim> {
+    vec![
+        Claim::NoneOf {
+            paths: &["Sources/SlopDeskDevicePanels/Simulator/SimulatorControlClient.swift"],
+            pattern: r#"JSONSerialization|"9:41"|"POST"|"DELETE"|200\.\.<|TimeInterval = [0-9]|"application/json"|"latitude""#,
+            view: View::Code,
+            message: "{files} types the panel's HTTP dialect at a call site again — the verb, the budget, \
+                      the cache policy, the content type, the 2xx window and both request bodies are \
+                      slopdesk_devicepanel::sim_control's, and a live server is the only thing that reports \
+                      one of them wrong",
+        },
+        Claim::Mentions {
+            path: "Sources/SlopDeskDevicePanels/Simulator/SimulatorControlClient.swift",
+            names: &[
+                "slopdesk_sim_control_plan",
+                "slopdesk_sim_control_status_ok",
+                "slopdesk_sim_status_bar_body",
+                "slopdesk_sim_location_body",
+                "slopdesk_sim_thumbnail_scale",
+                "slopdesk_sim_thumbnail_quality",
+            ],
+            message: "Sources/SlopDeskDevicePanels/Simulator/SimulatorControlClient.swift no longer asks \
+                      {entry} — what is left in Swift is the URLSession lifetime and nothing that decides",
+        },
+        Claim::NoneOf {
+            paths: &["Sources/SlopDeskDevicePanels/Simulator/SimulatorLogMessage.swift"],
+            pattern: r#"JSONSerialization|"log_started"|\[String: Any\]"#,
+            view: View::Code,
+            message: "{files} parses the console envelope in Swift again — slopdesk_devicepanel::sim_log \
+                      owns it, so a `type` a newer server adds costs that MESSAGE and not the socket",
+        },
+        Claim::Mentions {
+            path: "Sources/SlopDeskDevicePanels/Simulator/SimulatorLogMessage.swift",
+            names: &["slopdesk_sim_log_message"],
+            message: "Sources/SlopDeskDevicePanels/Simulator/SimulatorLogMessage.swift no longer asks \
+                      {entry} — the batch envelope has one decoder",
+        },
+        Claim::Mentions {
+            path: "rust/slopdesk-devicepanel/src/sim_control.rs",
+            names: &[
+                "pub const fn plan",
+                "pub fn status_bar_body",
+                "pub fn location_body",
+            ],
+            message: "rust/slopdesk-devicepanel/src/sim_control.rs lost '{entry}' — the request table is \
+                      one implementation or it is none",
+        },
         Claim::Mentions {
             path: "rust/slopdesk-devicepanel/src/sim_routes.rs",
             names: &["const QUERY_VALUE", ".add(b'&')", ".add(b'=')"],
             message: "rust/slopdesk-devicepanel/src/sim_routes.rs lost '{entry}' — a query value that can \
                       end its own parameter is a 400 nobody traces back to the filename",
         },
-    ];
-    check_all(tree, &claims)
+    ]
 }
 
 /// ONE virtual finger, planted by both panels
@@ -321,6 +387,21 @@ mod tests {
                 "slopdesk_sim_route\nSlopDeskSimRoute\nkept so the ban has a haystack\n",
             )
             .write(
+                "Sources/SlopDeskDevicePanels/Simulator/SimulatorControlClient.swift",
+                "slopdesk_sim_control_plan\nslopdesk_sim_control_status_ok\nslopdesk_sim_status_bar_body\\
+                 nslopdesk_sim_location_body\nslopdesk_sim_thumbnail_scale\\
+                 nslopdesk_sim_thumbnail_quality\nkept so the ban has a haystack\n",
+            )
+            .write(
+                "Sources/SlopDeskDevicePanels/Simulator/SimulatorLogMessage.swift",
+                "slopdesk_sim_log_message\nkept so the ban has a haystack\n",
+            )
+            .write(
+                "rust/slopdesk-devicepanel/src/sim_control.rs",
+                "pub const fn plan\npub fn status_bar_body\npub fn location_body\nkept so the ban has a \
+                 haystack\n",
+            )
+            .write(
                 "rust/slopdesk-devicepanel/src/sim_routes.rs",
                 "const QUERY_VALUE\n.add(b'&')\n.add(b'=')\nkept so the ban has a haystack\n",
             );
@@ -366,6 +447,45 @@ mod tests {
         fixture.append(
             "Sources/SlopDeskDevicePanels/Simulator/SimulatorEndpoints.swift",
             "URLQueryItem\n",
+        );
+        assert!(!super::one_dialect_for_the_simulator_server(&fixture.tree()).is_clean());
+
+        // A verb typed back at the call site — the drift the plan door exists to make impossible.
+        write_one_dialect_for_the_simulator_server(&fixture);
+        fixture.append(
+            "Sources/SlopDeskDevicePanels/Simulator/SimulatorControlClient.swift",
+            "request.httpMethod = \"DELETE\"\n",
+        );
+        assert!(!super::one_dialect_for_the_simulator_server(&fixture.tree()).is_clean());
+
+        // And the status-bar preset, back as a dictionary literal the server rejects whole.
+        write_one_dialect_for_the_simulator_server(&fixture);
+        fixture.append(
+            "Sources/SlopDeskDevicePanels/Simulator/SimulatorControlClient.swift",
+            "let demo = [\"time\": \"9:41\"]\n",
+        );
+        assert!(!super::one_dialect_for_the_simulator_server(&fixture.tree()).is_clean());
+
+        // The console envelope, parsed here again.
+        write_one_dialect_for_the_simulator_server(&fixture);
+        fixture.append(
+            "Sources/SlopDeskDevicePanels/Simulator/SimulatorLogMessage.swift",
+            "JSONSerialization\n",
+        );
+        assert!(!super::one_dialect_for_the_simulator_server(&fixture.tree()).is_clean());
+
+        // And each of the two new faces, stopping asking.
+        write_one_dialect_for_the_simulator_server(&fixture);
+        fixture.write(
+            "Sources/SlopDeskDevicePanels/Simulator/SimulatorLogMessage.swift",
+            "kept so the ban has a haystack\n",
+        );
+        assert!(!super::one_dialect_for_the_simulator_server(&fixture.tree()).is_clean());
+
+        write_one_dialect_for_the_simulator_server(&fixture);
+        fixture.write(
+            "rust/slopdesk-devicepanel/src/sim_control.rs",
+            "pub const fn plan\nkept so the ban has a haystack\n",
         );
         assert!(!super::one_dialect_for_the_simulator_server(&fixture.tree()).is_clean());
     }

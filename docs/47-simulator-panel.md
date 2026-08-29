@@ -123,8 +123,10 @@ upstream has never been a reason to put a plate under the pointer.
 
 `files` is deliberately not classified client-side: the server installs an `.app`/`.ipa` and drops an
 image or video into Photos, and guessing that taxonomy locally would reject the one build someone
-wanted. The upload uses its own long timeout (`SimulatorControlClient.uploadTimeout`, 300 s) — an
-`.ipa` install is not a 15-second request.
+wanted. The upload uses its own long timeout (`slopdesk_devicepanel::sim_control`'s
+`UPLOAD_TIMEOUT_SECONDS`, 300 s, read through `slopdesk_sim_control_plan`) — an `.ipa` install is not
+a 15-second request, and the 8-second control budget beside it would abort every install that is
+actually working.
 
 ### The log socket
 
@@ -753,8 +755,9 @@ one control in the panel with no response to the pointer at all — share it.
   `{"clear": true}`: an empty or flag-only POST answers `400 set at least one status-bar field`, so a
   clear spelled as an override fails rather than no-ops. And `batteryState` is
   `charging | charged | discharging` — "unplugged" reads like the right word and 400s the entire
-  preset. Both measured 2026-08-04 against a live server; `SimulatorControlClient.statusBarMethod`
-  and the demo-preset test pin them.
+  preset. Both measured 2026-08-04 against a live server, and both are
+  `slopdesk_devicepanel::sim_control`'s now — `plan(StatusBar, has_payload)` picks the verb and
+  `status_bar_body()` is the eight pairs, each pinned by that crate's tests.
 - **A device row's identity has to carry its SECTION, not just its UDID.** The device list was first
   drawn as a heading plus a nested `ForEach` per group. Two sibling `ForEach`es inside one
   `LazyVStack` whose elements share an id let the stack reuse the row it already built: measured
@@ -826,9 +829,8 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |
 | `Simulator/SimulatorDeviceKind.swift` | face over `slopdesk_simulator_device_kind(s)`: the family, its glyph name and its heading |
 | `Simulator/SimulatorDeviceSections.swift` | face over `slopdesk_simulator_sections`: running first, families in rank order, the runtime a group lifts, the row identity. ONE fold with the Android panel's — see `Shared/DeviceSectionReading.swift` for the delivery both read |
-| `Simulator/SimulatorOrientation.swift` | the quarter-turn cycle + wire spelling + demo status bar, pure |
-| `Simulator/SimulatorControlClient.swift` | every HTTP route (`URLSession`) |
-| `Simulator/SimulatorChromeAssets.swift` | fetches the body + button art into `NSImage`s |
+| `Simulator/SimulatorOrientation.swift` | face over `slopdesk_simulator_orientation_*`: the quarter-turn cycle + wire spelling |
+| `Simulator/SimulatorControlClient.swift` | the `URLSession` lifetime and NOTHING that decides — the verb, the budget, the cache policy, the content type, the 2xx window and both request bodies are `slopdesk_devicepanel::sim_control`, read through `slopdesk_sim_control_plan` |
 | `Simulator/SimulatorScrollGesture.swift` | scroll → ONE continuous `touch1` contact, with re-grip; pure |
 | `Simulator/SimulatorFrameSink.swift` | the video path with SwiftUI taken out of it: direct delivery + cold-start replay, `reset` vs `discard` |
 | `Simulator/SimulatorScreenView.swift` | `AVSampleBufferDisplayLayer` + mouse/scroll/pinch/edge/key mapping |
@@ -836,9 +838,9 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorStageView.swift` | the streaming surface: top bar + device + drawer + drop target |
 | `Simulator/SimulatorDeviceHeader.swift` | the panel's one top bar: back, name, measured facts, and the verbs |
 | `Simulator/SimulatorConsoleView.swift` | the log drawer: level menu, filter, follow latch, rows |
-| `Simulator/SimulatorLogLine.swift` | pure: compact-line parse, log envelope decode, the level set |
+| `Simulator/SimulatorLogMessage.swift` | face over `slopdesk_sim_log_message`: the batch envelope; plus the level set, which is a menu and stays |
 | `Simulator/SimulatorLogConnection.swift` | the console's socket (`NWConnection` + websocket) |
-| `Simulator/SimulatorPlace.swift` | pure: coordinate parse / body / readout + the preset shortlist |
+| `Simulator/SimulatorPlace.swift` | face over `slopdesk_devicepanel::sim_place`: coordinate parse / readout + the preset shortlist. The POST BODY is `slopdesk_sim_location_body` — one door, so the rounding cannot disagree with the readout beside it |
 | `Simulator/SimulatorLocationPopover.swift` | the location picker: presets, field, clear |
 | `Simulator/SimulatorDeviceList.swift` | the device list — Running as cards, then families as rows, both in width-driven grids |
 | `Simulator/SimulatorRunningCard.swift` | one running device drawn as its own live screen, polled small |

@@ -19,6 +19,7 @@
 // on an un-booted row are exact. The list is designed around this — an Android row can carry figures
 // where the iOS row could carry only a name.
 
+import CSlopDeskFFI
 import Foundation
 
 package struct AndroidDevice: Equatable, Identifiable {
@@ -53,42 +54,67 @@ package struct AndroidDevice: Equatable, Identifiable {
     // isEmulator)` triple, because they are four reads of the same two fields and asking them
     // separately would cross `adb`'s state word four times per row per redraw.
     //
-    // What is left here is DECODING, which is the whole job of this type: the bridge's JSON in, a
-    // record out. A rule spelled beside a decode is a rule the panel's other half cannot be tested
-    // against, and `isRunning` was already spelled twice inside one file pair before there was a
-    // second renderer.
+    // The DECODE is not here either, any more. `slopdesk_devicepanel::android_bridge::decode_list`
+    // reads the reply line, and this file reads back the row — which puts the bridge's whole
+    // grammar, request and reply, in the one crate that already builds the request. It was the last
+    // `JSONSerialization` call in the Android half, and the last reason the invariant that bans
+    // that call under this directory had to carry an exemption naming this file.
+    //
+    // One behaviour CHANGED with the move, deliberately: an empty string is now an absent field
+    // rather than a present empty one. A host that answered `"serial": ""` used to hand the panel a
+    // serial it would go on to spell into `adb -s ""` — a different command from the one meant.
 
     /// Decode the bridge's `list` reply. `nil` only when the envelope itself is not an object or
     /// reports failure — a malformed DEVICE inside is skipped instead, so one bad entry cannot blank
     /// the panel. Untrusted-input rule: validate then drop.
     package static func decodeList(_ data: Data) -> [Self]? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              root["ok"] as? Bool == true,
-              let entries = root["devices"] as? [[String: Any]]
-        else { return nil }
-        return entries.compactMap(decodeDevice)
+        var blob = DevicePanelBlob { out, cap in
+            devicePanelLend(data) { bytes, count in
+                slopdesk_android_device_list(bytes, count, out, cap)
+            }
+        }
+        // The refusal is the ABSENCE of bytes, because a host with no device attached still answers
+        // and an empty rail is a different picture from the last one the panel saw.
+        guard !blob.isRefusal else { return nil }
+        let count = blob.count32()
+        return (0..<count).map { _ in decodeDevice(&blob) }
     }
 
-    private static func decodeDevice(_ entry: [String: Any]) -> Self? {
-        // The key is the identity, and a row that cannot be selected is worse than an absent one.
-        // Everything else degrades, so a host that adds or renames a field still lists the device.
-        guard let key = entry["key"] as? String, !key.isEmpty else { return nil }
+    /// One row, in the order the door wrote it. Every field has a floor — a name falls back to the
+    /// key, a state to the empty word — so a walk that runs short loses fields rather than shifting
+    /// each one into its neighbour's slot.
+    private static func decodeDevice(_ blob: inout DevicePanelBlob) -> Self {
+        let key = blob.text()
+        let name = blob.text()
+        let serial = blob.text()
+        let avdName = blob.text()
+        let state = blob.text()
+        let isEmulator = blob.byte() != 0
+        let manufacturer = blob.text()
+        let model = blob.text()
+        let release = blob.text()
+        let apiLevel = blob.optionalCount()
+        let abi = blob.text()
+        let width = blob.optionalCount()
+        let height = blob.optionalCount()
+        let density = blob.optionalCount()
+        let formFactor = blob.text()
         return Self(
             key: key,
-            name: entry["name"] as? String ?? key,
-            serial: entry["serial"] as? String,
-            avdName: entry["avd"] as? String,
-            state: entry["state"] as? String ?? "",
-            isEmulator: entry["isEmulator"] as? Bool ?? false,
-            manufacturer: entry["manufacturer"] as? String,
-            model: entry["model"] as? String,
-            release: entry["release"] as? String,
-            apiLevel: entry["api"] as? Int,
-            abi: entry["abi"] as? String,
-            width: entry["width"] as? Int,
-            height: entry["height"] as? Int,
-            density: entry["density"] as? Int,
-            formFactor: entry["formFactor"] as? String,
+            name: name,
+            serial: serial.isEmpty ? nil : serial,
+            avdName: avdName.isEmpty ? nil : avdName,
+            state: state,
+            isEmulator: isEmulator,
+            manufacturer: manufacturer.isEmpty ? nil : manufacturer,
+            model: model.isEmpty ? nil : model,
+            release: release.isEmpty ? nil : release,
+            apiLevel: apiLevel,
+            abi: abi.isEmpty ? nil : abi,
+            width: width,
+            height: height,
+            density: density,
+            formFactor: formFactor.isEmpty ? nil : formFactor,
         )
     }
 }

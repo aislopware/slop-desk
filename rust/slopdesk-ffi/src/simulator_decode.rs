@@ -25,9 +25,16 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_devicepanel::{sim_chrome, sim_devices, sim_place};
+use slopdesk_devicepanel::{sim_chrome, sim_devices, sim_log, sim_place};
 
-use crate::{borrow, deliver, lent, push_text};
+use crate::{borrow, deliver, lent, push_text, saturating_u32};
+
+/// The console's `log_started` message: the child is up, output follows.
+pub const SLOPDESK_SIM_LOG_STARTED: u8 = 0;
+
+/// One batch of console lines. The count rides inside the blob — an EMPTY batch is a real message,
+/// which the server sends between bursts.
+pub const SLOPDESK_SIM_LOG_LINES: u8 = 1;
 
 /// Appends one `f64` as eight big-endian bytes of its bit pattern.
 fn push_number(blob: &mut Vec<u8>, value: f64) {
@@ -155,6 +162,54 @@ pub unsafe extern "C" fn slopdesk_sim_device_list(
     unsafe { deliver(&blob, out, cap) }
 }
 
+/// Decode one text frame off the console socket.
+///
+/// The blob is a `[u8]` kind — [`SLOPDESK_SIM_LOG_STARTED`] or [`SLOPDESK_SIM_LOG_LINES`] — and,
+/// for a batch, a `[u32 BE]` line count followed by that many runs.
+///
+/// Zero back is IGNORE THIS MESSAGE, not a failure: a `type` this build has no case for, or a
+/// payload that is not the envelope. A newer server that adds a message must cost the console that
+/// message and not the socket, so the near side reads `0` as "nothing to do" rather than as an
+/// error to report. It cannot collide with a real answer, because every known message carries at
+/// least its kind byte.
+///
+/// The LINES cross rather than the text frame's offsets, unlike the video envelope beside them:
+/// the near side is going to make one `String` per row either way, and a batch is fifty rows every
+/// fifty milliseconds rather than three megabytes sixty times a second.
+///
+/// # Safety
+/// `text` must be readable for `text_len` bytes for the duration of the call, and `out` writable
+/// for `cap` bytes.
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point reading caller-owned buffers is unsafe by definition"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slopdesk_sim_log_message(
+    text: *const c_uchar,
+    text_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: readable for its stated length by the caller's obligation, borrowed for the call.
+    // Non-UTF-8 reads as empty, which decodes to `Unknown` — the refusal this door already has.
+    let payload = unsafe { lent(text, text_len) };
+    let mut blob = Vec::new();
+    match sim_log::decode(payload) {
+        sim_log::Message::Unknown => return 0,
+        sim_log::Message::Started => blob.push(SLOPDESK_SIM_LOG_STARTED),
+        sim_log::Message::Lines(lines) => {
+            blob.push(SLOPDESK_SIM_LOG_LINES);
+            blob.extend_from_slice(&saturating_u32(lines.len()).to_be_bytes());
+            for line in &lines {
+                push_text(&mut blob, line);
+            }
+        },
+    }
+    // SAFETY: `blob` is a live local that cannot overlap `out`, which the caller keeps writable.
+    unsafe { deliver(&blob, out, cap) }
+}
+
 /// Read a typed coordinate. Answers sixteen bytes — latitude then longitude — or `0`.
 ///
 /// Zero is the refusal, and a refusal is the whole point of the door: a coordinate parsed WRONG
@@ -187,20 +242,6 @@ pub unsafe extern "C" fn slopdesk_sim_coordinate_parse(
     push_number(&mut blob, coordinate.longitude);
     // SAFETY: `blob` is a live local that cannot overlap `out`, which the caller keeps writable.
     unsafe { deliver(&blob, out, cap) }
-}
-
-/// One degree value as the POST body carries it — six decimals, half away from zero.
-///
-/// Six decimals is roughly a tenth of a metre; past that the digits describe nothing a simulator
-/// can act on. A scalar door because the body is a dictionary the near side already builds, and
-/// what crosses is the one part of it that is a decision.
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-#[unsafe(no_mangle)]
-pub extern "C" fn slopdesk_sim_coordinate_round(degrees: f64) -> f64 {
-    sim_place::rounded(degrees)
 }
 
 /// The fixed-width readout for a pinned position, `"37.334886, -122.008988"`.
@@ -264,8 +305,9 @@ mod tests {
     use slopdesk_devicepanel::sim_place;
 
     use super::{
-        slopdesk_sim_chrome, slopdesk_sim_coordinate_parse, slopdesk_sim_coordinate_readout,
-        slopdesk_sim_coordinate_round, slopdesk_sim_device_list, slopdesk_sim_places,
+        SLOPDESK_SIM_LOG_LINES, SLOPDESK_SIM_LOG_STARTED, slopdesk_sim_chrome, slopdesk_sim_coordinate_parse,
+        slopdesk_sim_coordinate_readout, slopdesk_sim_device_list, slopdesk_sim_log_message,
+        slopdesk_sim_places,
     };
     use crate::testing::delivered;
 
@@ -296,6 +338,16 @@ mod tests {
                 bits = bits << 8 | u64::from(self.byte());
             }
             f64::from_bits(bits)
+        }
+
+        /// The WIDER count, for the one delivery here whose rows are a device's own output rather
+        /// than a table's: a busy console batch is not bounded by anything two bytes can name.
+        fn count32(&mut self) -> usize {
+            let mut count = 0_usize;
+            for _ in 0..4 {
+                count = count << 8 | usize::from(self.byte());
+            }
+            count
         }
 
         fn text(&mut self) -> String {
@@ -424,6 +476,48 @@ mod tests {
         assert!(devices("not json").is_empty());
     }
 
+    fn log(text: &str) -> Vec<u8> {
+        delivered(|out, cap| {
+            // SAFETY: both the fixture and the buffer are live for the duration of the call.
+            unsafe { slopdesk_sim_log_message(text.as_ptr(), text.len(), out, cap) }
+        })
+    }
+
+    /// The two envelopes the server sends cross as a kind and, for a batch, its rows.
+    #[test]
+    fn the_console_envelopes_cross_as_a_kind_and_its_rows() {
+        assert_eq!(log(r#"{"type":"log_started"}"#), vec![SLOPDESK_SIM_LOG_STARTED]);
+
+        let blob = log(r#"{"type":"log","lines":["one","two"]}"#);
+        let mut cursor = Cursor::new(&blob);
+        assert_eq!(cursor.byte(), SLOPDESK_SIM_LOG_LINES);
+        assert_eq!(cursor.count32(), 2);
+        assert_eq!(cursor.text(), "one");
+        assert_eq!(cursor.text(), "two");
+        assert_eq!(cursor.at, blob.len(), "the layout must consume the delivery");
+    }
+
+    /// An EMPTY batch is a real message — the server sends one between bursts — so it crosses as a
+    /// kind with a count of zero rather than as the ABI's own zero.
+    #[test]
+    fn an_empty_batch_is_not_the_refusal() {
+        let blob = log(r#"{"type":"log","lines":[]}"#);
+        assert_eq!(blob, vec![SLOPDESK_SIM_LOG_LINES, 0, 0, 0, 0]);
+    }
+
+    /// Zero is IGNORE THIS MESSAGE. A `type` a newer server added must cost the console that
+    /// message and not the socket it arrived on.
+    #[test]
+    fn a_message_this_build_has_no_case_for_answers_zero() {
+        assert!(log(r#"{"type":"log_ended"}"#).is_empty());
+        assert!(log(r#"{"lines":["one"]}"#).is_empty());
+        assert!(log("[]").is_empty());
+        assert!(log("not json").is_empty());
+        // SAFETY: a null input span with a zero length is the documented "no bytes" pair.
+        let written = unsafe { slopdesk_sim_log_message(core::ptr::null(), 0, core::ptr::null_mut(), 0) };
+        assert_eq!(written, 0);
+    }
+
     fn parse(text: &str) -> Option<(f64, f64)> {
         let blob = delivered(|out, cap| {
             // SAFETY: both the fixture and the buffer are live for the duration of the call.
@@ -453,13 +547,9 @@ mod tests {
         assert_eq!(written, 0);
     }
 
-    /// Rounding and the readout are the wrapped crate's, reached through the ABI.
+    /// The readout is the wrapped crate's, reached through the ABI.
     #[test]
-    fn the_body_and_the_readout_are_the_crates() {
-        assert_eq!(
-            slopdesk_sim_coordinate_round(37.334_886_123_4),
-            sim_place::rounded(37.334_886_123_4)
-        );
+    fn the_readout_is_the_crates() {
         let readout = delivered(|out, cap| {
             // SAFETY: the buffer is a live local for the duration of the call.
             unsafe { slopdesk_sim_coordinate_readout(37.334_886_123_4, -122.008_988_123_4, out, cap) }

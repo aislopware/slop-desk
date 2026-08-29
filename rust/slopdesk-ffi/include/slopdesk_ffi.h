@@ -7605,9 +7605,6 @@ size_t slopdesk_sim_device_list(const uint8_t *json, size_t json_len,
 // refusal, which DMS, `inf` and `NaN` all are.
 size_t slopdesk_sim_coordinate_parse(const uint8_t *text, size_t text_len,
                                      uint8_t *out, size_t cap);
-// One degree value as the POST body carries it: six decimals, half away from
-// zero. A door for a rounding rule because the readout and the body must agree.
-double slopdesk_sim_coordinate_round(double degrees);
 // The fixed-width readout for a pinned position, "37.334886, -122.008988".
 // Never empty, so 0 can only mean the caller's buffer was measured wrong.
 size_t slopdesk_sim_coordinate_readout(double latitude, double longitude,
@@ -7615,6 +7612,67 @@ size_t slopdesk_sim_coordinate_readout(double latitude, double longitude,
 // The shortlist of places worth one tap.
 // Layout: [u16 count] × (name, latitude, longitude).
 size_t slopdesk_sim_places(uint8_t *out, size_t cap);
+
+// The console socket's own envelope. The server batches at ~50 ms, so one of
+// these carries a whole burst.
+#define SLOPDESK_SIM_LOG_STARTED 0
+#define SLOPDESK_SIM_LOG_LINES 1
+
+// One text frame off `/simulators/<udid>/logs`. 0 is IGNORE THIS MESSAGE — a
+// `type` this build has no case for, or a payload that is not the envelope —
+// never an error to report: a newer server that adds a message must cost the
+// console that message and not the socket. An EMPTY batch is a real answer, so
+// the count rides inside the blob.
+// Layout: [u8 kind], then for LINES a [u32 BE count] and that many runs.
+size_t slopdesk_sim_log_message(const uint8_t *text, size_t text_len,
+                                uint8_t *out, size_t cap);
+
+// ---------------------------------------------------------------------------
+// How the simulator panel ASKS — `slopdesk_devicepanel::sim_control`.
+//
+// The route table above answers WHERE a request goes; these answer everything
+// else about it. What the panel used to spell at eleven `URLSession` call sites
+// — a verb, a timeout, a cache policy, a content type, and the two JSON bodies
+// it posts — is one table, one success window and two byte answers.
+
+#define SLOPDESK_SIM_CONTROL_DEVICES 0u
+#define SLOPDESK_SIM_CONTROL_BOOT 1u
+#define SLOPDESK_SIM_CONTROL_SHUTDOWN 2u
+#define SLOPDESK_SIM_CONTROL_CHROME 3u
+#define SLOPDESK_SIM_CONTROL_RESOURCE 4u
+#define SLOPDESK_SIM_CONTROL_ORIENTATION 5u
+#define SLOPDESK_SIM_CONTROL_SCREENSHOT 6u
+#define SLOPDESK_SIM_CONTROL_THUMBNAIL 7u
+#define SLOPDESK_SIM_CONTROL_STATUS_BAR 8u
+#define SLOPDESK_SIM_CONTROL_FILES 9u
+#define SLOPDESK_SIM_CONTROL_LOCATION 10u
+
+// Everything about one request that is not its URL. `has_payload` is read by
+// the status bar and the location ONLY — the two routes with a set form and a
+// clear form, where clearing is a DELETE because a body-shaped clear is a
+// measured 400, not a no-op. 0 is an operation code no build wrote, which is a
+// refusal rather than a fall-through to a neighbour's verb.
+// Layout: [u8 ignores_cache][8 bytes BE of the f64 timeout in seconds][method]
+//         [content type], the last EMPTY for a request that carries no body.
+size_t slopdesk_sim_control_plan(uint32_t operation, bool has_payload,
+                                 uint8_t *out, size_t cap);
+// Whether the server's status line means the request succeeded — the whole 2xx
+// class, since `files` answers 201 for an install. A bool, so there is no 0 to
+// mistake for a size.
+bool slopdesk_sim_control_status_ok(uint16_t status);
+// The integer downscale divisor and the JPEG quality a device-list card is
+// captured at. Measured against the live server, not chosen: one rung finer
+// triples the bytes for pixels a 176pt box cannot show.
+int32_t slopdesk_sim_thumbnail_scale(void);
+double slopdesk_sim_thumbnail_quality(void);
+// The status-bar override body — Apple's marketing status bar, eight pairs the
+// server rejects WHOLE on one bad field. Never empty, so 0 can only mean the
+// caller measured its buffer wrong.
+size_t slopdesk_sim_status_bar_body(uint8_t *out, size_t cap);
+// The location body, `{"latitude":…,"longitude":…}`, rounded to six decimals so
+// it cannot disagree with the readout the header echoes. Never empty.
+size_t slopdesk_sim_location_body(double latitude, double longitude,
+                                  uint8_t *out, size_t cap);
 
 // ---------------------------------------------------------------------------
 // What the two device panels SAY — `slopdesk_devicepanel::android` and
@@ -10605,6 +10663,18 @@ size_t slopdesk_android_bridge_console_output(const unsigned char *line, size_t 
 // How many PNG bytes follow this ack. ONE answer for all three refusals — no count, a non-positive
 // one, and one past the 16 MiB ceiling — because the near side does the same thing with each.
 size_t slopdesk_android_bridge_screenshot_bytes(const unsigned char *line, size_t line_len);
+// The device set one `list` ack carries. 0 refuses the ENVELOPE — not an object, not `ok`, or no
+// `devices` array — which is distinct from an empty set, since a host with no device attached still
+// answers, and the panel must show an empty rail rather than the last one it saw. A single row that
+// carries no identity is DROPPED and the rest of the set still lands, because one unparseable
+// emulator must not cost the rail every phone beside it.
+// Layout: [u32 BE count], then per device: key, name, serial, avd (each a run), state (a run),
+//         [u8 is_emulator], manufacturer, model, release, [u8 present][i64 BE api], abi,
+//         [u8 present][i64 BE width], [u8 present][i64 BE height], [u8 present][i64 BE density],
+//         form factor. An absent number writes its eight bytes as zero, so the walk is fixed-width
+//         either way and the flag is the only thing that decides.
+size_t slopdesk_android_device_list(const unsigned char *line, size_t line_len,
+                                    unsigned char *out, size_t cap);
 
 typedef struct SlopDeskAndroidLogLines SlopDeskAndroidLogLines;
 

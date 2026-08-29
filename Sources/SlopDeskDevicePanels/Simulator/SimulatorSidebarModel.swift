@@ -497,9 +497,9 @@ package final class SimulatorSidebarModel {
     /// capture, so this is that preset rather than a form.
     package func toggleStatusBarOverride() async {
         guard case let .ready(host, port) = phase, let udid = selection else { return }
-        let overrides = isStatusBarOverridden ? [:] : SimulatorStatusBar.demo
+        let demo = !isStatusBarOverridden
         do {
-            try await control.setStatusBar(host: host, port: port, udid: udid, overrides: overrides)
+            try await control.setStatusBar(host: host, port: port, udid: udid, demo: demo)
             isStatusBarOverridden.toggle()
             show(notice: isStatusBarOverridden ? "Demo status bar on" : "Status bar restored")
         } catch {

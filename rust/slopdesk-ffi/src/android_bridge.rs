@@ -24,10 +24,22 @@
 use core::ffi::c_uchar;
 
 use slopdesk_devicepanel::android_bridge::{
-    BridgeOp, LogLineSplitter, console_output, reply_failure, request_line, screenshot_bytes,
+    BridgeOp, LogLineSplitter, console_output, decode_list, reply_failure, request_line, screenshot_bytes,
 };
 
 use crate::{borrow, deliver, lent, push_text, saturating_u32};
+
+/// Appends one optional integer as a presence byte and eight big-endian bytes.
+///
+/// `docs/55` §4's rule about an `Option`: a value plus a flag, never a sentinel. An absent API
+/// level and an API level of zero are different states — one is a row the host told us nothing
+/// about, the other would be a platform — and a magic number would make the near side pick which.
+/// The value is written even when absent so the layout has one fixed width per field, which is what
+/// lets the near side's cursor walk it without a table.
+fn push_optional_number(blob: &mut Vec<u8>, value: Option<i64>) {
+    blob.push(u8::from(value.is_some()));
+    blob.extend_from_slice(&value.unwrap_or_default().to_be_bytes());
+}
 
 /// Writes one bridge request line — the JSON object and its terminating newline — into `out`.
 ///
@@ -146,6 +158,64 @@ pub unsafe extern "C" fn slopdesk_android_bridge_screenshot_bytes(
     // SAFETY: the caller's obligation, restated above; `borrow` states its own.
     let line = unsafe { borrow(line, line_len) };
     screenshot_bytes(line).unwrap_or(0)
+}
+
+/// Decode the `list` reply into the rows the sidebar renders.
+///
+/// The blob is a `[u32 BE]` device count, then per device, in the near side's declaration order:
+/// its key, name, serial, AVD name, state, an `[u8]` emulator flag, its manufacturer, model,
+/// release, an `[u8 present][i64 BE]` API level, its ABI, three more optional numbers — width,
+/// height, density — and its form factor.
+///
+/// An OPTIONAL STRING crosses as the empty run, because the wrapped crate folds an absent field and
+/// an empty one into one answer already: a host that says `"serial": ""` is a host that named no
+/// serial, and `adb -s ""` is a different command from the one that was meant. An optional NUMBER
+/// crosses as a flag beside its value, because zero is a number a field could legitimately carry.
+///
+/// Zero back is a REFUSAL, and it means the envelope: not an object, `ok` anything but `true`, or
+/// no `devices` array. A host with nothing attached answers a COUNT of zero, which is why the count
+/// rides inside the blob rather than being the return.
+///
+/// # Safety
+/// `line` must be null or point to `line_len` live bytes for the call; `(out, cap)` must be
+/// writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_android_device_list(
+    line: *const c_uchar,
+    line_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let line = unsafe { borrow(line, line_len) };
+    let Some(devices) = decode_list(line) else {
+        return 0;
+    };
+    let mut blob = Vec::new();
+    blob.extend_from_slice(&saturating_u32(devices.len()).to_be_bytes());
+    for device in &devices {
+        push_text(&mut blob, &device.key);
+        push_text(&mut blob, &device.name);
+        push_text(&mut blob, device.serial.as_deref().unwrap_or_default());
+        push_text(&mut blob, device.avd_name.as_deref().unwrap_or_default());
+        push_text(&mut blob, &device.state);
+        blob.push(u8::from(device.is_emulator));
+        push_text(&mut blob, device.manufacturer.as_deref().unwrap_or_default());
+        push_text(&mut blob, device.model.as_deref().unwrap_or_default());
+        push_text(&mut blob, device.release.as_deref().unwrap_or_default());
+        push_optional_number(&mut blob, device.api_level);
+        push_text(&mut blob, device.abi.as_deref().unwrap_or_default());
+        push_optional_number(&mut blob, device.width);
+        push_optional_number(&mut blob, device.height);
+        push_optional_number(&mut blob, device.density);
+        push_text(&mut blob, device.form_factor.as_deref().unwrap_or_default());
+    }
+    // SAFETY: `blob` is a live local that cannot overlap `out`, which the caller keeps writable.
+    unsafe { deliver(&blob, out, cap) }
 }
 
 /// Builds a line splitter at the head of a fresh `logcat` subscription.
@@ -296,9 +366,134 @@ mod tests {
     use super::{
         LogLines, slopdesk_android_bridge_console_output, slopdesk_android_bridge_reply_failure,
         slopdesk_android_bridge_request, slopdesk_android_bridge_screenshot_bytes,
-        slopdesk_android_log_lines_answer, slopdesk_android_log_lines_free, slopdesk_android_log_lines_new,
-        slopdesk_android_log_lines_push,
+        slopdesk_android_device_list, slopdesk_android_log_lines_answer, slopdesk_android_log_lines_free,
+        slopdesk_android_log_lines_new, slopdesk_android_log_lines_push,
     };
+    use crate::testing::delivered;
+
+    /// The near side's cursor over a device-list delivery, written here so a layout disagreement
+    /// fails in Rust first.
+    struct Cursor<'a> {
+        blob: &'a [u8],
+        at: usize,
+    }
+
+    impl<'a> Cursor<'a> {
+        const fn new(blob: &'a [u8]) -> Self {
+            Self { blob, at: 0 }
+        }
+
+        fn byte(&mut self) -> u8 {
+            let byte = self.blob.get(self.at).copied().unwrap_or_default();
+            self.at += 1;
+            byte
+        }
+
+        fn count(&mut self) -> usize {
+            let mut count = 0_usize;
+            for _ in 0..4 {
+                count = count << 8 | usize::from(self.byte());
+            }
+            count
+        }
+
+        fn text(&mut self) -> String {
+            let length = self.count();
+            let text = self
+                .blob
+                .get(self.at..self.at + length)
+                .map(|span| String::from_utf8_lossy(span).into_owned())
+                .unwrap_or_default();
+            self.at += length;
+            text
+        }
+
+        fn optional_number(&mut self) -> Option<i64> {
+            let present = self.byte() == 1;
+            let mut bits = 0_u64;
+            for _ in 0..8 {
+                bits = bits << 8 | u64::from(self.byte());
+            }
+            #[expect(
+                clippy::cast_possible_wrap,
+                reason = "the two's-complement bit pattern IS what crossed; this is the inverse of \
+                          `to_be_bytes`"
+            )]
+            present.then_some(bits as i64)
+        }
+    }
+
+    fn devices(line: &str) -> Vec<u8> {
+        delivered(|out, cap| {
+            // SAFETY: both the fixture and the buffer are live for the duration of the call.
+            unsafe { slopdesk_android_device_list(line.as_ptr(), line.len(), out, cap) }
+        })
+    }
+
+    /// One running row and one AVD on disk cross whole, in the near side's declaration order — the
+    /// optional strings as empty runs, the optional numbers as a flag beside a value.
+    #[test]
+    fn the_device_list_crosses_whole() {
+        let blob = devices(
+            r#"{"ok":true,"devices":[
+                {"key":"serial:S","name":"Pixel 8","serial":"S","state":"device","isEmulator":false,
+                 "manufacturer":"Google","model":"Pixel 8","release":"15","api":35,"abi":"arm64-v8a",
+                 "width":1080,"height":2400,"density":420,"formFactor":"default"},
+                {"key":"avd:A","name":"Medium","avd":"A","state":"","isEmulator":true}]}"#,
+        );
+        let mut cursor = Cursor::new(&blob);
+        assert_eq!(cursor.count(), 2);
+
+        assert_eq!(cursor.text(), "serial:S");
+        assert_eq!(cursor.text(), "Pixel 8");
+        assert_eq!(cursor.text(), "S");
+        assert_eq!(cursor.text(), "", "a phone has no AVD name");
+        assert_eq!(cursor.text(), "device");
+        assert_eq!(cursor.byte(), 0);
+        assert_eq!(cursor.text(), "Google");
+        assert_eq!(cursor.text(), "Pixel 8");
+        assert_eq!(cursor.text(), "15");
+        assert_eq!(cursor.optional_number(), Some(35));
+        assert_eq!(cursor.text(), "arm64-v8a");
+        assert_eq!(cursor.optional_number(), Some(1080));
+        assert_eq!(cursor.optional_number(), Some(2400));
+        assert_eq!(cursor.optional_number(), Some(420));
+        assert_eq!(cursor.text(), "default");
+
+        assert_eq!(cursor.text(), "avd:A");
+        assert_eq!(cursor.text(), "Medium");
+        assert_eq!(cursor.text(), "", "an AVD on disk has no serial");
+        assert_eq!(cursor.text(), "A");
+        assert_eq!(cursor.text(), "");
+        assert_eq!(cursor.byte(), 1);
+        assert_eq!(cursor.text(), "");
+        assert_eq!(cursor.text(), "");
+        assert_eq!(cursor.text(), "");
+        // ABSENT, not zero: a row the host said nothing about is a different state from a platform
+        // numbered nothing, and a sentinel would make the near side pick which.
+        assert_eq!(cursor.optional_number(), None);
+        assert_eq!(cursor.text(), "");
+        assert_eq!(cursor.optional_number(), None);
+        assert_eq!(cursor.optional_number(), None);
+        assert_eq!(cursor.optional_number(), None);
+        assert_eq!(cursor.text(), "");
+        assert_eq!(cursor.at, blob.len(), "the layout must consume the delivery");
+    }
+
+    /// A host with nothing attached answers a COUNT of zero; only the envelope answers the ABI's
+    /// own zero.
+    #[test]
+    fn an_empty_device_set_is_not_a_refusal() {
+        let blob = devices(r#"{"ok":true,"devices":[]}"#);
+        assert_eq!(blob.len(), 4);
+        assert_eq!(Cursor::new(&blob).count(), 0);
+        assert!(devices(r#"{"ok":false,"error":"no adb"}"#).is_empty());
+        assert!(devices("[]").is_empty());
+        assert!(devices("not json").is_empty());
+        // SAFETY: a null input span with a zero length is the documented "no bytes" pair.
+        let written = unsafe { slopdesk_android_device_list(core::ptr::null(), 0, core::ptr::null_mut(), 0) };
+        assert_eq!(written, 0);
+    }
 
     /// The §4 dance every text door here takes: size, then fill.
     fn text(mut door: impl FnMut(*mut u8, usize) -> usize) -> Option<String> {

@@ -49,13 +49,21 @@
 //!
 //! ## And what its server SAYS BACK
 //!
-//! [`sim_chrome`], [`sim_devices`] and [`sim_place`] are the same foreign wire read in the other
-//! direction: the device body `definition.json` describes, the device set `/simulators.json`
-//! answers, and the one coordinate the location route takes. They keep that group's rule — an
-//! optional answer, and a malformed ROW dropped rather than the envelope refused — and they are
-//! here rather than in a client because each is a decision that would otherwise be made twice, once
-//! per renderer: which button can be drawn, which row can be acted on, which typed string is a
-//! position at all.
+//! [`sim_chrome`], [`sim_devices`], [`sim_log`] and [`sim_place`] are the same foreign wire read in
+//! the other direction: the device body `definition.json` describes, the device set
+//! `/simulators.json` answers, the console batch the log socket sends, and the one coordinate the
+//! location route takes. They keep that group's rule — an optional answer, and a malformed ROW
+//! dropped rather than the envelope refused — and they are here rather than in a client because
+//! each is a decision that would otherwise be made twice, once per renderer: which button can be
+//! drawn, which row can be acted on, which console line survives, which typed string is a position
+//! at all.
+//!
+//! ## And HOW it asks
+//!
+//! [`sim_control`] is the last quarter of that wire: the verb, the budget, the cache policy and the
+//! body for every non-streaming call the panel makes. [`sim_routes`] answers WHERE a request goes
+//! and this answers everything else about it — the pair the near side used to assemble at eleven
+//! `URLSession` call sites, four of which spelled the same three values and two of which did not.
 //!
 //! ## And what the two panels SAY
 //!
@@ -89,8 +97,10 @@ pub mod panel_key;
 pub mod scroll;
 pub mod sections;
 pub mod sim_chrome;
+pub mod sim_control;
 pub mod sim_devices;
 pub mod sim_input;
+pub mod sim_log;
 pub mod sim_place;
 pub mod sim_routes;
 pub mod sim_stream;

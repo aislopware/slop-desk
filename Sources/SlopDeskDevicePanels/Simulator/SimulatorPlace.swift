@@ -39,15 +39,6 @@ package struct SimulatorCoordinate: Equatable {
         return Self(latitude: blob.number(), longitude: blob.number())
     }
 
-    /// The POST body. Six decimals is roughly a tenth of a metre — past that the digits describe
-    /// nothing a simulator can act on, and they make the readout unreadable.
-    package var body: [String: Double] {
-        [
-            "latitude": slopdesk_sim_coordinate_round(latitude),
-            "longitude": slopdesk_sim_coordinate_round(longitude),
-        ]
-    }
-
     /// What the panel echoes back after a successful send. Fixed width, so the header does not
     /// reflow on every pin.
     package var readout: String {

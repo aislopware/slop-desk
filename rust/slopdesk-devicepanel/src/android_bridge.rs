@@ -205,6 +205,143 @@ pub fn screenshot_bytes(line: &[u8]) -> Option<usize> {
     (count > 0 && count <= SCREENSHOT_LIMIT).then_some(count)
 }
 
+/// One Android device, as the sidebar lists it — the `list` reply's payload, decoded.
+///
+/// The other end of this record is `slopdesk_androidd::protocol::encode_device`, which is why the
+/// decode belongs here rather than beside the socket: it was a Rust encoder facing a Swift
+/// `JSONSerialization` walk, with every field name spelled twice and nothing that could fail if one
+/// side gained a field or renamed one.
+///
+/// ## The optional fields are optional for a reason, not for tidiness
+///
+/// The daemon OMITS a field it has no value for rather than sending `null` — a phone has no AVD
+/// name and a shut-down AVD has no serial — and [`Device::serial`]'s absence is what gates every
+/// operation that needs one. A default of `""` here would turn "not running yet" into a serial the
+/// panel would happily send to `adb -s`, which is a different command from the one that was meant.
+///
+/// ## The figures on a shut-down row are real
+///
+/// `docs/47` records that a shut-down iOS simulator knows only its name, runtime, state and udid.
+/// Android inverts that: an AVD's `config.ini` IS its definition, so the size and density fields on
+/// an un-booted row are exact rather than a lookalike's. The list is designed around it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Device {
+    /// The identity, and the only field with no sane default.
+    ///
+    /// Stable across a boot: an AVD keeps its key when it acquires a serial, so a device someone
+    /// selected stays selected through the boot rather than vanishing and reappearing as a new row.
+    pub key: String,
+    /// The label, falling back to the key so a host that renames a field still lists the device.
+    pub name: String,
+    /// `adb`'s transport id, absent until the device is running.
+    pub serial: Option<String>,
+    /// The AVD this row is, for an emulator that has one.
+    pub avd_name: Option<String>,
+    /// `adb`'s own word, verbatim.
+    ///
+    /// Kept raw rather than folded into an enum: `adb` says `device`, `offline`, `unauthorized`,
+    /// `authorizing`, `connecting`, `recovery` and `sideload`, and a closed set here would turn a
+    /// transient state into a decode failure for the WHOLE list.
+    pub state: String,
+    /// Whether this row is an emulator rather than a physical device.
+    pub is_emulator: bool,
+    /// `ro.product.manufacturer`.
+    pub manufacturer: Option<String>,
+    /// `ro.product.model`.
+    pub model: Option<String>,
+    /// `ro.build.version.release`.
+    pub release: Option<String>,
+    /// `ro.build.version.sdk`.
+    pub api_level: Option<i64>,
+    /// The primary ABI.
+    pub abi: Option<String>,
+    /// The screen's width in pixels.
+    pub width: Option<i64>,
+    /// The screen's height in pixels.
+    pub height: Option<i64>,
+    /// The screen's density in dpi.
+    pub density: Option<i64>,
+    /// The platform's raw form-factor word — `ro.build.characteristics` for a running device,
+    /// `tag.id` for an AVD on disk. Resolved to a glyph by [`crate::android`], not here.
+    pub form_factor: Option<String>,
+}
+
+/// Decode the bridge's `list` reply.
+///
+/// `None` only when the envelope itself is not an object, or reports failure. A malformed DEVICE
+/// inside is SKIPPED — this crate's standing rule for a wire it does not control, applied at the
+/// row rather than at the envelope, so one bad entry cannot blank the panel.
+///
+/// The `ok` gate is deliberately kept beside the rows rather than left to [`reply_failure`]: the
+/// two answer different questions — that one says WHY the host refused, in the words the panel
+/// shows, and this one says whether there is a list to render at all.
+#[must_use]
+pub fn decode_list(line: &[u8]) -> Option<Vec<Device>> {
+    let fields = object(line)?;
+    if fields.get("ok").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let entries = fields.get("devices")?.as_array()?;
+    Some(entries.iter().filter_map(decode_device).collect())
+}
+
+/// One device, or `None` for a row with no identity to act on.
+///
+/// Everything but the key DEGRADES, so a host that adds or renames a field still lists the device.
+/// The key does not: a row that cannot be selected is worse than an absent one.
+fn decode_device(entry: &Value) -> Option<Device> {
+    let entry = entry.as_object()?;
+    let key = entry.get("key")?.as_str()?;
+    if key.is_empty() {
+        return None;
+    }
+    Some(Device {
+        key: key.to_owned(),
+        name: optional_text(entry, "name").unwrap_or_else(|| key.to_owned()),
+        serial: optional_text(entry, "serial"),
+        avd_name: optional_text(entry, "avd"),
+        state: optional_text(entry, "state").unwrap_or_default(),
+        is_emulator: entry
+            .get("isEmulator")
+            .and_then(Value::as_bool)
+            .unwrap_or_default(),
+        manufacturer: optional_text(entry, "manufacturer"),
+        model: optional_text(entry, "model"),
+        release: optional_text(entry, "release"),
+        api_level: optional_number(entry, "api"),
+        abi: optional_text(entry, "abi"),
+        width: optional_number(entry, "width"),
+        height: optional_number(entry, "height"),
+        density: optional_number(entry, "density"),
+        form_factor: optional_text(entry, "formFactor"),
+    })
+}
+
+/// One string field, or `None` when it is absent, is not a string, or is EMPTY.
+///
+/// The empty arm is the one that is a rule rather than tidiness, and it is a correction: the Swift
+/// this replaces read `serial` as "present if the key parses as a string", so a host that answered
+/// `"serial": ""` handed the panel a serial it would go on to spell into `adb -s ""` — a different
+/// command from the one that was meant, which is the same reasoning [`request_line`] already
+/// applies on the way out. An empty name, model or ABI is likewise a field the row cannot render,
+/// and folding both spellings of "nothing here" into one is what stops each caller from choosing.
+fn optional_text(entry: &Map<String, Value>, key: &str) -> Option<String> {
+    entry
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// One integer field, or `None` when it is absent or is not a whole number.
+///
+/// Both JSON spellings of an integer are accepted, for [`screenshot_bytes`]' reason: a decoder
+/// decides between integer and float from the literal's own syntax, and a density written `440.0`
+/// is still 440.
+fn optional_number(entry: &Map<String, Value>, key: &str) -> Option<i64> {
+    integer(entry.get(key)?)
+}
+
 /// One reply line as its object, or `None` for anything that is not one.
 fn object(line: &[u8]) -> Option<Map<String, Value>> {
     let value: Value = serde_json::from_slice(line).ok()?;
@@ -288,9 +425,139 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        BridgeOp, LOG_LINE_LIMIT, LogLineSplitter, REFUSED, SCREENSHOT_LIMIT, UNREADABLE_REPLY,
-        console_output, reply_failure, request_line, screenshot_bytes,
+        BridgeOp, Device, LOG_LINE_LIMIT, LogLineSplitter, REFUSED, SCREENSHOT_LIMIT, UNREADABLE_REPLY,
+        console_output, decode_list, reply_failure, request_line, screenshot_bytes,
     };
+
+    /// A `list` reply MEASURED against the daemon's own `encode_device`, one running phone and one
+    /// AVD on disk. Every field name here is `slopdesk_androidd::protocol`'s.
+    const LIST: &[u8] = br#"{"ok":true,"devices":[
+        {"key":"serial:39121FDJH000TR","name":"Pixel 8","serial":"39121FDJH000TR","state":"device",
+         "isEmulator":false,"manufacturer":"Google","model":"Pixel 8","release":"15","api":35,
+         "abi":"arm64-v8a","width":1080,"height":2400,"density":420,"formFactor":"default"},
+        {"key":"avd:Medium_Phone","name":"Medium Phone","avd":"Medium_Phone","state":"",
+         "isEmulator":true,"width":1080,"height":2400,"density":420}]}"#;
+
+    /// The list the daemon encodes decodes back into the rows the sidebar renders, absent fields
+    /// and all — the round trip that used to be a Rust encoder facing a Swift decoder.
+    #[test]
+    fn the_daemons_own_list_decodes_into_rows() {
+        let devices = decode_list(LIST).unwrap_or_default();
+        assert_eq!(devices.len(), 2);
+        assert_eq!(
+            devices.first().cloned(),
+            Some(Device {
+                key: "serial:39121FDJH000TR".to_owned(),
+                name: "Pixel 8".to_owned(),
+                serial: Some("39121FDJH000TR".to_owned()),
+                avd_name: None,
+                state: "device".to_owned(),
+                is_emulator: false,
+                manufacturer: Some("Google".to_owned()),
+                model: Some("Pixel 8".to_owned()),
+                release: Some("15".to_owned()),
+                api_level: Some(35),
+                abi: Some("arm64-v8a".to_owned()),
+                width: Some(1080),
+                height: Some(2400),
+                density: Some(420),
+                form_factor: Some("default".to_owned()),
+            })
+        );
+        assert_eq!(
+            devices.get(1).cloned(),
+            Some(Device {
+                key: "avd:Medium_Phone".to_owned(),
+                name: "Medium Phone".to_owned(),
+                // The fields an AVD on disk genuinely has none of stay ABSENT rather than becoming
+                // an empty serial the panel would hand to `adb -s`.
+                serial: None,
+                avd_name: Some("Medium_Phone".to_owned()),
+                state: String::new(),
+                is_emulator: true,
+                manufacturer: None,
+                model: None,
+                release: None,
+                api_level: None,
+                abi: None,
+                // And the figures on a shut-down row are REAL: an AVD's config.ini is its
+                // definition, which is what lets this list carry a size the iOS one cannot.
+                width: Some(1080),
+                height: Some(2400),
+                density: Some(420),
+                form_factor: None,
+            })
+        );
+    }
+
+    /// Only the ENVELOPE refuses. A row with no key is dropped and its neighbours survive, because
+    /// one bad entry must not blank a panel whose other devices are fine.
+    #[test]
+    fn a_row_with_no_identity_is_dropped_and_the_envelope_is_not() {
+        let devices =
+            decode_list(br#"{"ok":true,"devices":[{"key":""},{"name":"nameless"},7,{"key":"avd:A"},null]}"#)
+                .unwrap_or_default();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(
+            devices.first().map(|device| device.key.clone()),
+            Some("avd:A".to_owned())
+        );
+        // A key with nothing else still lists: the name falls back to it, so a host that renames a
+        // field loses a label rather than a row.
+        assert_eq!(
+            devices.first().map(|device| device.name.clone()),
+            Some("avd:A".to_owned())
+        );
+    }
+
+    /// The envelope's own refusals. A reply that acked but carries no `devices` array is one of
+    /// them: an empty LIST is `[]`, and a missing key is a reply this build cannot read.
+    #[test]
+    fn only_the_envelope_refuses() {
+        assert_eq!(decode_list(b"not json"), None);
+        assert_eq!(decode_list(b"[]"), None);
+        assert_eq!(decode_list(br#"{"devices":[]}"#), None);
+        assert_eq!(decode_list(br#"{"ok":false,"error":"no adb"}"#), None);
+        assert_eq!(decode_list(br#"{"ok":true}"#), None);
+        assert_eq!(decode_list(br#"{"ok":true,"devices":{}}"#), None);
+        // A host with no devices attached is a real answer, not a refusal.
+        assert_eq!(decode_list(br#"{"ok":true,"devices":[]}"#), Some(Vec::new()));
+    }
+
+    /// An EMPTY optional string is the same non-answer as an absent one.
+    ///
+    /// This is the correction the port makes. The Swift read `serial` as "present if it parses as a
+    /// string", so a host answering `""` handed the panel a serial it would spell into `adb -s ""`
+    /// — a different command from the one that was meant, and one the request door on the way out
+    /// already refuses to build.
+    #[test]
+    fn an_empty_optional_string_is_absent_rather_than_a_value() {
+        let devices = decode_list(
+            br#"{"ok":true,"devices":[{"key":"k","name":"","serial":"","avd":"","model":"",
+                 "formFactor":""}]}"#,
+        )
+        .unwrap_or_default();
+        let row = devices.first().cloned();
+        assert_eq!(row.as_ref().map(|device| device.serial.clone()), Some(None));
+        assert_eq!(row.as_ref().map(|device| device.avd_name.clone()), Some(None));
+        assert_eq!(row.as_ref().map(|device| device.model.clone()), Some(None));
+        assert_eq!(row.as_ref().map(|device| device.form_factor.clone()), Some(None));
+        // The NAME is not optional, so an empty one falls back to the key the same way an absent
+        // one does — a row with no label is a row nobody can pick out of a list.
+        assert_eq!(row.map(|device| device.name), Some("k".to_owned()));
+    }
+
+    /// A number written as a whole float is still that number — the same tolerance
+    /// `screenshot_bytes` extends to the count beside it, and a density is exactly the field a
+    /// generator writes as `420.0`.
+    #[test]
+    fn a_whole_float_is_still_a_figure() {
+        let devices = decode_list(br#"{"ok":true,"devices":[{"key":"k","density":420.0,"api":35.5}]}"#)
+            .unwrap_or_default();
+        assert_eq!(devices.first().and_then(|device| device.density), Some(420));
+        // And a fractional one is not a figure at all: an API level of 35.5 names no platform.
+        assert_eq!(devices.first().and_then(|device| device.api_level), None);
+    }
 
     fn decoded(line: &str) -> Value {
         assert!(line.ends_with('\n'), "every request line is terminated");

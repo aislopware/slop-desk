@@ -51,6 +51,16 @@ package struct DevicePanelBlob {
         self.init(wsAnswerBytes(door))
     }
 
+    /// Whether the door answered NOTHING.
+    ///
+    /// Most blobs here are fixed tables where `0` can only mean the caller measured its buffer
+    /// wrong. Two are not: `slopdesk_android_device_list` and `slopdesk_sim_log_message` both refuse
+    /// with `0` and both have a real answer that is nearly empty — a host with no device attached
+    /// still answers, and an empty rail is a different picture from the last one the panel saw. So
+    /// the refusal is the ABSENCE of bytes and the empty answer is its own count, and this is the
+    /// one question that separates them.
+    package var isRefusal: Bool { bytes.isEmpty }
+
     /// One byte, or `0` past the end.
     package mutating func byte() -> UInt8 {
         guard cursor < bytes.endIndex else { return 0 }
@@ -72,6 +82,23 @@ package struct DevicePanelBlob {
         var count = 0
         for _ in 0..<4 { count = count << 8 | Int(byte()) }
         return count
+    }
+
+    /// One `[u8 present][Int64 big-endian]` figure, or `nil` when the door said there is none.
+    ///
+    /// An `Option` crosses as a value plus a FLAG, never as a sentinel (`docs/55` §4) — and the
+    /// eight bytes are written either way, so the walk is fixed-width and the flag is the only
+    /// thing that decides. A density of zero and an absent one are different facts about an AVD,
+    /// and a sentinel would spell the first as the second.
+    ///
+    /// Past the end reads absent, which is ``DevicePanelBlob``'s short-delivery discipline: a
+    /// layout disagreement loses the field rather than shifting every later one along.
+    package mutating func optionalCount() -> Int? {
+        let present = byte() != 0
+        var bits: UInt64 = 0
+        for _ in 0..<8 { bits = bits << 8 | UInt64(byte()) }
+        guard present else { return nil }
+        return Int(Int64(bitPattern: bits))
     }
 
     /// One `[UInt32 big-endian length][UTF-8 bytes]` run, or the empty string past the end.

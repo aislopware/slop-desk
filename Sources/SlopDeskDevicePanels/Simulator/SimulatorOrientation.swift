@@ -1,13 +1,15 @@
-// SimulatorOrientation, SimulatorStatusBar — the two device settings the panel exposes, as pure
-// values so the wire strings are pinned by a test rather than typed at a call site.
+// SimulatorOrientation — one of the two device settings the panel exposes, as a pure value so the
+// wire strings are pinned by a test rather than typed at a call site.
 //
-// The server has no READ side for either: both routes set, neither reports. So the panel tracks what
-// it last asked for, and both reset when the selection changes — a claim about the previous device
-// carried onto the next one would rotate from the wrong angle and show the wrong toggle position.
+// The server has no READ side for it, nor for the status bar beside it: both routes set, neither
+// reports. So the panel tracks what it last asked for, and both reset when the selection changes —
+// a claim about the previous device carried onto the next one would rotate from the wrong angle and
+// show the wrong toggle position.
 //
-// Every value below is one the SERVER accepts, measured against a live one on 2026-08-04 rather than
-// guessed from what the status bar shows. It rejects the whole body on one bad field, so a plausible
-// synonym costs the entire preset — `batteryState` is `discharging`, never "unplugged".
+// The status bar's own preset is NOT here any more: it is a request BODY, and the body is
+// `slopdesk_sim_status_bar_body`, posted through ``SimulatorControlling/setStatusBar(host:port:udid:demo:)``
+// as a flag. The server rejects the whole body on one bad field, so the eight pairs belong on the
+// side that builds the request rather than in a dictionary a caller can edit.
 //
 // ## The orientation is a Rust value with a Swift face
 //
@@ -75,24 +77,4 @@ package enum SimulatorOrientation: String, CaseIterable, Sendable {
     package var viewAngle: Double {
         slopdesk_simulator_orientation_view_angle(crateByte)
     }
-}
-
-package enum SimulatorStatusBar {
-    /// Apple's marketing status bar: 9:41, full signal, full battery, no charging bolt. The only
-    /// reason anyone overrides a status bar is a clean capture, so the panel ships that one preset
-    /// rather than a form nobody wants to fill in twice.
-    ///
-    /// The one thing in this file that did NOT descend: it is a request BODY, not a rule — eight
-    /// key/value pairs the panel posts verbatim — and crossing it would be marshalling a dictionary
-    /// in both directions to have Rust hand back what Swift already holds.
-    package static let demo: [String: String] = [
-        "time": "9:41",
-        "dataNetwork": "wifi",
-        "wifiMode": "active",
-        "wifiBars": "3",
-        "cellularMode": "active",
-        "cellularBars": "4",
-        "batteryState": "discharging",
-        "batteryLevel": "100",
-    ]
 }

@@ -336,6 +336,12 @@ over it.
 the AVD name can, and it is what the user typed. A physical device has no AVD name and its model is
 exactly right. The headline is per-kind.
 
+The `list` reply is decoded by `slopdesk_devicepanel::android_bridge::decode_list`, which is the
+same crate that BUILDS the request — `AndroidDevice.swift` walks the delivery
+`slopdesk_android_device_list` writes and holds no field names of its own. One behaviour changed with
+that move, deliberately: an EMPTY string is an absent field rather than a present empty one, so a
+host answering `"serial": ""` can no longer hand the panel a serial it would spell into `adb -s ""`.
+
 ⚠️ **`state` is kept as `adb`'s raw word** (`device`, `offline`, `unauthorized`, `authorizing`,
 `connecting`, `recovery`, `sideload`, `bootloader`). A closed enum turns a transient state into a
 decode failure for the whole list. `unauthorized` is the one state worth designing for: it means a
@@ -386,8 +392,9 @@ crash`) are exactly what someone reading a crash is looking for.
 
 ## Gates
 
-`just test-touched` covers the whole panel, on both sides of the socket: the client half in Swift
-(reassembler, control encoder, layout, scroll machine, logcat parser, device decode) and the bridge
+`just test-touched` covers the whole panel, on both sides of the socket: the client half in
+`rust/slopdesk-devicepanel` (reassembler, control encoder, layout, scroll machine, logcat parser,
+device decode) with the Swift faces asserting only the crossing, and the bridge
 half as `rust/slopdesk-androidd`'s unit tests (catalogue, toolchain locator, console, argument
 vectors, refusals, request decode). Every runtime seam is injectable, so no test opens a device socket
 or builds a display layer (hang-safety). The **sockets** are exercised only by
@@ -396,5 +403,6 @@ or builds a display layer (hang-safety). The **sockets** are exercised only by
 would.
 
 `rust/slopdesk-invariants` ratchets what is typed on both sides of the wire: every `op` the
-panel can send has an arm in `server.rs`, every device field it decodes is one `protocol.rs` encodes,
-the announce marker matches, and no Swift Android bridge has come back.
+panel can send has an arm in `server.rs`, every device field `android_bridge.rs` decodes is one
+`protocol.rs` encodes, the announce marker matches, `JSONSerialization` appears nowhere under the
+panel directory, and no Swift Android bridge has come back.

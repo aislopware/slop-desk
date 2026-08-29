@@ -2,6 +2,7 @@
 // envelope MEASURED off a live `baguette serve`.
 
 #if os(macOS)
+import CSlopDeskFFI
 import Foundation
 import XCTest
 @testable import SlopDeskDevicePanels
@@ -263,8 +264,8 @@ final class SimulatorDeviceTests: XCTestCase {
         XCTAssertEqual(
             SimulatorEndpoints.screenshot(
                 host: "h", port: 1, udid: "u", nonce: 42,
-                scale: SimulatorControlClient.thumbnailScale,
-                quality: SimulatorControlClient.thumbnailQuality,
+                scale: Int(slopdesk_sim_thumbnail_scale()),
+                quality: slopdesk_sim_thumbnail_quality(),
             )?.absoluteString,
             "http://h:1/simulators/u/screenshot.jpg?t=42&scale=6&quality=0.5",
         )

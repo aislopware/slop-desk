@@ -183,6 +183,7 @@ pub mod search_rank;
 pub mod session_marks;
 pub mod session_template_engine;
 pub mod sidebar_row;
+pub mod simulator_control;
 pub mod simulator_decode;
 pub mod simulator_input;
 pub mod simulator_presentation;

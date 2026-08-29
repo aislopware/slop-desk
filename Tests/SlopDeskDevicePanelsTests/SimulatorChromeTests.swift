@@ -195,20 +195,30 @@ final class SimulatorChromeTests: XCTestCase {
         XCTAssertFalse(SimulatorOrientation.portraitUpsideDown.isLandscape)
     }
 
-    func testTheDemoStatusBarIsApplesOwnMarketingClock() {
-        XCTAssertEqual(SimulatorStatusBar.demo["time"], "9:41")
-        XCTAssertEqual(SimulatorStatusBar.demo["batteryLevel"], "100")
-        // The server rejects the WHOLE body on one bad field, so a plausible synonym costs the entire
-        // preset. Measured against a live server 2026-08-04: "unplugged" is a 400, "discharging" is
-        // the accepted spelling.
-        XCTAssertEqual(SimulatorStatusBar.demo["batteryState"], "discharging")
+    /// The status bar's PRESET and the verb that clears it are `slopdesk_devicepanel::sim_control`'s
+    /// and are pinned there — the eight pairs the server takes, and the measured 400 that makes a
+    /// clear a `DELETE` rather than an empty body. What crosses here is the plan the panel acts on.
+    func testClearingTheStatusBarIsADeleteRatherThanAFlagInTheBody() {
+        XCTAssertEqual(SimulatorControlPlan(.statusBar, hasPayload: false)?.method, "DELETE")
+        XCTAssertEqual(SimulatorControlPlan(.statusBar, hasPayload: true)?.method, "POST")
+        XCTAssertEqual(
+            SimulatorControlPlan(.statusBar, hasPayload: true)?.contentType, "application/json",
+        )
+        XCTAssertNil(SimulatorControlPlan(.statusBar, hasPayload: false)?.contentType)
     }
 
-    func testClearingTheStatusBarIsADeleteRatherThanAFlagInTheBody() {
-        // Measured 2026-08-04: an empty or flag-only POST answers 400 "set at least one status-bar
-        // field", so a clear spelled as an override does not no-op — it fails outright.
-        XCTAssertEqual(SimulatorControlClient.statusBarMethod(for: [:]), "DELETE")
-        XCTAssertEqual(SimulatorControlClient.statusBarMethod(for: SimulatorStatusBar.demo), "POST")
+    /// Every operation this build declares has a plan, and the two budgets are not each other's: an
+    /// install is minutes and a control call is seconds.
+    func testEveryOperationHasAPlanAndOnlyAnUploadGetsTheLongBudget() {
+        for operation in SimulatorControlOperation.allCases {
+            XCTAssertNotNil(SimulatorControlPlan(operation), "\(operation)")
+        }
+        XCTAssertEqual(SimulatorControlPlan(.files, hasPayload: true)?.timeout, 300)
+        XCTAssertEqual(SimulatorControlPlan(.devices)?.timeout, 8)
+        // A poll answered from a copy of its own previous answer is not a poll — and the bezel
+        // artwork is per MODEL and never changes, so it is the one read that may be cached.
+        XCTAssertTrue(SimulatorControlPlan(.devices)?.ignoresCache == true)
+        XCTAssertFalse(SimulatorControlPlan(.resource)?.ignoresCache == true)
     }
 }
 #endif

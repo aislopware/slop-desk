@@ -53,7 +53,7 @@ private final class FakeControl: SimulatorControlling, @unchecked Sendable {
     /// What the panel asked the device to do, in order — one log for every route that only SETS, so a
     /// test can assert the wire value rather than the fact that a call happened.
     private(set) var orientations: [String] = []
-    private(set) var statusBars: [[String: String]] = []
+    private(set) var statusBars: [Bool] = []
     private(set) var files: [(name: String, bytes: Int)] = []
     private(set) var screenshots = 0
     /// Answered by ``chrome``. Nil is the "this model has no description" case the panel must survive.
@@ -99,11 +99,9 @@ private final class FakeControl: SimulatorControlling, @unchecked Sendable {
         return screenshotResult
     }
 
-    func setStatusBar(
-        host _: String, port _: UInt16, udid _: String, overrides: [String: String],
-    ) throws {
+    func setStatusBar(host _: String, port _: UInt16, udid _: String, demo: Bool) throws {
         if let failure { throw failure }
-        statusBars.append(overrides)
+        statusBars.append(demo)
     }
 
     func sendFile(
@@ -761,12 +759,13 @@ final class SimulatorSidebarModelTests: XCTestCase {
         model.select("A")
         await model.toggleStatusBarOverride()
         XCTAssertTrue(model.isStatusBarOverridden)
-        XCTAssertEqual(control.statusBars.first?["time"], "9:41")
+        XCTAssertEqual(control.statusBars.first, true)
 
         await model.toggleStatusBarOverride()
         XCTAssertFalse(model.isStatusBarOverridden)
-        // Empty is how the client spells "clear"; the client turns that into the server's own flag.
-        XCTAssertEqual(control.statusBars.last, [:])
+        // The toggle asks for the preset or for the clear; which BODY and which verb each is are
+        // `slopdesk_devicepanel::sim_control`'s, so what the model owes is only the direction.
+        XCTAssertEqual(control.statusBars.last, false)
     }
 
     func testAFailedStatusBarCallDoesNotFlipTheTogglesPosition() async {
