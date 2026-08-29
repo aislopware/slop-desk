@@ -141,7 +141,7 @@ pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
             pattern: r#""SlopDeskCtlCore""#,
             view: View::Code,
             message: "Package.swift declares SlopDeskCtlCore again — the agent CLI is Rust, and the two \
-                      NDJSON line helpers the `slopdesk` CLI still needed moved into ClientControlProtocol \
+                      NDJSON line helpers the `slopdesk` CLI still needed moved into slopdesk-clientctl \
                       (docs/DECISIONS.md)",
         },
     ])

@@ -1,12 +1,14 @@
 // Client control backend over the live client stores.
 //
-// The concrete ``ClientControlBackend`` the ``ClientControlServer`` drives: adapts the running client
+// The concrete ``ClientControlBackend`` ``ClientControlHost`` drives: adapts the running client
 // GUI's `@MainActor` stores — ``WorkspaceStore`` (the `Session → Tab → Pane` tree),
-// ``WorkspaceBindingRegistry`` (keybinds) and ``FolderFrecencyStore`` (jump) — onto the verb seam the PURE ``ClientControlDispatcher`` calls.
+// ``WorkspaceBindingRegistry`` (keybinds) and ``FolderFrecencyStore`` (jump) — onto the verb seam the
+// socket's face calls.
 //
 // ## Compiled-only (hang-safety)
 // Like the host's `AgentControlListener`, this touches live GUI stores and is **never instantiated in a
-// unit test** — the dispatcher is tested against a FAKE backend (`ClientControlDispatcherTests`).
+// unit test** — everything the socket decides around it is tested in `slopdesk-clientctl`, with no
+// socket and no GUI.
 // Stores are held WEAKLY (the app owns them); a deallocated store degrades to empty/`nil`/`false`, never a trap.
 //
 // ## Validate-then-drop
@@ -37,7 +39,7 @@ import CoreText // CTFontDescriptorCopyAttribute(kCTFontURLAttribute) — the pe
 #endif
 
 /// The concrete ``ClientControlBackend`` over the live client stores. `@MainActor` (every store it adapts is
-/// main-actor isolated); held by the ``ClientControlServer`` and called from the socket's per-connection
+/// main-actor isolated); held by ``ClientControlHost`` and called from the socket's per-connection
 /// thread via a main-actor hop. Stores are weak — the app owns them, and a deallocated store degrades
 /// gracefully.
 @MainActor
@@ -94,7 +96,7 @@ package final class WorkspaceControlBackend: ClientControlBackend {
                     title: tabTitle(session: session, tab: tab),
                     paneCount: tab.allPaneIDs().count,
                     isFocused: isActiveSession && index == session.activeTabIndex,
-                    badge: tabBadgeToken(session: session, tab: tab),
+                    badge: tabBadge(session: session, tab: tab),
                 ))
             }
         }
@@ -206,7 +208,7 @@ package final class WorkspaceControlBackend: ClientControlBackend {
     /// through the SAME new-pane launch seam template panes use (``SessionTemplateEngine/launchBytes(cwd:command:)``),
     /// after the new pane's prompt appears. Returns `false` only when the placement op spawned no pane
     /// (e.g. no active session to split / new-tab into).
-    package func open(target: String, mode: ClientControlOpenMode, placement: ClientControlProtocol.Placement) -> Bool {
+    package func open(target: String, mode: ClientControlOpenMode, placement: ClientControlPlacement) -> Bool {
         guard let store else { return false }
         let command = Self.shimCommand(target: target, mode: mode)
         // Resolve the new leaf by DIFFING the live leaf set across the placement op: the public split / new-tab /
@@ -217,7 +219,7 @@ package final class WorkspaceControlBackend: ClientControlBackend {
         // The multi-session UI has no session switcher, so a `--new-window` that minted a NEW SESSION and
         // swapped the UI to it would strand the user with no way back. `--new-window` degrades to a NEW TAB
         // in the CURRENT session instead — no orphan session is ever user-created. The verb name stays
-        // `--new-window` for CLI compat (see ``ClientControlProtocol/Placement``); only the placement target
+        // `--new-window` for CLI compat (see ``ClientControlPlacement``); only the placement target
         // differs from what the name implies.
         case .newWindow: store.newTab(kind: .terminal)
         case .left: store.splitActivePane(axis: .horizontal, kind: .terminal, leading: true)
@@ -272,7 +274,7 @@ package final class WorkspaceControlBackend: ClientControlBackend {
     package func listFonts(
         monospaceOnly: Bool,
         family: String?,
-        scope: ClientControlProtocol.FontScope?,
+        scope: ClientControlFontScope?,
     ) -> [ClientFontInfo] {
         #if canImport(AppKit)
         let needle = family?.lowercased()
@@ -392,18 +394,21 @@ package final class WorkspaceControlBackend: ClientControlBackend {
         return store?.liveProgramTitle(for: active) ?? spec.title
     }
 
-    /// The tab's single fused badge TOKEN: a MANUAL `tab badge --kind` override if one is set, else the badge
+    /// The tab's single fused badge: a MANUAL `tab badge --kind` override if one is set, else the badge
     /// resolved for its representative (active) pane via the SAME ``TabBadgeGating/resolve(...)`` path the
     /// sidebar rail uses, or `nil` when all-clear.
-    private func tabBadgeToken(session _: Session, tab: Tab) -> String? {
+    ///
+    /// The KIND, not its token — the socket's spelling for a badge is one side over, and the listing
+    /// crosses as the ladder position every other door already speaks.
+    private func tabBadge(session _: Session, tab: Tab) -> TabBadgeKind? {
         guard let store else { return nil }
         // An explicit manual override wins over the derived per-pane badge (and the gates).
         if let override = store.tabBadgeOverride(for: tab.id) {
-            return ClientControlProtocol.badgeToken(for: override)
+            return override
         }
         guard let paneID = tab.activePane ?? tab.allPaneIDs().first else { return nil }
         let status = store.paneAgentStatus[paneID] ?? .none
-        let gated = TabBadgeGating.resolve(
+        return TabBadgeGating.resolve(
             agent: status,
             completion: store.panePendingCompletion[paneID],
             // Reveal-thresholded, matching the rail's `chrome(...)` input (`tab list` must report the
@@ -416,7 +421,6 @@ package final class WorkspaceControlBackend: ClientControlBackend {
             agentGates: store.agentBadgeGates(for: paneID),
             commandGates: store.commandBadgeGates,
         )
-        return gated.map { ClientControlProtocol.badgeToken(for: $0) }
     }
 
     /// The live handle for `paneId` (nil = the focused pane), or `nil` when no such leaf is materialized.

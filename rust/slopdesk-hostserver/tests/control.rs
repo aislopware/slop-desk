@@ -1229,7 +1229,7 @@ fn a_line_past_the_cap_is_refused_with_the_cap_both_ends_of_the_socket_read() {
     let mut line = Vec::from(b"{\"id\":\"a\",\"method\":\"read\",\"params\":{\"paneId\":\"".as_slice());
     line.extend(std::iter::repeat_n(
         b'x',
-        slopdesk_workspace::control_request::MAX_REQUEST_BYTES,
+        slopdesk_hostserver::ctlserve::MAX_REQUEST_BYTES,
     ));
     line.extend_from_slice(b"\"}}\n");
     wire.send(&line);

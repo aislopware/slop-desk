@@ -309,9 +309,9 @@ pub fn the_small_rules_are_spelled_once(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &["Sources/SlopDeskProtocol/ControlLine.swift", PANEL_SHARED],
-            message: "{files} grew an NDJSON control-line or CoreMedia rule back — ControlLine / \
-                      DevicePanelSampleBuffer own them",
+            exempt: &[PANEL_SHARED],
+            message: "{files} grew an NDJSON control-line or CoreMedia rule back — the control lanes parse \
+                      in Rust and DevicePanelSampleBuffer owns the other",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -658,10 +658,6 @@ slopdesk_android_version_label(bytes, len, release != nil, level, apiLevel != ni
     #[test]
     fn the_small_rules_keep_their_one_spelling() {
         let fixture = Fixture::new("device-smalls");
-        fixture.write(
-            "Sources/SlopDeskProtocol/ControlLine.swift",
-            "guard let method = obj[\"method\"] as? String else { return nil }\n",
-        );
         assert!(super::the_small_rules_are_spelled_once(&fixture.tree()).is_clean());
 
         // The inert flag, set minutes before the lane is dropped on an idle timer.
@@ -671,17 +667,13 @@ slopdesk_android_version_label(bytes, len, release != nil, level, apiLevel != ni
         );
         assert!(!super::the_small_rules_are_spelled_once(&fixture.tree()).is_clean());
 
-        // A second NDJSON reader outside ControlLine.
+        // An NDJSON reader in Swift at all. Both control lanes decode in Rust now, so there is no
+        // longer a file this is allowed in.
         let fixture = Fixture::new("device-smalls-ndjson");
-        fixture
-            .write(
-                "Sources/SlopDeskProtocol/ControlLine.swift",
-                "guard let method = obj[\"method\"] as? String else { return nil }\n",
-            )
-            .write(
-                "Sources/SlopDeskHost/Panel/HostLane.swift",
-                "let method = obj[\"method\"] as? String\n",
-            );
+        fixture.write(
+            "Sources/SlopDeskHost/Panel/HostLane.swift",
+            "let method = obj[\"method\"] as? String\n",
+        );
         assert!(!super::the_small_rules_are_spelled_once(&fixture.tree()).is_clean());
 
         // And a second mode-event mapping, which is the case-list contract splitting in silence.

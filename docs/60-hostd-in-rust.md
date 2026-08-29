@@ -742,9 +742,10 @@ is paused.
 
   What D.5 does NOT take is the live `ControlHost`. `list_panes`, `spawn_standalone`, `kill_pane`
   and the cross-pane status fan-out are `HostServer`'s adoption and observer tables, which is D.6 by
-  name; the trait is what D.6 implements. `ControlLine.swift` also stays, and not by the carve-out:
-  it is SHARED with the client's own control lane, which survives the cutover at F. Stage G takes
-  it.
+  name; the trait is what D.6 implements. `ControlLine.swift` also stayed, and not by the carve-out:
+  it was SHARED with the client's own control lane, which survives the cutover at F. Stage G.6 took
+  it, and the host's own line scan came home to `ctlserve.rs` in the same pass — two sockets, each
+  owning its grammar, sharing only `serde_json`.
 
   **D.6 — the server itself.** `HostServer` (3,134) + `HostServer+Workspace` (274) +
   `WorkspaceChannelSession` (486) + `HostWorkspaceDocument` (312): the composition root, and the

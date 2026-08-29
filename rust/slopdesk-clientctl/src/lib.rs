@@ -30,8 +30,19 @@
 //! the same drift one language over. `settable_badge_tokens` and [`badge_for_token`] both read the
 //! one table, so a token cannot be offered by the usage line and rejected by the parser.
 
+//! ## Both ends live here
+//! [`request`] takes a line apart into a validated [`request::Op`]; [`reply`] turns an
+//! [`reply::Outcome`] back into a line; [`serve`] is the `AF_UNIX` listener between them. The
+//! server half used to be Swift — a `[String: Any]` walked one key at a time, in a language whose
+//! compiler never saw the builders above. With both ends in one crate the agreement is a round trip
+//! a test can run rather than a resemblance a reader has to check.
+
 use serde_json::{Map, Value};
 use slopdesk_agent::badge::TabBadge;
+
+pub mod reply;
+pub mod request;
+pub mod serve;
 
 /// A JSON object, in the one spelling this crate uses.
 pub type Params = Map<String, Value>;

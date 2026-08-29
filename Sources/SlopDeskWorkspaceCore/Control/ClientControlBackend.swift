@@ -3,16 +3,17 @@ import SlopDeskWorkspaceModel
 
 // Client control backend seam.
 //
-// The protocol the ``ClientControlDispatcher`` calls to actually drive the running client GUI.
-// The concrete conformance (`WorkspaceControlBackend`) adapts `WorkspaceStore` /
-// `PreferencesStore` / `WorkspaceBindingRegistry` / `FolderFrecencyStore`; the dispatcher is
-// unit-tested against a FAKE conformance (no GUI, no socket — hang-safety).
+// The one thing the client control socket asks of this language: reaching the running GUI. Every
+// other step — the listener, the framing, the decode, the validation, the refusal words and the
+// reply encoder — is `slopdesk-clientctl`, and `ClientControlHost` is the face that carries one
+// already-decoded request across to a conformance here. The concrete one
+// (`WorkspaceControlBackend`) adapts `WorkspaceStore` / `PreferencesStore` /
+// `WorkspaceBindingRegistry` / `FolderFrecencyStore`.
 //
-// `@MainActor`: every concrete client store is `@MainActor`, so the seam — and therefore the
-// dispatch that calls it — is main-actor isolated. The dispatch logic stays PURE (deterministic,
-// no I/O) under that isolation.
+// `@MainActor`: every concrete client store is `@MainActor`, so the seam is main-actor isolated and
+// the face hops to reach it.
 
-// MARK: - Value types (the dispatcher serializes these to the NDJSON `result`)
+// MARK: - Value types (the face pushes these back through the reply handle)
 
 /// One window in a `windows` listing.
 public struct ClientWindowInfo: Sendable, Equatable {
@@ -29,14 +30,17 @@ public struct ClientWindowInfo: Sendable, Equatable {
     }
 }
 
-/// One tab in a `tabs` listing. `badge` is the canonical token of the tab's current badge, or `nil`.
+/// One tab in a `tabs` listing. `badge` is the tab's current badge, or `nil` for all-clear.
+///
+/// The KIND rather than its token: the token is the socket's spelling and lives one side over, so a
+/// listing that carried a string here would be this language naming a word it does not own.
 public struct ClientTabInfo: Sendable, Equatable {
     public let id: String
     public let windowId: String
     public let title: String
     public let paneCount: Int
     public let isFocused: Bool
-    public let badge: String?
+    public let badge: TabBadgeKind?
 
     public init(
         id: String,
@@ -44,7 +48,7 @@ public struct ClientTabInfo: Sendable, Equatable {
         title: String,
         paneCount: Int,
         isFocused: Bool,
-        badge: String?,
+        badge: TabBadgeKind?,
     ) {
         self.id = id
         self.windowId = windowId
@@ -123,6 +127,27 @@ public enum ClientControlOpenMode: Sendable, Equatable {
     case edit
 }
 
+/// Where a `view`/`edit` shim opens.
+///
+/// The raw value is the placement's POSITION in `slopdesk-clientctl`'s vocabulary, not its spelling:
+/// the token is parsed once, on the far side, and only the index crosses. `newTab` is `0` because it
+/// is what a request naming no placement means.
+public enum ClientControlPlacement: UInt8, Sendable, Equatable, CaseIterable {
+    case newTab = 0
+    case newWindow = 1
+    case left = 2
+    case right = 3
+    case top = 4
+    case bottom = 5
+}
+
+/// `font list --system` / `--user` scope, by position in the same vocabulary. A request naming no
+/// scope asks for BOTH, which is a `nil` filter rather than a case here.
+public enum ClientControlFontScope: UInt8, Sendable, Equatable, CaseIterable {
+    case system = 0
+    case user = 1
+}
+
 /// The outcome of resolving an `agent-status` query. Distinguishes a pane that does NOT exist from a
 /// pane that EXISTS but whose agent has not yet reported a non-`.none` status — the agent-startup
 /// window (`paneAgentStatus` has no entry until the first non-`.none` report over wire type 27).
@@ -160,14 +185,15 @@ public enum AgentStatusResolution: Sendable, Equatable {
 
 // MARK: - Backend seam
 
-/// The seam the ``ClientControlDispatcher`` drives. Every method is SYNCHRONOUS and `@MainActor`
-/// (it touches `@MainActor` client stores). Optionals / `Bool` returns encode the
-/// "validate-then-drop" outcomes the dispatcher converts into NDJSON success/error responses:
+/// The seam `ClientControlHost` drives. Every method is SYNCHRONOUS and `@MainActor` (it touches
+/// `@MainActor` client stores). Optionals / `Bool` returns name the outcomes the face turns into a
+/// refusal:
 ///
-/// - a `nil` / `false` return means "target not found / could not complete" → the dispatcher emits
-///   an `ok:false` error response (never a trap).
-/// - the dispatcher has ALREADY validated and bounded every param (counts, tokens, presence) before
-///   calling the backend, so a conformance can assume well-formed inputs.
+/// - a `nil` / `false` return means "target not found / could not complete" → the face answers the
+///   refusal the crate has a sentence for (never a trap).
+/// - every param has ALREADY been validated and bounded by the time it reaches here — counts are
+///   positive and clamped, tokens are parsed to indices, required fields are present — so a
+///   conformance can assume well-formed inputs.
 @preconcurrency
 @MainActor
 public protocol ClientControlBackend: AnyObject {
@@ -198,13 +224,13 @@ public protocol ClientControlBackend: AnyObject {
     func ignore(path: String) -> Bool
 
     /// Open a `view`/`edit` shim for `target` at `placement`. Returns `false` on failure.
-    func open(target: String, mode: ClientControlOpenMode, placement: ClientControlProtocol.Placement) -> Bool
+    func open(target: String, mode: ClientControlOpenMode, placement: ClientControlPlacement) -> Bool
 
     /// Fonts filtered by monospace / family substring / scope.
     func listFonts(
         monospaceOnly: Bool,
         family: String?,
-        scope: ClientControlProtocol.FontScope?,
+        scope: ClientControlFontScope?,
     ) -> [ClientFontInfo]
 
     /// Keybindings, optionally filtered by an action-name substring.

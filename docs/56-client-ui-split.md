@@ -22,7 +22,7 @@ So the "shared" target was already two targets wearing one coat: 72 of its 183 f
 and the halves overlap by far less than the file count suggests. Worse, the overlap that *does*
 exist is mostly accidental — `CodeSidebarRecommendationTips` (838 lines, since crossed to
 `rust/slopdesk-codepanel`), `WorkspaceControlBackend`
-(308), `PaneDragCoordinator` (246) and `ClientControlServer` (171) all compile into the iOS app for
+(308), `PaneDragCoordinator` (246) and the client control socket's face all compile into the iOS app for
 a code panel, a control socket and a pane-drag gesture that iOS does not have and will not get.
 
 Two more facts decided the framework question for the macOS half:

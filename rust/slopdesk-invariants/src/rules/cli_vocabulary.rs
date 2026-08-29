@@ -52,14 +52,16 @@ use crate::report::Report;
 use crate::text;
 use crate::tree::Tree;
 
-/// The far end of the client control socket — Swift, because it dispatches against the store.
-const SWIFT_CONTROL_PROTOCOL: &str = "Sources/SlopDeskWorkspaceCore/Control/ClientControlProtocol.swift";
-/// The `switch` that consumes those method strings.
-const SWIFT_CONTROL_DISPATCHER: &str = "Sources/SlopDeskWorkspaceCore/Control/ClientControlDispatcher.swift";
+/// The near end of the client control socket — Swift, because it reaches the `@MainActor` store.
+const SWIFT_CONTROL_FACE: &str = "Sources/SlopDeskClientCore/Control/ClientControlHost.swift";
+/// The seam it drives, which holds the two index-valued enums.
+const SWIFT_CONTROL_SEAM: &str = "Sources/SlopDeskWorkspaceCore/Control/ClientControlBackend.swift";
 /// The ONE spelling: the method names, the three token vocabularies and the NDJSON framing.
 const RUST_CLIENTCTL: &str = "rust/slopdesk-clientctl/src/lib.rs";
-/// The doors the Swift face reads that vocabulary through.
+/// The doors the Swift face runs that socket through.
 const RUST_CLIENTCTL_DOORS: &str = "rust/slopdesk-ffi/src/client_ctl.rs";
+/// Where the same codes are declared for the near side to compile against.
+const FFI_HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
 /// The process: argv in, dispatch, exit code out.
 const RUST_CLI_SHELL: &str = "rust/slopdesk-cli/src/shell.rs";
 
@@ -139,31 +141,36 @@ pub fn the_cli_help_has_one_author(tree: &Tree) -> Report {
 /// this rule compared one file's regexes against the other's, because no compiler crossed the
 /// boundary and no `.xcframework` could link a module of the CLI's own library.
 ///
-/// The module is `slopdesk-clientctl` now — its own crate, taken as a DIRECT edge by both
-/// `slopdesk-cli` and `slopdesk-ffi` — and the Swift file is a face over `slopdesk_ws_ctl_*`. So
-/// the question this rule asks changed shape: not "do the two spellings agree" but "is there still
-/// only one spelling".
+/// Then the SOCKET moved too. `slopdesk-clientctl` is the listener, the framing, the decode, the
+/// validation, the refusal sentences and the reply encoder — both ends link the one crate — and the
+/// Swift that remains is a FACE that reaches the `@MainActor` store and nothing else. So the words
+/// no longer cross at all: what crosses is a verb INDEX with typed params, and a typed outcome
+/// back.
 ///
 /// The clock argument that made this a gate rather than a test is unchanged and is now carried by
-/// the crate's own golden instead: the app is long-running and installed from a `.app`, the CLI
-/// arrives by `brew upgrade` and is typed seconds later, so a renamed method must be a WIRE change.
-/// What is left here is the part no suite can fail on — a literal reappearing in Swift.
+/// the crate's own goldens: the app is long-running and installed from a `.app`, the CLI arrives by
+/// `brew upgrade` and is typed seconds later, so a renamed method must be a WIRE change. What is
+/// left here is the part no suite can fail on — a literal reappearing in Swift, and a number
+/// reappearing in a third place.
 ///
 /// Four claims:
 /// * the crate still declares the one table of each vocabulary, so the doors have something to
 ///   read;
-/// * the doors exist, and the face names all five of them;
-/// * no method name or token is spelled as a literal anywhere in the face or the dispatcher;
-/// * the two `UInt8` enums declare exactly as many cases as the crate's vocabulary has entries —
-///   the BYTE contract, the same shape `TabBadgeKind.ffiByte` carries, and the one thing a door
-///   answering an index cannot check for itself.
+/// * the doors exist, and the face names every one that decides something — a face that stopped
+///   calling one would have gone back to holding the answer itself;
+/// * no method name or token is spelled as a literal in the face or the seam;
+/// * every `SLOPDESK_CTL_*` code is declared in exactly TWO places with the same value — the shim
+///   that matches on it and the header the face compiles against — and the shim's own suite pins
+///   those against the crate's tables. A third spelling with a different number is a face
+///   dispatching a neighbour's verb, which is the one failure a door answering an index cannot
+///   catch for itself.
 #[must_use]
 pub fn the_client_control_socket_has_one_vocabulary(tree: &Tree) -> Report {
     let mut report = Report::new();
     let Some(rust) = report.source(tree, RUST_CLIENTCTL, "the socket's one vocabulary lives there") else {
         return report;
     };
-    let Some(swift) = report.source(tree, SWIFT_CONTROL_PROTOCOL, "the face lives there") else {
+    let Some(face) = report.source(tree, SWIFT_CONTROL_FACE, "the face lives there") else {
         return report;
     };
 
@@ -188,34 +195,110 @@ pub fn the_client_control_socket_has_one_vocabulary(tree: &Tree) -> Report {
         );
     }
 
-    // Each door exists and the face names it. A face that stopped calling one would have gone back
-    // to holding the answer itself, which is the whole regression.
+    // Each door exists and the face names it. These seven are the ones that DECIDE something: the
+    // socket itself, its path, the dispatch index, the three param readers and the refusal. A face
+    // that stopped calling one grew that decision back in Swift, which is the whole regression.
     let doors = report.source(tree, RUST_CLIENTCTL_DOORS, "the face's doors live there");
     for door in DOORS {
         report.fail_if(
             !doors.is_some_and(|source| source.text.contains(door)),
-            format!("{RUST_CLIENTCTL_DOORS} no longer exports {door} — the face has nothing to read"),
+            format!("{RUST_CLIENTCTL_DOORS} no longer exports {door} — the face has nothing to call"),
         );
         report.fail_if(
-            !swift.text.contains(door),
+            !face.text.contains(door),
             format!(
-                "{SWIFT_CONTROL_PROTOCOL} no longer calls {door} — a vocabulary it does not ask for is one \
-                 it is spelling itself"
+                "{SWIFT_CONTROL_FACE} no longer calls {door} — a decision it does not ask for is one it is \
+                 making itself"
             ),
         );
     }
 
     // No literal, in either Swift file. This is the ban that replaces the whole two-way comparison:
     // there is nothing left to hold together as long as nobody writes the words down again.
-    literal_ban(tree, &mut report, SWIFT_CONTROL_PROTOCOL);
-    literal_ban(tree, &mut report, SWIFT_CONTROL_DISPATCHER);
+    literal_ban(tree, &mut report, SWIFT_CONTROL_FACE);
+    literal_ban(tree, &mut report, SWIFT_CONTROL_SEAM);
 
     // The byte contract. A token crosses as its POSITION, so a vocabulary that grows in Rust while
     // the Swift enum does not makes the new token parse to a `rawValue` no case answers — silently
     // unreachable rather than wrong, and still a change nobody meant to make.
-    byte_contract(&mut report, &swift.text, "Placement", placements.len());
-    byte_contract(&mut report, &swift.text, "FontScope", scopes.len());
+    if let Some(seam) = report.source(tree, SWIFT_CONTROL_SEAM, "the index-valued enums live there") {
+        byte_contract(
+            &mut report,
+            &seam.text,
+            "ClientControlPlacement",
+            placements.len(),
+        );
+        byte_contract(&mut report, &seam.text, "ClientControlFontScope", scopes.len());
+    }
+
+    codes_agree(tree, &mut report);
     report
+}
+
+/// The `SLOPDESK_CTL_*` codes are declared in two places and hold the same numbers.
+///
+/// The shim MATCHES on them; the header is what the face compiles against. Neither can be dropped —
+/// a `#define` is not a Rust `const` and a Rust `const` exports no symbol — so the one thing worth
+/// gating is that the two sets are identical. The shim's own suite already pins its half against
+/// `METHODS` and `Refusal::code`, so agreement here means all three agree.
+fn codes_agree(tree: &Tree, report: &mut Report) {
+    let (Some(doors), Some(header)) = (
+        report.source(tree, RUST_CLIENTCTL_DOORS, "the shim declares its half"),
+        report.source(tree, FFI_HEADER, "the header declares the other half"),
+    ) else {
+        return;
+    };
+    let declared = numbered(
+        &doors.text,
+        r"^pub const (SLOPDESK_CTL_[A-Z0-9_]+): [iu][0-9]+ = ([0-9]+);",
+    );
+    let defined = numbered(&header.text, r"^#define (SLOPDESK_CTL_[A-Z0-9_]+) ([0-9]+)");
+    report.fail_if(
+        declared.len() < CODE_FLOOR,
+        format!(
+            "{RUST_CLIENTCTL_DOORS}: the code extraction read {} (floor {CODE_FLOOR}) — the constants have \
+             been reshaped, and the comparison below is against nothing",
+            declared.len()
+        ),
+    );
+    for (name, value) in &declared {
+        match defined.get(name) {
+            None => {
+                report.fail(format!(
+                    "{FFI_HEADER} does not define {name} — the shim matches on a code the face cannot name"
+                ));
+            },
+            Some(other) if other != value => {
+                report.fail(format!(
+                    "{name} is {value} in {RUST_CLIENTCTL_DOORS} and {other} in {FFI_HEADER} — the face \
+                     would ask for one thing and be answered another"
+                ));
+            },
+            Some(_) => {},
+        }
+    }
+    for name in defined.keys() {
+        report.fail_if(
+            !declared.contains_key(name),
+            format!(
+                "{FFI_HEADER} defines {name}, which {RUST_CLIENTCTL_DOORS} does not declare — a code no \
+                 door answers to"
+            ),
+        );
+    }
+}
+
+/// Every `NAME value` pair one pattern finds, keyed by name.
+fn numbered(source: &str, pattern: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for line in source.lines() {
+        if let Some(caps) = text::cached(pattern).captures(line.trim())
+            && let (Some(name), Some(value)) = (caps.get(1), caps.get(2))
+        {
+            drop(out.insert(name.as_str().to_owned(), value.as_str().to_owned()));
+        }
+    }
+    out
 }
 
 /// How many methods the socket has at the floor. A smaller read is a stale extraction.
@@ -224,22 +307,28 @@ const METHOD_FLOOR: usize = 10;
 const PLACEMENT_FLOOR: usize = 6;
 /// The five settable badges plus `unread`, the many-to-one row.
 const BADGE_FLOOR: usize = 5;
+/// A floor on the code extraction. Deliberately low, because the load-bearing claim is that the two
+/// sides are the SAME set — a reformat that empties one is caught by the other's orphans, and only
+/// a reformat of both files, in two languages, at once could empty both.
+const CODE_FLOOR: usize = 8;
 
-/// The five doors the face reads the vocabulary through.
-const DOORS: [&str; 5] = [
-    "slopdesk_ws_ctl_methods",
-    "slopdesk_ws_ctl_badge_for_token",
-    "slopdesk_ws_ctl_badge_token",
-    "slopdesk_ws_ctl_placement_for_token",
-    "slopdesk_ws_ctl_font_scope_for_token",
+/// The seven doors that carry a DECISION out of Swift.
+const DOORS: [&str; 7] = [
+    "slopdesk_client_ctl_socket_path",
+    "slopdesk_client_ctl_serve",
+    "slopdesk_client_ctl_verb",
+    "slopdesk_client_ctl_text",
+    "slopdesk_client_ctl_flag",
+    "slopdesk_client_ctl_number",
+    "slopdesk_client_ctl_refuse",
 ];
 
 /// The words that may not be typed in Swift again.
 ///
 /// A method name and a placement token look alike — a lowercase hyphenated word in quotes — so the
 /// ban is one pattern over the CODE of both files. It is deliberately narrow: `docs/` prose and the
-/// doc comments above each `static let` may name whatever they describe, since a comment is not
-/// something the dispatcher reads.
+/// doc comments above each declaration may name whatever they describe, since a comment is not
+/// something the face reads.
 fn literal_ban(tree: &Tree, report: &mut Report, path: &str) {
     let Some(source) = report.source(tree, path, "one half of the face lives there") else {
         return;
@@ -258,17 +347,17 @@ fn literal_ban(tree: &Tree, report: &mut Report, path: &str) {
 }
 
 /// One `UInt8`-raw-valued enum declares exactly as many cases as its vocabulary has entries.
-fn byte_contract(report: &mut Report, protocol: &str, name: &str, expected: usize) {
+fn byte_contract(report: &mut Report, seam: &str, name: &str, expected: usize) {
     let Some(body) = text::capture_first(
-        protocol,
+        seam,
         &format!(
-            r"(?s)public enum {}: UInt8[^\n]*\{{(.*?)\n    \}}",
+            r"(?s)public enum {}: UInt8[^\n]*\{{(.*?)\n\}}",
             regex::escape(name)
         ),
     ) else {
         report.fail(format!(
-            "{SWIFT_CONTROL_PROTOCOL}: no `public enum {name}: UInt8` — the token index a door answers has \
-             no case to land on"
+            "{SWIFT_CONTROL_SEAM}: no `public enum {name}: UInt8` — the token index a door answers has no \
+             case to land on"
         ));
         return;
     };
@@ -276,7 +365,7 @@ fn byte_contract(report: &mut Report, protocol: &str, name: &str, expected: usiz
     report.fail_if(
         cases.len() != expected,
         format!(
-            "{SWIFT_CONTROL_PROTOCOL}: `{name}` declares {} cases and {RUST_CLIENTCTL} carries {expected} \
+            "{SWIFT_CONTROL_SEAM}: `{name}` declares {} cases and {RUST_CLIENTCTL} carries {expected} \
              tokens — a token crosses as its POSITION, so the extra one parses to a rawValue no case answers",
             cases.len()
         ),
@@ -1090,71 +1179,96 @@ pub const PLACEMENTS: &[&str] = &["new-tab", "new-window", "left", "right", "top
 pub const FONT_SCOPES: &[&str] = &["system", "user"];
 "#;
 
-    /// The doors the face reads it through.
+    /// The doors the face runs the socket through, plus the codes it matches on. Only the seven
+    /// `DOORS` names and the `SLOPDESK_CTL_*` shape matter here; the bodies are elided.
     const DOORS: &str = r#"
-pub unsafe extern "C" fn slopdesk_ws_ctl_methods(out: *mut c_uchar, cap: usize) -> usize {}
-pub unsafe extern "C" fn slopdesk_ws_ctl_badge_for_token(t: *const c_uchar, n: usize) -> i8 {}
-pub unsafe extern "C" fn slopdesk_ws_ctl_badge_token(b: u8, out: *mut c_uchar, cap: usize) -> usize {}
-pub unsafe extern "C" fn slopdesk_ws_ctl_placement_for_token(t: *const c_uchar, n: usize) -> i8 {}
-pub unsafe extern "C" fn slopdesk_ws_ctl_font_scope_for_token(t: *const c_uchar, n: usize) -> i8 {}
+pub const SLOPDESK_CTL_VERB_WINDOWS: i32 = 0;
+pub const SLOPDESK_CTL_VERB_TABS: i32 = 1;
+pub const SLOPDESK_CTL_FIELD_WINDOW_ID: u8 = 0;
+pub const SLOPDESK_CTL_FIELD_TAB_ID: u8 = 1;
+pub const SLOPDESK_CTL_FLAG_EDITABLE: u8 = 2;
+pub const SLOPDESK_CTL_NUMBER_LINES: u8 = 0;
+pub const SLOPDESK_CTL_LIST_WINDOWS: u8 = 0;
+pub const SLOPDESK_CTL_REFUSAL_PANE_NOT_FOUND: u8 = 16;
+pub unsafe extern "C" fn slopdesk_client_ctl_socket_path(c: *const c_uchar, n: usize) -> usize {}
+pub unsafe extern "C" fn slopdesk_client_ctl_serve(p: *const c_uchar, n: usize) -> *mut u8 {}
+pub unsafe extern "C" fn slopdesk_client_ctl_verb(r: *const SlopDeskCtlRequest) -> i32 {}
+pub unsafe extern "C" fn slopdesk_client_ctl_text(r: *const SlopDeskCtlRequest, f: u8) -> usize {}
+pub const unsafe extern "C" fn slopdesk_client_ctl_flag(r: *const SlopDeskCtlRequest, f: u8) -> bool {}
+pub unsafe extern "C" fn slopdesk_client_ctl_number(r: *const SlopDeskCtlRequest, n: u8) -> i64 {}
+pub unsafe extern "C" fn slopdesk_client_ctl_refuse(r: *mut SlopDeskCtlReply, code: u8) {}
 "#;
 
-    /// The FACE, in the shape `ClientControlProtocol.swift` has: methods read off one delivery,
-    /// three token parsers that are door calls, and two `UInt8` enums whose raw values ARE the
-    /// crate's positions.
-    const PROTOCOL: &str = r"
-public enum ClientControlProtocol {
-    public enum Method {
-        public static let all: [String] = { slopdesk_ws_ctl_methods(nil, 0) }()
-        public static let windows = at(0)
-        public static let keybindList = at(10)
+    /// The header's half of the same codes.
+    const HEADER: &str = r"
+#define SLOPDESK_CTL_VERB_WINDOWS 0
+#define SLOPDESK_CTL_VERB_TABS 1
+#define SLOPDESK_CTL_FIELD_WINDOW_ID 0
+#define SLOPDESK_CTL_FIELD_TAB_ID 1
+#define SLOPDESK_CTL_FLAG_EDITABLE 2
+#define SLOPDESK_CTL_NUMBER_LINES 0
+#define SLOPDESK_CTL_LIST_WINDOWS 0
+#define SLOPDESK_CTL_REFUSAL_PANE_NOT_FOUND 16
+";
+
+    /// The FACE, in the shape `ClientControlHost.swift` has: a bind, a dispatch on the verb INDEX,
+    /// param reads that are door calls, and refusals that are codes.
+    const FACE: &str = r"
+public final class ClientControlHost {
+    public static func resolvedSocketPath() -> String {
+        slopdesk_client_ctl_socket_path(bytes, container.utf8.count, out, cap)
     }
 
-    public static func tabBadgeKind(forToken token: String) -> TabBadgeKind? {
-        TabBadgeKind(ffiByte: slopdesk_ws_ctl_badge_for_token(bytes, len))
+    public func start() throws {
+        slopdesk_client_ctl_serve(buffer.baseAddress, buffer.count, retained.toOpaque(), runRequest)
     }
 
-    public static func badgeToken(for kind: TabBadgeKind) -> String {
-        slopdesk_ws_ctl_badge_token(kind.ffiByte, buffer.baseAddress, buffer.count)
+    private static func serve(request: OpaquePointer?, reply: OpaquePointer?) {
+        switch slopdesk_client_ctl_verb(request) {
+        case SLOPDESK_CTL_VERB_WINDOWS:
+            slopdesk_client_ctl_answer_list(reply, Kind.windows)
+        case SLOPDESK_CTL_VERB_TABS:
+            _ = slopdesk_client_ctl_flag(request, Flag.editable)
+            _ = slopdesk_client_ctl_number(request, Number.lines)
+        default:
+            break
+        }
     }
 
-    public enum Placement: UInt8, Sendable, Equatable, CaseIterable {
-        case newTab = 0
-        case newWindow = 1
-        case left = 2
-        case right = 3
-        case top = 4
-        case bottom = 5
+    private static func refuse(_ reply: OpaquePointer?, _ code: UInt8) {
+        slopdesk_client_ctl_refuse(reply, code, text[0])
     }
 
-    public static func placement(forToken token: String) -> Placement? {
-        Placement(rawValue: UInt8(slopdesk_ws_ctl_placement_for_token(bytes, len)))
-    }
-
-    public enum FontScope: UInt8, Sendable, Equatable, CaseIterable {
-        case system = 0
-        case user = 1
-    }
-
-    public static func fontScope(forToken token: String) -> FontScope? {
-        FontScope(rawValue: UInt8(slopdesk_ws_ctl_font_scope_for_token(bytes, len)))
+    private static func text(_ request: OpaquePointer?, _ field: UInt8) -> String? {
+        slopdesk_client_ctl_text(request, field, nil, 0, &present)
     }
 }
 ";
 
-    const DISPATCHER: &str = r#"
-switch method {
-case ClientControlProtocol.Method.windows: windows(id: id)
-default: Self.error(id: id, message: "unknown method: \(method)")
+    /// The seam, which holds the two index-valued enums the tokens land on.
+    const SEAM: &str = r"
+public enum ClientControlPlacement: UInt8, Sendable, Equatable, CaseIterable {
+    case newTab = 0
+    case newWindow = 1
+    case left = 2
+    case right = 3
+    case top = 4
+    case bottom = 5
 }
-"#;
+
+public enum ClientControlFontScope: UInt8, Sendable, Equatable, CaseIterable {
+    case system = 0
+    case user = 1
+}
+";
 
     fn socket(fixture: &Fixture) {
         fixture
             .write(super::RUST_CLIENTCTL, CLIENTCTL)
             .write(super::RUST_CLIENTCTL_DOORS, DOORS)
-            .write(super::SWIFT_CONTROL_PROTOCOL, PROTOCOL)
-            .write(super::SWIFT_CONTROL_DISPATCHER, DISPATCHER);
+            .write(super::FFI_HEADER, HEADER)
+            .write(super::SWIFT_CONTROL_FACE, FACE)
+            .write(super::SWIFT_CONTROL_SEAM, SEAM);
     }
 
     #[test]
@@ -1166,11 +1280,8 @@ default: Self.error(id: id, message: "unknown method: \(method)")
 
         // The regression the port removed: a method name typed back into the face.
         fixture.write(
-            super::SWIFT_CONTROL_PROTOCOL,
-            &PROTOCOL.replace(
-                "public static let windows = at(0)",
-                r#"public static let windows = "windows""#,
-            ),
+            super::SWIFT_CONTROL_FACE,
+            &FACE.replace("case SLOPDESK_CTL_VERB_WINDOWS:", r#"case "windows":"#),
         );
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(
@@ -1182,11 +1293,11 @@ default: Self.error(id: id, message: "unknown method: \(method)")
             report.violations()
         );
 
-        // The same regression in the `switch`, which is where a method name is consumed.
+        // The same regression in the SEAM, where a token would be respelled as a case name.
         socket(&fixture);
         fixture.write(
-            super::SWIFT_CONTROL_DISPATCHER,
-            &DISPATCHER.replace("case ClientControlProtocol.Method.windows:", r#"case "windows":"#),
+            super::SWIFT_CONTROL_SEAM,
+            &SEAM.replace("case newTab = 0", r#"case newTab = "new-tab""#),
         );
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(
@@ -1195,13 +1306,13 @@ default: Self.error(id: id, message: "unknown method: \(method)")
             report.violations()
         );
 
-        // A face that stopped asking — a parser that answers out of Swift again.
+        // A face that stopped asking — a param read that answers out of Swift again.
         socket(&fixture);
         fixture.write(
-            super::SWIFT_CONTROL_PROTOCOL,
-            &PROTOCOL.replace(
-                "slopdesk_ws_ctl_font_scope_for_token",
-                "FontScope(rawValue: token)",
+            super::SWIFT_CONTROL_FACE,
+            &FACE.replace(
+                "slopdesk_client_ctl_number(request, Number.lines)",
+                "params[\"lines\"] as? Int",
             ),
         );
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
@@ -1209,7 +1320,7 @@ default: Self.error(id: id, message: "unknown method: \(method)")
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("no longer calls slopdesk_ws_ctl_font_scope_for_token")),
+                .any(|v| v.contains("no longer calls slopdesk_client_ctl_number")),
             "{:?}",
             report.violations()
         );
@@ -1218,14 +1329,14 @@ default: Self.error(id: id, message: "unknown method: \(method)")
         socket(&fixture);
         fixture.write(
             super::RUST_CLIENTCTL_DOORS,
-            &DOORS.replace("slopdesk_ws_ctl_badge_token", "removed_door"),
+            &DOORS.replace("slopdesk_client_ctl_refuse", "removed_door"),
         );
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("no longer exports slopdesk_ws_ctl_badge_token")),
+                .any(|v| v.contains("no longer exports slopdesk_client_ctl_refuse")),
             "{:?}",
             report.violations()
         );
@@ -1242,7 +1353,7 @@ default: Self.error(id: id, message: "unknown method: \(method)")
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("`Placement` declares 6 cases") && v.contains("carries 7")),
+                .any(|v| v.contains("`ClientControlPlacement` declares 6 cases") && v.contains("carries 7")),
             "{:?}",
             report.violations()
         );
@@ -1265,6 +1376,65 @@ default: Self.error(id: id, message: "unknown method: \(method)")
         );
     }
 
+    /// The codes are declared twice and hold the same numbers, or the face asks for one verb and is
+    /// answered another.
+    #[test]
+    fn a_code_that_disagrees_with_its_header_is_caught() {
+        // The same name, a different number — the failure a door answering an index cannot see.
+        let fixture = Fixture::new("clientctl-code-drift");
+        socket(&fixture);
+        fixture.write(
+            super::FFI_HEADER,
+            &HEADER.replace(
+                "#define SLOPDESK_CTL_VERB_TABS 1",
+                "#define SLOPDESK_CTL_VERB_TABS 4",
+            ),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("SLOPDESK_CTL_VERB_TABS is 1 in") && v.contains("and 4 in")),
+            "{:?}",
+            report.violations()
+        );
+
+        // A code the shim matches on that the header never declares — the face cannot name it.
+        let fixture = Fixture::new("clientctl-code-missing");
+        socket(&fixture);
+        fixture.write(
+            super::FFI_HEADER,
+            &HEADER.replace("#define SLOPDESK_CTL_REFUSAL_PANE_NOT_FOUND 16\n", ""),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("does not define SLOPDESK_CTL_REFUSAL_PANE_NOT_FOUND")),
+            "{:?}",
+            report.violations()
+        );
+
+        // And the other direction: a header code no door answers to.
+        let fixture = Fixture::new("clientctl-code-orphan");
+        socket(&fixture);
+        fixture.write(
+            super::FFI_HEADER,
+            &format!("{HEADER}#define SLOPDESK_CTL_VERB_GHOST 99\n"),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("defines SLOPDESK_CTL_VERB_GHOST")),
+            "{:?}",
+            report.violations()
+        );
+    }
+
     /// A reformat that empties an extraction must be RED, not a silent pass.
     #[test]
     fn an_unreadable_vocabulary_fails_closed() {
@@ -1281,15 +1451,31 @@ default: Self.error(id: id, message: "unknown method: \(method)")
         // The far side's enum renamed or restyled: the index a door answers has nowhere to land.
         socket(&fixture);
         fixture.write(
-            super::SWIFT_CONTROL_PROTOCOL,
-            &PROTOCOL.replace("public enum Placement: UInt8", "public enum Placement: String"),
+            super::SWIFT_CONTROL_SEAM,
+            &SEAM.replace(
+                "public enum ClientControlPlacement: UInt8",
+                "public enum ClientControlPlacement: String",
+            ),
         );
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("no `public enum Placement: UInt8`")),
+                .any(|v| v.contains("no `public enum ClientControlPlacement: UInt8`")),
+            "{:?}",
+            report.violations()
+        );
+
+        // And the code extraction reformatted out of existence on the shim's side.
+        socket(&fixture);
+        fixture.write(
+            super::RUST_CLIENTCTL_DOORS,
+            &DOORS.replace("pub const SLOPDESK_CTL_", "const SLOPDESK_CTL_"),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("floor 8")),
             "{:?}",
             report.violations()
         );

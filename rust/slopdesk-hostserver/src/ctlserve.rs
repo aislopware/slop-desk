@@ -40,7 +40,6 @@ use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use serde_json::{Map, Value, json};
 use slopdesk_hostsession::{CloseTap, OutputTap};
-use slopdesk_workspace::control_request::{LineVerdict, MAX_REQUEST_BYTES, scan_line};
 
 use crate::control::{
     AgentStatusEvent, AgentStatusTap, ControlHost, ForegroundName, IpcGuards, dispatch, encode_line, failure,
@@ -49,6 +48,14 @@ use crate::control::{
 
 /// One `read(2)` into this, per turn of the connection loop.
 const READ_CHUNK: usize = 4096;
+
+/// Max bytes in one request line, measured on the TRIMMED request.
+///
+/// The line is refused at this size before it is parsed, so a megabyte of hostile JSON costs a
+/// length comparison rather than a parse. The client control socket keeps the same cap for the same
+/// reason, and each socket states it for itself: they are two grammars that happen to agree, not
+/// one rule that would drag a dependency between two lanes to say so.
+pub const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 /// The id an answer carries when the request never parsed far enough to have one.
 ///
@@ -159,15 +166,16 @@ fn answer(line: &[u8], host: &dyn ControlHost, guards: IpcGuards) -> Outcome {
     let Ok(text) = std::str::from_utf8(line) else {
         return Outcome::Answered(failure(UNKNOWN_ID, "invalid UTF-8"));
     };
-    let scan = scan_line(text);
-    match scan.verdict {
-        LineVerdict::Blank => return Outcome::Silent,
-        LineVerdict::TooLarge => return Outcome::Answered(failure(UNKNOWN_ID, "request too large")),
-        LineVerdict::Parse => {},
+    // The trim comes first so the two guards below measure the REQUEST rather than its padding: a
+    // peer that pretty-prints its lines is not sending a large request, and one that sends only
+    // whitespace is not sending one at all.
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Outcome::Silent;
     }
-    let Some(trimmed) = text.get(scan.start..scan.end) else {
-        return Outcome::Answered(failure(UNKNOWN_ID, "malformed request"));
-    };
+    if trimmed.len() > MAX_REQUEST_BYTES {
+        return Outcome::Answered(failure(UNKNOWN_ID, "request too large"));
+    }
     let Some(request) = parse_request(trimmed) else {
         return Outcome::Answered(failure(UNKNOWN_ID, "malformed request"));
     };

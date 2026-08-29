@@ -96,8 +96,6 @@
 //! - [`pane_session`] — what a live pane may do next: how a status frame lands, whether the
 //!   inspector may attach, what its video window does about a resume or a teardown, and where a
 //!   dismissed chip routes. Nothing that is ALIVE appears — only the facts a decision reads.
-//! - [`control_request`] — the client control socket's validate-then-drop rules, answered as
-//!   OFFSETS into the caller's own line so a large request costs a comparison rather than a copy.
 //! - [`inspector_store`] — the read-only inspector CLIENT's fold over what the daemon's frame
 //!   delivered: the four card rings and their eviction, the zero-state gate, and the subagent tree
 //!   flattened to one pre-order `(position, parent)` row per rendered agent.
@@ -130,7 +128,6 @@ pub mod connect_form;
 pub mod connect_gate;
 pub mod connect_run;
 pub mod connection;
-pub mod control_request;
 pub mod drop_action;
 pub mod drop_register;
 pub mod drop_zone;

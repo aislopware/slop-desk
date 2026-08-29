@@ -94,7 +94,6 @@ pub mod connect_gate;
 pub mod connect_run;
 pub mod connection;
 pub mod context_menu;
-pub mod control_request;
 pub mod copy_receipt;
 pub mod cursor_overlay;
 pub mod cursor_wire;

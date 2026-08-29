@@ -448,8 +448,8 @@ The eleventh is not. **`ControlLine.swift` is a hand-written NDJSON grammar with
 three call sites are all in `Sources/SlopDeskWorkspaceCore/Control/ClientControlDispatcher.swift`,
 and `rust/slopdesk-clientctl` already owns that lane's method vocabulary, its tokens and its NDJSON
 codec. So it is not protocol residue at all: it is the client control lane's codec, filed one module
-too low, and it retires with that lane rather than with this stage. Named here so the next census
-reads its survival as deferred rather than cleared.
+too low, and it retires with that lane rather than with this stage. **G.6 took it**, along with the
+lane — see the section below.
 
 ### G.5 — the CLI, `Sources/SlopDeskClient` and the last of `Sources/SlopDeskTransport`
 
@@ -656,6 +656,82 @@ before: a mark kept as a Swift `var` is two boundaries from the call it would di
 than one. `deleted_client_swift` gained a G.5 vector for the six paths above and a positive claim
 that `PaneDriving.swift` still ASKS its four doors — because a ban list alone is green on a tree
 where the face grew the driver back inside itself.
+
+### G.6 — the client control socket, whole
+
+G.4 named `ControlLine.swift` as a codec filed one module too low and deferred it to "the lane it
+belongs to". This is that lane, and taking it turned out to mean taking the SOCKET, because the codec
+was never the interesting half.
+
+**What was there.** Five Swift files and two Rust modules, for one socket. `ClientControlServer`
+(296) bound the `AF_UNIX` path, ran an accept loop, ran a per-connection `read(2)` loop, split on
+newlines, capped the line, guarded UTF-8 and hopped to the main actor. `ClientControlDispatcher`
+(343) parsed the line into `(id, method, params)`, switched on the method STRING through fourteen
+cases, read `[String: Any]` params one `as? String` at a time and built a `[String: Any]` result.
+`ControlRequestRules` (182) held the cap, the twenty refusals and two of the validators as a face
+over `slopdesk_ws_ctl_*`. `ClientControlProtocol` (202) held the method table and three token
+parsers as another face over the same prefix. `ControlLine` (50) was the codec. On the Rust side,
+`slopdesk-workspace::control_request` (607) held the judgements and `slopdesk-ffi` exported nine
+doors for the two faces to read them through.
+
+**Why nine reader doors was the wrong shape, and not a small one.** Every one of them answered a
+QUESTION about the socket — what are the methods, what does this token mean, how long may a line be,
+why is this send-keys refused — so that Swift could then make the decision. That is a boundary drawn
+in the middle of one subject. It costs a door per question, it costs a face per door, and it leaves
+the actual dispatch in the language that is supposed to be doing presentation. The two faces were
+not marshalling in `docs/60` §6's sense; they were a second implementation reading its constants
+from the first.
+
+**What is there now.** `rust/slopdesk-clientctl` grew three modules and became the socket:
+`request` (the decoder — trim, cap, parse, validate, and the twenty-case `Refusal` moved over from
+`slopdesk-workspace`), `reply` (the encoder, with a golden pinning twelve exact response lines) and
+`serve` (the `UnixListener`, the accept loop, the framing, and a `ControlClient` trait for whoever
+answers). The CLI already linked this crate to BUILD its requests; now it links the same crate that
+DECODES them, so the agreement between the two ends is a round-trip test — `every verb the CLI
+builds decodes to the op it meant`, fourteen cases — rather than a resemblance a gate has to check.
+The byte goldens stay beside it, because a round trip cannot catch version skew and a literal can.
+
+**The FFI is one door and one callback.** `slopdesk_client_ctl_serve` binds and starts accepting;
+every decoded request calls back into Swift with two opaque handles, a request to read and a reply
+to fill. Nothing on the request can be malformed — the decoder refused every line that was — so the
+accessors are total: a verb INDEX, a text field with an absent-vs-empty flag, a flag, a number, and
+the named keys. The reply takes typed pushes. A callback that fills nothing leaves the request
+refused as an unknown method BY NAME, which is the honest answer for a well-formed request this
+build has nowhere to send. The connection thread parks in the main-actor hop, which is why the
+handles can be valid for exactly the callback and never after — the same lifetime `slopdesk_pane_driver_*`'s
+forwarders have, for the same reason.
+
+**Teardown does not join, and the context is therefore immortal.** Every other `*_free` in this
+header joins its forwarders and hands the context back; this one cannot. A connection thread inside
+the callback is parked on the MAIN ACTOR, and `stop()` runs on the main actor — `deinit` at quit is
+exactly that — so a joining free would wait on a thread waiting on it, which is the one deadlock the
+semaphore hop is shaped to avoid. The other end of that trade is stated rather than hidden: the
+connection threads are detached, `slopdesk_client_ctl_free` stops the listener and unlinks the path
+without claiming anything about who is still running, and Swift's `Unmanaged.passRetained` box is
+never released. One object, once, for a socket bound once per process — against a release racing a
+callback that is already reading the pointer.
+
+`Sources/SlopDeskClientCore/Control/ClientControlHost.swift` is what is left in Swift: a bind, a
+`switch` on the verb index, and one backend call per verb. It is the only part that was ever this
+language's — reaching `@MainActor` stores — and it is the shape §6 asks for.
+
+**The host's control socket came home in the same pass.** `slopdesk-hostserver::ctlserve` imported
+`slopdesk_workspace::control_request`'s `scan_line`, `LineVerdict` and `MAX_REQUEST_BYTES` — the
+CLIENT socket's module, governing the HOST socket's lines, because the two happened to agree about a
+trim and a cap. Deleting that module forced the question, and the answer is that they are two
+grammars that agree rather than one rule two lanes share: `ctlserve.rs` now trims and caps for
+itself, three lines beside the `answer`, `failure` and `UNKNOWN_ID` that were already there, and the
+cross-lane dependency is gone.
+
+**What replaced the gate.** `the_client_control_socket_has_one_vocabulary` used to compare two
+spellings; then it checked that only one existed. It still bans the words from Swift — that is the
+part no suite can fail on — but its five reader doors became the seven that carry a DECISION out of
+Swift (the bind, the path, the verb, the three param readers, the refusal), and it gained the claim
+the new shape needs: every `SLOPDESK_CTL_*` code is declared in exactly two places, the shim that
+matches on it and the header the face compiles against, with the same number in both. The shim's own
+suite pins its half against `METHODS` and `Refusal::code`, so agreement at the gate means all three
+agree — and a face dispatching a neighbour's verb, the one failure a door answering an index cannot
+catch for itself, is caught.
 
 ## 5. What this campaign does NOT do
 

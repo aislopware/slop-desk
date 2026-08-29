@@ -10797,67 +10797,215 @@ size_t slopdesk_android_log_lines_push(SlopDeskAndroidLogLines *handle,
 size_t slopdesk_android_log_lines_answer(SlopDeskAndroidLogLines *handle,
                                          unsigned char *out, size_t cap);
 
-// ---- The client control socket's validate-then-drop rules ---------------------------------------
+// ---- The client control socket ------------------------------------------------------------------
 //
-// `slopdesk_workspace::control_request` — the socket's JUDGEMENTS. Its VOCABULARY is the block
-// after this one; both wear the `slopdesk_ws_ctl_` prefix because a caller reads them as one
-// socket, and they come from two crates because a line cap and a token list are different subjects.
+// `slopdesk_clientctl`, whole: the listener, the accept loop, the NDJSON framing, the size cap, the
+// decode, the validation, the twenty refusal sentences and the reply encoder. The CLI links the same
+// crate, so the two ends of this socket agree by CONSTRUCTION — there is no second spelling of a
+// method name or a token anywhere, and none may be written down again.
+//
+// What used to be here was that vocabulary as five reader doors, because a Swift dispatcher held the
+// other half: it read the method table into a `static let`, switched on the STRING, read
+// `[String: Any]` params and built a `[String: Any]` result. None of that crosses now. What crosses
+// is a VERB INDEX with its already-validated params in one direction, and a typed outcome in the
+// other, and the near side's only job is reaching the `@MainActor` stores — the one thing that was
+// ever Swift's.
+//
+// THE CALLBACK IS THE SHAPE. A request arrives on a connection thread the crate owns; the near side
+// hops to its actor, reads the request, fills the reply, and returns. Both handles are live for
+// exactly that call. A callback that fills nothing leaves the request refused as an unknown method,
+// which is the honest answer for a verb this build does not serve.
 
-// The cap one request line is refused past. A door for a single number, because TWO Swift servers
-// keep this cap — the client's and the host's — and a third transcription of `64 * 1024` is how the
-// two ends of one socket end up disagreeing about which line was too long.
-size_t slopdesk_ws_ctl_max_request_bytes(void);
-// THE LINE CROSSES ONCE, AS A SPAN. The answer is OFFSETS into the caller's own line rather than a
-// copy of the request inside it — `docs/55` §4c's shape, and the reason a 64 KiB request costs one
-// length comparison here rather than an allocation. The near side slices its own bytes at the
-// offsets, which is the operation it was going to do anyway. The return byte is the verdict; the
-// two out-parameters are read only when it admits the line.
-unsigned char slopdesk_ws_ctl_line_scan(const unsigned char *line, size_t len, size_t *start,
-                                        size_t *end);
-// How many lines a capture request may take. `present`/`is_integer` are the caller's own reading of
-// its JSON: a field that is absent and one that is present but not a number are different refusals,
-// and neither is a count.
-int64_t slopdesk_ws_ctl_capture_lines(bool present, bool is_integer, int64_t raw);
+// The socket, and the callback it runs each decoded request through.
+typedef struct SlopDeskClientCtl SlopDeskClientCtl;
+// One decoded request. Nothing on it can be malformed — every line that was is already refused.
+typedef struct SlopDeskCtlRequest SlopDeskCtlRequest;
+// Where one answer is written. Exactly one `_answer_*` or `_refuse`, plus any number of `_push_*`.
+typedef struct SlopDeskCtlReply SlopDeskCtlReply;
+// Runs one request. `context` is whatever `_serve` was given; both handles die when this returns.
+typedef void (*SlopDeskCtlRunFn)(void *context, const SlopDeskCtlRequest *request,
+                                 SlopDeskCtlReply *reply);
+
+// One borrowed run of UTF-8, live for the call that carries it. A pair rather than a C string: the
+// producer's text is a Swift `String`, which has a length and no terminator, and asking it for one
+// would be a copy per field for nothing. The LENGTH decides — a zero length may carry any pointer.
 typedef struct {
-    bool keys_present;   // the `keys` field appeared at all
-    bool keys_is_array;  // and it was an array
-    bool has_text;       // a non-empty `text`
-    bool has_keys;       // a non-empty `keys`
-} SlopDeskWsSendKeys;
-// Why a send-keys request is refused, or 0 to admit it. A malformed `keys` is told apart from an
-// absent one, because the two are different mistakes and only one of them is a typo.
-unsigned char slopdesk_ws_ctl_send_keys_refusal(SlopDeskWsSendKeys facts);
-// The sentence one refusal reads as, with the caller's own detail interpolated. Returns the count
-// NEEDED; a short or null `out` is written nothing and told the length.
-size_t slopdesk_ws_ctl_refusal_message(unsigned char code, const unsigned char *detail,
-                                       size_t detail_len, unsigned char *out, size_t cap);
+    const unsigned char *bytes;
+    size_t len;
+} SlopDeskCtlText;
+// One row of a `windows` listing.
+typedef struct {
+    SlopDeskCtlText id;
+    SlopDeskCtlText title;
+    int64_t tab_count;
+    bool focused;
+} SlopDeskCtlWindow;
+// One row of a `tabs` listing. `badge` is a position in the `TabBadge` ladder — the same byte
+// `TabBadgeKind.ffiByte` already carries — or negative for a tab wearing nothing.
+typedef struct {
+    SlopDeskCtlText id;
+    SlopDeskCtlText window_id;
+    SlopDeskCtlText title;
+    int64_t pane_count;
+    bool focused;
+    int32_t badge;
+} SlopDeskCtlTab;
+// One row of a `panes` listing. An EMPTY cwd and an UNKNOWN one are different answers — the first
+// prints a blank, the second omits the key — so the flag decides whether `cwd` is read at all.
+typedef struct {
+    SlopDeskCtlText id;
+    SlopDeskCtlText tab_id;
+    SlopDeskCtlText title;
+    SlopDeskCtlText kind;
+    bool focused;
+    SlopDeskCtlText cwd;
+    bool has_cwd;
+} SlopDeskCtlPane;
+// One row of a `font-list`.
+typedef struct {
+    SlopDeskCtlText family;
+    bool monospace;
+    bool system;
+} SlopDeskCtlFont;
+// One row of a `keybind-list`.
+typedef struct {
+    SlopDeskCtlText action;
+    SlopDeskCtlText keys;
+} SlopDeskCtlKeybind;
 
-// ---- The client control socket's VOCABULARY ------------------------------------------------------
-//
-// `slopdesk_clientctl`. The words themselves — what `slopdesk` writes onto the socket and what
-// `ClientControlDispatcher` reads back off it. They used to be a Swift spelling held against a Rust
-// one by a `slopdesk-invariants` rule, because the module lived inside the CLI's own library and
-// nothing linkable owned it; the crate exists so both ends read the one table.
-//
-// METHODS cross as WORDS, because the far side dispatches a `switch` on the string a foreign process
-// wrote. TOKENS cross as INDICES, because the far side turns each into a case of its own enum and
-// only ever switches on that — the token is parsed once, here, and the position IS the `rawValue`.
-// An unknown token answers -1, which is `nil` on the far side and a refusal after that.
+// The verbs, as positions in the method table. `view` and `edit` are two indices over ONE shape:
+// they differ only in SLOPDESK_CTL_FLAG_EDITABLE, so a face reads the flag rather than writing the
+// same body twice.
+#define SLOPDESK_CTL_VERB_WINDOWS 0
+#define SLOPDESK_CTL_VERB_TABS 1
+#define SLOPDESK_CTL_VERB_PANES 2
+#define SLOPDESK_CTL_VERB_TAB_BADGE 3
+#define SLOPDESK_CTL_VERB_JUMP 4
+#define SLOPDESK_CTL_VERB_LEARN 5
+#define SLOPDESK_CTL_VERB_IGNORE 6
+#define SLOPDESK_CTL_VERB_VIEW 7
+#define SLOPDESK_CTL_VERB_EDIT 8
+#define SLOPDESK_CTL_VERB_FONT_LIST 9
+#define SLOPDESK_CTL_VERB_KEYBIND_LIST 10
+#define SLOPDESK_CTL_VERB_PANE_CAPTURE 11
+#define SLOPDESK_CTL_VERB_PANE_SEND_KEYS 12
+#define SLOPDESK_CTL_VERB_AGENT_STATUS 13
 
-// Every method the socket dispatches, in declaration order, as ONE delivery: [u16 count], then per
-// method [u32 length][UTF-8]. A fixed table, read once into a Swift `static let`.
-size_t slopdesk_ws_ctl_methods(unsigned char *out, size_t cap);
-// The badge a settable `--kind` token names, as its index in the `TabBadge` ladder, or -1. The four
-// badges a foreground process derives — the two command tiers and the two privilege markers — answer
-// -1 even for their own canonical spelling: a request may not claim a tab is running `sudo`.
-int8_t slopdesk_ws_ctl_badge_for_token(const unsigned char *token, size_t token_len);
-// The canonical token for a badge index — the reverse, and TOTAL over the ladder, because a tab can
-// be LISTED wearing a badge no request may set. A byte past the ladder writes nothing and reports 0.
-size_t slopdesk_ws_ctl_badge_token(uint8_t badge, unsigned char *out, size_t cap);
-// Where a `view`/`edit` shim opens, as the position of the token in the placement vocabulary, or -1.
-int8_t slopdesk_ws_ctl_placement_for_token(const unsigned char *token, size_t token_len);
-// Which font surface `font list --scope` names, as a position in the scope vocabulary, or -1.
-int8_t slopdesk_ws_ctl_font_scope_for_token(const unsigned char *token, size_t token_len);
+// The text fields a request may carry, each named by the verbs that carry it.
+#define SLOPDESK_CTL_FIELD_WINDOW_ID 0
+#define SLOPDESK_CTL_FIELD_TAB_ID 1
+#define SLOPDESK_CTL_FIELD_PANE_ID 2
+#define SLOPDESK_CTL_FIELD_QUERY 3
+#define SLOPDESK_CTL_FIELD_PATH 4
+#define SLOPDESK_CTL_FIELD_TARGET 5
+#define SLOPDESK_CTL_FIELD_FAMILY 6
+#define SLOPDESK_CTL_FIELD_ACTION 7
+#define SLOPDESK_CTL_FIELD_TEXT 8
+#define SLOPDESK_CTL_FIELD_ID 9
+
+// The flags. Each is false for a verb that does not carry it, which is every flag's default.
+#define SLOPDESK_CTL_FLAG_CHANGE_DIRECTORY 0
+#define SLOPDESK_CTL_FLAG_MONOSPACE 1
+#define SLOPDESK_CTL_FLAG_EDITABLE 2
+
+// The numbers. Every one a verb DOES carry is non-negative, so -1 cannot be read as an answer.
+#define SLOPDESK_CTL_NUMBER_LINES 0
+#define SLOPDESK_CTL_NUMBER_BADGE 1
+#define SLOPDESK_CTL_NUMBER_PLACEMENT 2
+#define SLOPDESK_CTL_NUMBER_SCOPE 3
+
+// The listings. Opening one is separate from pushing into it so an EMPTY listing is expressible: a
+// `windows` that found none must still answer `[]`, because the CLI prints "no windows" from an
+// empty array and an error from a missing key.
+#define SLOPDESK_CTL_LIST_WINDOWS 0
+#define SLOPDESK_CTL_LIST_TABS 1
+#define SLOPDESK_CTL_LIST_PANES 2
+#define SLOPDESK_CTL_LIST_FONTS 3
+#define SLOPDESK_CTL_LIST_KEYBINDS 4
+#define SLOPDESK_CTL_LIST_LINES 5
+
+// The refusals. The SENTENCE each prints never crosses — a face names the refusal and hands over the
+// token the request supplied, which is what keeps `invalid placement 'x'` from becoming
+// `invalid placement "x"` on one of the two ends that print it. Only the seven marked OUTCOME are a
+// face's to answer; the rest are the decoder's, refused before the callback is ever reached.
+#define SLOPDESK_CTL_REFUSAL_TOO_LARGE 1
+#define SLOPDESK_CTL_REFUSAL_MALFORMED 2
+#define SLOPDESK_CTL_REFUSAL_UNKNOWN_METHOD 3
+#define SLOPDESK_CTL_REFUSAL_MISSING_BADGE_KIND 4
+#define SLOPDESK_CTL_REFUSAL_INVALID_BADGE_KIND 5
+#define SLOPDESK_CTL_REFUSAL_TAB_NOT_FOUND 6        // OUTCOME
+#define SLOPDESK_CTL_REFUSAL_NO_JUMP_TARGET 7       // OUTCOME
+#define SLOPDESK_CTL_REFUSAL_NOTHING_TO_LEARN 8     // OUTCOME
+#define SLOPDESK_CTL_REFUSAL_MISSING_PATH 9
+#define SLOPDESK_CTL_REFUSAL_COULD_NOT_IGNORE 10    // OUTCOME
+#define SLOPDESK_CTL_REFUSAL_MISSING_TARGET 11
+#define SLOPDESK_CTL_REFUSAL_INVALID_PLACEMENT 12
+#define SLOPDESK_CTL_REFUSAL_COULD_NOT_OPEN 13      // OUTCOME
+#define SLOPDESK_CTL_REFUSAL_INVALID_SCOPE 14
+#define SLOPDESK_CTL_REFUSAL_CAPTURE_LINES 15
+#define SLOPDESK_CTL_REFUSAL_PANE_NOT_FOUND 16      // OUTCOME
+#define SLOPDESK_CTL_REFUSAL_KEYS_NOT_AN_ARRAY 17
+#define SLOPDESK_CTL_REFUSAL_NOTHING_TO_SEND 18
+#define SLOPDESK_CTL_REFUSAL_UNKNOWN_KEY 19         // OUTCOME
+#define SLOPDESK_CTL_REFUSAL_MISSING_ID 20
+
+// Where the socket lives: the SLOPDESK_CLIENT_SOCKET override, else `cli-control.sock` inside the
+// container the caller names. The CONTAINER is the caller's because Application Support is a platform
+// lookup; every rule ABOUT the path is this side's, which is how the CLI reaches the same answer.
+size_t slopdesk_client_ctl_socket_path(const unsigned char *container, size_t container_len,
+                                       unsigned char *out, size_t cap);
+// Binds at `path` (0600) and begins accepting. NULL on a bind that failed, in which case nothing was
+// started and `context` is the caller's again at once. On non-NULL, `run` must stay callable and
+// `context` valid for the LIFE OF THE PROCESS: _free cannot join the connection threads (see it),
+// so one may still be inside the callback after the handle is gone.
+SlopDeskClientCtl *slopdesk_client_ctl_serve(const unsigned char *path, size_t path_len,
+                                             void *context, SlopDeskCtlRunFn run);
+// Stops the listener, unlinks the socket file, frees the handle. Does NOT join the connection
+// threads: one may be parked inside the callback waiting on the caller's main actor, and a free
+// called from that actor would then wait on a thread waiting on it. So `context` is never given
+// back — bind once per process and keep it.
+void slopdesk_client_ctl_free(SlopDeskClientCtl *handle);
+
+// Which verb, as a SLOPDESK_CTL_VERB_* position. -1 for a NULL handle.
+int32_t slopdesk_client_ctl_verb(const SlopDeskCtlRequest *request);
+// One text field. `present` tells an ABSENT field from an EMPTY one, which several verbs branch on:
+// a `learn` with no `path` takes the focused pane's cwd. `docs/55` §4 size-then-take.
+size_t slopdesk_client_ctl_text(const SlopDeskCtlRequest *request, uint8_t field,
+                                unsigned char *out, size_t cap, bool *present);
+// One flag. False for a verb that does not carry it.
+bool slopdesk_client_ctl_flag(const SlopDeskCtlRequest *request, uint8_t flag);
+// One number, or -1 for a verb that does not carry it.
+int64_t slopdesk_client_ctl_number(const SlopDeskCtlRequest *request, uint8_t number);
+// How many named keys a `pane-send-keys` carries. 0 for every other verb.
+size_t slopdesk_client_ctl_key_count(const SlopDeskCtlRequest *request);
+// One named key by position. Past the end writes nothing.
+size_t slopdesk_client_ctl_key(const SlopDeskCtlRequest *request, size_t index,
+                               unsigned char *out, size_t cap);
+
+// The verb landed and has nothing to report.
+void slopdesk_client_ctl_answer_done(SlopDeskCtlReply *reply);
+// Opens an EMPTY listing of `kind`. Every _push_* below appends to whichever one is open, and a push
+// with no matching listing open is a no-op rather than a wrong answer.
+void slopdesk_client_ctl_answer_list(SlopDeskCtlReply *reply, uint8_t kind);
+void slopdesk_client_ctl_push_window(SlopDeskCtlReply *reply, SlopDeskCtlWindow row);
+void slopdesk_client_ctl_push_tab(SlopDeskCtlReply *reply, SlopDeskCtlTab row);
+void slopdesk_client_ctl_push_pane(SlopDeskCtlReply *reply, SlopDeskCtlPane row);
+void slopdesk_client_ctl_push_font(SlopDeskCtlReply *reply, SlopDeskCtlFont row);
+void slopdesk_client_ctl_push_keybind(SlopDeskCtlReply *reply, SlopDeskCtlKeybind row);
+void slopdesk_client_ctl_push_line(SlopDeskCtlReply *reply, SlopDeskCtlText text);
+// A `tab-badge` that landed, echoing the badge the tab now wears by its ladder position.
+void slopdesk_client_ctl_answer_badge(SlopDeskCtlReply *reply, int32_t badge);
+// A `jump` that resolved. `changed` is false when `--no-cd` only printed the path.
+void slopdesk_client_ctl_answer_jump(SlopDeskCtlReply *reply, SlopDeskCtlText path, bool changed);
+// A `learn` or `ignore` that landed, echoing the path it acted on.
+void slopdesk_client_ctl_answer_path(SlopDeskCtlReply *reply, SlopDeskCtlText path);
+// An `agent-status` reading. `seen` false is an id that resolves to NO pane (`watch:claude` exits 4);
+// `seen` true with no status is the agent-startup window, which keeps the watch polling.
+void slopdesk_client_ctl_answer_agent(SlopDeskCtlReply *reply, bool seen, bool has_status,
+                                      uint8_t status);
+// The verb could not be served, in the socket's own words. `detail` is the token a person mistyped;
+// the refusals that name none ignore it.
+void slopdesk_client_ctl_refuse(SlopDeskCtlReply *reply, uint8_t refusal, SlopDeskCtlText detail);
 
 // ---- The inspector CLIENT's store fold ----------------------------------------------------------
 //

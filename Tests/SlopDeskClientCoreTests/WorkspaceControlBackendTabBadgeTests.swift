@@ -65,8 +65,9 @@ final class WorkspaceControlBackendTabBadgeTests: XCTestCase {
         XCTAssertTrue(store.tabBadgeOverrides.isEmpty, "no override is written for a missing tab")
     }
 
-    /// The written override surfaces in `listTabs` (the `tab list` badge column) as its canonical token,
-    /// winning over the derived (all-clear) badge — the end-to-end CLI surface, not just the store dict.
+    /// The written override surfaces in `listTabs` (the `tab list` badge column) as the KIND, winning
+    /// over the derived (all-clear) badge — the end-to-end CLI surface, not just the store dict. The
+    /// token is `slopdesk-clientctl`'s spelling and never crosses back into this language.
     func testListTabsReportsTheManualBadge() throws {
         let store = makeStore()
         let backend = makeBackend(store)
@@ -75,6 +76,6 @@ final class WorkspaceControlBackendTabBadgeTests: XCTestCase {
 
         XCTAssertTrue(backend.setTabBadge(tabId: nil, kind: .awaitingInput))
         let tab = try XCTUnwrap(backend.listTabs(windowId: nil).first { $0.id == focused.raw.uuidString })
-        XCTAssertEqual(tab.badge, "awaiting-input", "tab list reports the manual badge token")
+        XCTAssertEqual(tab.badge, .awaitingInput, "tab list reports the manual badge")
     }
 }

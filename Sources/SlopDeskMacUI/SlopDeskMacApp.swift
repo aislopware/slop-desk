@@ -116,7 +116,7 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
     /// send-keys, agent status). Built once here over a ``WorkspaceControlBackend`` adapter and bound at
     /// launch; compiled-only + never unit-tested (hang-safety, mirroring the host's
     /// `AgentControlListener`).
-    private let clientControlServer: ClientControlServer
+    private let clientControlServer: ClientControlHost
     /// The host-windows feed behind Open Quickly's host-window rows. App-owned so its renewal loop
     /// outlives column mounts; the loop self-gates on OQ/connection.
     private let hostWindowFeed: HostWindowFeed
@@ -323,7 +323,7 @@ public final class SlopDeskMacApp: NSObject, NSApplicationDelegate, NSMenuItemVa
         // The client control socket server over a ``WorkspaceControlBackend`` adapter on the SAME live
         // stores the GUI uses (the backend holds them WEAKLY — the composition retains the originals).
         // Built here so it outlives the window; BOUND at launch (the bind/listen is deferred).
-        clientControlServer = ClientControlServer(
+        clientControlServer = ClientControlHost(
             backend: WorkspaceControlBackend(store: store, folders: app.folders),
         )
         super.init()
