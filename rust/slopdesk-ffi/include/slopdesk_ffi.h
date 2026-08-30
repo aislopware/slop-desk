@@ -2071,6 +2071,14 @@ size_t slopdesk_ws_key_order(const SlopDeskWsDocKey *keys, size_t count, uint32_
 // identity, and two panes sharing one is a pane that reattaches to a process it never opened.
 size_t slopdesk_ws_workspace_file_minted_ids(const uint8_t *bytes, size_t len);
 
+// Whether THESE bytes are the throwaway default a `New Window` launch autosaves — one session named
+// `slopdesk_ws_default_session_name`, one tab, one terminal titled `slopdesk_ws_default_pane_title`,
+// no video. The file goes in rather than a decoded shape so the two seed names are never spelled a
+// second time on the caller's side. `false` is "not PROVABLY the default": unreadable bytes, a
+// foreign schemaVersion and an over-large file all land there, so a file this build cannot read is
+// preserved aside rather than skipped.
+bool slopdesk_ws_workspace_file_is_default_shape(const uint8_t *bytes, size_t len);
+
 // The file's bytes for a workspace, §4-shaped. UTF-8 JSON, sorted keys, trailing newline, so two
 // saves of one arrangement are byte-identical. Only the topology half of the cells is read — the
 // file is a LAYOUT, and liveness has no business on a disk that outlives the process it describes.

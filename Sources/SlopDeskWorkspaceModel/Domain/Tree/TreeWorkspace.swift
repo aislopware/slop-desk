@@ -80,10 +80,11 @@ public extension TreeWorkspace {
 /// The crate re-seeds too — a spec-less leaf, a session that lost its tabs, a workspace with nothing
 /// in it — so a copy of either literal on this side is a second answer to "what is a fresh pane
 /// called". It would not fail loudly: the pane would simply be titled one thing when a gesture made
-/// it and another when a launch repaired it, and the shape test
-/// (``WorkspacePersistence/isDefaultTreeShape(_:)``) that compares against a spelled-out `"Terminal"`
-/// would pass on a default the crate had stopped producing. `docs/55` §8 names this exact
-/// anti-pattern.
+/// it and another when a launch repaired it. `docs/55` §8 names this exact anti-pattern.
+///
+/// The throwaway-default SHAPE TEST is the same argument one step further, and is not written here
+/// at all: ``WorkspaceFile/isDefaultShape(_:)`` asks the crate about the FILE, so neither seed name
+/// crosses to be compared against, and a test written on this side cannot go stale behind them.
 public enum TreeWorkspaceDefaults {
     /// The title a re-seeded pane takes.
     public static let paneTitle = wsString { out, cap in slopdesk_ws_default_pane_title(out, cap) }

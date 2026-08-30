@@ -157,6 +157,25 @@ public enum WorkspaceFile {
         return tree
     }
 
+    /// Whether `data` is the THROWAWAY DEFAULT a `New Window` launch autosaves — one session named
+    /// the crate's seed name, one tab, one terminal titled the crate's seed title, no video.
+    ///
+    /// Asked of the FILE rather than of a decoded tree, which is the whole reason it is a door: the
+    /// alternative is decoding here and comparing the two seed names against
+    /// ``TreeWorkspaceDefaults``, and a shape test written against those would keep answering `true`
+    /// for a default the crate had stopped writing — `docs/55` §8's anti-pattern, one indirection
+    /// removed.
+    ///
+    /// `false` is "not PROVABLY the default" and folds in undecodability: a corrupt file, a foreign
+    /// `schemaVersion` and an over-large one all answer `false`, which is what makes
+    /// ``WorkspacePersistence/snapshotPreviousSession()`` preserve one aside instead of skipping it.
+    /// It is not a claim that the bytes hold a real session.
+    public static func isDefaultShape(_ data: Data) -> Bool {
+        Array(data).withUnsafeBufferPointer { input in
+            slopdesk_ws_workspace_file_is_default_shape(input.baseAddress, input.count)
+        }
+    }
+
     /// How many identities a decode of these bytes can spend.
     private static func mintedIDs(for bytes: [UInt8]) -> Int {
         bytes.withUnsafeBufferPointer { input in

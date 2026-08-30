@@ -146,13 +146,17 @@ public struct WorkspacePersistence: @unchecked Sendable {
     /// default-shaped file with a `.previous` beside it is the throwaway from a prior new-window launch,
     /// and there is a preserved session to protect. With no sidecar there is nothing to lose by writing
     /// one, so the snapshot is taken.
+    ///
+    /// WHICH shape is the throwaway is `slopdesk_workspace::persist`'s to say, through
+    /// ``WorkspaceFile/isDefaultShape(_:)`` — it reads the two seed names off the constants the re-seed
+    /// itself writes, where a copy on this side would keep recognising a default the crate had stopped
+    /// producing. Validate-then-drop rides along in the same answer: an unreadable or corrupt file is not
+    /// PROVABLY the default, so it is preserved aside rather than skipped.
     public func snapshotPreviousSession() {
         guard fileManager.fileExists(atPath: fileURL.path) else { return } // first launch: nothing to back up
-        // Validate-then-drop: an unreadable/corrupt file is NOT default-shaped, so it is preserved aside.
         if fileManager.fileExists(atPath: previousSessionURL.path),
            let data = try? Data(contentsOf: fileURL),
-           let tree = try? WorkspaceFile.decode(data),
-           Self.isDefaultTreeShape(tree)
+           WorkspaceFile.isDefaultShape(data)
         {
             return
         }
@@ -161,37 +165,13 @@ public struct WorkspacePersistence: @unchecked Sendable {
         try? fileManager.copyItem(at: fileURL, to: sidecar)
     }
 
-    /// Whether `tree` is SHAPED like the fresh-default tree the store autosaves over a real session on a
-    /// `.newWindow` launch — one "Local" session, one tab, one terminal leaf titled "Terminal", no video —
-    /// ignoring only the random ids ``TreeWorkspace/defaultWorkspace()`` mints per call (so a value `==` is
-    /// impossible). Only session content distinguishes real from default, so app-config presets are
-    /// intentionally NOT tested.
-    ///
-    /// It is a SHAPE test and nothing more: a real session the user never grew past one un-renamed
-    /// terminal answers `true` too. ``snapshotPreviousSession()`` is where that ambiguity is resolved, and
-    /// it resolves it by asking whether a preserved session already exists.
-    ///
-    static func isDefaultTreeShape(_ tree: TreeWorkspace) -> Bool {
-        guard tree.sessions.count == 1,
-              let session = tree.sessions.first,
-              session.name == TreeWorkspaceDefaults.sessionName,
-              session.tabs.count == 1,
-              tree.allPaneIDs().count == 1,
-              let leaf = tree.allPaneIDs().first,
-              let spec = tree.spec(for: leaf),
-              spec.kind == .terminal,
-              spec.title == TreeWorkspaceDefaults.paneTitle,
-              spec.video == nil else { return false }
-        return true
-    }
-
     /// Best-effort copy the unrestorable file aside BEFORE the next `save()` overwrites it, so a
     /// merely-unreadable-by-THIS-build file or a hard-corrupt one is recoverable, not silently
     /// destroyed. Bounded to a single fixed-name `.corrupt` sidecar (overwrites any prior backup).
     private func resetTreeToDefault() -> TreeWorkspace {
         let backup = fileURL.appendingPathExtension("corrupt")
-        try? FileManager.default.removeItem(at: backup)
-        try? FileManager.default.copyItem(at: fileURL, to: backup)
+        try? fileManager.removeItem(at: backup)
+        try? fileManager.copyItem(at: fileURL, to: backup)
         return .defaultWorkspace()
     }
 }

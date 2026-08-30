@@ -3477,6 +3477,34 @@ pub unsafe extern "C" fn slopdesk_ws_workspace_file_minted_ids(bytes: *const c_u
     persist::minted_ids_for(input)
 }
 
+/// Whether these bytes are the THROWAWAY DEFAULT a `New Window` launch autosaves.
+///
+/// The FILE goes in rather than a decoded shape, and that is what the door buys: the caller's
+/// alternative was to decode on its own side and compare the two seed names against literals, which
+/// is the second spelling `slopdesk_ws_default_session_name` and `slopdesk_ws_default_pane_title`
+/// exist to prevent — a copy of either would keep answering `true` for a default this build had
+/// stopped writing.
+///
+/// `false` is "not PROVABLY the default": unreadable bytes, a foreign `schemaVersion` and an
+/// over-large file all land there, so a file this build cannot read is preserved aside rather than
+/// skipped. It is not a claim that the file holds a real session.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` live bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_ws_workspace_file_is_default_shape(
+    bytes: *const c_uchar,
+    len: usize,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let input = unsafe { borrow(bytes, len) };
+    persist::is_default_file_shape(input)
+}
+
 /// The file's bytes for a workspace, under §4's convention.
 ///
 /// `entries`/`blob` are the document's cells in `slopdesk_ws_encode_snapshot`'s flat form. Only the
@@ -3650,7 +3678,8 @@ mod tests {
         slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
         slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
         slopdesk_ws_workspace_file_decode, slopdesk_ws_workspace_file_encode,
-        slopdesk_ws_workspace_file_minted_ids, slopdesk_ws_workspace_file_status,
+        slopdesk_ws_workspace_file_is_default_shape, slopdesk_ws_workspace_file_minted_ids,
+        slopdesk_ws_workspace_file_status,
     };
 
     const fn id(byte: u8) -> Uuid {
@@ -4655,6 +4684,46 @@ mod tests {
         };
         assert!(needed > 0);
         assert_eq!(status, slopdesk_ws_workspace_file_status(0));
+    }
+
+    /// The shape door reads the seed names off the crate, so this asks it about a file the crate
+    /// itself wrote — a literal here would be the second spelling the door exists to delete.
+    #[test]
+    fn the_shape_door_recognises_the_file_a_new_window_launch_autosaves() {
+        let default =
+            slopdesk_workspace::persist::encode_file(&slopdesk_tree::workspace::TreeWorkspace::single_pane(
+                slopdesk_ids::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_ids::identity::TabId::from_bytes([2; 16]),
+                PaneId::from_bytes([3; 16]),
+                slopdesk_tree::session::PaneSpec::new(
+                    slopdesk_tree::session::PaneKind::Terminal,
+                    slopdesk_tree::workspace::DEFAULT_PANE_TITLE,
+                ),
+            ));
+        // SAFETY: both are live locals'.
+        let (throwaway, kept) = unsafe {
+            (
+                slopdesk_ws_workspace_file_is_default_shape(default.as_ptr(), default.len()),
+                slopdesk_ws_workspace_file_is_default_shape(
+                    UNNAMED_SPLIT_FILE.as_ptr(),
+                    UNNAMED_SPLIT_FILE.len(),
+                ),
+            )
+        };
+        assert!(throwaway, "the re-seed's own output is the throwaway");
+        assert!(!kept, "a file with a split in it is a layout somebody made");
+        // SAFETY: a live local's, and the null probe §4 admits everywhere.
+        let unreadable = unsafe {
+            (
+                slopdesk_ws_workspace_file_is_default_shape(b"not a workspace".as_ptr(), 15),
+                slopdesk_ws_workspace_file_is_default_shape(core::ptr::null(), 0),
+            )
+        };
+        assert_eq!(
+            unreadable,
+            (false, false),
+            "false is `not provably the default`, so an unreadable file is preserved aside",
+        );
     }
 
     #[test]

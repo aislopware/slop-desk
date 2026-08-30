@@ -215,13 +215,16 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         try persistence.save(tree)
 
         // Direct contract pin: a multi-tab session is NOT default-shaped, while the pure re-seedable
-        // default IS.
+        // default IS. Asked of the FILE, which is where the shape test lives now — the crate reads
+        // the seed names off its own constants, so nothing here spells "Local" or "Terminal".
         XCTAssertFalse(
-            WorkspacePersistence.isDefaultTreeShape(tree),
+            WorkspaceFile.isDefaultShape(WorkspaceFile.encode(tree)),
             "a real multi-tab session must not be classified as the throwaway default",
         )
         XCTAssertTrue(
-            WorkspacePersistence.isDefaultTreeShape(TreeWorkspace.defaultWorkspace().normalized()),
+            WorkspaceFile.isDefaultShape(
+                WorkspaceFile.encode(TreeWorkspace.defaultWorkspace().normalized()),
+            ),
             "the pure default must still be classified as the re-seedable default (idempotency win)",
         )
 

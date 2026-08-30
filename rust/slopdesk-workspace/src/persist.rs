@@ -32,7 +32,9 @@ use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
 use slopdesk_ids::json::{Json, JsonError, Result, object, parse, to_pretty_string};
 use slopdesk_tree::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
 use slopdesk_tree::split_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
-use slopdesk_tree::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
+use slopdesk_tree::workspace::{
+    CURRENT_SCHEMA_VERSION, DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME, TreeWorkspace,
+};
 
 const fn malformed(hint: &'static str) -> JsonError {
     JsonError::from_hint(hint)
@@ -732,6 +734,78 @@ pub fn minted_ids_for(bytes: &[u8]) -> usize {
     needed
 }
 
+/// A deterministic identity source for a decode whose ANSWER is discarded.
+///
+/// [`is_default_file_shape`] decodes only to look at the arrangement, and the arrangement is what a
+/// re-seed's fresh ids are not part of — nothing outside this function ever sees one, so there is
+/// nothing for them to join to and a counter is the honest supply. The runtime's entropy is spent
+/// on the decode a launch KEEPS, not on this one.
+struct DiscardedIds(u8);
+
+impl DiscardedIds {
+    const fn take(&mut self) -> [u8; 16] {
+        self.0 = self.0.wrapping_add(1);
+        [self.0; 16]
+    }
+}
+
+impl IdSource for DiscardedIds {
+    fn pane(&mut self) -> PaneId {
+        PaneId::from_bytes(self.take())
+    }
+
+    fn tab(&mut self) -> TabId {
+        TabId::from_bytes(self.take())
+    }
+
+    fn session(&mut self) -> SessionId {
+        SessionId::from_bytes(self.take())
+    }
+
+    fn split(&mut self) -> SplitNodeId {
+        SplitNodeId::from_bytes(self.take())
+    }
+}
+
+/// Whether these bytes are the THROWAWAY DEFAULT a `New Window` launch autosaves — one session
+/// named [`DEFAULT_SESSION_NAME`], one tab, one terminal leaf titled [`DEFAULT_PANE_TITLE`], no
+/// video.
+///
+/// The names are read off the constants the re-seed itself writes rather than spelled here, which
+/// is the whole reason the question belongs on this side: a copy of either literal would pass on a
+/// default this crate had stopped producing.
+///
+/// It is a SHAPE test and nothing more — a real session someone never grew past one un-renamed
+/// terminal answers `true` too. The caller resolves that ambiguity; the client's
+/// `snapshotPreviousSession` does it by asking whether a preserved session already exists.
+///
+/// `false` means "not PROVABLY the throwaway default", so it folds in undecodability: bytes that
+/// are not a file, carry a foreign `schemaVersion`, or name more panes than a launch can hold all
+/// answer `false`. That is the answer the snapshot path wants — an unreadable file is preserved
+/// aside rather than skipped — but it is not "definitely a real session", and a caller reading it
+/// that way would be reading more than is here.
+#[must_use]
+pub fn is_default_file_shape(bytes: &[u8]) -> bool {
+    let Ok(workspace) = decode_file(bytes, &mut DiscardedIds(200)) else {
+        return false;
+    };
+    let [session] = workspace.sessions.as_slice() else {
+        return false;
+    };
+    let panes = workspace.all_pane_ids();
+    let [pane] = panes.as_slice() else {
+        return false;
+    };
+    let Some(spec) = workspace.spec_for(*pane) else {
+        return false;
+    };
+    session.name == DEFAULT_SESSION_NAME
+        && session.tabs.len() == 1
+        && spec.kind == PaneKind::Terminal
+        && spec.title == DEFAULT_PANE_TITLE
+        && spec.video.is_none()
+}
+
 /// How many leaves a raw node describes, before any repair.
 fn leaf_count(node: &Json) -> usize {
     if node.get("leaf").is_some() {
@@ -763,9 +837,9 @@ mod tests {
     use slopdesk_tree::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
 
     use super::{
-        EMPTY_WORKSPACE_IDS, FileError, MAX_PANES, NO_REFUSAL, decode_file, decode_pane_kind, decode_spec,
-        decode_split_node, decode_weight, encode_file, encode_spec, encode_split_node, encode_weight,
-        minted_ids_for,
+        DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME, EMPTY_WORKSPACE_IDS, FileError, MAX_PANES, NO_REFUSAL,
+        decode_file, decode_pane_kind, decode_spec, decode_split_node, decode_weight, encode_file,
+        encode_spec, encode_split_node, encode_weight, is_default_file_shape, minted_ids_for,
     };
 
     fn pane(byte: u8) -> PaneId {
@@ -1370,6 +1444,61 @@ mod tests {
         assert!(
             minted_ids_for(b"not a file") >= EMPTY_WORKSPACE_IDS,
             "bytes that are not a file still cost the default's own three"
+        );
+    }
+
+    /// The default the client autosaves over a real session on a `New Window` launch, spelled the
+    /// way [`TreeWorkspace::single_pane`] spells it — so the shape test is asked about the file the
+    /// re-seed actually writes rather than one this test typed out beside it.
+    fn default_file() -> String {
+        encode_file(&TreeWorkspace::single_pane(
+            SessionId::from_bytes([1; 16]),
+            TabId::from_bytes([2; 16]),
+            pane(3),
+            PaneSpec::new(PaneKind::Terminal, DEFAULT_PANE_TITLE),
+        ))
+    }
+
+    #[test]
+    fn the_re_seeds_own_output_is_what_the_shape_test_recognises() {
+        assert!(
+            is_default_file_shape(default_file().as_bytes()),
+            "the file a New Window launch autosaves is the throwaway this detects"
+        );
+    }
+
+    #[test]
+    fn anything_the_person_grew_is_not_the_throwaway_default() {
+        let renamed = default_file().replace(DEFAULT_SESSION_NAME, "Work");
+        assert!(
+            !is_default_file_shape(renamed.as_bytes()),
+            "a renamed session is a session somebody kept"
+        );
+        let retitled = default_file().replace(DEFAULT_PANE_TITLE, "build");
+        assert!(
+            !is_default_file_shape(retitled.as_bytes()),
+            "a retitled pane is one somebody named"
+        );
+        assert!(
+            !is_default_file_shape(encode_file(&workspace()).as_bytes()),
+            "two tabs and four panes is a real layout"
+        );
+    }
+
+    /// `false` is "not PROVABLY the default", and every unreadable file lands there — which is what
+    /// makes the snapshot path preserve one aside rather than skip it.
+    #[test]
+    fn an_unreadable_file_is_not_claimed_to_be_the_default() {
+        assert!(!is_default_file_shape(b""));
+        assert!(!is_default_file_shape(&[0xFF, 0xFE]));
+        assert!(!is_default_file_shape(b"not a file"));
+        let foreign = default_file().replace(
+            &format!("\"schemaVersion\" : {CURRENT_SCHEMA_VERSION}"),
+            "\"schemaVersion\" : 1",
+        );
+        assert!(
+            !is_default_file_shape(foreign.as_bytes()),
+            "a version this build does not speak is set aside, not read as a throwaway"
         );
     }
 
