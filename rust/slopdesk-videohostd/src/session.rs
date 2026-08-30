@@ -110,6 +110,26 @@ pub trait CaptureStream: Send + Sync + core::fmt::Debug {
         let _ = eligible;
     }
 
+    /// The freshly folded loss EWMA, for the capturer's CLEAN-LINK self-heal gate.
+    ///
+    /// Consulted only while that gate is on, and only under it: on a loss-free link the periodic
+    /// refresh doublet buys nothing, so the gate suppresses it and this is what re-arms the moment
+    /// loss appears. Pushed from the report fold, at the client's report clock — see
+    /// [`crate::session_actuate`]. High (infinite) before the first report, which is the capturer's
+    /// own default and the reason an unmeasured link never suppresses healing.
+    fn set_self_heal_loss_rate(&self, rate: f64) {
+        let _ = rate;
+    }
+
+    /// The capturer's encode wall-time EWMA in MILLISECONDS, for the stats HUD's second half.
+    ///
+    /// `0.0` is the wire's own spelling of "no reading yet" — a client renders the encode half
+    /// blank rather than being told a number nobody measured — so it is what the default answers
+    /// and what a session with no capture stream sends.
+    fn encode_millis_ewma(&self) -> f64 {
+        0.0
+    }
+
     /// The audio lane this stream forwards into, if the capture gate opened one.
     ///
     /// The one piece of a live set that is SESSION-lifetime rather than capture-lifetime: the

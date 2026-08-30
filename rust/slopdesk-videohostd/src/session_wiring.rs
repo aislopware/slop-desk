@@ -242,6 +242,13 @@ impl Controllers {
     /// session never had. Only the framework's own contract would then stand between that and a
     /// corrupt stream.
     ///
+    /// The CAPTURER's self-heal eligibility is deliberately not disarmed alongside this, and that
+    /// is a structural difference from the Swift rather than an omission. The Swift kept ONE
+    /// long-lived capturer across encoder rebuilds, so a rebuild had to clear a latch that would
+    /// otherwise survive; here every rebuild mints a fresh [`crate::capture::Capturer`], whose
+    /// latch starts disarmed by construction — the same reason the audio wish has to be
+    /// re-asserted after a resize and this does not.
+    ///
     /// [`Self::recovery_idr`] is deliberately untouched — see its own note.
     pub fn reset_ltr_for_new_encoder(&mut self) {
         self.ltr.reset();
@@ -366,48 +373,6 @@ impl ClientLiveness {
         }
         now - self.last_inbound >= threshold
     }
-}
-
-/// One frame as it leaves the encoder and reaches the packetize path.
-///
-/// The Swift's `EncodedFrameQueue.Frame`, and it survives the port unchanged because its shape is
-/// the wire's: what the packetizer needs and nothing else. The bytes are OWNED here rather than
-/// borrowed — this value crosses from the framework's encode thread to the send path, and the
-/// framework's buffer is valid only for the callback.
-#[derive(Debug, Clone)]
-pub struct EncodedFrame {
-    /// The length-prefixed access unit, parameter sets already prepended on a keyframe.
-    pub avcc: Vec<u8>,
-    /// Whether the framework marked this a sync sample.
-    pub keyframe: bool,
-    /// Whether this was the near-lossless static refresh, which the wire tags apart.
-    pub crisp: bool,
-    /// The long-term-reference ack token, when the session negotiated them and the frame carries
-    /// one.
-    pub ltr_token: Option<i64>,
-    /// Whether this frame was a refresh anchored on a reference the client acknowledged.
-    ///
-    /// The decode gate's non-keyframe re-anchor admission: it is what lets a client accept a
-    /// P-frame as a recovery point without waiting for an IDR.
-    pub acked_anchored: bool,
-}
-
-/// The lane a frame is sent on, and the one verb the session needs from it.
-///
-/// A trait rather than the concrete transport for [`crate::mux_lane`]'s reason: the session must be
-/// constructible in a test with no sockets, and a datagram's route to the wire is not the session's
-/// business. `Arc<dyn>` rather than a generic because the session is stored behind
-/// [`crate::mux_registry::LaneSession`], which is already a trait object — a second type parameter
-/// would have to be erased at that boundary anyway.
-pub trait SessionTransport: Send + Sync + core::fmt::Debug {
-    /// Sends one datagram on the given channel. Fire-and-forget, as UDP is.
-    fn send(&self, datagram: &[u8], channel: slopdesk_video::recovery_routing::VideoChannel);
-    /// Retires this lane after a `bye`, freeing the pinned flow so a reconnect can re-pin.
-    ///
-    /// UDP has no FIN, so a lane whose client said goodbye stays pinned unless something says so;
-    /// and a reconnecting client arrives on a NEW source port, which is a new flow the listener
-    /// would refuse against the stale pin.
-    fn reset_client_flow(&self);
 }
 
 /// Everything a session needs to exist, gathered so the constructor takes ONE argument.

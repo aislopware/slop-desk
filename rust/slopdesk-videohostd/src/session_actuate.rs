@@ -90,6 +90,13 @@ struct Actuation {
     governed_fps: Option<i64>,
     /// The smoothed round trip just folded, for the stats echo.
     smoothed_rtt_millis: f64,
+    /// The loss EWMA just folded, for the capturer's clean-link self-heal gate.
+    ///
+    /// `None` only when no report was folded, which cannot happen on this path — it is an `Option`
+    /// for the reason [`Self::governed_fps`] is: a default of `0.0` would read as a MEASURED
+    /// loss-free link and suppress healing on a link nothing has measured, which is the exact
+    /// inversion of the capturer's infinite default.
+    self_heal_loss_rate: Option<f64>,
 }
 
 impl Session {
@@ -155,7 +162,7 @@ impl Session {
             // that owns the cursor channel, and this session holds no sampler. Answering the
             // request from here would mean a second owner of the shape cache, which is worse than
             // the absence: the client's re-request is idempotent and its cache heals on the next
-            // shape change. See this file's report note.
+            // shape change.
             #[expect(
                 clippy::match_same_arms,
                 reason = "an unanswerable request and an already-decided one are the same NON-ACTION for \
@@ -197,14 +204,19 @@ impl Session {
         };
         // Staged OUTSIDE the lock: this is a `VTSessionSetProperty`, and an unknown, duplicate or
         // evicted frame id already answered `None` above rather than reaching it.
-        if let Some(token) = token
-            && let Some(encoder) = self.encoder()
-        {
-            encoder.stage_acked_token(token);
+        if let Some(token) = token {
+            if let Some(encoder) = self.encoder() {
+                encoder.stage_acked_token(token);
+            }
+            // SELF-HEAL: an ack just folded, so the encoder holds an acknowledged long-term
+            // reference and the capturer's cadence refresh can be a small loss-immune P-frame
+            // instead of falling back to an IDR. Idempotent — a lock-set of a bool — and disarmed
+            // again at every encoder install and every encoded keyframe, both of which leave the
+            // client holding no reference this side may name.
+            if let Some(capture) = self.capture_stream() {
+                capture.set_self_heal_eligible(true);
+            }
         }
-        // ⚠️ MISSING DOOR: the Swift also armed the capturer's self-heal eligibility here, so its
-        // cadence refresh could be a small loss-immune P-frame rather than an IDR fallback.
-        // `CaptureStream` has no `set_self_heal_eligible`; see this file's report note.
     }
 
     /// Answers a selective NACK from the send-history ring.
@@ -280,6 +292,7 @@ impl Session {
             );
             let estimate = controllers.estimate;
             plan.smoothed_rtt_millis = estimate.smoothed_rtt_millis;
+            plan.self_heal_loss_rate = Some(estimate.loss_rate);
 
             // 2. THE FEC LADDER, off the freshly folded loss EWMA. Hysteresis, the one-step clamp, the relax
             //    floor and the sticky dwell are all the pure policy's; this site only feeds it the report's
@@ -385,9 +398,6 @@ impl Session {
             drop(controllers);
         }
 
-        // ⚠️ MISSING DOOR: the Swift pushed the freshly folded loss EWMA to the capturer here, so
-        // its self-heal gate could suppress the periodic refresh doublet on a loss-free link.
-        // `CaptureStream` has no `set_self_heal_loss_rate`; see this file's report note.
         self.actuate(&plan);
         self.maybe_send_host_stats(extras, plan.smoothed_rtt_millis);
     }
@@ -411,6 +421,17 @@ impl Session {
         }
         if let Some(fps) = plan.governed_fps {
             self.actuate_governed_fps(fps);
+        }
+        // SELF-HEAL, clean-link loss gate: the capturer suppresses the periodic refresh doublet
+        // while the folded loss EWMA sits below its threshold, and re-arms the instant loss
+        // appears. Pushed on every report rather than behind a read of the gate here — the capturer
+        // consults the rate ONLY under its own gate, so an off gate makes this a store nobody
+        // reads, and a copy of the gate on this side would be a second thing to keep in step. The
+        // snapshot is at most one report (~50 ms) stale, well inside the K-frame heal cadence.
+        if let Some(rate) = plan.self_heal_loss_rate
+            && let Some(capture) = self.capture_stream()
+        {
+            capture.set_self_heal_loss_rate(rate);
         }
     }
 
@@ -580,11 +601,12 @@ impl Session {
         }
         self.send_control(&VideoControlMessage::HostStats {
             rtt_tenths_millis: tenths_of_a_millisecond(smoothed_rtt_millis),
-            // ⚠️ MISSING DOOR: the Swift read the capturer's encode wall-time EWMA here.
-            // `CaptureStream` has no `encode_millis_ewma`, and zero is the wire's own spelling of
-            // "no reading yet" — so a client renders the RTT half and leaves the encode half blank
-            // rather than being told a number nobody measured. See this file's report note.
-            encode_tenths_millis: 0,
+            // The capturer's encode wall-time EWMA, the HUD's second half. A session with no
+            // capture stream sends zero, which is the wire's own spelling of "no reading yet" — a
+            // client renders that half blank rather than being told a number nobody measured.
+            encode_tenths_millis: self
+                .capture_stream()
+                .map_or(0, |capture| tenths_of_a_millisecond(capture.encode_millis_ewma())),
         });
     }
 }

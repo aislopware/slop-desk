@@ -717,6 +717,14 @@ impl CaptureStream for LiveCapture {
         self.capturer.set_self_heal_eligible(eligible);
     }
 
+    fn set_self_heal_loss_rate(&self, rate: f64) {
+        self.capturer.set_self_heal_loss_rate(rate);
+    }
+
+    fn encode_millis_ewma(&self) -> f64 {
+        self.capturer.encode_millis_ewma()
+    }
+
     fn audio_lane(&self) -> Option<Arc<AudioSender>> {
         self.audio.clone()
     }

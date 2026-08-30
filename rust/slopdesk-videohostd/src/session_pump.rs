@@ -41,25 +41,34 @@
 //!
 //! ## Lock order on the hot path
 //! Two short holds of `controllers`, two of `counters`, one of `state` per `media_flowing` check,
-//! and at most one of `streaming` — never nested, and NEVER held across a send. In order:
-//! `state` → `controllers` (the folds) → `counters` (the count) → `streaming` (the keyframe's
-//! staged-token flush, cloned out and called on the far side of the guard) → packetize →
+//! and on a keyframe TWO of `streaming` — never nested, and NEVER held across a send or a framework
+//! call. In order: `state` → `controllers` (the folds) → `streaming` (the self-heal disarm, cloned
+//! out and the property written on the far side of the guard) → `counters` (the count) →
+//! `streaming` again (the staged-token flush, under the same clone-out discipline) → packetize →
 //! `state` again → `controllers` (the two records) → `counters` (the gap stamp and the duplicate
 //! throttle) → the wire.
+//!
+//! The two `streaming` holds are sequential rather than one, and deliberately: both reach a
+//! framework object whose call must happen outside the guard, so merging them would mean holding
+//! the clone of one across the call of the other for no saving a profile can see.
 //!
 //! ## What this module does NOT own
 //! The heartbeat, the client-silence pause, the cadence announcement and the display-max report
 //! live with the bring-up that arms them, in [`crate::session_capture`]. They were named in this
 //! file's brief and moved before it was written; nothing here duplicates them.
 //!
-//! ## Two branches of the Swift that do not appear
+//! ## One branch of the Swift that does not appear
 //! * **Small-frame duplication** (`:2869`). Every one of its terms needs `adaptiveMEnabled`, and no
 //!   `SLOPDESK_FEC_M` gate exists in [`slopdesk_video::host_gates`] — [`Session::new`] builds the
 //!   packetizer with [`slopdesk_video::fec::ReedSolomonFec::default`], whose `m` is one. The branch
 //!   is unreachable, and a port of unreachable code is a claim about behaviour nobody can check.
-//! * **The self-heal disarm** on an encoded keyframe (`:2730`). `Capturer::set_self_heal_eligible`
-//!   exists on the concrete capturer, but [`crate::session::CaptureStream`] does not carry it, and
-//!   the live set holds the trait. It is a missing door, not a decision taken here.
+//!
+//! ## The self-heal disarm, which used to be listed beside it
+//! It is here now, on the encoded-keyframe edge, and the note that called it a missing door was
+//! wrong by the time it was read: [`crate::session::CaptureStream`] has carried
+//! `set_self_heal_eligible` since the trait was written, and the live set forwards it to the
+//! concrete capturer. Nothing CALLED it, which is a different failure and a quieter one — the
+//! feature was inert with every door in place. See [`crate::session_actuate`] for the arm.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
@@ -170,6 +179,17 @@ fn wire_frame(session: &Session, frame: &FinishedFrame<'_>) {
             controllers.fec_tier.tier,
         )
     };
+    // SELF-HEAL, disarmed on the same edge the acked set is cleared on and OUTSIDE that hold: a
+    // keyframe empties the decoder's picture buffer by HEVC spec, so every token acked before it
+    // names a reference the client no longer holds, and a cadence refresh against one would be the
+    // IDR fallback at best. The next client ack re-arms it. Outside the controllers guard because
+    // this reaches a lock the CAPTURE side takes while building a frame, and the two must never
+    // nest — the same discipline `session_actuate` states for its own plan.
+    if frame.keyframe
+        && let Some(capture) = session.capture_stream()
+    {
+        capture.set_self_heal_eligible(false);
+    }
 
     let encoded = {
         let mut counters = session.locked_counters();
