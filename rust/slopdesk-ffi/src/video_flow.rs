@@ -23,15 +23,16 @@
 //! 1. `context` stays valid until `on_release` is called for it. This side calls `on_release`
 //!    EXACTLY once per successful [`slopdesk_video_flow_register_lane`], from whichever thread
 //!    drops the sink's last reference — the caller's, inside
-//!    [`slopdesk_video_flow_unregister_lane`] or [`slopdesk_video_flow_free`], or a reader's if it
-//!    was mid-delivery. That is why a release callback exists at all: unregistering a lane cannot
-//!    join the reader that serves the other lanes, so "no callback after unregister returns" is not
-//!    a promise this door can keep, and `on_release` is the one that can.
+//!    [`slopdesk_video_flow_unregister_lane`], [`slopdesk_video_flow_close`] or
+//!    [`slopdesk_video_flow_free`], or a reader's if it was mid-delivery. That is why a release
+//!    callback exists at all: unregistering a lane cannot join the reader that serves the other
+//!    lanes, so "no callback after unregister returns" is not a promise this door can keep, and
+//!    `on_release` is the one that can.
 //! 2. The callbacks run on the flow's OWN reader threads, never on the caller's. The media and the
 //!    cursor callback for the SAME lane can run CONCURRENTLY, because they are two sockets read by
 //!    two threads. A near side that touches shared state synchronises it.
-//! 3. No callback may re-enter [`slopdesk_video_flow_free`]. It joins the threads the callbacks run
-//!    on.
+//! 3. No callback may re-enter [`slopdesk_video_flow_close`] or [`slopdesk_video_flow_free`]. Both
+//!    join the threads the callbacks run on.
 //! 4. Every pointer in every callback is LENT for that call. A caller that keeps a payload copies
 //!    it.
 
@@ -277,10 +278,36 @@ pub unsafe extern "C" fn slopdesk_video_flow_send_path_viable(flow: *const SlopD
     unsafe { flow.as_ref() }.is_none_or(|flow| flow.0.is_send_path_viable())
 }
 
-/// Tear both sockets down and release the handle.
+/// Tear both sockets down, leaving the handle VALID.
 ///
 /// JOINS both readers, so no callback is running when this returns and none ever will be again, and
-/// runs every remaining lane's `on_release`. A null pointer is a no-op.
+/// runs every remaining lane's `on_release`. Every later call on the handle is a cheap refusal; a
+/// null pointer, and a second close, are no-ops.
+///
+/// This is the door a caller ends a flow through, and [`slopdesk_video_flow_free`] is the one it
+/// ends the HANDLE through. Splitting them is what lets the near side keep its pointer for its
+/// whole object lifetime: a flow torn down while another thread is inside a send answers `false`,
+/// where a flow FREED under that thread is a use-after-free the near side cannot lock its way out
+/// of — unregistering cannot join, so no lock it could hold would span the call.
+///
+/// # Safety
+/// `flow` is null or a live handle from [`slopdesk_video_flow_open`].
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and every pointer is the caller's"
+)]
+pub unsafe extern "C" fn slopdesk_video_flow_close(flow: *mut SlopDeskVideoFlow) {
+    // SAFETY: the caller's obligation, restated at the door.
+    if let Some(flow) = unsafe { flow.as_ref() } {
+        flow.0.close();
+    }
+}
+
+/// Release the handle, closing it first if it is not closed already.
+///
+/// A null pointer is a no-op. Carries every obligation [`slopdesk_video_flow_close`] does, plus
+/// one: no thread may be inside ANY door on this handle when it is called.
 ///
 /// # Safety
 /// `flow` is null or a handle from [`slopdesk_video_flow_open`] that is freed exactly once.

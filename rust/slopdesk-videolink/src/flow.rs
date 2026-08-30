@@ -63,8 +63,12 @@ const DEBUG_GAP_THRESHOLD: f64 = 0.028;
 /// Where a lane's inbound datagrams go.
 ///
 /// One implementor per lane, registered under its channel id. The flow calls these from its reader
-/// threads, never from the caller's, and never after [`Flow::unregister_lane`] has returned for
-/// that lane or the flow has been dropped.
+/// threads, never from the caller's, and never once [`Flow::close`] has returned.
+///
+/// [`Flow::unregister_lane`] is NOT that moment: a reader clones the sink's `Arc` and releases the
+/// table's read lock before delivering, so a delivery already under way finishes after the
+/// unregister returns. Only the close, which joins the readers, ends deliveries — which is why the
+/// door over this trait carries a release callback rather than promising silence at unregister.
 pub trait LaneSink: Send + Sync {
     /// A media datagram for this lane, tag already decoded and stripped.
     fn media(&self, channel: VideoChannel, payload: &[u8]);
@@ -114,7 +118,7 @@ struct Shared {
     media: UdpSocket,
     cursor: UdpSocket,
     lanes: RwLock<HashMap<u32, Arc<dyn LaneSink>>>,
-    /// Set once, by [`Flow::drop`]. The only liveness signal a shared UDP socket has.
+    /// Set by [`Flow::close`]. The only liveness signal a shared UDP socket has.
     torn: AtomicBool,
     /// The LAST media send's answer. See the crate header for why this is not a state machine.
     send_viable: AtomicBool,
@@ -135,7 +139,8 @@ impl Shared {
 /// The client half of one host's shared UDP flow.
 ///
 /// One media socket and one cursor socket, shared by every video pane pointed at that host and
-/// demultiplexed by channel id. Dropping it tears both down; see [`TEARDOWN_LATENCY`].
+/// demultiplexed by channel id. [`Flow::close`] tears both down, and dropping it is that same
+/// close; see [`TEARDOWN_LATENCY`] for what either costs.
 pub struct Flow {
     shared: Arc<Shared>,
     readers: Mutex<Vec<JoinHandle<()>>>,
@@ -203,6 +208,30 @@ impl Flow {
         }
     }
 
+    /// Tears both sockets down and joins both readers, so no sink is called again once it returns.
+    ///
+    /// This is the whole of what dropping does — [`Flow::drop`] calls it — and it is idempotent, so
+    /// closing then dropping joins once and clears once. It exists apart from the drop because the
+    /// near side's handle lives exactly as long as the object holding it: a caller that must end
+    /// the flow EARLY closes it and keeps the handle valid, rather than freeing a pointer
+    /// another thread may already be inside a [`Flow::send_media`] on. Every call after it is a
+    /// cheap false.
+    ///
+    /// Must not be called from a sink, for the reason the join states.
+    pub fn close(&self) {
+        self.shared.torn.store(true, Ordering::Release);
+        if let Ok(mut readers) = self.readers.lock() {
+            for reader in readers.drain(..) {
+                drop(reader.join());
+            }
+        }
+        // Only now, with both readers joined, can the lane table be emptied: a sink dropped while a
+        // reader still held a clone of it would be a callback into freed caller state.
+        if let Ok(mut lanes) = self.shared.lanes.write() {
+            lanes.clear();
+        }
+    }
+
     /// How many lanes are live. The pool tears the flow down at zero.
     #[must_use]
     pub fn lane_count(&self) -> usize {
@@ -226,6 +255,9 @@ impl Flow {
     /// name the PATH. `ECONNREFUSED` — an ICMP port-unreachable from a host that is plainly
     /// reachable — does not revoke viability, because the path it proves is a working one.
     pub fn send_media(&self, channel_id: u32, tag: u8, payload: &[u8]) -> bool {
+        if !self.shared.is_alive() {
+            return false;
+        }
         let datagram = mux_header::encode_media(channel_id, tag, payload);
         match self.shared.media.send(&datagram) {
             Ok(_) => {
@@ -247,6 +279,9 @@ impl Flow {
     /// carries no other client→host traffic: a host restart or a NAT rebind would otherwise kill
     /// cursor updates for the lane's whole life while video and input self-heal.
     pub fn send_cursor(&self, channel_id: u32, payload: &[u8]) -> bool {
+        if !self.shared.is_alive() {
+            return false;
+        }
         let datagram = mux_header::encode(channel_id, payload);
         self.shared.cursor.send(&datagram).is_ok()
     }
@@ -262,17 +297,7 @@ impl Flow {
 
 impl Drop for Flow {
     fn drop(&mut self) {
-        self.shared.torn.store(true, Ordering::Release);
-        if let Ok(mut readers) = self.readers.lock() {
-            for reader in readers.drain(..) {
-                drop(reader.join());
-            }
-        }
-        // Only now, with both readers joined, can the lane table be emptied: a sink dropped while a
-        // reader still held a clone of it would be a callback into freed caller state.
-        if let Ok(mut lanes) = self.shared.lanes.write() {
-            lanes.clear();
-        }
+        self.close();
     }
 }
 
@@ -727,6 +752,45 @@ mod tests {
         assert!(
             started.elapsed() < TEARDOWN_LATENCY,
             "a teardown is bounded by the read timeout, not open-ended: took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn closing_ends_every_send_and_drops_the_lanes_while_the_flow_is_still_alive() {
+        let media = HostEnd::bind();
+        let cursor = HostEnd::bind();
+        let flow = open_against(&media, &cursor);
+        let (sink, _inbox) = Recorder::new();
+        flow.register_lane(1, sink);
+        drop(cursor.next()); // the prime
+
+        flow.close();
+
+        assert_eq!(flow.lane_count(), 0, "the close released every sink");
+        assert!(
+            !flow.send_media(1, VideoChannel::Video.raw_value(), &[0x01]),
+            "a send after the close is refused, not handed to a socket nobody reads"
+        );
+        assert!(!flow.send_cursor(1, &[0x01]));
+        // The point of having a close at all: the caller may keep ASKING, because it still holds a
+        // live flow rather than a pointer someone else has freed underneath it.
+        assert!(flow.local_addrs().is_ok(), "the flow itself outlives its close");
+    }
+
+    #[test]
+    fn a_second_close_joins_nothing_and_returns() {
+        let media = HostEnd::bind();
+        let cursor = HostEnd::bind();
+        let flow = open_against(&media, &cursor);
+        flow.close();
+
+        let started = Instant::now();
+        flow.close();
+        drop(flow); // the drop is a third close
+        assert!(
+            started.elapsed() < TEARDOWN_LATENCY,
+            "closing twice must not wait on readers that are already joined: took {:?}",
             started.elapsed()
         );
     }

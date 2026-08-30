@@ -3134,12 +3134,12 @@ double slopdesk_mux_receive_backoff(uint32_t consecutive_errors);
  * FOUR obligations:
  *   1. `context` stays valid until `on_release` is called for it. This side calls it EXACTLY
  *      once per successful register, from whichever thread drops the lane's last reference —
- *      yours inside unregister/free, or a reader's if it was mid-delivery. Unregistering cannot
+ *      yours inside unregister/close/free, or a reader's if it was mid-delivery. Unregistering cannot
  *      join the reader that still serves the OTHER lanes, so `on_release` is the only promise
  *      this door can keep.
  *   2. The callbacks run on the flow's own reader threads, never yours. The media and cursor
  *      callbacks for the SAME lane can run CONCURRENTLY — two sockets, two threads.
- *   3. No callback may re-enter `slopdesk_video_flow_free`. It joins those threads.
+ *   3. No callback may re-enter `slopdesk_video_flow_close` or `_free`. Both join those threads.
  *   4. Every pointer in every callback is LENT for that call. Keep nothing.
  * ---------------------------------------------------------------------------- */
 
@@ -3173,8 +3173,17 @@ bool slopdesk_video_flow_send_cursor(SlopDeskVideoFlow *flow, uint32_t channel_i
 // fire while this is false; sparse best-effort sends are not gated. `true` for NULL, the same
 // optimism a fresh flow starts with.
 bool slopdesk_video_flow_send_path_viable(const SlopDeskVideoFlow *flow);
-// Tears both sockets down and releases the handle. JOINS both readers and runs every remaining
-// lane's `on_release`, so no callback is running when this returns. NULL is a no-op.
+// Tears both sockets down, leaving the handle VALID. JOINS both readers and runs every remaining
+// lane's `on_release`, so no callback is running when this returns and none will be again; every
+// later call on the handle is a cheap refusal. NULL, and a second close, are no-ops.
+//
+// This is how a flow ENDS; `_free` is how the handle does. They are two doors so the near side can
+// hold its pointer for its whole object lifetime: a flow torn down under a thread that is inside a
+// send answers false, where a flow FREED under it is a use-after-free no lock on that side can
+// close — unregistering cannot join, so nothing it holds could span the call.
+void slopdesk_video_flow_close(SlopDeskVideoFlow *flow);
+// Releases the handle, closing it first if it is not closed already. NULL is a no-op. Carries every
+// obligation the close does, plus one: no thread may be inside ANY door on this handle.
 void slopdesk_video_flow_free(SlopDeskVideoFlow *flow);
 
 

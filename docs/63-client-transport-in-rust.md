@@ -800,8 +800,15 @@ them. `CodeSidebarProxy` is the proxy campaign and is still deferred.
 
 **And the PATH-2 half is closed too, which leaves the list one name long.** `NWVideoMuxClientFlow`
 is gone: the two sockets, the two readers and the lane table are `rust/slopdesk-videolink`,
-reached through the seven `slopdesk_video_flow_*` doors and the one Swift near side
-(`VideoMuxClientFlow.swift`, which holds a handle and decides nothing). `UDPSendPathPolicy` went
+reached through the eight `slopdesk_video_flow_*` doors and the one Swift near side
+(`VideoMuxClientFlow.swift`, which holds a handle and decides nothing). Eight and not seven because
+ENDING the flow and freeing its handle are two doors: unlike a device socket, which one object owns
+outright, a flow is refcounted across every pane on a host, so the registry ends it at zero while a
+pane's periodic sender may still be inside a `send`. `_close` tears the sockets down and leaves the
+handle valid — that sender gets `false` — and `_free` runs only from the near side's `deinit`, where
+ARC has already proved nobody is inside a call. Freeing at the close instead was a use-after-free no
+lock on the Swift side could have closed, because unregistering a lane cannot join the shared
+readers. `UDPSendPathPolicy` went
 with it rather than being ported — it existed only to read an `NWConnection.State`, and a raw
 `sendto` has no state to read; see `docs/DECISIONS.md`. So §6's `import Network` grep now answers
 FOUR files: `CodeSidebarProxy` (deferred, and dying with code-server anyway), `NWByteChannel` and

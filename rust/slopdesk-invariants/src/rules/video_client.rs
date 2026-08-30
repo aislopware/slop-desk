@@ -599,6 +599,9 @@ pub fn client_mux(tree: &Tree) -> Report {
                 "slopdesk_video_flow_send_media",
                 "slopdesk_video_flow_send_cursor",
                 "slopdesk_video_flow_send_path_viable",
+                // Two doors, because the flow ENDS before the handle does: freeing at `close` would
+                // leave a sender that is already inside a door holding a pointer the registry freed.
+                "slopdesk_video_flow_close",
                 "slopdesk_video_flow_free",
             ],
             message: "Sources/SlopDeskVideoClient/Mux/VideoMuxClientFlow.swift no longer calls {entry} — \
@@ -1050,6 +1053,7 @@ slopdesk_video_flow_unregister_lane(x)
 slopdesk_video_flow_send_media(x)
 slopdesk_video_flow_send_cursor(x)
 slopdesk_video_flow_send_path_viable(x)
+slopdesk_video_flow_close(x)
 slopdesk_video_flow_free(x)
 ";
 

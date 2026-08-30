@@ -19,6 +19,15 @@ import SlopDeskVideoProtocol
 /// `rust/slopdesk-videolink`'s suite drives the real thing against a second socket, and viability is
 /// simply whether the last send left.
 ///
+/// ## The handle lives exactly as long as this object
+/// It is opened once and freed in `deinit`, never in between — the rule `DeviceWebSocket` already
+/// keeps on the other door family, and the only one that makes a raw handle safe to share. Every
+/// caller here reaches the flow through a strong reference, so ARC already guarantees the object
+/// outlives any call on it; if `close()` freed the pointer instead, a periodic sender on the
+/// session's queue could be inside a door with a pointer the registry freed one hop earlier. `close`
+/// therefore ENDS the flow (`slopdesk_video_flow_close`) and leaves the handle valid, and every door
+/// call after it is a refusal rather than a race.
+///
 /// `@unchecked Sendable` via the `NSLock` guarding the handle.
 public final class VideoMuxClientFlow: @unchecked Sendable {
     private static func mediaSocket(for channel: VideoChannel) -> Bool { channel != .cursor }
@@ -134,14 +143,14 @@ public final class VideoMuxClientFlow: @unchecked Sendable {
         }
     }
 
+    /// Ends the flow. The handle stays live until `deinit` — see the type's header for why.
     public func close() {
         lock.lock()
         let flow = handle
-        handle = nil
         lock.unlock()
-        // Outside the lock: `free` joins both readers, and a callback still in flight takes no lock
-        // of ours but a re-entrant `close` from one would.
-        if let flow { slopdesk_video_flow_free(flow) }
+        // Outside the lock: the close joins both readers, and a callback still in flight takes no
+        // lock of ours but a re-entrant `close` from one would.
+        if let flow { slopdesk_video_flow_close(flow) }
     }
 }
 
