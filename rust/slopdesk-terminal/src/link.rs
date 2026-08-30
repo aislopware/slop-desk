@@ -289,9 +289,9 @@ enum PathShape {
 /// Absolute, tilde, relative and `path:line[:col]` filesystem paths.
 fn classify_path(core: &str, row: usize, cell_start: usize, cwd: Option<&str>) -> Option<DetectedLink> {
     // Trailing colons come off FIRST. A log line's `/path:` is the obvious case, but the one that
-    // matters is the standard compiler diagnostic `path:line:col:` — its trailing colon would defeat
-    // the suffix split, leaving `:line:col` baked into the resolved path so open and reveal both
-    // fail. Then split the numeric suffix off what is left.
+    // matters is the standard compiler diagnostic `path:line:col:` — its trailing colon would
+    // defeat the suffix split, leaving `:line:col` baked into the resolved path so open and
+    // reveal both fail. Then split the numeric suffix off what is left.
     let cleaned = core.trim_end_matches(':');
     let (path_part, suffix) = split_line_col(cleaned);
     if path_part.is_empty() {
@@ -301,9 +301,9 @@ fn classify_path(core: &str, row: usize, cell_start: usize, cwd: Option<&str>) -
     // Decorative prompt art — a starship cat's `/ᐠ`, a powerline glyph — frequently starts with `/`
     // and is not a path. Such art is a SINGLE exotic glyph after the root; a real path is
     // structured. So drop a candidate only when it is BOTH single-segment AND carries no ordinary
-    // path character. A multi-segment path (`/дом/данные`, `~/デスクトップ`, where the anchor counts
-    // as a segment) or any path with an ASCII alphanumeric in it still passes, so a genuine
-    // non-Latin path keeps its underline and only the lone-glyph decoration is dropped.
+    // path character. A multi-segment path (`/дом/данные`, `~/デスクトップ`, where the anchor
+    // counts as a segment) or any path with an ASCII alphanumeric in it still passes, so a
+    // genuine non-Latin path keeps its underline and only the lone-glyph decoration is dropped.
     let has_ordinary_char = path_part.chars().any(|c| c.is_ascii_alphanumeric());
     let segment_count = path_part.split('/').filter(|segment| !segment.is_empty()).count();
     if !has_ordinary_char && segment_count < 2 {

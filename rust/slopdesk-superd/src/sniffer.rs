@@ -280,8 +280,8 @@ impl OutputSniffer {
             State::Osc => {
                 match byte {
                     BEL => {
-                        // This BEL is a TERMINATOR — emit whatever the sequence was, and crucially not
-                        // a bell.
+                        // This BEL is a TERMINATOR — emit whatever the sequence was, and crucially
+                        // not a bell.
                         self.finish_osc(now_ms, events);
                         self.state = State::Ground;
                     },
@@ -289,9 +289,11 @@ impl OutputSniffer {
                     _ => {
                         self.osc_buffer.push(byte);
                         if self.osc_buffer.len() > OSC_CAP {
-                            // Overlong — abandon without emitting, but do NOT drop to ground: we are
-                            // still inside the OSC and its terminator has not arrived, so ground would
-                            // re-read that terminating BEL as a spurious bell and misread what follows.
+                            // Overlong — abandon without emitting, but do NOT drop to ground: we
+                            // are still inside the OSC and its
+                            // terminator has not arrived, so ground would
+                            // re-read that terminating BEL as a spurious bell and misread what
+                            // follows.
                             self.osc_buffer.clear();
                             self.state = State::OscDiscard;
                         }
@@ -497,8 +499,8 @@ impl OutputSniffer {
             return;
         };
         let existing = self.kitty_assembly.iter().position(|(id, ..)| *id == chunk.id);
-        // Bound the in-flight count BEFORE opening a slot, so a brand-new id over the cap is dropped
-        // rather than buffered.
+        // Bound the in-flight count BEFORE opening a slot, so a brand-new id over the cap is
+        // dropped rather than buffered.
         if existing.is_none() && self.kitty_assembly.len() >= KITTY_ASSEMBLY_MAX {
             return;
         }
@@ -955,8 +957,8 @@ mod tests {
 
     #[test]
     fn a_stray_escape_ends_an_osc_without_orphaning_the_next_sequence() {
-        // The `ESC` is not an `ST`, so the title ends there — and the `]` that follows must still be
-        // read as an introducer rather than as content.
+        // The `ESC` is not an `ST`, so the title ends there — and the `]` that follows must still
+        // be read as an introducer rather than as content.
         assert_eq!(observe("\u{1B}]2;first\u{1B}\u{1B}]2;second\u{7}"), vec![
             title("first"),
             title("second")

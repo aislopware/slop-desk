@@ -98,11 +98,12 @@ impl InputDedupRing {
         }
         // Append the expected echo of these bytes. We do NOT compact away a tentative (unconfirmed)
         // match prefix here — those held bytes might still need to be flushed back if the in-flight
-        // match diverges. Compaction happens only on a confirmed full match (which clears `pending`)
-        // or via the FIFO eviction below.
+        // match diverges. Compaction happens only on a confirmed full match (which clears
+        // `pending`) or via the FIFO eviction below.
         for &byte in bytes {
             // A PTY in cooked mode (`ONLCR`) echoes a sent `\n` as `\r\n`, and the line discipline
-            // often echoes an Enter (`\r`) as `\r\n` too. Expand both so the echo matches either way.
+            // often echoes an Enter (`\r`) as `\r\n` too. Expand both so the echo matches either
+            // way.
             if byte == b'\n' || byte == b'\r' {
                 self.pending.push(b'\r');
                 self.pending.push(b'\n');
@@ -116,10 +117,11 @@ impl InputDedupRing {
         }
         let drop_count = self.pending.len() - self.capacity;
         // The evicted region may overlap the already-HELD (matched) prefix — bytes suppressed from
-        // passthrough during `filter` awaiting confirmation. Evicting them gives up on the match, so
-        // they are real output that must be FLUSHED, not silently eaten. The un-held evicted bytes
-        // (expected echo not yet seen in output) are correctly dropped: their future echo, if any,
-        // simply passes through — the documented correctness-over-completeness rule.
+        // passthrough during `filter` awaiting confirmation. Evicting them gives up on the match,
+        // so they are real output that must be FLUSHED, not silently eaten. The un-held
+        // evicted bytes (expected echo not yet seen in output) are correctly dropped: their
+        // future echo, if any, simply passes through — the documented
+        // correctness-over-completeness rule.
         let held_evicted = self.matched.min(drop_count);
         if held_evicted > 0 {
             self.flush_buffer
@@ -167,8 +169,8 @@ impl InputDedupRing {
                 self.matched = 0;
             }
         } else if self.matched > 0 {
-            // Mismatch: the bytes we held were NOT echo. Flush them back intact, then re-process this
-            // byte against a reset cursor — it may start a fresh match.
+            // Mismatch: the bytes we held were NOT echo. Flush them back intact, then re-process
+            // this byte against a reset cursor — it may start a fresh match.
             passthrough.extend(self.pending.iter().take(self.matched).copied());
             self.matched = 0;
             self.step(byte, passthrough);
@@ -234,7 +236,8 @@ mod tests {
     fn a_held_prefix_is_flushed_before_a_later_real_match() {
         let mut ring = InputDedupRing::new();
         ring.record_sent(b"ls");
-        // `l` held, `o` diverges → flush `l`, re-process `o`; then the real `ls` matches and is eaten.
+        // `l` held, `o` diverges → flush `l`, re-process `o`; then the real `ls` matches and is
+        // eaten.
         assert_eq!(ring.filter(b"lols"), b"lo");
         assert_eq!(ring.pending_count(), 0);
     }
@@ -265,9 +268,9 @@ mod tests {
 
     #[test]
     fn an_eviction_that_cuts_into_the_held_prefix_flushes_it_rather_than_eating_it() {
-        // Capacity 4. Send `abcd`, hold `abc` from the output, then send `efgh` — the eviction drops
-        // `abcd` and takes the held `abc` with it. Those three bytes were real output withheld from
-        // passthrough, so the next filter must emit them first.
+        // Capacity 4. Send `abcd`, hold `abc` from the output, then send `efgh` — the eviction
+        // drops `abcd` and takes the held `abc` with it. Those three bytes were real output
+        // withheld from passthrough, so the next filter must emit them first.
         let mut ring = InputDedupRing::with_capacity(4);
         ring.record_sent(b"abcd");
         assert_eq!(ring.filter(b"abc"), b"", "held, awaiting confirmation");

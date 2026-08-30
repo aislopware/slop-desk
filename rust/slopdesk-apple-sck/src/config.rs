@@ -56,9 +56,9 @@ const TIME_IS_VALID: u32 = 1;
 #[must_use]
 pub(crate) fn configuration(spec: &CaptureSpec) -> Retained<SCStreamConfiguration> {
     // SAFETY: framework rule — `new` on a plain `NSObject` subclass with no initialiser
-    // requirements. `objc2` generates every `ScreenCaptureKit` method `unsafe` because the framework's
-    // header states no nullability and no thread affinity; `SCStreamConfiguration` is a value
-    // holder the documentation shows being built on whatever queue the caller is on.
+    // requirements. `objc2` generates every `ScreenCaptureKit` method `unsafe` because the
+    // framework's header states no nullability and no thread affinity; `SCStreamConfiguration`
+    // is a value holder the documentation shows being built on whatever queue the caller is on.
     #[expect(
         unsafe_code,
         reason = "allocating a configuration; ScreenCaptureKit's header states no nullability so objc2 \

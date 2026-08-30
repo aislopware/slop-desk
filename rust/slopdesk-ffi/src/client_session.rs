@@ -478,7 +478,8 @@ unsafe fn step(
         return shape;
     }
     if !records.is_empty() && !effects.is_null() {
-        // SAFETY: the capacity check above, and the caller's obligation that the buffer is writable.
+        // SAFETY: the capacity check above, and the caller's obligation that the buffer is
+        // writable.
         unsafe { std::ptr::copy_nonoverlapping(records.as_ptr(), effects, records.len()) };
     }
     if !rects.is_empty() && !masks.is_null() {

@@ -409,9 +409,9 @@ fn build_and_sign_apps(layout: &Layout, settings: &Settings) -> Result<(), Strin
     crate::ops::renderer::enable(&layout.root, &crate::ops::renderer::MACOS)?;
 
     // ONE app since `docs/60` F.9: the menu-bar host is gone and the daemon it supervised ships in
-    // the CLI tarball below, driven by `slopdesk-ops`. This used to be a loop over two bundles; what
-    // kept the four steps from being written twice was never the loop but the two helpers below, and
-    // they still do.
+    // the CLI tarball below, driven by `slopdesk-ops`. This used to be a loop over two bundles;
+    // what kept the four steps from being written twice was never the loop but the two helpers
+    // below, and they still do.
     build_one_app(
         layout,
         "Apps/ClientApp-macOS/project.yml",

@@ -228,7 +228,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
             },
             "-y" | "--yes" => inv.assume_yes = true,
             "-e" => {
-                // A launch flag only at top level; after a subcommand it is that subcommand's token.
+                // A launch flag only at top level; after a subcommand it is that subcommand's
+                // token.
                 if inv.subcommand.is_empty() {
                     let _first = value_at(idx + 1, "-e")?;
                     // `-e` is terminal: capture every remaining token verbatim and stop parsing.
@@ -433,9 +434,10 @@ mod tests {
 
     #[test]
     fn every_documented_global_flag_is_one_this_parser_accepts() {
-        // The help text is generated from `GLOBAL_FLAGS`, so a flag renamed in the `match` above but
-        // not here would leave the CLI documenting a flag it rejects with "unknown flag". Feeding
-        // each spelling back through the parser is what makes that impossible rather than unlikely.
+        // The help text is generated from `GLOBAL_FLAGS`, so a flag renamed in the `match` above
+        // but not here would leave the CLI documenting a flag it rejects with "unknown
+        // flag". Feeding each spelling back through the parser is what makes that
+        // impossible rather than unlikely.
         for flag in GLOBAL_FLAGS {
             assert!(!flag.spellings.is_empty(), "{} spells nothing", flag.display);
             for spelling in flag.spellings {

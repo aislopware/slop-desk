@@ -290,9 +290,10 @@ impl CommandBlockSegmenter {
             State::Escape => {
                 match byte {
                     LEFT_BRACKET => {
-                        // A colourised command line wraps the typed text in SGR runs, so the WHOLE CSI
-                        // — introducer, parameters and final byte — has to be tracked and stripped from
-                        // the command text. Returning to ground after the introducer would leak the
+                        // A colourised command line wraps the typed text in SGR runs, so the WHOLE
+                        // CSI — introducer, parameters and final byte — has
+                        // to be tracked and stripped from the command text.
+                        // Returning to ground after the introducer would leak the
                         // `32m`/`0m` bytes as content. Output keeps the sequence verbatim.
                         if self.phase == Phase::Output {
                             self.append_byte(ESC);
@@ -309,8 +310,9 @@ impl CommandBlockSegmenter {
                     b'P' | b'X' | b'^' | b'_' => self.state = State::StringConsume,
                     ESC => self.state = State::Escape,
                     _ => {
-                        // Some other escape — a two-byte or nF form. Opaque VT, preserved for output so
-                        // the capture stays a faithful stream, stripped from the command span.
+                        // Some other escape — a two-byte or nF form. Opaque VT, preserved for
+                        // output so the capture stays a faithful stream,
+                        // stripped from the command span.
                         if self.phase == Phase::Output {
                             self.append_byte(ESC);
                             self.append_byte(byte);
@@ -530,8 +532,9 @@ impl CommandBlockSegmenter {
             self.open_command_bytes.clear();
             return;
         }
-        // A `B` with no preceding `A` is tolerated. As in the `A` arm, only a block that executed is
-        // closed as incomplete; one that never did is discarded rather than turned into a phantom.
+        // A `B` with no preceding `A` is tolerated. As in the `A` arm, only a block that executed
+        // is closed as incomplete; one that never did is discarded rather than turned into
+        // a phantom.
         self.close_or_discard_open(now_ms, completed);
         self.start_open_block();
         self.phase = Phase::Command;
@@ -618,8 +621,8 @@ impl CommandBlockSegmenter {
     /// no phantom — neither a completed one nor a forever-running incomplete one — and it claims no
     /// block index, so the next real command reuses the slot.
     fn discard_open_block(&mut self) {
-        // A block that never reached `C` never armed the spinner, so no clear is owed; the flags are
-        // reset anyway so the next block starts clean.
+        // A block that never reached `C` never armed the spinner, so no clear is owed; the flags
+        // are reset anyway so the next block starts clean.
         self.synthetic_spinner_active = false;
         self.saw_real_progress_this_block = false;
         self.has_open_block = false;

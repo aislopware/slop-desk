@@ -270,7 +270,8 @@ impl SampleBuffer {
             // SAFETY: framework rule, above — `len` bytes read from the base of a live slice of
             // exactly that length, into a block the create just sized to match. An EMPTY frame has
             // no base to pass and nothing to copy, which is what `NonNull::new` answers here; the
-            // caller's own triage refuses one long before this, so the branch is a floor, not a path.
+            // caller's own triage refuses one long before this, so the branch is a floor, not a
+            // path.
             let status = unsafe { CMBlockBuffer::replace_data_bytes(source, &block, 0, len) };
             if status != NO_ERR {
                 return Err(status);
@@ -790,7 +791,8 @@ mod tests {
             #[expect(unsafe_code, reason = "the attachments accessor is generated unsafe")]
             let array = unsafe { sample.inner.sample_attachments_array(false) }
                 .expect("a stamped sample has an array");
-            // SAFETY: framework rule — the documented element type of THIS array, as `stamp` states.
+            // SAFETY: framework rule — the documented element type of THIS array, as `stamp`
+            // states.
             #[expect(unsafe_code, reason = "CFArrayRef carries no element type in C")]
             let typed: &CFArray<CFMutableDictionary<CFString, CFType>> = unsafe { array.cast_unchecked() };
             let first = typed.get(0).expect("one sample, one dictionary");

@@ -149,11 +149,12 @@ fn cluster_ending_at(anchor: usize, bytes: &[u8]) -> Option<usize> {
     if fill_end - j < MIN_FILL_SPACES {
         return None;
     }
-    // `SGR` run after the mark (`%s%b` + reset), the mark itself (`%` — or `#` for a root shell), and
-    // the `SGR` run before it (`%B%S`). BOTH runs must be non-empty — the false-positive guard: a
-    // plain-text `%`/`#` at the end of real command output (a session that `unsetopt PROMPT_SP`,
-    // followed by a pad-to-clear + `CR`) has no `SGR` wrapping, while zsh's `promptexpand` always
-    // emits both sides on a capable `TERM`. A bare dumb-`TERM` mark is a deliberate miss.
+    // `SGR` run after the mark (`%s%b` + reset), the mark itself (`%` — or `#` for a root shell),
+    // and the `SGR` run before it (`%B%S`). BOTH runs must be non-empty — the false-positive
+    // guard: a plain-text `%`/`#` at the end of real command output (a session that `unsetopt
+    // PROMPT_SP`, followed by a pad-to-clear + `CR`) has no `SGR` wrapping, while zsh's
+    // `promptexpand` always emits both sides on a capable `TERM`. A bare dumb-`TERM` mark is a
+    // deliberate miss.
     let suffix_end = j;
     while let Some(start) = sgr_start(j, bytes) {
         j = start;
@@ -256,10 +257,10 @@ fn zero_width_sequence_start(end: usize, floor: usize, bytes: &[u8]) -> Option<u
     }
     // `DECSET`/`DECRST` (`ESC [ ? … h/l`) never move the cursor — cursor-show `?25h`, autowrap
     // `?7h`, sync-frame `?2026h/l`, bracketed-paste `?2004h` all interpose between a prompt cycle's
-    // `CRLF` and its cluster. The EXCEPTION is the alt-screen trio (47/1047/1049): those switch grids
-    // and restore a SAVED cursor, so the column is unknowable across them — end the walk. `ED`
-    // (`ESC [ … J`) erases without ever moving the cursor. ANSI `SM`/`RM` (no `?`) are out of scope:
-    // unrecognised ⇒ the safe mid-line answer.
+    // `CRLF` and its cluster. The EXCEPTION is the alt-screen trio (47/1047/1049): those switch
+    // grids and restore a SAVED cursor, so the column is unknowable across them — end the walk.
+    // `ED` (`ESC [ … J`) erases without ever moving the cursor. ANSI `SM`/`RM` (no `?`) are out
+    // of scope: unrecognised ⇒ the safe mid-line answer.
     if matches!(last, b'h' | b'l' | b'J') {
         let mut i = end - 2;
         while i > floor && (0x30..=0x3B).contains(&bytes[i]) {

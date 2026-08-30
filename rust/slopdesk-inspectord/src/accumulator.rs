@@ -104,8 +104,9 @@ impl LineAccumulator {
             if search_start > 0 {
                 self.pending.drain(..search_start);
             }
-            // Cap the surviving partial: grown past the cap with no newline in sight, discard it and
-            // enter skip mode so the REST of that line is dropped too instead of accumulating.
+            // Cap the surviving partial: grown past the cap with no newline in sight, discard it
+            // and enter skip mode so the REST of that line is dropped too instead of
+            // accumulating.
             if self.pending.len() > self.max_pending_bytes {
                 self.pending.clear();
                 self.skipping_overlong_line = true;

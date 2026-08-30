@@ -331,8 +331,8 @@ impl Distiller {
                     self.state = State::Ground;
                 } else {
                     // ESC not followed by `\`: the OSC is terminated by the bare ESC; that ESC
-                    // starts a new escape. Finish the OSC (without the trailing ESC), then reprocess
-                    // from AfterEsc.
+                    // starts a new escape. Finish the OSC (without the trailing ESC), then
+                    // reprocess from AfterEsc.
                     self.finish_osc();
                     self.pending.clear();
                     self.pending.push(ESC);
@@ -418,8 +418,8 @@ pub fn distill(bytes: &[u8]) -> Vec<u8> {
         distiller.emit_pending();
     }
     // A never-closed B→C span (no `C` at end-of-buffer) in the buffering fallback: emit its raw
-    // bytes so no output is lost (it is the tail of the live command line being edited when the ring
-    // ended).
+    // bytes so no output is lost (it is the tail of the live command line being edited when the
+    // ring ended).
     if distiller.suppress
         && distiller.input_mode == InputMode::Buffering
         && !distiller.input_buffer.is_empty()

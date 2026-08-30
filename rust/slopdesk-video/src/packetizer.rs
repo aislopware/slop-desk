@@ -223,9 +223,9 @@ impl VideoPacketizer {
         //
         // The Swift builds a fresh codec at `(k = group, m)` for the adaptive branch. That is
         // equivalent here and NOT merely similar: an m-tier resolves its group size to the default,
-        // so `group == scheme.group_size()` exactly, and the Cauchy rows depend only on `(k, rank)`.
-        // Going through the configured codec instead of constructing one avoids the `k + m <= 255`
-        // construction assert on a path a wire tier reaches.
+        // so `group == scheme.group_size()` exactly, and the Cauchy rows depend only on `(k,
+        // rank)`. Going through the configured codec instead of constructing one avoids the
+        // `k + m <= 255` construction assert on a path a wire tier reaches.
         scheme.parity_with_m(payloads, group, m)
     }
 

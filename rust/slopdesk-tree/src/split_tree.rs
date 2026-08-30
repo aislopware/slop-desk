@@ -541,10 +541,11 @@ impl SplitNode {
                 }
                 // Splice any survivor that is itself a split on THIS axis up into this level. A
                 // collapse can float a grandchild that happens to share the grandparent's axis —
-                // `V[ H[V[a,b], c], d ]` losing `c` collapses the `H` and leaves `V[V[a,b], d]` — and
-                // the live path never re-runs the decoder's repair, so without this merge the tree
-                // carries a same-axis nest that skews the rebalance and over-counts the depth. One
-                // pass is enough: a valid child split never nests its own axis, so nothing spliced up
+                // `V[ H[V[a,b], c], d ]` losing `c` collapses the `H` and leaves `V[V[a,b], d]` —
+                // and the live path never re-runs the decoder's repair, so without
+                // this merge the tree carries a same-axis nest that skews the
+                // rebalance and over-counts the depth. One pass is enough: a valid
+                // child split never nests its own axis, so nothing spliced up
                 // can share it either.
                 let merged = merge_same_axis(survivors, *axis);
                 match merged.len() {
@@ -1162,11 +1163,12 @@ mod tests {
             WeightedChild::new(SplitWeight::Flex(1.0), SplitNode::Leaf(pane(2))),
         ]);
         let over = tree.setting_divider_weight(split_id(1), 0, 99.0);
-        // The trailing child takes the REMAINDER, not the floor, so the pair sum is preserved to the
-        // bit even at the clamp — which is what stops a long over-drag from leaking width.
+        // The trailing child takes the REMAINDER, not the floor, so the pair sum is preserved to
+        // the bit even at the clamp — which is what stops a long over-drag from leaking
+        // width.
         assert_eq!(weights(&over), vec![2.0 - MIN_WEIGHT, 2.0 - (2.0 - MIN_WEIGHT)]);
-        // The cursor comes back: the seam resumes exactly where the weight says, with no accumulated
-        // drift to unwind.
+        // The cursor comes back: the seam resumes exactly where the weight says, with no
+        // accumulated drift to unwind.
         let back = over.setting_divider_weight(split_id(1), 0, 1.2);
         assert_eq!(weights(&back), vec![1.2, 0.8]);
     }
@@ -1232,8 +1234,8 @@ mod tests {
             WeightedChild::leaf(pane(1)),
             WeightedChild::leaf(pane(2)),
         ]);
-        // Same axis at both levels — only the decoder's flatten forbids that, and this is the query,
-        // so the deepest must still win.
+        // Same axis at both levels — only the decoder's flatten forbids that, and this is the
+        // query, so the deepest must still win.
         let tree = SplitNode::Split {
             id: split_id(1),
             axis: SplitAxis::Horizontal,

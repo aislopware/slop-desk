@@ -282,7 +282,8 @@ pub unsafe extern "C" fn slopdesk_metadata_decode_processes(
     arena_cap: usize,
     out_count: *mut usize,
 ) -> u32 {
-    // SAFETY: the caller's obligations are this function's; `borrow` and `deliver_list` restate them.
+    // SAFETY: the caller's obligations are this function's; `borrow` and `deliver_list` restate
+    // them.
     unsafe {
         let items = match decode_process_list(borrow(payload, payload_len)) {
             Ok(items) => items,

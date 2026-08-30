@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn every_span_stays_inside_the_line_for_any_input() {
-        // The spans cross a C ABI and are used to slice the caller's own buffer, so a range past the
-        // end is a crash on the far side rather than a wrong row here.
+        // The spans cross a C ABI and are used to slice the caller's own buffer, so a range past
+        // the end is a crash on the far side rather than a wrong row here.
         for text in [
             "",
             " ",

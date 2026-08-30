@@ -220,9 +220,10 @@ fn escape_end(bytes: &[u8], start: usize) -> usize {
         b'[' => {
             parse_csi(bytes, start).map_or_else(
                 || {
-                    // A `CSI` the strict parser refuses — a stray byte in the parameter run. Scan on to
-                    // the first final byte anyway: the alternative is emitting the sequence as text.
-                    // Well-formed input never reaches here, because every parameter and intermediate
+                    // A `CSI` the strict parser refuses — a stray byte in the parameter run. Scan
+                    // on to the first final byte anyway: the alternative is
+                    // emitting the sequence as text. Well-formed input never
+                    // reaches here, because every parameter and intermediate
                     // byte is below `0x40`, so both readings stop at the same byte.
                     bytes
                         .iter()

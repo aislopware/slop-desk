@@ -90,23 +90,24 @@ impl Session {
                   step moves; splitting them would hide the order from the reader"
     )]
     pub(crate) fn start_capture(self: &Arc<Self>, width: u16, height: u16) {
-        // 1. THE RE-MINT KILLS EVERYTHING THE LAST STREAM ASSERTED. User stream settings, the client's
-        //    audio wish, the privacy blank and the display wake all die here, because a fresh hello starts
-        //    clean and the client re-sends each of them after the ack. On the ordinary path the state
-        //    machine has already emitted `StopCapture`, so this finds nothing — and on the path where it
-        //    has not, this is what stops the previous `SCStream` instead of orphaning it behind the install
-        //    at step 9.
+        // 1. THE RE-MINT KILLS EVERYTHING THE LAST STREAM ASSERTED. User stream settings, the
+        //    client's audio wish, the privacy blank and the display wake all die here, because a
+        //    fresh hello starts clean and the client re-sends each of them after the ack. On the
+        //    ordinary path the state machine has already emitted `StopCapture`, so this finds
+        //    nothing — and on the path where it has not, this is what stops the previous `SCStream`
+        //    instead of orphaning it behind the install at step 9.
         //
-        //    The outgoing generation is read BEFORE the teardown, because the teardown drops the [`Live`]
-        //    that holds it. [`Live::new`] restarts the counter at zero, so without this the second
-        //    bring-up would hand out the same tokens as the first, and a straggler from bring-up A —
-        //    step 13's wake adopt above all — could answer `is_current` against bring-up B and act on a
-        //    set it never installed. Seeding the fresh counter with the old one makes the token monotone
-        //    across re-mints, which is the invariant [`Live`]'s own test asserts WITHIN one value.
+        //    The outgoing generation is read BEFORE the teardown, because the teardown drops the
+        // [`Live`]    that holds it. [`Live::new`] restarts the counter at zero, so without
+        // this the second    bring-up would hand out the same tokens as the first, and a
+        // straggler from bring-up A —    step 13's wake adopt above all — could answer
+        // `is_current` against bring-up B and act on a    set it never installed. Seeding
+        // the fresh counter with the old one makes the token monotone    across re-mints,
+        // which is the invariant [`Live`]'s own test asserts WITHIN one value.
         //    The held-input BALANCE is read here for the same reason and only that reason: the
-        //    teardown below clears the injector seam, and what the user is physically holding has to
-        //    outlive it. Everything else about the last stream dies; the user's hands are not part of
-        //    the last stream. Step 6 seeds the replacement with this.
+        //    teardown below clears the injector seam, and what the user is physically holding has
+        // to    outlive it. Everything else about the last stream dies; the user's hands
+        // are not part of    the last stream. Step 6 seeds the replacement with this.
         let outgoing_generation = self
             .locked_streaming()
             .as_ref()
@@ -114,10 +115,11 @@ impl Session {
         let held = self.input_balance();
         self.teardown_live();
 
-        // 2. THE PIXEL GEOMETRY AND THE RATE, BEFORE ANYTHING IS BUILT. The bitrate is resolution-aware and
-        //    is BOTH the encoder's target and the congestion controller's ceiling, so it is resolved once
-        //    here rather than twice below: a 2× HiDPI window has four times the pixels, and a rate cap that
-        //    ignored that starves scroll frames into stutter. Every number is `slopdesk_video`'s.
+        // 2. THE PIXEL GEOMETRY AND THE RATE, BEFORE ANYTHING IS BUILT. The bitrate is
+        //    resolution-aware and is BOTH the encoder's target and the congestion controller's
+        //    ceiling, so it is resolved once here rather than twice below: a 2× HiDPI window has
+        //    four times the pixels, and a rate cap that ignored that starves scroll frames into
+        //    stutter. Every number is `slopdesk_video`'s.
         let pixel_width = pixels(width, self.spec.capture_scale);
         let pixel_height = pixels(height, self.spec.capture_scale);
         let bits_per_pixel =
@@ -130,11 +132,11 @@ impl Session {
             bits_per_pixel,
         );
 
-        // 3. THE ENCODER, BUILT AND OPENED BEFORE IT IS SHARED. `open` takes `&mut self` and can fail;
-        //    installing behind the `Arc` first would mean either a fallible call through a shared handle or
-        //    a half-open encoder visible to the capture path. A failed create ABORTS the bring-up — the
-        //    Swift returned here too, and the alternative is a session whose every frame is dropped by a
-        //    `None` session with nothing to report it.
+        // 3. THE ENCODER, BUILT AND OPENED BEFORE IT IS SHARED. `open` takes `&mut self` and can
+        //    fail; installing behind the `Arc` first would mean either a fallible call through a
+        //    shared handle or a half-open encoder visible to the capture path. A failed create
+        //    ABORTS the bring-up — the Swift returned here too, and the alternative is a session
+        //    whose every frame is dropped by a `None` session with nothing to report it.
         //
         //    The sink is built FIRST because `Encoder::new` takes it: the wire pump needs only a
         //    `Weak<Session>`, and the capture pump at step 7 needs the encoder, so the two halves
@@ -162,14 +164,15 @@ impl Session {
 
         // 4. RE-ANCHOR THE CONTROLLERS TO THIS BUILD, BEFORE A FRAME CAN REACH THEM. Three separate
         //    obligations under ONE lock, which is why they are one block:
-        //      * the LTR acked-set is cleared — a new `VTCompressionSession` holds zero acknowledged
-        //        long-term references, and a surviving ack names one the client no longer has;
-        //      * the FPS governor is minted FRESH at the base cadence, through the free function that only
-        //        an initial build may call — see `Controllers::fps`;
-        //      * the rate controllers are seeded to THIS build's ceiling, with NO user ceiling. That `None`
-        //        is the "user stream settings die with the re-mint" reset: the client re-sends its wish
-        //        after the ack, and layering a stale one here would apply a cap the client has not asked
-        //        for since the last session.
+        //      * the LTR acked-set is cleared — a new `VTCompressionSession` holds zero
+        //        acknowledged long-term references, and a surviving ack names one the client no
+        //        longer has;
+        //      * the FPS governor is minted FRESH at the base cadence, through the free function
+        //        that only an initial build may call — see `Controllers::fps`;
+        //      * the rate controllers are seeded to THIS build's ceiling, with NO user ceiling.
+        //        That `None` is the "user stream settings die with the re-mint" reset: the client
+        //        re-sends its wish after the ack, and layering a stale one here would apply a cap
+        //        the client has not asked for since the last session.
         let governor_texts = resolved(&self.overlay, &fps_governor::KEYS);
         let abr_texts = resolved(&self.overlay, &ABR_KEYS);
         let qp_texts = resolved(&self.overlay, &qp_control::KEYS);
@@ -201,11 +204,11 @@ impl Session {
             let _actuated = encoder.set_live_bitrate(target);
         }
 
-        // 5. THE AUDIO LANE, BEFORE THE PUMP THAT FEEDS IT AND BEFORE THE TAP'S SHAPE. ⚠️ The epoch is the
-        //    SESSION's, never a fresh `Instant::now()`. Audio timestamps and video fragment headers are
-        //    both host-relative milliseconds on ONE clock, and a second epoch here would put the two
-        //    timelines a start-up delay apart — a wire bug neither end can see, because each stream is
-        //    internally consistent.
+        // 5. THE AUDIO LANE, BEFORE THE PUMP THAT FEEDS IT AND BEFORE THE TAP'S SHAPE. ⚠️ The epoch
+        //    is the SESSION's, never a fresh `Instant::now()`. Audio timestamps and video fragment
+        //    headers are both host-relative milliseconds on ONE clock, and a second epoch here
+        //    would put the two timelines a start-up delay apart — a wire bug neither end can see,
+        //    because each stream is internally consistent.
         //
         //    The master gate is resolved from the rules crate's own table rather than read as a
         //    string here: the capturer would answer it through `Capturer::gates()`, but the tap's
@@ -225,10 +228,10 @@ impl Session {
             ))
         });
 
-        // 6. THE INPUT INJECTOR, BEFORE ANY FRAME GOES OUT. Ordered here and not later because the client's
-        //    first click can arrive on the very datagram after the ack, and an inbound path with a `None`
-        //    injector drops it silently — the Swift's `guard let injector` behaviour, which was a real
-        //    lost-first-click on a slow bring-up.
+        // 6. THE INPUT INJECTOR, BEFORE ANY FRAME GOES OUT. Ordered here and not later because the
+        //    client's first click can arrive on the very datagram after the ack, and an inbound
+        //    path with a `None` injector drops it silently — the Swift's `guard let injector`
+        //    behaviour, which was a real lost-first-click on a slow bring-up.
         //
         //    The balance `held` was read at step 1, BEFORE the teardown that cleared the last seam.
         //    A transparent reconnect rebuilds the injector while the user may still be physically
@@ -251,19 +254,20 @@ impl Session {
             held,
         ))));
 
-        // 7. THE CAPTURE PUMP, which is what the capturer delivers into. It holds the encoder and the audio
-        //    lane and a `Weak<Session>` — weak, because the session owns the capturer which owns this, and
-        //    a strong edge back would close a cycle nothing could drop.
+        // 7. THE CAPTURE PUMP, which is what the capturer delivers into. It holds the encoder and
+        //    the audio lane and a `Weak<Session>` — weak, because the session owns the capturer
+        //    which owns this, and a strong edge back would close a cycle nothing could drop.
         let pump = CapturePump::new(self, &encoder, audio.clone());
         // Concrete parameter, so the unsizing happens at the binding rather than inside an
         // inference that would look for an `Arc<dyn CaptureEvents>` to clone.
         let events: Arc<dyn CaptureEvents> = Arc::<CapturePump>::clone(&pump);
 
-        // 8. THE CAPTURE STREAM. ⚠️ Blocks, and needs the window server. A refused start is NOT fatal here,
-        //    and that is the Swift's own choice carried over: by the time this runs the state machine is
-        //    already `.streaming`, so returning without installing would leave the session believing it
-        //    streams with no component to stop — the "streaming but dead" state `Live`'s own note names.
-        //    Installing a stream that never came up leaves the teardown something to find.
+        // 8. THE CAPTURE STREAM. ⚠️ Blocks, and needs the window server. A refused start is NOT
+        //    fatal here, and that is the Swift's own choice carried over: by the time this runs the
+        //    state machine is already `.streaming`, so returning without installing would leave the
+        //    session believing it streams with no component to stop — the "streaming but dead"
+        //    state `Live`'s own note names. Installing a stream that never came up leaves the
+        //    teardown something to find.
         let capturer = Capturer::new(
             CaptureShape {
                 fps: i32::try_from(self.spec.fps).unwrap_or(i32::MAX),
@@ -293,8 +297,8 @@ impl Session {
             Target::Display { id } => capturer.start_display(id, pixel_width, pixel_height),
         };
 
-        // 9. INSTALL THE SET, AND KEEP THE GENERATION. Everything below this line can race a teardown, and
-        //    `generation` is the one token that answers whether it did.
+        // 9. INSTALL THE SET, AND KEEP THE GENERATION. Everything below this line can race a
+        //    teardown, and `generation` is the one token that answers whether it did.
         let live_capture = Arc::new(LiveCapture::new(capturer, audio));
         // Spelled with the concrete parameter so the unsizing happens at the binding, not inside an
         // inference that would try to clone an `Arc<dyn CaptureStream>` that does not exist yet.
@@ -323,27 +327,28 @@ impl Session {
 
         // 10. RE-SEED THE CLIENT-SILENCE STAMP, before the heartbeat can consult it. A reused or
         //     reconnected
-        //    session that inherited a stale "silent" stamp would pause a capturer that has not had its
-        //    first inbound datagram yet — a stream that starts frozen.
+        //    session that inherited a stale "silent" stamp would pause a capturer that has not had
+        // its    first inbound datagram yet — a stream that starts frozen.
         *self.locked_liveness() = ClientLiveness::starting_at(self.now());
 
-        // 11. ANNOUNCE THE CADENCE AND THE RESIZE CEILING, once per bring-up. The cadence goes out ONLY
-        //     when the governor is armed: with the gate off the host is byte-identical to one that never
-        //     had the feature, which is what makes the gate testable against the golden vectors at all.
+        // 11. ANNOUNCE THE CADENCE AND THE RESIZE CEILING, once per bring-up. The cadence goes out
+        //     ONLY when the governor is armed: with the gate off the host is byte-identical to one
+        //     that never had the feature, which is what makes the gate testable against the golden
+        //     vectors at all.
         if self.gates.fps_governor_enabled {
             self.send_cadence(u16::try_from(self.spec.fps).unwrap_or(u16::MAX));
         }
         self.send_display_max();
 
-        // 12. THE STALL-SCRIM HEARTBEAT. After step 10, because its first tick reads the stamp that step
-        //     re-seeded; after step 9, because the client-silence pause it pushes goes to the capture
-        //     stream the install made reachable.
+        // 12. THE STALL-SCRIM HEARTBEAT. After step 10, because its first tick reads the stamp that
+        //     step re-seeded; after step 9, because the client-silence pause it pushes goes to the
+        //     capture stream the install made reachable.
         live_capture.start_heartbeat(self);
 
-        // 13. THE HOST DISPLAY WAKE, and only for a DISPLAY target — the sleep timer does not count a
-        //     remote viewer as activity, so a full-desktop session must say so, and a window pane must NOT
-        //     or every open pane would pin the host's display awake. `Target` answers it; this does not
-        //     re-derive it.
+        // 13. THE HOST DISPLAY WAKE, and only for a DISPLAY target — the sleep timer does not count
+        //     a remote viewer as activity, so a full-desktop session must say so, and a window pane
+        //     must NOT or every open pane would pin the host's display awake. `Target` answers it;
+        //     this does not re-derive it.
         //
         //     The assertion is process-wide and outlives every `Arc` here, so it is the ONE step
         //     that re-presents the generation: acquire, then record under the lock only if this
@@ -384,64 +389,68 @@ impl Session {
     /// idempotent by TAKING the [`Streaming`] value: whoever wins the lock gets the components, and
     /// every later caller finds a `None` and does nothing.
     pub(crate) fn teardown_live(&self) {
-        // 1. TAKE THE SET, AND DROP THE LOCK. Not just for contention: step 4 JOINS the heartbeat thread,
-        //    and that thread takes this same lock on every tick, so holding it here would deadlock a
-        //    teardown against a heartbeat that had just woken.
+        // 1. TAKE THE SET, AND DROP THE LOCK. Not just for contention: step 4 JOINS the heartbeat
+        //    thread, and that thread takes this same lock on every tick, so holding it here would
+        //    deadlock a teardown against a heartbeat that had just woken.
         let Some(streaming) = self.locked_streaming().take() else {
             return;
         };
 
-        // 2. RELEASE THE DISPLAY WAKE. Before the slow steps, because it is the only thing here that is
-        //    process-wide: a teardown that stalled in the framework would otherwise hold the host's display
-        //    awake for the length of the stall. The flag is what remembers — a window session never
-        //    acquired one and must not release one.
+        // 2. RELEASE THE DISPLAY WAKE. Before the slow steps, because it is the only thing here
+        //    that is process-wide: a teardown that stalled in the framework would otherwise hold
+        //    the host's display awake for the length of the stall. The flag is what remembers — a
+        //    window session never acquired one and must not release one.
         if streaming.holds_display_wake {
             let _released = HostDisplayWake::shared().release();
         }
 
-        // 3. THE PRIVACY BLANK, TAKEN AND DISENGAGED. Before the slow steps below for the same reason as
-        //    step 2, and unconditionally: a session that ended while blanked leaves the host dark and
-        //    input-dead, and the keyboard that would undo it is the one that was swallowed. A zeroed gamma
-        //    table is not cleaned up by anything underneath this — measured, it outlives the process that
-        //    set it — so this call is the ONLY thing that gives the host's screen back.
+        // 3. THE PRIVACY BLANK, TAKEN AND DISENGAGED. Before the slow steps below for the same
+        //    reason as step 2, and unconditionally: a session that ended while blanked leaves the
+        //    host dark and input-dead, and the keyboard that would undo it is the one that was
+        //    swallowed. A zeroed gamma table is not cleaned up by anything underneath this —
+        //    measured, it outlives the process that set it — so this call is the ONLY thing that
+        //    gives the host's screen back.
         //
-        //    TAKEN, not merely disengaged, and that is what closes the race with `apply_privacy_mode`:
-        //    step 1 already emptied `streaming`, so a wish that arrives between then and here is refused
-        //    there, and one that arrives after this finds a `None` and has nothing to re-engage. The
-        //    explicit `disengage` is redundant with `Drop` and is written anyway, because the restore has
-        //    to be a statement in this order rather than a consequence of where a binding ends.
+        //    TAKEN, not merely disengaged, and that is what closes the race with
+        // `apply_privacy_mode`:    step 1 already emptied `streaming`, so a wish that
+        // arrives between then and here is refused    there, and one that arrives after
+        // this finds a `None` and has nothing to re-engage. The    explicit `disengage` is
+        // redundant with `Drop` and is written anyway, because the restore has    to be a
+        // statement in this order rather than a consequence of where a binding ends.
         let blank = self.privacy.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(blank) = blank {
             blank.disengage();
         }
 
-        // 4. FLUSH THE SEND LANE. The frames queued in it belong to the capture and encode generation being
-        //    torn down, and draining them would spend the wire on a stream the client is about to be told
-        //    is over. The lane itself SURVIVES — `close` is the session's own stop, not this.
+        // 4. FLUSH THE SEND LANE. The frames queued in it belong to the capture and encode
+        //    generation being torn down, and draining them would spend the wire on a stream the
+        //    client is about to be told is over. The lane itself SURVIVES — `close` is the
+        //    session's own stop, not this.
         if let Some(lane) = self.send_lane.as_ref() {
             lane.flush();
         }
 
-        // 5. THE LIVE CAPTURE ITSELF: heartbeat, audio gate, stream, audio thread, in that order — see
-        //    `LiveCapture::stop`.
+        // 5. THE LIVE CAPTURE ITSELF: heartbeat, audio gate, stream, audio thread, in that order —
+        //    see `LiveCapture::stop`.
         if let Some(capture) = streaming.live.capture.as_ref() {
             capture.stop();
         }
 
-        // 6. THE ENCODER GOES LAST, by being dropped last. `Encoder::drop` COMPLETES the frames still in
-        //    the compression session, and completing them after step 5 means the capture path can no longer
-        //    present a new one into a session that is draining.
+        // 6. THE ENCODER GOES LAST, by being dropped last. `Encoder::drop` COMPLETES the frames
+        //    still in the compression session, and completing them after step 5 means the capture
+        //    path can no longer present a new one into a session that is draining.
         drop(streaming);
 
-        // 7. THE INJECTOR, AFTER EVERYTHING ELSE. Dropping it JOINS its two threads, and the raise thread
-        //    can be mid-accessibility-chain against a hung app for a second or more — so it goes after the
-        //    steps that give the host its screen and its wire back, never before them. Clearing the seam is
-        //    what makes the join happen: the pump holds the only other handle, and it drops this one on the
-        //    next drain.
+        // 7. THE INJECTOR, AFTER EVERYTHING ELSE. Dropping it JOINS its two threads, and the raise
+        //    thread can be mid-accessibility-chain against a hung app for a second or more — so it
+        //    goes after the steps that give the host its screen and its wire back, never before
+        //    them. Clearing the seam is what makes the join happen: the pump holds the only other
+        //    handle, and it drops this one on the next drain.
         //
-        //    The BALANCE is deliberately not read here. A teardown is not necessarily a re-mint, and
-        //    the next bring-up reads it off the seam itself at its step 6 — which answers the empty
-        //    ledger once this has run, and the live one when a re-mint gets there first.
+        //    The BALANCE is deliberately not read here. A teardown is not necessarily a re-mint,
+        // and    the next bring-up reads it off the seam itself at its step 6 — which
+        // answers the empty    ledger once this has run, and the live one when a re-mint
+        // gets there first.
         self.set_input_injector(None);
     }
 
@@ -515,7 +524,8 @@ impl Session {
         let mut privacy = self.privacy.lock().unwrap_or_else(PoisonError::into_inner);
         if !enabled {
             // Taken, not just disabled: a disengaged blank holds nothing worth keeping, and leaving
-            // the `Some` behind would mean a later teardown restoring a display that is already lit.
+            // the `Some` behind would mean a later teardown restoring a display that is already
+            // lit.
             let blank = privacy.take();
             drop(privacy);
             if let Some(blank) = blank {
@@ -524,14 +534,14 @@ impl Session {
             return;
         }
         // Under the lock, and this is the check the whole ordering exists for. `None` here means a
-        // teardown has already run, and the correct answer to "go private" for a stream that is over
-        // is to darken nothing at all.
+        // teardown has already run, and the correct answer to "go private" for a stream that is
+        // over is to darken nothing at all.
         if self.locked_streaming().is_none() {
             return;
         }
         // `Drop` restores, so the blank has to be constructed IN PLACE rather than built, engaged
-        // and then stored: a temporary that was dropped on the way into the `Option` would black the
-        // display and light it again within the same statement.
+        // and then stored: a temporary that was dropped on the way into the `Option` would black
+        // the display and light it again within the same statement.
         let blank = privacy.get_or_insert_with(|| PrivacyBlank::new(id, HostGamma));
         if !blank.set_enabled(true) {
             // The gamma call was refused by the window server. `PrivacyBlank` has already stayed

@@ -71,7 +71,10 @@ repos:
       - id: rustfmt
         name: rustfmt (apply)
         # NIGHTLY: rust/rustfmt.toml enables unstable options (wrap_comments, group_imports,
-        # format_strings). Only the formatter needs it — the crate builds/tests on stable.
+        # format_strings). Only the formatter needs it — the crate builds/tests on stable. It is the
+        # LATEST nightly, never a dated one (`lint-invariants`: nightly-is-never-pinned-to-a-date),
+        # and this hook inherits that by entering the justfile rather than naming a toolchain — the
+        # commit path and the gate cannot disagree about which rustfmt judged the tree.
         #
         # Through the justfile target, not `cd rust` directly: `rust/` holds SEVENTEEN workspaces and
         # `--all` means "every member of THIS one", so the bare form formatted the four root members

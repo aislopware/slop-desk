@@ -218,8 +218,8 @@ impl PaneSpawner {
         let built = PaneSession::new(Arc::clone(pty), config);
         if let Some(watching) = keys {
             // The refcount's release. Installed on the SESSION rather than driven from the host's
-            // close ladder because that ladder has four ends and a refcount released on only some of
-            // them is a repo watched for the life of the process.
+            // close ladder because that ladder has four ends and a refcount released on only some
+            // of them is a repo watched for the life of the process.
             let _token = built.add_close_tap(watching);
         }
         if let Some(history) = restored {
@@ -269,8 +269,8 @@ impl Spawner for PaneSpawner {
     fn start(&self, pane: &Arc<dyn Pane>, cwd: Option<&str>) {
         pane.start();
         // AFTER the start, so the control this enqueues rides a live sender. A pane that requested
-        // no directory still lands in a real one, and skipping its seed would leave it outside every
-        // project section until an OSC-7 edge an unshimmed shell never sends.
+        // no directory still lands in a real one, and skipping its seed would leave it outside
+        // every project section until an OSC-7 edge an unshimmed shell never sends.
         if let Some(cwd) = cwd.filter(|cwd| !cwd.is_empty()) {
             pane.seed_project(cwd);
         }
@@ -309,11 +309,12 @@ impl Spawner for PaneSpawner {
             Arc::clone(&request.status),
             request.blocks,
         );
-        // Usually 0 — this shell was forked a moment ago and has no history to arrive twice. But the
-        // fork may have found superd ALREADY holding this id and taken that shell over, and then the
-        // supervised ring holds the same bytes the restore below does: subscribing from 0 would
-        // print the user's whole history a second time and re-feed the sniffer and the block ledger
-        // with it. Only the fork knows which happened, which is why both offsets rode in together.
+        // Usually 0 — this shell was forked a moment ago and has no history to arrive twice. But
+        // the fork may have found superd ALREADY holding this id and taken that shell over,
+        // and then the supervised ring holds the same bytes the restore below does:
+        // subscribing from 0 would print the user's whole history a second time and re-feed
+        // the sniffer and the block ledger with it. Only the fork knows which happened,
+        // which is why both offsets rode in together.
         config.resume_from = if pty.took_over_a_survivor() {
             request.resume_takeover
         } else {
@@ -349,8 +350,9 @@ impl Spawner for PaneSpawner {
         config.resume_from = request.resume_from;
         // The SIZE is deliberately not re-asserted here. The kernel's `winsize` on this master is
         // the live truth and survived the restart intact, while superd's record is only what the
-        // last hostd told it — a pane whose client never resized still carries the spawn-time 24×80,
-        // and writing that back would `SIGWINCH` a 200×50 agent into re-wrapping at 80 columns.
+        // last hostd told it — a pane whose client never resized still carries the spawn-time
+        // 24×80, and writing that back would `SIGWINCH` a 200×50 agent into re-wrapping at
+        // 80 columns.
         let session = Self::wrap(&pty, config, keys, request.restored);
         Ok(LivePane::adopt(session, request.session))
     }

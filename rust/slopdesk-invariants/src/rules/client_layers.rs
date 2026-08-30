@@ -431,8 +431,9 @@ mod tests {
             "{report:?}"
         );
 
-        // PROSE naming a door is not a call, and six live headers do exactly this — a raw read would
-        // fire on all of them and the rule would be turned off by the first person it stopped.
+        // PROSE naming a door is not a call, and six live headers do exactly this — a raw read
+        // would fire on all of them and the rule would be turned off by the first person it
+        // stopped.
         fixture.write(
             "Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift",
             "// The ladder is slopdesk_workspace::git_line's, asked for by rung.\nlet rung = 0\n",

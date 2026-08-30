@@ -80,9 +80,10 @@ pub fn write_all(fd: RawFd, bytes: &[u8]) -> Transfer {
     let mut rest = bytes;
     let mut transferred = 0_usize;
     while !rest.is_empty() {
-        // SAFETY: `rest` is a live Rust slice for the duration and the length is exactly its own, so
-        // the call reads only inside it. `fd` is the caller's obligation — a descriptor this process
-        // holds open — and a closed or unwritable one is answered with an errno.
+        // SAFETY: `rest` is a live Rust slice for the duration and the length is exactly its own,
+        // so the call reads only inside it. `fd` is the caller's obligation — a descriptor
+        // this process holds open — and a closed or unwritable one is answered with an
+        // errno.
         let moved = unsafe { libc::write(fd, rest.as_ptr().cast::<libc::c_void>(), rest.len()) };
         if moved > 0 {
             let done = usize::try_from(moved).unwrap_or(rest.len()).min(rest.len());
@@ -117,14 +118,14 @@ pub fn read_exactly(fd: RawFd, into: &mut [u8]) -> Transfer {
     let mut transferred = 0_usize;
     while !rest.is_empty() {
         // SAFETY: `rest` is a live, uniquely-borrowed Rust slice for the duration and the length is
-        // exactly its own, so the call writes only inside it. `fd` is the caller's obligation, and a
-        // closed or unreadable one is answered with an errno.
+        // exactly its own, so the call writes only inside it. `fd` is the caller's obligation, and
+        // a closed or unreadable one is answered with an errno.
         let moved = unsafe { libc::read(fd, rest.as_mut_ptr().cast::<libc::c_void>(), rest.len()) };
         if moved > 0 {
             let done = usize::try_from(moved).unwrap_or(rest.len()).min(rest.len());
             transferred = transferred.saturating_add(done);
-            // The slice has to be handed over rather than re-borrowed: a `&mut` cannot be sliced out
-            // of itself while the original is still in scope.
+            // The slice has to be handed over rather than re-borrowed: a `&mut` cannot be sliced
+            // out of itself while the original is still in scope.
             rest = std::mem::take(&mut rest).get_mut(done..).unwrap_or_default();
             continue;
         }

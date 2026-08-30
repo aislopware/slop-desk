@@ -254,7 +254,8 @@ mod tests {
     #[test]
     fn every_k_subset_of_the_encoder_inverts() {
         // The MDS property, checked rather than asserted: for k=4, m=3 there are C(7,4) = 35
-        // subsets, and EVERY one of them must be invertible or a real loss pattern is unrecoverable.
+        // subsets, and EVERY one of them must be invertible or a real loss pattern is
+        // unrecoverable.
         let (k, m) = (4_usize, 3_usize);
         let rows = encoder_rows(k, m);
         let n = k + m;

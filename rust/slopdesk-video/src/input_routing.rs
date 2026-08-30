@@ -242,8 +242,9 @@ impl InputButtonBalance {
                     return InjectionPlan::default();
                 }
                 if key.down {
-                    // A down for an already-down modifier — a refocus resync against a still-latched
-                    // host flag — is a no-op, because that flag is already correct.
+                    // A down for an already-down modifier — a refocus resync against a
+                    // still-latched host flag — is a no-op, because that flag
+                    // is already correct.
                     return InjectionPlan {
                         pre_release: None,
                         suppress: !self.held_modifier_keys.insert(key.key_code),

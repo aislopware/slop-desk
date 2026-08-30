@@ -780,9 +780,10 @@ impl MuxConnection {
 
         // The host's verdict on an open THIS end initiated, recorded before the routing decision
         // below can finish a refused channel. A waiter that lost that race would be woken by the
-        // teardown and answered with its default rather than with what the host actually said. An id
-        // this end never opened has no slot, which is the whole of the phantom-id discipline — and
-        // the reason a host reaching this line records nothing without asking its role.
+        // teardown and answered with its default rather than with what the host actually said. An
+        // id this end never opened has no slot, which is the whole of the phantom-id
+        // discipline — and the reason a host reaching this line records nothing without
+        // asking its role.
         if let MuxFrame::ChannelOpenAck {
             channel_id,
             accepted,
@@ -800,12 +801,12 @@ impl MuxConnection {
             Link::Data => &mut tables.data,
         };
         // `accepted` is read for `ChannelOpenAck` alone. The host is the side that SENDS those, so
-        // one arriving here is spurious or hostile — but it is still ROUTED, so the frame's own bool
-        // has to be carried rather than assumed. Assuming `false` turns every stray ack into a
-        // `reject`, which marks a live id dead and reaps the pane behind it: a peer could kill an
-        // arbitrary pane with fourteen bytes. With the real bool, an `accepted: true` stray is the
-        // no-op it is on the client (`open` on an already-open id), which is the behaviour the
-        // Swift had.
+        // one arriving here is spurious or hostile — but it is still ROUTED, so the frame's own
+        // bool has to be carried rather than assumed. Assuming `false` turns every stray
+        // ack into a `reject`, which marks a live id dead and reaps the pane behind it: a
+        // peer could kill an arbitrary pane with fourteen bytes. With the real bool, an
+        // `accepted: true` stray is the no-op it is on the client (`open` on an
+        // already-open id), which is the behaviour the Swift had.
         let accepted = matches!(*frame, MuxFrame::ChannelOpenAck { accepted: true, .. });
         let decision = table.route(kind, id, accepted);
 

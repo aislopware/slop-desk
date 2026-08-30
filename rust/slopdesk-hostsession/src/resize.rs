@@ -196,8 +196,8 @@ impl Resize {
         };
         if self.pty.window_size() == Some(wanted) {
             // The PTY already holds exactly this grid — see rule one: this is a comparison against
-            // the LIVE size, so a redraw jiggle's deliberate one-row shortfall reads as a difference
-            // and is corrected rather than memoised away.
+            // the LIVE size, so a redraw jiggle's deliberate one-row shortfall reads as a
+            // difference and is corrected rather than memoised away.
             drop(write);
             return;
         }
@@ -208,9 +208,9 @@ impl Resize {
         drop(write);
         // The resident screen model is a FIXED-SIZE grid, and a VT grid cannot be reflowed — so a
         // geometry change does not adjust it, it invalidates it. Marking it here rather than in the
-        // scan loop is what makes the invalidation atomic with the ioctl that caused it: a scan that
-        // sampled the new size but folded bytes painted for the old one would run its rule ladder
-        // over a screen no program ever drew.
+        // scan loop is what makes the invalidation atomic with the ioctl that caused it: a scan
+        // that sampled the new size but folded bytes painted for the old one would run its
+        // rule ladder over a screen no program ever drew.
         self.detect.mark_screen_dirty();
         self.schedule_nudge();
     }

@@ -768,7 +768,8 @@ fn every_pinned_cursor_message_matches_in_both_directions() {
         );
     }
 
-    // And the router must land every pinned datagram on the right variant from its first byte alone.
+    // And the router must land every pinned datagram on the right variant from its first byte
+    // alone.
     for vector in &updates {
         let bytes = from_hex(vector["hex"].as_str().expect("a hex message"));
         assert!(matches!(

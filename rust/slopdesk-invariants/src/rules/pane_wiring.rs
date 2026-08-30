@@ -490,8 +490,8 @@ mod tests {
             "func arm(onCancel: @escaping () -> Void) { addLocalMonitorForEvents() }\nfunc disarm() { \
              removeMonitor(token) }\n",
         );
-        // Both floors, separately: the phone's pane target and the Mac's. A fixture that filled only
-        // one of them is exactly the state `3f11c6e6` left the real tree in.
+        // Both floors, separately: the phone's pane target and the Mac's. A fixture that filled
+        // only one of them is exactly the state `3f11c6e6` left the real tree in.
         for index in 0..20 {
             fixture.write(
                 &format!("Sources/SlopDeskPhoneUI/Pane/View{index}.swift"),

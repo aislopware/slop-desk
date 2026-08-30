@@ -157,8 +157,9 @@ impl Connection {
     ) -> Result<(), String> {
         // BEFORE the first byte, so the receiver can attach the batch to the chunk that follows —
         // the same rule the live path keeps, and the reason a sniff frame precedes its output.
-        // One batch for the whole backlog rather than one per split frame: the split is a frame-size
-        // artefact, and the events are order-only facts that no split can reorder.
+        // One batch for the whole backlog rather than one per split frame: the split is a
+        // frame-size artefact, and the events are order-only facts that no split can
+        // reorder.
         if let Some(events) = sniff_backlog(&resumed.bytes)
             && !events.is_empty()
         {
@@ -439,9 +440,9 @@ impl Server {
         }
 
         // The connection is gone. Panes are NOT — this is the whole design in three lines.
-        // Its subscriptions go with it, and each one may be releasing a pause: hostd dying mid-flood
-        // is exactly when one is outstanding, and a pause nobody is left to lift would freeze the
-        // pane superd had just carried through the restart.
+        // Its subscriptions go with it, and each one may be releasing a pause: hostd dying
+        // mid-flood is exactly when one is outstanding, and a pause nobody is left to lift
+        // would freeze the pane superd had just carried through the restart.
         for pane_id in connection.subscriptions() {
             self.registry.unsubscribed(&pane_id);
         }

@@ -203,9 +203,9 @@ pub fn a_choice_enum_spells_exactly_the_tables_stops(tree: &Tree) -> Report {
             continue;
         };
         let Options::Tokens(stops) = stops else { continue };
-        // No `String` raw type: the enum's `rawValue` is a crate table read through a door, so there
-        // is nothing here spelled twice. The same conclusion `Options::CrateOwned` reaches, from the
-        // other side.
+        // No `String` raw type: the enum's `rawValue` is a crate table read through a door, so
+        // there is nothing here spelled twice. The same conclusion `Options::CrateOwned`
+        // reaches, from the other side.
         let Some(cases) = swift_cases(tree, &enum_name) else {
             continue;
         };

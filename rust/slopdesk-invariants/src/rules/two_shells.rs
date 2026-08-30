@@ -515,13 +515,14 @@ mod tests {
         );
     }
 
-    // THE `a_ledger_row_whose_prologue_dissolved_is_named` TEST WAS DELETED 2026-08-28, with the row
-    // it guarded. It seeded the two sidebar-header files with no shared body and asserted the rule
-    // said "the debt is PAID, drop the entry" — the forcing function that made dropping the row
-    // mandatory rather than remembered. It did its job: `ObservationFollow` dissolved the prologue,
-    // the rule went red in exactly those words, and the row is gone. Rewriting it against a
-    // different row would assert the same mechanic `Claim::NoCloneAcross`'s own tests already cover,
-    // about a row nobody expects to dissolve, so it is not replaced.
+    // THE `a_ledger_row_whose_prologue_dissolved_is_named` TEST WAS DELETED 2026-08-28, with the
+    // row it guarded. It seeded the two sidebar-header files with no shared body and asserted
+    // the rule said "the debt is PAID, drop the entry" — the forcing function that made
+    // dropping the row mandatory rather than remembered. It did its job: `ObservationFollow`
+    // dissolved the prologue, the rule went red in exactly those words, and the row is gone.
+    // Rewriting it against a different row would assert the same mechanic
+    // `Claim::NoCloneAcross`'s own tests already cover, about a row nobody expects to dissolve,
+    // so it is not replaced.
 
     #[test]
     fn a_drained_shell_is_red() {

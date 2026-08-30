@@ -64,8 +64,8 @@ fn from_hex(hex: &str) -> Vec<u8> {
 fn to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        // `write!` into the buffer rather than `push_str(&format!(…))`: one allocation for the whole
-        // string instead of one per byte.
+        // `write!` into the buffer rather than `push_str(&format!(…))`: one allocation for the
+        // whole string instead of one per byte.
         let _ = write!(out, "{byte:02x}");
     }
     out

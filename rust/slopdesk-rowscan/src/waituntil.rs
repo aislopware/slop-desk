@@ -87,8 +87,9 @@ impl Scanner {
             return false;
         };
 
-        // Stripped before decoded, which the Swift did the other way round: the grammar is ASCII, so
-        // no invalid byte can be part of a sequence, and stripping first is one copy fewer.
+        // Stripped before decoded, which the Swift did the other way round: the grammar is ASCII,
+        // so no invalid byte can be part of a sequence, and stripping first is one copy
+        // fewer.
         let text = String::from_utf8_lossy(&strip(ready)).into_owned();
         if text.is_empty() {
             return false;

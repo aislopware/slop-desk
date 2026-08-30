@@ -210,9 +210,9 @@ impl Pass {
     }
 
     fn current(&mut self) -> &mut Revision {
-        // The pass never empties `revisions` without pushing an opening one back, so the fallback is
-        // unreachable; it exists so this returns a reference rather than an index every caller
-        // re-checks.
+        // The pass never empties `revisions` without pushing an opening one back, so the fallback
+        // is unreachable; it exists so this returns a reference rather than an index every
+        // caller re-checks.
         if self.revisions.is_empty() {
             self.revisions.push(Revision {
                 start_known: false,
@@ -612,8 +612,8 @@ fn classify_csi(seq: &[u8]) -> CsiEffect {
         b'K' => {
             let values = split_params(digits);
             let mode = values.first().copied().unwrap_or(0);
-            // EL takes ONE parameter and only modes 0–2 exist; anything else is a sequence this pass
-            // has no model for.
+            // EL takes ONE parameter and only modes 0–2 exist; anything else is a sequence this
+            // pass has no model for.
             if values.len() <= 1 && (0..=2).contains(&mode) {
                 CsiEffect::EraseInLine(mode)
             } else {

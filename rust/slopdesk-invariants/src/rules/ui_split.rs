@@ -525,10 +525,11 @@ mod tests {
         assert!(super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
 
         // ⚠️ A DOCUMENTED IMPORT RESCUES, WHICH IS THE HALF THAT WAS BROKEN, and it goes here
-        // because every later case seeds a violation that `split()` does not undo. `RailStatusRollup`
-        // spells `import AppKit // the cluster and its slots are NSViews` and this rule reported it
-        // as holding no view framework, because the `$` anchor could not see past the comment. A rule
-        // that goes red on a correct file is one somebody eventually deletes.
+        // because every later case seeds a violation that `split()` does not undo.
+        // `RailStatusRollup` spells `import AppKit // the cluster and its slots are
+        // NSViews` and this rule reported it as holding no view framework, because the `$`
+        // anchor could not see past the comment. A rule that goes red on a correct file is
+        // one somebody eventually deletes.
         fixture.write(
             "Sources/SlopDeskMacUI/Views/MacView0.swift",
             "import AppKit // the slots are NSViews\nfinal class V: NSView {}\n",
@@ -559,8 +560,8 @@ mod tests {
         assert!(!super::the_ui_split_holds_its_shape(&fixture.tree()).is_clean());
 
         // A file naming no view framework at all, which is what the narrowed rescue now decides. It
-        // imports the framework the phone half does NOT build with, so the only thing keeping it out
-        // is the alternation having dropped SwiftUI.
+        // imports the framework the phone half does NOT build with, so the only thing keeping it
+        // out is the alternation having dropped SwiftUI.
         split(&fixture);
         fixture.write(
             "Sources/SlopDeskPhoneUI/Views/View7.swift",
@@ -840,7 +841,8 @@ mod tests {
         halves(&fixture, &mac, &short, &mac_pipe, SHARED_PIPE);
         assert!(!super::the_two_video_halves_agree(&fixture.tree()).is_clean());
 
-        // The half that catches a FIX: the phone grew the excused sink, so the ledger entry is stale.
+        // The half that catches a FIX: the phone grew the excused sink, so the ledger entry is
+        // stale.
         let both: Vec<&str> = SHARED_SINKS
             .iter()
             .copied()

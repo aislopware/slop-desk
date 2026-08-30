@@ -48,8 +48,9 @@ fn main() -> ExitCode {
         },
     };
 
-    // A host with no `adb` has no Android panel at all, and saying so once here beats answering every
-    // request with the same sentence — hostd sees the exit and reports the service unavailable.
+    // A host with no `adb` has no Android panel at all, and saying so once here beats answering
+    // every request with the same sentence — hostd sees the exit and reports the service
+    // unavailable.
     let toolchain = match locate_toolchain(options.vendored_bin.as_deref(), options.vendored_jar.as_deref()) {
         Ok(toolchain) => toolchain,
         Err(error) => {

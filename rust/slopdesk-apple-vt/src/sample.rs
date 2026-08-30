@@ -204,8 +204,9 @@ impl EncodedSample {
                 return false;
             };
             out.extend_from_slice(&prefix.to_be_bytes());
-            // SAFETY: Rust's obligation, above — `len` initialised bytes the format description owns
-            // and `self` holds for this call, read as `u8`, which cannot be misaligned.
+            // SAFETY: Rust's obligation, above — `len` initialised bytes the format description
+            // owns and `self` holds for this call, read as `u8`, which cannot be
+            // misaligned.
             out.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast_const(), len) });
         }
         true

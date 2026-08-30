@@ -120,9 +120,10 @@ fn compose(parts: &Composition<'_>) -> (Arc<Host>, Assembled) {
     let ids: Arc<dyn SessionIds> = Arc::new(SystemIds);
     let offload: Arc<dyn Offload> = Arc::new(Threads);
     let watching: Arc<dyn HostObserver> = parts.log.clone();
-    // The EPOCH is this daemon's incarnation: a client holding a document from a previous hostd must
-    // be told its version numbers mean nothing now, and a fresh id is how. Minted through the same
-    // door every session id comes from, so a host with no entropy source fails one way.
+    // The EPOCH is this daemon's incarnation: a client holding a document from a previous hostd
+    // must be told its version numbers mean nothing now, and a fresh id is how. Minted through
+    // the same door every session id comes from, so a host with no entropy source fails one
+    // way.
     let epoch = ids.mint().unwrap_or_default();
     let document = Arc::new(WorkspaceDocument::new(epoch, Arc::clone(&ids)));
     // BEFORE the spawner, because the spawner's Recipe holds the sink into it — and after the
@@ -182,15 +183,17 @@ fn compose(parts: &Composition<'_>) -> (Arc<Host>, Assembled) {
         owner: parts.owner.clone(),
     });
 
-    // The cycle closes here, and everything that needed the composition to exist lands in one place.
+    // The cycle closes here, and everything that needed the composition to exist lands in one
+    // place.
     late_host.publish(&host);
     let store = workspace_store(&ids, parts.log);
     let panes: Arc<dyn Panes> = host.clone();
     document.install_from(&store);
     document.set_panes(&panes);
-    // The prevent-sleep aggregate rides the SAME fan-out every other status consumer does, so a pane
-    // torn down mid-turn clears through `fan_teardown` rather than being kept for ever. The token is
-    // dropped because the tap lives as long as the daemon; there is no un-register.
+    // The prevent-sleep aggregate rides the SAME fan-out every other status consumer does, so a
+    // pane torn down mid-turn clears through `fan_teardown` rather than being kept for ever.
+    // The token is dropped because the tap lives as long as the daemon; there is no
+    // un-register.
     let steering: Arc<dyn ControlHost> = host.clone();
     if parts.gates.agent_prevent_sleep {
         let awake: Arc<dyn AgentStatusTap> = Arc::new(KeepAwake::new(true));
@@ -338,8 +341,9 @@ fn main() {
 
     // screend is OPTIONAL in a way superd is not: without it a pane replays raw and runs no scan
     // loop, which is a reduced host rather than a broken one.
-    // A client, not a connection: it dials lazily and pools, so nothing is asked of screend here and
-    // a daemon that is down costs a pane its scan loop rather than this daemon its start-up.
+    // A client, not a connection: it dials lazily and pools, so nothing is asked of screend here
+    // and a daemon that is down costs a pane its scan loop rather than this daemon its
+    // start-up.
     let screen = Arc::new(ScreenClient::new());
 
     let transcripts = DiskTranscripts::from_environment(&supervisor, Some(Arc::clone(&screen))).map(Arc::new);
@@ -349,8 +353,8 @@ fn main() {
     let queries: Arc<dyn HostQuerying> = Arc::new(HostQueries::from_environment());
     // Twelve of the twenty-two metadata verbs are claimed by named performers that actuate on
     // host-GLOBAL state — the Finder, the pasteboard, the workbench child, one set of simulated
-    // devices. One instance of each per daemon, therefore, and `HostMetadata` hands anything that is
-    // not its own read verb to the table below.
+    // devices. One instance of each per daemon, therefore, and `HostMetadata` hands anything that
+    // is not its own read verb to the table below.
     let panels = build_panels(&hooks, &supervisor, &log);
     let metadata: Arc<dyn MetadataPerformer> =
         Arc::new(HostMetadata::new(queries, Arc::clone(&panels.performers)));
@@ -462,9 +466,9 @@ fn shut_down(
     listening.stop();
     hooks.stop();
     // The three panel children are RELINQUISHED, never terminated: superd keeps them, so the next
-    // hostd adopts a warm workbench, a live simulator panel and every device mirror still in flight.
-    // Terminating here is what `docs/51` exists to end — it would put a Node boot in front of the
-    // editor after every host edit.
+    // hostd adopts a warm workbench, a live simulator panel and every device mirror still in
+    // flight. Terminating here is what `docs/51` exists to end — it would put a Node boot in
+    // front of the editor after every host edit.
     panels.code.relinquish();
     panels.simulator.relinquish();
     panels.android.relinquish();
@@ -546,9 +550,9 @@ fn build_panels(hooks: &Arc<HookTable>, supervisor: &Arc<SupervisorClient>, log:
     let performers: Arc<dyn MetadataPerformer> = Arc::new(Performers {
         path: Arc::new(PathActions::from_environment(Finder)),
         agent: Arc::new(AgentActions::new(ClaudeHooks::new(log), {
-            // Read at PERFORM time, not captured now: the listener claim is made AFTER this table is
-            // built, and it can fail later besides. A flag frozen here would report `false` to every
-            // client for the daemon's whole life.
+            // Read at PERFORM time, not captured now: the listener claim is made AFTER this table
+            // is built, and it can fail later besides. A flag frozen here would report
+            // `false` to every client for the daemon's whole life.
             let table = Arc::clone(hooks);
             Arc::new(move || table.is_listening())
         })),

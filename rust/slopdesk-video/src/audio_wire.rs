@@ -457,7 +457,8 @@ mod tests {
 
     #[test]
     fn reserved_flag_bits_do_not_change_the_payload_grammar() {
-        // Bit 0 clear with every other bit set: still a frame, so an old client survives a new host.
+        // Bit 0 clear with every other bit set: still a frame, so an old client survives a new
+        // host.
         let mut bytes = AudioChannelMessage::Frame {
             seq: 1,
             host_send_ts_millis: 2,

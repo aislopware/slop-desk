@@ -1291,10 +1291,11 @@ mod tests {
             .write("rust/slopdesk-apple-cgevent/Cargo.toml", APPLE_MANIFEST)
             .write("rust/slopdesk-apple-cgevent/src/lib.rs", "pub fn f() {}\n")
             .write("rust/slopdesk-wire/Cargo.toml", CLEAN);
-        // Every crate holding a sample-memory exemption, each SPENDING exactly one site. Both halves
-        // are required of a compliant tree — a listed crate that is missing is a stale ratchet, and
-        // one that writes nothing is an exemption to delete — so a fixture that left either out
-        // would fail every case above for a reason the case is not about.
+        // Every crate holding a sample-memory exemption, each SPENDING exactly one site. Both
+        // halves are required of a compliant tree — a listed crate that is missing is a
+        // stale ratchet, and one that writes nothing is an exemption to delete — so a
+        // fixture that left either out would fail every case above for a reason the case is
+        // not about.
         for exempt in &super::SAMPLE_MEMORY {
             fixture
                 .write(&format!("{}/Cargo.toml", exempt.crate_dir), APPLE_MANIFEST)

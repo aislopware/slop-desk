@@ -293,9 +293,10 @@ fn process(csi: &Csi<'_>, state: &mut InputModeFinalState) -> Option<Vec<u8>> {
         b's' | b'r' => {
             // XTSAVE / XTRESTORE (`CSI ? Pm s|r`) — a save/restore DOOR into the tracked modes that
             // bypasses h/l: replaying a raw `?1000s … ?1000r` pair can re-arm mouse reporting
-            // mid-replay (the exact garbage-input class this pass exists to strip), and an untracked
-            // restore desyncs the net-state simulation. A NON-`?` final here is DECSTBM (`r`) /
-            // SCOSC-DECSLRM (`s`) — display state, kept verbatim via the guard.
+            // mid-replay (the exact garbage-input class this pass exists to strip), and an
+            // untracked restore desyncs the net-state simulation. A NON-`?` final here
+            // is DECSTBM (`r`) / SCOSC-DECSLRM (`s`) — display state, kept verbatim via
+            // the guard.
             if csi.params.first() != Some(&b'?') {
                 return None;
             }

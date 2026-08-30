@@ -932,7 +932,8 @@ mod tests {
             assert!(!report.is_clean(), "{seed} passed the ban");
         }
 
-        // The view choice, proved: the tree's ONLY live match is a comment saying it does not do it.
+        // The view choice, proved: the tree's ONLY live match is a comment saying it does not do
+        // it.
         fixture.write(
             &format!("{}/List.swift", super::PHONE_UI),
             "// nothing here indexes `devices[indexPath.item]`, because a reload can land first\n",

@@ -525,8 +525,8 @@ fn fold(shared: &Shared, body: impl FnOnce(&mut Folds) -> Emission) {
     let (emission, moved) = shared.with_folds(|folds| {
         let emission = body(folds);
         // `is_some()` rather than "the status differs from the last one we saw": the detector has
-        // already done the dedupe, and a second comparison here is how one machine comes to disagree
-        // with itself about whether an edge happened.
+        // already done the dedupe, and a second comparison here is how one machine comes to
+        // disagree with itself about whether an edge happened.
         let moved = emission.status.as_ref().map(|_| {
             let status = folds.detector.status();
             let quiet = folds.detector.is_quiet();

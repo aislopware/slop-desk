@@ -524,8 +524,8 @@ mod tests {
 
     #[test]
     fn a_nan_pan_clamps_to_a_finite_limit_instead_of_poisoning_the_point() {
-        // This is the whole reason the clamp is `f64::max`/`min` and not a comparison: a NaN pan off
-        // the wire must land the cursor somewhere, not paint NaN into a CALayer frame.
+        // This is the whole reason the clamp is `f64::max`/`min` and not a comparison: a NaN pan
+        // off the wire must land the cursor somewhere, not paint NaN into a CALayer frame.
         let out = view_point(
             VideoPoint::new(100.0, 100.0),
             VideoSize::new(800.0, 600.0),

@@ -140,7 +140,8 @@ pub fn list_sessions(home: &str, project: &str) -> Vec<Session> {
 /// recent ones.
 pub fn sort_newest_first(sessions: &mut Vec<Session>) {
     // Keyed on the NEGATED time rather than a reversed comparator: `sort_by_key` is the shape
-    // clippy asks for, and `Reverse` over an i64 says the same thing without a wrap to reason about.
+    // clippy asks for, and `Reverse` over an i64 says the same thing without a wrap to reason
+    // about.
     sessions.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
     sessions.truncate(MAX_SESSIONS);
 }

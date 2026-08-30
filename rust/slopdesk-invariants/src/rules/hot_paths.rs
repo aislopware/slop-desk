@@ -353,10 +353,11 @@ pub fn one_open_one_route(tree: &Tree) -> Report {
                   clamp and the adoption owner test are all slopdesk-muxsession's open_route, and each of \
                   them is a rule that still compiles when it is wrong (docs/59 §5, step 6)",
     }];
-    // Three crates spell the live-edge sentinel and none of them imports another's, so this half is a
-    // count-spellings check rather than a face-and-door one: `hostpane` hands it to a subscriber,
-    // `lifecycle` parks a detached pane on it and `open_route` resumes a survivor from it. Two that
-    // disagree replay a whole transcript twice, and no compiler sees the third.
+    // Three crates spell the live-edge sentinel and none of them imports another's, so this half is
+    // a count-spellings check rather than a face-and-door one: `hostpane` hands it to a
+    // subscriber, `lifecycle` parks a detached pane on it and `open_route` resumes a survivor
+    // from it. Two that disagree replay a whole transcript twice, and no compiler sees the
+    // third.
     claims.extend(FROM_NOW_ON_SITES.iter().map(|path| {
         Claim::Matches {
             path,

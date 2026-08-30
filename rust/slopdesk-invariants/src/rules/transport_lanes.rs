@@ -543,8 +543,8 @@ mod tests {
         assert!(!super::one_arena_reader_and_one_interner(&fixture.tree()).is_clean());
 
         // A target that dropped the edge — which is how a face comes to spell the read itself. The
-        // `.library` line still names it and the neighbour above still declares the edge, so this is
-        // also the case the shell's `grep -A 24` window could not tell from a kept one.
+        // `.library` line still names it and the neighbour above still declares the edge, so this
+        // is also the case the shell's `grep -A 24` window could not tell from a kept one.
         //
         // Seeded on `SlopDeskWorkspaceCore` since `docs/61`. It used to be `SlopDeskVideoHost`, and
         // that target is deleted: a break-test that drops an edge nothing demands proves only that

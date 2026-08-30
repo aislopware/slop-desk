@@ -686,7 +686,8 @@ impl Host {
         self.park(key, pane);
     }
 
-    // ----------------------------------------------------------------------- paths B/C: a fresh shell
+    // ----------------------------------------------------------------------- paths B/C: a fresh
+    // shell
 
     /// Forks a brand-new shell for this channel.
     ///

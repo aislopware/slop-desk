@@ -408,9 +408,9 @@ fn boot_superd(binary: &Path) -> Option<Superd> {
     let guard = Reaped { child };
 
     // Readiness is a real CONNECTION, not the socket file existing: `bind(2)` makes the node and
-    // `listen(2)` comes after it, so a hostd dialling in that window gets `ECONNREFUSED` rather than
-    // `ENOENT` — microseconds wide, and it only ever loses under load, where the flake gets blamed
-    // on whichever test caught it.
+    // `listen(2)` comes after it, so a hostd dialling in that window gets `ECONNREFUSED` rather
+    // than `ENOENT` — microseconds wide, and it only ever loses under load, where the flake
+    // gets blamed on whichever test caught it.
     if !wait_until(Duration::from_secs(5), || UnixStream::connect(&socket).is_ok()) {
         skip("the private superd never accepted a connection");
         return None;
@@ -844,8 +844,9 @@ fn the_scrollback_survives_a_hostd_restart() {
     let Some(sandbox) = Sandbox::build(&rig) else {
         return;
     };
-    // This test's SUBJECT is a journal that outlives the daemon, so its two hostds share one journal
-    // directory OUTSIDE either container. The per-file override wins over the container.
+    // This test's SUBJECT is a journal that outlives the daemon, so its two hostds share one
+    // journal directory OUTSIDE either container. The per-file override wins over the
+    // container.
     let Some(journal) = TempDir::make("e2e-scrollback") else {
         return;
     };
@@ -1022,8 +1023,8 @@ fn two_clients_share_one_real_pty() {
     let shared = marker("FANOUT_SHARED");
 
     // ── Client A takes the pane and proves the shell is live. Both clients keep their stdin open
-    // for the whole test: credit is granted at consumption, so a client that stops reading parks the
-    // host's sender.
+    // for the whole test: credit is granted at consumption, so a client that stops reading parks
+    // the host's sender.
     let Some(mut a) = launch_client(hostd.port, Some(&session)) else {
         return;
     };
@@ -1037,9 +1038,9 @@ fn two_clients_share_one_real_pty() {
         return;
     }
 
-    // ── Client B JOINS the live session — no detach, no reattach; A is still here. B is cold, so the
-    // host state-transfers the screen and the rendered snapshot carries the marker A already
-    // printed. Seeing it is how we know B is attached and draining.
+    // ── Client B JOINS the live session — no detach, no reattach; A is still here. B is cold, so
+    // the host state-transfers the screen and the rendered snapshot carries the marker A
+    // already printed. Seeing it is how we know B is attached and draining.
     let Some(mut b) = launch_client(hostd.port, Some(&session)) else {
         return;
     };

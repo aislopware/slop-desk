@@ -313,13 +313,14 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
     }
 
     if plan.build {
-        // The ONE launch this cannot rebuild: a record still naming the `SwiftPM` artifact. hostd is
-        // a cargo binary as of `docs/60` stage F, so `.build/` holds last week's daemon — and
-        // replaying that record after a `cargo build` would start the OLD one while reporting a
-        // fresh build, which is the "running last week's code" failure the version audit exists to
-        // catch. Refused in words, the way a missing record is, rather than silently substituting a
-        // path: `just host-restart` replays the recorded launch EXACTLY, and swapping the binary
-        // under it would make that sentence false.
+        // The ONE launch this cannot rebuild: a record still naming the `SwiftPM` artifact. hostd
+        // is a cargo binary as of `docs/60` stage F, so `.build/` holds last week's daemon
+        // — and replaying that record after a `cargo build` would start the OLD one while
+        // reporting a fresh build, which is the "running last week's code" failure the
+        // version audit exists to catch. Refused in words, the way a missing record is,
+        // rather than silently substituting a path: `just host-restart` replays the
+        // recorded launch EXACTLY, and swapping the binary under it would make that
+        // sentence false.
         if let Some(found) = record.as_ref().filter(|found| is_swiftpm_artifact(&found.binary)) {
             return Err(format!(
                 "the launch record names the SwiftPM host ({}), which stage F deleted — stop it, start \
@@ -328,9 +329,9 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
                 found.binary.display()
             ));
         }
-        // `release` with no record, where the `SwiftPM` build defaulted to `debug`. A first launch on
-        // this machine is the release binary `just host` produces, and a debug daemon is a
-        // different program at the operating point the fan-out was measured at.
+        // `release` with no record, where the `SwiftPM` build defaulted to `debug`. A first launch
+        // on this machine is the release binary `just host` produces, and a debug daemon is
+        // a different program at the operating point the fan-out was measured at.
         let configuration = record
             .as_ref()
             .map_or("release", |found| configuration_of(&found.binary));
@@ -352,9 +353,10 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
         // `KeepAlive: SuccessfulExit=false` (`ops::launchd`'s `HOSTD`), so a signalled daemon under
         // that agent is relaunched within seconds — from `~/Library/Application Support`, which is
         // whatever `install hostd` last copied there, not what was just built. That relaunch RACES
-        // the replay below for the port, and the loser exits 0, which is what makes the wrong winner
-        // SILENT: the listener check passes, this reports success, and the daemon on the port is
-        // last week's. Booting the job out is what makes the replay the only bidder.
+        // the replay below for the port, and the loser exits 0, which is what makes the wrong
+        // winner SILENT: the listener check passes, this reports success, and the daemon on
+        // the port is last week's. Booting the job out is what makes the replay the only
+        // bidder.
         if launchd::bootout(&launchd::HOSTD, Duration::from_secs(20))? {
             say(
                 "host-restart",
@@ -379,7 +381,8 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
             say("host-restart", &format!("pid {} exited", found.pid));
 
             // The port, SEPARATELY. An exited process is not a freed listener, and launching into
-            // a port that is not free yet is the "left a host on the port" failure by another route.
+            // a port that is not free yet is the "left a host on the port" failure by another
+            // route.
             let port = found.port.to_string();
             if !until(Duration::from_secs(20), || !listening(&port)) {
                 return Err(format!(

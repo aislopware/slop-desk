@@ -371,7 +371,8 @@ impl Registry {
                 wanted.cap_bytes,
             );
             // The spawn-time winsize is the first geometry this pane ever had, and a pane whose
-            // client never resizes would otherwise leave a later life's renderer with no size at all.
+            // client never resizes would otherwise leave a later life's renderer with no size at
+            // all.
             self.journals
                 .record_size(&request.pane_id, request.rows, request.cols);
         }
@@ -1673,8 +1674,8 @@ mod tests {
         );
         assert!(ended, "a reaped pane's stream is finished and must say so");
 
-        // And the teardown that follows forgets it, rather than reporting a pane hostd knows it has.
-        // Releasing an exited pane is ordinary teardown, not an error.
+        // And the teardown that follows forgets it, rather than reporting a pane hostd knows it
+        // has. Releasing an exited pane is ordinary teardown, not an error.
         registry.release("pane-quick", false).unwrap();
         assert!(matches!(
             registry.resume("pane-quick", 0),

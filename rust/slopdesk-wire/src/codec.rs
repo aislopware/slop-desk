@@ -761,7 +761,8 @@ mod tests {
     #[test]
     fn wire_byte_count_predicts_the_encoded_size_exactly() {
         // Not a nicety: flow control debits the sender per encoded frame and credits the receiver
-        // per `wire_byte_count`, so any disagreement leaks window permanently rather than cancelling.
+        // per `wire_byte_count`, so any disagreement leaks window permanently rather than
+        // cancelling.
         for message in every_variant() {
             assert_eq!(
                 message.wire_byte_count(),

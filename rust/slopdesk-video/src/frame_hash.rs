@@ -262,7 +262,8 @@ impl StreamHasher {
         let base = if self.started {
             merge_lanes(self.lanes)
         } else {
-            // Under 32 bytes total, xxHash64 starts from `seed + PRIME5` and the whole input is tail.
+            // Under 32 bytes total, xxHash64 starts from `seed + PRIME5` and the whole input is
+            // tail.
             self.seed.wrapping_add(PRIME64_E)
         };
         finalize_tail(base, self.buf.get(..self.buf_len).unwrap_or(&[]), self.total)

@@ -165,7 +165,8 @@ impl Timers {
         if let Some(handle) = handle {
             // The bodies run on that thread and a teardown can reach here FROM one of them — the
             // settle applies a grid, and an apply can be what a caller tears down under. Joining
-            // self would deadlock, so the handle is dropped instead: the thread is already stopping.
+            // self would deadlock, so the handle is dropped instead: the thread is already
+            // stopping.
             if handle.thread().id() == std::thread::current().id() {
                 return;
             }

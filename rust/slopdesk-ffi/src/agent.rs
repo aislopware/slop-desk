@@ -94,12 +94,14 @@ macro_rules! predicate {
 
 predicate!(
     /// Whether a process name is a generic runtime or shell rather than an agent.
-    slopdesk_agent_kind_is_generic, |text| slopdesk_agent::kind::AgentKind::is_generic_runtime_or_shell(text)
+    slopdesk_agent_kind_is_generic,
+    |text| slopdesk_agent::kind::AgentKind::is_generic_runtime_or_shell(text)
 );
 predicate!(
     /// Whether a process name is a credential prompt or remote-shell entry point the control RPC
     /// must refuse to touch.
-    slopdesk_agent_is_sensitive, |text| slopdesk_agent::process::is_sensitive(text)
+    slopdesk_agent_is_sensitive,
+    |text| slopdesk_agent::process::is_sensitive(text)
 );
 
 /// Which agent a process name names, as an `AgentKind` discriminant, or `-1` for none.
@@ -770,8 +772,8 @@ mod tests {
             );
             assert_eq!(status_from(status_byte(*status)), *status);
         }
-        // Past the end degrades to `None` rather than to the last case — the documented contract for
-        // a Swift enum that grew a case this build has never heard of.
+        // Past the end degrades to `None` rather than to the last case — the documented contract
+        // for a Swift enum that grew a case this build has never heard of.
         let past_the_end = u8::try_from(ClaudeStatus::ALL.len()).unwrap_or(u8::MAX);
         assert_eq!(status_from(past_the_end), ClaudeStatus::None);
         assert_eq!(status_from(u8::MAX), ClaudeStatus::None);

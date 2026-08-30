@@ -263,7 +263,8 @@ fn put_layout(out: &mut ByteWriter<'_>, node: &WorkspaceLayoutNode) {
             out.put_u8(1);
             out.put_bytes(id);
             out.put_u8(axis.as_byte());
-            // `childCount` is a u8 → fan-out is bounded at 255 by the FORMAT, before any allocation.
+            // `childCount` is a u8 → fan-out is bounded at 255 by the FORMAT, before any
+            // allocation.
             out.put_u8(u8::try_from(children.len()).unwrap_or(u8::MAX));
             for child in children.iter().take(usize::from(u8::MAX)) {
                 put_layout(out, child);

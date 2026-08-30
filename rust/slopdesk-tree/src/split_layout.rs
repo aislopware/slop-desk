@@ -287,7 +287,8 @@ impl Divider {
         if sum <= 0.0 {
             return None;
         }
-        // Separate divide and multiply, never fused — the readout must round the way the tests read.
+        // Separate divide and multiply, never fused — the readout must round the way the tests
+        // read.
         let lead = (leading / sum * 100.0).round().clamp(0.0, 100.0);
         #[expect(
             clippy::cast_possible_truncation,
@@ -788,9 +789,10 @@ mod tests {
 
     #[test]
     fn a_drag_moves_the_seam_one_to_one_with_the_cursor() {
-        // A 50/50 top-level split over 800 pt: flex sum 2, so 120 px of cursor is 0.3 of weight, and
-        // the leading child's extent moves 0.3 / 2 * 800 = 120 pt. Drop the flex-sum factor and it
-        // moves 60 — the seam trailing the cursor at half speed, which is what this pins.
+        // A 50/50 top-level split over 800 pt: flex sum 2, so 120 px of cursor is 0.3 of weight,
+        // and the leading child's extent moves 0.3 / 2 * 800 = 120 pt. Drop the flex-sum
+        // factor and it moves 60 — the seam trailing the cursor at half speed, which is
+        // what this pins.
         let top = seam(1.0, 1.0, 800.0);
         let delta = top.weight_delta(120.0);
         assert_eq!(delta, 0.3);
@@ -820,7 +822,8 @@ mod tests {
 
     #[test]
     fn a_degenerate_pair_shows_no_ratio_at_all() {
-        // Absent rather than wrong: a `Fixed` side reports weight 0, and float residue never renders.
+        // Absent rather than wrong: a `Fixed` side reports weight 0, and float residue never
+        // renders.
         assert_eq!(seam(0.0, 1.0, 800.0).split_percents(), None);
         assert_eq!(seam(1.0, 0.0, 800.0).split_percents(), None);
         assert_eq!(seam(f64::NAN, 1.0, 800.0).split_percents(), None);

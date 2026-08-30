@@ -442,8 +442,8 @@ fn span_rect(metrics: CellMetrics, span: LinkSpan) -> Rect {
         );
 
         // Then the Rust half, with the fused multiply-add the whole ban exists for. The token is
-        // ASSEMBLED rather than spelled: `no-fused-multiply-add` bans one anywhere in the tree, so a
-        // break-test that seeds one has to seed it without being one.
+        // ASSEMBLED rather than spelled: `no-fused-multiply-add` bans one anywhere in the tree, so
+        // a break-test that seeds one has to seed it without being one.
         fixture
             .write("Sources/SlopDeskTerminal/TerminalSurface.swift", metrics)
             .write(
@@ -640,7 +640,8 @@ slopdesk_ws_find_step(current != nil, current ?? 0, forward, count)
             "{report:?}"
         );
 
-        // The grammar retyped at a third call site, in code rather than in the prose that explains it.
+        // The grammar retyped at a third call site, in code rather than in the prose that explains
+        // it.
         fixture.write(super::SWIFT_SEARCH_ACTION, vocabulary).write(
             "Sources/SlopDeskWorkspaceCore/Terminal/GlobalSearchController.swift",
             "// clears the stale highlight with end_search, then scrolls\nreturn [\"end_search\"]\n",

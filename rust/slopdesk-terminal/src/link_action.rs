@@ -242,9 +242,9 @@ pub fn posix_parent(path: &str) -> &str {
 #[must_use]
 pub fn line_col_suffix(text: &str) -> &str {
     let bytes = text.as_bytes();
-    // Scanning bytes rather than characters is exact here and not an approximation: neither an ASCII
-    // digit nor `:` can appear inside a multi-byte sequence, so every index this lands on is a
-    // character boundary.
+    // Scanning bytes rather than characters is exact here and not an approximation: neither an
+    // ASCII digit nor `:` can appear inside a multi-byte sequence, so every index this lands on
+    // is a character boundary.
     let run_start = |end: usize| -> Option<usize> {
         let mut index = end;
         let mut saw_digit = false;

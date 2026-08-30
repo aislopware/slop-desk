@@ -366,8 +366,9 @@ mod tests {
         );
         assert!(!super::an_unknown_mux_type_is_refused(&fixture.tree()).is_clean());
 
-        // And the decode site reading the raw byte itself, with the vocabulary left intact beside it
-        // — the `default:` arm coming back one language over, in the one place that can act on it.
+        // And the decode site reading the raw byte itself, with the vocabulary left intact beside
+        // it — the `default:` arm coming back one language over, in the one place that can
+        // act on it.
         fixture.write(
             super::MUX_ENVELOPE_RUST,
             "pub const fn from_byte(byte: u8) -> Option<Self> { match byte { 1 => Some(Self::Data), _ => \

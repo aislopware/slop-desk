@@ -297,8 +297,8 @@ impl VideoClientStateMachine {
                 }
                 self.state = VideoClientState::Stopped;
                 // The ended effect is emitted ONLY here, on a host-initiated end: the runtime
-                // rebuilds the whole pipeline and re-hellos on a fresh lane. A local stop must never
-                // trigger that rebuild.
+                // rebuilds the whole pipeline and re-hellos on a fresh lane. A local stop must
+                // never trigger that rebuild.
                 vec![ClientEffect::StopDecodePipeline, ClientEffect::SessionEndedByHost]
             },
             // The host adopted a new capture size. It is staged as pending; adopting it as the

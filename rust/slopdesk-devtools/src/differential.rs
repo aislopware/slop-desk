@@ -373,7 +373,8 @@ pub fn diff(left: &Value, right: &Value, label: &str) -> Option<String> {
             ));
         }
         // A rule EVALUATED on one side only is a divergence in the ladder itself, unless it is one
-        // of ours. (Count, not just membership: the ladder short-circuits, so a length gap is real.)
+        // of ours. (Count, not just membership: the ladder short-circuits, so a length gap is
+        // real.)
         let live = |side: &BTreeMap<&str, &Value>| side.keys().filter(|id| !diverged.contains(*id)).count();
         let (mine, yours) = (live(&mine), live(&yours));
         if mine != yours {

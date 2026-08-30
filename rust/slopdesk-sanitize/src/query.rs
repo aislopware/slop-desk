@@ -154,8 +154,8 @@ fn should_strip_dcs(body: &[u8]) -> bool {
     ) {
         return true;
     }
-    // The zero-body miss responses `0$r`/`1$r`/`0+r`/`1+r` are exactly 3 bytes; longer hit responses
-    // carry the payload after `r` — both are covered by the 3-byte prefix match.
+    // The zero-body miss responses `0$r`/`1$r`/`0+r`/`1+r` are exactly 3 bytes; longer hit
+    // responses carry the payload after `r` — both are covered by the 3-byte prefix match.
     matches!(
         (body.first(), body.get(1), body.get(2)),
         (Some(b'0' | b'1'), Some(b'$' | b'+'), Some(b'r'))

@@ -294,11 +294,12 @@ impl Session {
             plan.smoothed_rtt_millis = estimate.smoothed_rtt_millis;
             plan.self_heal_loss_rate = Some(estimate.loss_rate);
 
-            // 2. THE FEC LADDER, off the freshly folded loss EWMA. Hysteresis, the one-step clamp, the relax
-            //    floor and the sticky dwell are all the pure policy's; this site only feeds it the report's
-            //    unrecovered evidence. It is stepped IN PLACE on the controller set, under this same hold:
-            //    the frame path reads `Controllers::fec_tier` to stamp a packet, so stepping it anywhere else
-            //    would let a frame be built from half a report.
+            // 2. THE FEC LADDER, off the freshly folded loss EWMA. Hysteresis, the one-step clamp,
+            //    the relax floor and the sticky dwell are all the pure policy's; this site only
+            //    feeds it the report's unrecovered evidence. It is stepped IN PLACE on the
+            //    controller set, under this same hold: the frame path reads `Controllers::fec_tier`
+            //    to stamp a packet, so stepping it anywhere else would let a frame be built from
+            //    half a report.
             let tier_before = controllers.fec_tier;
             controllers.fec_tier = next_tier(
                 adaptive_m,
@@ -309,9 +310,9 @@ impl Session {
                 saw_unrecovered_loss,
             );
 
-            // 3. THE ABR and 4. THE QP LADDER. The quantiser reuses the ABR's own congestion verdict rather
-            //    than deriving a second one: under const-QP that verdict IS what drives Q, and two detectors
-            //    that disagreed would fight each other on one stream.
+            // 3. THE ABR and 4. THE QP LADDER. The quantiser reuses the ABR's own congestion
+            //    verdict rather than deriving a second one: under const-QP that verdict IS what
+            //    drives Q, and two detectors that disagreed would fight each other on one stream.
             if self.gates.abr_enabled {
                 // IDLE-RAMP GUARD: the recent offered throughput, so the controller suppresses its
                 // additive probe while the stream is application-limited. The cadence is the
@@ -360,11 +361,11 @@ impl Session {
                 }
             }
 
-            // 5. THE FPS GOVERNOR, on the same report clock and AFTER the ABR, so it reacts to this tick's
-            //    actuated rate. The below-ceiling proxy compares against the EFFECTIVE ceiling, not the
-            //    policy one: with a user bitrate ceiling the rate legitimately saturates at the override, and
-            //    comparing against the policy ceiling would read a clean link as permanently congested and
-            //    walk the cadence down.
+            // 5. THE FPS GOVERNOR, on the same report clock and AFTER the ABR, so it reacts to this
+            //    tick's actuated rate. The below-ceiling proxy compares against the EFFECTIVE
+            //    ceiling, not the policy one: with a user bitrate ceiling the rate legitimately
+            //    saturates at the override, and comparing against the policy ceiling would read a
+            //    clean link as permanently congested and walk the cadence down.
             let target_bps = controllers.last_actuated_bps;
             let abr_current = controllers
                 .congestion

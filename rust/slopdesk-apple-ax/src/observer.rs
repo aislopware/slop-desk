@@ -154,8 +154,8 @@ impl Installed {
             return None;
         }
         let mut slot: *mut AXObserver = ptr::null_mut();
-        // SAFETY: framework rule, above — a live, correctly typed out-parameter slot, and a callback
-        // that dereferences none of its arguments.
+        // SAFETY: framework rule, above — a live, correctly typed out-parameter slot, and a
+        // callback that dereferences none of its arguments.
         let status = unsafe { AXObserver::create(pid, Some(on_notification), NonNull::from(&mut slot)) };
         if status != AXError::Success {
             return None;

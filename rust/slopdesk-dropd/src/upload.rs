@@ -797,7 +797,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let port = listener.local_addr().expect("a bound address").port();
 
-        // A minimal peer: read whole frames, answer each request the protocol expects, keep the body.
+        // A minimal peer: read whole frames, answer each request the protocol expects, keep the
+        // body.
         let peer = thread::spawn(move || -> Vec<u8> {
             let (mut link, _from) = listener.accept().expect("one connection");
             let mut received = Vec::new();

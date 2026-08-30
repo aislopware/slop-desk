@@ -522,8 +522,9 @@ mod tests {
     }
 
     fn seams(fixture: &Fixture) -> &Fixture {
-        // ONE slot per seam. The fixture used to seed three shapes here — `shared`, `nativeShared` and
-        // `makeNative` — because the rule REQUIRED all three; it now forbids the last two.
+        // ONE slot per seam. The fixture used to seed three shapes here — `shared`, `nativeShared`
+        // and `makeNative` — because the rule REQUIRED all three; it now forbids the last
+        // two.
         let shapes = "static var shared\n";
         fixture
             .write(super::TERMINAL_SEAM, shapes)
@@ -559,8 +560,9 @@ mod tests {
         );
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
-        // The prose that names the door is NOT a registrar — the reason this reads the code view, and
-        // the reason the rule's own doc comment can spell `nativeShared` while banning it.
+        // The prose that names the door is NOT a registrar — the reason this reads the code view,
+        // and the reason the rule's own doc comment can spell `nativeShared` while banning
+        // it.
         seams(&fixture);
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Terminal/SeamNotes.swift",
@@ -568,8 +570,9 @@ mod tests {
         );
         assert!(super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
-        // ⚠️ THE CASE THIS RULE REVERSED ON. A seam that re-grows the second slot is now the FAILURE,
-        // where the same fixture was the rule's clean state before the phone gained a UIView.
+        // ⚠️ THE CASE THIS RULE REVERSED ON. A seam that re-grows the second slot is now the
+        // FAILURE, where the same fixture was the rule's clean state before the phone
+        // gained a UIView.
         seams(&fixture);
         fixture.write(super::VIDEO_SEAM, "static var shared\nstatic var nativeShared\n");
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());

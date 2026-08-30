@@ -568,8 +568,8 @@ pub struct DaemonChild {
 pub fn daemon_children(parent: u32) -> Vec<DaemonChild> {
     // `pgrep` exits 1 when it matches NOTHING, and the shell's `|| true` around it was load-bearing
     // rather than defensive: without it the single most important observation this can make — "the
-    // daemon has no shells at all" — killed the run with no line saying why. Here a failed spawn and
-    // an empty match are the same empty vector, which is the honest reading of both.
+    // daemon has no shells at all" — killed the run with no line saying why. Here a failed spawn
+    // and an empty match are the same empty vector, which is the honest reading of both.
     let listing = Command::new("/usr/bin/pgrep")
         .args(["-P", &parent.to_string()])
         .stderr(Stdio::null())

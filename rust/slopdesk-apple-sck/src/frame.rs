@@ -73,10 +73,10 @@ impl FrameKeys {
     /// The raw frame status, or `None` when the buffer carries no readable one.
     fn status(&self, sample: &CMSampleBuffer) -> Option<isize> {
         // SAFETY: framework rule — a `Get`-rule accessor on a sample buffer this crate holds a
-        // reference to for the call. `objc2` generates it `unsafe` because `CoreMedia`'s header does
-        // not state nullability; it returns an already-owned `CFRetained`, so no ownership
-        // question reaches this crate. `false` asks it not to CREATE an attachment array, which is
-        // what keeps this read free of an allocation per frame.
+        // reference to for the call. `objc2` generates it `unsafe` because `CoreMedia`'s header
+        // does not state nullability; it returns an already-owned `CFRetained`, so no
+        // ownership question reaches this crate. `false` asks it not to CREATE an
+        // attachment array, which is what keeps this read free of an allocation per frame.
         #[expect(
             unsafe_code,
             reason = "a CoreMedia accessor generated unsafe because its header states no nullability"

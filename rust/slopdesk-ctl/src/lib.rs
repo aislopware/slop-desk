@@ -132,8 +132,8 @@ pub fn run(argv: &[String], env: &Environment, io: &mut Io<'_>) -> Result<u8, St
     // what someone asks when nothing is answering.
     //
     // The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
-    // every tool in this tree answers and the one `slopdesk-release package` parses when it checks a
-    // built binary against `scripts/tool-stamps.pin`.
+    // every tool in this tree answers and the one `slopdesk-release package` parses when it checks
+    // a built binary against `scripts/tool-stamps.pin`.
     if argv.get(1).is_some_and(|argument| argument == "--version") {
         io.out
             .write_all(format!("slopdesk-ctl {}\n", env!("CARGO_PKG_VERSION")).as_bytes())

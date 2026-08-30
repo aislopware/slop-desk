@@ -345,9 +345,10 @@ impl Truths {
                     Route::Fifo
                 },
                 Kind::CommandRunning => {
-                    // Stamped on RECEIPT rather than carried in the event: the scale that matters is
-                    // the one `pane/titleFresh` compares against, which is this process's, and
-                    // superd's clock is not it. The two differ by one socket hop.
+                    // Stamped on RECEIPT rather than carried in the event: the scale that matters
+                    // is the one `pane/titleFresh` compares against, which is
+                    // this process's, and superd's clock is not it. The two
+                    // differ by one socket hop.
                     self.command_running_since = Some(stamps.uptime);
                     Route::Fifo
                 },

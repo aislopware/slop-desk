@@ -109,9 +109,9 @@ impl Session {
     /// re-ack would echo that. The machine is deliberately left alone: a blind rollback risks an
     /// epoch/size desync worse than a cosmetic echo, and the next real resize corrects it anyway.
     pub(crate) fn resize_capture(self: &Arc<Self>, width: u16, height: u16, epoch: u32) {
-        // 1. STILL STREAMING, WITH A LIVE SET. A `bye`, a reap or a stop can have raced in between the
-        //    state machine emitting this effect and this running. Dropped with no ack, because an ack for a
-        //    resize that never happened would move the client's own capture size.
+        // 1. STILL STREAMING, WITH A LIVE SET. A `bye`, a reap or a stop can have raced in between
+        //    the state machine emitting this effect and this running. Dropped with no ack, because
+        //    an ack for a resize that never happened would move the client's own capture size.
         let Some((capture, encoder, generation)) = self.live_set() else {
             return;
         };
@@ -121,38 +121,41 @@ impl Session {
             generation,
         };
 
-        // 2. A WINDOW TARGET. The state machine REJECTS a display resize — a display does not have a size
-        //    to write — so this is defensive, and it is a guard rather than an `expect` because a daemon
-        //    that panics on an unreachable branch is worse than one that ignores a message it cannot serve.
+        // 2. A WINDOW TARGET. The state machine REJECTS a display resize — a display does not have
+        //    a size to write — so this is defensive, and it is a guard rather than an `expect`
+        //    because a daemon that panics on an unreachable branch is worse than one that ignores a
+        //    message it cannot serve.
         let Target::Window { id, pid, .. } = self.spec.target else {
             return;
         };
 
-        // 3. THE PRE-RESIZE POINT SIZE, READ BEFORE THE WINDOW MOVES. Every abort below this line happens
-        //    with the window ALREADY at the new size, and a window whose aspect no longer matches the
-        //    running capture is a distorted stream with no ack to explain it. This is the only moment the
-        //    old size can still be observed, so it is read here whether or not it is ever used.
+        // 3. THE PRE-RESIZE POINT SIZE, READ BEFORE THE WINDOW MOVES. Every abort below this line
+        //    happens with the window ALREADY at the new size, and a window whose aspect no longer
+        //    matches the running capture is a distorted stream with no ack to explain it. This is
+        //    the only moment the old size can still be observed, so it is read here whether or not
+        //    it is ever used.
         let pre_resize = self.window_bounds_cg().size;
 
-        // 4. THE AX RESIZE, AND THE SIZE THE WINDOW ACTUALLY TOOK. A fixed-size window, a sheet or a hung
-        //    app answers `None`: ABORT, keep the old encoder, send no ack. The window has not moved on that
-        //    path — the write is what failed — so there is nothing to roll back.
+        // 4. THE AX RESIZE, AND THE SIZE THE WINDOW ACTUALLY TOOK. A fixed-size window, a sheet or
+        //    a hung app answers `None`: ABORT, keep the old encoder, send no ack. The window has
+        //    not moved on that path — the write is what failed — so there is nothing to roll back.
         let Some(achieved) = resize_window(id, pid, VideoSize::new(f64::from(width), f64::from(height)))
         else {
             return;
         };
 
-        // 5. THE SUPERSEDE RE-CHECK, BECAUSE STEP 4 BLOCKED. The accessibility write is a cross-process
-        //    round trip, and a teardown or a newer resize can complete inside it. Asked BEFORE anything is
-        //    built so a dead session costs one geometry read rather than a `VTCompressionSession`.
+        // 5. THE SUPERSEDE RE-CHECK, BECAUSE STEP 4 BLOCKED. The accessibility write is a
+        //    cross-process round trip, and a teardown or a newer resize can complete inside it.
+        //    Asked BEFORE anything is built so a dead session costs one geometry read rather than a
+        //    `VTCompressionSession`.
         if !self.resize_is_current(generation, epoch) {
             return;
         }
 
-        // 6. THE ACHIEVED SIZE ON THE WIRE'S OWN TERMS, THEN IN PIXELS. The clamp is the rules crate's and
-        //    the bounds are the wire's — a size the ack cannot carry is a size the client cannot adopt. The
-        //    pixel conversion is `session_capture`'s own, not a second spelling of it: these numbers are
-        //    pinned by `golden/golden_vectors.json`.
+        // 6. THE ACHIEVED SIZE ON THE WIRE'S OWN TERMS, THEN IN PIXELS. The clamp is the rules
+        //    crate's and the bounds are the wire's — a size the ack cannot carry is a size the
+        //    client cannot adopt. The pixel conversion is `session_capture`'s own, not a second
+        //    spelling of it: these numbers are pinned by `golden/golden_vectors.json`.
         let (achieved_width, achieved_height) = clamp_capture_size(
             achieved,
             VideoSize::new(1.0, 1.0),
@@ -162,8 +165,9 @@ impl Session {
         let pixel_height = pixels(achieved_height, self.spec.capture_scale);
 
         // 7. THE REBUILD. This is where the in-place fast path would branch — see the module note:
-        //    `slopdesk_video::capture_config::can_resize_in_place` and `crate::capture::Capturer::resize`
-        //    are both here, and the encoder swap they need is not.
+        //    `slopdesk_video::capture_config::can_resize_in_place` and
+        //    `crate::capture::Capturer::resize` are both here, and the encoder swap they need is
+        //    not.
         match self.rebuild_live_set(&outgoing, id, epoch, pixel_width, pixel_height) {
             // 8. THE ACK, LAST AND ONLY HERE. It may reach the client just BEFORE the first new-size
             //    keyframe, because starting a stream is not waiting for a frame from it. That is safe and it
@@ -278,9 +282,9 @@ impl Session {
         pixel_width: i32,
         pixel_height: i32,
     ) -> Rebuilt {
-        // 1. THE NEW ENCODER, BUILT AND OPENED BEFORE IT IS SHARED — `start_capture` step 3's reasoning,
-        //    unchanged. The new resolution has a new ceiling; the controllers are re-anchored to it at step
-        //    7, once this encoder is the installed one.
+        // 1. THE NEW ENCODER, BUILT AND OPENED BEFORE IT IS SHARED — `start_capture` step 3's
+        //    reasoning, unchanged. The new resolution has a new ceiling; the controllers are
+        //    re-anchored to it at step 7, once this encoder is the installed one.
         let bits_per_pixel =
             live_bitrate::bits_per_pixel_from_env(self.overlay.get(BITS_PER_PIXEL_KEY).as_deref());
         let ceiling = live_bitrate::target_bitrate(
@@ -308,10 +312,10 @@ impl Session {
         }
         let encoder = Arc::new(encoder);
 
-        // 2. THE LANE, THE PUMP, THE CAPTURER. The tap's SHAPE is derived from whether a lane exists rather
-        //    than from a second read of `SLOPDESK_AUDIO`: the lane's existence IS that gate's answer,
-        //    resolved once at bring-up, and a rebuild that re-read the table could build a tap the lane
-        //    cannot serve. Gates resolve once per launch — `docs/46`.
+        // 2. THE LANE, THE PUMP, THE CAPTURER. The tap's SHAPE is derived from whether a lane
+        //    exists rather than from a second read of `SLOPDESK_AUDIO`: the lane's existence IS
+        //    that gate's answer, resolved once at bring-up, and a rebuild that re-read the table
+        //    could build a tap the lane cannot serve. Gates resolve once per launch — `docs/46`.
         let audio = outgoing.capture.audio_lane();
         let pump = CapturePump::new(self, &encoder, audio.clone());
         // Concrete parameter, so the unsizing happens at the binding rather than inside an
@@ -342,18 +346,18 @@ impl Session {
             &self.overlay,
         );
 
-        // 3. RETIRE THE OUTGOING SET'S CAPTURE HALF, AND DRAIN ITS ENCODER. The stop first, so no further
-        //    frame can enter the encoder being drained; the drain second, so whatever it already holds is
-        //    flushed to the wire instead of dying with the session. The audio lane survives both — it is
-        //    the successor's now.
+        // 3. RETIRE THE OUTGOING SET'S CAPTURE HALF, AND DRAIN ITS ENCODER. The stop first, so no
+        //    further frame can enter the encoder being drained; the drain second, so whatever it
+        //    already holds is flushed to the wire instead of dying with the session. The audio lane
+        //    survives both — it is the successor's now.
         outgoing.capture.stop_capture_only();
         outgoing.encoder.complete_frames();
 
-        // 4. START THE NEW STREAM. ⚠️ Blocks for the framework's whole spin-up — this is the resize freeze
-        //    the in-place path would have avoided. A refusal here is FATAL to the rebuild, in contrast to
-        //    `start_capture` step 7 where installing a dead stream is right: there, the alternative is a
-        //    session with nothing to stop; here, the caller has a size to fall back to and a live session
-        //    to restore.
+        // 4. START THE NEW STREAM. ⚠️ Blocks for the framework's whole spin-up — this is the resize
+        //    freeze the in-place path would have avoided. A refusal here is FATAL to the rebuild,
+        //    in contrast to `start_capture` step 7 where installing a dead stream is right: there,
+        //    the alternative is a session with nothing to stop; here, the caller has a size to fall
+        //    back to and a live session to restore.
         if capturer
             .start_window(window_id, pixel_width, pixel_height, None)
             .is_err()
@@ -367,10 +371,10 @@ impl Session {
             return Rebuilt::StreamRefused;
         };
 
-        // 6. INSTALL, UNDER THE GENERATION. The last moment a supersede can be caught, and the reason step
-        //    4 comes before it: a stream that was started but never installed is stopped here and orphans
-        //    nothing, whereas one installed before it started would have to be un-installed from under
-        //    whoever replaced it.
+        // 6. INSTALL, UNDER THE GENERATION. The last moment a supersede can be caught, and the
+        //    reason step 4 comes before it: a stream that was started but never installed is
+        //    stopped here and orphans nothing, whereas one installed before it started would have
+        //    to be un-installed from under whoever replaced it.
         let Some((generation, audio_enabled)) =
             self.install_rebuilt(&successor, &encoder, outgoing.generation, epoch)
         else {
@@ -380,8 +384,8 @@ impl Session {
             return Rebuilt::Superseded;
         };
 
-        // 7. RE-ANCHOR WHAT THE NEW BUILD DOES NOT INHERIT. Four obligations, and the first three are what
-        //    a fresh `VTCompressionSession` and a fresh `SCStream` know nothing about.
+        // 7. RE-ANCHOR WHAT THE NEW BUILD DOES NOT INHERIT. Four obligations, and the first three
+        //    are what a fresh `VTCompressionSession` and a fresh `SCStream` know nothing about.
         //
         //    The pump learns its generation FIRST, because everything it reports — a capture death
         //    above all — is guarded on it, and a frame can arrive the instant step 4 returned.

@@ -121,7 +121,8 @@ pub fn split_trailing_incomplete_utf8(bytes: &[u8]) -> (&[u8], &[u8]) {
         .take_while(|byte| *byte & 0xC0 == 0x80)
         .count();
     if continuations >= window.len() || continuations >= 4 {
-        // Nothing but continuation bytes in the window — a stray tail, not a scalar we can complete.
+        // Nothing but continuation bytes in the window — a stray tail, not a scalar we can
+        // complete.
         return (bytes, &[]);
     }
     let lead = window.get(window.len() - continuations - 1).copied().unwrap_or(0);

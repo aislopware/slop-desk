@@ -263,8 +263,8 @@ fn number_literal(number: f64) -> String {
     if !number.is_finite() {
         return "null".to_owned();
     }
-    // `{:?}` is the shortest representation that parses back to the same bits, and it keeps the `.0`
-    // that tells a reader the field is a float.
+    // `{:?}` is the shortest representation that parses back to the same bits, and it keeps the
+    // `.0` that tells a reader the field is a float.
     format!("{number:?}")
 }
 

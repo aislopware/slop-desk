@@ -147,8 +147,8 @@ pub fn step(buffer: &[u8]) -> Step<'_> {
                     }
                     let claimed = u64::from_be_bytes(wide);
                     // The claim is refused BEFORE it is narrowed: on a 64-bit host the cast would
-                    // succeed and the ceiling would catch it, but the order here is the one that stays
-                    // right if this is ever built somewhere narrower.
+                    // succeed and the ceiling would catch it, but the order here is the one that
+                    // stays right if this is ever built somewhere narrower.
                     match usize::try_from(claimed) {
                         Ok(length) => (length, 10),
                         Err(_) => return Step::Invalid,

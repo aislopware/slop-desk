@@ -67,10 +67,10 @@ pub fn hello_and_status(tree: &Tree) -> Report {
     ]);
 
     // ONE-SIDED since `docs/60` Batch B. The banner used to be a VALUE in `ScreenProtocol.swift`
-    // compared against screenwire's byte-string, and Swift was read FIRST because Swift was the side
-    // that documented it. Screenwire is that side now, so what is left to ratchet is that it still
-    // declares one, and that the client has not grown a literal copy to compare against — which is
-    // exactly how the pair started.
+    // compared against screenwire's byte-string, and Swift was read FIRST because Swift was the
+    // side that documented it. Screenwire is that side now, so what is left to ratchet is that
+    // it still declares one, and that the client has not grown a literal copy to compare
+    // against — which is exactly how the pair started.
     let Some(rust) = report.source(tree, RUST_SCREEN, "screend's banner is answered there") else {
         return report;
     };

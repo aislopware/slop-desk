@@ -542,7 +542,8 @@ mod tests {
             );
         assert!(super::the_chord_table_is_held_not_rebuilt(&fixture.tree()).is_clean());
 
-        // A computed `allBindings`: 86 fresh 85-element arrays per keystroke, and no test can see it.
+        // A computed `allBindings`: 86 fresh 85-element arrays per keystroke, and no test can see
+        // it.
         fixture.write(
             super::SWIFT_BINDINGS,
             "public static var allBindings: [WorkspaceBinding] { bindings + selectPaneBindings }\n",

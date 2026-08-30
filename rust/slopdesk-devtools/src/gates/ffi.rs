@@ -650,7 +650,8 @@ fn read_armap(archive: &Path) -> Result<String, String> {
 fn door_names(text: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     for (index, _) in text.match_indices("slopdesk_") {
-        // A door NAME starts a word: `_slopdesk_` inside an armap line, or `xslopdesk_`, is not one.
+        // A door NAME starts a word: `_slopdesk_` inside an armap line, or `xslopdesk_`, is not
+        // one.
         if index > 0 {
             let previous = text[..index].chars().next_back().unwrap_or(' ');
             if previous.is_alphanumeric() || previous == '_' {

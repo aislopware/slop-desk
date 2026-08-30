@@ -271,9 +271,10 @@ unsafe fn exec_in_forked_child(
         // signals) would breed shells that NEVER receive the destroy-path hangup, and zsh then
         // skips its history save on pane teardown. A terminal emulator hands every child a clean
         // slate. (SIGKILL/SIGSTOP reject SIG_DFL — harmless.)
-        // `= 0` rather than `mem::zeroed()`: Darwin's `sigset_t` IS a `u32`, and `zeroed()` compiles
-        // to a `write_bytes` whose debug-only precondition check is a CALL that can panic — inside
-        // this window (`ForkWindowContractTests`). The literal has no such edge.
+        // `= 0` rather than `mem::zeroed()`: Darwin's `sigset_t` IS a `u32`, and `zeroed()`
+        // compiles to a `write_bytes` whose debug-only precondition check is a CALL that
+        // can panic — inside this window (`ForkWindowContractTests`). The literal has no
+        // such edge.
         let mut empty: libc::sigset_t = 0;
         libc::sigemptyset(&raw mut empty);
         libc::sigprocmask(libc::SIG_SETMASK, &raw const empty, std::ptr::null_mut());
@@ -758,7 +759,8 @@ mod tests {
 
     #[test]
     fn spawned_child_writes_to_the_pty_master() {
-        // The `sleep` is what keeps the slave open past the parent's first read — see `drain_until`.
+        // The `sleep` is what keeps the slave open past the parent's first read — see
+        // `drain_until`.
         let arguments = vec!["-c".to_owned(), "echo 'hello superd'; sleep 60".to_owned()];
         let spawned = spawn_pty(&plan("/bin/sh", &arguments)).unwrap();
 
@@ -778,7 +780,8 @@ mod tests {
     /// `-` and would otherwise silently start non-login.
     #[test]
     fn argv0_is_passed_independently_of_the_executable() {
-        // The `sleep` is what keeps the slave open past the parent's first read — see `drain_until`.
+        // The `sleep` is what keeps the slave open past the parent's first read — see
+        // `drain_until`.
         let arguments = vec!["-c".to_owned(), "printf %s \"$0\"; sleep 60".to_owned()];
         let mut spawn_plan = plan("/bin/sh", &arguments);
         spawn_plan.argv0 = Some("-sh");
@@ -930,7 +933,8 @@ mod tests {
         let pty = open_pty(24, 80).unwrap();
         let fd = pty.master.as_raw_fd();
         let mut term = unsafe_zeroed_termios();
-        // SAFETY: `term` is a live local of the right type and `fd` is a descriptor this test holds.
+        // SAFETY: `term` is a live local of the right type and `fd` is a descriptor this test
+        // holds.
         assert_eq!(unsafe { libc::tcgetattr(fd, &raw mut term) }, 0);
         assert!(
             term.c_lflag & tcflag(libc::ICANON) != 0,

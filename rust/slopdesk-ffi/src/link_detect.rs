@@ -440,9 +440,10 @@ mod tests {
             "the arena answered a size it then would not fill"
         );
         // This door spells its arena pair `size_t`, the way §4 spells every length, where the
-        // record-carrying doors spell it `u32`. Saturating is the exact bridge: a pair inside a real
-        // arena converts unchanged, and one too wide to be inside any arena answers empty either
-        // way. It is the ONE place the two widths meet, which is where the cast belongs.
+        // record-carrying doors spell it `u32`. Saturating is the exact bridge: a pair inside a
+        // real arena converts unchanged, and one too wide to be inside any arena answers
+        // empty either way. It is the ONE place the two widths meet, which is where the
+        // cast belongs.
         let text = |offset: usize, length: usize| {
             crate::arena_text(&arena, saturating_u32(offset), saturating_u32(length))
         };

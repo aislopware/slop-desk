@@ -331,7 +331,8 @@ mod tests {
     fn a_message_containing_semicolons_stays_whole_in_the_body() {
         let bytes = watch_finish_notification_bytes("watch: a;b;c failed (exit 2)");
         let text = String::from_utf8(bytes).expect("utf8");
-        // maxSplits 3 on the host side: everything after the title is the body, semicolons included.
+        // maxSplits 3 on the host side: everything after the title is the body, semicolons
+        // included.
         assert!(text.ends_with("watch: a;b;c failed (exit 2)\u{7}"));
     }
 

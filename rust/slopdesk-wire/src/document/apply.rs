@@ -326,8 +326,9 @@ fn rename_pane(args: &[u8], topology: &WorkspaceTopology) -> IntentOutcome {
     let mut next = topology.clone();
     next.tree = tree_ops::updating_spec(&next.tree, pane, |spec| {
         spec.title = title;
-        // A rename is AUTHORSHIP, and the flag is what makes the live-title derivations yield to it.
-        // Setting the title without it would let the next OSC title overwrite the person.
+        // A rename is AUTHORSHIP, and the flag is what makes the live-title derivations yield to
+        // it. Setting the title without it would let the next OSC title overwrite the
+        // person.
         spec.user_renamed = true;
     });
     accept(next)
@@ -741,8 +742,8 @@ fn set_zoom(args: &[u8], topology: &WorkspaceTopology) -> IntentOutcome {
     else {
         return IntentOutcome::RejectedNotFound;
     };
-    // Set, not toggle. A toggle over shared state resolves differently depending on how many clients
-    // sent it, which is the class of bug an idempotent assignment cannot have.
+    // Set, not toggle. A toggle over shared state resolves differently depending on how many
+    // clients sent it, which is the class of bug an idempotent assignment cannot have.
     tab.zoomed_pane = zoomed.then_some(pane);
     accept(next)
 }
@@ -854,9 +855,9 @@ fn reopen_closed_tab(args: &[u8], topology: &WorkspaceTopology) -> IntentOutcome
     // The ring is newest-LAST, and the index counts from the newest.
     let from_end = usize::from(lifo_index) + 1;
     let Some(array_index) = topology.closed_tabs.len().checked_sub(from_end) else {
-        // Nothing to reopen — an empty ring, or an index past its end — is NOT an error. The gesture
-        // on an empty ring is a satisfied request that changes nothing, and answering rejected would
-        // make every client roll back a patch it never made.
+        // Nothing to reopen — an empty ring, or an index past its end — is NOT an error. The
+        // gesture on an empty ring is a satisfied request that changes nothing, and
+        // answering rejected would make every client roll back a patch it never made.
         return IntentOutcome::Applied(Box::new(topology.clone()));
     };
     let Some(restored) = topology.closed_tabs.get(array_index).cloned() else {
@@ -939,9 +940,9 @@ fn dock_pane_at_tab_edge(
     }
     let mut next = topology.clone();
     next.tree = tree_ops::move_leaf_to_tab_root_edge(&next.tree, source, tab, dock.edge, ids);
-    // The op declines a same-tab dock against a lone leaf, a dock past the depth cap, a dock the pane
-    // already sits at, and a destination in another SESSION — so "did the source end up in the tab
-    // the client named" is the one check that covers every refusal.
+    // The op declines a same-tab dock against a lone leaf, a dock past the depth cap, a dock the
+    // pane already sits at, and a destination in another SESSION — so "did the source end up in
+    // the tab the client named" is the one check that covers every refusal.
     if tab_of_pane(&next, source) != Some(tab) {
         return IntentOutcome::RejectedInvalid;
     }
@@ -953,8 +954,8 @@ fn set_tab_layout(args: &[u8], topology: &WorkspaceTopology) -> IntentOutcome {
         return IntentOutcome::RejectedInvalid;
     };
     let tab = TabId::from_bytes(raw);
-    // The decoder enforces the depth cap while it descends, so an over-deep shape never materializes
-    // as a value at all.
+    // The decoder enforces the depth cap while it descends, so an over-deep shape never
+    // materializes as a value at all.
     let Ok(layout) = codec::decode_layout(&blob) else {
         return IntentOutcome::RejectedInvalid;
     };
@@ -990,9 +991,10 @@ fn set_tab_layout(args: &[u8], topology: &WorkspaceTopology) -> IntentOutcome {
     else {
         return IntentOutcome::RejectedNotFound;
     };
-    // Every split comes back at an EQUAL share — a re-tile discards the divider drags that described
-    // the OLD shape — and the tab EXITS zoom, because a zoomed tab renders one pane, so re-shaping
-    // under a zoom would change nothing the person can see while the caller's cursor advances.
+    // Every split comes back at an EQUAL share — a re-tile discards the divider drags that
+    // described the OLD shape — and the tab EXITS zoom, because a zoomed tab renders one pane,
+    // so re-shaping under a zoom would change nothing the person can see while the caller's
+    // cursor advances.
     target.root = rebuilt(&layout);
     target.zoomed_pane = None;
     accept(next)

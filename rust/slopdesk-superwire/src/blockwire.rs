@@ -433,7 +433,8 @@ mod tests {
             assert_eq!(super::base64(bytes), encoded);
             assert_eq!(super::unbase64(encoded), bytes);
         }
-        // The whole byte range, so the alphabet's tail (`+` and `/`) is covered rather than assumed.
+        // The whole byte range, so the alphabet's tail (`+` and `/`) is covered rather than
+        // assumed.
         let every: Vec<u8> = (0..=255_u8).collect();
         let encoded = super::base64(&every);
         assert_eq!(encoded.len(), 344);

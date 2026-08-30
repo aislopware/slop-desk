@@ -157,9 +157,10 @@ impl JournalStore {
             .spawn(move || run(&worker));
         if spawned.is_err() {
             // A store with no thread still accepts appends and still flushes — every reader path
-            // (`head`, `info`, `close`) flushes synchronously before it answers. What is lost is the
-            // idle cadence, so a pane that stops producing keeps its last few KiB in memory until
-            // somebody asks. Refusing to journal at all would be the worse answer.
+            // (`head`, `info`, `close`) flushes synchronously before it answers. What is lost is
+            // the idle cadence, so a pane that stops producing keeps its last few KiB
+            // in memory until somebody asks. Refusing to journal at all would be the
+            // worse answer.
             eprintln!("superd: journal writer thread did not start — flushes are on demand only");
         }
         Self { shared }
@@ -468,8 +469,8 @@ impl Writer {
                 .ok()?;
             // `append` puts every write at the end regardless of the file offset, so there is no
             // seek to get wrong — the failure the Swift journal had to guard against (a failed
-            // `lseek` leaving the fd at 0, overwriting the head and serving silent corruption on the
-            // next restore) cannot happen here.
+            // `lseek` leaving the fd at 0, overwriting the head and serving silent corruption on
+            // the next restore) cannot happen here.
             self.on_disk = usize::try_from(opened.metadata().ok()?.len()).unwrap_or(usize::MAX);
             self.handle = Some(opened);
         }

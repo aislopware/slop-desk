@@ -229,7 +229,8 @@ pub fn verdict(corpus_json: &str, regenerated_json: &str) -> Result<(usize, Vec<
     );
 
     // Byte-diff over the keys present on BOTH sides, so a set drift reports as a set drift rather
-    // than as a missing key. The pins above independently guarantee this covers all of EMITTED_KEYS.
+    // than as a missing key. The pins above independently guarantee this covers all of
+    // EMITTED_KEYS.
     let diffed: Vec<&String> = emitted
         .iter()
         .filter(|key| held.contains(*key) && present.contains(*key))

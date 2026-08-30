@@ -388,8 +388,8 @@ mod tests {
         fixture.append(super::NEW_TAB, "return min(max(index, 0), tabCount)\n");
         assert!(!super::four_cross_language_twins(&fixture.tree()).is_clean());
 
-        // The cast, written a second time in Swift — the half of the twin that came back rather than
-        // the half that stayed.
+        // The cast, written a second time in Swift — the half of the twin that came back rather
+        // than the half that stayed.
         twins(&fixture);
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Connection/ConnectionViewModel.swift",
@@ -397,8 +397,8 @@ mod tests {
         );
         assert!(!super::four_cross_language_twins(&fixture.tree()).is_clean());
 
-        // And the surviving half losing the property that made it ONE answer: a range predicate and a
-        // conversion spelled apart is the twin re-forming inside a single language.
+        // And the surviving half losing the property that made it ONE answer: a range predicate and
+        // a conversion spelled apart is the twin re-forming inside a single language.
         twins(&fixture);
         fixture.write(
             super::PORT_RUST,
@@ -455,9 +455,9 @@ mod tests {
         );
         assert!(!super::the_loop_shaped_crossings_are_whole_collection_doors(&fixture.tree()).is_clean());
 
-        // A retired door, asked for again — anywhere, tests included. The wide door the near side used
-        // to be allowed to call is banned with the rest of the family now, since there is no near side
-        // left for it to serve.
+        // A retired door, asked for again — anywhere, tests included. The wide door the near side
+        // used to be allowed to call is banned with the rest of the family now, since there
+        // is no near side left for it to serve.
         loops(&fixture);
         fixture.write(
             "Tests/TransportTests/ReplayTests.swift",

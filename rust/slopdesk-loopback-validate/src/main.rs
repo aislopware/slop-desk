@@ -214,8 +214,8 @@ fn full_run(frames: usize) -> Vec<ScenarioStats> {
 
     // The interleave investigation: prove the column-major send reorder decodes cleanly through the
     // real hardware with NO loss — a protocol or codec fault would surface here — and that it turns
-    // an adjacent-datagram burst single-hole parity cannot recover in consecutive order into a fully
-    // recoverable, decodable stream.
+    // an adjacent-datagram burst single-hole parity cannot recover in consecutive order into a
+    // fully recoverable, decodable stream.
     println!("=== 7. INTERLEAVE, clean link (tier g5) — must decode ALL through real HW ===");
     all.push(base::run("7. interleave clean g5", Arm {
         frames,

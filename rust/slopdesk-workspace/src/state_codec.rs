@@ -845,7 +845,8 @@ pub fn decode_layout(bytes: &[u8]) -> Result<Vec<LayoutNode>, LayoutError> {
                 // C-style bool discipline: any non-zero is vertical, never a trap on an odd byte.
                 let axis = u8::from(reader.u8().ok_or(LayoutError::Malformed)? != 0);
                 let child_count = reader.u8().ok_or(LayoutError::Malformed)?;
-                // One byte minimum per child — a bare leaf tag — bounded before anything is reserved.
+                // One byte minimum per child — a bare leaf tag — bounded before anything is
+                // reserved.
                 if usize::from(child_count) > reader.remaining() {
                     return Err(LayoutError::Malformed);
                 }

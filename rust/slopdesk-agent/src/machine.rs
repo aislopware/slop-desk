@@ -486,11 +486,12 @@ impl ClaudeStatusMachine {
             // out of the terminal status across that gap.
             ClaudeHookEvent::SessionEnd { .. } => self.terminate(true, now),
         }
-        // ⚠️ A hook does NOT blindly reset the stopwatch. The clock measures how long the screen has
-        // contradicted the AUTHORITATIVE STATUS, and a hook that leaves that contradiction standing
-        // has not answered it. Blindly clearing here meant a turn still emitting hooks held the
-        // watchdog at zero forever — which is exactly the situation a stale ask-ledger entry
-        // creates, so the one case that needed the escape hatch was the one that disabled it.
+        // ⚠️ A hook does NOT blindly reset the stopwatch. The clock measures how long the screen
+        // has contradicted the AUTHORITATIVE STATUS, and a hook that leaves that
+        // contradiction standing has not answered it. Blindly clearing here meant a turn
+        // still emitting hooks held the watchdog at zero forever — which is exactly the
+        // situation a stale ask-ledger entry creates, so the one case that needed the
+        // escape hatch was the one that disabled it.
         self.reconcile_screen_dissent();
     }
 
@@ -580,12 +581,13 @@ impl ClaudeStatusMachine {
     /// - any other agent-naming title stays the presence floor it always was.
     fn apply_title(&mut self, title: &str, now: f64) {
         if Self::title_shows_spinner(title) {
-            // ⚠️ Never out of done while a hook feed is live. The title arrives on the PTY read loop
-            // and the `Stop` on its own queue, so a turn's trailing spinner repaint routinely lands
-            // AFTER the `Stop` that ended it — promoting there erased the finished state and its
-            // label, and the `✳` a moment later took working → idle, minting a SECOND completion
-            // for the one turn. Under coverage the promotion buys nothing anyway:
-            // `UserPromptSubmit` / `PreToolUse` announce a real turn starting.
+            // ⚠️ Never out of done while a hook feed is live. The title arrives on the PTY read
+            // loop and the `Stop` on its own queue, so a turn's trailing spinner
+            // repaint routinely lands AFTER the `Stop` that ended it — promoting there
+            // erased the finished state and its label, and the `✳` a moment later took
+            // working → idle, minting a SECOND completion for the one turn. Under
+            // coverage the promotion buys nothing anyway: `UserPromptSubmit` /
+            // `PreToolUse` announce a real turn starting.
             let stale = self.authoritative_covered && self.status == ClaudeStatus::Done;
             if self.status != ClaudeStatus::None && self.block_source != BlockSource::Hook && !stale {
                 self.enter(ClaudeStatus::Working, None, None);

@@ -87,8 +87,8 @@ impl KeepAwake {
                 while let Ok((pane, working)) = receiver.recv() {
                     // ONE statement: the fold's answer is computed from the set this iteration just
                     // updated, and applied before the next edge can be taken off the channel.
-                    // A refused create is not remembered — the next edge retries, which is the whole
-                    // recovery story for a system that said no once.
+                    // A refused create is not remembered — the next edge retries, which is the
+                    // whole recovery story for a system that said no once.
                     reported.store(
                         assertion.set_asserted(fold.note(&pane, working)),
                         Ordering::Release,
@@ -116,8 +116,8 @@ impl KeepAwake {
 impl AgentStatusTap for KeepAwake {
     fn changed(&self, event: &AgentStatusEvent) {
         // Cloned out from under the guard rather than sent under it: a `Sender` clone is a refcount
-        // bump, and holding the lock across the send would serialise every pane's transitions behind
-        // whichever one the owner thread is mid-way through applying.
+        // bump, and holding the lock across the send would serialise every pane's transitions
+        // behind whichever one the owner thread is mid-way through applying.
         let sender = self.edges.lock().unwrap_or_else(PoisonError::into_inner).clone();
         let Some(sender) = sender else {
             return;

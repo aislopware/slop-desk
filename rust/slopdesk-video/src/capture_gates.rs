@@ -1141,7 +1141,8 @@ mod tests {
             },
         );
         assert!(heartbeat.force_keyframe);
-        // The shipped table leaves this gate INERT: v2 owns admission and suppresses before latching.
+        // The shipped table leaves this gate INERT: v2 owns admission and suppresses before
+        // latching.
         let inert = gates(&[]).resolve_encode(anchored, EncodeFrame {
             keyframe_latched: true,
             ..LIVE

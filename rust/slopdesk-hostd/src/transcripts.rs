@@ -183,8 +183,9 @@ impl Transcripts for DiskTranscripts {
         if info.bytes == 0 {
             return None;
         }
-        // Read here rather than over the socket: superd answered a PATH precisely so a multi-megabyte
-        // transcript never crosses an `AF_UNIX` connection to be handed straight to a renderer.
+        // Read here rather than over the socket: superd answered a PATH precisely so a
+        // multi-megabyte transcript never crosses an `AF_UNIX` connection to be handed
+        // straight to a renderer.
         let raw = fs::read(&info.path).ok()?;
         if raw.is_empty() {
             return None;

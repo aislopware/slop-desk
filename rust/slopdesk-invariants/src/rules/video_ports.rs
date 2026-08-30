@@ -842,7 +842,8 @@ mod tests {
         assert!(super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
 
         // Every named file is still there and still says the right thing, so the only claim left to
-        // fail is the floor — which is what stops a stale walk turning both bans into a silent pass.
+        // fail is the floor — which is what stops a stale walk turning both bans into a silent
+        // pass.
         for index in 0..200 {
             fixture.remove(&format!("Sources/Filler/Filler{index}.swift"));
         }

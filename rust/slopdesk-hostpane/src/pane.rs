@@ -215,18 +215,19 @@ impl PtyProcess {
     /// Never in practice — the `expect` is on an identity this function just installed.
     pub fn spawn(&self, mut request: SpawnRequest) -> Result<(), ClientError> {
         // Validate the requested cwd HOST-SIDE, before the request goes out: the child's `chdir`
-        // runs pre-`execve` and is best-effort, so a stale, deleted or `~`-style path would silently
-        // leave the pane in superd's directory rather than the user's. Repairing it here is policy,
-        // and policy is hostd's — superd is told a directory, not asked to choose one.
+        // runs pre-`execve` and is best-effort, so a stale, deleted or `~`-style path would
+        // silently leave the pane in superd's directory rather than the user's. Repairing
+        // it here is policy, and policy is hostd's — superd is told a directory, not asked
+        // to choose one.
         request.cwd = resolve_cwd(
             request.cwd.as_deref(),
             request.environment.get("HOME").map(String::as_str),
         );
         let pane_id = request.pane_id.clone();
 
-        // Registered BEFORE the request: a child that dies instantly (a bad executable, an `exit 1`)
-        // can be reaped and broadcast while this thread is still inside `spawn`, and a dropped
-        // `exited` leaves a dead pane looking alive until someone types into it.
+        // Registered BEFORE the request: a child that dies instantly (a bad executable, an `exit
+        // 1`) can be reaped and broadcast while this thread is still inside `spawn`, and a
+        // dropped `exited` leaves a dead pane looking alive until someone types into it.
         self.observe_exit(&pane_id);
 
         match self.client.spawn(request) {
@@ -238,9 +239,9 @@ impl PtyProcess {
                 // superd refuses a duplicate pane id, and it is right to: two forks under one id
                 // would orphan the first child. But a duplicate here does not mean a mistake — it
                 // means the pane this id names is STILL RUNNING, left behind by a hostd that
-                // relinquished it and never adopted it back. Refusing would hand the user a dead tab
-                // per surviving shell, permanently, and the only cure would be killing superd, which
-                // is killing their agents.
+                // relinquished it and never adopted it back. Refusing would hand the user a dead
+                // tab per surviving shell, permanently, and the only cure would be
+                // killing superd, which is killing their agents.
                 //
                 // So the surviving pane is taken over instead. Not blindly: a pane another live
                 // hostd is ATTACHED to is that daemon's, and this reports the original refusal
@@ -308,9 +309,9 @@ impl PtyProcess {
         }
         // Wired here rather than only in `spawn`: an adopted pane's child can die like any other,
         // and a pane that never hears about it reports a corpse as running for ever. `spawn`
-        // registers this itself, EARLIER — before the request, so an instantly dying child cannot be
-        // reaped before anyone is listening — and re-registering here replaces that closure with an
-        // identical one.
+        // registers this itself, EARLIER — before the request, so an instantly dying child cannot
+        // be reaped before anyone is listening — and re-registering here replaces that
+        // closure with an identical one.
         self.observe_exit(&record.pane_id);
     }
 

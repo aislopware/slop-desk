@@ -2600,8 +2600,8 @@ pub unsafe extern "C" fn slopdesk_ws_decode_diff(
             }
         })
         .collect();
-    // SAFETY: each pointer is null or writable for what its obligation says, and both source vectors
-    // were allocated inside this call so neither can overlap a destination.
+    // SAFETY: each pointer is null or writable for what its obligation says, and both source
+    // vectors were allocated inside this call so neither can overlap a destination.
     unsafe {
         if !sets_needed.is_null() {
             *sets_needed = set_entries.len();
@@ -3781,8 +3781,8 @@ mod tests {
 
     #[test]
     fn a_blank_project_key_is_absent_rather_than_empty() {
-        // The trailing slash folds, which is what keeps a pane's directory and its git toplevel from
-        // becoming two identically-titled sections.
+        // The trailing slash folds, which is what keeps a pane's directory and its git toplevel
+        // from becoming two identically-titled sections.
         let key = transform(
             |bytes, len, out, cap| unsafe { slopdesk_ws_project_key(bytes, len, true, out, cap) },
             "  /Users/me/slop-desk/  ",
@@ -4290,7 +4290,8 @@ mod tests {
         blob: &[u8],
         pool: &[Uuid],
     ) -> Option<slopdesk_wire::document::topology::WorkspaceTopology> {
-        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe
+        // with.
         let needed = unsafe {
             slopdesk_ws_normalize(
                 pass,
@@ -4451,7 +4452,8 @@ mod tests {
 
     /// One save through the C signature, sized the way §4 says to: probe, grow, call again.
     fn file_encode(cells: &[super::CEntry], blob: &[u8]) -> Vec<u8> {
-        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe
+        // with.
         let needed = unsafe {
             slopdesk_ws_workspace_file_encode(
                 cells.as_ptr(),
@@ -4500,7 +4502,8 @@ mod tests {
                 })
                 .collect();
         let (mut status, mut version) = (u8::MAX, i64::MIN);
-        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe
+        // with.
         let needed = unsafe {
             slopdesk_ws_workspace_file_decode(
                 bytes.as_ptr(),
@@ -4782,7 +4785,8 @@ mod tests {
         // again, because nothing on disk could still claim an older number.
         let stale = slopdesk_tree::CURRENT_SCHEMA_VERSION - 1;
         let empty: Vec<super::CEntry> = Vec::new();
-        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe
+        // with.
         let needed = unsafe {
             slopdesk_ws_workspace_file_encode(
                 empty.as_ptr(),
@@ -4795,7 +4799,8 @@ mod tests {
             )
         };
         let mut out = vec![0_u8; needed];
-        // SAFETY: `out` is now exactly `needed` bytes and the inputs are still the same live locals.
+        // SAFETY: `out` is now exactly `needed` bytes and the inputs are still the same live
+        // locals.
         unsafe {
             slopdesk_ws_workspace_file_encode(
                 empty.as_ptr(),

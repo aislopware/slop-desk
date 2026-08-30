@@ -272,9 +272,9 @@ extern "C" fn restore_and_reraise(signal: libc::c_int) {
     reason = "signal(3)/raise(3) have no nix wrapper that is callable from a handler"
 )]
 fn reraise_with_default_disposition(signal: libc::c_int) {
-    // SAFETY: both calls are on POSIX's async-signal-safe list. `SIG_DFL` is a valid disposition for
-    // every signal, and `raise` on the signal currently being handled is delivered when the handler
-    // returns and the mask that `sa_mask` installed is lifted.
+    // SAFETY: both calls are on POSIX's async-signal-safe list. `SIG_DFL` is a valid disposition
+    // for every signal, and `raise` on the signal currently being handled is delivered when the
+    // handler returns and the mask that `sa_mask` installed is lifted.
     unsafe {
         libc::signal(signal, libc::SIG_DFL);
         libc::raise(signal);

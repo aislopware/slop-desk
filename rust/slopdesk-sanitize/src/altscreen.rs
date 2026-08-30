@@ -67,9 +67,9 @@ pub fn strip(bytes: &[u8]) -> Vec<u8> {
     let n = bytes.len();
     let mut out = Vec::with_capacity(n);
     let mut i = 0;
-    // Start offset of the currently OPEN segment (its opening CSI included), `None` when on the main
-    // screen. While open, nothing is emitted — on close the whole range is dropped; at end-of-stream
-    // the range is flushed verbatim (live TUI).
+    // Start offset of the currently OPEN segment (its opening CSI included), `None` when on the
+    // main screen. While open, nothing is emitted — on close the whole range is dropped; at
+    // end-of-stream the range is flushed verbatim (live TUI).
     let mut open_segment_start: Option<usize> = None;
 
     while i < n {

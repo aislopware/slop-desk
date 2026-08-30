@@ -398,7 +398,8 @@ pub const unsafe extern "C" fn slopdesk_ws_core_begin_save(
         return false;
     };
     if !out.is_null() {
-        // SAFETY: by the caller's obligation `out` is a writable `uint64_t`, checked non-null above.
+        // SAFETY: by the caller's obligation `out` is a writable `uint64_t`, checked non-null
+        // above.
         unsafe { out.write(generation) };
     }
     true

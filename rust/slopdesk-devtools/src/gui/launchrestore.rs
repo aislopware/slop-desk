@@ -779,7 +779,8 @@ pub fn run(root: &Path) -> Result<(), String> {
 
     let divergent_text = diverge(&fixture_text)?;
     let divergent = read_fixture(&divergent_text)?;
-    // Self-check: a derivation that quietly produced the SAME ids would make phase C assert nothing.
+    // Self-check: a derivation that quietly produced the SAME ids would make phase C assert
+    // nothing.
     let shares_an_id = divergent.panes.iter().any(|pane| {
         fixture
             .panes

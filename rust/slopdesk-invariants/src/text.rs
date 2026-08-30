@@ -34,10 +34,10 @@ pub fn cached(pattern: &str) -> &'static Regex {
         return compiled;
     }
     // MULTILINE, always. Every pattern here is a port of a `grep`, `sed` or `awk` expression, and
-    // all three are line-oriented: `^` means start-of-line and `$` means end-of-line to every one of
-    // them. Leaving Rust's default in place made `$` mean end-of-FILE, which is not a stricter
-    // reading of the same rule — it is a different rule that happens to be satisfied by one line in
-    // the file, so the extraction reads empty and `same` reports it as stale.
+    // all three are line-oriented: `^` means start-of-line and `$` means end-of-line to every one
+    // of them. Leaving Rust's default in place made `$` mean end-of-FILE, which is not a
+    // stricter reading of the same rule — it is a different rule that happens to be satisfied
+    // by one line in the file, so the extraction reads empty and `same` reports it as stale.
     let compiled: &'static Regex = Box::leak(Box::new(
         regex::RegexBuilder::new(pattern)
             .multi_line(true)

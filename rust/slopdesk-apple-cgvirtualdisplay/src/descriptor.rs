@@ -163,9 +163,9 @@ fn set_serial_if_possible(descriptor: &AnyObject, value: u32) {
         ("serialNumber", c"setSerialNumber:"),
     ] {
         let selector = Sel::register(setter);
-        // SAFETY: Objective-C runtime rule. `-respondsToSelector:` is `NSObject`'s own, declared for
-        // every root-class descendant, and takes exactly one `SEL` by value; asking it is the
-        // documented way to find out whether the send below is legal.
+        // SAFETY: Objective-C runtime rule. `-respondsToSelector:` is `NSObject`'s own, declared
+        // for every root-class descendant, and takes exactly one `SEL` by value; asking it
+        // is the documented way to find out whether the send below is legal.
         #[expect(
             unsafe_code,
             reason = "`respondsToSelector:` is NSObject's, and asking it is what makes the next send safe"
@@ -178,8 +178,8 @@ fn set_serial_if_possible(descriptor: &AnyObject, value: u32) {
         let key = NSString::from_str(key);
         // SAFETY: Objective-C runtime rule. `-setValue:forKey:` is `NSObject`'s key-value coding
         // entry point, declared `(id, NSString *)`; the key names a property the class was just
-        // observed to implement a setter for, and KVC unboxes the `NSNumber` into its `unsigned int`
-        // for us.
+        // observed to implement a setter for, and KVC unboxes the `NSNumber` into its `unsigned
+        // int` for us.
         #[expect(
             unsafe_code,
             reason = "key-value coding is NSObject's, and the key was just proven to exist"
@@ -233,8 +233,9 @@ fn termination_handler(descriptor: &AnyObject) -> Option<Retained<AnyObject>> {
 /// leak whether or not the process's footprint moved.
 #[cfg(test)]
 fn retain_count(object: &AnyObject) -> usize {
-    // SAFETY: Objective-C runtime rule. `-retainCount` is `NSObject`'s, answers `NSUInteger`, and is
-    // read here only as a same-thread ownership assertion — nothing schedules on this object.
+    // SAFETY: Objective-C runtime rule. `-retainCount` is `NSObject`'s, answers `NSUInteger`, and
+    // is read here only as a same-thread ownership assertion — nothing schedules on this
+    // object.
     #[expect(
         unsafe_code,
         reason = "`retainCount` is NSObject's own, and a leak test is exactly its one honest use"

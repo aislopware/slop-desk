@@ -313,7 +313,8 @@ mod tests {
         );
 
         assert_eq!(actions(&contacts), [Action::Move, Action::Up, Action::Down]);
-        // The re-grip lands inside the margin, never on it: the boundary is the system-gesture band.
+        // The re-grip lands inside the margin, never on it: the boundary is the system-gesture
+        // band.
         let replanted = gesture.finger().map(|point| point.y);
         assert_eq!(replanted, Some(FITTED.size.height - EDGE_MARGIN));
     }

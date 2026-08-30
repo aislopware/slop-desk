@@ -184,10 +184,11 @@ impl PaneSink for StreamState {
         let last_of_a_backlog = guarded.ends_at.is_some_and(|end| next >= end);
         // The boundary moves inside the SAME hold that read the end against it, so this handler and
         // `open` cannot both conclude that the other one will declare the stream over. Advancing it
-        // after the chunk was handed on left a window one instruction wide where a backlog frame was
-        // delivered before `open` recorded the end: the handler saw no end yet, `open` then read the
-        // not-yet-advanced offset and judged the backlog unfinished, and NEITHER finished. A pane
-        // that ran to completion before anyone subscribed hung there for ever.
+        // after the chunk was handed on left a window one instruction wide where a backlog frame
+        // was delivered before `open` recorded the end: the handler saw no end yet, `open`
+        // then read the not-yet-advanced offset and judged the backlog unfinished, and
+        // NEITHER finished. A pane that ran to completion before anyone subscribed hung
+        // there for ever.
         if !dropped {
             guarded.expected_offset = Some(next);
         }

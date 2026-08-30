@@ -258,9 +258,9 @@ pub fn config_string(config: &TerminalConfig<'_>) -> String {
     // would only draw a second underline under the same span. OSC 8 hyperlinks are a different set
     // and are untouched. A structural fact about who owns link rendering, not a preference.
     lines.push("link-url = false".to_owned());
-    // A pane's viewport is never an exact multiple of the cell size, and the default dumps the whole
-    // remainder on the right and bottom, which reads as an off-centre grid inside an even gutter.
-    // Also structural: no preference gates it.
+    // A pane's viewport is never an exact multiple of the cell size, and the default dumps the
+    // whole remainder on the right and bottom, which reads as an off-centre grid inside an even
+    // gutter. Also structural: no preference gates it.
     lines.push("window-padding-balance = true".to_owned());
     for keybind in config.keybinds {
         if !trim_config_spaces(keybind).is_empty() {

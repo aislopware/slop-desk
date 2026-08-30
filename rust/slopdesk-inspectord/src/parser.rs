@@ -196,9 +196,10 @@ fn flatten_content(value: Option<&Value>) -> String {
             blocks
                 .iter()
                 .map(|block| {
-                    // No `text` key → render the WHOLE object deterministically (sorted keys), never an
-                    // arbitrary field: the Swift original's `b.values.first` surfaced a different,
-                    // often less informative, value on each process because of hash-order randomisation.
+                    // No `text` key → render the WHOLE object deterministically (sorted keys),
+                    // never an arbitrary field: the Swift original's
+                    // `b.values.first` surfaced a different, often less
+                    // informative, value on each process because of hash-order randomisation.
                     string_at(block, "text").map_or_else(|| display_string(block), str::to_owned)
                 })
                 .collect::<Vec<_>>()

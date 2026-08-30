@@ -256,14 +256,14 @@ pub fn device_list(toolchain: &Toolchain) -> Vec<Device> {
         .unwrap_or_default();
     let mut running: Vec<Device> = Vec::new();
     for entry in catalog::parse_devices(&listing) {
-        // A target that is `offline` or `unauthorized` cannot answer a shell, so it is recorded from
-        // what `adb devices` alone said. Probing it would cost the poll its timeout.
+        // A target that is `offline` or `unauthorized` cannot answer a shell, so it is recorded
+        // from what `adb devices` alone said. Probing it would cost the poll its timeout.
         if entry.state != "device" {
             // A booting emulator can still say WHICH AVD it is: the guest's `adbd` answers nothing
             // for the first ~21 s of a cold boot (measured 2026-08-07), but the QEMU console is up
             // from process launch. Naming it here is what folds the transient `emulator-5554 ·
-            // offline` row into the AVD row the user booted — one identity for the whole boot, so an
-            // early selection survives it.
+            // offline` row into the AVD row the user booted — one identity for the whole boot, so
+            // an early selection survives it.
             let avd_name = console::port_for_serial(&entry.serial).and_then(|_port| {
                 let reply = console::run(
                     "avd name",
@@ -401,8 +401,8 @@ fn screenshot(client: &mut TcpStream, toolchain: &Toolchain, request: &Request) 
         refuse(client, BridgeError::BadRequest);
         return;
     };
-    // `exec-out` rather than `shell`: `shell` allocates a pty on some transports and translates `\n`
-    // to `\r\n`, which rewrites every 0x0A byte inside the PNG.
+    // `exec-out` rather than `shell`: `shell` allocates a pty on some transports and translates
+    // `\n` to `\r\n`, which rewrites every 0x0A byte inside the PNG.
     let png = toolchain::capture(
         &toolchain.adb,
         &["-s", serial, "exec-out", "screencap", "-p"],
@@ -488,12 +488,12 @@ fn open_mirror(mut client: TcpStream, bridge: &Arc<Bridge>, request: &Request) {
     };
     let options = mirror_options(request);
 
-    // The device's state is asked of `adb` NOW rather than trusted from the panel's list, which is up
-    // to four seconds stale and misses every boot in progress. Without this, an `open` against a
-    // booting device dies inside `adb push` with a sentence about tunnels — measured 2026-08-07: a
-    // cold boot sits `offline` for ~21 s, and an open issued the moment it turns `device` can stall
-    // in push for ~15 s more. The client's reattempt loop absorbs the wait; this reply is what tells
-    // it the wait is worth making.
+    // The device's state is asked of `adb` NOW rather than trusted from the panel's list, which is
+    // up to four seconds stale and misses every boot in progress. Without this, an `open`
+    // against a booting device dies inside `adb push` with a sentence about tunnels — measured
+    // 2026-08-07: a cold boot sits `offline` for ~21 s, and an open issued the moment it turns
+    // `device` can stall in push for ~15 s more. The client's reattempt loop absorbs the wait;
+    // this reply is what tells it the wait is worth making.
     let listing = bridge
         .toolchain
         .adb(None, &["devices"], Duration::from_secs(5))
@@ -540,11 +540,11 @@ fn open_mirror(mut client: TcpStream, bridge: &Arc<Bridge>, request: &Request) {
     let session = Arc::new(Mutex::new(started));
     bridge.remember(&session);
 
-    // Nagle on the downstream leg too, and not only on the control leg it was first set for. A frame
-    // is written as one call but leaves as a run of full segments and one short tail, and it is the
-    // tail that Nagle holds back until the client acknowledges what came before — which the client,
-    // having a whole frame to decode, is in no hurry to do. The delay lands at a frame boundary every
-    // time, which is exactly where the eye is looking for it.
+    // Nagle on the downstream leg too, and not only on the control leg it was first set for. A
+    // frame is written as one call but leaves as a run of full segments and one short tail, and
+    // it is the tail that Nagle holds back until the client acknowledges what came before —
+    // which the client, having a whole frame to decode, is in no hurry to do. The delay lands
+    // at a frame boundary every time, which is exactly where the eye is looking for it.
     let _ignored = client.set_nodelay(true);
     reply(&mut client, &encode_ok(json!({ "device": device_name })));
 

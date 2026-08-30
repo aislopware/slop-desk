@@ -564,7 +564,8 @@ mod tests {
         }
         // The regression guard for the reversal: a solid plate needs light ink to stay legible, so
         // an inverted chip and a foreground override arrive together. Every row here carries a
-        // saturated multi-colour file icon authored for a light bed, which cannot follow a dark one.
+        // saturated multi-colour file icon authored for a light bed, which cannot follow a dark
+        // one.
         let inverting: Vec<&String> = colours
             .keys()
             .filter(|key| {

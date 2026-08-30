@@ -237,7 +237,8 @@ mod tests {
     #[test]
     fn a_null_record_list_is_an_empty_one() {
         let q = b"split";
-        // SAFETY: the query is live; a null record pointer with length 0 is the documented empty pair.
+        // SAFETY: the query is live; a null record pointer with length 0 is the documented empty
+        // pair.
         let hits = unsafe {
             slopdesk_ws_binding_row_matches(
                 q.as_ptr(),

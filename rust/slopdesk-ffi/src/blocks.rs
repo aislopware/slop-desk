@@ -631,9 +631,9 @@ pub unsafe extern "C" fn slopdesk_block_store_project(
         // `row_cap` records by the caller's obligation.
         unsafe { rows.add(position).write(row) };
         // SAFETY: the offsets run over one pass of the same blocks the length was summed from, so
-        // `offset + bytes.len() <= arena_length <= arena_cap`, and `arena` is writable for that many
-        // bytes by the caller's obligation. The source is owned by the store, which the caller may
-        // not alias.
+        // `offset + bytes.len() <= arena_length <= arena_cap`, and `arena` is writable for that
+        // many bytes by the caller's obligation. The source is owned by the store, which
+        // the caller may not alias.
         unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), arena.add(offset), bytes.len()) };
         offset += bytes.len();
     }

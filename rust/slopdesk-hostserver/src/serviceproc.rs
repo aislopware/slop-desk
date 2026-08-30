@@ -220,12 +220,13 @@ impl ServiceProcess {
         // line is the first thing the service ever said and superd's ring still has it.
         let stream = PaneOutputStream::new(Arc::clone(client), Some(pane_id), 0, sink);
         stream.start();
-        // superd holds the ONLY master for this service, so superd dying kills the child — and hostd
-        // would otherwise never hear about it, because the `exited` notice travels the connection
-        // that just died. Marking the handle ended makes the next ensure re-run `spawn_or_adopt`,
-        // which adopts the survivor if superd was merely unreachable and spawns a fresh one if it
-        // really restarted. An OBSERVER rather than the owner's `disconnected`, because this client
-        // is shared by every panel service.
+        // superd holds the ONLY master for this service, so superd dying kills the child — and
+        // hostd would otherwise never hear about it, because the `exited` notice travels
+        // the connection that just died. Marking the handle ended makes the next ensure
+        // re-run `spawn_or_adopt`, which adopts the survivor if superd was merely
+        // unreachable and spawns a fresh one if it really restarted. An OBSERVER rather
+        // than the owner's `disconnected`, because this client is shared by every panel
+        // service.
         let latch = Arc::downgrade(&process);
         let token = client.observe_disconnect(Arc::new(move || {
             if let Some(process) = Weak::upgrade(&latch) {

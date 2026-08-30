@@ -293,9 +293,9 @@ impl VideoSessionStateMachine {
                 fps_cap,
                 bitrate_ceiling_bps,
             } if self.media_flowing() => {
-                // Live controls apply only to a STREAMING session: there is no capture or encoder to
-                // actuate otherwise, and the client re-sends after every accepted hello, so a
-                // pre-stream message is never load-bearing.
+                // Live controls apply only to a STREAMING session: there is no capture or encoder
+                // to actuate otherwise, and the client re-sends after every
+                // accepted hello, so a pre-stream message is never load-bearing.
                 vec![SessionEffect::ApplyStreamSettings {
                     fps_cap,
                     bitrate_ceiling_bps,
@@ -307,8 +307,8 @@ impl VideoSessionStateMachine {
             VideoControlMessage::PrivacyMode { enabled }
                 if self.media_flowing() && self.is_display_target =>
             {
-                // Scoped to a DISPLAY target: a window session drops it, because there is no display
-                // to black without hiding an unrelated app.
+                // Scoped to a DISPLAY target: a window session drops it, because there is no
+                // display to black without hiding an unrelated app.
                 vec![SessionEffect::ApplyPrivacyMode { enabled }]
             },
             // Everything else is a no-op here. A keepalive carries no state-machine semantics — its
@@ -412,9 +412,10 @@ impl VideoSessionStateMachine {
         self.capture_height = height;
         self.window_id = target_id;
         self.is_display_target = display_target;
-        // Re-arm the resize epoch for the FRESH session. A reconnecting client mints epochs from one
-        // again, because its debounce is per-connection, so a stale epoch carried over from the
-        // prior session would make every new one look stale and drop its first resizes.
+        // Re-arm the resize epoch for the FRESH session. A reconnecting client mints epochs from
+        // one again, because its debounce is per-connection, so a stale epoch carried over
+        // from the prior session would make every new one look stale and drop its first
+        // resizes.
         self.last_resize_epoch = 0;
         self.state = VideoSessionState::Streaming;
         vec![

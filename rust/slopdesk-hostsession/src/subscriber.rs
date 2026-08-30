@@ -268,12 +268,13 @@ pub(crate) fn run_input_relay(
                 }
                 shared.end_input_write();
             }
-            // Two folds over what was just typed, here rather than anywhere else for one reason: the
-            // termios `ECHO` bit flips fastest around a password prompt, and the instant after the
-            // keystroke that opened it is when the probe is right. The cancel edge has the same
-            // shape — a `Ctrl-C` observed after the output it interrupted is an agent reported busy
-            // through its own interruption. Both are cheap enough to sit on this path: one
-            // `tcgetattr`, and a fold that bails on its status check before reading a byte.
+            // Two folds over what was just typed, here rather than anywhere else for one reason:
+            // the termios `ECHO` bit flips fastest around a password prompt, and the
+            // instant after the keystroke that opened it is when the probe is right.
+            // The cancel edge has the same shape — a `Ctrl-C` observed after the output
+            // it interrupted is an agent reported busy through its own interruption.
+            // Both are cheap enough to sit on this path: one `tcgetattr`, and a fold
+            // that bails on its status check before reading a byte.
             Detect::sample_echo(shared, pty);
             detect.fold_input(shared, bytes);
         }
@@ -290,8 +291,8 @@ pub(crate) fn run_input_relay(
     // are two, pause the PTY for a client that is still right there.
     subscriber.retire();
     // Whether that EMPTIED the set is the detach ladder's question, and the detach ladder is stage
-    // C.2c's. What the answer changes here is nothing: the online truth below is recomputed from the
-    // set either way.
+    // C.2c's. What the answer changes here is nothing: the online truth below is recomputed from
+    // the set either way.
     let _emptied = shared.retire(subscriber);
     shared.recompute_client_online();
 }

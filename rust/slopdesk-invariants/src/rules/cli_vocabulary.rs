@@ -487,8 +487,9 @@ pub fn the_ui_shell_docs_describe_the_shipped_cli(tree: &Tree) -> Report {
             continue;
         };
 
-        // A verb the docs name is a verb the vocabulary knows. CATCHES the `theme` bug: a doc naming
-        // a subcommand that is in no availability at all, so it is not merely unbuilt.
+        // A verb the docs name is a verb the vocabulary knows. CATCHES the `theme` bug: a doc
+        // naming a subcommand that is in no availability at all, so it is not merely
+        // unbuilt.
         let unknown: Vec<&str> = cli_tokens(&section)
             .into_iter()
             .filter(|token| !vocab_words.contains(token.as_str()))

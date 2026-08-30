@@ -425,8 +425,9 @@ impl EncoderState {
         // regime READS it. The Swift folded inside that regime's arm and drained its drop counter
         // there too, so under const-QP or per-frame adaptation the counter accumulated for the life
         // of the process and nothing ever emptied it. Folding here is what makes `drops` an input
-        // rather than a buried counter, and it is what lets [`Self::drop_relief`] answer honestly in
-        // every regime — which is the number a host log needs to explain a coarse stream.
+        // rather than a buried counter, and it is what lets [`Self::drop_relief`] answer honestly
+        // in every regime — which is the number a host log needs to explain a coarse
+        // stream.
         let relief = self.drop_relief.fold(drops);
 
         if let Some(_engaged) = self.config.const_qp {

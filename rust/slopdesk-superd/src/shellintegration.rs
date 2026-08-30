@@ -309,7 +309,8 @@ pub fn probe_zdotdir(
         .spawn()
         .ok()?;
 
-    // Bounded wait. Polling is fine on this rare path — the probe only runs when /etc/zshenv exists.
+    // Bounded wait. Polling is fine on this rare path — the probe only runs when /etc/zshenv
+    // exists.
     let deadline = std::time::Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {

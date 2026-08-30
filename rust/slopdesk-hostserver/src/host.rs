@@ -979,8 +979,9 @@ impl ControlHost for Host {
                 return Err(SpawnRefused(String::from("the host is stopping")));
             }
             sessions.attach_control(&pane);
-            // Under the SAME acquisition as the insert, and after it: the route is advertised to the
-            // child as `SLOPDESK_PANE_ID`, and a refused insert must leave no key behind to retire.
+            // Under the SAME acquisition as the insert, and after it: the route is advertised to
+            // the child as `SLOPDESK_PANE_ID`, and a refused insert must leave no key
+            // behind to retire.
             sessions.register_hook(&pane, &uuid_text(session));
         }
         self.spawner.start(&pane, cwd);
@@ -991,9 +992,10 @@ impl ControlHost for Host {
         let Some(id) = parse_uuid(pane_id) else {
             return false;
         };
-        // The channel panes first. EVERY key naming the pane goes, not just the first match: under a
-        // fan-out N keys alias one pane, and a survivor keeps the killed pane in `list-panes`, shut
-        // again by the host's own stop, and read as attached by the rebind recovery.
+        // The channel panes first. EVERY key naming the pane goes, not just the first match: under
+        // a fan-out N keys alias one pane, and a survivor keeps the killed pane in
+        // `list-panes`, shut again by the host's own stop, and read as attached by the
+        // rebind recovery.
         let mux = {
             let mut sessions = self.sessions();
             sessions
@@ -1023,9 +1025,10 @@ impl ControlHost for Host {
         // Then the DETACHED store — panes with no client attached right now.
         //
         // Two ways to be in there and ctl must be able to end either: a client that disconnected,
-        // and a pane this host ADOPTED at start. The second is why this branch has to exist at all —
-        // a survivor is parked from the moment the daemon comes up, so without it every pane that
-        // outlived a restart was unkillable while being perfectly visible in `list-panes`.
+        // and a pane this host ADOPTED at start. The second is why this branch has to exist at all
+        // — a survivor is parked from the moment the daemon comes up, so without it every
+        // pane that outlived a restart was unkillable while being perfectly visible in
+        // `list-panes`.
         let Some(store) = self.detached.as_ref() else {
             return false;
         };

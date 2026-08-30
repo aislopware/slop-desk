@@ -237,8 +237,8 @@ mod tests {
         assert_eq!(probe.classify(&asked, 0.0).ax_listed, vec![1]);
 
         let refusing = scripted(vec![(9, None)]);
-        // A fresh probe with a refusing sweeper knows nothing at all, which is the OTHER half of the
-        // same rule: never swept is not evidence either.
+        // A fresh probe with a refusing sweeper knows nothing at all, which is the OTHER half of
+        // the same rule: never swept is not evidence either.
         let verdict = refusing.classify(&asked, 0.0);
         assert!(verdict.ax_listed.is_empty());
         assert!(verdict.minimized.is_empty());

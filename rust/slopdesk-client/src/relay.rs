@@ -253,9 +253,9 @@ pub fn run(args: &Args<'_>, errors: &mut impl Write) -> u8 {
 
     // The stdin thread is abandoned, parked in `read(2)`, and the resize waiter in `sigwait`. Both
     // are deliberate: neither owns anything the process needs back, and the alternative is the
-    // Swift's `Shutdown` — a flag, a `close(STDIN_FILENO)` and a cancellation, three moving parts to
-    // retire two threads the kernel retires for free when the process ends. What the guard below
-    // still owes is the terminal, and it is dropped before the return rather than at it.
+    // Swift's `Shutdown` — a flag, a `close(STDIN_FILENO)` and a cancellation, three moving parts
+    // to retire two threads the kernel retires for free when the process ends. What the guard
+    // below still owes is the terminal, and it is dropped before the return rather than at it.
     drop(guard);
     code
 }

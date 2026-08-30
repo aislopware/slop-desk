@@ -105,8 +105,9 @@ pub fn run(root: &Path, window: &str, args: &[String]) -> Result<(), String> {
     // way up — AX-moving whatever windows it names back off a dead virtual display — and UNLINKS it
     // unconditionally, before it even tries to decode it. Pointed at the real container, an
     // un-isolated run restores and then destroys the crash journal belonging to the developer's own
-    // videohostd, and moves their windows while doing it. `video-prefs.json` folds into the daemon's
-    // `env::Overlay` at the same moment, so it would also measure a configuration nobody wrote.
+    // videohostd, and moves their windows while doing it. `video-prefs.json` folds into the
+    // daemon's `env::Overlay` at the same moment, so it would also measure a configuration
+    // nobody wrote.
     let state = std::env::temp_dir().join(format!("slopdesk-input-test.{}", std::process::id()));
     let environment = container(&state)?;
 

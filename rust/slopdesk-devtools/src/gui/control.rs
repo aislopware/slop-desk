@@ -487,7 +487,8 @@ mod tests {
         assert_eq!(value("CFFIXED_USER_HOME").as_deref(), Some("/tmp/gate-container"));
         assert_eq!(value("HOME").as_deref(), Some("/tmp/gate-container"));
         assert_eq!(value(DEFAULTS_SUITE_ENV).as_deref(), Some(suite.name()));
-        // No socket asked for, so none is bound: an instance nobody addresses must not squat a path.
+        // No socket asked for, so none is bound: an instance nobody addresses must not squat a
+        // path.
         assert_eq!(value("SLOPDESK_CLIENT_SOCKET"), None);
     }
 

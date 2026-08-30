@@ -451,7 +451,8 @@ mod tests {
         assert!(super::the_git_line_stays_measured(&fixture.tree()).is_clean());
 
         // The memo dropped, on either side. The phone arm is the one that did not exist before the
-        // ladder moved down: the Mac half can stay perfect while the UIKit half re-measures per draw.
+        // ladder moved down: the Mac half can stay perfect while the UIKit half re-measures per
+        // draw.
         fixture.write(super::HEADER, "var summary: PaneGitSummary?\n");
         assert!(!super::the_git_line_stays_measured(&fixture.tree()).is_clean());
 
@@ -523,8 +524,8 @@ mod tests {
         let fixture = Fixture::new("macui-leaf");
         fixture.write(super::GUI_LEAF_CORE, "private var cachedPaneKind: PaneKind?\n");
         for shell in super::GUI_LEAF_SHELLS {
-            // Asking the tree for something that is NOT fixed per pane id stays legal — the ban is on
-            // the `.kind` reading, not on the function.
+            // Asking the tree for something that is NOT fixed per pane id stays legal — the ban is
+            // on the `.kind` reading, not on the function.
             fixture.write(shell, "let detached = store.tree.isDetached(paneID)\n");
         }
         assert!(super::the_gui_leaf_remembers_its_kind(&fixture.tree()).is_clean());
@@ -534,8 +535,8 @@ mod tests {
         assert!(!super::the_gui_leaf_remembers_its_kind(&fixture.tree()).is_clean());
         fixture.write(super::GUI_LEAF_CORE, "private var cachedPaneKind: PaneKind?\n");
 
-        // The walk restored in the CONTROL BAR — the site the name-only rule never looked at, and the
-        // one a plate sync runs per model tick.
+        // The walk restored in the CONTROL BAR — the site the name-only rule never looked at, and
+        // the one a plate sync runs per model tick.
         fixture.write(
             super::GUI_LEAF_SHELLS[1],
             "let isDesktop = store.tree.spec(for: paneID)?.kind == .desktop\n",

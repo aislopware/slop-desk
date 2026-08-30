@@ -125,7 +125,8 @@ mod tests {
         assert!(parsed);
         assert_eq!((state, percent), (1, 40));
 
-        // An OSC 9 the host sees far more often: a plain notification, whose first field is a title.
+        // An OSC 9 the host sees far more often: a plain notification, whose first field is a
+        // title.
         let foreign = b"some title";
         // SAFETY: as above.
         let parsed = unsafe {

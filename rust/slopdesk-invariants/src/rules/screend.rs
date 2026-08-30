@@ -74,11 +74,11 @@ pub fn address(tree: &Tree) -> Report {
     ];
     let mut report = check_all(tree, &claims);
 
-    // The address literal, banned in CODE up to `#[cfg(test)]` only. Both exclusions are load-bearing
-    // here: the doc comment above the resolution NAMES the socket to record what the rule picks, and
-    // the suite asserts the resolution BY spelling the resulting path. Matching either would be the
-    // gate failing on its own documentation and its own proof — the same shape superd's half of this
-    // rule already needed.
+    // The address literal, banned in CODE up to `#[cfg(test)]` only. Both exclusions are
+    // load-bearing here: the doc comment above the resolution NAMES the socket to record what
+    // the rule picks, and the suite asserts the resolution BY spelling the resulting path.
+    // Matching either would be the gate failing on its own documentation and its own proof —
+    // the same shape superd's half of this rule already needed.
     if let Some(client) = report.source(tree, CLIENT_PATHS, "hostd's end of screend's address lives there") {
         let code = text::before(client.code(), r"#\[cfg\(test\)\]");
         report.fail_if(

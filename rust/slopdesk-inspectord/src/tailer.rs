@@ -270,8 +270,9 @@ mod tests {
         let mut tailer = TranscriptTailer::new(&path);
         assert_eq!(texts(&tailer.poll()), vec!["old".to_owned()]);
 
-        // `mv` the old file away and put a BIGGER one at the same path. A size-only check reads from
-        // the stale offset and loses the new file's prefix; the identity check restarts.
+        // `mv` the old file away and put a BIGGER one at the same path. A size-only check reads
+        // from the stale offset and loses the new file's prefix; the identity check
+        // restarts.
         fs::rename(&path, dir.join("session.jsonl.1")).expect("renamed");
         append(
             &path,

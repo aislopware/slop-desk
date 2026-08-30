@@ -109,9 +109,9 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
 
     // The same question a second time, about the recipe that RUNS the tests — and asked of a dry
-    // run of `test` rather than of its dependency line, because reading the `<short>-test` names off
-    // `test:` gets it WRONG: `slopdesk-sanitize` has no recipe of its own, its tests run inside
-    // `screend-test`, and the first draft of this check reported it as untested.
+    // run of `test` rather than of its dependency line, because reading the `<short>-test` names
+    // off `test:` gets it WRONG: `slopdesk-sanitize` has no recipe of its own, its tests run
+    // inside `screend-test`, and the first draft of this check reported it as untested.
     let test_plan: String = dry_run(root, "test")
         .lines()
         .filter(|line| line.contains("cargo test"))

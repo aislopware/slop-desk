@@ -257,7 +257,8 @@ mod tests {
     /// dereferenced.
     #[test]
     fn an_empty_fold_and_null_buffers_are_inert() {
-        // SAFETY: a zero-length read of a dangling-but-aligned pointer; neither out param is touched.
+        // SAFETY: a zero-length read of a dangling-but-aligned pointer; neither out param is
+        // touched.
         let empty = unsafe {
             slopdesk_ws_settle_step(
                 core::ptr::NonNull::dangling().as_ptr(),

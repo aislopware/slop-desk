@@ -230,8 +230,9 @@ pub fn every_linked_artifact_is_built_by_the_release(tree: &Tree) -> Report {
             );
             continue;
         }
-        // ANY of them, not the first one found. Several files know an artifact without producing it,
-        // and the question that has one right answer is whether the workflow runs one that does.
+        // ANY of them, not the first one found. Several files know an artifact without producing
+        // it, and the question that has one right answer is whether the workflow runs one
+        // that does.
         if !found.iter().any(|producer| code.contains(producer.as_str())) {
             unbuilt.insert(
                 artifact.clone(),

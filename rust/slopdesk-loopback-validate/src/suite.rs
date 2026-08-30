@@ -74,8 +74,8 @@ pub fn run(frames_per_phase: usize) {
         ..closedloop::Arm::default()
     });
     // The fair window is STEADY STATE — the second half of the adverse phase. It excludes the
-    // adaptive run's climb-from-OFF transient, which the pinned baseline never pays, and by then the
-    // adaptive tier has settled at its heaviest.
+    // adaptive run's climb-from-OFF transient, which the pinned baseline never pays, and by then
+    // the adaptive tier has settled at its heaviest.
     println!(
         "    adverse STEADY-STATE (2nd half) UNRECOVERED : adaptive={}  vs  pinned-g5={}",
         on.adverse_unrec_second_half, fec_pinned.adverse_unrec_second_half,

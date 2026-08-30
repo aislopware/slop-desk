@@ -312,7 +312,8 @@ pub fn ios_tests(root: &Path, request: &SimulatorRequest) -> Result<(), String> 
     if we_booted {
         println!("==> booting {} ({udid})", request.device);
         let _ignored = proc::ask("xcrun", &["simctl", "boot", &udid], root);
-        // `bootstatus -b` returns when the device finishes booting; a no-op on an already-booted one.
+        // `bootstatus -b` returns when the device finishes booting; a no-op on an already-booted
+        // one.
         let _ignored = proc::ask("xcrun", &["simctl", "bootstatus", &udid, "-b"], root);
     }
     println!("==> simulator: {} ({udid})", request.device);

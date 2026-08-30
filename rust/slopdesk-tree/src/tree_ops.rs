@@ -245,10 +245,11 @@ fn cascade_after_tab_removal(
         return ws.clone();
     };
     if session.tabs.is_empty() {
-        // A session that still owns DETACHED panes survives its last tab closing — the person closed
-        // a TAB, not the satellites, and dropping the session here would orphan their specs and tear
-        // live streams down mid-use. The selection repair re-seeds a default tab so the session
-        // stays renderable. An explicit `close_session` still drops everything, satellites included.
+        // A session that still owns DETACHED panes survives its last tab closing — the person
+        // closed a TAB, not the satellites, and dropping the session here would orphan
+        // their specs and tear live streams down mid-use. The selection repair re-seeds a
+        // default tab so the session stays renderable. An explicit `close_session` still
+        // drops everything, satellites included.
         if !session.detached.is_empty() {
             return ws.clone();
         }
@@ -439,8 +440,8 @@ pub fn move_leaf_across_tabs(
     let Some(session) = next.sessions.get_mut(source_session) else {
         return ws.clone();
     };
-    // The destination is validated BEFORE the source tab is touched, so a rejected insert leaves the
-    // workspace whole.
+    // The destination is validated BEFORE the source tab is touched, so a rejected insert leaves
+    // the workspace whole.
     let Some(destination) = session.tabs.get(target_tab).cloned() else {
         return ws.clone();
     };
@@ -659,8 +660,8 @@ fn tiled(leaves: &[PaneId], ids: &mut impl IdSource) -> SplitNode {
     while rows * cols < count {
         rows += 1;
     }
-    // Round-robin over the rows gives exactly the near-equal slices: row `r` takes one leaf for each
-    // index congruent to it, which is the base width plus one for the first few rows.
+    // Round-robin over the rows gives exactly the near-equal slices: row `r` takes one leaf for
+    // each index congruent to it, which is the base width plus one for the first few rows.
     let mut widths = vec![0_usize; rows];
     for index in 0..count {
         if let Some(width) = widths.get_mut(index % rows) {

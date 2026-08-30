@@ -461,9 +461,9 @@ impl ReplayBuffer {
                     bytes: entry.bytes,
                 });
             }
-            // A prior eviction emptied the ring mid-alt-segment: these are the first surviving bytes,
-            // so the re-opener lands here — BEFORE the eviction below, whose cut scan must see the
-            // opener to keep tracking the still-open segment.
+            // A prior eviction emptied the ring mid-alt-segment: these are the first surviving
+            // bytes, so the re-opener lands here — BEFORE the eviction below, whose cut
+            // scan must see the opener to keep tracking the still-open segment.
             if ring_was_empty {
                 self.attach_pending_reopen();
             }
@@ -527,7 +527,8 @@ impl ReplayBuffer {
             dropped.extend_from_slice(&entry.bytes);
         }
         self.scrollback_bytes -= dropped_bytes;
-        // Landed at/under cap: line-align the new oldest so the ring never starts mid-escape-sequence.
+        // Landed at/under cap: line-align the new oldest so the ring never starts
+        // mid-escape-sequence.
         if self.scrollback_bytes <= self.scrollback_bytes_cap
             && let Some(head) = self.scrollback_ring.first_mut()
             && let Some(newline) = head.bytes.iter().position(|&byte| byte == b'\n')
@@ -728,8 +729,8 @@ impl ReplayBuffer {
             })
             .collect();
         self.scrollback_bytes = rendered.len();
-        // The canonical stream is self-contained (it opens with the full preamble wipe) — any carried
-        // alt-segment repair belongs to the raw bytes it just replaced.
+        // The canonical stream is self-contained (it opens with the full preamble wipe) — any
+        // carried alt-segment repair belongs to the raw bytes it just replaced.
         self.pending_alt_reopen = None;
         true
     }
@@ -765,9 +766,10 @@ impl ReplayBuffer {
                     });
                 }
             } else {
-                // The adopted stream REPLACES the tail, so its cumulative labels are re-derived from
-                // the running total's current value — the invariant `retained_bytes_above` reads is
-                // "labels ascend to `tail_cumulative_bytes`", and rebasing here keeps that true
+                // The adopted stream REPLACES the tail, so its cumulative labels are re-derived
+                // from the running total's current value — the invariant
+                // `retained_bytes_above` reads is "labels ascend to
+                // `tail_cumulative_bytes`", and rebasing here keeps that true
                 // across a wholesale replacement.
                 tail.push(TailEntry {
                     seq: *seq,
@@ -962,7 +964,8 @@ mod tests {
         }
         buffer.ack(3);
         assert_eq!(buffer.acked_seq(), 3);
-        // `messages(acked_seq)` isolates the un-acked tail; `messages(0)` would also include the ring.
+        // `messages(acked_seq)` isolates the un-acked tail; `messages(0)` would also include the
+        // ring.
         let tail: Vec<i64> = buffer
             .messages(buffer.acked_seq())
             .into_iter()
@@ -1280,8 +1283,8 @@ mod tests {
 
     #[test]
     fn ring_eviction_is_line_aligned() {
-        // cap 8. s1 = "AAAA" (4 B), s2 = "BB\nCC" (5 B). Ack s1 → 4 B, under cap. Ack s2 → 9 B > 8 →
-        // evict s1 → 5 B ≤ 8 → trim s2 past its `\n` → "CC".
+        // cap 8. s1 = "AAAA" (4 B), s2 = "BB\nCC" (5 B). Ack s1 → 4 B, under cap. Ack s2 → 9 B > 8
+        // → evict s1 → 5 B ≤ 8 → trim s2 past its `\n` → "CC".
         let mut buffer = ReplayBuffer::with_scrollback(8);
         let first = buffer.append(bytes("AAAA"));
         let second = buffer.append(bytes("BB\nCC"));
@@ -1572,8 +1575,8 @@ mod tests {
 
     #[test]
     fn the_line_trim_and_the_repair_compose() {
-        // cap 12. s1 = opener + "x\n" (10 B) evicts whole; s2 = "in-alt\nrest" (11 B) survives and is
-        // line-trimmed to "rest" — still inside the segment → opener + "rest".
+        // cap 12. s1 = opener + "x\n" (10 B) evicts whole; s2 = "in-alt\nrest" (11 B) survives and
+        // is line-trimmed to "rest" — still inside the segment → opener + "rest".
         let mut buffer = ReplayBuffer::with_scrollback(12);
         let first = buffer.append(bytes("\u{1B}[?1049hx\n"));
         let second = buffer.append(bytes("in-alt\nrest"));

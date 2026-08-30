@@ -181,9 +181,10 @@ impl HookTable {
             parsed.tool_use_id,
             parsed.label,
         );
-        // Called OUTSIDE the routes lock. The fold reaches the pane's detector, which takes locks of
-        // its own and calls status observers that reach back into the composition; holding this one
-        // across it would make every hook a lock-order hazard for every bind.
+        // Called OUTSIDE the routes lock. The fold reaches the pane's detector, which takes locks
+        // of its own and calls status observers that reach back into the composition;
+        // holding this one across it would make every hook a lock-order hazard for every
+        // bind.
         pane.fold_hook(event, parsed.kind_byte, parsed.prompt.as_deref());
     }
 

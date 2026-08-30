@@ -278,10 +278,10 @@ pub fn classify_pair(span_delta: f64, centroid_travel: f64, zoom: f64) -> Option
     if span_delta.abs() >= PINCH_SPAN_SLOP {
         return Some(TouchPairRoute::Zoom);
     }
-    // `zoom` is the compositor scale the user is looking through; at 1× there is nothing to pan (the
-    // whole stream is in the pane), so the pair can only mean a remote scroll. Written as a
-    // predicate rather than as `travel < slop` so a NaN travel stays UNDECIDED, which is the answer
-    // that sends nothing.
+    // `zoom` is the compositor scale the user is looking through; at 1× there is nothing to pan
+    // (the whole stream is in the pane), so the pair can only mean a remote scroll. Written as
+    // a predicate rather than as `travel < slop` so a NaN travel stays UNDECIDED, which is the
+    // answer that sends nothing.
     (centroid_travel >= PAIR_TRAVEL_SLOP).then_some(if zoom > MIN_ZOOM {
         TouchPairRoute::Pan
     } else {
@@ -325,8 +325,8 @@ pub fn clamp_zoom(zoom: f64) -> f64 {
     if !zoom.is_finite() {
         return MIN_ZOOM;
     }
-    // `max`/`min` rather than `clamp` for the repo's bit-exactness rule: a comparison that SELECTS a
-    // float is the pair of IEEE operations, never a `<` ternary.
+    // `max`/`min` rather than `clamp` for the repo's bit-exactness rule: a comparison that SELECTS
+    // a float is the pair of IEEE operations, never a `<` ternary.
     let mut clamped = f64::min(f64::max(zoom, MIN_ZOOM), MAX_ZOOM);
     if (clamped - 1.0).abs() < UNITY_SNAP {
         clamped = 1.0;
@@ -927,7 +927,8 @@ mod tests {
     #[test]
     fn the_same_mask_twice_is_nothing_changed() {
         // The rule that makes this safe to call from a MOVE: UIKit reports the mask on every event
-        // of the gesture, so a drag re-answers the press it already sent unless the diff swallows it.
+        // of the gesture, so a drag re-answers the press it already sent unless the diff swallows
+        // it.
         let first = pointer_button_transitions(0, UI_BUTTON_PRIMARY);
         assert_eq!(first.pressed, POINTER_BUTTON_LEFT);
         assert_eq!(first.released, 0);

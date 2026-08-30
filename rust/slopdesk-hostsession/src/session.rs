@@ -347,9 +347,10 @@ impl PaneSession {
     ) -> SubscriberId {
         let id = self.shared.reserve_subscriber_id();
         let subscriber = Subscriber::new(id, data, control);
-        // Read the head BEFORE the roster admits this member. Every frame that can reach its lane is
-        // sequenced after the admit, so it is numbered above this — read it after and a frame landing
-        // in the window would be at or below the sender's cursor, and silently skipped.
+        // Read the head BEFORE the roster admits this member. Every frame that can reach its lane
+        // is sequenced after the admit, so it is numbered above this — read it after and a
+        // frame landing in the window would be at or below the sender's cursor, and
+        // silently skipped.
         let head = self.shared.highest_seq();
         self.shared.admit(&subscriber, 0);
         self.resize.add_contributor(id, size_passive);
@@ -519,10 +520,10 @@ impl PaneSession {
                 );
             }
             // Between the EOF gate and the exit message, and that position IS the contract: an
-            // orchestrator watching this pane has now been handed every output byte, and has not yet
-            // been told the pane is gone. Ahead of `append_exit` rather than after it because the
-            // exit rides a queue — a close fired afterwards would still be the SECOND thing the
-            // watcher heard only by luck of the drain's timing.
+            // orchestrator watching this pane has now been handed every output byte, and has not
+            // yet been told the pane is gone. Ahead of `append_exit` rather than after
+            // it because the exit rides a queue — a close fired afterwards would still
+            // be the SECOND thing the watcher heard only by luck of the drain's timing.
             taps.notify_closed();
             shared.append_exit(code);
             // Wait until the drain actually SENT it before firing the observer, which is what
@@ -700,9 +701,10 @@ impl PaneSession {
         if !verdict.first {
             return;
         }
-        // Retire every member. The resize contributors are DELIBERATELY left in the fold: a reattach
-        // swaps the sub-channels while the same PTY lives on, and forgetting the standing offer here
-        // would snap the pane back to its spawn size until the returning client sent a new one.
+        // Retire every member. The resize contributors are DELIBERATELY left in the fold: a
+        // reattach swaps the sub-channels while the same PTY lives on, and forgetting the
+        // standing offer here would snap the pane back to its spawn size until the
+        // returning client sent a new one.
         for member in self.shared.roster() {
             member.retire();
             let _emptied = self.shared.retire(&member);
@@ -764,8 +766,8 @@ impl PaneSession {
         self.shared.end_fan_out();
         self.shared.set_observer(observer);
         // The returning client REPLACES the member the detach retired: a subscriber IS its channel
-        // pair, so a new pair is a new member under the same id, never a swap underneath the threads
-        // a departed one owned.
+        // pair, so a new pair is a new member under the same id, never a swap underneath the
+        // threads a departed one owned.
         let member = Subscriber::new(PRIMARY_SUBSCRIBER, data, control);
         self.shared.admit(&member, 0);
 
@@ -1007,9 +1009,10 @@ impl PaneSession {
         self.shared.mark_torn_down();
         self.stop_stream();
         // Nobody holds a dead pane at a size, and no timer may still be pending against it. The
-        // fold's GENERATION is deliberately not rewound by `clear_members` — a body already past its
-        // sleep must not find its stale generation matching a fresh one — and `stop` then makes the
-        // question moot by dropping every pending body and joining the thread that would run them.
+        // fold's GENERATION is deliberately not rewound by `clear_members` — a body already past
+        // its sleep must not find its stale generation matching a fresh one — and `stop`
+        // then makes the question moot by dropping every pending body and joining the
+        // thread that would run them.
         self.resize.clear_members();
         self.resize.stop();
         // Both detection loops park on a condvar rather than sleeping, precisely so this is
@@ -1044,17 +1047,19 @@ impl PaneSession {
             // first point at which the trait's own sentence is true: the stream was unsubscribed at
             // the top, so every byte hostd will ever see has already reached every output tap; the
             // EOF latch was released a few lines up; and `end_child` has just reaped the child. An
-            // announcement before the signal would tell an orchestrator its agent was gone while the
-            // shell was still running, which is the same lie the relinquish path is silent to avoid.
+            // announcement before the signal would tell an orchestrator its agent was gone while
+            // the shell was still running, which is the same lie the relinquish path is
+            // silent to avoid.
             //
-            // Which is why a `relinquish` says NOTHING. The pane is not over: superd still holds the
-            // master, the shell never sees a `SIGHUP`, and the next hostd adopts it back. Nothing
-            // waits on the silence either — hostd is exiting, so a `subscribe` pump ends on its own
-            // socket regardless.
+            // Which is why a `relinquish` says NOTHING. The pane is not over: superd still holds
+            // the master, the shell never sees a `SIGHUP`, and the next hostd adopts it
+            // back. Nothing waits on the silence either — hostd is exiting, so a
+            // `subscribe` pump ends on its own socket regardless.
             //
             // Idempotent with the exit thread's call, which is the announcer on the path where the
-            // CHILD ends first — there the exit thread runs its EOF gate and fires ahead of `.exit`,
-            // and reaches this ladder afterwards to find the latch already thrown.
+            // CHILD ends first — there the exit thread runs its EOF gate and fires ahead of
+            // `.exit`, and reaches this ladder afterwards to find the latch already
+            // thrown.
             self.taps.notify_closed();
         }
 

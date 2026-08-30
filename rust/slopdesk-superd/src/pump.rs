@@ -462,7 +462,8 @@ impl Worker {
         let now_ms = now_ms();
         let events = self.sniffer.as_mut().map_or_else(Vec::new, |sniffer| {
             // Applied HERE rather than where the flag was set, so the retirement lands on a chunk
-            // boundary: a title split across two reads is never half-deduped against a stale anchor.
+            // boundary: a title split across two reads is never half-deduped against a stale
+            // anchor.
             if forget {
                 sniffer.forget_title_coalescing();
             }

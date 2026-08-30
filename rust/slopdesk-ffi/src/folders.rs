@@ -276,8 +276,8 @@ pub unsafe extern "C" fn slopdesk_folder_sanitized(
     if kept.len() > order_cap || order.is_null() || kept.is_empty() {
         return kept.len();
     }
-    // SAFETY: the buffer is non-null and holds at least `kept.len()` entries, by the check above and
-    // the caller's obligation that it is writable for `order_cap`.
+    // SAFETY: the buffer is non-null and holds at least `kept.len()` entries, by the check above
+    // and the caller's obligation that it is writable for `order_cap`.
     unsafe { std::ptr::copy_nonoverlapping(kept.as_ptr(), order, kept.len()) };
     kept.len()
 }

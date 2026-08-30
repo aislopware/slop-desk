@@ -449,9 +449,9 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     );
 
     // ONE auto-connect spawns ONE shell. The video shape is a lone terminal plus a DETACHED desktop
-    // pane, and a `.desktop` pane runs no PTY — so exactly one shell may ever attach. A second means
-    // the bootstrap adopted a tree the window was not already showing and abandoned the first pane's
-    // shell. Read AFTER the render settle, so a late second attach still counts.
+    // pane, and a `.desktop` pane runs no PTY — so exactly one shell may ever attach. A second
+    // means the bootstrap adopted a tree the window was not already showing and abandoned the
+    // first pane's shell. Read AFTER the render settle, so a late second attach still counts.
     let shells = hostd.attached_shells();
     if shells != 1 {
         hostd.log.dump("hostd log", 0);

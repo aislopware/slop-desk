@@ -370,7 +370,8 @@ mod tests {
             assert!(slopdesk_adaptive_fec_multi_loss_active(m), "m = {m}");
         }
         // And it is the same predicate the tier→`m` table gates itself on, which is the drift this
-        // removes: an `m` the door calls inactive must be an `m` that resolves every tier to itself.
+        // removes: an `m` the door calls inactive must be an `m` that resolves every tier to
+        // itself.
         for m in 0..=adaptive_fec::multi_loss::M_MAX {
             if !slopdesk_adaptive_fec_multi_loss_active(m) {
                 for tier in [

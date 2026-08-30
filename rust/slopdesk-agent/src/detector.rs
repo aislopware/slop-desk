@@ -286,9 +286,10 @@ impl PaneDetector {
             self.last_emitted_name = Some(base.to_owned());
             emission.foreground = Some(base.to_owned());
         }
-        // Presence = ANY known agent, not just claude: the alias table means a codex/gemini/opencode
-        // pane lights the same machinery its screen verdicts drive. The exact-basename discipline
-        // holds — `AgentKind::identify` matches whole canonical names, never substrings.
+        // Presence = ANY known agent, not just claude: the alias table means a
+        // codex/gemini/opencode pane lights the same machinery its screen verdicts drive.
+        // The exact-basename discipline holds — `AgentKind::identify` matches whole
+        // canonical names, never substrings.
         let present = is_claude_running(base) || AgentKind::identify(base).is_some();
         if self.absence_suppressed(present, base, now) {
             // Skip the terminating absence fold; keep the authoritative status intact. (There is no
@@ -296,9 +297,10 @@ impl PaneDetector {
         } else {
             self.machine.reduce(ClaudeSignal::ProcessPresent(present), now);
             // Absence terminates → not blocked anymore → forget the stale notification kind AND the
-            // authoritative provenance, so a later wrapper foreground preserves nothing. The session
-            // intent dies with the session too: a claude killed without a session end must not pin
-            // its task line onto whatever runs in the pane next.
+            // authoritative provenance, so a later wrapper foreground preserves nothing. The
+            // session intent dies with the session too: a claude killed without a
+            // session end must not pin its task line onto whatever runs in the pane
+            // next.
             if !present {
                 self.last_notification_kind = 0;
                 self.hook_authority = false;
@@ -351,11 +353,11 @@ impl PaneDetector {
     ) -> Emission {
         let mut emission = Emission::default();
         // ⚠️ WHOSE hook is this? The relay routes by `SLOPDESK_PANE_ID`, which every descendant of
-        // the pane's shell inherits — so a `claude -p …` run from a script, or from the pane agent's
-        // own Bash tool, posts its whole hook set HERE. The reader already ATTRIBUTED the record
-        // from the envelope's session id; drop it whole if it names a different live session: not
-        // the status, not the liveness anchor, and not the session TITLE, which a nested prompt
-        // would otherwise rewrite.
+        // the pane's shell inherits — so a `claude -p …` run from a script, or from the pane
+        // agent's own Bash tool, posts its whole hook set HERE. The reader already
+        // ATTRIBUTED the record from the envelope's session id; drop it whole if it names a
+        // different live session: not the status, not the liveness anchor, and not the
+        // session TITLE, which a nested prompt would otherwise rewrite.
         if !self.machine.accepts(&event) {
             return emission;
         }
@@ -372,15 +374,16 @@ impl PaneDetector {
         }
         // A REAL hook is the same precedence-2 authoritative signal as a ctl report, so it stamps
         // the SAME stickiness anchor — otherwise the ~1 Hz poll terminates a hook-set status within
-        // a second whenever claude runs under a wrapper whose basename never classifies as `claude`.
-        // Stamped on every parsed record, so pre/post-tool traffic keeps a long turn's window fresh.
+        // a second whenever claude runs under a wrapper whose basename never classifies as
+        // `claude`. Stamped on every parsed record, so pre/post-tool traffic keeps a long
+        // turn's window fresh.
         //
         // EXCEPT a session end. The anchor's whole job is protecting a LIVE state from a poll that
         // cannot see the agent; a session that just ended has no live state to protect, and the
         // absence the poll is about to report is the session end's own corroboration. Stamping here
-        // inverted the mechanism — the one signal announcing the end became what kept the dead state
-        // alive, for the full window. Clear the anchor instead, so the next absence terminates on
-        // contact.
+        // inverted the mechanism — the one signal announcing the end became what kept the dead
+        // state alive, for the full window. Clear the anchor instead, so the next absence
+        // terminates on contact.
         if matches!(event, ClaudeHookEvent::SessionEnd { .. }) {
             self.last_authoritative_at = None;
         } else {
@@ -553,8 +556,8 @@ impl PaneDetector {
             self.last_emitted_status = Some(triple.clone());
             emission.status = Some(triple);
         }
-        // The intent stream re-asserts the same way: current truth, anchor re-pointed, and quiet for
-        // a pane whose intent stream never spoke (no spurious empty clear frame).
+        // The intent stream re-asserts the same way: current truth, anchor re-pointed, and quiet
+        // for a pane whose intent stream never spoke (no spurious empty clear frame).
         if self.last_emitted_intent.is_some() {
             let current = self.session_intent.clone().unwrap_or_default();
             self.last_emitted_intent = Some(current.clone());

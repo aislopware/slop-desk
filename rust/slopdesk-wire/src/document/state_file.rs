@@ -200,8 +200,8 @@ pub fn decode(text: &str) -> Result<HostWorkspaceState, FileError> {
         };
         let key = WorkspaceKey::new(kind, id, field);
         // Re-filtered on the way IN as well as out. A hand-edited file could otherwise restore a
-        // pane as attached with no process behind it, which is the exact render the filter exists to
-        // prevent — and the file is the one input a person can edit by hand.
+        // pane as attached with no process behind it, which is the exact render the filter exists
+        // to prevent — and the file is the one input a person can edit by hand.
         if is_persisted(&key) {
             state.set(key, value);
         }
@@ -375,7 +375,8 @@ mod tests {
     fn a_hand_edited_file_cannot_restore_a_pane_as_live() {
         let mut hostile = HostWorkspaceState::default();
         hostile.set(pane_key(pane::AGENT_STATE), vec![2, 0]);
-        // Written straight, bypassing the outbound filter, exactly as a person with an editor would.
+        // Written straight, bypassing the outbound filter, exactly as a person with an editor
+        // would.
         let rows = encode(&hostile);
         assert!(rows.contains("\"entries\""));
         let Ok(back) = decode(&rows) else {
@@ -386,10 +387,10 @@ mod tests {
 
     #[test]
     fn every_refusal_has_its_own_byte_and_none_of_them_is_ok() {
-        // The whole taxonomy's reason for existing is that a caller can TELL these apart, and across
-        // a C boundary it can only tell them apart by these bytes. Two arms sharing one would make
-        // "not our file" and "one bad row" the same report, which is the difference between minting
-        // a default and hunting a corrupt row.
+        // The whole taxonomy's reason for existing is that a caller can TELL these apart, and
+        // across a C boundary it can only tell them apart by these bytes. Two arms sharing
+        // one would make "not our file" and "one bad row" the same report, which is the
+        // difference between minting a default and hunting a corrupt row.
         let bytes: Vec<u8> = [
             FileError::Malformed,
             FileError::VersionMismatch(99),
@@ -419,8 +420,9 @@ mod tests {
 
     #[test]
     fn bytes_that_are_not_utf8_are_not_this_document() {
-        // What a caller holding a file gets: raw bytes. A truncated multi-byte scalar is the shape a
-        // half-written file presents, and it must land on the same answer a stray brace does.
+        // What a caller holding a file gets: raw bytes. A truncated multi-byte scalar is the shape
+        // a half-written file presents, and it must land on the same answer a stray brace
+        // does.
         assert_eq!(decode_bytes(&[0xFF, 0xFE, 0xFD]), Err(FileError::Malformed));
         let text = encode(&persisting(&pane_state()));
         let Ok(back) = decode_bytes(text.as_bytes()) else {

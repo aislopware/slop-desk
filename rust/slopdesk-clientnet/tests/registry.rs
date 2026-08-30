@@ -121,8 +121,8 @@ impl Harness {
 
     /// Closes the peer sockets of the connection built at `index`, which kills its links.
     fn kill(&self, index: usize) {
-        // A shutdown from the peer side is what a mesh flap looks like to the connection under test:
-        // both links end, and the pool has to notice without being told.
+        // A shutdown from the peer side is what a mesh flap looks like to the connection under
+        // test: both links end, and the pool has to notice without being told.
         if let Ok(kept) = self.kept.lock()
             && let Some(held) = kept.get(index)
         {

@@ -621,19 +621,20 @@ mod tests {
         );
         assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
 
-        // The shared runtime no longer folding the workbench phase. ONE claim since the carve, where
-        // there were two: the fold is typed once for both shells, so asking each shell for it would be
-        // asking them to re-grow the clone it deleted.
+        // The shared runtime no longer folding the workbench phase. ONE claim since the carve,
+        // where there were two: the fold is typed once for both shells, so asking each
+        // shell for it would be asking them to re-grow the clone it deleted.
         surfaces(&fixture);
         fixture.write(super::SURFACE_RUNTIME, "switch phase { case .booting: break }\n");
         assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
 
-        // A shell reaching PAST the plan to the wording — the second decision, growing back beside the
-        // runtime's. Naming the type in PROSE is still fine, and that is the arm the old `Claim::Names`
-        // pair got backwards: it read the file raw and a header sentence satisfied it.
+        // A shell reaching PAST the plan to the wording — the second decision, growing back beside
+        // the runtime's. Naming the type in PROSE is still fine, and that is the arm the
+        // old `Claim::Names` pair got backwards: it read the file raw and a header sentence
+        // satisfied it.
         surfaces(&fixture);
-        // ⚠️ `surfaces` re-WRITES its own files and removes nothing, so the second-owner seed above is
-        // still in the tree. Any case that asserts CLEAN has to undo it by hand.
+        // ⚠️ `surfaces` re-WRITES its own files and removes nothing, so the second-owner seed above
+        // is still in the tree. Any case that asserts CLEAN has to undo it by hand.
         fixture.remove("Sources/SlopDeskMacUI/Panel/MacPanelMetrics.swift");
         fixture.append(
             super::PHONE_SURFACES,
@@ -651,9 +652,9 @@ mod tests {
         fixture.write(super::MAC_SURFACES, "private func mount(_ plan: Plan) {}\n");
         assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
 
-        // And the representable back in the phone's panel — the second mount racing the pooled page.
-        // Over `Panel/` rather than the deleted `CodeSidebar/`, which is where a phone code mount
-        // lives now.
+        // And the representable back in the phone's panel — the second mount racing the pooled
+        // page. Over `Panel/` rather than the deleted `CodeSidebar/`, which is where a
+        // phone code mount lives now.
         surfaces(&fixture);
         fixture.write(
             "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
@@ -821,9 +822,9 @@ mod tests {
         );
         assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
 
-        // And one `UIView` subclass is the SAME collapse spelled imperatively — the shape the phone's
-        // port produces by the dozen, which is why it had to join the alternation before stage C put
-        // the first one in the tree.
+        // And one `UIView` subclass is the SAME collapse spelled imperatively — the shape the
+        // phone's port produces by the dozen, which is why it had to join the alternation
+        // before stage C put the first one in the tree.
         floor(&fixture);
         fixture.write(
             "Sources/SlopDeskSlate/SlateStatusMarkView.swift",
@@ -839,12 +840,13 @@ mod tests {
         assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
 
         // ⚠️ AND THE FALSE RED, which is the case the anchoring exists for: a floor that TAKES a
-        // `CALayer` and hands it back is the shared QuartzCore de-duplication, not a view. A rule that
-        // fires here teaches its readers to ignore it.
+        // `CALayer` and hands it back is the shared QuartzCore de-duplication, not a view. A rule
+        // that fires here teaches its readers to ignore it.
         //
-        // ⚠️ `floor` RE-WRITES ITS OWN FILES AND REMOVES NOTHING, so the two seeded subclasses above
-        // are still in the tree and would fail this CLEAN assertion for the wrong reason. Every case
-        // that asserts clean after an earlier red has to take the earlier seed back out by hand.
+        // ⚠️ `floor` RE-WRITES ITS OWN FILES AND REMOVES NOTHING, so the two seeded subclasses
+        // above are still in the tree and would fail this CLEAN assertion for the wrong
+        // reason. Every case that asserts clean after an earlier red has to take the
+        // earlier seed back out by hand.
         floor(&fixture);
         fixture.remove("Sources/SlopDeskSlate/SlateStatusMark.swift");
         fixture.remove("Sources/SlopDeskSlate/SlateStatusMarkView.swift");

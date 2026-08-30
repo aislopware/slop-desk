@@ -125,8 +125,8 @@ mod tests {
             }
             Some(Vec::new())
         });
-        // Empty bytes, NOT `None`: the file exists and simply has no diff, which the builder maps to
-        // an ok-with-nothing rather than a not-found.
+        // Empty bytes, NOT `None`: the file exists and simply has no diff, which the builder maps
+        // to an ok-with-nothing rather than a not-found.
         assert_eq!(found.as_deref(), Some(b"".as_slice()));
     }
 

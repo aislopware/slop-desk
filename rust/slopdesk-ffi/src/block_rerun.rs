@@ -57,8 +57,8 @@ pub unsafe extern "C" fn slopdesk_block_rerun_bytes(
     out: *mut c_uchar,
     cap: usize,
 ) -> usize {
-    // SAFETY: the caller's contract, discharged by Swift's `withUnsafeBufferPointer`, whose scope is
-    // exactly this call.
+    // SAFETY: the caller's contract, discharged by Swift's `withUnsafeBufferPointer`, whose scope
+    // is exactly this call.
     let bytes = unsafe { borrow(command, command_len) };
     let Ok(text) = core::str::from_utf8(bytes) else {
         return 0;

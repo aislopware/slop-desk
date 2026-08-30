@@ -79,7 +79,8 @@ mod tests {
 
     #[test]
     fn a_split_recovers_each_unit_and_stops_at_a_ragged_tail() {
-        // 0x42, then a prefix claiming 9 bytes with only 2 left → the tail is dropped, not an error.
+        // 0x42, then a prefix claiming 9 bytes with only 2 left → the tail is dropped, not an
+        // error.
         let avcc = [0, 0, 0, 1, 0x42, 0, 0, 0, 9, 0x01, 0x02];
         assert_eq!(split(&avcc), vec![&[0x42_u8][..]]);
     }

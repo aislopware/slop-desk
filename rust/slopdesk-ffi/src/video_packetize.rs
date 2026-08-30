@@ -337,8 +337,8 @@ mod tests {
         unsafe { slopdesk_video_packetizer_free(coded) };
 
         assert!(with.len() > without.len(), "parity adds datagrams");
-        // The headers differ by design — `fragCount` counts the parity too — so what has to match is
-        // the frame's own bytes, which the split must carve identically either way.
+        // The headers differ by design — `fragCount` counts the parity too — so what has to match
+        // is the frame's own bytes, which the split must carve identically either way.
         let payloads = |grams: &[Vec<u8>]| -> Vec<Vec<u8>> {
             grams
                 .iter()

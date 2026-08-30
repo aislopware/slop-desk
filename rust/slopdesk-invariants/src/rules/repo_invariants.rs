@@ -200,6 +200,59 @@ pub fn pkill_never_reaches_the_developers_host(tree: &Tree) -> Report {
     report
 }
 
+/// The prek config, which is not under [`ROOTS`](crate::tree) and so is read rather than walked.
+const HOOKS: &str = ".pre-commit-config.yaml";
+
+/// Every nightly this tree asks for is the LATEST one — never a `nightly-YYYY-MM-DD`.
+///
+/// Two toolchains here are nightly, for two unrelated reasons: rustfmt, because `rust/rustfmt.toml`
+/// turns on thirteen unstable options, and Miri. Neither is pinned, and the pressure to pin comes
+/// from the formatter, so the argument is worth writing down where the ban lives.
+///
+/// `wrap_comments` decides where a comment BREAKS. That is rustfmt's own judgement and it changes
+/// between nightlies, so the day rustup fetches a new one the tree is red on files nobody touched —
+/// on 2026-08-30, 3123 lines across 215 files, with no code change behind them. A date pin makes
+/// that stop, and buys a worse thing: the formatter, the linter and the commit hook all agreeing
+/// with each other about a rustfmt from months ago, with the bump deferred until it is a thousand-
+/// file commit nobody wants to review. The standing decision is the other way — take the reformat
+/// when it arrives, as its own commit, and stay current. `just install-tools` installs-or-updates
+/// the floating channel with the one verb, so "have the tools" and "be on the latest" are one step.
+///
+/// So the rule is a ban, not a requirement, and it reads both places a toolchain can be named: the
+/// justfile, and the prek hooks. The hooks half is the easiest to lose — `.pre-commit-config`'s
+/// `rustfmt (apply)` enters `just fmt-rust` rather than cargo, precisely so the commit path cannot
+/// disagree with the gate — and that file is outside the walked roots, so it arrives through
+/// [`Tree::read`] rather than the tree. A missing one is not a violation: this rule is about what a
+/// config SAYS, not about whether hooks are installed.
+#[must_use]
+pub fn nightly_is_never_pinned_to_a_date(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let mut dated = Vec::new();
+    if let Some(justfile) = report.source(tree, "justfile", "every toolchain this tree asks for is in it") {
+        dated.extend(hits(
+            &[(Path::new("justfile"), justfile)],
+            r"nightly-\d{4}-\d{2}-\d{2}",
+        ));
+    }
+    if let Ok(hooks) = tree.read(HOOKS) {
+        let a_date = text::cached(r"nightly-\d{4}-\d{2}-\d{2}");
+        dated.extend(
+            hooks
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| !line.trim_start().starts_with('#') && a_date.is_match(line))
+                .map(|(number, line)| format!("{HOOKS}:{}: {}", number + 1, line.trim())),
+        );
+    }
+    sites(
+        &mut report,
+        "a nightly toolchain is pinned to a date — every one of them tracks the latest, and a rustfmt \
+         reformat is a commit to take rather than a bump to defer",
+        &dated,
+    );
+    report
+}
+
 /// POSIX `'…'` quoting was written eight times; it lives once, behind `slopdesk_ws_shell_quote`.
 ///
 /// This gate existed in `check-supervisor.sh` and could not fail: it piped 742 paths into
@@ -1138,10 +1191,10 @@ pub fn the_replay_boots_the_agent_out_first(tree: &Tree) -> Report {
 #[cfg(test)]
 mod tests {
     use super::{
-        a_guarded_keepalive_supervises_a_daemon_that_exits_zero,
+        HOOKS, a_guarded_keepalive_supervises_a_daemon_that_exits_zero,
         an_ops_harness_that_starts_a_daemon_contains_it, every_injected_sink_has_someone_who_binds_it,
-        live_docs_cite_files_that_exist, no_app_layer_crypto, no_fused_multiply_add,
-        no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
+        live_docs_cite_files_that_exist, nightly_is_never_pinned_to_a_date, no_app_layer_crypto,
+        no_fused_multiply_add, no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
         pkill_never_reaches_the_developers_host, scripting_is_rust, source_comments_cite_files_that_exist,
         the_formula_installs_every_binary_the_release_ships, the_replay_boots_the_agent_out_first,
     };
@@ -1357,6 +1410,31 @@ mod tests {
         assert!(pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean());
         fixture.write("scripts/reap.sh", "pkill -f slopdesk-hostd\n");
         assert!(!pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean());
+    }
+
+    /// The floating spelling passes; a date fires from either file a toolchain can be named in.
+    #[test]
+    fn a_dated_nightly_is_red_in_the_justfile_and_in_the_hooks() {
+        let floating = "fmt-rust:\n    cargo +nightly fmt --all\nmiri:\n    cargo +nightly miri test\n";
+        let fixture = Fixture::new("nightly-floating");
+        fixture.write("justfile", floating);
+        fixture.write(HOOKS, "repos:\n  - hooks:\n      - entry: just fmt-rust\n");
+        assert!(nightly_is_never_pinned_to_a_date(&fixture.tree()).is_clean());
+
+        let pinned = Fixture::new("nightly-dated-justfile");
+        pinned.write("justfile", "fmt-rust:\n    cargo +nightly-2026-08-21 fmt --all\n");
+        assert!(!nightly_is_never_pinned_to_a_date(&pinned.tree()).is_clean());
+
+        let hook = Fixture::new("nightly-dated-hook");
+        hook.write("justfile", floating);
+        hook.write(
+            HOOKS,
+            "repos:\n  - hooks:\n      - entry: cargo +nightly-2026-08-21 fmt --all\n",
+        );
+        assert!(
+            !nightly_is_never_pinned_to_a_date(&hook.tree()).is_clean(),
+            "a hook can pin a toolchain the justfile never names"
+        );
     }
 
     #[test]

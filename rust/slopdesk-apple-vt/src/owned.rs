@@ -58,8 +58,9 @@ use objc2_core_foundation::{CFRetained, Type};
 /// a live slot of the declared type, and must not use `raw` afterwards. Not marked `unsafe` because
 /// the obligation is about the CALLEE'S NAME rather than about the pointer — see the module header.
 pub(crate) fn created<T: Type>(raw: *mut T) -> Option<CFRetained<T>> {
-    // SAFETY: framework rule — the Copy/Create rule made this reference the caller's to release, and
-    // the null check above is what the frameworks use to report that they wrote nothing at all.
+    // SAFETY: framework rule — the Copy/Create rule made this reference the caller's to release,
+    // and the null check above is what the frameworks use to report that they wrote nothing at
+    // all.
     #[expect(
         unsafe_code,
         reason = "the Create-rule out-parameter; docs/57 §2 admits this shape, at ONE site"

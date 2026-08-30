@@ -123,7 +123,8 @@ fn serve_connection(pair: PairedConnection, host: &Arc<Host>) {
     if spawned.is_err() {
         // A process too exhausted to make a thread cannot serve this client, and a connection whose
         // events nobody drains is worse than a refused one: the peer waits for an ack that no code
-        // path will ever send. Close it, and let the client's own reconnect decide when to try again.
+        // path will ever send. Close it, and let the client's own reconnect decide when to try
+        // again.
         //
         // The two link threads are not joined on this path, because `threads` went into the closure
         // that would not spawn and was dropped with it. That is the right outcome rather than a
@@ -155,9 +156,9 @@ fn drain(events: &Receiver<MuxEvent>, host: &Arc<Host>, peer: &Arc<dyn Peer>) {
         }
     }
     // The stream ended, so both link threads have. Unconditional, and idempotent on purpose: a
-    // clean FIN arrives as a `LinkDown` event AND closes the stream, while a decoder fault can close
-    // the stream with no event at all. Running it twice detaches nothing the first pass left, and
-    // the connection is forgotten and its peer closed inside the same call — which is why there is
-    // no `forget_connection` here to pair with it.
+    // clean FIN arrives as a `LinkDown` event AND closes the stream, while a decoder fault can
+    // close the stream with no event at all. Running it twice detaches nothing the first pass
+    // left, and the connection is forgotten and its peer closed inside the same call — which is
+    // why there is no `forget_connection` here to pair with it.
     host.handle_link_down(connection);
 }

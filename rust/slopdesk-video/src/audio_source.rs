@@ -317,7 +317,8 @@ mod tests {
         blocks.push(&[0.5; 7]);
         blocks.reset();
         assert_eq!(blocks.pending_samples(), 0);
-        // A fresh buffer starts a block at its own first sample, with no shard of the past spliced in.
+        // A fresh buffer starts a block at its own first sample, with no shard of the past spliced
+        // in.
         blocks.push(&vec![0.25; SAMPLES_PER_BLOCK]);
         assert_eq!(blocks.next_block().expect("a clean block")[0], 0.25);
     }

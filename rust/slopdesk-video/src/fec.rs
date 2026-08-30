@@ -264,8 +264,8 @@ impl ReedSolomonFec {
         let parity_coeffs = rs_matrix::parity_rows(k, m);
 
         // Collect k survivor (encoder-row, framed-bytes) pairs. Encoder indices: 0..k are the data
-        // rows (identity), k..k+m are the parity rows. Any k linearly independent survivors suffice,
-        // and every k-subset of an MDS encoder is independent.
+        // rows (identity), k..k+m are the parity rows. Any k linearly independent survivors
+        // suffice, and every k-subset of an MDS encoder is independent.
         let mut survivor_rows: Vec<Vec<u8>> = Vec::with_capacity(k);
         let mut survivor_bytes: Vec<Vec<u8>> = Vec::with_capacity(k);
 
@@ -276,10 +276,10 @@ impl ReedSolomonFec {
                 survivor_bytes.push(length_prefixed(bytes));
             }
         }
-        // 2) The encoder treats a short final group (group_len < k) as having (k - group_len) implicit
-        //    all-zero data shards in slots group_len..k. Those phantom shards are never missing (they are
-        //    the constant 0), so they always count as survivors — which is what lets a short group still
-        //    reach k independent rows.
+        // 2) The encoder treats a short final group (group_len < k) as having (k - group_len)
+        //    implicit all-zero data shards in slots group_len..k. Those phantom shards are never
+        //    missing (they are the constant 0), so they always count as survivors — which is what
+        //    lets a short group still reach k independent rows.
         for slot in group_len..k {
             survivor_rows.push(unit_row(k, slot));
             survivor_bytes.push(Vec::new()); // all-zero contributes nothing

@@ -337,7 +337,8 @@ mod tests {
     #[test]
     fn the_keys_are_written_in_sorted_order() {
         let json = sample().to_json().expect("a serialisable record");
-        // Exactly two spaces, so a nested `SLOPDESK_*` key four deep is not read as a top-level one.
+        // Exactly two spaces, so a nested `SLOPDESK_*` key four deep is not read as a top-level
+        // one.
         let keys: Vec<&str> = json
             .lines()
             .filter_map(|line| line.strip_prefix("  \""))

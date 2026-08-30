@@ -119,9 +119,9 @@ pub fn parse_avc_configuration(record: &[u8]) -> Option<AvcConfiguration> {
     if parameter_sets.is_empty() {
         return None;
     }
-    // The PPS count and its sets are absent from a truncated record. That is tolerated: an SPS alone
-    // still yields a usable format description, and refusing here would turn a recoverable stream
-    // into a dead panel.
+    // The PPS count and its sets are absent from a truncated record. That is tolerated: an SPS
+    // alone still yields a usable format description, and refusing here would turn a
+    // recoverable stream into a dead panel.
     if let Some(pps_count) = reader.byte() {
         reader.read_parameter_sets(usize::from(pps_count), &mut parameter_sets)?;
     }

@@ -167,9 +167,9 @@ mod tests {
 
     #[test]
     fn an_absent_window_is_not_a_window_of_the_detail_width() {
-        // The macOS floor: a 500pt detail inside a 720pt window is REGULAR, but the same detail with
-        // no window yet is measured against the smaller threshold and is regular too. Swap the
-        // thresholds and the first of these flips.
+        // The macOS floor: a 500pt detail inside a 720pt window is REGULAR, but the same detail
+        // with no window yet is measured against the smaller threshold and is regular too.
+        // Swap the thresholds and the first of these flips.
         assert!(!slopdesk_ws_is_compact(false, 500.0, 720.0, true));
         assert!(!slopdesk_ws_is_compact(false, 500.0, 0.0, false));
         assert!(slopdesk_ws_is_compact(false, 500.0, 600.0, true));

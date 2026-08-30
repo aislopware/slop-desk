@@ -376,7 +376,8 @@ mod tests {
     /// else.
     #[test]
     fn identity_is_whatever_the_caller_says_it_is() {
-        // Modifier-independent: the physical key is the identity, the combo is the caller's payload.
+        // Modifier-independent: the physical key is the identity, the combo is the caller's
+        // payload.
         let mut by_key = KeyRepeat::new();
         start(&mut by_key, b"l");
         assert!(

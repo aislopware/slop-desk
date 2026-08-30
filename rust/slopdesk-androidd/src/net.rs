@@ -59,8 +59,8 @@ pub fn read_request_line(stream: &mut TcpStream, limit: usize) -> Option<Vec<u8>
     let mut line = Vec::new();
     let mut byte = [0_u8; 1];
     while line.len() < limit {
-        // Anything other than exactly one byte is EOF, a timeout or a transport fault, and all three
-        // mean the same to a request line: there is no request.
+        // Anything other than exactly one byte is EOF, a timeout or a transport fault, and all
+        // three mean the same to a request line: there is no request.
         if !matches!(stream.read(&mut byte), Ok(1)) {
             return None;
         }

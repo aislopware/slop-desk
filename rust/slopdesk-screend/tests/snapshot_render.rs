@@ -201,8 +201,8 @@ fn a_scroll_region_with_origin_mode_round_trips() {
 
 #[test]
 fn deferred_wrap_survives_the_snapshot() {
-    // Fill the last column exactly: wrap_pending must survive so the next printable in the LIVE tail
-    // wraps (and a CR stays on the same row).
+    // Fill the last column exactly: wrap_pending must survive so the next printable in the LIVE
+    // tail wraps (and a CR stays on the same row).
     assert_round_trip(b"0123456789AB", 3, 12);
 }
 
@@ -317,8 +317,9 @@ fn a_sub_region_scroll_never_accrues_scrollback() {
 #[test]
 fn fuzzed_streams_render_idempotently() {
     // Deterministic LCG (no clock, no entropy): 300 streams over the vocabulary the collapser fuzz
-    // uses — text, wide scalars, erases, SGR, cursor motion, scroll regions, alt screen, wrap edges.
-    // Every stream must round-trip visibly and render idempotently; a divergence prints its seed.
+    // uses — text, wide scalars, erases, SGR, cursor motion, scroll regions, alt screen, wrap
+    // edges. Every stream must round-trip visibly and render idempotently; a divergence prints
+    // its seed.
     let mut state: u64 = 0x5EED_50DE;
     let mut next = move |bound: usize| -> usize {
         state = state

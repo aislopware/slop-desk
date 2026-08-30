@@ -81,11 +81,12 @@ impl SleepAssertion {
             (true, None) => {
                 let mut id: IOPMAssertionID = 0;
                 let name = CFString::from_static_str(self.kind.type_name());
-                // SAFETY: framework rule. `IOPMAssertionCreateWithName` documents that on success it
-                // writes ONE unique reference through `AssertionID`; `id` is a fully initialised
-                // local that outlives the call, and nothing on this side reads through the pointer.
-                // Both `CFString` arguments are live for the duration of the call — `name` is a
-                // local binding held across it, and `reason` is owned by `self`.
+                // SAFETY: framework rule. `IOPMAssertionCreateWithName` documents that on success
+                // it writes ONE unique reference through `AssertionID`; `id` is a
+                // fully initialised local that outlives the call, and nothing on
+                // this side reads through the pointer. Both `CFString` arguments
+                // are live for the duration of the call — `name` is a local binding
+                // held across it, and `reason` is owned by `self`.
                 #[expect(
                     unsafe_code,
                     reason = "the assertion create reports its new id through an out-pointer; objc2 cannot \

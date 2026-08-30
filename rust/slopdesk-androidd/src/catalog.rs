@@ -455,10 +455,10 @@ pub fn filling(device: &Device, avd: &Device) -> Device {
 
 #[cfg(test)]
 mod tests {
-    // Fixtures are REAL output, captured 2026-08-04 from `adb` 1.0.41 / emulator 36 against a booted
-    // `Pixel_API36` AVD on mac-studio, and carried over verbatim from the Swift catalogue this
-    // replaces. These formats are conventions rather than contracts, and a recorded fixture that
-    // stops matching is the only warning we get that one has moved.
+    // Fixtures are REAL output, captured 2026-08-04 from `adb` 1.0.41 / emulator 36 against a
+    // booted `Pixel_API36` AVD on mac-studio, and carried over verbatim from the Swift
+    // catalogue this replaces. These formats are conventions rather than contracts, and a
+    // recorded fixture that stops matching is the only warning we get that one has moved.
     use std::collections::HashMap;
 
     use super::{
@@ -540,9 +540,9 @@ mod tests {
     #[test]
     fn a_shut_down_device_is_built_from_its_config() {
         // Joined rather than written as one long literal on purpose: `format_strings` reflows a
-        // literal at the column it reaches, and a break that lands between the `\` and the `n` of an
-        // escape silently rewrites the fixture into a different one. A line per line is also how the
-        // file being imitated actually looks.
+        // literal at the column it reaches, and a break that lands between the `\` and the `n` of
+        // an escape silently rewrites the fixture into a different one. A line per line is
+        // also how the file being imitated actually looks.
         let config = parse_config(
             &[
                 "abi.type=arm64-v8a",

@@ -151,8 +151,8 @@ fn main() {
         || decode_layout(black_box(&encoded_layout)).map_or(0, |_| 1),
     );
     // The two columns mean something different on this row, which is why it is labelled: the
-    // "encode" side computes the diff, the "decode" side applies it. Neither touches a byte. This is
-    // the row the Dictionary-plus-sort → BTreeMap change actually lands on.
+    // "encode" side computes the diff, the "decode" side applies it. Neither touches a byte. This
+    // is the row the Dictionary-plus-sort → BTreeMap change actually lands on.
     row(
         "diffFrom / applying 2000 cells",
         2000,

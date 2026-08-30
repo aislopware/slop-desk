@@ -404,8 +404,8 @@ mod tests {
         // ⚠️ AN ORDINARY SPLIT IS NOT A REGRESSION, and it goes FIRST because it is the only case
         // here that asserts a clean tree — every later one seeds a violation that the next
         // `navigator()` does not undo. Moving a reading from one file of the column to another is
-        // what the old per-file `Mentions` called a violation, and it is the whole reason this claim
-        // reads the directory.
+        // what the old per-file `Mentions` called a violation, and it is the whole reason this
+        // claim reads the directory.
         fixture
             .write(
                 "Sources/SlopDeskPhoneUI/Columns/NavigatorRowCell.swift",
@@ -423,8 +423,8 @@ mod tests {
 
         // A half that PORTED the git line and one that DELETED it look the same to the sigil ban —
         // which is why the reader is asserted beside it. Deleting the CELL rather than editing the
-        // controller is the point: the reading has to be missing from the whole column, not from one
-        // file somebody split.
+        // controller is the point: the reading has to be missing from the whole column, not from
+        // one file somebody split.
         navigator(&fixture);
         fixture.remove("Sources/SlopDeskPhoneUI/Columns/SidebarGitLineView.swift");
         let report = super::one_navigator_per_platform(&fixture.tree());
@@ -562,8 +562,8 @@ mod tests {
         );
         assert!(!super::one_panel_chrome_one_tab_reading(&fixture.tree()).is_clean());
 
-        // A phone tab surface cutting its own four — the half the parked claim never reached, because
-        // it watched a controller that had already handed the tabs to its siblings.
+        // A phone tab surface cutting its own four — the half the parked claim never reached,
+        // because it watched a controller that had already handed the tabs to its siblings.
         panel(&fixture);
         fixture.write(
             "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabGroup.swift",

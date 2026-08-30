@@ -70,7 +70,8 @@ mod tests {
     fn resolve(name: &str, arg: Option<&str>) -> Option<String> {
         let mut buffer = [0_u8; 32];
         let (arg_ptr, arg_len) = arg.map_or((core::ptr::null(), 0), |text| (text.as_ptr(), text.len()));
-        // SAFETY: every pair is a live local, and an absent argument crosses as a null with no length.
+        // SAFETY: every pair is a live local, and an absent argument crosses as a null with no
+        // length.
         let needed = unsafe {
             slopdesk_ws_binding_id_for_config_name(
                 name.as_ptr(),

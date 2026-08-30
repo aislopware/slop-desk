@@ -331,15 +331,15 @@ impl Encoder {
             self.config.speed_over_quality,
         );
         // Smallest pipeline delay the encoder will accept, probed in order. A rejection is EXPECTED
-        // — some encoders floor at one or two — and none accepted leaves the key unset, which is the
-        // framework's own unlimited default.
+        // — some encoders floor at one or two — and none accepted leaves the key unset, which is
+        // the framework's own unlimited default.
         for delay in &self.frame_delays {
             if session.set_int(Key::MaxFrameDelayCount, *delay) == NO_ERR {
                 break;
             }
         }
-        // Opt OUT of the efficiency clock policy: it trades encode latency for watts, and this trade
-        // goes the other way every time.
+        // Opt OUT of the efficiency clock policy: it trades encode latency for watts, and this
+        // trade goes the other way every time.
         let _ = session.set_bool(Key::MaximizePowerEfficiency, false);
         let _ = session.set_int(Key::MaxKeyFrameInterval, i64::from(i32::MAX));
 

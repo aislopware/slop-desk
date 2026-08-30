@@ -362,8 +362,9 @@ impl CodeServerManager {
     fn gated_spawn(self: &Arc<Self>, generation: u64) -> Boot {
         let binary = (self.locate_binary)();
         // A host with no seeder has no argv and no bridge socket to give the child. Reporting
-        // unavailable is the honest answer: a workbench launched on guessed arguments is a different
-        // program, not a degraded panel — which is why the rule reads the two as one `launchable`.
+        // unavailable is the honest answer: a workbench launched on guessed arguments is a
+        // different program, not a degraded panel — which is why the rule reads the two as
+        // one `launchable`.
         let profile = (self.read_profile)();
         let launchable = binary.is_some() && profile.is_some();
 

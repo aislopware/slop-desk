@@ -85,9 +85,10 @@ fn tools_dir() -> PathBuf {
     if let Some(override_path) = std::env::var_os("SLOPDESK_TOOLS_DIR") {
         return PathBuf::from(override_path);
     }
-    // `CARGO_MANIFEST_DIR` is `rust/slopdesk-provision`; the tools tree is two levels up and across.
-    // Resolved at COMPILE time on purpose: this binary is run by `just provision` out of the tree it
-    // was built in, and a runtime walk from `current_exe()` would have to guess past `target/`.
+    // `CARGO_MANIFEST_DIR` is `rust/slopdesk-provision`; the tools tree is two levels up and
+    // across. Resolved at COMPILE time on purpose: this binary is run by `just provision` out
+    // of the tree it was built in, and a runtime walk from `current_exe()` would have to guess
+    // past `target/`.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../ThirdParty/tools")
         .components()

@@ -1713,6 +1713,11 @@ pub fn registry() -> Vec<Rule> {
             check: repo_invariants::scripting_is_rust,
         },
         Rule {
+            name: "nightly-is-never-pinned-to-a-date",
+            origin: "rust/rustfmt.toml, docs/46",
+            check: repo_invariants::nightly_is_never_pinned_to_a_date,
+        },
+        Rule {
             name: "release-ships-every-sidecar",
             origin: "docs/49",
             check: repo_invariants::the_release_ships_every_sidecar_the_host_needs,

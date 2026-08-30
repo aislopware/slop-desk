@@ -148,10 +148,10 @@ pub(crate) fn apply_with_timeout(
 /// The blocking call itself, plus the `displayID` read that is only meaningful after it.
 fn perform(work: &Work) -> Applied {
     // SAFETY: Objective-C runtime rule. `-applySettings:` is `CGVirtualDisplay`'s declared method,
-    // taking one `CGVirtualDisplaySettings *` and answering `BOOL`, and `-displayID` is its declared
-    // `CGDirectDisplayID` getter. Both are sent to the object the class's own initialiser produced.
-    // The framework's threading contract for `-applySettings:` is "not the main thread", which is
-    // why this runs on a thread of its own.
+    // taking one `CGVirtualDisplaySettings *` and answering `BOOL`, and `-displayID` is its
+    // declared `CGDirectDisplayID` getter. Both are sent to the object the class's own
+    // initialiser produced. The framework's threading contract for `-applySettings:` is "not
+    // the main thread", which is why this runs on a thread of its own.
     #[expect(
         unsafe_code,
         reason = "sending a message to a class the runtime resolved is what reaching a private class IS"

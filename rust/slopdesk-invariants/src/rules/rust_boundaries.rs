@@ -304,12 +304,12 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
         "|CGSCurrentCursorSeed",
         "|SLSCurrentCursorSeed"
     );
-    // NOT `AXUIElementCreateApplication` or `…SetMessagingTimeout`: those attach a SUBSCRIPTION with
-    // a run loop and read nothing, and `docs/57` §1 keeps those Swift. Every other reach into the
-    // tree is banned — the READ, the write, the action, the trust check and the private window-id
-    // symbol. The last is the sharpest: it was a `@_silgen_name` declaration in the deleted
-    // injector, and a second declaration of a private symbol is how two callers end up disagreeing
-    // about which framework exports it.
+    // NOT `AXUIElementCreateApplication` or `…SetMessagingTimeout`: those attach a SUBSCRIPTION
+    // with a run loop and read nothing, and `docs/57` §1 keeps those Swift. Every other reach
+    // into the tree is banned — the READ, the write, the action, the trust check and the
+    // private window-id symbol. The last is the sharpest: it was a `@_silgen_name` declaration
+    // in the deleted injector, and a second declaration of a private symbol is how two callers
+    // end up disagreeing about which framework exports it.
     const ACCESSIBILITY: &str = concat!(
         "AXIsProcessTrusted",
         "|AXUIElementCopyAttributeValue",

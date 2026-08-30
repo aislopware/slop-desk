@@ -192,8 +192,8 @@ fn the_main_session_folds_into_the_events_the_transcript_implies() {
     assert_eq!(card.status, ToolCardStatus::Errored);
     assert_eq!(card.output.as_deref(), Some("Error: file not found"));
 
-    // 8. A type this build has never seen is SURFACED, verbatim — the schema-evolution valve. It must
-    //    not be dropped (silence is indistinguishable from a bug) and must not be guessed at.
+    // 8. A type this build has never seen is SURFACED, verbatim — the schema-evolution valve. It
+    //    must not be dropped (silence is indistinguishable from a bug) and must not be guessed at.
     let InspectorEvent::UnknownLine { raw } = next() else {
         panic!("expected the future line to surface")
     };

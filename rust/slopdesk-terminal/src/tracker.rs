@@ -163,8 +163,8 @@ impl TerminalModeTracker {
         while index < bytes.len() {
             match self.state {
                 State::Ground => {
-                    // FAST PATH: in ground only ESC can change anything — content (including BEL) is
-                    // ignored for mode tracking. Skip to the next ESC.
+                    // FAST PATH: in ground only ESC can change anything — content (including BEL)
+                    // is ignored for mode tracking. Skip to the next ESC.
                     match find(bytes, index, bytes.len(), ESC) {
                         Some(offset) => {
                             self.step(ESC, &mut events); // ground ESC → Escape
@@ -175,10 +175,10 @@ impl TerminalModeTracker {
                 },
                 State::StringConsume => {
                     // FAST PATH: only ESC (possible ST start) and BEL (terminator) matter; every
-                    // other byte is opaque string body. Route only the FIRST interesting byte through
-                    // the table. The BEL scan is bounded to the prefix BEFORE the next ESC — an
-                    // unbounded scan re-run on every re-entry degrades to O(n²) on escape-dense
-                    // streams.
+                    // other byte is opaque string body. Route only the FIRST interesting byte
+                    // through the table. The BEL scan is bounded to the prefix
+                    // BEFORE the next ESC — an unbounded scan re-run on every
+                    // re-entry degrades to O(n²) on escape-dense streams.
                     let escape_at = find(bytes, index, bytes.len(), ESC).unwrap_or(bytes.len());
                     if let Some(bell_at) = find(bytes, index, escape_at, BEL) {
                         self.step(BEL, &mut events); // terminator → Ground
@@ -261,14 +261,16 @@ impl TerminalModeTracker {
                 }
             },
             State::OscEscape => {
-                // Either way the OSC is over: `ESC\` is a real ST, and a stray ESC terminates it too.
+                // Either way the OSC is over: `ESC\` is a real ST, and a stray ESC terminates it
+                // too.
                 self.handle_osc(events);
                 if byte == BACKSLASH {
                     self.state = State::Ground;
                 } else {
-                    // The `ESC` was not an ST terminator, and the ESC we already consumed may itself
-                    // introduce a NEW escape sequence — so re-enter Escape (not Ground) and classify
-                    // this byte as that sequence's introducer. Returning to Ground here would orphan
+                    // The `ESC` was not an ST terminator, and the ESC we already consumed may
+                    // itself introduce a NEW escape sequence — so re-enter
+                    // Escape (not Ground) and classify this byte as that
+                    // sequence's introducer. Returning to Ground here would orphan
                     // the ESC and let the next marker's introducer (`[` / `]`) be parsed as plain
                     // content, losing the whole following sequence.
                     self.state = State::Escape;
@@ -312,8 +314,8 @@ impl TerminalModeTracker {
         let end = self.csi_buffer.len().saturating_sub(1);
         let parameter_bytes = self.csi_buffer.get(1..end).unwrap_or_default();
         // A LOSSY decode is required: the machine appends arbitrary (including non-UTF-8) bytes to
-        // the buffer, and a failable decode would return nothing on such bytes — dropping parameters
-        // that a lossy decode still yields.
+        // the buffer, and a failable decode would return nothing on such bytes — dropping
+        // parameters that a lossy decode still yields.
         let text = String::from_utf8_lossy(parameter_bytes);
         let parameters: Vec<i64> = text
             .split(';')
@@ -534,8 +536,9 @@ mod tests {
 
     #[test]
     fn a_stray_escape_inside_an_osc_does_not_orphan_the_next_sequence() {
-        // The OSC is terminated by the stray ESC, and the ESC still introduces the CSI that follows —
-        // returning to ground here would parse `[` as content and lose the whole alt-screen marker.
+        // The OSC is terminated by the stray ESC, and the ESC still introduces the CSI that follows
+        // — returning to ground here would parse `[` as content and lose the whole
+        // alt-screen marker.
         assert_eq!(events("\u{1B}]133;A\u{1B}[?1049h"), [
             TerminalModeEvent::PromptStart,
             TerminalModeEvent::EnteredAltScreen

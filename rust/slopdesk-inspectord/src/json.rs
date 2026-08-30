@@ -69,8 +69,8 @@ pub fn display_string(value: &Value) -> String {
             // keys and NOT on anything above it: Swift compares canonically, so a decomposed `é`
             // sorts after `z` there and before it here. Tool payload keys are ASCII identifiers in
             // practice, which is why this has never shown; it is in the module note's table rather
-            // than fixed, because "fix" would mean one of the two adopting the other's collation and
-            // neither is reachable from the other's process.
+            // than fixed, because "fix" would mean one of the two adopting the other's collation
+            // and neither is reachable from the other's process.
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort_unstable();
             keys.iter()
@@ -185,8 +185,9 @@ mod tests {
             "9007199254740993"
         );
         assert_eq!(display_string(&json!(u64::MAX)), "18446744073709551615");
-        // And the guard still applies where it must: a genuine float that large cannot be re-derived
-        // through `i64` without lying about its low digits, so it keeps serde's own spelling.
+        // And the guard still applies where it must: a genuine float that large cannot be
+        // re-derived through `i64` without lying about its low digits, so it keeps serde's
+        // own spelling.
         assert_eq!(display_string(&json!(1e16_f64)), "1e+16");
     }
 

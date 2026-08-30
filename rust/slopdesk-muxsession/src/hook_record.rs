@@ -95,9 +95,10 @@ pub fn split(record: &[u8]) -> Split {
         };
     };
     // `char::is_whitespace` is Unicode `White_Space`, which is exactly the union Foundation's
-    // `.whitespacesAndNewlines` names (general category Zs, plus U+0009, plus U+000A–U+000D, U+0085,
-    // U+2028 and U+2029). Trimming ASCII by hand would keep a NBSP the near side dropped, and a pane
-    // id that differs by one invisible byte routes nowhere with nothing to see in a log.
+    // `.whitespacesAndNewlines` names (general category Zs, plus U+0009, plus U+000A–U+000D,
+    // U+0085, U+2028 and U+2029). Trimming ASCII by hand would keep a NBSP the near side
+    // dropped, and a pane id that differs by one invisible byte routes nowhere with nothing to
+    // see in a log.
     let trimmed = id.trim_matches(char::is_whitespace);
     if trimmed.is_empty() {
         return Split {

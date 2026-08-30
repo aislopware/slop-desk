@@ -370,8 +370,8 @@ pub fn resolve(signals: Signals<'_>) -> Option<TabBadge> {
         return Some(TabBadge::AwaitingInput);
     }
 
-    // 2. A failed command, or a held-red progress error. Either sits above a running spinner and above
-    //    a stale completion dot.
+    // 2. A failed command, or a held-red progress error. Either sits above a running spinner and
+    //    above a stale completion dot.
     if signals.completion == Some(Completion::Failure) || signals.progress == Some(Progress::Error) {
         return Some(TabBadge::Error);
     }

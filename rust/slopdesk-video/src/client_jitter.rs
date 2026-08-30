@@ -394,7 +394,8 @@ mod tests {
     #[test]
     fn the_recommendation_covers_the_jitter_with_the_safety_headroom() {
         let controller = controller();
-        // 10 ms of jitter at 60 fps with 2.5× safety is 1.5 frames, which rounds up to 2, plus the base.
+        // 10 ms of jitter at 60 fps with 2.5× safety is 1.5 frames, which rounds up to 2, plus the
+        // base.
         assert_eq!(controller.depth_for_jitter(0.010), 3);
         assert_eq!(
             controller.depth_for_jitter(1.0),

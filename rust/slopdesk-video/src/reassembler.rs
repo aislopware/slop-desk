@@ -496,9 +496,10 @@ impl FrameReassembler {
         let header = fragment.header;
         let frame_id = header.frame_id;
 
-        // Hostile input — UDP video has no auth beyond the mesh, so an implausible header is rejected
-        // BEFORE any per-frame buffer exists. A crafted `frag_count` makes assembly build and iterate
-        // a `data_count`-sized array per frame, and `frag_index >= frag_count` can never complete.
+        // Hostile input — UDP video has no auth beyond the mesh, so an implausible header is
+        // rejected BEFORE any per-frame buffer exists. A crafted `frag_count` makes
+        // assembly build and iterate a `data_count`-sized array per frame, and `frag_index
+        // >= frag_count` can never complete.
         if header.frag_count == 0
             || usize::from(header.frag_count) > MAX_FRAGMENTS_PER_FRAME
             || header.frag_index >= header.frag_count
@@ -532,9 +533,9 @@ impl FrameReassembler {
             )
         });
         // THE FRAGCOUNT PIN. A fragment disagreeing with the pinned count passes its OWN header's
-        // `frag_index < frag_count` guard, so it has to be rejected here or it would move a boundary
-        // that everything else already depends on. Equality also re-establishes the index guard
-        // against the pinned count.
+        // `frag_index < frag_count` guard, so it has to be rejected here or it would move a
+        // boundary that everything else already depends on. Equality also re-establishes
+        // the index guard against the pinned count.
         if header.frag_count != entry.frag_count {
             return ReassemblyResult::Stale;
         }
@@ -554,8 +555,9 @@ impl FrameReassembler {
                 parity_index
             };
             entry.note_observed_parity_boundary(parity_index);
-            // Parity is laid out group-major then rank AFTER the data, so `frag_index - boundary` IS
-            // the flat slot `group * m + rank`. At `m == 1` it collapses to group order.
+            // Parity is laid out group-major then rank AFTER the data, so `frag_index - boundary`
+            // IS the flat slot `group * m + rank`. At `m == 1` it collapses to group
+            // order.
             let slot = parity_index.saturating_sub(boundary);
             // Duplicates overwrite; only a first arrival counts.
             if entry.parity.insert(slot, fragment.payload.clone()).is_none() {
@@ -633,8 +635,8 @@ impl FrameReassembler {
             return ReassemblyResult::Stale;
         };
         // The CHEAP precheck before the expensive assembly, which copies every present payload and
-        // runs recovery. It is outcome-equivalent to "assembly would succeed now" and reads the O(1)
-        // counters, so the hot path never re-scans the groups.
+        // runs recovery. It is outcome-equivalent to "assembly would succeed now" and reads the
+        // O(1) counters, so the hot path never re-scans the groups.
         if !entry.can_eventually_complete() {
             return ReassemblyResult::Incomplete;
         }
@@ -673,7 +675,8 @@ impl FrameReassembler {
             }
             // FEC cannot recover this from what is here. With NACK on and the loss small enough,
             // HOLD it for the retransmit window and request it once. A loss too BIG to NACK falls
-            // through to the prompt drop rather than being held uselessly — nothing would ever come.
+            // through to the prompt drop rather than being held uselessly — nothing would ever
+            // come.
             if self.retransmit_grace > 0 && age <= self.retransmit_grace {
                 if self.nacked.contains(&frame_id) {
                     continue; // Already requested: hold for its retransmit.
@@ -736,17 +739,18 @@ impl FrameReassembler {
             .into_iter()
             .map(|payload| payload.map(<[u8]>::to_vec))
             .collect();
-        // The flat parity array in group-major then rank order — the layout recovery indexes. A lost
-        // shard leaves its slot `None`.
+        // The flat parity array in group-major then rank order — the layout recovery indexes. A
+        // lost shard leaves its slot `None`.
         let parity_slots = usize::from(entry.frag_count).saturating_sub(data_count);
         let parity: Vec<Option<Vec<u8>>> = (0..parity_slots)
             .map(|slot| entry.parity.get(&slot).cloned())
             .collect();
-        // Recover at the SAME per-frame `m` the host encoded with, which sets both the parity stride
-        // and the per-group budget. For every production tier this equals the codec's own `m`, so it
-        // collapses to a plain recover. Going through the configured codec rather than building one
-        // at `(group_size, m)` is exact here — an m-tier resolves its group size to the default, so
-        // the Cauchy rows are the same rows — and it keeps a construction assert off a wire path.
+        // Recover at the SAME per-frame `m` the host encoded with, which sets both the parity
+        // stride and the per-group budget. For every production tier this equals the
+        // codec's own `m`, so it collapses to a plain recover. Going through the configured
+        // codec rather than building one at `(group_size, m)` is exact here — an m-tier
+        // resolves its group size to the default, so the Cauchy rows are the same rows —
+        // and it keeps a construction assert off a wire path.
         fec.recover_with_m(&mut data, &parity, group_size, entry.m);
 
         if data.iter().any(Option::is_none) {
@@ -757,7 +761,8 @@ impl FrameReassembler {
 
     fn retire(&mut self, frame_id: u32) {
         self.pending.remove(&frame_id);
-        // A retired frame is no longer a retransmit candidate, so the once-per-frame guard forgets it.
+        // A retired frame is no longer a retransmit candidate, so the once-per-frame guard forgets
+        // it.
         self.nacked.remove(&frame_id);
         self.retired.insert(frame_id);
         let ahead = self

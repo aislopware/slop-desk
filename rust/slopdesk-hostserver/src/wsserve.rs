@@ -137,9 +137,10 @@ impl WorkspaceService {
                     status: status.as_byte(),
                 });
                 if status == WorkspaceIntentStatus::Applied {
-                    // `closePane` / `closeTab` run HOST-side, so the DOCUMENT is where "this pane is
-                    // gone" is decided — a `channelClose` is only ever one client leaving, and under
-                    // a fan-out reaping on it would take down the other client's running agent.
+                    // `closePane` / `closeTab` run HOST-side, so the DOCUMENT is where "this pane
+                    // is gone" is decided — a `channelClose` is only ever one
+                    // client leaving, and under a fan-out reaping on it would
+                    // take down the other client's running agent.
                     if let Some(panes) = self.document.panes() {
                         panes.reap(&gone);
                     }

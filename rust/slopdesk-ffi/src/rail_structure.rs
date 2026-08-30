@@ -344,7 +344,8 @@ mod tests {
             assert_eq!(answered.0, alone, "pane {index}: the title's process rung");
         }
         // A key that is PRESENT and blank is not an absent key, and a length alone could not say
-        // which — asserted here so the corpus cannot lose the case that makes the flag load-bearing.
+        // which — asserted here so the corpus cannot lose the case that makes the flag
+        // load-bearing.
         assert_eq!(blanks, 1, "the corpus still carries a present-and-blank key");
     }
 

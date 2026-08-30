@@ -137,8 +137,9 @@ impl Host {
         };
         for key in &doomed {
             if let Some(peer) = self.peer(key.connection) {
-                // `Retired`: the pane is leaving the layout, so the session id this channel names is
-                // about to stop existing. A client that re-opens it gets a SPAWN.
+                // `Retired`: the pane is leaving the layout, so the session id this channel names
+                // is about to stop existing. A client that re-opens it gets a
+                // SPAWN.
                 peer.close_channel(key.channel, MuxCloseReason::Retired);
             }
         }

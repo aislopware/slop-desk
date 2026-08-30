@@ -607,8 +607,8 @@ impl AnnouncedPortService {
             let Some(service) = Weak::upgrade(&service) else {
                 return;
             };
-            // Before the port, for the reason `ProbedPortService::port_sink` gives: `served_port` is
-            // what the wait below is on, so anything learned after it is missed.
+            // Before the port, for the reason `ProbedPortService::port_sink` gives: `served_port`
+            // is what the wait below is on, so anything learned after it is missed.
             if let Some(version) = version.as_ref()
                 && let Some(announced) = version(line)
             {

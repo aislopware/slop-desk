@@ -193,8 +193,8 @@ pub fn keystrokes(command: &str, cwd: Option<&str>) -> Vec<u8> {
     // exactly why the pair could sit disagreeing. The gate only decides; the path is still quoted
     // verbatim, because what was typed is what the person meant to type.
     if let Some(path) = cwd.filter(|path| !path.trim().is_empty()) {
-        // The whole line is literal UTF-8 — see the module's note on why a path must never reach the
-        // token parser. The quoting is only so a directory with spaces survives.
+        // The whole line is literal UTF-8 — see the module's note on why a path must never reach
+        // the token parser. The quoting is only so a directory with spaces survives.
         out.extend_from_slice(format!("cd {}", slopdesk_ids::shell_quoting::single_quoted(path)).as_bytes());
         out.push(0x0A);
     }

@@ -1819,8 +1819,8 @@ impl Claim {
                 if let Some(source) = report.source(tree, "Package.swift", message) {
                     let manifest = View::Code.of(source);
                     let block = target_block(&manifest, target);
-                    // An empty block is a target that has been renamed away, which is a stale ledger
-                    // rather than a satisfied ban.
+                    // An empty block is a target that has been renamed away, which is a stale
+                    // ledger rather than a satisfied ban.
                     report.fail_if(
                         block.is_empty(),
                         format!(

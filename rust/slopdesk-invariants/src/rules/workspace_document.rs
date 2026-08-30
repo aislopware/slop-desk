@@ -361,7 +361,8 @@ pub fn optional_fills(tree: &Tree) -> Report {
                 continue;
             }
             // The `??` is on this line, or on the next one — and only the next one, because a
-            // second line of lookahead would start pairing a fill with a call it does not belong to.
+            // second line of lookahead would start pairing a fill with a call it does not belong
+            // to.
             let filled = line.contains("??") || lines.get(index + 1).is_some_and(|next| next.contains("??"));
             if !filled {
                 continue;

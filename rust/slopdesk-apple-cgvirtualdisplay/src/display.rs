@@ -166,23 +166,25 @@ impl State {
         self.scale.store(NO_DISPLAY_SCALE, Ordering::SeqCst);
         let registration = self.registration.lock().ok().and_then(|mut slot| slot.take());
         if let Some(registration) = registration {
-            // 1. Nothing left for WindowServer to call. Safe because `registration.block` still holds the
-            //    block that the property is about to release.
+            // 1. Nothing left for WindowServer to call. Safe because `registration.block` still
+            //    holds the block that the property is about to release.
             descriptor::neutralise(&registration.descriptor.0);
-            // 2. Give the descriptor, the queue and the block up on the DELIVERY queue, and WAIT for that
-            //    drop. The queue is serial, so waiting turns "ordered after any handler already in flight"
-            //    into "no handler is in flight once this returns" — which is the term the FFI door above
-            //    states to its caller: the context a termination callback reads may be released once teardown
-            //    has RETURNED. Dropping asynchronously would let teardown return while a handler was still
-            //    inside the caller's function pointer.
+            // 2. Give the descriptor, the queue and the block up on the DELIVERY queue, and WAIT
+            //    for that drop. The queue is serial, so waiting turns "ordered after any handler
+            //    already in flight" into "no handler is in flight once this returns" — which is the
+            //    term the FFI door above states to its caller: the context a termination callback
+            //    reads may be released once teardown has RETURNED. Dropping asynchronously would
+            //    let teardown return while a handler was still inside the caller's function
+            //    pointer.
             //
-            //    It cannot deadlock: a handler never reaches here (`handle_termination` deliberately
-            //    does not dismantle), and everything a handler itself dispatches is asynchronous.
+            //    It cannot deadlock: a handler never reaches here (`handle_termination`
+            // deliberately    does not dismantle), and everything a handler itself
+            // dispatches is asynchronous.
             let queue = registration.queue.clone();
             queue.exec_sync(move || drop(registration));
         }
-        // 3. Only now the display itself, on the main thread, because its `-dealloc` is the unregistering
-        //    IPC.
+        // 3. Only now the display itself, on the main thread, because its `-dealloc` is the
+        //    unregistering IPC.
         if let Some(display) = self.claim() {
             release_on_main(display.0);
         }

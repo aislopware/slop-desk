@@ -903,8 +903,8 @@ mod tests {
             );
         assert!(super::a_named_ink_table_answers_every_renderer(&fixture.tree()).is_clean());
 
-        // And the hoist does not become a wildcard: a half that stopped answering the rung ALTOGETHER
-        // is still red.
+        // And the hoist does not become a wildcard: a half that stopped answering the rung
+        // ALTOGETHER is still red.
         fixture.write(
             "Sources/SlopDeskPhoneUI/Pane/PaneStatusPillsView.swift",
             "case .chrome: break\ncase let .chromeMuted(tone): break\n",
@@ -1207,8 +1207,9 @@ mod tests {
         );
         assert!(!super::one_drop_preview_two_drawings(&fixture.tree()).is_clean());
 
-        // A re-declaration under the MINTED spelling, and under the retired AppKit one. Both are the
-        // per-framework pair re-forming; the second is the likelier, which is why it is in the ban.
+        // A re-declaration under the MINTED spelling, and under the retired AppKit one. Both are
+        // the per-framework pair re-forming; the second is the likelier, which is why it is
+        // in the ban.
         for seed in [
             "    static let slabRimWash = 0.7\n",
             "    private static let zoneRim: CGFloat = 2\n",

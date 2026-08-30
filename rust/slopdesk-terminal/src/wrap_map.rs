@@ -79,8 +79,8 @@ pub fn physical_row(logical_line: isize, lines: &[&str], columns: isize) -> usiz
         row = row.saturating_add(wrapped_row_count(line, columns));
     }
     // A logical index past the mirror's end — a stale snapshot of a buffer that has since shrunk —
-    // contributes one physical row each. `saturating_sub` is the "only when it ran off the end" test
-    // and the count in one expression.
+    // contributes one physical row each. `saturating_sub` is the "only when it ran off the end"
+    // test and the count in one expression.
     row.saturating_add(logical_line.saturating_sub(lines.len()))
 }
 
@@ -169,8 +169,9 @@ mod tests {
 
     #[test]
     fn a_negative_logical_index_reads_as_row_zero() {
-        // The Swift guard this replaced was `max(0, logicalLine)`, and it applied whether or not the
-        // grid width was known. Both arms are pinned so the clamp cannot quietly move into one.
+        // The Swift guard this replaced was `max(0, logicalLine)`, and it applied whether or not
+        // the grid width was known. Both arms are pinned so the clamp cannot quietly move
+        // into one.
         assert_eq!(row(-1, &["abcdefgh", "ij"], 4), 0);
         assert_eq!(row(-7, &["abcdefgh", "ij"], 0), 0);
     }

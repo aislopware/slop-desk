@@ -89,8 +89,8 @@ pub fn render(snapshot: &ReplaySnapshot, input_mode_reassert: &[u8]) -> Vec<u8> 
     // 3. Main grid, sequentially — EVERY row, so the viewport lands exactly on the grid.
     append_main_grid(snapshot, &mut out, &mut sgr);
 
-    // 4. Alt screen (active only): seed the main saved-cursor slot via `?1049h`'s own save, then paint
-    //    absolutely.
+    // 4. Alt screen (active only): seed the main saved-cursor slot via `?1049h`'s own save, then
+    //    paint absolutely.
     if snapshot.using_alt {
         append_cup(snapshot.saved_main_row, snapshot.saved_main_col, &mut out);
         sgr.reset(&mut out); // the alt clear-on-enter must fill with the DEFAULT bg
@@ -119,9 +119,9 @@ pub fn render(snapshot: &ReplaySnapshot, input_mode_reassert: &[u8]) -> Vec<u8> 
 
     // Cursor + deferred wrap — the LAST cursor-affecting emission. Coordinates are ORIGIN-relative
     // when DECOM is on (the CUP is interpreted inside the region above). The charset
-    // re-establishment must come AFTER this: the wrap re-arm re-prints a cell that was painted under
-    // the default (preamble) charset, and switching G0/G1 first would remap its ASCII through DEC
-    // graphics.
+    // re-establishment must come AFTER this: the wrap re-arm re-prints a cell that was painted
+    // under the default (preamble) charset, and switching G0/G1 first would remap its ASCII
+    // through DEC graphics.
     let cup_row = if snapshot.origin_mode {
         snapshot.cursor_row.saturating_sub(snapshot.scroll_top)
     } else {
@@ -178,12 +178,13 @@ pub fn render(snapshot: &ReplaySnapshot, input_mode_reassert: &[u8]) -> Vec<u8> 
 /// revealed too), no modes, no cursor or cursor-shape restoration.
 #[must_use]
 pub fn render_transcript(snapshot: &ReplaySnapshot) -> Vec<u8> {
-    // Scrollback and grid form ONE uniform run of rows so a soft-wrapped logical line that STRADDLES
-    // the boundary (first half scrolled into history, second half still on screen) re-joins like any
-    // other. Splitting at the boundary would also break the fixed point (transcript-of-transcript):
-    // the re-feed's scroll phase shifts the boundary, so the split would land in a different place
-    // each pass. Grid rows apply the same full-to-the-last-column join guard the scrollback capture
-    // bakes into `ScrollbackLine::soft_wrapped`; trailing blank grid rows are dropped so the new
+    // Scrollback and grid form ONE uniform run of rows so a soft-wrapped logical line that
+    // STRADDLES the boundary (first half scrolled into history, second half still on screen)
+    // re-joins like any other. Splitting at the boundary would also break the fixed point
+    // (transcript-of-transcript): the re-feed's scroll phase shifts the boundary, so the split
+    // would land in a different place each pass. Grid rows apply the same
+    // full-to-the-last-column join guard the scrollback capture bakes into
+    // `ScrollbackLine::soft_wrapped`; trailing blank grid rows are dropped so the new
     // shell's prompt lands right under the content.
     let mut rows: Vec<(&[Cell], bool)> = snapshot
         .scrollback

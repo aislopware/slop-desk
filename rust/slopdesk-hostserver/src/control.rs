@@ -459,14 +459,14 @@ pub fn dispatch(
     let id = request.id.as_str();
     let params = &request.params;
 
-    // BEFORE the verb acts, and before any pane lookup: a refused verb must never touch the PTY, and
-    // must not answer the question "does this pane exist" either.
+    // BEFORE the verb acts, and before any pane lookup: a refused verb must never touch the PTY,
+    // and must not answer the question "does this pane exist" either.
     if is_mutating(&request.method) {
         if !guards.allow_send_keys {
             return failure(id, "ipc send-keys disabled");
         }
-        // The sensitive gate only covers a verb that NAMES a target — `spawn` makes a fresh pane and
-        // has none, so the send-keys gate is all that stands in front of it.
+        // The sensitive gate only covers a verb that NAMES a target — `spawn` makes a fresh pane
+        // and has none, so the send-keys gate is all that stands in front of it.
         if !guards.allow_sensitive_sessions
             && let Some(pane_id) = text(params, "paneId")
         {
@@ -988,9 +988,9 @@ fn wait_pane(id: &str, params: &Map<String, Value>, host: &dyn ControlHost) -> S
         Ok(pane) => pane,
         Err(refusal) => return refusal,
     };
-    // Compiled before the wait, not during it: this pattern arrived whole from an agent, so one that
-    // does not compile must be reported rather than block silently until its timeout. The dialect is
-    // the `regex` crate's — no lookaround, no backreferences.
+    // Compiled before the wait, not during it: this pattern arrived whole from an agent, so one
+    // that does not compile must be reported rather than block silently until its timeout. The
+    // dialect is the `regex` crate's — no lookaround, no backreferences.
     let Some(scanner) =
         slopdesk_rowscan::waituntil::Scanner::new(pattern, slopdesk_rowscan::waituntil::WAIT_BUFFER_CAP)
     else {

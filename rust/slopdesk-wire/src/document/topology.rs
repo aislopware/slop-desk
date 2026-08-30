@@ -153,8 +153,8 @@ impl WorkspaceTopology {
                 self.append_pane(*id, spec, &mut out);
             }
         }
-        // A closed tab is a tab no session lists. It rides as the same entries a live one does — the
-        // ring names it, and its `tab/sessionID` says where it goes back.
+        // A closed tab is a tab no session lists. It rides as the same entries a live one does —
+        // the ring names it, and its `tab/sessionID` says where it goes back.
         for closed in &self.closed_tabs {
             self.append_tab(&closed.tab, closed.session_id, &mut out);
             append_weights(&closed.tab.root, &mut out);
@@ -355,8 +355,8 @@ impl WorkspaceTopology {
         }
 
         // A closed tab is one the ring names that no session lists. A ring entry that IS live is
-        // dropped rather than duplicated — one tab cannot be both open and reopenable, and rendering
-        // it twice is worse than losing one undo step.
+        // dropped rather than duplicated — one tab cannot be both open and reopenable, and
+        // rendering it twice is worse than losing one undo step.
         let ring = state
             .uuid_list(&WorkspaceKey::root(root::CLOSED_TAB_RING))
             .unwrap_or_default();
@@ -366,10 +366,10 @@ impl WorkspaceTopology {
                 continue;
             }
             // The owner may be GONE — a session emptied by closing its last tab takes its id with
-            // it, while the tabs it lost are still reopenable and still carry the only copy of their
-            // panes' specs. So the back-pointer must be PRESENT (it says which session to prefer)
-            // but need not still resolve; the reopen falls back to the active session for one that
-            // does not.
+            // it, while the tabs it lost are still reopenable and still carry the only copy of
+            // their panes' specs. So the back-pointer must be PRESENT (it says which
+            // session to prefer) but need not still resolve; the reopen falls back to
+            // the active session for one that does not.
             let Some(tab) = read_tab(tab_id, state) else {
                 continue;
             };
@@ -482,9 +482,9 @@ fn read_session(id: SessionId, state: &HostWorkspaceState) -> Option<Session> {
         });
     }
 
-    // The active tab arrives as an IDENTITY and becomes an index here — the one place the conversion
-    // happens, so a reorder on another client can never leave this one pointing at a position that
-    // has since become a different tab.
+    // The active tab arrives as an IDENTITY and becomes an index here — the one place the
+    // conversion happens, so a reorder on another client can never leave this one pointing at a
+    // position that has since become a different tab.
     let active_key = WorkspaceKey::of(
         WorkspaceObjectKind::Session,
         id.bytes(),

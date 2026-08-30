@@ -723,7 +723,8 @@ mod tests {
 
     #[test]
     fn a_tiny_window_still_makes_progress() {
-        // A threshold that rounded to 0 would grant on every byte; one that never fired would stall.
+        // A threshold that rounded to 0 would grant on every byte; one that never fired would
+        // stall.
         let mut rx = ReceiveWindowAccountant::new(1);
         assert_eq!(rx.threshold(), 1);
         assert_eq!(rx.consume(1), Some(1));

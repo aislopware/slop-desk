@@ -214,7 +214,8 @@ mod tests {
         write_one_vocabulary_for_foreground_process(&fixture);
         assert!(super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
 
-        // The version walk, respelled in a host crate. One name read three ways must reduce the same.
+        // The version walk, respelled in a host crate. One name read three ways must reduce the
+        // same.
         fixture.append(
             "rust/slopdesk-hostsession/src/detect.rs",
             "if segment == \"versions\" { continue; }\n",

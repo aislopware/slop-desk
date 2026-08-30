@@ -431,16 +431,17 @@ fn echo_loop<E: Enumerates, O: SendsFeed>(shared: &Arc<Shared<E, O>>) {
         }
         // ⚠️ COMPUTED HERE, UNDER THE RE-ACQUIRED LOCK, AND NEVER CARRIED ACROSS THE BLAST. This
         // used to be folded before the `drop(lane)` above and read again down here, which is a lost
-        // wakeup with a 10-second tell. `deliver` pushes an echo and then calls `notify_all`; a push
-        // that lands while this thread is inside `blast` — holding no lock and not yet waiting —
-        // signals a condvar nobody is on, so the notification is dropped on the floor. The stale
-        // fold then still said `INFINITY`, so the thread took the UNBOUNDED arm and slept until the
-        // next unrelated push or the stop. The duplicate never went out.
+        // wakeup with a 10-second tell. `deliver` pushes an echo and then calls `notify_all`; a
+        // push that lands while this thread is inside `blast` — holding no lock and not yet
+        // waiting — signals a condvar nobody is on, so the notification is dropped on the
+        // floor. The stale fold then still said `INFINITY`, so the thread took the
+        // UNBOUNDED arm and slept until the next unrelated push or the stop. The duplicate
+        // never went out.
         //
-        // Re-reading the queue here closes it: an echo queued during the blast is visible, `soonest`
-        // is finite, and the wait is bounded — or already elapsed, so the next turn of the loop
-        // delivers it immediately. The lost notification stops mattering because the state it was
-        // announcing is read directly.
+        // Re-reading the queue here closes it: an echo queued during the blast is visible,
+        // `soonest` is finite, and the wait is bounded — or already elapsed, so the next
+        // turn of the loop delivers it immediately. The lost notification stops mattering
+        // because the state it was announcing is read directly.
         //
         // It reproduced at ~20% on an idle machine (`a_snapshot_goes_out_twice_a_short_time_apart`,
         // 2 failures in 10 runs), and the shape is the tell: a pass took 0.1s and a failure burned
@@ -678,8 +679,8 @@ mod tests {
         let feed = feed(vec![window(1, "One")]);
         let sink = std::sync::Arc::clone(&feed.shared.sink);
         feed.answer(7, 0);
-        // Age the roster past its TTL by hand rather than waiting six seconds: every rule here takes
-        // `now` as an argument precisely so a test can move it.
+        // Age the roster past its TTL by hand rather than waiting six seconds: every rule here
+        // takes `now` as an argument precisely so a test can move it.
         let aged = feed.shared.now() + super::SUBSCRIBER_TTL + 1.0;
         let expired = feed.shared.lane().subscribers.reap_expired(aged);
         assert_eq!(expired, vec![7]);

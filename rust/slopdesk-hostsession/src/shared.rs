@@ -668,8 +668,9 @@ impl Shared {
                 })
                 .collect::<Vec<_>>()
         };
-        // The joiner starts CURRENT: it is receiving the rendered screen, not the history behind it,
-        // so its retention cursor must not pin bytes every other member has already acked.
+        // The joiner starts CURRENT: it is receiving the rendered screen, not the history behind
+        // it, so its retention cursor must not pin bytes every other member has already
+        // acked.
         let head = self
             .replay
             .lock()

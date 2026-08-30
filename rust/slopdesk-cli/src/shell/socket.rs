@@ -330,7 +330,8 @@ mod tests {
         );
         assert_eq!(failure.message, "app error: no such pane");
 
-        // A response with no verdict at all is a refusal too, and says so rather than reading as ok.
+        // A response with no verdict at all is a refusal too, and says so rather than reading as
+        // ok.
         let failure = require_ok(&Map::new()).expect_err("no verdict");
         assert_eq!(failure.message, "app error: (no error message)");
     }

@@ -758,8 +758,9 @@ fn pump_loop(session: &Weak<Session>, extras: &Arc<SessionExtras>) {
             return;
         };
         if batch.is_empty() {
-            // The scroll idle flush: an empty-run plan IS the trailing-flush path, and the planner's
-            // own gate decides whether the residual is due. See the module note.
+            // The scroll idle flush: an empty-run plan IS the trailing-flush path, and the
+            // planner's own gate decides whether the residual is due. See the module
+            // note.
             session.inject_coalesced(&[]);
         } else {
             session.receive_batch(&batch);

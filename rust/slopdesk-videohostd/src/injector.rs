@@ -252,7 +252,8 @@ impl<T> Pump<T> {
     fn stop(&mut self) {
         drop(self.jobs.take());
         if let Some(thread) = self.thread.take() {
-            // A pump that panicked has already left its loop, which is all this call is waiting for.
+            // A pump that panicked has already left its loop, which is all this call is waiting
+            // for.
             drop(thread.join());
         }
     }

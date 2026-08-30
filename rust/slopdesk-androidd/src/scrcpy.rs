@@ -229,13 +229,14 @@ impl Session {
             let _ignored = process.kill();
             return Err(BridgeError::ServerDidNotStart);
         };
-        // The field is a fixed 64 bytes, NUL-padded; a device whose name fills it has no terminator.
+        // The field is a fixed 64 bytes, NUL-padded; a device whose name fills it has no
+        // terminator.
         let trimmed: Vec<u8> = name_bytes.into_iter().take_while(|&byte| byte != 0).collect();
         let device_name = String::from_utf8_lossy(&trimmed).into_owned();
 
-        // Handshake done: from here the stream is quiet for as long as the screen is still (measured
-        // idle floor 547 B/s), so the dial-time receive timeout has to go or the pump reads that as
-        // a dead peer.
+        // Handshake done: from here the stream is quiet for as long as the screen is still
+        // (measured idle floor 547 B/s), so the dial-time receive timeout has to go or the
+        // pump reads that as a dead peer.
         let _ignored = video.set_read_timeout(None);
         let _ignored = video.set_write_timeout(None);
         let _ignored = control.set_read_timeout(None);

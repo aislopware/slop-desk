@@ -157,7 +157,8 @@ pub fn serve(path: &Path) -> std::io::Result<()> {
                         .spawn(move || {
                             handle_connection(&stream, &registry);
                             // Last one out starts the clock. The stamp is written BEFORE the count
-                            // drops, so a watchdog that sees zero necessarily sees this instant too.
+                            // drops, so a watchdog that sees zero necessarily sees this instant
+                            // too.
                             *held.idle_since.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
                             held.live.fetch_sub(1, Ordering::AcqRel);
                         })

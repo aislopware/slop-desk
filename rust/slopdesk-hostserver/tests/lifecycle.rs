@@ -561,7 +561,8 @@ mod suite {
     fn a_link_drop_on_a_host_with_no_retention_ends_the_pane_rather_than_stranding_it() {
         // The Swift runs its detach loop only `if detachEnabled`, so a host with retention off
         // drops the link and leaves its panes in the live map. `slopdesk-hostnet` named that branch
-        // when it made the policy the owner's; here the loop always runs and `park` is what differs.
+        // when it made the policy the owner's; here the loop always runs and `park` is what
+        // differs.
         let bench = bench_on_a_host_with_no_retention();
         let link = Link::on(1);
         bench.host.note_peer(&as_peer(&link));

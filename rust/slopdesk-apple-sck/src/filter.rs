@@ -24,8 +24,8 @@ use crate::content::{Display, Window};
 #[must_use]
 pub(crate) fn desktop_independent_window(window: &Window) -> Retained<SCContentFilter> {
     // SAFETY: framework rule — an initialiser taking a live `SCWindow` the caller holds a strong
-    // reference to for the duration of the call. The filter retains what it needs; `ScreenCaptureKit`
-    // documents a filter as outliving the window object that described it.
+    // reference to for the duration of the call. The filter retains what it needs;
+    // `ScreenCaptureKit` documents a filter as outliving the window object that described it.
     #[expect(
         unsafe_code,
         reason = "an SCContentFilter initialiser; generated unsafe because the header states no nullability"

@@ -386,7 +386,8 @@ impl WorkspaceCore {
                 backstop: Backstop::Leave,
             };
         }
-        // A new host is a new hold, with its own full window rather than the remainder of the first.
+        // A new host is a new hold, with its own full window rather than the remainder of the
+        // first.
         self.dial.hold = Hold::default();
         self.refresh_gate(inputs)
     }

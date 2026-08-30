@@ -153,8 +153,9 @@ pub trait CaptureStream: Send + Sync + core::fmt::Debug {
     /// The successor is NOT started and NOT armed: the caller installs it under the generation
     /// first, because a stream started before its install is one a supersede cannot reclaim.
     fn hand_over(&self, capturer: crate::capture::Capturer) -> Option<Arc<dyn CaptureStream>> {
-        // Explicitly, not `let _ =`: a `Capturer` has a destructor, and the whole point of the `None`
-        // arm is that the un-started stream is torn down HERE rather than surviving as a leak.
+        // Explicitly, not `let _ =`: a `Capturer` has a destructor, and the whole point of the
+        // `None` arm is that the un-started stream is torn down HERE rather than surviving
+        // as a leak.
         drop(capturer);
         None
     }
@@ -469,8 +470,8 @@ impl LaneSession for Session {
             return;
         }
         // 1. The inbound pump, so nothing already queued injects into a half-torn-down session.
-        //    `stop_inbound` is self-join-safe: a `bye` is handled ON the pump thread, so this call can
-        //    reach it from the thread it would otherwise wait for.
+        //    `stop_inbound` is self-join-safe: a `bye` is handled ON the pump thread, so this call
+        //    can reach it from the thread it would otherwise wait for.
         self.stop_inbound();
         if let Some(lane) = self.send_lane.as_ref() {
             lane.close();

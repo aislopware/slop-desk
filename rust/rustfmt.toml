@@ -1,10 +1,19 @@
-# rustfmt — maximal-strict, deterministic formatting for the one Rust crate in the tree
-# (rust/slopdesk-hook). Mirrors the Swift side's split: the FORMATTER owns layout, clippy owns
-# lint/bug/consistency. Width tracks the repo convention (SwiftFormat 120 on code, ruff 100).
+# rustfmt — maximal-strict, deterministic formatting for every Rust workspace under `rust/`. There
+# are seventeen; `just fmt-rust` fans out over the same list `lint-rust` checks, so the formatter
+# never fixes less than the gate judges. Mirrors the Swift side's split: the FORMATTER owns layout,
+# clippy owns lint/bug/consistency. Width tracks the repo convention (SwiftFormat 120 on code,
+# ruff 100).
 #
-# ⚠️ The options below marked NIGHTLY require `cargo +nightly fmt`; `unstable_features` unlocks
-# them. `just fmt-rust` / the prek hook pin the nightly toolchain for exactly this reason. The
-# BUILD stays on stable — only the formatter needs nightly.
+# ⚠️ The options below marked NIGHTLY need a nightly rustfmt; `unstable_features` unlocks them. The
+# toolchain is the LATEST nightly, always — `just fmt-rust` and `just lint-rust` both ask for the
+# floating `+nightly`, the prek `rustfmt (apply)` hook inherits it by entering `just fmt-rust` rather
+# than cargo, `just install-tools` installs-or-updates it, and `just lint-invariants`
+# (`nightly-is-never-pinned-to-a-date`) stops anyone freezing it. That has a price worth knowing
+# before it surprises you: `wrap_comments` decides where a comment BREAKS, that judgement changes
+# between nightlies, and this tree treats comments as an asset — so the day rustup fetches a new one,
+# `just lint` is red on files nobody touched. That is a REFORMAT TO TAKE, not a bug: run
+# `just fmt-rust`, commit it on its own, carry on. The BUILD stays on stable — only the formatter
+# needs nightly.
 edition = "2024"
 style_edition = "2024"
 unstable_features = true

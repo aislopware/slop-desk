@@ -372,7 +372,8 @@ mod tests {
         );
         assert!(!super::one_pacing_schedule_and_one_gap(&fixture.tree()).is_clean());
 
-        // And the lane hand-rolling the chunk boundaries again, in the language the port left it in.
+        // And the lane hand-rolling the chunk boundaries again, in the language the port left it
+        // in.
         pacing(&fixture);
         fixture.write(
             "rust/slopdesk-videohostd/src/sendlane.rs",

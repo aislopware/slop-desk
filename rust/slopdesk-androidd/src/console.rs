@@ -52,8 +52,8 @@ pub fn run(command: &str, serial: &str, home: &Path, timeout: Duration) -> Optio
     let token = auth_token(home)?;
     let mut stream = connect_loopback(port, timeout)?;
 
-    // The greeting arrives unprompted and has no fixed length, so it is drained by reading until the
-    // console falls quiet rather than by counting bytes.
+    // The greeting arrives unprompted and has no fixed length, so it is drained by reading until
+    // the console falls quiet rather than by counting bytes.
     let _greeting = drain(&mut stream);
     stream.write_all(format!("auth {token}\n").as_bytes()).ok()?;
     let reply = drain(&mut stream)?;

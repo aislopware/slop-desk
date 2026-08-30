@@ -176,8 +176,8 @@ pub struct ConnectionRegistry {
 
 impl fmt::Debug for ConnectionRegistry {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The factory is a closure and has nothing to print; the pool is the state worth seeing, and
-        // a poisoned lock must not turn a debug print into a panic.
+        // The factory is a closure and has nothing to print; the pool is the state worth seeing,
+        // and a poisoned lock must not turn a debug print into a panic.
         formatter
             .debug_struct("ConnectionRegistry")
             .field("pool", &self.pool.try_lock().ok())
@@ -440,8 +440,9 @@ impl ConnectionRegistry {
         let Ok(mut pool) = self.pool.lock() else {
             return;
         };
-        // A channel or another in-flight acquire arriving during the failed build means the endpoint
-        // has an owner again; leave its lifecycle to that owner rather than to this pin's failure.
+        // A channel or another in-flight acquire arriving during the failed build means the
+        // endpoint has an owner again; leave its lifecycle to that owner rather than to
+        // this pin's failure.
         if pool
             .entries
             .get(target)

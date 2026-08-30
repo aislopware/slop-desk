@@ -645,9 +645,10 @@ mod tests {
         fixture.append(super::MAC_ROOT, "OverlayHostView(store: store)\n");
         assert!(!super::the_stage_d_ledger_is_empty(&fixture.tree()).is_clean());
 
-        // ⚠️ THE VACUOUS-MENTION CASE, which is why these two are `Matches` on the CALL. A file whose
-        // header explains at length that `CloseConfirmationCopy` owns the wording, and which then
-        // composes its own sentences, satisfied the old `Mentions` claim on its prose alone.
+        // ⚠️ THE VACUOUS-MENTION CASE, which is why these two are `Matches` on the CALL. A file
+        // whose header explains at length that `CloseConfirmationCopy` owns the wording,
+        // and which then composes its own sentences, satisfied the old `Mentions` claim on
+        // its prose alone.
         seed(&fixture);
         fixture.write(
             super::PHONE_CLOSE,

@@ -421,8 +421,9 @@ unsafe fn spill(error: &ConnectError, reason: *mut c_uchar, reason_cap: usize, r
         said.truncate(cut);
     }
     if !reason.is_null() && !said.is_empty() {
-        // SAFETY: `said.len() <= reason_cap` after the truncation above, and the caller's obligation
-        // makes that many bytes writable. A `String`'s buffer cannot overlap the caller's.
+        // SAFETY: `said.len() <= reason_cap` after the truncation above, and the caller's
+        // obligation makes that many bytes writable. A `String`'s buffer cannot overlap the
+        // caller's.
         unsafe { core::ptr::copy_nonoverlapping(said.as_ptr(), reason, said.len()) };
     }
     if !reason_len.is_null() {

@@ -160,7 +160,8 @@ impl Inner {
     /// them.
     fn set_aside(&self, reason: &str) {
         // Seconds since the epoch rather than a formatted date: the name only has to be unique and
-        // sortable, and a locale-formatted timestamp in a filename is a bug waiting for a traveller.
+        // sortable, and a locale-formatted timestamp in a filename is a bug waiting for a
+        // traveller.
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
@@ -228,8 +229,8 @@ impl WorkspaceStore for DiskWorkspace {
                 return self.inner.default_document();
             },
         };
-        // Decoded, but is it a WORKSPACE? A file whose sessions all failed the structural checks has
-        // no topology, and publishing it would hand every client an empty window.
+        // Decoded, but is it a WORKSPACE? A file whose sessions all failed the structural checks
+        // has no topology, and publishing it would hand every client an empty window.
         if WorkspaceTopology::from_document(&restored).is_none() {
             self.inner.log.say(&format!(
                 "workspace store: {FILE_NAME} holds no workspace — minting the default"
@@ -257,8 +258,9 @@ impl WorkspaceStore for DiskWorkspace {
         if !arm {
             return;
         }
-        // One thread per debounce WINDOW, not per save: the window is armed under the lock above and
-        // a burst therefore costs one thread and one write however many intents arrive inside it.
+        // One thread per debounce WINDOW, not per save: the window is armed under the lock above
+        // and a burst therefore costs one thread and one write however many intents arrive
+        // inside it.
         let store = Arc::clone(&self.inner);
         drop(
             std::thread::Builder::new()

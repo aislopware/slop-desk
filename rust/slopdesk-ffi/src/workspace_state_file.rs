@@ -370,17 +370,18 @@ mod tests {
 
     #[test]
     fn the_bytes_are_the_wrapped_modules_own() {
-        // The door may not have an encoding of its own. If this ever drifts, the file on disk stopped
-        // being the one `state_file` describes and the module's tests stopped covering it.
+        // The door may not have an encoding of its own. If this ever drifts, the file on disk
+        // stopped being the one `state_file` describes and the module's tests stopped
+        // covering it.
         let saved = state_file::persisting(&pane_state());
         assert_eq!(encode(&saved), state_file::encode(&saved).into_bytes());
     }
 
     #[test]
     fn an_empty_document_is_four_bytes_and_a_refusal_is_none() {
-        // The distinction the whole `status` out-parameter exists for. A well-formed file holding no
-        // surviving cells encodes to a snapshot with a zero count in it; bytes that are not a file
-        // answer nothing at all, and only the status tells the two apart.
+        // The distinction the whole `status` out-parameter exists for. A well-formed file holding
+        // no surviving cells encodes to a snapshot with a zero count in it; bytes that are
+        // not a file answer nothing at all, and only the status tells the two apart.
         let (status, _, snapshot) = decode(&encode(&HostWorkspaceState::default()));
         assert_eq!(status, NO_REFUSAL);
         assert_eq!(snapshot.len(), 4, "an empty snapshot is its count and nothing");
@@ -443,8 +444,8 @@ mod tests {
     #[test]
     fn a_hand_edited_liveness_row_does_not_survive_the_crossing() {
         // The filter runs on the way IN as well as out, and the FILE is the one input a person can
-        // edit. A row that came back live here would be the fake-live render the whole module exists
-        // to prevent, arriving through the door rather than around it.
+        // edit. A row that came back live here would be the fake-live render the whole module
+        // exists to prevent, arriving through the door rather than around it.
         let mut hostile = HostWorkspaceState::default();
         hostile.set(pane_key(pane::AGENT_STATE), vec![2, 0]);
         hostile.set(pane_key(pane::TITLE), b"kept".to_vec());
@@ -457,8 +458,9 @@ mod tests {
 
     #[test]
     fn a_zero_length_value_stays_distinct_from_an_absent_row() {
-        // An empty value is how a field is RETIRED. Two encodings and a snapshot crossing sit between
-        // the write and the read, and each of them has a way to lose the distinction.
+        // An empty value is how a field is RETIRED. Two encodings and a snapshot crossing sit
+        // between the write and the read, and each of them has a way to lose the
+        // distinction.
         let mut state = HostWorkspaceState::default();
         state.set(pane_key(pane::TITLE), Vec::new());
         let (status, _, snapshot) = decode(&encode(&state));
@@ -534,8 +536,9 @@ mod tests {
 
     #[test]
     fn a_span_the_blob_cannot_back_encodes_as_an_empty_value() {
-        // The offsets are arithmetic done in another process. A cell whose span runs off the end must
-        // read as empty rather than trap — the file still writes, with one retired field in it.
+        // The offsets are arithmetic done in another process. A cell whose span runs off the end
+        // must read as empty rather than trap — the file still writes, with one retired
+        // field in it.
         let mut flat = Flat::of(&state_file::persisting(&pane_state()));
         for cell in &mut flat.cells {
             if cell.field == pane::TITLE {

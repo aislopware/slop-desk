@@ -105,7 +105,8 @@ mod tests {
     #[test]
     fn each_geometry_is_read_against_its_own_threshold() {
         // The macOS floor window: a ~500pt detail inside a 720pt window resolves REGULAR. Read
-        // against the window threshold the detail would collapse, which is the bug this shape avoids.
+        // against the window threshold the detail would collapse, which is the bug this shape
+        // avoids.
         assert!(!is_compact(false, 500.0, Some(720.0)));
         assert!(
             is_compact(false, 500.0, Some(600.0)),

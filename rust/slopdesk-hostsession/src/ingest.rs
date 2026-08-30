@@ -176,9 +176,9 @@ impl PaneChunkSink for Ingest {
             pane.forget_title_coalescing();
         }
         // The two taps that only OBSERVE the chunk. Neither may change what is forwarded, and
-        // neither may block: the screen tap is a copy under a lock nothing else contends for at this
-        // instant, and the derivation's own expensive half is handed to an executor rather than run
-        // here. A pane with detection off pays a branch for both.
+        // neither may block: the screen tap is a copy under a lock nothing else contends for at
+        // this instant, and the derivation's own expensive half is handed to an executor
+        // rather than run here. A pane with detection off pays a branch for both.
         //
         // The derivation reads the RAW batch rather than the fold's output, and it has to: the fold
         // WITHHELDs the sniffed OSC-7 precisely so that the only cwd on the wire is the one this
@@ -194,8 +194,9 @@ impl PaneChunkSink for Ingest {
         if !broadcast.is_empty() {
             self.shared.broadcast_control(&broadcast);
             // AFTER the fold and after the broadcast: `run --wait` hears that its command completed
-            // only once the block's output is retained and askable, so the very next thing it does —
-            // request that output — cannot lose the race with the fold that announced it.
+            // only once the block's output is retained and askable, so the very next thing it does
+            // — request that output — cannot lose the race with the fold that announced
+            // it.
             self.taps.notify_blocks(&broadcast);
         }
 

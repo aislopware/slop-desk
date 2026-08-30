@@ -135,10 +135,18 @@ fmt-shell:
 
 # rustfmt.toml turns on nightly-only options (wrap_comments, group_imports, format_strings …).
 # Only the FORMATTER needs nightly; the crate itself builds and tests on stable.
+#
+# `+nightly` is the FLOATING channel and stays that way — never a `nightly-YYYY-MM-DD`, which
+# `lint-invariants` (`nightly-is-never-pinned-to-a-date`) enforces. The cost is real and worth
+# naming: `wrap_comments` decides where a comment BREAKS, that judgement changes between nightlies,
+# and this tree treats comments as an asset — so the day rustup fetches a new one, `just lint` goes
+# red on files nobody touched (2026-08-30: 3123 lines across 215 files). That is not a bug to
+# prevent, it is a reformat to take: run `just fmt-rust` and commit it on its own.
+#
 # EVERY workspace, matching `lint-rust` — the daemons each have their own (see the note there), and a
 # formatter that skips what the linter checks means `just fmt && just lint` fails on its own output.
 
-# Format Rust (nightly rustfmt — rust/rustfmt.toml uses unstable options)
+# Format Rust (latest nightly rustfmt — rust/rustfmt.toml uses unstable options)
 fmt-rust:
     @for ws in {{RUST_WORKSPACES}}; do (cd $ws && cargo +nightly fmt --all) || exit 1; done
 
@@ -1537,6 +1545,12 @@ instruments-test:
 # Install all required tools (brew) and the git hooks
 install-tools: hooks
     brew install just swiftlint swiftformat shellcheck shfmt prek git-cliff xcodegen
+    # The formatter's toolchain, INSTALLED-OR-UPDATED to the latest nightly — the same verb does
+    # both, which is the point: `fmt-rust` and `lint-rust` ask for floating `+nightly`, so "install
+    # the tools" and "be on the current one" are one step, not a pin somebody has to remember to
+    # bump. Without it every fmt path dies on rustup's own "toolchain is not installed", which reads
+    # as a broken justfile rather than a missing dependency.
+    rustup toolchain install nightly --component rustfmt --profile minimal
 
 # Install the prek git hooks (pre-commit + pre-push)
 hooks:

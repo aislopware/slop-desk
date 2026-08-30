@@ -437,7 +437,8 @@ mod tests {
             OutputFormat::Text,
             true,
         );
-        // `id` is a number where a string was expected, `focused` a string where a bool was: both blank.
+        // `id` is a number where a string was expected, `focused` a string where a bool was: both
+        // blank.
         assert_eq!(text, "");
     }
 

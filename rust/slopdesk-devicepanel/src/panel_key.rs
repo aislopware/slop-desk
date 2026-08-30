@@ -267,7 +267,8 @@ pub fn resolve_android(
     }
     // A chord with a real modifier has to reach the device AS a chord, so it would have to go as a
     // keycode; but the panel cannot know the device's layout, so only the chords with an
-    // unambiguous keycode are forwarded and the rest are dropped rather than typed as stray letters.
+    // unambiguous keycode are forwarded and the rest are dropped rather than typed as stray
+    // letters.
     if modifiers.contains(InputModifiers::COMMAND) || modifiers.contains(InputModifiers::CONTROL) {
         return AndroidResolution::Nothing;
     }

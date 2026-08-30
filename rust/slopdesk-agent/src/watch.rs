@@ -269,7 +269,8 @@ mod tests {
     fn an_absurd_timeout_saturates_instead_of_wrapping_into_the_past() {
         let deadline = block_deadline_nanos(u64::MAX - 1, Some(i64::MAX));
         assert_eq!(deadline, Some(u64::MAX));
-        // The point of saturating: the deadline is never BEHIND the start, which would time out at once.
+        // The point of saturating: the deadline is never BEHIND the start, which would time out at
+        // once.
         assert!(deadline.is_some_and(|nanos| nanos >= u64::MAX - 1));
     }
 }

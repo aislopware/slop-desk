@@ -436,9 +436,10 @@ mod tests {
         );
         assert!(!super::one_notification_card_two_corners(&fixture.tree()).is_clean());
 
-        // And the layer swallowing the screen — the hazard the mount ban used to stand in for, seeded
-        // both ways it can happen: the override deleted outright, and the override KEPT while its
-        // answer changes to `self`. The second is the one a reviewer waves through.
+        // And the layer swallowing the screen — the hazard the mount ban used to stand in for,
+        // seeded both ways it can happen: the override deleted outright, and the override
+        // KEPT while its answer changes to `self`. The second is the one a reviewer waves
+        // through.
         toast(&fixture);
         fixture.write(
             "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",

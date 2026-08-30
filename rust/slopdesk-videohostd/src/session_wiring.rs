@@ -217,9 +217,9 @@ impl Controllers {
         if gates.abr_enabled {
             let mut controller =
                 LiveCongestionController::with_ceiling(ceiling, congestion_config, gradient_cut);
-            // A user ceiling survives an encoder rebuild: the client sends its settings once after a
-            // hello and never again on a resize, so a live override has to be re-layered here or a
-            // mid-session resize would silently discard it.
+            // A user ceiling survives an encoder rebuild: the client sends its settings once after
+            // a hello and never again on a resize, so a live override has to be
+            // re-layered here or a mid-session resize would silently discard it.
             controller.set_user_ceiling_bps(user_ceiling_bps);
             self.congestion = Some(controller);
         }

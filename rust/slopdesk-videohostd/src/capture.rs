@@ -396,9 +396,10 @@ impl Capturer {
             max_allowed_frame_qp: crate::encode::max_allowed_frame_qp(overlay),
             encode_ewma_alpha: EncodeLoadPacerConfig::default().alpha,
         });
-        // The pacer's FLOOR is the network governor's, deliberately: the two axes cap the same rate,
-        // and a compute-side floor below the network-side one would let an over-running encoder
-        // steer past a rate the governor had already declared the minimum acceptable.
+        // The pacer's FLOOR is the network governor's, deliberately: the two axes cap the same
+        // rate, and a compute-side floor below the network-side one would let an
+        // over-running encoder steer past a rate the governor had already declared the
+        // minimum acceptable.
         let governor_texts: [Option<String>; GOVERNOR_KEYS.len()] =
             core::array::from_fn(|index| GOVERNOR_KEYS.get(index).copied().and_then(&read));
         let governor_values: [Option<&str>; GOVERNOR_KEYS.len()] =
@@ -533,17 +534,17 @@ impl Capturer {
     /// the frame queue and joins the two threads that deliver those callbacks.
     pub fn stop(&self) {
         let inner = &self.inner;
-        // 1. Quiesce, on the queue every tick and every delivery runs on, so a tick already in flight
-        //    finishes and any later one is inert before a thread is asked to end.
+        // 1. Quiesce, on the queue every tick and every delivery runs on, so a tick already in
+        //    flight finishes and any later one is inert before a thread is asked to end.
         inner.frame_queue.exec_sync(|| {
             let mut live = inner.lock_live();
             live.capture_stopped = true;
             live.gated_flush_due = None;
             live.cached = None;
         });
-        // 2. The framework, TAKEN out of its slot so a second caller finds nothing to stop. A stream that
-        //    already died answers an error, which is nothing to act on: the teardown is identical either
-        //    way and the death callback has already fired.
+        // 2. The framework, TAKEN out of its slot so a second caller finds nothing to stop. A
+        //    stream that already died answers an error, which is nothing to act on: the teardown is
+        //    identical either way and the death callback has already fired.
         let stopped = inner.lock_stream().take();
         if let Some(stream) = stopped {
             let _status = stream.stop();
@@ -554,20 +555,21 @@ impl Capturer {
             *stopping = true;
         }
         inner.timer_wake.notify_all();
-        // 4. The encode drain. The pending deltas are DISCARDED rather than flushed — a deliberate delta
-        //    from the Swift, whose GCD tail could still encode after `stop()` returned. The session drains
-        //    the encoder right after this returns, so a delta encoded into a session that is going away has
-        //    no reader.
+        // 4. The encode drain. The pending deltas are DISCARDED rather than flushed — a deliberate
+        //    delta from the Swift, whose GCD tail could still encode after `stop()` returned. The
+        //    session drains the encoder right after this returns, so a delta encoded into a session
+        //    that is going away has no reader.
         {
             let mut backlog = inner.lock_backlog();
             backlog.pending.clear();
             backlog.stopping = true;
         }
         inner.backlog_ready.notify_all();
-        // 5. Both threads, TAKEN and then joined with the handle lock RELEASED — a join under it would hold
-        //    it for the whole shutdown, and `arm_threads` on another thread would block behind a teardown
-        //    it is not part of. Every wake above is already published, so a thread that has not noticed yet
-        //    is about to. The take is what makes the join happen once.
+        // 5. Both threads, TAKEN and then joined with the handle lock RELEASED — a join under it
+        //    would hold it for the whole shutdown, and `arm_threads` on another thread would block
+        //    behind a teardown it is not part of. Every wake above is already published, so a
+        //    thread that has not noticed yet is about to. The take is what makes the join happen
+        //    once.
         let (timer, encoder) = {
             let mut threads = inner.lock_threads();
             (threads.timer.take(), threads.encoder.take())
@@ -1334,9 +1336,9 @@ impl Inner {
     fn idr_poll(&self, now: f64) {
         // EVENT-DRIVEN crisp: a run of byte-identical complete re-deliveries already proved the
         // screen is at rest, so fire the crisp re-anchor NOW rather than waiting out the wall-clock
-        // quiet window. A crisp keyframe is a superset of any pending recovery, so those latches are
-        // drained and satisfied; `record_synthetic` re-anchors the normal static cadence, which is
-        // what keeps this from double-emitting with the block below.
+        // quiet window. A crisp keyframe is a superset of any pending recovery, so those latches
+        // are drained and satisfied; `record_synthetic` re-anchors the normal static
+        // cadence, which is what keeps this from double-emitting with the block below.
         if self.gates.still_crisp && self.stillness_ready() {
             let _satisfied = self.drain_recovery();
             {
@@ -1473,11 +1475,12 @@ impl Inner {
             .map_or(Measurement::NONE, |previous| self.measure(previous, &locked));
         let fresh = read_frame(&locked).map(Arc::new);
         // The shared full-NV12 hash, computed AT MOST ONCE. Idle-skip, still-crisp and
-        // static-suppress are three independently gated deciders that would otherwise each pay their
-        // own lock and full-frame hash. The union of the three gates is the table's own
-        // `needs_frame_hash`; the same value feeds every decider below AND the submitted-hash record
-        // at the bottom, which is sound because a hash is deterministic and the buffer is the same
-        // one. The Swift recomputed it at the submit site; one computation is the same answer.
+        // static-suppress are three independently gated deciders that would otherwise each pay
+        // their own lock and full-frame hash. The union of the three gates is the table's
+        // own `needs_frame_hash`; the same value feeds every decider below AND the
+        // submitted-hash record at the bottom, which is sound because a hash is
+        // deterministic and the buffer is the same one. The Swift recomputed it at the
+        // submit site; one computation is the same answer.
         let hash = if self
             .gates
             .needs_frame_hash(measurement.measured, measurement.change_milli)
@@ -1521,8 +1524,9 @@ impl Inner {
         live.cached.clone_from(&fresh);
 
         // TRUE IDLE-SKIP: drop a frame only when it is byte-identical to the previous one by the
-        // FULL hash — luma AND chroma, so a syntax-highlight colour flip is never mistaken for idle,
-        // which the luma-only change measurement would miss — and it carries no obligation.
+        // FULL hash — luma AND chroma, so a syntax-highlight colour flip is never mistaken for
+        // idle, which the luma-only change measurement would miss — and it carries no
+        // obligation.
         let mut idle_skip = false;
         if self.gates.idle_skip
             && idle_skip_eligible(measurement.measured, measurement.change_milli)
@@ -1603,9 +1607,9 @@ impl Inner {
             }
         }
 
-        // The PTS, clamped up to the high-water mark — the value ACTUALLY handed to the encoder, not
-        // merely the tracker, because the live session encodes with frame reordering off and a real
-        // frame must never reverse a prior synthetic IDR's timestamp.
+        // The PTS, clamped up to the high-water mark — the value ACTUALLY handed to the encoder,
+        // not merely the tracker, because the live session encodes with frame reordering
+        // off and a real frame must never reverse a prior synthetic IDR's timestamp.
         let ticks = monotonic_pts(
             live.last_pts_ticks,
             ticks_90k(presentation.value, presentation.timescale),
@@ -1632,9 +1636,9 @@ impl Inner {
 
         // The FPS-governor cadence gate. It sits ABOVE the latch drain and PEEKS `forced`, so a
         // gated return is impossible while a recovery latch is pending or before the first frame —
-        // recovery converts to the NEXT delivery, and deliveries stay at the full rate. A due motion
-        // heartbeat sits BELOW the gate, so it can slip by at most one governed slot on its
-        // multi-second cadence, which is acceptable.
+        // recovery converts to the NEXT delivery, and deliveries stay at the full rate. A due
+        // motion heartbeat sits BELOW the gate, so it can slip by at most one governed slot
+        // on its multi-second cadence, which is acceptable.
         let governed = self.governed_fps();
         if governed < self.shape.fps {
             let must_encode =
@@ -1707,9 +1711,9 @@ impl Inner {
     fn resolve_below_gate(&self, now: f64, governed: i32, staged_qp: Option<i32>) -> FramePlan {
         let (keyframe, ltr) = self.drain_recovery();
         let latches = self.peek();
-        // The self-heal cadence is rebased TIME-equivalently at the governed rate, so the wall-clock
-        // heal latency stays roughly constant: the rate is governed down exactly when whole-frame
-        // loss is most likely and a recovery round trip is most expensive.
+        // The self-heal cadence is rebased TIME-equivalently at the governed rate, so the
+        // wall-clock heal latency stays roughly constant: the rate is governed down exactly
+        // when whole-frame loss is most likely and a recovery round trip is most expensive.
         let heal_every = self_heal_effective_every(
             i64::from(self.gates.self_heal_every),
             i64::from(self.shape.fps),
@@ -1828,7 +1832,8 @@ impl Inner {
             BacklogDecision::EvictOldestUnforced(index) => {
                 // Coalesce the stalest pending delta out and admit the newest, WITHOUT waking the
                 // drain: the count is unchanged, so the wake already outstanding consumes it. That
-                // is the blocks-in-flight invariant the Swift kept by not scheduling a second block.
+                // is the blocks-in-flight invariant the Swift kept by not scheduling a second
+                // block.
                 let _evicted = backlog.pending.remove(index);
                 backlog.pending.push_back(entry);
                 drop(backlog);

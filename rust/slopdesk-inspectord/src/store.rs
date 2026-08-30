@@ -298,9 +298,10 @@ impl InspectorStore {
             self.evicted_tool_cards = self
                 .evicted_tool_cards
                 .saturating_add(u64::try_from(dropped).unwrap_or(u64::MAX));
-            // Every survivor's position shifted down by `dropped`, so the lookup is rebuilt over the
-            // surviving slice. Without this a later upsert of a RETAINED id resolves to the wrong
-            // slot — or past the end — and appends a duplicate instead of updating in place.
+            // Every survivor's position shifted down by `dropped`, so the lookup is rebuilt over
+            // the surviving slice. Without this a later upsert of a RETAINED id
+            // resolves to the wrong slot — or past the end — and appends a duplicate
+            // instead of updating in place.
             self.tool_card_index = index_of(&self.tool_cards);
         }
     }
@@ -872,8 +873,8 @@ mod tests {
             "the truncation banner's number is what actually went",
         );
 
-        // The part that breaks when the index is left pointing at pre-eviction offsets: an upsert of
-        // a SURVIVING id must land in place rather than appending a duplicate.
+        // The part that breaks when the index is left pointing at pre-eviction offsets: an upsert
+        // of a SURVIVING id must land in place rather than appending a duplicate.
         let survivor = format!("t{}", total - 1);
         let before = store.tool_cards().len();
         let mut updated = card(&survivor, ToolCardStatus::Completed);

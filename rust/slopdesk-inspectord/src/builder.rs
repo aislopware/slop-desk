@@ -413,8 +413,8 @@ impl EventBuilder {
         }
         state.pending_order.push_back(result.tool_use_id.clone());
         while state.pending_order.len() > PENDING_RESULT_CAP {
-            // Dropping the oldest orphan is correct: had its `tool_use` ever existed, the card would
-            // have been emitted long ago.
+            // Dropping the oldest orphan is correct: had its `tool_use` ever existed, the card
+            // would have been emitted long ago.
             let Some(oldest) = state.pending_order.pop_front() else {
                 break;
             };
