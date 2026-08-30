@@ -49,6 +49,7 @@
 
 use std::sync::Arc;
 
+use slopdesk_apple_sck::CaptureRegion;
 use slopdesk_video::audio_source::{CHANNEL_COUNT, SAMPLE_RATE};
 use slopdesk_video::congestion::{CongestionConfig, LiveCongestionController};
 use slopdesk_video::fps_governor::FpsGovernor;
@@ -71,18 +72,18 @@ use crate::windowplace::{self, AccessibilityTree};
 /// One value rather than three parameters because the three are only ever read together, and
 /// because the generation is what makes the other two safe to touch: a rebuild that resumes to find
 /// it stale must install nothing, and neither handle below it means anything after that.
-struct Replaced<'a> {
+pub(crate) struct Replaced<'a> {
     /// The stream being retired — the audio lane's donor, and the thing that gets stopped.
-    capture: &'a Arc<dyn CaptureStream>,
+    pub(crate) capture: &'a Arc<dyn CaptureStream>,
     /// The encoder being retired, drained once no capturer can reach it any more.
-    encoder: &'a Arc<Encoder>,
+    pub(crate) encoder: &'a Arc<Encoder>,
     /// The install token both of the above were current as of.
-    generation: u64,
+    pub(crate) generation: u64,
 }
 
 /// How far a rebuild got, and therefore what the caller still owes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Rebuilt {
+pub(crate) enum Rebuilt {
     /// Installed and capturing at the requested size. The only outcome that may be acknowledged.
     Live,
     /// The encoder refused to open. NOTHING was stopped — the outgoing set is still capturing at
@@ -168,7 +169,7 @@ impl Session {
         //    `slopdesk_video::capture_config::can_resize_in_place` and
         //    `crate::capture::Capturer::resize` are both here, and the encoder swap they need is
         //    not.
-        match self.rebuild_live_set(&outgoing, id, epoch, pixel_width, pixel_height) {
+        match self.rebuild_live_set(&outgoing, id, epoch, pixel_width, pixel_height, None) {
             // 8. THE ACK, LAST AND ONLY HERE. It may reach the client just BEFORE the first new-size
             //    keyframe, because starting a stream is not waiting for a frame from it. That is safe and it
             //    is the CLIENT's invariant, not this one's: adoption is frame-gated on a decoded buffer at
@@ -196,7 +197,8 @@ impl Session {
                 // no path of its own. Its own failure is NOT recovered from a second time: a host
                 // that cannot start a stream at either size has a problem no third attempt fixes,
                 // and the idle reaper is what reclaims the session. No ack either way.
-                let _recovered = self.rebuild_live_set(&outgoing, id, epoch, recovery_width, recovery_height);
+                let _recovered =
+                    self.rebuild_live_set(&outgoing, id, epoch, recovery_width, recovery_height, None);
             },
             // A newer owner is live and owns everything this path would have touched.
             Rebuilt::Superseded => {},
@@ -207,7 +209,7 @@ impl Session {
     ///
     /// Both locks are taken and released in the house order — state, then streaming — and the
     /// handles are CLONED out, because everything the caller does with them blocks on a framework.
-    fn live_set(&self) -> Option<(Arc<dyn CaptureStream>, Arc<Encoder>, u64)> {
+    pub(crate) fn live_set(&self) -> Option<(Arc<dyn CaptureStream>, Arc<Encoder>, u64)> {
         if !self.locked_state().media_flowing() {
             return None;
         }
@@ -251,6 +253,12 @@ impl Session {
     /// Replaces `outgoing` with a fresh encoder and capture stream at `pixel_width` ×
     /// `pixel_height`.
     ///
+    /// `region` is the DIALOG-EXPAND crop, `None` for the plain window frame — the one parameter a
+    /// resize never sets and [`crate::session_geometry`] always does. It reaches the framework at
+    /// step 4 and nowhere else: `pixel_width` × `pixel_height` must already be its size times the
+    /// capture scale, which is the caller's obligation because only the caller knows which
+    /// rectangle it measured.
+    ///
     /// The order is the whole function, and it is the Swift's with ONE change, at step 4:
     ///
     /// 1. **The encoder, opened before anything is stopped.** A failed open must leave the outgoing
@@ -274,13 +282,14 @@ impl Session {
     /// 7. **Re-anchor everything the new build does not inherit**, then arm the heartbeat.
     ///
     /// ⚠️ Steps 1 and 4 need a window server and both TCC grants.
-    fn rebuild_live_set(
+    pub(crate) fn rebuild_live_set(
         self: &Arc<Self>,
         outgoing: &Replaced<'_>,
         window_id: u32,
         epoch: u32,
         pixel_width: i32,
         pixel_height: i32,
+        region: Option<CaptureRegion>,
     ) -> Rebuilt {
         // 1. THE NEW ENCODER, BUILT AND OPENED BEFORE IT IS SHARED — `start_capture` step 3's
         //    reasoning, unchanged. The new resolution has a new ceiling; the controllers are
@@ -359,7 +368,7 @@ impl Session {
         //    the alternative is a session with nothing to stop; here, the caller has a size to fall
         //    back to and a live session to restore.
         if capturer
-            .start_window(window_id, pixel_width, pixel_height, None)
+            .start_window(window_id, pixel_width, pixel_height, region)
             .is_err()
         {
             return Rebuilt::StreamRefused;

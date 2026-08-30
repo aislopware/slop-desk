@@ -642,6 +642,49 @@ const STRANDED_RUST_MODULES: [&str; 0] = [];
 /// in any comment anywhere would excuse its module. A module of impls whose public methods nobody
 /// calls is still red.
 #[must_use]
+/// The spellings that name THIS module from anywhere in the tree, whatever qualifies them.
+///
+/// Split out of the loop because the three sources are independent of each other and of the scan
+/// that consumes them: the crate-qualified path, whatever `lib.rs` re-exports out of the module,
+/// and — for a module of inherent impls, which has no nameable item at all — the CALL shape of each
+/// method it hangs on somebody else's type. The relative `crate::`/`super::`/`self::` form and the
+/// bare `module::` form are deliberately NOT here: those two are ambiguous across crates, so the
+/// caller pairs them with a same-crate flag and a left-context check respectively.
+fn unambiguous_reaches(
+    module: &str,
+    crate_ident: &str,
+    body: &str,
+    exported: Option<&BTreeSet<String>>,
+) -> Vec<String> {
+    let mut alternatives = vec![format!(r"\b{crate_ident}::{module}::")];
+    if let Some(names) = exported {
+        alternatives.extend(names.iter().map(|name| format!(r"\b{name}\b")));
+    }
+    // What a module of inherent impls has INSTEAD of a nameable item: methods on a type some OTHER
+    // module declares. A trait impl is skipped by its `for`, and again by the visibility qualifier
+    // the pattern demands — Rust forbids one on a trait method.
+    let declared = text::capture_set(
+        body,
+        r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|union|trait) (\w+)",
+    );
+    for (header, block) in text::capture_pairs(body, r"(?s)^impl([^\n{]*)\{(.*?)\n\}") {
+        let subject = text::capture_first(&header, r"^(?:<[^>]*>)?\s*(\w+)");
+        // An impl on a type this module DECLARES is not the stranded shape: the type is a nameable
+        // item, so `module::` and the `pub use` path above already speak for it.
+        if header.contains(" for ") || subject.is_none_or(|name| declared.contains(&name)) {
+            continue;
+        }
+        alternatives.extend(
+            text::capture_all(&block, r"^\s+pub(?:\([^)]*\))?(?: (?:const|async|unsafe|extern))* fn (\w+)")
+                .into_iter()
+                // The CALL, not the name: a method is reached by being called, and a bare name
+                // would let any mention in any comment excuse the module.
+                .map(|name| format!(r"\b{name}\s*\(")),
+        );
+    }
+    alternatives
+}
+
 pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
     let mut report = Report::new();
     let sources = report.corpus(tree, &["rust"], &["rs"]);
@@ -689,43 +732,65 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
                 continue; // a door; its caller is Swift
             }
 
-            let mut alternatives = vec![format!("{module}::")];
-            if let Some(names) = exported.get(&module) {
-                alternatives.extend(names.iter().map(|name| format!(r"{name}\b")));
-            }
-            // What a module of inherent impls has INSTEAD of a nameable item: methods on a type
-            // some OTHER module declares. A trait impl is skipped by its `for`, and again by the
-            // visibility qualifier the pattern demands — Rust forbids one on a trait method.
-            let declared = text::capture_set(
-                &body,
-                r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|union|trait) (\w+)",
-            );
-            for (header, block) in text::capture_pairs(&body, r"(?s)^impl([^\n{]*)\{(.*?)\n\}") {
-                let subject = text::capture_first(&header, r"^(?:<[^>]*>)?\s*(\w+)");
-                // An impl on a type this module DECLARES is not the stranded shape: the type is a
-                // nameable item, so `module::` and the `pub use` path above already speak for it.
-                if header.contains(" for ") || subject.is_none_or(|name| declared.contains(&name)) {
-                    continue;
-                }
-                alternatives.extend(
-                    text::capture_all(&block, r"^\s+pub(?:\([^)]*\))?(?: (?:const|async|unsafe|extern))* fn (\w+)")
-                        .into_iter()
-                        // The CALL, not the name: a method is reached by being called, and a bare
-                        // name would let any mention in any comment excuse the module.
-                        .map(|name| format!(r"{name}\s*\(")),
-                );
-            }
-            let reaches = text::cached(&format!(r"\b(?:{})", alternatives.join("|")));
+            // THIS crate's module, not a homonym in another one. `slopdesk-video` has a `cursor`
+            // and a `capture_region` too, and for as long as the pattern was the bare `cursor::`,
+            // one `use slopdesk_video::cursor::CursorChannelMessage;` in a sibling file read as a
+            // call into `slopdesk-videohostd`'s own `cursor`. So which spellings count depends on
+            // WHERE the file that spells them is, and the split is the whole point:
+            //
+            // * `crate::`, `super::` and `self::` are RELATIVE, so they name this module only from
+            //   inside this crate. From outside, `crate::cursor::` names the other crate's — which
+            //   is exactly how slopdesk-video's own uses excused this one.
+            // * An UNQUALIFIED `cursor::` counts from anywhere, because `use slopdesk_video::
+            //   {cursor, geometry};` and then `cursor::X` is the ordinary cross-crate idiom and
+            //   nothing short of resolving imports tells the two apart. What it must not do is
+            //   count when something already qualifies it, and that is a left-context check rather
+            //   than a pattern — see below.
+            // * `slopdesk_videohostd::cursor::`, a re-exported name, and a method call on a type
+            //   this module does not declare are all unambiguous, so they count from anywhere too.
+            //
+            // The bare form stays a PURE LITERAL and its left context is checked in Rust below,
+            // rather than being spelled `(?:^|[^\w:])`. That spelling is correct and it costs the
+            // whole rule: a leading character class has no literal prefix, the regex crate gives up
+            // its prefilter for the entire alternation, and one scan of the tree per module turns
+            // twenty seconds of `memchr` into twenty minutes of NFA.
+            let crate_ident = crate_name.replace('-', "_");
+            let here = text::cached(&format!(r"\b(?:crate|super|self)::{module}::"));
+            let alternatives = unambiguous_reaches(&module, &crate_ident, &body, exported.get(&module));
+            let anywhere = text::cached(&format!(r"(?:{})", alternatives.join("|")));
+            let bare = text::cached(&format!("{module}::"));
+            let reaches = |text: &str, same_crate: bool| {
+                anywhere.is_match(text)
+                    || (same_crate && here.is_match(text))
+                    || bare.find_iter(text).any(|hit| {
+                        // A segment ANYTHING qualifies is somebody else's: `cursor::` inside
+                        // `slopdesk_video::cursor::` names slopdesk-video's module, and the
+                        // qualified spellings that DO name this one are the two regexes above.
+                        text.get(..hit.start())
+                            .and_then(|before| before.chars().next_back())
+                            .is_none_or(|char| !char.is_alphanumeric() && char != '_' && char != ':')
+                    })
+            };
             let wired = sources.iter().any(|(path, held)| {
                 if inside.iter().any(|(known, _)| known == path) {
                     return false;
                 }
-                if path == lib {
-                    // `lib.rs` counts as a caller, but not through its own declarations.
-                    let stripped = text::cached(r"(?s)^pub (?:mod|use) [^;]*;").replace_all(&held.text, "");
-                    return reaches.is_match(&stripped);
+                let same_crate = directory.parent().is_some_and(|root| path.starts_with(root));
+                // A CALLER, not a mention. `statements()` blanks every comment, because the
+                // alternatives above are exactly the strings a `///` link spells — a sibling
+                // writing "the way [`crate::windowgeometry::Poller`] is" would otherwise excuse
+                // the whole module, and one did.
+                if path.ends_with("lib.rs") || path.ends_with("mod.rs") {
+                    // A root counts as a caller, but not through its own declarations — and not
+                    // just THIS crate's root. `slopdesk-video/src/lib.rs` says `pub use
+                    // cursor::{…}` about its OWN `cursor`, and that line, at
+                    // the start of a line and qualified by nothing, is the last
+                    // thing that excused `slopdesk-videohostd::cursor`.
+                    let stripped =
+                        text::cached(r"(?s)^pub (?:mod|use) [^;]*;").replace_all(held.statements(), "");
+                    return reaches(&stripped, same_crate);
                 }
-                reaches.is_match(&held.text)
+                reaches(held.statements(), same_crate)
             });
             let named = format!("{crate_name}::{module}");
             let known_debt = STRANDED_RUST_MODULES.contains(&named.as_str());
@@ -1684,6 +1749,114 @@ mod tests {
             "pub fn unrelated(ink: u8) -> u8 {\n    ink.as_byte()\n}\n",
         );
         assert!(!no_rust_module_is_written_and_then_never_called(&fixture.tree()).is_clean());
+    }
+
+    /// A `///` link is a MENTION, and the rule's own alternatives are exactly what one spells.
+    ///
+    /// This is the first of the three holes round 15 found, and it is the nastiest, because the
+    /// text that excused the module was written to be helpful: a sibling saying "the way
+    /// [`crate::windowgeometry::Poller`] is" spells the qualified path character for character.
+    /// `statements()` blanking every comment is what closes it; take that away and a module is
+    /// excused by being documented.
+    #[test]
+    fn a_doc_link_is_not_a_caller() {
+        let root = "pub mod windowgeometry;\npub mod pump;\npub fn boot() {\n    pump::start();\n}\n";
+        let module = "pub struct Poller;\n";
+
+        let mentioned = Fixture::new("stranded-doc-link");
+        mentioned.write("rust/slopdesk-x/src/lib.rs", root);
+        mentioned.write("rust/slopdesk-x/src/windowgeometry.rs", module);
+        mentioned.write(
+            "rust/slopdesk-x/src/pump.rs",
+            "/// the way [`crate::windowgeometry::Poller`] is\npub fn start() {}\n",
+        );
+        let report = no_rust_module_is_written_and_then_never_called(&mentioned.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("pub mod windowgeometry;")),
+            "{report:?}"
+        );
+
+        // The same link as a STATEMENT is the real thing, and the module goes green — which is what
+        // keeps the half above a gate rather than a rule that never passes.
+        let used = Fixture::new("stranded-doc-link-used");
+        used.write("rust/slopdesk-x/src/lib.rs", root);
+        used.write("rust/slopdesk-x/src/windowgeometry.rs", module);
+        used.write(
+            "rust/slopdesk-x/src/pump.rs",
+            "use crate::windowgeometry::Poller;\npub fn start() {\n    let _ = Poller;\n}\n",
+        );
+        assert!(no_rust_module_is_written_and_then_never_called(&used.tree()).is_clean());
+    }
+
+    /// `crate::cursor::` in ANOTHER crate names that crate's `cursor`, and this tree has two.
+    ///
+    /// The second hole. `slopdesk-video` owns a `cursor` and a `capture_region`; so does
+    /// `slopdesk-videohostd`. While the pattern was the bare `cursor::`, one sibling of the OTHER
+    /// module writing `crate::cursor::Message` read as reach into this one — a relative path
+    /// resolved against the wrong crate root.
+    #[test]
+    fn a_homonym_module_in_another_crate_is_not_this_ones_caller() {
+        let fixture = Fixture::new("stranded-homonym");
+        fixture.write("rust/slopdesk-x/src/lib.rs", "pub mod cursor;\n");
+        fixture.write("rust/slopdesk-x/src/cursor.rs", "pub struct Sampler;\n");
+        // slopdesk-y reaches its OWN `cursor` relatively, which is the ordinary shape and must stay
+        // green — the whole verdict this test turns on is slopdesk-x's.
+        fixture.write(
+            "rust/slopdesk-y/src/lib.rs",
+            "pub mod cursor;\nuse crate::cursor::Message;\npub fn go(m: Message) {\n    let _ = m;\n}\n",
+        );
+        fixture.write("rust/slopdesk-y/src/cursor.rs", "pub struct Message;\n");
+        let report = no_rust_module_is_written_and_then_never_called(&fixture.tree());
+        assert_eq!(
+            report.violations().len(),
+            1,
+            "only slopdesk-x's cursor is stranded: {report:?}"
+        );
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk-x") && v.contains("pub mod cursor;")),
+            "{report:?}"
+        );
+    }
+
+    /// The third hole: a root's own `pub use cursor::{…}` is a DECLARATION, not a call.
+    ///
+    /// `slopdesk-video/src/lib.rs` re-exports its own `cursor`, at the start of a line and
+    /// qualified by nothing — the exact bare shape that counts from anywhere. Stripping every
+    /// `pub mod` and `pub use` statement out of a root before reading it is what closes this,
+    /// and the rest of the root still counts, so a genuine caller living up there is not lost.
+    #[test]
+    fn another_roots_reexport_of_its_own_module_is_not_a_caller() {
+        let fixture = Fixture::new("stranded-foreign-reexport");
+        fixture.write("rust/slopdesk-x/src/lib.rs", "pub mod cursor;\n");
+        fixture.write("rust/slopdesk-x/src/cursor.rs", "pub struct Sampler;\n");
+        fixture.write(
+            "rust/slopdesk-y/src/lib.rs",
+            "pub mod cursor;\npub use cursor::{Message, Shape};\npub fn make() -> Message {\n    let _ = \
+             Shape;\n    Message\n}\n",
+        );
+        fixture.write(
+            "rust/slopdesk-y/src/cursor.rs",
+            "pub struct Message;\npub struct Shape;\n",
+        );
+        let report = no_rust_module_is_written_and_then_never_called(&fixture.tree());
+        assert_eq!(
+            report.violations().len(),
+            1,
+            "only slopdesk-x's cursor is stranded: {report:?}"
+        );
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk-x") && v.contains("pub mod cursor;")),
+            "{report:?}"
+        );
     }
 
     /// A door's caller is Swift, which is in no `.rs` file — so `no_mangle` is what stands in for

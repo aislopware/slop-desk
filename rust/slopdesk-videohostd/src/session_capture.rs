@@ -63,6 +63,7 @@ use crate::env::Overlay;
 use crate::injector::Injector;
 use crate::privacy::{HostGamma, PrivacyBlank};
 use crate::session::{CaptureStream, Session, Streaming};
+use crate::session_geometry::RegionState;
 use crate::session_pump::{CapturePump, EncodedPump};
 use crate::session_wiring::{ClientLiveness, Live, Target, initial_governor};
 use crate::wake::HostDisplayWake;
@@ -86,7 +87,7 @@ impl Session {
     /// ⚠️ Steps 7 and down need a window server and a Screen-Recording grant.
     #[expect(
         clippy::too_many_lines,
-        reason = "the thirteen bring-up steps are ONE order, and every note below says what breaks if a \
+        reason = "the fourteen bring-up steps are ONE order, and every note below says what breaks if a \
                   step moves; splitting them would hide the order from the reader"
     )]
     pub(crate) fn start_capture(self: &Arc<Self>, width: u16, height: u16) {
@@ -297,7 +298,20 @@ impl Session {
             Target::Display { id } => capturer.start_display(id, pixel_width, pixel_height),
         };
 
-        // 9. INSTALL THE SET, AND KEEP THE GENERATION. Everything below this line can race a
+        // 9. THE TWO WATCHERS, BEFORE THE INSTALL. Both publish through a `Weak<Session>` and both
+        //    are safe to start early: the geometry watcher's first poll re-origins an injector step
+        //    6 has already installed and sends on a lane that is already up, and the cursor
+        //    sampler's first position is gated behind a main-thread refresh that has not landed
+        //    yet. Started here rather than after the install because the install is what MOVES them
+        //    into `Streaming`, and a set installed without them would have a window in which a
+        //    teardown finds nothing to join.
+        //
+        //    They are deliberately NOT inside `Live`: a resize replaces the capture stream and the
+        //    encoder as a set, and both of these are watching the same window either way — see
+        //    `Streaming`'s own field notes.
+        let (geometry, cursor) = self.start_watchers();
+
+        // 10. INSTALL THE SET, AND KEEP THE GENERATION. Everything below this line can race a
         //    teardown, and `generation` is the one token that answers whether it did.
         let live_capture = Arc::new(LiveCapture::new(capturer, audio));
         // Spelled with the concrete parameter so the unsizing happens at the binding, not inside an
@@ -311,12 +325,18 @@ impl Session {
             let generation = live.install(installed, encoder);
             *streaming = Some(Streaming {
                 live,
-                // Recorded at step 13, once the assertion is actually held. A `true` written here
+                // Recorded at step 14, once the assertion is actually held. A `true` written here
                 // would let a teardown in between release a wake nobody took.
                 holds_display_wake: false,
                 // The client's wish dies with the re-mint and is re-sent after the ack. The fresh
                 // capturer's forwarding gate is down by construction, so the two agree.
                 audio_enabled: false,
+                geometry,
+                cursor,
+                // A fresh bring-up is always captured at the plain window frame — step 8 passes a
+                // `None` region for exactly this reason — so the crop state starts at `None` and
+                // the first dialog-expand sample is what moves it.
+                region: RegionState::default(),
             });
             generation
         };
@@ -325,13 +345,13 @@ impl Session {
         // pump reports — a capture death above all — is guarded on it.
         pump.adopt_generation(generation);
 
-        // 10. RE-SEED THE CLIENT-SILENCE STAMP, before the heartbeat can consult it. A reused or
+        // 11. RE-SEED THE CLIENT-SILENCE STAMP, before the heartbeat can consult it. A reused or
         //     reconnected
         //    session that inherited a stale "silent" stamp would pause a capturer that has not had
         // its    first inbound datagram yet — a stream that starts frozen.
         *self.locked_liveness() = ClientLiveness::starting_at(self.now());
 
-        // 11. ANNOUNCE THE CADENCE AND THE RESIZE CEILING, once per bring-up. The cadence goes out
+        // 12. ANNOUNCE THE CADENCE AND THE RESIZE CEILING, once per bring-up. The cadence goes out
         //     ONLY when the governor is armed: with the gate off the host is byte-identical to one
         //     that never had the feature, which is what makes the gate testable against the golden
         //     vectors at all.
@@ -340,12 +360,12 @@ impl Session {
         }
         self.send_display_max();
 
-        // 12. THE STALL-SCRIM HEARTBEAT. After step 10, because its first tick reads the stamp that
+        // 13. THE STALL-SCRIM HEARTBEAT. After step 11, because its first tick reads the stamp that
         //     step re-seeded; after step 9, because the client-silence pause it pushes goes to the
         //     capture stream the install made reachable.
         live_capture.start_heartbeat(self);
 
-        // 13. THE HOST DISPLAY WAKE, and only for a DISPLAY target — the sleep timer does not count
+        // 14. THE HOST DISPLAY WAKE, and only for a DISPLAY target — the sleep timer does not count
         //     a remote viewer as activity, so a full-desktop session must say so, and a window pane
         //     must NOT or every open pane would pin the host's display awake. `Target` answers it;
         //     this does not re-derive it.
@@ -392,7 +412,7 @@ impl Session {
         // 1. TAKE THE SET, AND DROP THE LOCK. Not just for contention: step 4 JOINS the heartbeat
         //    thread, and that thread takes this same lock on every tick, so holding it here would
         //    deadlock a teardown against a heartbeat that had just woken.
-        let Some(streaming) = self.locked_streaming().take() else {
+        let Some(mut streaming) = self.locked_streaming().take() else {
             return;
         };
 
@@ -430,18 +450,31 @@ impl Session {
             lane.flush();
         }
 
-        // 5. THE LIVE CAPTURE ITSELF: heartbeat, audio gate, stream, audio thread, in that order —
+        // 5. THE TWO WATCHERS, BEFORE THE STREAM THEY PUBLISH ABOUT. Both `stop` calls JOIN a
+        //    thread, and that is the whole point of doing it here: the geometry thread can be
+        //    mid-region-rebuild against the very capture step 6 is about to stop, and the cursor
+        //    thread publishes onto a lane step 7 of `LaneSession::stop` retires. Neither is
+        //    idempotence — `Drop` would join them at step 6 anyway — it is ORDER, so that no poll
+        //    and no sample is in flight past this line.
+        if let Some(mut watcher) = streaming.geometry.take() {
+            watcher.stop();
+        }
+        if let Some(mut sampler) = streaming.cursor.take() {
+            sampler.stop();
+        }
+
+        // 6. THE LIVE CAPTURE ITSELF: heartbeat, audio gate, stream, audio thread, in that order —
         //    see `LiveCapture::stop`.
         if let Some(capture) = streaming.live.capture.as_ref() {
             capture.stop();
         }
 
-        // 6. THE ENCODER GOES LAST, by being dropped last. `Encoder::drop` COMPLETES the frames
-        //    still in the compression session, and completing them after step 5 means the capture
+        // 7. THE ENCODER GOES LAST, by being dropped last. `Encoder::drop` COMPLETES the frames
+        //    still in the compression session, and completing them after step 6 means the capture
         //    path can no longer present a new one into a session that is draining.
         drop(streaming);
 
-        // 7. THE INJECTOR, AFTER EVERYTHING ELSE. Dropping it JOINS its two threads, and the raise
+        // 8. THE INJECTOR, AFTER EVERYTHING ELSE. Dropping it JOINS its two threads, and the raise
         //    thread can be mid-accessibility-chain against a hung app for a second or more — so it
         //    goes after the steps that give the host its screen and its wire back, never before
         //    them. Clearing the seam is what makes the join happen: the pump holds the only other
@@ -771,6 +804,18 @@ impl CaptureStream for LiveCapture {
 
     fn arm_heartbeat(&self, session: &Arc<Session>) {
         self.start_heartbeat(session);
+    }
+
+    fn reanchor(&self, window_origin: slopdesk_video::geometry::VideoPoint) {
+        self.capturer.reanchor(window_origin);
+    }
+
+    fn is_display_anchored(&self) -> bool {
+        self.capturer.is_display_anchored()
+    }
+
+    fn is_union_anchored(&self) -> bool {
+        self.capturer.is_union_anchored()
     }
 }
 
@@ -1141,6 +1186,9 @@ mod tests {
             live,
             holds_display_wake,
             audio_enabled: false,
+            geometry: None,
+            cursor: None,
+            region: RegionState::default(),
         });
         recorder
     }

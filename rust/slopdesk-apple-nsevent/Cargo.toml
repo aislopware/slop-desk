@@ -1,0 +1,139 @@
+# `slopdesk-apple-nsevent` — `NSEvent`: what the input hardware is doing RIGHT NOW.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# One class method and no decisions: where the pointer is, in global Cocoa points. Whether that
+# point is inside the captured window, which shape id it carries and how often to ask are
+# `slopdesk_video::cursor_sampling`'s, and they stay there.
+#
+# ## Why it is not folded into an existing crate
+# §2's unit is one framework AREA, and `NSEvent` is its own. `slopdesk-apple-cursor` wraps
+# `NSCursor` — the cursor's IMAGE — and its own `primary_height` note already ruled `NSScreen` a
+# different area than that one class; `NSEvent` takes the same ruling. `slopdesk-apple-cgevent` is
+# the other near miss and is further away than it looks: that crate SYNTHESISES events and posts
+# them, and a read of the live hardware state is the opposite direction through a different
+# framework.
+#
+# The coordinate space is the reason this is `NSEvent` and not `CGEvent`. `CGEventGetLocation`
+# answers CG global points, top-left origin, which would have to be flipped back through the primary
+# display's height to satisfy the one caller — and that flip is exactly the bug
+# `slopdesk-apple-cgdisplay`'s header exists to avoid. `NSEvent.mouseLocation` is already the space
+# `cursor_sampling::window_position` documents as its input.
+#
+# ## The `unsafe` in this crate: NONE
+# `objc2-app-kit` generates `mouseLocation` SAFE — no arguments, a `CGPoint` out — and it is a class
+# method with no `MainThreadMarker`, which is what lets the 120 Hz sampling thread ask it directly
+# instead of hopping. Neither CoreFoundation admission (§2's `CFRetained::from_raw` /
+# `CFRetained::retain`) is spent: no CoreFoundation object crosses this boundary, only two `f64`s.
+#
+# `unsafe_code` is `deny` rather than `forbid` for the gate reason `slopdesk-apple-nsapp`'s header
+# spells out: `crate_policy::unsafe_policy` exempts every `rust/slopdesk-apple-*` manifest by NAME
+# and then requires each exempt manifest to state exactly `deny`. A `forbid` here fails
+# `just lint-invariants`.
+#
+# ## macOS ONLY
+# The one module is `#[cfg(target_os = "macos")]` and the dependencies are target-gated, so the
+# crate compiles to nothing elsewhere — `docs/57` §3.5. It offers no non-macOS twin for
+# `slopdesk-apple-nsapp`'s reason: `slopdesk-ffi` does not link it, its one caller is a macOS-only
+# daemon, and "where is the pointer" has no honest answer on a platform with no pointer.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-nsevent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "NSEvent reads for slopdesk — where the pointer is, in global Cocoa points"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_nsevent"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  # The class and its one class method.
+  "NSEvent",
+  # `NSPoint` is `CGPoint`, and the generated signature names it through this bridge.
+  "objc2-core-foundation",
+] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFCGTypes",
+] }
+# One point type in the repository, not one per crate — `slopdesk-apple-cgdisplay`'s rule.
+slopdesk-video = { path = "../slopdesk-video" }
+
+# Mirrors the rest of the family's: this is linked into the same daemon.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` for the
+# gate reason spelled out in the header above; this crate writes none.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

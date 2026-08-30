@@ -30,7 +30,7 @@ Swift, by design: no FFI door was added for any of it, so there is no bridge to 
 | 9 | the devtools GUI's video page | `rust/slopdesk-devtools/src/gui/mod.rs`, `gui/video.rs` | check whether they name the Swift target or only the daemon's socket |
 | 10 | `EnvBridge.loadDefaultSidecarIntoEnvConfig` | Swift client side | the daemon's `setenv` fold. `crate::env::Overlay` replaced it; the Swift call site dies with the launch path |
 | 11 | `docs/00` and `docs/01` | prose | the "genuinely left to Swift: Network.framework" line is no longer true of this path |
-| 12 | the four `slopdesk-videohostd` names in `STRANDED_RUST_MODULES` | `rust/slopdesk-invariants/src/rules/repo_invariants.rs` | `encode`, `feed`, `mux_registry` and `windowgeometry` are registered DEBT, not exemptions. The session port is what reaches them, so all four leave the list in this commit — removing a name is the last step of finishing the port, never a step of its own |
+| 12 | the four `slopdesk-videohostd` names in `STRANDED_RUST_MODULES` | `rust/slopdesk-invariants/src/rules/repo_invariants.rs` | ✅ PAID, and then paid AGAIN for a reason the register could not show. `encode`, `feed`, `mux_registry` and `windowgeometry` came off as the port reached them and the list is `[&str; 0]`. But an empty register only means no name is EXCUSED — and `windowgeometry` and `cursor` were passing on text rather than on a caller: a sibling's `///` link spelling the qualified path, a homonym module in `slopdesk-video` reached with `crate::`, and that crate's root re-exporting its own `cursor`. Both modules were written, unit-tested and CONSTRUCTED NOWHERE. Closing the three holes turned them red, and `session_geometry.rs` is the composition that answers — every door they needed was already open. Each hole now carries its own break-test |
 | 13 | the host's whole FFI door surface | `rust/slopdesk-ffi/` | 248 doors across 26 modules had the deleted Swift as their ONLY caller, so they die with it — plus the three settings faces that were the last thing keeping four of those modules alive (`HostGateTable`, `CaptureGateTable`, `InjectorGateTable`). Six more modules SHRINK to the doors a client still opens. See §5 |
 | 14 | the `drag-cadence-ratchet` rule | `rust/slopdesk-invariants/src/rules/window_placement.rs` | it pins `WindowGeometryWatcher.swift`'s poll cadence to `windowgeometry.rs`'s. Its Swift subject dies here, so it is re-aimed or dropped WITH its break-test, the same way row 8 treats `apple_floors` |
 
@@ -155,6 +155,16 @@ The modules above are what a session IS. What actually runs them landed in the s
   rest of the session. Three more things survive with it — the client's latched audio wish, the
   user's stream settings, and the FPS governor, which is not re-minted because its ladder position
   is knowledge about the LINK and a resize does not change the link.
+- **`session_geometry.rs`** — the COMPOSITION over `windowgeometry.rs` and `cursor.rs`, and the one
+  module in the daemon that is nothing but wiring. Both watchers were written, unit-tested and
+  constructed nowhere for the length of the port; this file starts them, holds a `Weak<Session>` in
+  each pump so the session→watcher→sink chain stays acyclic, and turns their observations into the
+  three effects the Swift spread across its actor: the geometry datagram on the wire, the injector
+  and cursor bounds RE-ORIGIN, and the display-anchored capture's re-anchor. It also owns the
+  DIALOG-EXPAND region loop — every verdict in it comes from `slopdesk_video::capture_region`, the
+  contract is debounced 400 ms while the expand is not, and a lost rebuild walks
+  `capture_recovery::capture_failure_action`'s union → plain-window → disconnect ladder, which had
+  been a decision function with no caller.
 - **`diag.rs`** — one `write_all` of one buffer to stderr, prefixed with the invoked basename so two
   daemons in one log are distinguishable.
 
@@ -164,6 +174,11 @@ Two things could not live in the daemon and got their own homes:
   ledger. It is a DECISION, so it is not in the daemon: the Swift file's own doc said as much.
 - **`slopdesk-apple-nsapp`** — `become_accessory`, `run`, `drain_main_queue`. Zero `unsafe`;
   `objc2-app-kit` generates all three calls safe behind a `MainThreadMarker`.
+- **`slopdesk-apple-nsevent`** — `pointer_cocoa`, one class method and no decisions. Zero `unsafe`
+  and, unlike the three above, no `MainThreadMarker` in the generated signature — which is the
+  reason it is its own crate rather than a fourth call in `slopdesk-apple-cursor`: reading where
+  the pointer is must be callable from the sampler's own thread, and everything `NSCursor` answers
+  must not. `docs/57`'s ledger carries the full ruling.
 
 ### The divergences from the Swift, each one deliberate
 

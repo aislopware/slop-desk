@@ -67,8 +67,16 @@ pub trait ReadsGeometry: Send + Sync + fmt::Debug {
 
 /// Where a poll's findings go.
 pub trait SendsGeometry: Send + Sync + fmt::Debug {
-    /// The tracked window's frame changed.
-    fn geometry(&self, change: GeometryChange);
+    /// The tracked window's frame changed: WHAT changed, and the whole frame it changed to.
+    ///
+    /// Both, because the two answer different questions and only one of them is on the wire. The
+    /// [`GeometryChange`] is what the client is told — a move alone, so it does not re-map input
+    /// against a size that did not move — while `frame` is what the HOST re-origins its own
+    /// coordinate mapping and its display-anchored crop against, and neither of those can act on
+    /// half a rectangle. Passing it costs nothing: the poll has just read it, and a consumer that
+    /// asked the window server again would be paying a second round trip 30 times a second for the
+    /// number it was handed.
+    fn geometry(&self, change: GeometryChange, frame: VideoRect);
     /// The capture region changed past the hysteresis: the bounding union, and the individual
     /// opaque rects inside it the client masks the flank between.
     fn region(&self, union: VideoRect, contents: &[VideoRect]);
@@ -90,8 +98,8 @@ impl<T: ReadsGeometry + ?Sized> ReadsGeometry for Arc<T> {
 
 /// The same, for the sink: the session holds the channel and lends the watcher a handle on it.
 impl<T: SendsGeometry + ?Sized> SendsGeometry for Arc<T> {
-    fn geometry(&self, change: GeometryChange) {
-        (**self).geometry(change);
+    fn geometry(&self, change: GeometryChange, frame: VideoRect) {
+        (**self).geometry(change, frame);
     }
     fn region(&self, union: VideoRect, contents: &[VideoRect]) {
         (**self).region(union, contents);
@@ -186,14 +194,14 @@ impl Poller {
         };
         let previous = self.last_bounds.replace(bounds);
         match previous {
-            None => sink.geometry(GeometryChange::Bounds(bounds)),
+            None => sink.geometry(GeometryChange::Bounds(bounds), bounds),
             Some(previous) => {
                 let moved = bounds.origin != previous.origin;
                 let resized = bounds.size != previous.size;
                 match (moved, resized) {
-                    (true, true) => sink.geometry(GeometryChange::Bounds(bounds)),
-                    (true, false) => sink.geometry(GeometryChange::Move(bounds.origin)),
-                    (false, true) => sink.geometry(GeometryChange::Resize(bounds.size)),
+                    (true, true) => sink.geometry(GeometryChange::Bounds(bounds), bounds),
+                    (true, false) => sink.geometry(GeometryChange::Move(bounds.origin), bounds),
+                    (false, true) => sink.geometry(GeometryChange::Resize(bounds.size), bounds),
                     (false, false) => {},
                 }
             },
@@ -449,6 +457,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct Log {
         changes: Mutex<Vec<GeometryChange>>,
+        frames: Mutex<Vec<VideoRect>>,
         regions: Mutex<Vec<(VideoRect, Vec<VideoRect>)>>,
     }
 
@@ -465,14 +474,21 @@ mod tests {
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone()
         }
+        fn frames(&self) -> Vec<VideoRect> {
+            self.frames.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        }
     }
 
     impl SendsGeometry for Log {
-        fn geometry(&self, change: GeometryChange) {
+        fn geometry(&self, change: GeometryChange, frame: VideoRect) {
             self.changes
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(change);
+            self.frames
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(frame);
         }
         fn region(&self, union: VideoRect, contents: &[VideoRect]) {
             self.regions
@@ -541,6 +557,15 @@ mod tests {
             GeometryChange::Move(VideoPoint::new(150.0, 100.0)),
             GeometryChange::Resize(VideoSize::new(640.0, 480.0)),
             GeometryChange::Bounds(VideoRect::xywh(0.0, 0.0, 320.0, 240.0)),
+        ]);
+        // The WHOLE frame rides beside every one of them, including the two that name a single
+        // half. That is what the host's own re-origin acts on — a `Move` carries no size and a
+        // `Resize` carries no origin, and neither is a rectangle anything can be mapped against.
+        assert_eq!(log.frames(), vec![
+            WINDOW,
+            VideoRect::xywh(150.0, 100.0, 800.0, 600.0),
+            VideoRect::xywh(150.0, 100.0, 640.0, 480.0),
+            VideoRect::xywh(0.0, 0.0, 320.0, 240.0),
         ]);
     }
 

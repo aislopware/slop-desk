@@ -42,18 +42,24 @@
 //! added back here is the values form of the same driver, for a caller that links them rather than
 //! dialling them through a C door. The doors die with the Swift.
 //!
-//! ## The two things this module needs that the tree does not have yet
-//! [`HostShape`] is the real cold reader and it is complete. There is deliberately no `HostPointer`
-//! and no real [`HopsToMain`], because each needs one thing that does not exist:
+//! ## The four real seams, and the one answer that is an absence
+//! [`HostPointer`], [`HostShape`] and [`MainHop`] are the live implementations; the sink is the
+//! session's, because only the session owns a socket. Each of the three took a `docs/57` §2 ruling
+//! rather than a convenience:
 //!
-//! * **The pointer read.** `NSEvent.mouseLocation` — the global-Cocoa-points query the Swift made
-//!   on the sampling thread — has no wrapper in the `slopdesk-apple-*` family. Which crate it
-//!   belongs in is a `docs/57` §2 question rather than a convenience: `slopdesk-apple-cursor` wraps
-//!   `NSCursor`, and the same file's `primary_height` note already ruled `NSScreen` a DIFFERENT
-//!   framework area than that one cursor. `NSEvent` may well take the same ruling.
-//! * **The hop.** `dispatch2`'s main queue is how `slopdesk-apple-cgvirtualdisplay` does it, but
-//!   its helper is `pub(crate)` and this crate does not depend on `dispatch2`. Either edge is a
-//!   one-line implementation of the trait; neither is this module's to choose.
+//! * **The pointer read** is `slopdesk-apple-nsevent`, its own crate. `NSEvent` is a different
+//!   framework AREA from `NSCursor` — the same ruling `slopdesk-apple-cursor`'s `primary_height`
+//!   note already made about `NSScreen` — and it is `NSEvent` rather than `CGEvent` because
+//!   `mouseLocation` is already in global Cocoa points and `CGEventGetLocation` is not.
+//! * **The hop** is `slopdesk-apple-nsapp::on_main`, beside the two loops that DRAIN the queue it
+//!   posts to. A hop onto a queue nothing drains is work handed to a thread that never looks, so
+//!   the pair belongs in one crate.
+//! * **The cursor seed** has no wrapper and will not get one. It is `CGSCurrentCursorSeed` behind a
+//!   private CoreGraphics connection — no `objc2` binding exists, and hand-writing the `extern`
+//!   would put a private symbol inside the one family `docs/57` §2 says calls Apple only through
+//!   generated bindings. [`HostPointer::cursor_seed`] therefore answers `None`, which is the exact
+//!   case [`ReadsPointer::cursor_seed`] documents: the refresh policy's unconditional cadence is
+//!   what carries the shape, one safety refresh later than a seed would have.
 
 use core::fmt;
 use std::collections::HashMap;
@@ -160,11 +166,50 @@ impl<T: SendsCursor + ?Sized> SendsCursor for Arc<T> {
     }
 }
 
+/// The real pointer, read on the SAMPLING thread.
+///
+/// `slopdesk-apple-nsevent`'s one call, which answers global Cocoa points because that is what
+/// [`window_position`] takes — see that crate's header for why the read is `NSEvent` and not
+/// `CGEvent`. Nothing here is `unsafe` and nothing here decides anything.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HostPointer;
+
+impl ReadsPointer for HostPointer {
+    fn pointer_cocoa(&self) -> VideoPoint {
+        slopdesk_apple_nsevent::pointer_cocoa()
+    }
+
+    /// Always `None`, and permanently.
+    ///
+    /// The window server's cursor seed is `CGSCurrentCursorSeed` behind a private CoreGraphics
+    /// connection. No `objc2` binding exists for it, and hand-writing the `extern` would put a
+    /// private symbol inside the one crate family `docs/57` §2 restricts to generated bindings — so
+    /// the answer is the absence [`ReadsPointer::cursor_seed`] already documents rather than a
+    /// fourth `unsafe` crate. The cost is bounded and known: [`ShapeRefreshPolicy`] falls back to
+    /// its unconditional cadence, so a shape change lands one fallback tick late instead of on the
+    /// tick the seed would have flagged.
+    fn cursor_seed(&self) -> Option<i32> {
+        None
+    }
+}
+
+/// The real hop: `slopdesk-apple-nsapp`'s main queue.
+///
+/// One call, and it is the crate that RUNS the queue — see [`HopsToMain`] for why the contract is
+/// asynchronous and what a synchronous hop would cost the 120 Hz stream.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MainHop;
+
+impl HopsToMain for MainHop {
+    fn hop(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+        slopdesk_apple_nsapp::on_main(work);
+    }
+}
+
 /// The real main display and the real displayed cursor.
 ///
 /// Both calls are `slopdesk-apple-*`'s, so nothing here is `unsafe` and nothing here decides
-/// anything. There is no matching `HostPointer`: see this module's own docs for the one read that
-/// does not exist in the tree yet.
+/// anything.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HostShape;
 

@@ -158,17 +158,11 @@ impl Session {
                 }
             },
             RecoveryDecision::Ack { stream_seq } => self.note_ack(stream_seq),
-            // ⚠️ MISSING SEAM: the Swift re-shipped the cursor SHAPE bitmap through the sampler
-            // that owns the cursor channel, and this session holds no sampler. Answering the
-            // request from here would mean a second owner of the shape cache, which is worse than
-            // the absence: the client's re-request is idempotent and its cache heals on the next
-            // shape change.
-            #[expect(
-                clippy::match_same_arms,
-                reason = "an unanswerable request and an already-decided one are the same NON-ACTION for \
-                          opposite reasons; folding them would lose the one that is a seam"
-            )]
-            RecoveryDecision::ReshipCursorShape { .. } => {},
+            // The sampler owns the shape cache and is the ONLY thing that can answer this: the
+            // cursor is not re-read, because a fresh read would answer whatever shape is displayed
+            // now rather than the id the client lost. Ungated, like the LTR-refresh arm above — a
+            // few hundred bytes of an already-minted bitmap is not what the storm cap bounds.
+            RecoveryDecision::ReshipCursorShape { shape_id } => self.reship_cursor_shape(shape_id),
             RecoveryDecision::NetworkStats(report) => self.fold_report(&extras, &report),
             RecoveryDecision::RetransmitFragments {
                 frame_id,

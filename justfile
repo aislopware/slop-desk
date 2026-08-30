@@ -1086,6 +1086,17 @@ apple-app-test:
 apple-nsapp-test:
     cd rust/slopdesk-apple-nsapp && cargo test
 
+# `NSEvent` — where the pointer IS, in global Cocoa points, and nothing else. A different framework
+# area than `slopdesk-apple-cursor`'s `NSCursor`, which is the cursor's IMAGE: one class method, no
+# `MainThreadMarker` in its generated signature, and no `unsafe`. The missing marker is the point —
+# `mouseLocation` is a window-server query rather than view state, so the 120 Hz sampler calls it
+# from its own thread instead of hopping, and the suite's whole job is to hold that: the read
+# answers a finite point from an off-main thread and a thousand of them accumulate nothing.
+
+# cargo test for the NSEvent pointer read (off-main is finite, leak check)
+apple-nsevent-test:
+    cd rust/slopdesk-apple-nsevent && cargo test
+
 # The cursor shape the person is actually looking at. `NSCursor.currentSystemCursor` crosses the
 # window-server boundary, so it needs a main thread — which a `cargo test` thread is not, and that
 # is the arm the suite covers: an off-main read must answer NOTHING rather than trap, because the
@@ -1448,7 +1459,7 @@ host-status:
 # closes that.
 
 # cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + one client pane session's driver + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test devicelink-test videolink-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test devicelink-test videolink-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-nsevent-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # The same six sidecars, for the same reason as `test` above and with more at stake: this is the

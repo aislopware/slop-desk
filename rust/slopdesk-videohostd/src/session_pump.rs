@@ -647,6 +647,7 @@ mod tests {
     use crate::mux_lane::{LaneControl, LaneRetired, MuxLaneTransport};
     use crate::mux_sink::MuxSinkTable;
     use crate::session::{CaptureStream, Streaming};
+    use crate::session_geometry::RegionState;
     use crate::session_wiring::{KF_DUP_FAST_ATTACK_WINDOW, Live, SessionSpec, Target};
 
     /// The two timings a live daemon resolves before it folds the gate table, spelled the way the
@@ -812,6 +813,9 @@ mod tests {
             live,
             holds_display_wake: false,
             audio_enabled: false,
+            geometry: None,
+            cursor: None,
+            region: RegionState::default(),
         });
         (generation, recorder)
     }

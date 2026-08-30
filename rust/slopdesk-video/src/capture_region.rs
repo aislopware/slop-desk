@@ -18,6 +18,7 @@
 //! See `geometry`'s module header for the crate's float policy.
 
 use crate::geometry::VideoRect;
+use crate::video_control::MaskRect;
 
 /// Minimum overlap fraction, of the SMALLER rect's area, for an attached panel.
 ///
@@ -194,6 +195,87 @@ pub fn content_rects(
     rects
 }
 
+/// [`content_rects`]' answer projected into the capture's own PIXEL space — the transparency mask.
+///
+/// The union rect a dialog-expand capture is cropped to is a BOUNDING BOX, so a narrow popup beside
+/// a wide window leaves a black flank the window server never drew into. The client masks that
+/// flank out, and to do it it needs the opaque pieces in the decoder's texture space rather than in
+/// the host's global points — which is this projection and nothing else.
+///
+/// Each global rect is expressed relative to `region`'s top-left, scaled by `capture_scale`, and
+/// CLAMPED to the capture surface. A rect that clamps to nothing — a popup that closed between the
+/// enumeration and this call, or one entirely outside the crop — is DROPPED rather than emitted as
+/// a zero-sized rect: the client unions what it receives, and a degenerate member is one more rect
+/// to carry for no pixels.
+///
+/// An EMPTY answer is meaningful and is what a contract sends: the plain window frame is fully
+/// opaque, so an empty mask is the instruction to stop masking. The caller decides that; this only
+/// projects.
+///
+/// The four edges are rounded INDEPENDENTLY, before the clamp and before the subtraction that makes
+/// a width — the Swift's own order, which is what keeps two adjacent rects sharing an edge from
+/// rounding into a one-pixel seam between them. Each `(edge - origin) * scale` stays a subtract
+/// then a multiply, never a `mul_add`: `golden/golden_vectors.json` pins the sizes this feeds.
+#[must_use]
+pub fn mask_rects(
+    content_rects_global: &[VideoRect],
+    region: VideoRect,
+    capture_scale: f64,
+    pixel_width: i32,
+    pixel_height: i32,
+) -> Vec<MaskRect> {
+    let max_width = f64::from(pixel_width);
+    let max_height = f64::from(pixel_height);
+    let mut out = Vec::with_capacity(content_rects_global.len());
+    for rect in content_rects_global {
+        let left = ((rect.min_x() - region.min_x()) * capture_scale).round();
+        let top = ((rect.min_y() - region.min_y()) * capture_scale).round();
+        let right = ((rect.max_x() - region.min_x()) * capture_scale).round();
+        let bottom = ((rect.max_y() - region.min_y()) * capture_scale).round();
+        // `Double.minimum`/`.maximum` rather than `<`/`>` ternaries, which is the crate's float
+        // rule: a NaN edge — a garbage bounds read times a garbage scale — propagates through the
+        // clamp instead of silently taking whichever branch a comparison against NaN happens to
+        // take, and the `width > 0.0` guard below then drops the rect.
+        let clamped_left = f64::min(f64::max(0.0, left), max_width);
+        let clamped_top = f64::min(f64::max(0.0, top), max_height);
+        let clamped_right = f64::min(f64::max(0.0, right), max_width);
+        let clamped_bottom = f64::min(f64::max(0.0, bottom), max_height);
+        let width = clamped_right - clamped_left;
+        let height = clamped_bottom - clamped_top;
+        #[expect(
+            clippy::neg_cmp_op_on_partial_ord,
+            reason = "a NaN edge must DROP the rect, which `<=` would not do — the same negated-positive \
+                      spelling every skip test in this module uses"
+        )]
+        if !(width > 0.0) || !(height > 0.0) {
+            continue;
+        }
+        out.push(MaskRect {
+            x: wire_pixels(clamped_left),
+            y: wire_pixels(clamped_top),
+            width: wire_pixels(width),
+            height: wire_pixels(height),
+        });
+    }
+    out
+}
+
+/// One already-clamped, already-positive pixel edge as the wire carries it.
+///
+/// The saturation at [`u16::MAX`] is the wire's own limit rather than a second opinion about the
+/// geometry: `pixel_width` may legitimately exceed 65535 on a large enough capture, and a mask that
+/// wrapped there would name the left edge of the surface.
+fn wire_pixels(pixels: f64) -> u16 {
+    let bounded = f64::min(f64::max(0.0, pixels), f64::from(u16::MAX));
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped into u16's range on the line above, so no value is left that can wrap"
+    )]
+    let value = bounded as u16;
+    value
+}
+
 /// Whether a region change is worth acting on: any edge differing by MORE than `min_delta` points.
 ///
 /// Strict `>`, so a difference of exactly `min_delta` does NOT retarget — pinned case by case in
@@ -267,9 +349,10 @@ pub fn region_decision(
 mod tests {
     use super::{
         DEFAULT_MIN_DELTA, DEFAULT_MIN_OVERLAP_FRACTION, RegionDecision, WindowSnapshot, content_rects,
-        region_decision, should_reorigin_to_window_on_geometry, should_retarget, union_region,
+        mask_rects, region_decision, should_reorigin_to_window_on_geometry, should_retarget, union_region,
     };
     use crate::geometry::VideoRect;
+    use crate::video_control::MaskRect;
 
     const DISPLAY: VideoRect = VideoRect::xywh(0.0, 0.0, 1920.0, 1080.0);
     const TARGET: VideoRect = VideoRect::xywh(120.0, 120.0, 700.0, 500.0);
@@ -438,5 +521,78 @@ mod tests {
             region_decision(adrift, TARGET, Some(adrift), DEFAULT_MIN_DELTA),
             RegionDecision::Contract
         );
+    }
+
+    /// The projection is relative to the REGION's origin and scaled, which is the whole conversion:
+    /// a window at the union's top-left starts at pixel zero however far from the desktop origin
+    /// the union sits, and a 2× capture doubles every edge.
+    #[test]
+    fn the_mask_is_relative_to_the_region_and_scaled_into_capture_pixels() {
+        let region = VideoRect::xywh(100.0, 100.0, 1000.0, 600.0);
+        let contents = [
+            VideoRect::xywh(100.0, 100.0, 700.0, 500.0),
+            VideoRect::xywh(700.0, 300.0, 400.0, 400.0),
+        ];
+        assert_eq!(mask_rects(&contents, region, 2.0, 2000, 1200), vec![
+            MaskRect {
+                x: 0,
+                y: 0,
+                width: 1400,
+                height: 1000,
+            },
+            MaskRect {
+                x: 1200,
+                y: 400,
+                width: 800,
+                height: 800,
+            },
+        ]);
+    }
+
+    /// A rect reaching past the capture surface is CLAMPED to it rather than dropped — the overhang
+    /// is real content, and the client masks the part it can actually see.
+    #[test]
+    fn a_rect_overhanging_the_surface_is_clamped_rather_than_lost() {
+        let region = VideoRect::xywh(0.0, 0.0, 800.0, 600.0);
+        let contents = [VideoRect::xywh(600.0, 400.0, 800.0, 800.0)];
+        assert_eq!(mask_rects(&contents, region, 1.0, 800, 600), vec![MaskRect {
+            x: 600,
+            y: 400,
+            width: 200,
+            height: 200,
+        }]);
+    }
+
+    /// A rect entirely outside the crop, and a NaN one, both DROP. Neither has pixels the client
+    /// could mask, and a zero-sized member is one more rect to carry for nothing.
+    #[test]
+    fn a_rect_with_no_pixels_inside_the_crop_is_dropped_entirely() {
+        let region = VideoRect::xywh(0.0, 0.0, 800.0, 600.0);
+        let contents = [
+            VideoRect::xywh(2000.0, 2000.0, 100.0, 100.0),
+            VideoRect::xywh(f64::NAN, 0.0, 100.0, 100.0),
+            VideoRect::xywh(10.0, 10.0, 0.0, 50.0),
+        ];
+        assert!(mask_rects(&contents, region, 1.0, 800, 600).is_empty());
+    }
+
+    /// Nothing in, nothing out — which is exactly the datagram a CONTRACT sends to clear the mask.
+    #[test]
+    fn an_empty_content_list_projects_to_an_empty_mask() {
+        assert!(mask_rects(&[], VideoRect::xywh(0.0, 0.0, 800.0, 600.0), 2.0, 1600, 1200).is_empty());
+    }
+
+    /// A capture surface wider than the wire's own 16-bit field saturates rather than wrapping. A
+    /// wrap here would name the LEFT edge of the surface and mask the wrong pixels entirely.
+    #[test]
+    fn an_edge_past_the_wires_range_saturates_rather_than_wrapping() {
+        let region = VideoRect::xywh(0.0, 0.0, 80_000.0, 600.0);
+        let contents = [VideoRect::xywh(70_000.0, 0.0, 9_000.0, 600.0)];
+        assert_eq!(mask_rects(&contents, region, 1.0, 80_000, 600), vec![MaskRect {
+            x: u16::MAX,
+            y: 0,
+            width: 9_000,
+            height: 600,
+        }]);
     }
 }

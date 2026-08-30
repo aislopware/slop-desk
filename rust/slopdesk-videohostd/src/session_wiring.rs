@@ -12,9 +12,16 @@
 //!   bookkeeping, the recovery-IDR admission, the folded network estimate. Every one is a pure
 //!   value type in [`slopdesk_video`], every one is touched only from the report-fold path and the
 //!   encoded-frame path, and they move together. They are [`Controllers`].
-//! * the LIVE COMPONENTS — the capturer, the encoder, the geometry watcher, the cursor sampler, the
-//!   injector. These are framework objects with lifetimes, they are swapped as a SET at every
-//!   rebuild, and every rebuild path guards on their IDENTITY. They are [`Live`].
+//! * the LIVE COMPONENTS — the capturer and the encoder. These are framework objects with
+//!   lifetimes, they are swapped as a SET at every rebuild, and every rebuild path guards on their
+//!   IDENTITY. They are [`Live`].
+//!
+//!   The other three framework objects the Swift held beside them are deliberately NOT in that set,
+//!   and each for its own reason. The injector is per-connection, not per-capture, so it lives with
+//!   the input state a client owns. The geometry watcher and the cursor sampler watch the WINDOW,
+//!   which a resize does not replace — they are started once per capture and stopped once per
+//!   teardown, so they sit in `Streaming` beside the set rather than inside it, and a rebuild that
+//!   swapped them would drop a poll interval for nothing.
 //! * the WIRE COUNTERS — the send stamps, the frame count, the dup throttles. Small, hot, and read
 //!   from the encoded-frame path alone.
 //!
@@ -639,10 +646,10 @@ pub type TakenComponents<Capture, Encode> = Option<(Option<Arc<Capture>>, Option
 
 /// The live framework objects a session installs as a SET.
 ///
-/// A struct rather than five fields because every rebuild path replaces all of them together and
-/// every one of those paths guards on IDENTITY across a suspension. The Swift wrote that guard five
-/// times per path — `capturer === oldCapturer, encoder === oldEncoder, …` — and the class of bug it
-/// was defending against is a path that forgets one of the five. A generation counter over the set
+/// A struct rather than loose fields because every rebuild path replaces them together and every
+/// one of those paths guards on IDENTITY across a suspension. The Swift wrote that guard once per
+/// component per path — `capturer === oldCapturer, encoder === oldEncoder, …` — and the class of
+/// bug it was defending against is a path that forgets one. A generation counter over the set
 /// answers the same question once and cannot be partially written.
 #[derive(Debug)]
 pub struct Live<Capture: ?Sized, Encode: ?Sized> {

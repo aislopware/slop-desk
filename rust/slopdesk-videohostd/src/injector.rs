@@ -812,13 +812,6 @@ impl Injector {
         Self { core, raise, scroll }
     }
 
-    /// Re-points the coordinate mapping at the window's current frame.
-    pub fn update_bounds(&self, bounds: VideoRect) {
-        if let Ok(mut frame) = self.core.bounds.lock() {
-            *frame = bounds;
-        }
-    }
-
     /// The raise pump's channel, for the scroll pump's suppressed-chord retry.
     fn raise_sender(&self) -> Option<&Sender<()>> {
         self.raise.as_ref().and_then(|pump| pump.jobs.as_ref())
@@ -981,6 +974,21 @@ impl InputInjector for Injector {
         };
         let (buttons, modifiers) = balance.masks();
         HeldInput { modifiers, buttons }
+    }
+
+    /// Re-points the coordinate mapping at `bounds`, in GLOBAL CG points.
+    ///
+    /// The rectangle every normalised client point is projected through, so it is the CAPTURE's
+    /// rectangle rather than the window's: a dialog-expand session maps against the union, which is
+    /// what keeps a click in the overhanging panel landing where the person aimed it.
+    ///
+    /// A poisoned lock leaves the previous mapping in place, which is the honest degradation — a
+    /// stale origin puts clicks a window-move away from where they were aimed, and no mapping at
+    /// all would put every one of them at the desktop origin.
+    fn update_bounds(&self, bounds: VideoRect) {
+        if let Ok(mut frame) = self.core.bounds.lock() {
+            *frame = bounds;
+        }
     }
 
     /// Requests the raise chain for the first event of an interaction, and returns IMMEDIATELY.

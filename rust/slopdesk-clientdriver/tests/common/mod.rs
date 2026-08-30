@@ -583,15 +583,6 @@ impl Harness {
         }
     }
 
-    /// Rewrites the plan mid-test, for a suite whose later dials depend on what the earlier ones
-    /// did. Only dials made AFTER this call see it.
-    pub fn replan(&self, scripted: impl IntoIterator<Item = OpenPolicy>, fallback: OpenPolicy) {
-        if let Ok(mut plan) = self.plan.lock() {
-            plan.scripted = scripted.into_iter().collect();
-            plan.fallback = fallback;
-        }
-    }
-
     /// How many connections the pool has dialled.
     pub fn connections(&self) -> usize {
         self.hosts.lock().map_or(0, |hosts| hosts.len())

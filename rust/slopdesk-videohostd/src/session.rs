@@ -175,6 +175,36 @@ pub trait CaptureStream: Send + Sync + core::fmt::Debug {
     fn arm_heartbeat(&self, session: &Arc<Session>) {
         let _ = session;
     }
+
+    /// Re-origins a display-anchored crop after the tracked window MOVED.
+    ///
+    /// `window_origin` is the window's frame origin in GLOBAL CG points. The geometry watcher's
+    /// sink calls this on every move it publishes; the capturer coalesces, refuses on a union crop,
+    /// and no-ops in per-window mode — see [`crate::capture::Capturer::reanchor`], which owns every
+    /// one of those verdicts.
+    ///
+    /// ⚠️ BLOCKS on the framework while it is the driver, so it is called from the watcher's own
+    /// thread and never from the frame queue.
+    fn reanchor(&self, window_origin: slopdesk_video::geometry::VideoPoint) {
+        let _ = window_origin;
+    }
+
+    /// Whether this capture crops a DISPLAY rather than tracking a window object.
+    ///
+    /// Read before a re-anchor is worth attempting at all: per-window mode has no crop to move, so
+    /// a session in it skips the call rather than paying a lock and a framework refusal per poll.
+    fn is_display_anchored(&self) -> bool {
+        false
+    }
+
+    /// Whether the crop is a dialog-expand UNION region rather than the plain window frame.
+    ///
+    /// A union crop is the geometry poller's own, so a window move must NOT re-anchor it — the
+    /// region is re-decided by the next region sample instead. `false` is the honest default for a
+    /// double that models no crop at all.
+    fn is_union_anchored(&self) -> bool {
+        false
+    }
 }
 
 /// The live half of a session: what only exists while a client is streaming.
@@ -191,6 +221,23 @@ pub struct Streaming {
     /// The client's latched audio wish. Reset to `false` on every capture bring-up, because the
     /// client re-sends it after each accepted hello.
     pub audio_enabled: bool,
+    /// The 30 Hz window-frame poller, or `None` for a DISPLAY target — a display never moves and
+    /// never resizes, so there is nothing to watch.
+    ///
+    /// Deliberately NOT inside [`Live`]: a resize replaces the capture stream and the encoder as a
+    /// SET, and the watcher is watching the same window either way. Rebuilding it there would
+    /// restart a poll cadence and re-publish a `Bounds` the client already has.
+    pub geometry: Option<crate::session_geometry::LiveGeometry>,
+    /// The 120 Hz cursor sampler, for as long as this session streams.
+    ///
+    /// `None` only when the thread could not be started. Outside [`Live`] for the watcher's reason,
+    /// and additionally because the shape inventory it holds is what makes a client's re-ship
+    /// request answerable — a rebuild that reset it would re-ship every cursor the session had
+    /// already sent.
+    pub cursor: Option<crate::session_geometry::LiveCursor>,
+    /// The DIALOG-EXPAND crop this session is currently captured at, and the bookkeeping that
+    /// keeps two region rebuilds from overlapping.
+    pub region: crate::session_geometry::RegionState,
 }
 
 /// One client's video session over one mux lane.

@@ -75,9 +75,10 @@ use crate::session_wiring::Target;
 /// the scroll router — is [`crate::injector`], and what a test needs here is a recorder that posts
 /// nothing. The seam is what lets both be the same session's injector.
 ///
-/// Three methods, and the third is here only because this seam IS the handle: the session owns no
-/// other reference to what it installed, so the bring-up's held-input carry-over has nowhere else
-/// to ask. Anything a caller can reach through its own handle stays off this trait.
+/// Four methods, and the last two are here only because this seam IS the handle: the session owns
+/// no other reference to what it installed, so the bring-up's held-input carry-over and the
+/// geometry watcher's re-origin both have nowhere else to ask. Anything a caller can reach through
+/// its own handle stays off this trait.
 pub trait InputInjector: Send + Sync + core::fmt::Debug {
     /// Posts one decoded client event. Fire-and-forget, as the wire is.
     fn inject(&self, event: &InputEvent);
@@ -87,6 +88,22 @@ pub trait InputInjector: Send + Sync + core::fmt::Debug {
     fn raise_target_window(&self);
     /// What the user is physically holding, for seeding the injector that replaces this one.
     fn balance(&self) -> HeldInput;
+
+    /// Re-points the coordinate mapping at a new rectangle, in GLOBAL CG points.
+    ///
+    /// The FOURTH method, and here for the same reason the third is: the session owns no other
+    /// reference to what it installed, and the two callers that must re-point it — the geometry
+    /// watcher's move handler and the dialog-expand rebuild — reach it only through this seam. The
+    /// rectangle is the capture's own: the plain window frame ordinarily, and the UNION while an
+    /// expanded region is live, which is what keeps a click in the dialog area mapping to the right
+    /// absolute point.
+    ///
+    /// INERT by default, for [`crate::session::CaptureStream`]'s reason: a recorder that models the
+    /// session's view of an injector has no mapping to move, and a default that lied would be a
+    /// different thing entirely.
+    fn update_bounds(&self, bounds: slopdesk_video::geometry::VideoRect) {
+        let _ = bounds;
+    }
 }
 
 /// The inbound queue and its two flags, as ONE lock.
@@ -425,6 +442,27 @@ impl Session {
         let held = input.injector.as_ref().map(|injector| injector.balance());
         drop(input);
         held.unwrap_or_default()
+    }
+
+    /// Re-points the installed injector's coordinate mapping at `bounds`, in GLOBAL CG points.
+    ///
+    /// The other end of [`InputInjector::update_bounds`], and a door for the same reason
+    /// [`Self::input_balance`] is one: the seam IS the handle, so the two callers that must
+    /// re-point the mapping — a window move and a dialog-expand rebuild — have nowhere else to
+    /// ask. A no-op with nothing installed, which is the honest answer before a bring-up and
+    /// after a teardown.
+    pub(crate) fn reorigin_input(&self, bounds: slopdesk_video::geometry::VideoRect) {
+        let Some(extras) = self.extras() else {
+            return;
+        };
+        let input = extras.locked_input();
+        let injector = input.injector.clone();
+        // Dropped before the call: the mapping write takes the injector's own lock, and holding the
+        // inbound one across it would put the receive thread behind a geometry poll.
+        drop(input);
+        if let Some(injector) = injector {
+            injector.update_bounds(bounds);
+        }
     }
 
     /// This lane's extras, or `None` once the pump has been stopped.

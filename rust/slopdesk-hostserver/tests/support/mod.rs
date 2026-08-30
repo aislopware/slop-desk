@@ -303,22 +303,6 @@ impl Ghost {
             .clone()
     }
 
-    /// Every hook event routed to this pane, in arrival order — the hook table's assertion.
-    pub fn folded_hooks(&self) -> Vec<(slopdesk_agent::ClaudeHookEvent, u8, Option<String>)> {
-        self.folded.lock().unwrap_or_else(PoisonError::into_inner).clone()
-    }
-
-    /// Every git summary OFFERED to this pane, in order.
-    ///
-    /// Offered rather than delivered: a real pane decides by its own latch, and a fake that
-    /// reimplemented that decision would be asserting the fake's rule rather than the fan-in's.
-    pub fn offered_git(&self) -> Vec<slopdesk_wire::message::ProjectGitStatus> {
-        self.offered
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-
     /// How many close taps are live — the leak assertion.
     pub fn close_taps(&self) -> usize {
         self.close_taps.count()

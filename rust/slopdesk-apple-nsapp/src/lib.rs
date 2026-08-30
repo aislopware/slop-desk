@@ -143,6 +143,30 @@ pub fn drain_main_queue() -> ! {
     dispatch2::dispatch_main()
 }
 
+/// Schedules `work` on the main dispatch queue and returns IMMEDIATELY.
+///
+/// The other half of the two loops above. They are what DRAINS the main queue; this is what puts
+/// something on it, and the pair lives in one crate because the second is worthless without the
+/// first — a caller that hops onto a queue nothing drains has handed its work to a thread that will
+/// never look. `slopdesk-apple-cgvirtualdisplay` keeps its own `pub(crate)` twin of this because
+/// its hop ferries a framework object with a thread rule of its own; this one takes a plain closure
+/// and is the general door.
+///
+/// ASYNCHRONOUS, and that is the contract rather than an implementation detail. The one caller is
+/// `slopdesk-videohostd`'s 120 Hz cursor sampler, whose whole shape exists to keep a main-thread
+/// stall off the pointer stream — a synchronous hop would reintroduce exactly the stall the split
+/// prevents. Work that never runs because the process ended costs whatever that work was; nothing
+/// here waits to find out.
+///
+/// Callable from ANY thread, the main one included, where it still defers to the next drain rather
+/// than running inline.
+#[cfg(target_os = "macos")]
+pub fn on_main(work: impl FnOnce() + Send + 'static) {
+    // `dispatch2` generates this safe: the closure is `Send + 'static`, which is the whole rule
+    // libdispatch states about work handed to another queue.
+    dispatch2::DispatchQueue::main().exec_async(work);
+}
+
 /// The refusing arm of the two loops: block this thread for ever, doing nothing.
 ///
 /// A diverging function has no `false` to answer with, so "refuse without trapping" has exactly one

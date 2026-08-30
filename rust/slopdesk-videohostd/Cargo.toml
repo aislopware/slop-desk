@@ -98,6 +98,11 @@ slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
 # the crate wraps only the one.
 slopdesk-apple-cursor = { path = "../slopdesk-apple-cursor" }
 
+# The other half of the same channel, and a different framework area: where the pointer IS, in the
+# global Cocoa points the position math takes. Off the main thread by design — that is the whole
+# reason the sampler can run at 120 Hz behind a main thread doing accessibility round-trips.
+slopdesk-apple-nsevent = { path = "../slopdesk-apple-nsevent" }
+
 # The sleep assertion a full-desktop session holds. `IOPMAssertion` is a refcount the daemon owns
 # process-wide, so the crate wraps the assertion and this one holds the count.
 slopdesk-apple-power = { path = "../slopdesk-apple-power" }

@@ -96,6 +96,7 @@ pub mod sendlane;
 pub mod session;
 pub mod session_actuate;
 pub mod session_capture;
+pub mod session_geometry;
 pub mod session_inbound;
 pub mod session_pump;
 pub mod session_resize;

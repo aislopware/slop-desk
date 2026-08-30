@@ -485,6 +485,7 @@ dependencies = [
  "bitflags",
  "libc",
  "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
 ]
 
@@ -1009,6 +1010,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-apple-nsevent"
+version = "0.1.0"
+dependencies = [
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "slopdesk-video",
+]
+
+[[package]]
 name = "slopdesk-apple-pasteboard"
 version = "0.1.0"
 dependencies = [
@@ -1378,6 +1388,7 @@ dependencies = [
  "slopdesk-apple-cgwindow",
  "slopdesk-apple-cursor",
  "slopdesk-apple-nsapp",
+ "slopdesk-apple-nsevent",
  "slopdesk-apple-power",
  "slopdesk-apple-sck",
  "slopdesk-apple-vt",
