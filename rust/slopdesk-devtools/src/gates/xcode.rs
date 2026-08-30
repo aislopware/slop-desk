@@ -308,6 +308,11 @@ pub fn simulator_udid(json: &str, device: &str) -> Result<String, String> {
 /// Derived rather than hardcoded, because a hardcoded number is a second thing to keep in step and
 /// the day it drifted this gate would fail on an honest new test.
 ///
+/// It reads the source VERBATIM, comments and all, which is safe only in one direction: a
+/// commented-out `func test…` inflates this count and reds a run the simulator passed, and nothing
+/// a comment can say makes `xctest` execute one more case. See the census in [`super`] for why the
+/// `//` filter that would close the false alarm is deliberately not written here.
+///
 /// # Errors
 /// When the test directory cannot be walked.
 pub fn declared_tests(root: &Path) -> Result<usize, String> {

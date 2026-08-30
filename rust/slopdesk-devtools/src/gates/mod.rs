@@ -33,6 +33,50 @@
 //! With them the `scripts/` directory holds no code at all: two Swift probes, a set of pins and a
 //! fixture tree.
 //!
+//! ## Can a COMMENT satisfy one of these? The census, so nobody re-runs it
+//! `slopdesk-invariants` closed that class over the tree: a positive claim — one that must be
+//! SATISFIED — answered by a sentence rather than by code. These gates read text too, so the same
+//! question was asked of every reading site here, and the answer is per-site rather than global.
+//! ALL TEN modules are below, including the four that read no source text at all, because "not
+//! listed" and "listed as clean" are the same line to whoever reads this next and only one of them
+//! is a fact.
+//!
+//! * [`reach`] — YES, and it is fixed. `just --dry-run` echoes a comment inside a recipe body
+//!   verbatim, so `# cargo +nightly miri test` in `check` satisfied the obligation `CLAUDE.md`
+//!   names as the price of `rust/slopdesk-gfsimd`'s `unsafe`. `reach::commands_only`, before the
+//!   substitutions.
+//! * [`golden`] — YES, and it is DOCUMENTED rather than fixed. `readers` counts a file that names a
+//!   frozen key in prose while opening the corpus; the honest fix needs literal-preserving comment
+//!   stripping, which lives in another cargo workspace. `NOT_A_READER` says the rest, and the
+//!   measurement is there: zero of the 27 frozen keys are prose-only today.
+//! * [`ffi`] — no, in both halves. A commented declaration in the header mints a symbol the built
+//!   library does not export, which fails LOUD, and `path_dependencies` rejects a name carrying a
+//!   `#` before it ever looks for a path.
+//! * [`stamp`] — no. `products_named_in` matches `product:` and `- package:` at the START of a
+//!   trimmed line, and a YAML comment puts a `#` there first.
+//! * [`prepush`] — no. A commented `rust/slopdesk-x/target` adds an EXPECTED daemon, so the gate
+//!   demands a binary that is not there: loud, not quiet.
+//! * [`swift_graph`] — no. The closure comes from `swift package describe`, which is `SwiftPM`'s
+//!   own resolution rather than a scan, so a commented `import` is not an edge.
+//! * [`xcode`] — the one other module that reads SOURCE, and it fails loud. `declared_tests` counts
+//!   `func test…` across `Apps/ClientApp-iOS/Tests` and demands the simulator execute exactly that
+//!   many, so a commented-out declaration INFLATES the left side and reds a run that was green: a
+//!   false alarm, never a false pass, because the right side is `xctest`'s own summary. Measured on
+//!   the tree today: 23 declarations, none of them in a comment. Left unstripped on purpose — the
+//!   honest fix is the same shared literal-preserving stripper [`golden`] is waiting on, and a
+//!   second hand-rolled `//` filter here is the duplication that note exists to refuse. Everything
+//!   else it reads — `simctl list`'s JSON, the xcodebuild log, the `Executed N tests` count — is
+//!   process output, which no comment in this tree can write.
+//! * [`touched`] — no source read at all. The change set is `git diff --name-only` and `git
+//!   ls-files --others`, the graph is `swift package describe`'s JSON: three processes.
+//! * [`android`] — no. `ready_devices` parses `adb devices`, and the toolchain search asks the
+//!   filesystem `is_file`, not a scanner.
+//! * [`supervisor`] — no. It reads nothing; it builds the sidecar binaries the Swift suites launch
+//!   and lets `cargo`'s exit code be the verdict.
+//!
+//! The discriminator is the one that crate arrived at: a claim that must be SATISFIED must not read
+//! prose, and a BAN may, because a comment makes a ban fail loud rather than pass quiet.
+//!
 //! ## The one thing that changed on the way over
 //! Both stampers now hash repo-RELATIVE paths, for the reason [`super::release::stamps`] does. The
 //! stamps live under `.build/`, so the first run after this port rebuilds once and is warm after.

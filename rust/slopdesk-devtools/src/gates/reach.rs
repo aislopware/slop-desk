@@ -17,6 +17,13 @@
 //! justfile is a BACKTICK and not `shell(…)`: a `shell(…)` prints as its own source text, which
 //! this could not honestly re-run.
 //!
+//! ## And a plan is not source text, except where it is
+//! Every question here is POSITIVE — the plan must NAME something — which is the shape a comment
+//! can answer for. `slopdesk-invariants` closed that class over the tree by reading `statements()`;
+//! the same class reaches a plan because `just --dry-run` ECHOES a comment inside a recipe body
+//! verbatim. [`commands_only`] is this module's half of the answer, and it runs before the
+//! substitutions for a reason of its own.
+//!
 //! ## Why the answer matters more than it looks
 //! Almost every crate under `rust/` is its own cargo workspace, and cargo will not cross a
 //! workspace boundary for you. A crate that no `fmt`/`lint`/`test` recipe enters is not a warning —
@@ -46,7 +53,40 @@ const REACHING: [&str; 4] = ["fmt-rust", "lint-rust", "lint-rust-clippy", "test-
 /// rather than accepting.
 fn dry_run(root: &Path, recipe: &str) -> String {
     let raw = proc::ask_err("just", &["--dry-run", recipe], root).unwrap_or_default();
-    expand_backticks(&raw, root)
+    plan(&raw, root)
+}
+
+/// A raw dry-run plan turned into the text every question below is asked of.
+///
+/// The two steps are ONE function because their ORDER is the contract, and a caller composing them
+/// by hand can get it wrong silently — see [`commands_only`] for what expanding first would run.
+#[must_use]
+pub fn plan(raw: &str, root: &Path) -> String {
+    expand_backticks(&commands_only(raw), root)
+}
+
+/// A dry-run plan with the lines `just` would only ECHO removed.
+///
+/// Every question this module asks is a POSITIVE one — the plan must NAME a crate path, a
+/// `cargo test -p`, a `cargo +nightly miri test` — and `just --dry-run` prints a comment inside a
+/// recipe body verbatim, exactly like a command. So `# cargo +nightly miri test` in the `check`
+/// recipe satisfied the one obligation `CLAUDE.md` names as the price of `rust/slopdesk-gfsimd`'s
+/// `unsafe`, and a commented-out `cargo test -p` line answered for a suite nobody runs. The tree is
+/// clean today — the only echoed comment in any of the six plans is `check`'s `#!/bin/sh` shebang,
+/// which nothing here searches for — so this closes the hole rather than reporting one.
+///
+/// It runs BEFORE [`expand_backticks`], and that order is the sharper half. A backtick on a
+/// commented line is a substitution `just` would never perform, and expanding first would hand it
+/// to `sh -c`: the gate executing shell out of a line the recipe does not run.
+///
+/// A LEADING `#` is the whole test. A `#` inside a command — `sed 's/#.*//'` — is not a comment and
+/// the line stays, which is why this is not a strip-to-end-of-line.
+#[must_use]
+pub fn commands_only(raw: &str) -> String {
+    raw.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Run every `` `…` `` in a dry-run plan and splice its output back in, as the shell would.
@@ -260,7 +300,49 @@ fn any_rust_file_matching(dir: &Path, needles: &[&str]) -> bool {
 mod tests {
     use std::path::Path;
 
-    use super::{expand_backticks, plan_enters, runs_tests_for};
+    use super::{commands_only, expand_backticks, plan, plan_enters, runs_tests_for};
+
+    /// A commented recipe line answers none of the four questions, in all three of their spellings.
+    #[test]
+    fn a_comment_in_a_plan_is_not_a_command() {
+        let plan = "    # cd rust/slopdesk-ghost && cargo test\n# cargo test -p slopdesk-ghost\n\t#cargo \
+                    +nightly miri test\ncd rust/slopdesk-wire && cargo test\n";
+        let kept = commands_only(plan);
+        assert!(!plan_enters(&kept, "slopdesk-ghost"), "{kept}");
+        assert!(!runs_tests_for(&kept, "slopdesk-ghost"), "{kept}");
+        assert!(!kept.contains("miri"), "{kept}");
+
+        // The live line beside them survives, so the filter is reading the `#` rather than the
+        // plan.
+        assert!(plan_enters(&kept, "slopdesk-wire"), "{kept}");
+    }
+
+    /// A `#` INSIDE a command is not a comment, and the line stays.
+    #[test]
+    fn a_hash_inside_a_command_does_not_delete_the_line() {
+        let plan = "cd rust/slopdesk-wire && sed 's/#.*//' x && cargo test\n";
+        assert_eq!(commands_only(plan), plan.trim_end());
+    }
+
+    /// The order that closes the sharper half: a substitution on a commented line is never run.
+    ///
+    /// The command would create the file if it ever reached `sh -c`, so the assertion is about the
+    /// filesystem rather than about the returned string — a plan that merely LOOKS empty would pass
+    /// a string comparison while the side effect had already happened. It goes through [`plan`],
+    /// which is the composition `dry_run` uses, so a reordering there has to break this test.
+    #[test]
+    fn a_backtick_on_a_commented_line_is_never_executed() {
+        let witness = std::env::temp_dir().join("slopdesk-reach-commented-backtick");
+        let _ = std::fs::remove_file(&witness);
+        let raw = format!("# echo `touch {} && echo ran`\n", witness.display());
+        let expanded = plan(&raw, Path::new("/"));
+        assert!(expanded.trim().is_empty(), "{expanded}");
+        assert!(!witness.exists(), "the gate ran a command the recipe would not");
+
+        // And the live half still expands, so the assertion above is not passing because `plan`
+        // stopped substituting altogether.
+        assert_eq!(plan("echo `printf x`\n", Path::new("/")), "echo x");
+    }
 
     /// The whole reason this module still answers the question it did under make: a dry run hands
     /// back the SUBSTITUTION, and the crate paths only exist once it has been run.

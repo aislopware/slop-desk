@@ -163,6 +163,25 @@ const RUST_TESTS: &str = "rust";
 /// corpus, and replays neither. Left in, it would answer for those fourteen and the check could no
 /// longer notice a real replay suite being deleted. A minter is not a reader; it is the thing
 /// readers are read against.
+///
+/// ## ⚠️ This carve-out stands in for a VIEW, and knows it
+///
+/// Read that paragraph again: what disqualified the minter is that it names the keys IN COMMENTS.
+/// That is the prose-satisfaction class `slopdesk-invariants` closed over the whole tree — a
+/// positive claim answered by a sentence — and here it is patched with a path allowlist, which
+/// closes one file rather than the class. Any other file that explains a frozen key in prose while
+/// opening the corpus answers for it too.
+///
+/// It stays a carve-out for one reason, and the reason is a boundary rather than an oversight. The
+/// honest fix reads the bodies through a comment stripper that PRESERVES STRING LITERALS, because a
+/// reader cites its key as `"naluJoin"` and a naive strip to end-of-line corrupts any line holding
+/// `//` inside a string. That stripper exists — `slopdesk-invariants`' `Source::statements` — in
+/// another cargo workspace, and reaching it means either depending on the whole gate crate from
+/// this inner-loop one or minting a shared text crate. Both are design changes, not a sweep.
+///
+/// Measured before it was left: with comments stripped from every candidate, all 27 frozen keys
+/// keep a reader — zero are prose-only. The hole is real and currently unexercised, and this note
+/// is here so the next reader finds a documented boundary rather than an inconsistency.
 const NOT_A_READER: &[&str] = &[MINTER];
 
 /// One thing wrong with the pin, phrased for the author who has to fix it.
