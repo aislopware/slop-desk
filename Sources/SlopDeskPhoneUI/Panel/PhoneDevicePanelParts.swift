@@ -8,18 +8,19 @@
 //
 // ## The chrome
 //
-// The empty stage, the caption under it, the notice a list draws when it has no rows, and the delay
-// before a veil admits that a stream is late. These are DESIGN decisions, not device ones, and each was
-// made once and written down twice — `docs/DECISIONS.md` records the reasoning for all four in the
-// singular ("a scrim says something is on top of the picture; there is no picture"), which is the tell.
-// A panel that redraws its own empty state is how one console ends up on `Slate.Surface.field` and the
-// other on `raised` after a design pass touches the file it happened to be looking at.
+// The empty stage, the caption under it, and the notice a list draws when it has no rows. These are
+// DESIGN decisions, not device ones, and each was made once and written down twice —
+// `docs/DECISIONS.md` records the reasoning for all three in the singular ("a scrim says something is
+// on top of the picture; there is no picture"), which is the tell. A panel that redraws its own empty
+// state is how one console ends up on `Slate.Surface.field` and the other on `raised` after a design
+// pass touches the file it happened to be looking at.
 //
-// What stays with each panel is the NUMBER that was measured on its own device —
-// ``SimulatorPresentation/veilDelay`` against a 0.09 s first keyframe, ``AndroidPresentation/veilDelay``
-// against 0.83 s — because those are facts about two different pieces of hardware and merging them
-// would throw away the measurement. Both numbers are `rust/slopdesk-devicepanel`'s already
-// (docs/62 §7 item 7); what is left on this side is the `Task.sleep`, which is an actuator.
+// The veil's WAIT used to be here too, and it is not: it was the same guard-sleep-cancel in three
+// spellings, and it is ``DeviceVeilWait`` now (docs/62 §7 item 7). What stays with each panel is the
+// NUMBER that was measured on its own device — ``SimulatorPresentation/veilDelay`` against a 0.09 s
+// first keyframe, ``AndroidPresentation/veilDelay`` against 0.83 s — because those are facts about two
+// different pieces of hardware and merging them would throw away the measurement. Both numbers are
+// `rust/slopdesk-devicepanel`'s already.
 //
 // ## The soft keyboard
 //
@@ -136,25 +137,6 @@ enum PhoneDevicePanelChrome {
         let key = PhoneDeviceClearKey(ink: ink, action: action)
         key.accessibilityLabel = "Clear the filter"
         return key
-    }
-
-    /// Whether the loading veil should be showing, late on the way up and immediate on the way down;
-    /// `nil` when the wait was cancelled and the caller must not write anything.
-    ///
-    /// The asymmetry is the whole point, and it is why the views keep a copy of the model's loading
-    /// state at all: the caller's `Task` is cancelled the instant the model's state flips, so a pending
-    /// veil for a stream that arrived in time never appears. Waiting on the way DOWN would leave grey
-    /// over a picture that is already there.
-    ///
-    /// ⚠️ THE SIMULATOR HALF DOES NOT CALL THIS. ``SimulatorPresentation/loadingVeil(isAwaiting:)`` is
-    /// the same three lines with that panel's own measured delay already inside, and calling the door
-    /// beats passing it its own number. This form exists for the Android stage, whose delay
-    /// (``AndroidPresentation/veilDelay``) crosses on its own and whose Mac twin inlines exactly this.
-    static func loadingVeilState(isAwaiting: Bool, after delay: Duration) async -> Bool? {
-        guard isAwaiting else { return false }
-        try? await Task.sleep(for: delay)
-        guard !Task.isCancelled else { return nil }
-        return true
     }
 }
 

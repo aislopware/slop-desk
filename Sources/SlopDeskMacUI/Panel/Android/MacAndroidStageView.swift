@@ -312,10 +312,10 @@ final class MacAndroidStageView: NSView {
 
     /// Late on the way up, and nothing at all if the wait ended first — the loop's cancellation is
     /// what makes that second half true, so this only has to check that the world did not move under
-    /// the sleep.
+    /// the sleep. The wait is ``DeviceVeilWait``'s, shared with the phone's stage and the simulator's.
     private func waitOutVeil() async {
-        try? await Task.sleep(for: AndroidPresentation.veilDelay)
-        guard !Task.isCancelled, model.isAwaitingStream else { return }
+        guard await DeviceVeilWait.state(isAwaiting: true, after: AndroidPresentation.veilDelay) == true,
+              model.isAwaitingStream else { return }
         showsLoading = true
         follow()
     }

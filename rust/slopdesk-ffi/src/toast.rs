@@ -1,9 +1,11 @@
-//! The three toast factories, in C.
+//! The three toast factories and the stack they stand in, in C.
 //!
 //! The rules are `slopdesk_workspace::toast`; what is here is the marshalling.
 //!
-//! A card is SIX values that are only ever wanted together — an id, a flavour, a source, a title,
-//! and two optional lines — so all three doors answer the same layout and share one reader:
+//! The stack door is the odd one and answers no card at all — see
+//! [`slopdesk_ws_toast_push`]. The three factories share one layout, because a card is SIX values
+//! that are only ever wanted together — an id, a flavour, a source, a title, and two optional
+//! lines — so all three answer it and share one reader:
 //!
 //! ```text
 //! [u8 flavor][u8 source][u8 flags]
@@ -155,14 +157,63 @@ pub unsafe extern "C" fn slopdesk_ws_toast_session_resume(
     unsafe { deliver(&packed(&card), out, cap) }
 }
 
+/// Which standing cards survive one push, as positions in the stack the caller handed over.
+///
+/// `standing` is one NUL-separated run of the ids as they stand, oldest first — the encoding
+/// `file_transfer`'s batch already uses, and the right one here because an id is a printable pane
+/// key that can never contain a NUL. An EMPTY stack is a null pointer or a zero length; it is never
+/// a blob with one empty run, so the two cannot be confused.
+///
+/// The answer is one byte per survivor, in order, and the pushed card is deliberately absent: it is
+/// always last, so returning it would make the near side read back a constant it already knows.
+/// Every index is below [`toast::CAP`], so a byte is the whole range.
+///
+/// # Safety
+/// Each `(ptr, len)` pair must be null or that many live bytes; `(out, cap)` must be writable for
+/// `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and every pointer is the caller's"
+)]
+pub unsafe extern "C" fn slopdesk_ws_toast_push(
+    standing: *const c_uchar,
+    standing_len: usize,
+    incoming: *const c_uchar,
+    incoming_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; both borrows die with this call.
+    let (standing, incoming) = unsafe {
+        (
+            String::from_utf8_lossy(borrow(standing, standing_len)),
+            String::from_utf8_lossy(borrow(incoming, incoming_len)),
+        )
+    };
+    let ids: Vec<&str> = if standing.is_empty() {
+        Vec::new()
+    } else {
+        standing.split('\0').collect()
+    };
+    let kept: Vec<u8> = toast::push(&ids, &incoming)
+        .into_iter()
+        .map(|at| u8::try_from(at).unwrap_or(u8::MAX))
+        .collect();
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&kept, out, cap) }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
 
     use slopdesk_workspace::toast::{self as toast, Card, ResumeOutcome};
 
     use super::{
-        slopdesk_ws_toast_explicit_osc, slopdesk_ws_toast_long_command, slopdesk_ws_toast_session_resume,
+        slopdesk_ws_toast_explicit_osc, slopdesk_ws_toast_long_command, slopdesk_ws_toast_push,
+        slopdesk_ws_toast_session_resume,
     };
     use crate::testing::{delivered, runs};
 
@@ -283,6 +334,33 @@ mod tests {
                     "exit {exit:?}, title {pane_title:?}",
                 );
             }
+        }
+    }
+
+    /// The stack fold across the boundary, including the two shapes that could be confused: an
+    /// empty stack, and a stack whose only card is the one being pushed again.
+    #[test]
+    fn the_stack_fold_answers_the_same_survivors_the_crate_does() {
+        for (standing, incoming) in [
+            (&[][..], "pane.a"),
+            (&["pane.a"][..], "pane.a"),
+            (&["pane.a", "pane.b"][..], "pane.a"),
+            (&["pane.a", "pane.b", "pane.c", "pane.d"][..], "pane.e"),
+            (&["pane.a", "pane.b", "pane.c", "pane.d"][..], "pane.b"),
+        ] {
+            let blob = standing.join("\0").into_bytes();
+            let key = incoming.as_bytes().to_vec();
+            let kept = delivered(|out, cap| {
+                // SAFETY: `blob`, `key` and `out` are live locals for the call.
+                unsafe {
+                    slopdesk_ws_toast_push(blob.as_ptr(), blob.len(), key.as_ptr(), key.len(), out, cap)
+                }
+            });
+            let expected: Vec<u8> = toast::push(standing, incoming)
+                .into_iter()
+                .map(|at| u8::try_from(at).expect("an index below the cap fits a byte"))
+                .collect();
+            assert_eq!(kept, expected, "standing {standing:?}, incoming {incoming}");
         }
     }
 

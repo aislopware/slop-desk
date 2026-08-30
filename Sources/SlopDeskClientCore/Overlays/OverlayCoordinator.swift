@@ -240,12 +240,12 @@ public final class OverlayCoordinator {
 
     // MARK: Toasts
 
-    /// The live toast stack (newest last). Bounded; auto-dismissed by the view's timers.
+    /// The live toast stack (newest last). Bounded by ``ToastStack``; auto-dismissed by each card's
+    /// own dwell task.
     public private(set) var toasts: [Toast] = []
-    private static let toastCap = 4
     /// Monotonic dwell-timer identity handed to each pushed toast (``Toast/epoch``). A same-id replace keeps
     /// the id (so the card is REUSED, not re-inserted) but takes a FRESH epoch, which is what makes the
-    /// card's `.task(id:)` restart its dwell instead of inheriting the replaced toast's spent time.
+    /// card's dwell task restart instead of inheriting the replaced toast's spent time.
     private var toastEpoch = 0
 
     // MARK: Recents (mirrors the store's recent commands into palette item ids)
@@ -755,17 +755,17 @@ public final class OverlayCoordinator {
 
     // MARK: Toasts
 
-    /// Push a toast (newest last); evicts the oldest beyond the cap and de-dupes by id (a newer same-id
-    /// toast replaces the old one, warp `object_id` discipline).
+    /// Push a toast, newest last.
+    ///
+    /// Which of the standing cards survive is ``ToastStack/pushing(_:onto:)`` — the cap, the
+    /// replace-by-id and which end the eviction eats are one fold and they are Rust's. What is
+    /// left here is the two things a fold cannot do: stamp the fresh epoch that restarts the card's
+    /// dwell, and hold the array the view reads.
     public func pushToast(_ toast: Toast) {
         toastEpoch += 1
         var stamped = toast
         stamped.epoch = toastEpoch
-        toasts.removeAll { $0.id == stamped.id }
-        toasts.append(stamped)
-        if toasts.count > Self.toastCap {
-            toasts.removeFirst(toasts.count - Self.toastCap)
-        }
+        toasts = ToastStack.pushing(stamped, onto: toasts)
     }
 
     /// Dismiss a toast by id (the X button or the auto-dismiss timer).

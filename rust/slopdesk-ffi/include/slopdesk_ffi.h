@@ -9326,6 +9326,14 @@ size_t slopdesk_ws_toast_long_command(const uint8_t *pane_key, size_t pane_key_l
 size_t slopdesk_ws_toast_session_resume(const uint8_t *pane_key, size_t pane_key_len,
                                         uint8_t outcome, uint8_t *out, size_t cap);
 
+// The STACK the cards stand in: which of the standing ones survive one push, as positions in the
+// stack the caller handed over. `standing` is one NUL-separated run of the ids, oldest first; an
+// empty stack is a null pointer or a zero length, never a blob with one empty run. The answer is
+// one byte per survivor, in order, and the pushed card is deliberately absent — it is always last.
+size_t slopdesk_ws_toast_push(const uint8_t *standing, size_t standing_len,
+                              const uint8_t *incoming, size_t incoming_len,
+                              uint8_t *out, size_t cap);
+
 // ---- The agent status readout ---------------------------------------------------------------
 //
 // The READING and the INK are separate doors on purpose: they answer different questions about the

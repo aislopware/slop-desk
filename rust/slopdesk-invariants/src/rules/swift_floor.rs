@@ -159,6 +159,10 @@ const FLOOR: &[(&str, Floor)] = &[
         Floor::CallingConvention,
     ),
     (
+        "Sources/SlopDeskDevicePanels/Shared/DeviceVeilWait.swift",
+        Floor::SwiftRuntime,
+    ),
+    (
         "Sources/SlopDeskDevicePanels/Shared/SimulatorWebSocketLane.swift",
         Floor::DevicePanelLane,
     ),

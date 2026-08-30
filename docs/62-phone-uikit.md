@@ -1831,14 +1831,21 @@ The port's real prize, and the honest headline is that it is **small** — becau
 (7,874), `-codepanel` (1,340) and `-fuzzy` (633) already own the decisions these views render. Nine
 things remain, each named with its crate and with what is left for the view.
 
-1. **`Overlays/OverlayKeyRepeat.swift` (49) → `rust/slopdesk-workspace::key_repeat`.** It is a
+> **CLOSED 2026-08-30.** All nine landed, and two did not land as this section wrote them. Item 4 is
+> a FLOOR, not a port — `docs/67`'s seven-reason booking is the later and better ruling, and the
+> content agrees: two one-line comparisons have no decision in them to cross. Item 7's premise was
+> wrong — the two delays are two MEASUREMENTS, not one duplication, and both already crossed on
+> their own; what was actually duplicated was the WAIT, in three spellings, now `DeviceVeilWait`.
+> Item 2's stack rules crossed as written. Per-item status is inline below.
+
+1. ✅ **LANDED — `Overlays/OverlayKeyRepeat.swift` (49) → `rust/slopdesk-workspace::key_repeat`.** It is a
    whitelist of which keys may auto-repeat, typed on `KeyEquivalent` and `KeyPress.Phases` — and UIKit
    has neither. So it is not ported; it **merges** into the crate that already owns the phone's
    hardware repeat latch and its 350/50 ms cadence. The overlays become a second consumer of
    `KeyRepeater` rather than a parallel policy with the same name and a different concern. *Left for
    the view:* calling `keyDown`/`keyUp` from `pressesBegan`/`pressesEnded`.
 
-2. **`SlopDeskClientCore/Overlays/OverlayCoordinator.swift` (771) — the toast queue → `rust/slopdesk-workspace::toast`.**
+2. ✅ **LANDED 2026-08-30 — `SlopDeskClientCore/Overlays/OverlayCoordinator.swift` (771) — the toast queue → `rust/slopdesk-workspace::toast`.**
    `toast.rs`'s own header scopes this out deliberately: *"the card's lifecycle — the push, the de-dupe
    by id, the dwell timer and its epoch — stays with the coordinator that owns the clock."* That was
    right while the clock was `.task(id:)`. Under UIKit the clock becomes an explicit `Task`, which is
@@ -1846,19 +1853,34 @@ things remain, each named with its crate and with what is left for the view.
    assignment) are pure and cross; the **clock** stays Swift because a timer is an actuator.
    *Left for the view:* one stored `Task` per card and a `dismiss` call.
 
-3. **The palette selection machine, same file → `rust/slopdesk-workspace::palette_rows`.**
+   **LANDED 2026-08-30 as `toast::push`, and it answers POSITIONS rather than cards.** The stack is
+   four entries, so the ids cross as one NUL-separated run and what comes back is one byte per
+   survivor — nothing is copied. The pushed card is deliberately absent from the answer: it is
+   always last, so returning it would be asking Rust to hand back the argument. `CAP` is the
+   crate's now, for the reason `veil_delay` is: two shells that trim to different depths disagree
+   about which pane spoke last. The near side keeps the epoch stamp and the array the view reads.
+
+3. ✅ **LANDED — the palette selection machine, same file → `rust/slopdesk-workspace::palette_rows`.**
    `rankedResults` `:423`, `moveSelection` `:521`, `moveSelectionToFirst` `:528`, `moveSelectionToLast`
    `:534`. `list_nav.rs` already vends `clamped_selection`, `quick_pick` and `wrapped_index`; what is
    Swift is the composition of those with the ranked rows, which is a fold. *Left for the view:*
    scrolling to the selected index path.
 
-4. **`SlopDeskClientCore/Overlays/HoverSelectionGate.swift` (56) → `rust/slopdesk-workspace`.**
+4. 🚫 **SUPERSEDED — `SlopDeskClientCore/Overlays/HoverSelectionGate.swift` (56) → `rust/slopdesk-workspace`.**
    `admitHover(at:)`, `noteHoverDrivenSelection()`, `shouldAutoScrollOnSelectionChange()` — pointer-vs-
    keyboard arbitration, pure and already testable. It gains urgency in UIKit because the auto-scroll
    it gates becomes `scrollToItem(at:at:animated:)`, which is a real actuator with a real cost.
    *Left for the view:* the hover recognizer and the scroll call.
 
-5. **`ViModeOverlay.swift:232-308` `ViKeyHintReflow` → `rust/slopdesk-workspace::vi_hints`.** A SwiftUI
+   **NOT PORTED, and this item is superseded.** `docs/67` books it `ShellDeDuplication` — a
+   decision `AppKit` and `UIKit` would each otherwise write, hoisted so the two cannot disagree —
+   and that booking is both later and right. Read the file: it is `location != lastPointerLocation`
+   and `!selectionIsHoverDriven`, two comparisons over two stored bits. There is no decision in it
+   to move; crossing it would buy a C ABI call and a handle for a pointer-equality test. The
+   urgency this item claimed — that the scroll became a real actuator — argues for the gate
+   EXISTING, which it does, not for which language it is written in.
+
+5. ✅ **LANDED — `ViModeOverlay.swift:232-308` `ViKeyHintReflow` → `rust/slopdesk-workspace::vi_hints`.** A SwiftUI
    `Layout` conformance doing width accumulation and manual x/y placement, which **cannot port** — the
    protocol does not exist in UIKit. Half of it is already
    `ViKeyHintPresentation.layout(forWidth:gap:columnWidth:)`; the accumulate-and-place loop is a flow
@@ -1867,24 +1889,35 @@ things remain, each named with its crate and with what is left for the view.
    re-measures all three columns on any subview invalidation. *Left for the view:* measuring each
    label (only the platform can) and setting the frames the solver returns.
 
-6. **`SimulatorBezelView.swift:42-113` → `rust/slopdesk-devicepanel::geometry`.** Bleed, viewport and
+6. ✅ **LANDED — `SimulatorBezelView.swift:42-113` → `rust/slopdesk-devicepanel::geometry`.** Bleed, viewport and
    scale arithmetic — ~50% of the file, under a `GeometryReader`, with a load-bearing z-order. The
    crate already holds `geometry.rs` and `sim_place.rs`. *Left for the view:* the artwork and the
    press latch.
 
-7. **`Panel/DevicePanelChrome.swift:96-101` `loadingVeilState` → `rust/slopdesk-devicepanel`.** An
+7. 🔁 **RE-SCOPED — `Panel/DevicePanelChrome.swift:96-101` `loadingVeilState` → `rust/slopdesk-devicepanel`.** An
    asymmetric delay policy (immediate down, delayed up, nil on cancellation) that exists **twice** with
    different numbers — 400 ms here for Android, 600 ms in `SimulatorPresentation.loadingVeil` for the
    simulator. Two spellings of one idea, which is the shape `docs/56` spent forty increments removing.
    *Left for the view:* the `Task.sleep`.
 
-8. **`GuiLeafView.swift`'s control-bar gates → `rust/slopdesk-ffi::gui_readout`.** `showsControlBar`
+   **RE-SCOPED 2026-08-30: the premise was wrong, and the real duplication was elsewhere.** The two
+   numbers are not two spellings of one idea — 400 ms was measured against the simulator server's
+   0.09 s first keyframe and 600 ms against the Android bridge's 0.83 s, and both already cross on
+   their own doors (`slopdesk_simulator_veil_delay_ms`, `slopdesk_android_veil_delay_ms`). Merging
+   them would throw away both measurements. What WAS duplicated is the wait itself — `guard
+   isAwaiting`, sleep, cancellation check — which existed in three spellings: the simulator's, the
+   phone's Android helper, and the Mac Android stage inlining it. That is now `DeviceVeilWait`, one
+   helper in `SlopDeskDevicePanels/Shared` that all three call with their own delay. It stays Swift:
+   a sleep and a cancellation check is structured concurrency, which is `docs/67`'s `SwiftRuntime`
+   floor and the one shape a door cannot carry.
+
+8. ✅ **LANDED — `GuiLeafView.swift`'s control-bar gates → `rust/slopdesk-ffi::gui_readout`.** `showsControlBar`
    `:332`, `showsModeToggles` `:561-570`, `hasLatchedMode` `:338`, `activationKey` `:323`,
    `isDesktopUploadTarget` `:315`. `RemoteGUIDisplay.resolve` already crosses at `:110-117`, and these
    are the same kind of question about the same model. The Mac's `MacGuiLeafView` answers them too, so
    they are already two spellings.
 
-9. **`SlopDeskClientCore/Overlays/OpenQuicklySources.swift` → `rust/slopdesk-workspace::open_quickly`.**
+9. ✅ **LANDED — `SlopDeskClientCore/Overlays/OpenQuicklySources.swift` → `rust/slopdesk-workspace::open_quickly`.**
    The section assembler — `sections(store:folders:agents:current:filter:query:)` — is the one piece of
    the Open Quickly path that never crossed, and the survey confirms it holds no FFI call. Every one of
    its inputs is already a Rust-derived reading.

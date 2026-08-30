@@ -381,7 +381,7 @@ final class PhoneAndroidStageView: UIView {
         veilKey = isAwaiting
         veilTask?.cancel()
         veilTask = Task { [weak self] in
-            guard let state = await PhoneDevicePanelChrome.loadingVeilState(
+            guard let state = await DeviceVeilWait.state(
                 isAwaiting: isAwaiting, after: AndroidPresentation.veilDelay,
             ) else { return }
             guard let self else { return }

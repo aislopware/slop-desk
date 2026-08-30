@@ -1,12 +1,18 @@
 //! The workspace document's solvers: `rust/slopdesk-workspace` reached from the client's Swift.
 //!
 //! ## What crosses here, and what deliberately does not
-//! `SlopDeskWorkspaceModel` is the app's DOCUMENT — 262 files import its value types, and a
-//! `SplitNode` or a `TreeWorkspace` is what `SwiftUI` diffs to decide what to redraw. Those types
-//! stay in Swift for the same reason `ClaudeStatus` did (docs/55 §6): a case list a `switch` reads
-//! is a vocabulary, not an implementation. What crosses is the half that DECIDES — which neighbour
-//! "move focus left" lands on, what order the sidebar's sections come in, which tab takes focus
-//! after a close.
+//! `SlopDeskWorkspaceModel` is the app's DOCUMENT — 262 files import its value types. Those types
+//! stay in Swift for two reasons, and the first one alone would not hold. It is the one
+//! `ClaudeStatus` used (docs/55 §6): a case list a `switch` reads is a vocabulary, not an
+//! implementation. The second is the only kind of veto `CLAUDE.md` recognises — a MEASURED one.
+//! `WorkspaceMarshalBenchTests` ran the port this header would otherwise invite, over the shipped
+//! encoder and decoder rather than a fixture, and moving the whole document per gesture costs
+//! ~2.8 ms on a realistic workspace and ~12.6 ms on a hoarder's: a third of a 120 Hz frame, then a
+//! missed one, for a divider drag that is otherwise a few hundred microseconds.
+//!
+//! So what crosses is the half that DECIDES — which neighbour "move focus left" lands on, what
+//! order the sidebar's sections come in, which tab takes focus after a close. A RULE is bounded by
+//! one tab; the document is not, and that is the whole of why the line is here.
 //!
 //! ## Everything is flat, because everything here is geometry
 //! No handles and no staging: a solver takes an array of `(id, rect)` and answers rects. The

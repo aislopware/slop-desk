@@ -112,7 +112,7 @@ door is inside the header's `MACOS-ONLY` region and the Swift file is `#if os(ma
 
 ## 5. The floor, as a list
 
-The other 70 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
+The other 71 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
 that fits none of them does not belong on the list, which is the question §7's rule forces someone
 to answer the next time one appears.
 
@@ -120,7 +120,7 @@ to answer the next time one appears.
 | --- | --- | --- |
 | `ShellDeDuplication` | 24 | A decision AppKit and UIKit would each otherwise write, hoisted so the two cannot disagree — `PanePointer`, `DeviceBezelGeometry`, `PanelChromeActions`, `HoverSelectionGate`, the `*Copy` files, the rung enums the design floor resolves. What it decides is PRESENTATION; the value is that it is written once for both. |
 | `Vocabulary` | 17 | The types the wire, the config or the ABI is typed in on this side — `WireMessage`, `MetadataVerb`, `VideoChannel`, `KeyChord`, the config enums — plus the module-doc files that carry no code at all. |
-| `SwiftRuntime` | 13 | Drives a Swift or Foundation primitive with no counterpart that can cross a C ABI: `withObservationTracking`, `Task`, `AsyncStream`, `DispatchQueue`, `NWConnection`, `JSONEncoder`, `ProcessInfo`, `async` re-entrancy, the first-responder generation, a virtual clock. §6 closes `docs/65` §5's triad into this class. |
+| `SwiftRuntime` | 14 | Drives a Swift or Foundation primitive with no counterpart that can cross a C ABI: `withObservationTracking`, `Task`, `AsyncStream`, `DispatchQueue`, `NWConnection`, `JSONEncoder`, `ProcessInfo`, `async` re-entrancy, the first-responder generation, a virtual clock, `DeviceVeilWait`'s sleep-and-cancellation-check. §6 closes `docs/65` §5's triad into this class. |
 | `CallingConvention` | 8 | The NEAR side of the FFI boundary: `FFIDelivery`, `ArenaText`, `RustHandle`, `LentText`, `CodecBytes`, `DevicePanelDelivery`, plus the two seams that decide what does NOT need to cross — `DeviceSectionReading` walks a blob a door filled, and `SimulatorFrameSink` holds three payloads (`docs/55` §4b: Rust would copy an IDR in and out to be told which one it was). A door's caller cannot itself be behind a door. |
 | `DrawingArt` | 6 | `SlateVectorArt`, `AndroidMarkPath`, the remaining `*Art` files — CoreGraphics path data. `docs/63` §6's floor by name. |
 | `DevicePanelLane` | 1 | `SimulatorWebSocketLane` — an `import Network` socket. `docs/63` §6 names it and rules that "the device-panel and proxy lanes are their own campaigns and are not scoped here". |
@@ -152,7 +152,7 @@ was an inflated ledger somebody had to justify — never a portable file waved t
 side a census should fail on, and it is why the fix shrank the list rather than growing it. A
 break-test now pins all three modifiers.
 
-**70, not 44.** The shell pipeline in §1 answers 44 and the rule answers 70, and the rule is right:
+**71, not 44.** The shell pipeline in §1 answers 44 and the rule answers 71, and the rule is right:
 its candidate filter runs over `Source::code()`, which strips a comment LINE wherever it opens,
 where the pipeline's `grep` was matching raw text. A file whose only mention of a face is in a doc
 comment reads as delegated to `grep` and as undelegated to the rule. That gap is exactly how

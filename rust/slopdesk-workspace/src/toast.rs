@@ -5,9 +5,13 @@
 //! shapes the whole card — it carries WHO spoke ([`Source`] and [`Flavor`]), WHAT happened (the
 //! title and the body), and WHERE to go (the pane key, which is the jump target).
 //!
-//! What is here is the three FACTORIES: the fields each event turns into. The card's lifecycle —
-//! the push, the de-dupe by id, the dwell timer and its epoch — stays with the coordinator that
-//! owns the clock, because none of it is a decision about words.
+//! What is here is the three FACTORIES — the fields each event turns into — and the STACK the
+//! cards stand in. This module used to say the stack was the coordinator's, "because none of it is
+//! a decision about words". That reasoning was sound while the coordinator's clock was a
+//! declarative `.task(id:)` that owned the whole lifecycle as one thing. `docs/62` split it: under
+//! `UIKit` the dwell is an explicit `Task` per card, which separates the CLOCK from the RULES, and
+//! the rules — the cap, the replace-by-id, which end the eviction eats — were never about the
+//! clock. A timer is an actuator and stays near; [`push`] is a fold and does not.
 //!
 //! ## The headline is `source` + `flavor` TOGETHER, never flavour alone
 //!
@@ -231,9 +235,44 @@ pub fn session_resume(pane_key: &str, outcome: ResumeOutcome) -> Option<Card> {
     })
 }
 
+/// How many cards may stand at once.
+///
+/// Four, because the stack is a corner of a window someone is working in rather than a log: past
+/// four the oldest is already off the bottom of anybody's attention, and the fifth would push the
+/// one that is still being read. The number is the crate's for the same reason `veil_delay` is —
+/// two shells that trim to different depths disagree about which pane spoke last.
+pub const CAP: usize = 4;
+
+/// Which of the caller's standing cards survive one push, as positions in the stack it handed over.
+///
+/// The pushed card is not in the answer: it is always last, so naming it would be a constant the
+/// caller has to read. What IS decided here is the pair of rules a stack has and a list does not.
+/// A newer card with the SAME id REPLACES the older rather than standing beside it, because both
+/// name one pane and two rows for one pane is the surface lying about how many things happened.
+/// And when the cap is reached the eviction eats the FRONT, which is where the oldest live — the
+/// other end is the card that just arrived.
+///
+/// Ids cross as they are, unhashed: a stack is four entries, and a set would cost more to build
+/// than the scan it replaces.
+#[must_use]
+pub fn push(standing: &[&str], incoming: &str) -> Vec<usize> {
+    let mut kept: Vec<usize> = standing
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| **id != incoming)
+        .map(|(at, _)| at)
+        .collect();
+    // The pushed card takes the last slot, so the survivors may hold every other one.
+    let room = CAP - 1;
+    if kept.len() > room {
+        kept.drain(..kept.len() - room);
+    }
+    kept
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Flavor, ResumeOutcome, Source, explicit_osc, long_command, session_resume};
+    use super::{CAP, Flavor, ResumeOutcome, Source, explicit_osc, long_command, push, session_resume};
     use crate::secrets::MASK;
 
     /// Every factory de-dupes on the SAME id shape, so a newer event at a pane replaces the older.
@@ -317,6 +356,30 @@ mod tests {
         assert_eq!(ResumeOutcome::from_index(1), ResumeOutcome::FreshShell);
         assert_eq!(ResumeOutcome::from_index(2), ResumeOutcome::ResumedSession);
         assert_eq!(ResumeOutcome::from_index(9), ResumeOutcome::Undetermined);
+    }
+
+    /// A second card for one pane REPLACES the first, and it does so at the TOP: the pane spoke
+    /// again, so it is the newest thing that happened, not the oldest.
+    #[test]
+    fn a_pane_that_speaks_twice_moves_to_the_top_rather_than_standing_twice() {
+        assert_eq!(push(&["pane.a", "pane.b"], "pane.a"), vec![1]);
+        assert_eq!(push(&["pane.a", "pane.b"], "pane.c"), vec![0, 1]);
+        assert_eq!(push(&[], "pane.a"), Vec::<usize>::new());
+    }
+
+    /// The eviction eats the FRONT. Dropping the other end would evict the card that just arrived,
+    /// which is the one thing on screen the user has not read yet.
+    #[test]
+    fn a_full_stack_loses_its_oldest_and_never_the_arrival() {
+        let full = ["pane.a", "pane.b", "pane.c", "pane.d"];
+        assert_eq!(push(&full, "pane.e"), vec![1, 2, 3]);
+        assert_eq!(
+            push(&full, "pane.e").len(),
+            CAP - 1,
+            "the arrival holds the last slot"
+        );
+        // A de-dupe already made room, so nothing is evicted on top of it.
+        assert_eq!(push(&full, "pane.a"), vec![1, 2, 3]);
     }
 
     /// Distinct speakers and flavours take distinct codes — a renderer switches on the number.

@@ -27,7 +27,7 @@
 //
 // **``loadingVeil(isAwaiting:)``.** A `Task.sleep` and a cancellation check — structured concurrency
 // on the renderer's own task, which is exactly the "it must be Swift" case. The NUMBER it waits is
-// the crate's.
+// the crate's, and the WAIT itself is ``DeviceVeilWait``, which every stage that has a veil shares.
 //
 // **``matches(_:query:)`` and ``Console/visible(_:filter:)``.** Already Rust, through
 // ``DeviceRowFilter`` — what stays is which FIELDS a row lends it.
@@ -462,23 +462,14 @@ package enum SimulatorPresentation {
     /// measured once that two files carry is a value that gets re-tuned in one of them.
     package static let veilDelay: Duration = .milliseconds(Int(slopdesk_simulator_veil_delay_ms()))
 
-    /// Whether the veil should be showing: LATE on the way up, immediate on the way down. `nil` means
-    /// the wait was cancelled and the caller must not write anything.
+    /// This panel's veil wait, which is ``DeviceVeilWait/state(isAwaiting:after:)`` with this
+    /// panel's own measured delay already inside — calling the door beats passing it its own number.
     ///
-    /// The asymmetry is the whole point. A caller re-runs this whenever `isAwaiting` changes and
-    /// cancels the previous run, so a pending veil for a stream that arrived in time never appears at
-    /// all; waiting on the way DOWN would instead leave grey over a picture that is already there.
-    ///
-    /// It stays Swift because it is structured concurrency on the RENDERER's own task — a sleep and a
-    /// cancellation check, which is the one shape a door cannot carry. The SHAPE is shared with the
-    /// Android stage (`DevicePanelChrome.loadingVeilState`) and the NUMBER deliberately is not: 400 ms
-    /// was measured against this server's 0.09 s first keyframe and the bridge's 600 ms against its
-    /// own 0.83 s, and merging them would throw away both measurements.
+    /// The SHAPE is shared with the Android stage and the NUMBER deliberately is not: 400 ms was
+    /// measured against this server's 0.09 s first keyframe and the bridge's 600 ms against its own
+    /// 0.83 s, and merging them would throw away both measurements.
     package static func loadingVeil(isAwaiting: Bool) async -> Bool? {
-        guard isAwaiting else { return false }
-        try? await Task.sleep(for: veilDelay)
-        guard !Task.isCancelled else { return nil }
-        return true
+        await DeviceVeilWait.state(isAwaiting: isAwaiting, after: veilDelay)
     }
 
     /// What a failed read of a dropped file says. The server routes a dropped file by EXTENSION — an
