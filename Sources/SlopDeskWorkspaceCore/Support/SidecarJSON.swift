@@ -32,4 +32,36 @@ enum SidecarJSON {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }
+
+    /// `<Application Support>/SlopDesk/<name>` — where a sidecar this target owns lives.
+    ///
+    /// The SAME four stores that spelled the encoder out spelled this out too, in four
+    /// byte-identical eight-line bodies differing only in the filename. Both halves of the reason
+    /// are the same as the encoder's, and neither is obvious from the line:
+    ///
+    /// - **The container name is `slopdesk-hostlaunch`'s `CONTAINER_NAME`.** A fifth store that
+    ///   typed a different string would still write a perfectly good file, into a directory the
+    ///   daemons do not read.
+    /// - **The temp-directory fallback is not a fallback to nothing.** Application Support fails to
+    ///   resolve only in sandboxed edge cases, and every file this answers for is re-creatable — a
+    ///   fresh workspace, a fresh preference set, a re-learned frecency — so a throwaway location
+    ///   beats a `nil` every caller would have to branch on.
+    ///
+    /// `SLOPDESK_APP_SUPPORT_DIR` is deliberately NOT read here, unlike
+    /// ``EnvBridge/defaultSidecarURL(fileManager:)`` one target over. That variable exists so an
+    /// automation run cannot inherit the developer's state, and this target answers the same
+    /// question a different way: `ClientComposition` hands every one of these stores a `nil` handle
+    /// under automation, so there is nothing to redirect. Reading it here would give the client a
+    /// second, quieter redirect on top of the one that already works.
+    static func appSupportURL(named name: String, using fileManager: FileManager = .default) -> URL {
+        let base = (try? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true,
+        )) ?? fileManager.temporaryDirectory
+        return base
+            .appendingPathComponent("SlopDesk", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: false)
+    }
 }

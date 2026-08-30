@@ -114,18 +114,10 @@ public final class FolderFrecencyStore {
         var entries: [FolderEntry]
     }
 
-    /// `<Application Support>/SlopDesk/folders-frecency.json` (sibling of `workspace.json`). Falls back to a
-    /// temp directory if Application Support cannot be resolved — the data is non-critical (re-learned on use).
+    /// `<Application Support>/SlopDesk/folders-frecency.json` (sibling of `workspace.json`). The
+    /// container and its sandboxed-edge-case fallback are ``SidecarJSON/appSupportURL(named:using:)``'s.
     public static func defaultFileURL(using fileManager: FileManager = .default) -> URL {
-        let base = (try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true,
-        )) ?? fileManager.temporaryDirectory
-        return base
-            .appendingPathComponent("SlopDesk", isDirectory: true)
-            .appendingPathComponent("folders-frecency.json", isDirectory: false)
+        SidecarJSON.appSupportURL(named: "folders-frecency.json", using: fileManager)
     }
 
     private static func makeEncoder() -> JSONEncoder { SidecarJSON.encoder() }

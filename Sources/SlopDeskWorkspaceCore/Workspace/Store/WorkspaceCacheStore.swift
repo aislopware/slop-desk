@@ -44,19 +44,10 @@ public struct WorkspaceCacheStore: @unchecked Sendable {
         self.fileURL = fileURL ?? Self.defaultFileURL(using: fileManager)
     }
 
-    /// `<Application Support>/SlopDesk/workspace-cache.json` — sibling of `device-prefs.json`. Falls
-    /// back to a temporary directory when Application Support can't resolve (sandboxed edge cases);
-    /// the data is a cache, so a fresh empty one is always recoverable.
+    /// `<Application Support>/SlopDesk/workspace-cache.json` — sibling of `device-prefs.json`. The
+    /// container and its sandboxed-edge-case fallback are ``SidecarJSON/appSupportURL(named:using:)``'s.
     public static func defaultFileURL(using fileManager: FileManager = .default) -> URL {
-        let base = (try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true,
-        )) ?? fileManager.temporaryDirectory
-        return base
-            .appendingPathComponent("SlopDesk", isDirectory: true)
-            .appendingPathComponent("workspace-cache.json", isDirectory: false)
+        SidecarJSON.appSupportURL(named: "workspace-cache.json", using: fileManager)
     }
 
     /// The on-disk shape: the host it describes, and the exact kind-0 snapshot payload BYTES.

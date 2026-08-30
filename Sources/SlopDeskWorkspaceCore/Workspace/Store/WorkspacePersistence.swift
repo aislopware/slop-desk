@@ -38,19 +38,10 @@ public struct WorkspacePersistence: @unchecked Sendable {
         self.fileURL = fileURL ?? Self.defaultFileURL(using: fileManager)
     }
 
-    /// Default persistence location: `<Application Support>/SlopDesk/workspace.json`. Falls back to a
-    /// temporary directory if Application Support can't resolve (sandboxed edge cases) — the data is
-    /// non-critical (a fresh default workspace is always recoverable).
+    /// Default persistence location: `<Application Support>/SlopDesk/workspace.json`. The container
+    /// and its sandboxed-edge-case fallback are ``SidecarJSON/appSupportURL(named:using:)``'s.
     public static func defaultFileURL(using fileManager: FileManager = .default) -> URL {
-        let base = (try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true,
-        )) ?? fileManager.temporaryDirectory
-        return base
-            .appendingPathComponent("SlopDesk", isDirectory: true)
-            .appendingPathComponent("workspace.json", isDirectory: false)
+        SidecarJSON.appSupportURL(named: "workspace.json", using: fileManager)
     }
 
     // MARK: Save

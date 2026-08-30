@@ -109,19 +109,10 @@ public struct DevicePreferencesStore: @unchecked Sendable {
         self.fileURL = fileURL ?? Self.defaultFileURL(using: fileManager)
     }
 
-    /// `<Application Support>/SlopDesk/device-prefs.json` — sibling of the workspace cache. Falls back to
-    /// a temporary directory when Application Support can't resolve (sandboxed edge cases); the data is
-    /// non-critical, a fresh default is always recoverable.
+    /// `<Application Support>/SlopDesk/device-prefs.json` — sibling of the workspace cache. The
+    /// container and its sandboxed-edge-case fallback are ``SidecarJSON/appSupportURL(named:using:)``'s.
     public static func defaultFileURL(using fileManager: FileManager = .default) -> URL {
-        let base = (try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true,
-        )) ?? fileManager.temporaryDirectory
-        return base
-            .appendingPathComponent("SlopDesk", isDirectory: true)
-            .appendingPathComponent("device-prefs.json", isDirectory: false)
+        SidecarJSON.appSupportURL(named: "device-prefs.json", using: fileManager)
     }
 
     /// Reads + decodes. Never throws — launch must always get a usable value:
