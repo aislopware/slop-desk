@@ -247,5 +247,17 @@ being rewritten in place. So the differential here is narrower and must be named
   the file a legitimate wire change merges FROM. The key sets stay typed in one language, in
   `rust/slopdesk-devtools/src/gates/golden.rs` — the suite names none of them, deriving its check
   from what it minted.
-- **`SerialFeedGate` (113), `NWByteChannel` (87), `BoundedInputPipe`** — the store seam in miniature,
-  and they will read differently once §3's idiom exists. Re-triage them after stage 4, not before.
+- ~~**`SerialFeedGate` (113), `NWByteChannel` (87), `BoundedInputPipe`** — the store seam in
+  miniature, and they will read differently once §3's idiom exists. Re-triage them after stage 4,
+  not before.~~ **RE-TRIAGED 2026-08-30, `docs/67` §6, and all three CLOSE.** `BoundedInputPipe` was
+  already gone — no file, no reference, nothing to triage. `SerialFeedGate` STAYS as the ghostty
+  feed's runtime half: it is a serial `DispatchQueue`, a set of parked `CheckedContinuation`s and a
+  byte counter, and only the counter is portable, so moving it would put `pendingBytes` / `closed` /
+  `drained` / the watermarks behind a door while the continuation set those fields decide about
+  stayed on this side — one lock's invariant split across a C ABI, which is strictly worse than one
+  language holding both halves. (Its live caller is `ThirdParty/ghostty/integration/GhosttySurface`,
+  which a `Sources/` grep does not see; it is not dead.) `NWByteChannel` STAYS as the `NWConnection`
+  lifetime, which `docs/66` already booked for its neighbour: moving the client's socket ownership
+  into Rust is a real campaign and a different one. Both are booked under `SwiftRuntime` in
+  `slopdesk-invariants`' `swift-floor-booked` rule, so the verdict is now a gate rather than a
+  paragraph.

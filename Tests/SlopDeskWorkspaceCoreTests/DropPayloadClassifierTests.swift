@@ -1,78 +1,75 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``DropPayloadClassifier`` — the pure mapping of an inspected drag pasteboard
-/// onto a single ``DroppedContent`` with file → url → text precedence and validate-then-drop on an
-/// unsupported / empty drag. No AppKit, no disk: `isDirectory` is supplied by the caller.
+/// The SEAM under ``DropPayloadClassifier`` — the arena, the records that name spans into it, and
+/// the four content codes coming back as four cases.
+///
+/// What a pasteboard classifies TO is `slopdesk_workspace::drop_payload`'s and is asserted there:
+/// the file → url → text precedence, the blank gate, the folder/file split, and the empty-drag
+/// refusal (`docs/67` §3). Restating them here would be the second implementation moving the rules
+/// was meant to end. What no crate test can reach is the marshalling — several Swift strings lent
+/// as one contiguous buffer, and a length that is bytes rather than characters — so that is all
+/// this asks about, once per shape the arena can take.
 final class DropPayloadClassifierTests: XCTestCase {
     private typealias File = DropPayloadClassifier.FileEntry
     private typealias Payload = DropPayloadClassifier.Payload
 
-    // MARK: - Type routing
-
-    func testDirectoryFileURLClassifiesAsFolder() {
-        let payload = Payload(files: [File(path: "/Users/me/proj", isDirectory: true)])
-        XCTAssertEqual(DropPayloadClassifier.classify(payload), .folder("/Users/me/proj"))
-    }
-
-    func testRegularFileURLClassifiesAsFile() {
-        let payload = Payload(files: [File(path: "/Users/me/proj/README.md", isDirectory: false)])
-        XCTAssertEqual(DropPayloadClassifier.classify(payload), .file("/Users/me/proj/README.md"))
-    }
-
-    func testWebURLClassifiesAsURL() {
-        let payload = Payload(urls: ["https://example.com/path"])
-        XCTAssertEqual(DropPayloadClassifier.classify(payload), .url("https://example.com/path"))
-    }
-
-    func testPlainTextClassifiesAsText() {
-        let payload = Payload(text: "echo hello")
-        XCTAssertEqual(DropPayloadClassifier.classify(payload), .text("echo hello"))
-    }
-
-    // MARK: - Precedence (file > url > text)
-
-    func testFileBeatsURLandText() {
-        // A Finder file drag also exposes a text/URL representation of its path; the file wins.
-        let payload = Payload(
-            files: [File(path: "/tmp/a.txt", isDirectory: false)],
-            urls: ["https://decoy.example"],
-            text: "/tmp/a.txt",
+    /// Every code the door can answer with maps back onto its own case. A drifted arm here would
+    /// silently turn a dropped folder into a pasted string.
+    func testEachContentCodeCrossesBackAsItsOwnCase() {
+        XCTAssertEqual(
+            DropPayloadClassifier.classify(Payload(files: [File(path: "/proj", isDirectory: true)])),
+            .folder("/proj"),
         )
-        XCTAssertEqual(DropPayloadClassifier.classify(payload), .file("/tmp/a.txt"))
+        XCTAssertEqual(
+            DropPayloadClassifier.classify(Payload(files: [File(path: "/proj/a.md", isDirectory: false)])),
+            .file("/proj/a.md"),
+        )
+        XCTAssertEqual(
+            DropPayloadClassifier.classify(Payload(urls: ["https://example.com/path"])),
+            .url("https://example.com/path"),
+        )
+        XCTAssertEqual(DropPayloadClassifier.classify(Payload(text: "echo hello")), .text("echo hello"))
     }
 
-    func testURLBeatsText() {
-        let payload = Payload(urls: ["https://example.com"], text: "example.com")
-        XCTAssertEqual(DropPayloadClassifier.classify(payload), .url("https://example.com"))
-    }
-
-    func testFirstNonEmptyFileWins() {
-        let payload = Payload(files: [
-            File(path: "   ", isDirectory: true), // blank → skipped
-            File(path: "/real/dir", isDirectory: true),
-        ])
+    /// The arena is one buffer holding every run, so a payload with items in all three groups is the
+    /// case where a mis-computed span would surface — as a neighbour's bytes, not as a crash.
+    func testAFullPasteboardLendsEveryRunFromOneBuffer() {
+        let payload = Payload(
+            files: [
+                File(path: "   ", isDirectory: true),
+                File(path: "/real/dir", isDirectory: true),
+                File(path: "/never/reached", isDirectory: false),
+            ],
+            urls: ["https://decoy.example", "https://second.example"],
+            text: "/real/dir",
+        )
         XCTAssertEqual(DropPayloadClassifier.classify(payload), .folder("/real/dir"))
     }
 
-    // MARK: - Validate-then-drop (unsupported / empty → nil)
+    /// A length in BYTES, not characters: a path with multi-byte scalars in it is the one input that
+    /// tells a `count` mistake from a correct one.
+    func testANonASCIIPathCrossesWholeAndUnmangled() {
+        let path = "/Users/tôi/dự án/README—final.md"
+        XCTAssertEqual(
+            DropPayloadClassifier.classify(Payload(files: [File(path: path, isDirectory: false)])),
+            .file(path),
+        )
+        XCTAssertEqual(DropPayloadClassifier.classify(Payload(text: "echo 'xin chào' 🌈")), .text("echo 'xin chào' 🌈"))
+    }
 
-    func testEmptyPayloadIsNil() {
-        // An unsupported UTType is simply absent → an all-empty payload classifies to nil, no crash.
+    /// The presence flag, read from the near side: a refusal is `nil` rather than a case carrying an
+    /// empty string, and an empty group is not a null pointer the door may not dereference.
+    func testARefusalIsNilRatherThanAnEmptyCase() {
         XCTAssertNil(DropPayloadClassifier.classify(Payload()))
-    }
-
-    func testWhitespaceOnlyTextIsNil() {
-        XCTAssertNil(DropPayloadClassifier.classify(Payload(text: "  \n\t ")))
-    }
-
-    func testBlankPathFileIsNil() {
         XCTAssertNil(DropPayloadClassifier.classify(Payload(files: [File(path: "", isDirectory: false)])))
+        XCTAssertNil(DropPayloadClassifier.classify(Payload(urls: ["  "], text: " \n\t ")))
     }
 
-    func testBlankURLFallsThroughToText() {
-        // A blank URL is dropped; a real text item behind it still classifies.
-        let payload = Payload(urls: ["   "], text: "fallback")
-        XCTAssertEqual(DropPayloadClassifier.classify(payload), .text("fallback"))
+    /// `text: nil` and `text: ""` reach the door as different facts — the flag, not the length —
+    /// and neither may be read as a classified empty snippet.
+    func testAnAbsentTextAndAnEmptyOneAreBothNoAnswer() {
+        XCTAssertNil(DropPayloadClassifier.classify(Payload(text: nil)))
+        XCTAssertNil(DropPayloadClassifier.classify(Payload(text: "")))
     }
 }

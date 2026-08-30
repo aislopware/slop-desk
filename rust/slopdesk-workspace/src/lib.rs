@@ -126,6 +126,7 @@ pub mod connect_gate;
 pub mod connect_run;
 pub mod connection;
 pub mod drop_action;
+pub mod drop_payload;
 pub mod drop_register;
 pub mod drop_zone;
 pub mod find_bar;

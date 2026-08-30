@@ -11,8 +11,10 @@ import Foundation
 /// where it owns a `ghostty_surface_t` in a Metal view. The headless core
 /// here never links libghostty.
 ///
-/// ``HeadlessTerminalSurface`` is the in-package conformer used by tests and the
-/// headless `slopdesk-client` CLI.
+/// Nothing in this package conforms to it. There was an in-package byte sink here for
+/// the headless `slopdesk-client` CLI, and that CLI is `rust/slopdesk-client` now
+/// (`docs/63` G.5) — so the last conformer this side is the test target's own
+/// `RecordingTerminalPaneSession`, which is a recorder rather than a surface.
 ///
 /// ### Concurrency
 /// libghostty's `feed_data`/`refresh`/`draw` are main-thread-only ([18 C]), so the
@@ -183,7 +185,7 @@ public struct TerminalCellMetrics: Sendable, Equatable {
 ///
 /// Like ``TerminalSurfaceActions`` this is a SEPARATE protocol the GUI probes with
 /// `as? TerminalViewportSnapshotting`: the libghostty-backed `GhosttySurface` conforms (app target),
-/// while headless conformers (tests, the CLI ``HeadlessTerminalSurface``) and the
+/// while headless conformers (the test target's own) and the
 /// `BuildStatusPlaceholderView` placeholder DO NOT — so `cellMetrics()` is absent and the overlays
 /// simply do not render. That is the HONEST ceiling: an absent underline, never a wrong one (no faked
 /// overlay over a placeholder). Not exercised by a test (the real surface hangs without a window server

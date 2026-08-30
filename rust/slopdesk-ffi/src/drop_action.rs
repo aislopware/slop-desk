@@ -10,15 +10,22 @@
 //! are the same function — see [`slopdesk_workspace::drop_zone`]. "Which zone" is a code plus a
 //! presence flag rather than a sentinel code, because `0` is a real zone and a gap between the
 //! blobs is a real answer.
+//!
+//! And so does WHAT was dropped. [`slopdesk_drop_classify`] reduces the drag's supported slice to
+//! one `SLOPDESK_DROP_CONTENT_*` code and its value — the step before the table, which `docs/67`
+//! moved because a walk decided half in Rust and half in Swift is the one-implementation rule
+//! broken at a join. The classifier's answer is handed straight back to [`slopdesk_drop_action`] in
+//! the SAME numbers, so nothing between the two doors re-derives what the drag was.
 
 use core::ffi::c_uchar;
 
 use slopdesk_tree::geometry::{Point, Size};
 use slopdesk_workspace::drop_action::{self, DropAction, DropZone, Dropped, DroppedKind};
+use slopdesk_workspace::drop_payload::{self, FileEntry};
 use slopdesk_workspace::drop_zone;
 
 use crate::workspace::CPoint;
-use crate::{borrow, deliver};
+use crate::{borrow, deliver, records_of};
 
 /// Top-centre: a new terminal tab rooted at the dropped folder.
 pub const SLOPDESK_DROP_ZONE_NEW_TAB: u8 = 0;
@@ -146,6 +153,128 @@ pub unsafe extern "C" fn slopdesk_drop_action(
             needed.write(written);
         }
         verb
+    }
+}
+
+// ---------------------------------------------------------------------------------------------- //
+// Classify: the pasteboard's supported slice, reduced to one content
+// ---------------------------------------------------------------------------------------------- //
+
+/// One borrowed run of UTF-8, live for the call that carries it and no longer.
+///
+/// A pair rather than a C string, for [`crate::client_ctl::SlopDeskCtlText`]'s reason: the far
+/// side's text is a Swift `String`, which has a length and no terminator.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SlopDeskDropText {
+    /// The bytes, or null for an empty run.
+    pub bytes: *const c_uchar,
+    /// How many. The LENGTH decides — a zero-length run may carry a dangling non-null.
+    pub len: usize,
+}
+
+/// One file URL the platform layer pulled off the drag.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SlopDeskDropFile {
+    /// The POSIX path.
+    pub path: SlopDeskDropText,
+    /// Whether it names a directory, resolved from the URL's resource values on the platform side.
+    /// This side never stats: by the time it could, the file may be gone.
+    pub is_directory: bool,
+}
+
+/// The `&str` a lent run names, or `""` when it is empty, null or not UTF-8.
+///
+/// Validate-then-drop, the same as everywhere else this side reads something it did not originate:
+/// a run that is not text classifies as blank and falls through to the next group.
+///
+/// # Safety
+/// `run.bytes` must be null or point to `run.len` initialised bytes, live for the call.
+#[expect(
+    unsafe_code,
+    reason = "reconstituting the caller's run IS the boundary this module documents"
+)]
+unsafe fn text_of<'a>(run: SlopDeskDropText) -> &'a str {
+    // SAFETY: the caller's obligation, restated above; `borrow` answers empty for a null.
+    core::str::from_utf8(unsafe { borrow(run.bytes, run.len) }).unwrap_or_default()
+}
+
+/// WHICH of a drag's items is the drop: the supported slice in, one `SLOPDESK_DROP_CONTENT_*` code
+/// and its value out.
+///
+/// A code plus a presence flag rather than a sentinel code, for [`slopdesk_drop_zone_at`]'s reason:
+/// `0` is a real content kind, and "nothing supported was in the drag" is a real answer the overlay
+/// draws (it stays dark). `false` leaves `kind` and `out` untouched.
+///
+/// `needed` takes §4's number for the value. A value that does not fit leaves `out` untouched; the
+/// KIND is still correct, so a caller that only wants to know whether the drag is actionable never
+/// has to size a buffer at all.
+///
+/// # Safety
+/// `files` must be null or describe `files_count` live records, `urls` null or `urls_count` live
+/// records, and every run inside them must satisfy [`text_of`]'s obligation. `kind` must be null or
+/// one writable byte; `out` null or writable for `cap` bytes; `needed` null or one writable
+/// `usize`. All live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_drop_classify(
+    files: *const SlopDeskDropFile,
+    files_count: usize,
+    urls: *const SlopDeskDropText,
+    urls_count: usize,
+    text: SlopDeskDropText,
+    has_text: bool,
+    kind: *mut u8,
+    out: *mut c_uchar,
+    cap: usize,
+    needed: *mut usize,
+) -> bool {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let entries: Vec<FileEntry<'_>> = records_of(files, files_count)
+            .iter()
+            .map(|record| {
+                FileEntry {
+                    path: text_of(record.path),
+                    is_directory: record.is_directory,
+                }
+            })
+            .collect();
+        let links: Vec<&str> = records_of(urls, urls_count)
+            .iter()
+            .map(|record| text_of(*record))
+            .collect();
+        let payload = drop_payload::Payload {
+            files: &entries,
+            urls: &links,
+            text: has_text.then(|| text_of(text)),
+        };
+        let Some(content) = drop_payload::classify(&payload) else {
+            return false;
+        };
+        if !kind.is_null() {
+            kind.write(content_code_of(content.kind));
+        }
+        let written = deliver(content.value.as_bytes(), out, cap);
+        if !needed.is_null() {
+            needed.write(written);
+        }
+        true
+    }
+}
+
+/// The `SLOPDESK_DROP_CONTENT_*` code a kind answers to — [`kind_of`]'s inverse, so what the
+/// classifier decides and what the action door is later asked about are the same numbers.
+const fn content_code_of(kind: DroppedKind) -> u8 {
+    match kind {
+        DroppedKind::Folder => SLOPDESK_DROP_CONTENT_FOLDER,
+        DroppedKind::File => SLOPDESK_DROP_CONTENT_FILE,
+        DroppedKind::Url => SLOPDESK_DROP_CONTENT_URL,
+        DroppedKind::Text => SLOPDESK_DROP_CONTENT_TEXT,
     }
 }
 
@@ -308,17 +437,18 @@ mod tests {
         clippy::float_cmp,
         reason = "the alphas and proportions are exact, and a drifted one IS the bug these pin"
     )]
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
 
     use super::{
         SLOPDESK_DROP_ACTION_INJECT_TEXT, SLOPDESK_DROP_ACTION_NEW_TAB_CD, SLOPDESK_DROP_ACTION_NOTHING,
-        SLOPDESK_DROP_ACTION_SPLIT_TRAILING, SLOPDESK_DROP_CONTENT_FOLDER, SLOPDESK_DROP_CONTENT_URL,
-        SLOPDESK_DROP_ZONE_INK_ACCENT, SLOPDESK_DROP_ZONE_INK_ACCENT_MUTED, SLOPDESK_DROP_ZONE_INK_OK,
-        SLOPDESK_DROP_ZONE_INSERT_PATH, SLOPDESK_DROP_ZONE_LABEL_INK_PRIMARY,
-        SLOPDESK_DROP_ZONE_LABEL_INK_SECONDARY, SLOPDESK_DROP_ZONE_LABEL_INK_TERTIARY,
-        SLOPDESK_DROP_ZONE_NEW_TAB, SLOPDESK_DROP_ZONE_OPEN_IN_PLACE, SLOPDESK_DROP_ZONE_SPLIT_LEFT,
-        SLOPDESK_DROP_ZONE_SPLIT_RIGHT, slopdesk_drop_action, slopdesk_drop_zone_at,
-        slopdesk_drop_zone_label, slopdesk_drop_zone_marks, slopdesk_drop_zone_shape,
-        slopdesk_drop_zone_wash,
+        SLOPDESK_DROP_ACTION_SPLIT_TRAILING, SLOPDESK_DROP_CONTENT_FILE, SLOPDESK_DROP_CONTENT_FOLDER,
+        SLOPDESK_DROP_CONTENT_TEXT, SLOPDESK_DROP_CONTENT_URL, SLOPDESK_DROP_ZONE_INK_ACCENT,
+        SLOPDESK_DROP_ZONE_INK_ACCENT_MUTED, SLOPDESK_DROP_ZONE_INK_OK, SLOPDESK_DROP_ZONE_INSERT_PATH,
+        SLOPDESK_DROP_ZONE_LABEL_INK_PRIMARY, SLOPDESK_DROP_ZONE_LABEL_INK_SECONDARY,
+        SLOPDESK_DROP_ZONE_LABEL_INK_TERTIARY, SLOPDESK_DROP_ZONE_NEW_TAB, SLOPDESK_DROP_ZONE_OPEN_IN_PLACE,
+        SLOPDESK_DROP_ZONE_SPLIT_LEFT, SLOPDESK_DROP_ZONE_SPLIT_RIGHT, SlopDeskDropFile, SlopDeskDropText,
+        slopdesk_drop_action, slopdesk_drop_classify, slopdesk_drop_zone_at, slopdesk_drop_zone_label,
+        slopdesk_drop_zone_marks, slopdesk_drop_zone_shape, slopdesk_drop_zone_wash,
     };
     use crate::testing::delivered;
     use crate::workspace::CPoint;
@@ -494,5 +624,177 @@ mod tests {
             let edge = slopdesk_drop_zone_marks(code, 800.0, 600.0);
             assert!(edge.label_center.x > 0.0 && edge.label_center.x < 800.0);
         }
+    }
+
+    // ------------------------------------------------------------------------------------------ //
+    // Classify
+    // ------------------------------------------------------------------------------------------ //
+
+    /// A lent run over a `&str` the caller keeps alive across the call.
+    fn run(text: &str) -> SlopDeskDropText {
+        SlopDeskDropText {
+            bytes: text.as_ptr(),
+            len: text.len(),
+        }
+    }
+
+    /// The classify door, asked the way the shells ask it: the three groups in, `(kind, value)`
+    /// out.
+    fn classified(files: &[(&str, bool)], urls: &[&str], text: Option<&str>) -> Option<(u8, String)> {
+        let records: Vec<SlopDeskDropFile> = files
+            .iter()
+            .map(|&(path, is_directory)| {
+                SlopDeskDropFile {
+                    path: run(path),
+                    is_directory,
+                }
+            })
+            .collect();
+        let links: Vec<SlopDeskDropText> = urls.iter().copied().map(run).collect();
+        let lent = text.map_or(
+            SlopDeskDropText {
+                bytes: core::ptr::null(),
+                len: 0,
+            },
+            run,
+        );
+        let mut kind = u8::MAX;
+        let mut present = false;
+        let value = delivered(|out, cap| {
+            let mut needed = 0;
+            present = unsafe {
+                slopdesk_drop_classify(
+                    records.as_ptr(),
+                    records.len(),
+                    links.as_ptr(),
+                    links.len(),
+                    lent,
+                    text.is_some(),
+                    &raw mut kind,
+                    out,
+                    cap,
+                    &raw mut needed,
+                )
+            };
+            needed
+        });
+        present.then(|| (kind, String::from_utf8_lossy(&value).into_owned()))
+    }
+
+    /// The precedence the whole classifier exists for, asked through the door: Finder publishes a
+    /// file drag's path as text too, and reading that first would paste every file drop.
+    #[test]
+    fn a_file_drag_that_also_carries_its_path_as_text_classifies_as_a_file() {
+        assert_eq!(
+            classified(&[("/repo/a.txt", false)], &["https://x.dev"], Some("/repo/a.txt")),
+            Some((SLOPDESK_DROP_CONTENT_FILE, "/repo/a.txt".to_owned()))
+        );
+        assert_eq!(
+            classified(&[("/repo", true)], &[], None),
+            Some((SLOPDESK_DROP_CONTENT_FOLDER, "/repo".to_owned()))
+        );
+    }
+
+    /// The two answers below a file, in order.
+    #[test]
+    fn a_url_outranks_text_and_text_answers_alone() {
+        assert_eq!(
+            classified(&[], &["https://x.dev"], Some("x")),
+            Some((SLOPDESK_DROP_CONTENT_URL, "https://x.dev".to_owned()))
+        );
+        assert_eq!(
+            classified(&[], &[], Some("hello")),
+            Some((SLOPDESK_DROP_CONTENT_TEXT, "hello".to_owned()))
+        );
+    }
+
+    /// The presence flag earns its keep: `0` is `SLOPDESK_DROP_CONTENT_FOLDER`, so a sentinel code
+    /// could not say "nothing supported was in the drag" without stealing a real answer.
+    #[test]
+    fn an_empty_or_blank_drag_answers_false_and_touches_nothing() {
+        assert_eq!(classified(&[], &[], None), None);
+        assert_eq!(classified(&[("  ", false)], &["\n"], Some(" \t ")), None);
+
+        let mut kind = 99;
+        let present = unsafe {
+            slopdesk_drop_classify(
+                core::ptr::null(),
+                0,
+                core::ptr::null(),
+                0,
+                SlopDeskDropText {
+                    bytes: core::ptr::null(),
+                    len: 0,
+                },
+                false,
+                &raw mut kind,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null_mut(),
+            )
+        };
+        assert!(!present);
+        assert_eq!(kind, 99, "a refusal leaves the caller's byte alone");
+    }
+
+    /// The kind is written whether or not the value fits, so a caller that only asks "is this drag
+    /// actionable" never sizes a buffer.
+    #[test]
+    fn the_kind_lands_even_when_no_buffer_was_offered() {
+        let path = "/repo";
+        let records = [SlopDeskDropFile {
+            path: run(path),
+            is_directory: true,
+        }];
+        let mut kind = u8::MAX;
+        let mut needed = 0;
+        let present = unsafe {
+            slopdesk_drop_classify(
+                records.as_ptr(),
+                records.len(),
+                core::ptr::null(),
+                0,
+                SlopDeskDropText {
+                    bytes: core::ptr::null(),
+                    len: 0,
+                },
+                false,
+                &raw mut kind,
+                core::ptr::null_mut(),
+                0,
+                &raw mut needed,
+            )
+        };
+        assert!(present);
+        assert_eq!(kind, SLOPDESK_DROP_CONTENT_FOLDER);
+        assert_eq!(
+            needed,
+            path.len(),
+            "the length is reported even with nowhere to write"
+        );
+    }
+
+    /// The two doors are asked in one vocabulary: whatever `classify` decides is what `action` is
+    /// then handed, with no re-derivation between them.
+    #[test]
+    fn what_classify_decides_is_what_the_action_door_is_asked_about() {
+        let (kind, value) = classified(&[("/repo", true)], &[], None).expect("a folder classifies");
+        let mut needed = 0;
+        let payload = delivered(|out, cap| {
+            let verb = unsafe {
+                slopdesk_drop_action(
+                    SLOPDESK_DROP_ZONE_NEW_TAB,
+                    kind,
+                    value.as_ptr(),
+                    value.len(),
+                    out,
+                    cap,
+                    &raw mut needed,
+                )
+            };
+            assert_eq!(verb, SLOPDESK_DROP_ACTION_NEW_TAB_CD);
+            needed
+        });
+        assert_eq!(String::from_utf8_lossy(&payload), "/repo");
     }
 }

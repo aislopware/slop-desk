@@ -60,6 +60,7 @@ pub mod sidecar_wires;
 pub mod split_surfaces;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
+pub mod swift_floor;
 pub mod terminal_config;
 pub mod terminal_grammar;
 pub mod terminal_surface;
@@ -1159,6 +1160,11 @@ pub fn registry() -> Vec<Rule> {
             name: "video-halves-agree",
             origin: "docs/56 §3",
             check: ui_split::the_two_video_halves_agree,
+        },
+        Rule {
+            name: "swift-floor-booked",
+            origin: "docs/67 §5",
+            check: swift_floor::the_swift_floor_is_exactly_what_is_booked,
         },
         Rule {
             name: "ui-test-edges",

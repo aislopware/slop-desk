@@ -93,6 +93,10 @@ slopdesk-wire = { path = "../slopdesk-wire" }
 # The four clipboard rules, which the HOST reads out of the same crate. A client that decided any of
 # them here would be the second implementation the shared crate exists to have exactly one of.
 slopdesk-clipboard = { path = "../slopdesk-clipboard" }
+# The one effect behind `slopdesk_cli_link`: where the bundled command goes, and whose file is
+# already sitting there. A crate rather than a module because it belongs to no subject in this
+# graph — see its own manifest. A DIRECT edge, so it is inside `slopdesk-gate ffi`'s content stamp.
+slopdesk-clilink = { path = "../slopdesk-clilink" }
 slopdesk-workspace = { path = "../slopdesk-workspace" }
 # The three crates carved out of `slopdesk-workspace`. The shim names modules in all four directly,
 # so all four are direct edges — and each one is what puts that crate inside `slopdesk-gate ffi`'s

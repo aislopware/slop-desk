@@ -3398,6 +3398,27 @@ size_t slopdesk_link_cd_command_line(const uint8_t *text, size_t len, uint8_t *o
 uint8_t slopdesk_drop_action(uint8_t zone, uint8_t content_kind, const uint8_t *value,
                              size_t value_len, uint8_t *out, size_t cap, size_t *needed);
 
+/* WHICH of a drag's items IS the drop — the step before the table, on the same content codes.
+ *
+ * The platform layer reads the pasteboard, because AppKit and UIKit disagree about everything up to
+ * the value and about nothing after it: a file URL with an `isDirectory` resource value, a web URL,
+ * a plain string. What crosses is that errand's RESULT, and precedence over it — file, then url,
+ * then text — is decided here. A Finder file drag also publishes its own path as text, so a reader
+ * that took text first would paste every file drop instead of opening it.
+ *
+ * A code plus a presence flag, for `slopdesk_drop_zone_at`'s reason: `0` is a real content kind, and
+ * "nothing supported was in the drag" is a real answer. `false` leaves `*kind` and `*out` untouched.
+ * `*kind` lands whether or not the value fits, so a caller that only asks "is this actionable" never
+ * sizes a buffer. `has_text` is separate from `text` because an EMPTY published text and no published
+ * text at all classify the same but are not the same fact.                                        */
+typedef struct { const uint8_t *bytes; size_t len; } SlopDeskDropText;
+typedef struct { SlopDeskDropText path; bool is_directory; } SlopDeskDropFile;
+
+bool slopdesk_drop_classify(const SlopDeskDropFile *files, size_t files_count,
+                            const SlopDeskDropText *urls, size_t urls_count,
+                            SlopDeskDropText text, bool has_text, uint8_t *kind,
+                            uint8_t *out, size_t cap, size_t *needed);
+
 /* WHERE the five zones are, on the same codes. The overlay asks for a zone's ellipse to draw it and
  * the receiver asks which zone a point is in, so the drawn blob and the hit region are one function
  * and a `.contentShape`-after-`.position` mistake cannot move one without the other.
@@ -8757,6 +8778,28 @@ typedef void (*SlopDeskVirtualDisplayTerminatedFn)(void *context);
 
 // A NULL callback disarms. The context is opaque and never freed here — see the barrier
 // note above for the one moment at which the caller may release it.
+
+// ---- Installing the `slopdesk` command -----------------------------------------------
+//
+// In the region, and not because of a framework: iOS has no `PATH` and no place to put a
+// command, so the question does not arise on the phone at all.
+//
+// The smallest split that could work. `Bundle.main` is the only thing on either side of
+// this boundary that knows where this app's own executable lives, so the shell resolves
+// the source and lends it; where the link goes, whether one is already there, whose file
+// it is, and the `symlink` itself are all behind the door. Both runs are `(ptr, len)`
+// UTF-8 as everywhere else, and an empty one links nothing.
+//
+// Idempotent — called on every launch. Three of the four verdicts are not "it worked":
+// OCCUPIED means a regular file somebody else owns is at the destination and was left
+// exactly where it was, which is the one refusal that is a decision rather than a failure.
+#define SLOPDESK_CLI_LINK_ALREADY  0u
+#define SLOPDESK_CLI_LINK_MADE     1u
+#define SLOPDESK_CLI_LINK_OCCUPIED 2u
+#define SLOPDESK_CLI_LINK_FAILED   3u
+
+uint8_t slopdesk_cli_link(const uint8_t *home, size_t home_len,
+                          const uint8_t *source, size_t source_len);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END

@@ -1,73 +1,58 @@
 #if os(macOS)
+import CSlopDeskFFI
 import Foundation
 
-// The `slopdesk` command, linked without asking.
+// The `slopdesk` command, linked without asking — as the Swift face of `slopdesk-clilink`, reached
+// through `rust/slopdesk-ffi`'s `cli_link` door.
 //
-// It used to be a first-launch card with a switch on it, and the switch escalated: `/usr/local/bin`
-// is root-owned, so turning it on raised an administrator prompt on a user's first two minutes with
-// the app. Two things were wrong with that. A password prompt is the most expensive question a
-// program can ask, and it was being spent on a convenience; and a card that can be dismissed is a
-// card most people dismiss, which left `slopdesk edit` — the command every doc example opens with —
-// not existing on most installs.
+// ## What is not here any more
 //
-// So the link is made at launch, into a directory the user already owns. No prompt, no switch,
-// nothing to opt into. `~/.local/bin` is the XDG user-binary location and is already on `PATH` in
-// most shell setups; where it is not, the file is still there to point at, which is strictly more
-// than the dismissed card left behind.
+// The link itself, and every question around it: where it goes, whether one is already there, whose
+// file it is, and the four verdicts that come out. All Rust's — it is an EFFECT on the filesystem,
+// and every effect on the system is Rust's (`docs/67`). What stays is the ONE thing no crate can
+// derive: where this bundle's own executable lives, which is `Bundle.main` and nothing else.
 //
 // ## Compiled-only
-// Touches the filesystem. `#if os(macOS)`: iOS has no `PATH` and no place to put a command.
+// `#if os(macOS)`: iOS has no `PATH` and no place to put a command, so the door is inside the
+// header's `MACOS-ONLY` region and this file is gated to match.
 
 /// Links the bundled `slopdesk` executable into the user's own bin directory.
 @preconcurrency
 @MainActor
 public enum CLILink {
-    /// Where the link lands: `~/.local/bin/slopdesk`.
-    ///
-    /// Deliberately NOT `/usr/local/bin`, which needs a privilege the app should never ask for, and
-    /// not `/opt/homebrew/bin`, which belongs to a package manager that did not install this.
-    public static var linkPath: String {
-        NSHomeDirectory() + "/.local/bin/slopdesk"
-    }
-
     /// Makes the link if it is missing or points somewhere else, and answers whether the command is
-    /// now reachable at ``linkPath``.
+    /// reachable afterwards.
     ///
     /// Idempotent and silent. Every failure mode — no bundled binary, an unwritable home, a real
     /// file already sitting at the path — answers `false` and changes nothing: the app works without
     /// the command, and a launch that threw over a symlink would be trading the product for a
-    /// convenience.
-    ///
-    /// A path that already holds a REGULAR file is left alone. That is somebody else's `slopdesk`,
-    /// or an earlier copy the user placed by hand, and replacing it silently is the one outcome
-    /// worse than not linking at all.
+    /// convenience. Which of those it was is the door's four-verdict answer; nothing here reads more
+    /// than "is it there", so nothing here spells the other three out again.
     @discardableResult
     public static func ensureLinked() -> Bool {
         guard let source = bundledCLIPath() else { return false }
-        let manager = FileManager.default
-        let link = linkPath
-        if let existing = try? manager.destinationOfSymbolicLink(atPath: link) {
-            if existing == source { return true }
-            try? manager.removeItem(atPath: link)
-        } else if manager.fileExists(atPath: link) {
-            return false // a real file somebody else owns
+        let home = NSHomeDirectory()
+        let verdict = Array(home.utf8).withUnsafeBufferPointer { homeBytes in
+            Array(source.utf8).withUnsafeBufferPointer { sourceBytes in
+                slopdesk_cli_link(
+                    homeBytes.baseAddress, homeBytes.count,
+                    sourceBytes.baseAddress, sourceBytes.count,
+                )
+            }
         }
-        try? manager.createDirectory(
-            atPath: URL(fileURLWithPath: link).deletingLastPathComponent().path,
-            withIntermediateDirectories: true,
-        )
-        try? manager.createSymbolicLink(atPath: link, withDestinationPath: source)
-        return (try? manager.destinationOfSymbolicLink(atPath: link)) == source
+        return UInt32(verdict) == SLOPDESK_CLI_LINK_ALREADY || UInt32(verdict) == SLOPDESK_CLI_LINK_MADE
     }
 
     /// The `slopdesk` executable shipped inside this bundle, or `nil` in a build that has none —
     /// which a `swift build` binary run straight out of `.build` is.
+    ///
+    /// The near side of the seam, and the whole of it: `Bundle.main` is the only thing on either
+    /// side that knows where this app put itself.
     private static func bundledCLIPath() -> String? {
         guard let directory = Bundle.main.executableURL?.deletingLastPathComponent() else {
             return nil
         }
-        let candidate = directory.appendingPathComponent("slopdesk", isDirectory: false).path
-        return FileManager.default.isExecutableFile(atPath: candidate) ? candidate : nil
+        return directory.appendingPathComponent("slopdesk", isDirectory: false).path
     }
 }
 #endif

@@ -11,7 +11,7 @@ import SlopDeskWorkspaceModel
 /// (which hangs without a window server — the hang-safety rule). It never touches VideoToolbox / Metal /
 /// SCStream / a real terminal; it is a pure in-memory recorder.
 ///
-/// NON-isolated (like ``HeadlessTerminalSurface``) so it satisfies the nonisolated `TerminalSurface` /
+/// NON-isolated so it satisfies the nonisolated `TerminalSurface` /
 /// `TerminalSurfaceActions` protocols; an `NSLock` guards the recorded actions (`@unchecked Sendable`),
 /// though the tests only touch it from the main actor.
 final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @unchecked Sendable {

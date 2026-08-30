@@ -84,6 +84,9 @@ pub mod client_session;
 pub mod client_view;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub mod clipboard;
+// macOS only, and not because of a framework: iOS has no `PATH` and no place to put a command.
+#[cfg(target_os = "macos")]
+pub mod cli_link;
 pub mod close_confirm;
 pub mod code_panel;
 pub mod code_surface;

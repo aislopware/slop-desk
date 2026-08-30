@@ -1089,6 +1089,10 @@ name = "slopdesk-clientsession"
 version = "0.1.0"
 
 [[package]]
+name = "slopdesk-clilink"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-clipboard"
 version = "0.1.0"
 dependencies = [
@@ -1146,6 +1150,7 @@ dependencies = [
  "slopdesk-clientdriver",
  "slopdesk-clientnet",
  "slopdesk-clientsession",
+ "slopdesk-clilink",
  "slopdesk-clipboard",
  "slopdesk-codepanel",
  "slopdesk-devicelog",
