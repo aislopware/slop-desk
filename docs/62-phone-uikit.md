@@ -261,7 +261,7 @@ SwiftUI canvas above and a 300 ms failure requirement is 300 ms of a click alrea
 | `Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift:334` | 363 | `SimulatorScreenUIView` | added as a subview |
 | `Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift:364` | 389 | `AndroidScreenUIView` | ditto |
 | `Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift:46` | 81 | a pooled `WKWebView` in a clipping `UIView` `:42` | the pool hands the page straight to a controller; `updateUIView`'s four hand-written constraints `:62-79` become the controller's |
-| `ThirdParty/ghostty/.../GhosttyTerminalView.swift:2953` | — | `GhosttyLayerBackedView: UIView` `:2995` | §8: **vendored.** What changes is not this file but the seam it satisfies |
+| `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2953` | — | `GhosttyLayerBackedView: UIView` `:2995` | §8: **vendored.** What changes is not this file but the seam it satisfies |
 
 **The seam loses a shape, and that is a ledger row of its own.**
 `Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift:47-51` has two:

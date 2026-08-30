@@ -17614,3 +17614,41 @@ the tree, and a table with a single row is a rule with a longer name. *Pinning t
 too* — cargo unifies features, so everything depending on `slopdesk-hostpane` gets the setter
 compiled; that is not a second writer, it is the one writer's dependents, and forbidding it would
 forbid hostd from linking its own pane.
+
+## A citation with a line number was still a citation, and one rule could not see it (2026-08-31)
+
+`every_cited_path_exists` asks whether a read-first doc names a file that is gone. Its extraction was
+`` `((roots)/…\.[a-z]+)` `` — the closing backtick against the extension — so it read
+`` `Sources/A/View.swift` `` and was blind to `` `Sources/A/View.swift:15` ``. Nineteen citations
+across the read-first corpus carry a `:LINE` suffix, and seven of them named a file the phone port
+deleted. The rule had been green over all seven since the port landed.
+
+The suffix is not an edge case, it is this repo's idiom: `docs/62` §2.4's wrapper ledger cites every
+"before" by path and first line, and `repo_invariants::live_docs_cite_files_that_exist` — the same
+question over a hand-copied doc list — has stripped `:[\d,+-]+` since it was written. One sibling
+matched the idiom and one matched less than it, and the one that matched less is the one whose corpus
+reaches `docs/57`–`62`.
+
+**What landed.** The pattern gained a non-capturing `(?::[0-9,+-]+)?`, and the extraction moved into
+one `cited_paths` both rules call. That coupling is the point rather than tidiness: the two rules ask
+opposite halves of one question, so widening `every_cited_path_exists` alone would exempt each
+newly-visible citation in the first rule *and* make its own tombstone read unspent in the second, in
+the same pass. `a_line_numbered_citation_keeps_its_tombstone_spent` is the test for exactly that.
+
+The seven newly-visible paths became tombstones rather than repointings. §2.4 is a before/after
+ledger whose "after" column reads "deleted." / "dissolves." / "added as a subview"; three of the seven
+do have a successor under a different name, and aiming a row at it deletes the only fact the row
+carries. That is the argument the phone and mux blocks above it already make.
+
+`ThirdParty/ghostty/.../GhosttyTerminalView.swift:2953` was the one row that was not a ledger entry —
+`...` is prose elision, and `.` and `/` are both inside the path class, so the widened rule captured
+a path that can never resolve. The doc now spells
+`ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`, which exists, so the
+citation resolves on its own.
+
+**Rejected.** *An ellipsis exclusion in the matcher* — one row, and a doc that elides a path it is
+citing should spell the path. *Unifying `live_docs_cite_files_that_exist`'s corpus onto
+`read_first_docs` in the same pass* — measured, and it drifts BOTH ways: the derived corpus adds
+`DESIGN.md` and `docs/57`–`62`, and drops `docs/45`, `docs/47`, `README.md` and `justfile`, which
+`CLAUDE.md`'s table does not name. Which docs that rule should read is a coverage decision, not a
+mechanical one, and it is its own change.

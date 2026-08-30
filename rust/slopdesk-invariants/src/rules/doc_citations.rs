@@ -65,13 +65,20 @@ const DOCC_EXTERNAL: [&str; 4] = [
 /// name before the controller replaced it. Repointing either at its successor deletes the only fact
 /// the row carries — a before/after ledger whose "before" column has been rewritten to the "after"
 /// is not a ledger, and the rules those paragraphs re-aim are the ones a reader has to find.
+/// The sixth block is `docs/62` §2.4's again, at the width the rule could finally see. That table
+/// is a wrapper LEDGER — a row per representable, an "after" column that reads "deleted." /
+/// "dissolves." / "added as a subview" — and every "before" in it is cited with a `:LINE` suffix,
+/// which is exactly what [`cited_paths`] did not read until it was widened. Three of the seven have
+/// a successor under a different name (`PhoneSimulatorScreenView`, `PhoneAndroidScreenView`,
+/// `CodeSidebarWebViewPool`) and repointing at any of them is the phone block's error one more
+/// time: the row's whole content is which file the controller was cut out of.
 /// ⚠️ THIS LIST IS THIS RULE'S ALONE, and it does NOT exempt a Swift COMMENT.
 /// `repo_invariants::source_comments_cite_files_that_exist` is the other half of the same
 /// question and carries no list at all, on purpose — it is SHAPE, so it cannot decay. A comment
 /// recording a deleted file is not fixed by an entry here; it is fixed by not spelling a backticked
 /// PATH, which that rule's own doc says stays legal. Adding the name here instead silently does
 /// nothing.
-const PATH_TOMBSTONES: [&str; 22] = [
+const PATH_TOMBSTONES: [&str; 29] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -110,6 +117,15 @@ const PATH_TOMBSTONES: [&str; 22] = [
     // `rust/slopdesk-wire`'s `replay` module would have the doc say a Rust crate was the thing the
     // sentence is explaining the retirement of.
     "Sources/SlopDeskTransport/ReplayBuffer.swift",
+    // `docs/62` §2.4's wrapper ledger and the two paragraphs that continue it, all seven cited with
+    // a `:LINE` suffix and therefore invisible to this rule until the extraction was widened.
+    "Sources/SlopDeskVideoClientPhone/VideoLayerRepresentable.swift",
+    "Sources/SlopDeskPhoneUI/Pane/PaneMoveEscapeResponder.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
+    "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+    "Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift",
+    "Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift",
+    "Apps/ClientApp-iOS/Tests/SidebarAutoHideWiringTests.swift",
 ];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.
@@ -324,13 +340,7 @@ pub fn every_cited_path_exists(tree: &Tree) -> Report {
         return report;
     }
 
-    let pattern = format!("`(({})/[A-Za-z0-9_./+-]+\\.[a-z]+)`", roots.join("|"));
-    let mut cited: BTreeSet<String> = BTreeSet::new();
-    for doc in &live {
-        if let Some(source) = tree.get(doc) {
-            cited.extend(text::capture_set(&source.text, &pattern));
-        }
-    }
+    let cited = cited_paths(tree, &live, &roots);
     if cited.is_empty() {
         report
             .fail("no file path is cited by any read-first doc — the extraction in this gate has gone stale");
@@ -396,13 +406,7 @@ pub fn every_tombstone_still_buries_something(tree: &Tree) -> Report {
         report.fail("the repository root could not be read — no tombstone could be checked");
         return report;
     };
-    let pattern = format!("`(({})/[A-Za-z0-9_./+-]+\\.[a-z]+)`", roots.join("|"));
-    let mut cited: BTreeSet<String> = BTreeSet::new();
-    for doc in &live {
-        if let Some(source) = tree.get(doc) {
-            cited.extend(text::capture_set(&source.text, &pattern));
-        }
-    }
+    let cited = cited_paths(tree, &live, &roots);
     if cited.is_empty() {
         report.fail(
             "no file path is cited by any read-first doc — this rule cannot tell a live tombstone from a \
@@ -423,6 +427,34 @@ pub fn every_tombstone_still_buries_something(tree: &Tree) -> Report {
     report
 }
 
+/// Every rooted file path the given docs cite, with any `:LINE` suffix dropped.
+///
+/// ONE function because both path rules read the same set and disagreeing about it is a defect, not
+/// a duplication: [`every_cited_path_exists`] asks which of these is gone, and
+/// [`every_tombstone_still_buries_something`] asks which entry no longer appears here. Widening one
+/// side alone would make every newly-visible citation red in the first rule and its own exemption
+/// read unspent in the second.
+///
+/// The `:LINE` suffix is why this was widened. `` `docs/62`'s §2.4 `` cites a wrapper by path and
+/// first line, which is this repo's own idiom — `repo_invariants::live_docs_cite_files_that_exist`
+/// has stripped `:[\d,+-]+` since it was written. Requiring the closing backtick immediately after
+/// the extension made this rule blind to nineteen citations across the read-first corpus, seven of
+/// which named a file deleted in the phone port: an extraction narrower than the idiom it reads is
+/// a rule that reports nothing and looks clean doing it.
+fn cited_paths(tree: &Tree, docs: &[String], roots: &[String]) -> BTreeSet<String> {
+    let pattern = format!(
+        "`(({})/[A-Za-z0-9_./+-]+\\.[a-z]+)(?::[0-9,+-]+)?`",
+        roots.join("|")
+    );
+    let mut cited: BTreeSet<String> = BTreeSet::new();
+    for doc in docs {
+        if let Some(source) = tree.get(doc) {
+            cited.extend(text::capture_set(&source.text, &pattern));
+        }
+    }
+    cited
+}
+
 /// The repository's top-level directory names, which bound what counts as a rooted path.
 fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
     let mut found: Vec<String> = fs::read_dir(tree.root())
@@ -439,8 +471,8 @@ fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cited_symbols, every_cited_path_exists, every_docc_link_resolves, the_read_first_table_resolves,
-        unspent_tombstones,
+        cited_paths, cited_symbols, every_cited_path_exists, every_docc_link_resolves,
+        the_read_first_table_resolves, unspent_tombstones,
     };
     use crate::tests::Fixture;
 
@@ -574,5 +606,57 @@ mod tests {
             &format!("see {live} and {gone}\n"),
         );
         assert!(!every_cited_path_exists(&broken.tree()).is_clean());
+    }
+
+    /// A citation carrying a line number is still a citation.
+    ///
+    /// `docs/62` §2.4 cites every wrapper as `path.swift:15`, and the extraction that required the
+    /// closing backtick against the extension read seven deleted files as nothing at all.
+    #[test]
+    fn a_line_numbered_citation_is_read_like_any_other() {
+        let live = concat!("`Sources/", "A/Live.swift:15`");
+        let gone = concat!("`Sources/", "A/Gone.swift:47-51`");
+
+        let fixture = Fixture::new("cited-paths-lines");
+        fixture.write("CLAUDE.md", "read `docs/51`\n");
+        fixture.write("Sources/A/Live.swift", "let x = 1\n");
+        fixture.write("docs/51-process-supervision.md", &format!("see {live}\n"));
+        assert!(every_cited_path_exists(&fixture.tree()).is_clean());
+
+        let broken = Fixture::new("cited-paths-lines-gone");
+        broken.write("CLAUDE.md", "read `docs/51`\n");
+        broken.write("Sources/A/Live.swift", "let x = 1\n");
+        broken.write(
+            "docs/51-process-supervision.md",
+            &format!("see {live} and {gone}\n"),
+        );
+        assert!(!every_cited_path_exists(&broken.tree()).is_clean());
+    }
+
+    /// The coupling: one extraction, so a line-numbered citation keeps its tombstone alive.
+    ///
+    /// This is the test a one-sided widening fails. If [`cited_paths`] stripped the suffix for
+    /// `every_cited_path_exists` only, `Gone.swift` would be exempt AND its entry would read
+    /// "no read-first doc cites it any more" in the same pass.
+    #[test]
+    fn a_line_numbered_citation_keeps_its_tombstone_spent() {
+        let gone = concat!("`Sources/", "A/Gone.swift:47-51`");
+
+        let fixture = Fixture::new("cited-paths-lines-tombstone");
+        fixture.write("CLAUDE.md", "read `docs/51`\n");
+        fixture.write("docs/51-process-supervision.md", &format!("gone: {gone}\n"));
+        let tree = fixture.tree();
+        let cited = cited_paths(&tree, &["docs/51-process-supervision.md".to_owned()], &[
+            "Sources".to_owned(),
+        ]);
+
+        assert!(
+            cited.contains("Sources/A/Gone.swift"),
+            "the suffix is dropped, not the citation: {cited:?}"
+        );
+        assert!(
+            unspent_tombstones(&cited, tree.root(), &["Sources/A/Gone.swift"]).is_empty(),
+            "the tombstone is still spent"
+        );
     }
 }
