@@ -4,7 +4,8 @@
 //! itself, which stays on this side of the door for the same reason every other effect does. The
 //! near side never opens the file, parses TOML, or holds a default of its own.
 //!
-//! Three doors, all cold: one at launch, one per reload, one when the CLI is asked for the schema.
+//! Five doors, all cold: one at launch, one per reload, one when the CLI is asked for the schema,
+//! one when the reader asks to open the file and it may not exist yet, and one for the env key.
 //! Nothing here is called from a draw.
 
 use core::ffi::c_uchar;
@@ -95,6 +96,27 @@ pub unsafe extern "C" fn slopdesk_config_snapshot(
     unsafe { deliver(snapshot.as_bytes(), out, cap) }
 }
 
+/// Makes the path openable: its directory, the JSON Schema beside it, and a starter file if there
+/// is none. Answers whether the starter was SEEDED.
+///
+/// The write is here for the same reason the read is: an effect on the filesystem is this side's,
+/// and the near side had no business holding the starter text either — that is a policy about what
+/// a fresh install says, and it belongs beside the table it describes. Best-effort throughout,
+/// because the caller's fallback for a failure is what would have happened anyway.
+///
+/// # Safety
+/// The path pair must be live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_config_prepare(path: *const c_uchar, path_len: usize) -> bool {
+    // SAFETY: the caller's obligation on the path pair.
+    let path = String::from_utf8_lossy(unsafe { borrow(path, path_len) }).into_owned();
+    config::path::prepare(Path::new(&path))
+}
+
 /// The JSON Schema for the config file, written out of the same table the snapshot resolves
 /// against.
 ///
@@ -115,7 +137,9 @@ pub unsafe extern "C" fn slopdesk_config_schema(out: *mut c_uchar, cap: usize) -
 mod tests {
     #![expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 
-    use super::{slopdesk_config_path, slopdesk_config_schema, slopdesk_config_snapshot};
+    use super::{
+        slopdesk_config_path, slopdesk_config_prepare, slopdesk_config_schema, slopdesk_config_snapshot,
+    };
     use crate::testing::delivered;
 
     /// Calls a `(ptr, len) -> (out, cap)` door with one lent string.
@@ -164,6 +188,34 @@ mod tests {
             snapshot.contains("\"controls.copy-on-select\":true"),
             "{snapshot}"
         );
+    }
+
+    /// The door seeds a file the SNAPSHOT door then reads as the defaults — which is the whole
+    /// contract between the two, and the one a starter carrying a key would break.
+    #[test]
+    fn preparing_seeds_a_file_that_reads_back_as_the_default_install() {
+        let directory = std::env::temp_dir().join("slopdesk-ffi-config-prepare");
+        drop(std::fs::remove_dir_all(&directory));
+        let path = directory.join("config.toml");
+        let lent = path.to_string_lossy().into_owned();
+
+        assert!(
+            unsafe { slopdesk_config_prepare(lent.as_ptr(), lent.len()) },
+            "a path with no file behind it is seeded"
+        );
+        assert!(
+            !unsafe { slopdesk_config_prepare(lent.as_ptr(), lent.len()) },
+            "the second call finds the file and says so"
+        );
+        assert!(directory.join("config.schema.json").exists());
+
+        let snapshot = answer(slopdesk_config_snapshot, &lent);
+        drop(std::fs::remove_dir_all(&directory));
+        assert!(
+            snapshot.contains("\"controls.copy-on-select\":false"),
+            "{snapshot}"
+        );
+        assert!(snapshot.ends_with("\"diagnostics\":[]}"), "{snapshot}");
     }
 
     #[test]

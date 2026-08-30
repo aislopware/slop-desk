@@ -21,48 +21,16 @@ public enum ConfigFile {
     /// JSON Schema beside it and the `#:schema` line that points at it.
     ///
     /// A fresh install has no `~/.config/slopdesk` and no file in it, and ⌘, that opens nothing is a
-    /// shortcut that looks broken. So the directory and a starter file are made first.
-    ///
-    /// The starter file is a COMMENT and a schema pointer, never a dump of the defaults. A file
-    /// pre-filled with every key at its default value is a file that pins today's answers forever:
-    /// the next release improves a default and nobody gets it, because their file already says the
-    /// old number. Every key is absent on purpose, and absent means "whatever this build thinks is
-    /// best".
-    ///
-    /// `try?` on each step, because a failure means the editor opens nothing — which is exactly what
-    /// would have happened anyway.
+    /// shortcut that looks broken. So the directory, the schema and a starter file are made first —
+    /// by ``AppConfig/prepare(path:)``, over there, because all three are filesystem EFFECTS and
+    /// because what a starter file says is a policy about the settings table rather than a string
+    /// this file gets to hold. The `URL` is the only thing that has to come back: `NSWorkspace` takes
+    /// one, and nothing else here does.
     public static func prepared() -> URL {
         let path = resolvedPath
-        let url = URL(fileURLWithPath: path)
-        let directory = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true, attributes: nil,
-        )
-        try? AppConfig.jsonSchema().write(
-            to: directory.appendingPathComponent("config.schema.json", isDirectory: false),
-            atomically: true,
-            encoding: .utf8,
-        )
-        if !FileManager.default.fileExists(atPath: path) {
-            try? starter.write(to: url, atomically: true, encoding: .utf8)
-        }
-        return url
+        AppConfig.prepare(path: path)
+        return URL(fileURLWithPath: path)
     }
-
-    /// What a brand-new `config.toml` says: how to find the schema, and that saying nothing is fine.
-    private static let starter = """
-    #:schema ./config.schema.json
-
-    # slopdesk configuration.
-    #
-    # Everything has a best-by-default answer already applied — this file exists to disagree with
-    # one. An empty file is a complete file; a key is only written here to change it.
-    #
-    # `slopdesk config show` prints every setting as resolved, `slopdesk config schema` prints the
-    # schema this points at, and an editor with JSON-Schema support completes the key, shows what it
-    # does and underlines a value outside its range.
-
-    """
 
     #if os(macOS)
     /// Opens the config file in whatever the reader edits text with — what ⌘, does now.

@@ -41,8 +41,15 @@ only to change it. That is why ⌘, on a fresh install writes a starter file tha
 `#:schema` pointer rather than a dump of the defaults: a file pre-filled with today's answers pins
 them forever, so the next release improves a default and nobody who ever opened Settings gets it.
 
-`ConfigFile.prepared()` also drops a copy of the schema NEXT to the file, so the `#:schema
-./config.schema.json` line resolves with no network and no editor plugin configuration.
+The same step drops a copy of the schema NEXT to the file, so the `#:schema ./config.schema.json`
+line resolves with no network and no editor plugin configuration — and it rewrites that copy every
+time, because a schema from an older build completes keys the running one no longer has.
+
+All three effects are ONE door, `slopdesk_config_prepare`, over `config::path::prepare`.
+`ConfigFile.prepared()` resolves the path, calls it and hands back a `URL` for `NSWorkspace`; it
+holds no `FileManager` call and no starter text of its own. The starter is
+`config::path::STARTER`, beside the table it describes, because what a fresh file SAYS is a decision
+about the settings — the same reason the file's READ never crossed to Swift either.
 
 ## 2. Where the answers come from
 

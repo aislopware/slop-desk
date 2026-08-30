@@ -1042,6 +1042,17 @@ size_t slopdesk_config_snapshot(const uint8_t *path, size_t path_len, uint8_t *o
 // is checked against.
 size_t slopdesk_config_schema(uint8_t *out, size_t cap);
 
+// Makes `path` openable: its directory, `config.schema.json` beside it, and a starter file if there
+// is none. `true` when the starter was SEEDED — the rest is idempotent and says nothing.
+//
+// The reader's own file is never rewritten; the schema always is, because a schema from an older
+// build completes keys the running one no longer has. The starter text is the far side's, not a
+// literal on this one: what a fresh install SAYS is a policy about the table, and it says nothing
+// about any key on purpose — a file pre-filled with defaults pins today's answers forever.
+//
+// Best-effort: a home that cannot be written leaves the caller exactly where it would have been.
+bool slopdesk_config_prepare(const uint8_t *path, size_t path_len);
+
 // The env var that overrides the config-file location, for the one caller that prints where the
 // path came from. Everything else asks `slopdesk_config_path`, which has already applied it.
 size_t slopdesk_config_env_key(uint8_t *out, size_t cap);

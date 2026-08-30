@@ -298,6 +298,20 @@ public extension AppConfig {
         return decode(json)
     }
 
+    /// Makes `path` openable — its directory, the schema beside it, and a starter file if there is
+    /// none — and answers whether the starter was seeded.
+    ///
+    /// Every one of those is a filesystem effect, so all three are one door rather than three
+    /// `FileManager` calls here: the near side does not decide where the schema goes or what a fresh
+    /// file says, any more than it decides how the file PARSES.
+    @discardableResult
+    static func prepare(path: String) -> Bool {
+        let bytes = Array(path.utf8)
+        return bytes.withUnsafeBufferPointer { path in
+            slopdesk_config_prepare(path.baseAddress, path.count)
+        }
+    }
+
     /// The JSON Schema the file is described by — what `slopdesk config schema` prints and what
     /// `docs/config.schema.json` is checked against.
     static func jsonSchema() -> String {
