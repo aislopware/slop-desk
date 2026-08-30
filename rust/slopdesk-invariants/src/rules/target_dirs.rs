@@ -144,6 +144,100 @@ fn check_config(report: &mut Report, root: &Path, crate_dir: &str, slice: &str, 
     }
 }
 
+/// How many files a single non-dot directory under the repo root may hold before it is a gate cost.
+///
+/// Measured rather than picked: seeding 200,000 files into a non-dot directory at the root took a
+/// bare `-showBuildSettings` from 15 s to 54 s, so the walk costs roughly 5 ms per thousand files.
+/// The ceiling here is where a tree starts being worth a second of every Xcode gate, which is far
+/// below anything a source tree reaches — `Sources` is 768 files and `ThirdParty` 98 once its two
+/// DOT-directories are discounted.
+const WALKED_FILE_CEILING: usize = 20_000;
+
+/// How deep to look for one. A generated tree announces itself in the first level or two.
+const WALK_DEPTH: usize = 2;
+
+/// No large GENERATED tree sits where Xcode's package walk can see it
+///
+/// The companion to [`build_products_live_outside_the_checkout`], and the general form of the same
+/// defect. Xcode enumerates the `SwiftPM` package root — this repository — on every invocation, and
+/// its walk SKIPS dot-directories and walks every other one. That is the whole reason the root can
+/// still hold 552 K files and cost nothing: `.build`, `.work`, `.git` and `ThirdParty/ghostty`'s
+/// two dot-directories are invisible to it.
+///
+/// So the invariant is not about cargo. It is that any large generated tree under the root must be
+/// either DOT-PREFIXED or outside the checkout — and a new one that is neither costs every Xcode
+/// gate proportionally, silently, with everything still compiling. See `docs/46`.
+#[must_use]
+pub fn no_generated_tree_sits_in_the_package_walk(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let mut offenders: Vec<(String, usize)> = Vec::new();
+    collect_heavy(tree.root(), tree.root(), WALK_DEPTH, &mut offenders);
+    offenders.sort();
+    for (path, count) in offenders {
+        report.fail(format!(
+            "{path} holds {count} files where Xcode's package walk can see them — the walk skips \
+             DOT-directories and walks every other one, at roughly 5 ms per thousand files on EVERY \
+             invocation of every Xcode gate. Dot-prefix it or move it outside the checkout (docs/46)"
+        ));
+    }
+    report
+}
+
+/// Every non-dot directory within `depth` of the root that is over the ceiling, and its count.
+///
+/// A directory over the ceiling is reported and NOT descended into: the offender is the tree, and
+/// naming its children as well would bury the one line a reader needs.
+fn collect_heavy(root: &Path, dir: &Path, depth: usize, into: &mut Vec<(String, usize)>) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // A DOT-directory is invisible to the walk, and a SYMLINK is a leaf to it — `lstat` does
+        // not follow one. Neither costs the gate anything, which is what makes both a
+        // legitimate home for a generated tree.
+        if name.starts_with('.') || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let count = count_files(&path);
+        if count > WALKED_FILE_CEILING {
+            let display = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
+            into.push((display, count));
+            continue;
+        }
+        collect_heavy(root, &path, depth - 1, into);
+    }
+}
+
+/// Files under `dir`, counted the way the walk sees them: dot-directories and symlinks are leaves.
+fn count_files(dir: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => total += count_files(&entry.path()),
+            Ok(_) => total += 1,
+            Err(_) => {},
+        }
+    }
+    total
+}
+
 /// One crate's `target` is a symlink, so the runtime locators still resolve it.
 ///
 /// A missing link is reported as such rather than as a broken one: `cargo clean` takes the LINK
@@ -177,6 +271,68 @@ mod tests {
     use std::fs;
 
     use crate::tests::Fixture;
+
+    /// Seeds `count` files under `dir`, flat — enough to cross the ceiling without a deep tree.
+    fn seed(dir: &std::path::Path, count: usize) {
+        fs::create_dir_all(dir).expect("seed dir");
+        for index in 0..count {
+            fs::write(dir.join(format!("f{index}")), b"").expect("seed file");
+        }
+    }
+
+    /// A tree whose only heavy directories are DOT-prefixed costs the walk nothing.
+    #[test]
+    fn a_dot_directory_may_be_as_heavy_as_it_likes() {
+        let fixture = Fixture::new("walk-dotted");
+        let root = fixture.tree();
+        let root = root.root().to_path_buf();
+        seed(&root.join(".build"), super::WALKED_FILE_CEILING + 10);
+        let report = super::no_generated_tree_sits_in_the_package_walk(&fixture.tree());
+        assert!(report.is_clean(), "{report:?}");
+    }
+
+    /// The same tree without its dot is the regression this rule exists for.
+    #[test]
+    fn a_heavy_non_dot_directory_is_caught() {
+        let fixture = Fixture::new("walk-undotted");
+        let root = fixture.tree();
+        let root = root.root().to_path_buf();
+        seed(&root.join("generated"), super::WALKED_FILE_CEILING + 10);
+        let report = super::no_generated_tree_sits_in_the_package_walk(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("generated holds")),
+            "{report:?}"
+        );
+    }
+
+    /// A SYMLINK is a leaf to the walk — `lstat` does not follow one — so its weight is not
+    /// counted. This is the fact the whole cargo migration rests on.
+    #[test]
+    fn a_symlink_to_a_heavy_tree_is_not_counted() {
+        let fixture = Fixture::new("walk-linked");
+        let root = fixture.tree();
+        let root = root.root().to_path_buf();
+        let outside = root.join("../slopdesk-invariants-walk-linked-outside");
+        seed(&outside, super::WALKED_FILE_CEILING + 10);
+        fixture.link("linked", "../slopdesk-invariants-walk-linked-outside");
+        let report = super::no_generated_tree_sits_in_the_package_walk(&fixture.tree());
+        assert!(report.is_clean(), "{report:?}");
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    /// An ordinary source tree is nowhere near the ceiling, so the rule is silent on the real tree.
+    #[test]
+    fn a_source_tree_is_far_below_the_ceiling() {
+        let fixture = Fixture::new("walk-sources");
+        let root = fixture.tree();
+        let root = root.root().to_path_buf();
+        seed(&root.join("Sources"), 800);
+        let report = super::no_generated_tree_sits_in_the_package_walk(&fixture.tree());
+        assert!(report.is_clean(), "{report:?}");
+    }
 
     /// A tree that satisfies the rule: two crates, each with a config and a link, plus the root.
     ///

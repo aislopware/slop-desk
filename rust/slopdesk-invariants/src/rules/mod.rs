@@ -394,6 +394,11 @@ pub fn registry() -> Vec<Rule> {
             check: target_dirs::build_products_live_outside_the_checkout,
         },
         Rule {
+            name: "nothing-heavy-in-the-package-walk",
+            origin: "docs/46 — the inner loop",
+            check: target_dirs::no_generated_tree_sits_in_the_package_walk,
+        },
+        Rule {
             name: "one-home-per-operation",
             origin: "docs/51 §6.15, docs/55",
             check: rust_boundaries::one_home_per_operation,

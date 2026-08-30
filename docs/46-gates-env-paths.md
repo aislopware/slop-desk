@@ -74,6 +74,16 @@ opposite and was wrong. Xcode's walk uses `lstat`, which does not follow a symli
 leaf to the enumerator and a directory to everything else. Re-measured five ways with the links live:
 `-showBuildSettings` 15–29 s, a full `ios --force` 31 s.
 
+**The general rule, which is what to remember: the walk skips DOT-directories and walks every other
+one.** That is why the package root can still hold 552 K files and cost nothing — `.build` (159 K),
+`.work` (298 K), `.git` and `ThirdParty/ghostty`'s two dot-dirs (62 K) are all invisible to it, and
+only ~3,400 non-dot files are left. Measured directly: seeding 200 K files into a NON-dot directory
+at the root took the same probe from **15 s to 54 s**, and removing it put it back. So the invariant
+worth holding is not "keep cargo out" but **any large generated tree under the repo root must be
+either dot-prefixed or outside the checkout**. `slopdesk-targets` is outside; `.build` and `.work`
+are dotted; a future scratch tree that is neither would cost the inner loop directly, and it is the
+kind of regression nothing else notices because everything still compiles.
+
 It is cheap because nothing in it re-does work whose inputs did not move:
 
 - **`slopdesk-gate ffi`** hashes the shim's sources and every crate reachable from it by a `path = "../…"` edge, plus the header and the script itself. A second run on a warm tree exits in milliseconds; `--check` (in `just lint`) reports staleness without building. Its three slices build CONCURRENTLY, each into its own directory under the shim crate's derived `target/ffi` — separate directories rather than one, because cargo takes an exclusive lock on a target directory and three builds sharing one merely queue. Measured on one edit to a wrapped crate: 70 s serial, 55 s backgrounded onto the shared directory, **14 s** as it stands. The header⇄library symbol check on each slice is two `comm` passes over sorted sets, not 776 `grep -c` sweeps per slice (which cost 20 s and, being substring matches, let a door renamed to a longer name pass).
