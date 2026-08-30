@@ -116,7 +116,9 @@ final class WorkspaceChannelClientTests: XCTestCase {
                 return WorkspaceChannelClient.Handle(
                     channelID: channelID,
                     control: pipe,
-                    awaitAccepted: { await verdict.value },
+                    // The window is ignored on purpose: this awaiter is the one that tests whether
+                    // the race is still a bound of its own.
+                    awaitAccepted: { _ in await verdict.value },
                 )
             },
             close: { id in releasedIDs.mutate { $0.append(id) } },

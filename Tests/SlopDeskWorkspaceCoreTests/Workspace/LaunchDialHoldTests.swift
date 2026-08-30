@@ -228,7 +228,7 @@ final class LaunchDialHoldTests: XCTestCase {
                 WorkspaceChannelClient.Handle(
                     channelID: 4,
                     control: pipes.open(),
-                    awaitAccepted: { await verdict.value },
+                    awaitAccepted: { _ in await verdict.value },
                 )
             },
             close: { _ in },

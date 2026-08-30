@@ -24,14 +24,20 @@ public final class WorkspaceChannelClient {
     public struct Handle: Sendable {
         public let channelID: UInt32
         public let control: any MessageChannel
-        /// The host's `channelOpenAck` verdict. `nil` for a transport that never acks.
-        public let awaitAccepted: (@Sendable () async -> Bool)?
+        /// The host's `channelOpenAck` verdict, bounded by the window the caller passes in. `nil`
+        /// for a transport that never acks.
+        ///
+        /// The window is an ARGUMENT rather than a constant baked into the awaiter, so the deadline
+        /// the waiter actually parks on is the one this client is racing. Two numbers here would not
+        /// average: the longer always wins, because the loser of the race is cancelled and a waiter
+        /// parked inside a blocking Rust call does not observe cancellation.
+        public let awaitAccepted: (@Sendable (Duration) async -> Bool)?
 
         @preconcurrency
         public init(
             channelID: UInt32,
             control: any MessageChannel,
-            awaitAccepted: (@Sendable () async -> Bool)? = nil,
+            awaitAccepted: (@Sendable (Duration) async -> Bool)? = nil,
         ) {
             self.channelID = channelID
             self.control = control
@@ -44,14 +50,15 @@ public final class WorkspaceChannelClient {
         /// two answers mean different things to this client: `false` is the host declining to serve
         /// class 1 at all, which `ChannelRun` records as `.refused` and never retries.
         ///
-        /// The bound is long rather than absent — the Swift this replaced waited forever — and it
-        /// costs nothing, because a connection that dies under the waiter resolves it immediately
-        /// on the Rust side rather than leaving it parked.
+        /// The bound is the caller's rather than this file's — the Swift this replaced waited
+        /// forever, and a constant here would quietly outrank ``handshakeTimeout``. It costs
+        /// nothing either way, because a connection that dies under the waiter resolves it
+        /// immediately on the Rust side rather than leaving it parked.
         public init(_ transport: MuxClientTransport) {
             self.init(
                 channelID: transport.openedChannelID,
                 control: MuxControlChannel(transport),
-                awaitAccepted: { await transport.awaitAccepted(within: .seconds(30)) },
+                awaitAccepted: { await transport.awaitAccepted(within: $0) },
             )
         }
     }
@@ -335,15 +342,21 @@ public final class WorkspaceChannelClient {
 
     /// Races `operation` against `timeout`, answering `nil` when the timeout wins.
     ///
-    /// The loser is cancelled. The production awaiter (`MuxClientTransport.awaitAccepted`) parks on
-    /// its own bounded deadline in Rust rather than forever, so no continuation is stranded and the
-    /// group closes.
+    /// `operation` is HANDED the same timeout it is being raced against, which is what makes the
+    /// answer honest. A task group does not return until every child has finished, and `cancelAll`
+    /// is a flag rather than an interrupt: the production awaiter parks inside a blocking Rust call
+    /// that cannot observe it, so whichever deadline is longer is the one the caller actually waits.
+    /// Passing the window in collapses the two into one number instead of leaving a constant
+    /// somewhere else to outrank this one silently.
+    ///
+    /// The race still earns its place for an awaiter that ignores the window — a test's, or a future
+    /// transport's — where it is the only bound there is.
     private static func race(
-        _ operation: @escaping @Sendable () async -> Bool,
+        _ operation: @escaping @Sendable (Duration) async -> Bool,
         timeout: Duration,
     ) async -> Bool? {
         await withTaskGroup(of: Bool?.self) { group in
-            group.addTask { await operation() }
+            group.addTask { await operation(timeout) }
             group.addTask {
                 try? await Task.sleep(for: timeout)
                 return nil
