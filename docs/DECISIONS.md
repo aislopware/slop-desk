@@ -17682,3 +17682,39 @@ which the span rule has a shape for; the span rule handles `README.md`, `justfil
 be arguing with the documents' subject. *Teaching the derived rule to read DIRECTORY citations* —
 that is where ~20 of the 74 come from, all of them `docs/60` reciting which target each stage
 deleted.
+
+## A fallback safe enough to take every time (2026-08-31)
+
+`stamp.rs` narrows each typecheck gate's input digest to what its own triple compiles, and its header
+said what that buys: "`SlopDeskMacUI` is in no iOS app's closure, so a desktop-chrome edit no longer
+costs an iOS typecheck." It never did. `Scope::apps` lists the shell AND `Apps/Shared`, and
+`Apps/Shared` is an asset catalog with no `project.yml`. `products_named_in` opens the file, cannot,
+and answers `None` — which `Scope::sources` reads as "a spec I could not understand" and widens to
+the whole `Sources` tree, correctly and every single time. Measured before: union 706 inputs, iOS
+703, macOS 694, the difference being `Apps/` files alone; the `Sources` closure was identical in all
+three. After: 706 / 613 / 610, and the modules the narrowing drops are exactly `SlopDeskMacUI` +
+`SlopDeskVideoClientMac` on the iOS side and `SlopDeskPhoneUI` + `SlopDeskVideoClientPhone` on the
+macOS side, with no shared module in either diff.
+
+The species is the one rounds 22–26 have been mining, in its quietest form: a claim wider than its
+reach, where the gap is filled by a *conservative* fallback. Nothing was ever wrong — no stamp was
+ever warm over code it had not compiled — so no test failed, no gate went red, and the only symptom
+was a build that stayed as slow as it had been before the optimisation shipped.
+
+**A spec that is ABSENT is now skipped; a spec that exists and cannot be read whole still widens.**
+Those are different facts and the code was conflating them. The boundary that keeps the skip safe is
+that each scope has exactly one spec-bearing app, so a deleted spec leaves the product list empty and
+the existing `products.is_empty()` floor widens anyway; the day a scope holds two, absent has to
+become an answer rather than a silence, and `Scope::sources`' doc comment says so.
+
+**One thing the narrowing exposed.** A narrowed scope's product closure names the xcframework
+binaryTarget, so it walks `ThirdParty/slopdesk-ffi` under the compiled-extension filter and picks up
+`SlopDeskFFI.xcframework/Info.plist`, which `Scope::Everything` — whose closure is the literal string
+`Sources` — did not. The union was one file smaller than the scope it is the fallback for. Invisible
+while the fallback always won, and wrong in the one direction this gate may not be wrong in, so
+`FFI_TREE` is now walked under every scope.
+
+**Rejected.** *Giving `Apps/Shared` a `project.yml`* — it vends no target; the spec would exist to
+satisfy a scan. *Widening `COMPILED` to `json` so the asset catalog reaches the digest* — an asset
+catalog does not change what type-checks, and it would put every `Contents.json` in the tree into
+both stamps.

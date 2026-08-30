@@ -30,6 +30,15 @@
 //! parse, a product list nothing in the graph vends — falls back to the WHOLE source tree, because
 //! a scope that guessed low would be a green over code it never compiled.
 //!
+//! That fallback is also how this section spent months describing something that never happened. A
+//! scope's app list holds the shells AND `Apps/Shared`, which is an asset catalog with no
+//! `project.yml`, and demanding a spec of it answered "cannot read" on every call — so every scope
+//! widened to the union and both claims above were false. Measured after the fix: 706 inputs in the
+//! union, 613 for iOS and 610 for macOS, and the difference is exactly `SlopDeskMacUI` /
+//! `SlopDeskVideoClientMac` on one side and `SlopDeskPhoneUI` / `SlopDeskVideoClientPhone` on the
+//! other, with no shared module in either. A fallback safe enough to take every time is a fallback
+//! nobody notices taking.
+//!
 //! ## Source is hashed as CODE, not as bytes
 //! A `.swift` or a `.h` in the set is digested through [`super::code_text`] — comments removed,
 //! inter-token whitespace normalised — so a doc-comment edit leaves the stamp exactly where it was.
@@ -119,13 +128,27 @@ impl Scope {
 
     /// The source trees this scope compiles: the closure of the products its specs name, or the
     /// whole tree when that cannot be resolved.
+    ///
+    /// A directory with NO spec vends no product and is skipped. `Apps/Shared` is one — it carries
+    /// the assets and entitlements both shells include, and it is in [`Self::apps`] so those files
+    /// reach the digest, not because it names a target. Demanding a spec of it made
+    /// [`products_named_in`] answer `None` on every call, so the widening below fired every time
+    /// and the narrowing this whole section describes had never once run.
+    ///
+    /// The boundary that keeps the skip safe: each scope has exactly ONE spec-bearing app today. A
+    /// scope holding two would narrow to the survivor if one spec were deleted, so the day a second
+    /// arrives, "absent" has to become an answer rather than a silence.
     fn sources(self, root: &Path) -> Vec<String> {
         if matches!(self, Self::Everything) {
             return vec!["Sources".to_owned()];
         }
         let mut products: Vec<String> = Vec::new();
         for app in self.apps() {
-            let Some(named) = products_named_in(&root.join(app).join("project.yml")) else {
+            let spec = root.join(app).join("project.yml");
+            if !spec.is_file() {
+                continue;
+            }
+            let Some(named) = products_named_in(&spec) else {
                 return vec!["Sources".to_owned()];
             };
             products.extend(named);
@@ -190,6 +213,13 @@ pub fn inputs_for(root: &Path, scope: Scope) -> Result<Vec<String>, String> {
     let mut trees: Vec<String> = scope.sources(root);
     trees.extend(scope.apps().iter().map(|app| (*app).to_owned()));
     trees.push(GHOSTTY_TREE.to_owned());
+    // The xcframework is a binaryTarget in the graph, so a narrowed scope's product closure NAMES
+    // it and walks it under this filter, while `Everything` — whose closure is the literal string
+    // `Sources` — did not. That made the union smaller than the thing it is the fallback FOR, by
+    // one file: `SlopDeskFFI.xcframework/Info.plist`, which records the slices the Swift side
+    // links. Unobservable while the narrowing never ran, and a fallback that covers less than
+    // the scope it replaces is the one direction this gate may not be wrong in.
+    trees.push(FFI_TREE.to_owned());
     for tree in &trees {
         walk(root, &root.join(tree), &mut found, &|path| {
             path.extension()
@@ -455,6 +485,53 @@ mod tests {
             narrowed,
             inputs_for(&root, Scope::Everything).unwrap(),
             "a scope that resolved nothing must stamp exactly what the union does"
+        );
+    }
+
+    /// A sibling directory with no spec vends no product, and must not widen the whole scope.
+    ///
+    /// `Apps/Shared` is that directory in the real tree — an asset catalog both shells include —
+    /// and demanding a `project.yml` of it made every narrowing fall back to the union, silently,
+    /// for as long as the narrowing existed. This is the test that reds on that shape: it asserts
+    /// the scope both NARROWS and drops the module the app does not link, which a fallback to
+    /// `Sources` fails on the second count.
+    #[test]
+    fn a_spec_less_app_directory_does_not_widen_the_scope() {
+        let root = fixture("spec-less-sibling");
+        fs::create_dir_all(root.join("Apps/Shared")).unwrap();
+        fs::write(root.join("Apps/Shared/Contents.json"), "{}\n").unwrap();
+        let spec = root.join("Apps/ClientApp-iOS/project.yml");
+        fs::create_dir_all(spec.parent().unwrap()).unwrap();
+        fs::write(
+            &spec,
+            "targets:\n  App:\n    dependencies:\n      - package: SlopDesk\n        product: Phone\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("Sources/Phone")).unwrap();
+        fs::create_dir_all(root.join("Sources/Desktop")).unwrap();
+        fs::write(root.join("Sources/Phone/P.swift"), "let p = 1\n").unwrap();
+        fs::write(root.join("Sources/Desktop/D.swift"), "let d = 1\n").unwrap();
+        // The describe cache, seeded rather than produced: `touched::graph` reads it whenever it is
+        // no older than `Package.swift`, so this test asserts the SCOPE without spending a SwiftPM
+        // manifest compile on a two-target fixture.
+        fs::create_dir_all(root.join(".build")).unwrap();
+        fs::write(
+            root.join(".build/pkg-describe.json"),
+            "{\"targets\": [{\"name\": \"Phone\", \"type\": \"library\", \"path\": \"Sources/Phone\", \
+             \"target_dependencies\": []}, {\"name\": \"Desktop\", \"type\": \"library\", \"path\": \
+             \"Sources/Desktop\", \"target_dependencies\": []}], \"products\": [{\"name\": \"Phone\", \
+             \"targets\": [\"Phone\"]}, {\"name\": \"Desktop\", \"targets\": [\"Desktop\"]}]}",
+        )
+        .unwrap();
+
+        let narrowed = inputs_for(&root, Scope::Ios).unwrap();
+        assert!(
+            narrowed.contains(&"Sources/Phone/P.swift".to_owned()),
+            "the scope dropped what the app links: {narrowed:?}"
+        );
+        assert!(
+            !narrowed.contains(&"Sources/Desktop/D.swift".to_owned()),
+            "the spec-less sibling widened the scope back to the whole tree: {narrowed:?}"
         );
     }
 
