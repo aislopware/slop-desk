@@ -64,7 +64,8 @@ it rather than guessing one. The one bootstrap this tree needs is `brew install 
   in one of the three crates above and the operation moves there. TWO admissions, each Core
   Foundation's own ownership convention and each at most ONE gated site per crate:
   `CFRetained::from_raw` for a Copy/Create-rule out-parameter `objc2` hands over raw, and
-  `CFRetained::retain` for a Get-rule pointer a callback borrows. Both are recognised by the
+  `CFRetained::retain` — or its `objc2` twin `Retained::retain`, one admission in two spellings
+  sharing ONE budget — for a Get-rule pointer a callback borrows. Both are recognised by the
   QUALIFIED path; any other `from_raw` is still barred. Most of what
   these crates call is `safe` in the bindings already, so `unsafe` here means "the framework's own
   contract", never "Rust's". Each carries `#![deny(unsafe_op_in_unsafe_fn)]`, a `# Safety` note per

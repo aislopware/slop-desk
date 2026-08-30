@@ -31,6 +31,7 @@ use crate::config::{configuration, set_source_rect, source_rect};
 use crate::content::ShareableContent;
 use crate::filter::{desktop_independent_window, display_excluding_nothing, display_including_window};
 use crate::handoff::Handoff;
+use crate::own::borrowed;
 use crate::tap::Tap;
 
 /// Everything went the way it was asked to.
@@ -461,14 +462,8 @@ fn update_configuration(stream: &SCStream, config: &SCStreamConfiguration) -> i3
 fn error_code(error: *mut NSError) -> i32 {
     // SAFETY: framework rule — the completion handler's argument is a borrowed +0 reference valid
     // for the call, and taking one of our own is how it is read at all. Null is the frameworks' own
-    // "nothing went wrong", and `Retained::retain` answers `None` for it.
-    #[expect(
-        unsafe_code,
-        reason = "the handler's argument is a borrowed +0 reference; retaining it is the framework's stated \
-                  way to read it"
-    )]
-    let taken = unsafe { Retained::retain(error) };
-    taken.as_deref().map_or(NO_ERROR, code_of)
+    // "nothing went wrong", and `borrowed` answers `None` for it.
+    borrowed(error).as_deref().map_or(NO_ERROR, code_of)
 }
 
 /// One error object's code, narrowed to the width an FFI door carries.

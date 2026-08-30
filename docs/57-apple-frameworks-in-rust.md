@@ -120,6 +120,15 @@ path only — `value.retain()` on a live typed reference asserts nothing and is 
 The two counts are independent: a crate that owns a session AND reads its callback's samples
 genuinely carries both, and one does not consume the other.
 
+**One admission, TWO spellings.** `objc2` gives an Objective-C object `Retained::retain` and a Core
+Foundation type `CFRetained::retain`, and they satisfy one rule: `ScreenCaptureKit` hands its
+completion handler a borrowed `SCShareableContent` for exactly the reason `VideoToolbox` hands its
+output handler a borrowed `CMSampleBuffer`. So the two spellings share ONE budget rather than each
+getting their own, and the gate adds them. This is written down because it was not: the gate matched
+only the CF spelling, and `slopdesk-apple-sck` spent the admission at two `Retained::retain` sites
+with the gate reading green. Its one site is now `own::borrowed`, the helper the paragraph below
+already asks for.
+
 **Both admissions may be spent on a GENERIC HELPER, and that is the reading, not a loophole.**
 `slopdesk-apple-vt` grew a second framework area — compression takes one Create-rule out-parameter
 and one Get-rule callback pointer, decompression takes four and one — and written inline that would

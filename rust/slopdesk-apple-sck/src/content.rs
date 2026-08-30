@@ -15,6 +15,7 @@ use objc2_screen_capture_kit::{SCDisplay, SCRunningApplication, SCShareableConte
 use slopdesk_video::geometry::{VideoPoint, VideoRect};
 
 use crate::handoff::Handoff;
+use crate::own::borrowed;
 
 /// One shareable window, still holding the framework object a content filter needs.
 #[derive(Debug)]
@@ -207,14 +208,8 @@ impl ShareableContent {
             // SAFETY: framework rule — `ScreenCaptureKit` hands the completion handler a +0
             // reference valid for the call, and taking one of our own is how it outlives the
             // block. Null is the framework's own way of reporting that the query failed, and
-            // `Retained::retain` answers `None` for it rather than retaining nothing.
-            #[expect(
-                unsafe_code,
-                reason = "the handler's argument is a borrowed +0 reference; retaining it is the \
-                          framework's stated way to keep it"
-            )]
-            let taken = unsafe { Retained::retain(content) };
-            filler.deliver(taken);
+            // `borrowed` answers `None` for it rather than retaining nothing.
+            filler.deliver(borrowed(content));
         });
         // SAFETY: framework rule — the block is copied by `ScreenCaptureKit` before this returns
         // (`RcBlock` is the copyable heap block the API is documented to take), and the two flags

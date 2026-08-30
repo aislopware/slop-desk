@@ -228,7 +228,9 @@ struct Spend {
     sample_memory_sites: usize,
     /// `CFRetained::from_raw`, the Copy/Create-rule admission. At most one per crate.
     copy_rule_sites: usize,
-    /// `CFRetained::retain`, the Get-rule admission. At most one per crate, independently.
+    /// `CFRetained::retain` and its `objc2` twin `Retained::retain`, the Get-rule admission — ONE
+    /// admission in two spellings, so the two counts are added rather than kept apart. At most one
+    /// per crate, independently of the Copy rule's.
     get_rule_sites: usize,
 }
 
@@ -254,6 +256,18 @@ fn scan_spend(tree: &Tree, src: &str, sample_memory: bool) -> Spend {
             // `something.retain()` on a live typed reference asserts nothing and is not this
             // admission.
             if line.contains("CFRetained::retain") {
+                spend.get_rule_sites += 1;
+                continue;
+            }
+            // The same admission in Objective-C spelling. `objc2` gives an `NSObject` subclass
+            // `Retained::retain` and a Core Foundation type `CFRetained::retain`, and the rule they
+            // satisfy is one rule — `ScreenCaptureKit` hands its completion handlers a borrowed
+            // `SCShareableContent` for exactly the reason `VideoToolbox` hands its output handler a
+            // borrowed `CMSampleBuffer`. Counting only the CF spelling left the ObjC one
+            // UNCOUNTED, which is how `slopdesk-apple-sck` came to spend the admission twice with
+            // this gate reading green. The branch above matches first and `continue`s, so the
+            // qualified `CFRetained::retain` is never counted here as well.
+            if line.contains("Retained::retain") {
                 spend.get_rule_sites += 1;
                 continue;
             }
@@ -374,10 +388,10 @@ pub fn apple_family(tree: &Tree) -> Report {
         report.fail_if(
             get_rule_sites > 1,
             format!(
-                "{crate_dir} takes a Core Foundation Get-rule retain in {get_rule_sites} places — the \
-                 family admits CFRetained::retain at ONE site per crate, so the question 'is this borrowed \
-                 pointer still the framework's' is answered once, at the boundary the framework hands it \
-                 across (docs/57 §2)",
+                "{crate_dir} takes a Get-rule retain in {get_rule_sites} places — the family admits it at \
+                 ONE site per crate in EITHER spelling (CFRetained::retain, or objc2's Retained::retain), \
+                 so the question 'is this borrowed pointer still the framework's' is answered once, at the \
+                 boundary the framework hands it across (docs/57 §2)",
             ),
         );
     }
@@ -843,6 +857,29 @@ mod tests {
         fixture.write(
             "rust/slopdesk-apple-cgevent/src/lib.rs",
             &format!("{one}pub fn again() {{ let _ = unsafe {{ CFRetained::retain(other) }}; }}\n"),
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("Get-rule retain")),
+            "{report:?}"
+        );
+    }
+
+    /// The `objc2` spelling is the SAME admission, and the two counts add rather than run in
+    /// parallel. This is the hole `slopdesk-apple-sck` was sitting in: two `Retained::retain` sites
+    /// over `ScreenCaptureKit`'s completion-handler arguments, and a gate that read only the Core
+    /// Foundation spelling called it clean. One site is one site whichever type it is over.
+    #[test]
+    fn the_objc_spelling_of_the_get_rule_is_the_same_one_admission() {
+        let objc = "pub fn borrow() { let _ = unsafe { Retained::retain(content) }; }\n";
+        let fixture = policy_fixture("apple-get-rule-objc");
+        fixture.write("rust/slopdesk-apple-cgevent/src/lib.rs", objc);
+        assert!(super::apple_family(&fixture.tree()).is_clean());
+
+        // One of each spelling is still TWO retains, not one of each budget.
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            &format!("{objc}pub fn again() {{ let _ = unsafe {{ CFRetained::retain(other) }}; }}\n"),
         );
         let report = super::apple_family(&fixture.tree());
         assert!(
