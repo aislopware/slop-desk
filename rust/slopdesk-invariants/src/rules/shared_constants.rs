@@ -440,7 +440,14 @@ fn normalised(name: &str) -> String {
 // ------------------------------------------------------------------------------------------- //
 
 /// Every Swift file this gate audits, tests aside.
-fn swift_sources(tree: &Tree) -> Vec<(&Path, &Source)> {
+///
+/// Floored, like [`rust_sources`] and for the reason [`Report::corpus`] gives: every rule in this
+/// module compares one side against the other, and a side that came back EMPTY finds no drift at
+/// all. `Report::same` has refused two empty extractions since the shell, but that refusal only
+/// reaches a pair once both sides have been read — a walk that returns nothing never builds the
+/// pair to refuse. `Report::corpus` is not used directly here because these two exclude `Tests`
+/// and that carve-out is the module's own.
+fn swift_sources<'a>(tree: &'a Tree, report: &mut Report) -> Vec<(&'a Path, &'a Source)> {
     let mut out = Vec::new();
     for root in SWIFT_ROOTS {
         for (path, source) in tree.under(root) {
@@ -451,14 +458,28 @@ fn swift_sources(tree: &Tree) -> Vec<(&Path, &Source)> {
             }
         }
     }
+    report.fail_if(
+        out.is_empty(),
+        format!(
+            "no product Swift under {} — every alphabet in this module would have nothing to disagree with, \
+             and the gate would read green",
+            SWIFT_ROOTS.join(", ")
+        ),
+    );
     out
 }
 
 /// Every `.rs` under `rust/`, which is where both wire crates and the FFI shims live.
-fn rust_sources(tree: &Tree) -> Vec<(&Path, &Source)> {
-    tree.under("rust")
+fn rust_sources<'a>(tree: &'a Tree, report: &mut Report) -> Vec<(&'a Path, &'a Source)> {
+    let out: Vec<(&Path, &Source)> = tree
+        .under("rust")
         .filter(|(path, _)| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect()
+        .collect();
+    report.fail_if(
+        out.is_empty(),
+        "no .rs under rust/ — the Rust half of every shared constant is missing, so nothing here can drift",
+    );
+    out
 }
 
 /// Each `mod`/`enum` in `text`, mapped to the constants declared before the next one opens.
@@ -664,9 +685,9 @@ fn ordinal_shims(text: &str) -> BTreeMap<String, Vec<Alphabet>> {
 /// Both readings are kept, and neither is preferred, because which one is the law depends on the
 /// enum: `MotionAction` writes its bytes on the variants, `ChannelState` writes them in an FFI
 /// `match` and nowhere else. An enum with both is compared against both, and they had better agree.
-fn rust_alphabets(tree: &Tree) -> BTreeMap<String, Readings> {
+fn rust_alphabets(tree: &Tree, report: &mut Report) -> BTreeMap<String, Readings> {
     let mut out: BTreeMap<String, Readings> = BTreeMap::new();
-    for (path, source) in rust_sources(tree) {
+    for (path, source) in rust_sources(tree, report) {
         let where_ = path.display().to_string();
         for held in declarations(&source.text, RUST_ENUM) {
             let declared = discriminants(&held, true);
@@ -696,9 +717,9 @@ struct Pairs {
 }
 
 /// Every Swift constant that restates a Rust one, and the exemptions that were spent doing it.
-fn shared_pairs(tree: &Tree) -> Pairs {
+fn shared_pairs(tree: &Tree, report: &mut Report) -> Pairs {
     let mut rust: BTreeMap<String, Vec<(String, String, f64)>> = BTreeMap::new();
-    for (path, source) in rust_sources(tree) {
+    for (path, source) in rust_sources(tree, report) {
         for found in text::cached(RUST_CONST).captures_iter(&source.text) {
             if let Some(value) = numeric(&found[2]) {
                 rust.entry(normalised(&found[1])).or_default().push((
@@ -726,7 +747,7 @@ fn shared_pairs(tree: &Tree) -> Pairs {
     let vocabulary: BTreeSet<&str> = VOCABULARIES.iter().map(|(swift, ..)| *swift).collect();
     let mut findings = Vec::new();
     let mut used_homonyms = BTreeSet::new();
-    for (path, source) in swift_sources(tree) {
+    for (path, source) in swift_sources(tree, report) {
         let here = path.display().to_string();
         if vocabulary.contains(here.as_str()) {
             continue; // ratcheted letter for letter below, which is stricter than this pass
@@ -776,7 +797,7 @@ fn shared_pairs(tree: &Tree) -> Pairs {
 #[must_use]
 pub fn a_shared_number_is_asked_for_or_ratcheted(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let found = shared_pairs(tree);
+    let found = shared_pairs(tree, &mut report);
     if !found.findings.is_empty() {
         report.fail(format!(
             "a constant is spelled in both languages —{}\nAsk for it through a `CSlopDeskFFI` door (see \
@@ -857,11 +878,11 @@ pub fn the_field_vocabularies_agree(tree: &Tree) -> Report {
 }
 
 /// Every wire enum whose two spellings stopped agreeing, case for case, and the aliases spent.
-fn enum_findings(tree: &Tree) -> (Vec<String>, BTreeSet<String>) {
-    let rust = rust_alphabets(tree);
+fn enum_findings(tree: &Tree, report: &mut Report) -> (Vec<String>, BTreeSet<String>) {
+    let rust = rust_alphabets(tree, report);
     let mut out = BTreeSet::new();
     let mut used = BTreeSet::new();
-    for (path, source) in swift_sources(tree) {
+    for (path, source) in swift_sources(tree, report) {
         let here_file = path.display().to_string();
         for held in declarations(&source.text, SWIFT_ENUM) {
             let here = discriminants(&held, false);
@@ -915,7 +936,7 @@ fn enum_findings(tree: &Tree) -> (Vec<String>, BTreeSet<String>) {
 #[must_use]
 pub fn the_wire_enums_agree(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let (drifted, _) = enum_findings(tree);
+    let (drifted, _) = enum_findings(tree, &mut report);
     if !drifted.is_empty() {
         report.fail(format!(
             "a shared alphabet drifted —\n{}\nA verb byte that moved in one language is a request the other \
@@ -927,9 +948,9 @@ pub fn the_wire_enums_agree(tree: &Tree) -> Report {
 }
 
 /// Every wire flag whose bit moved in one language and not the other, and the files spent.
-fn bit_findings(tree: &Tree) -> (Vec<String>, BTreeSet<String>) {
+fn bit_findings(tree: &Tree, report: &mut Report) -> (Vec<String>, BTreeSet<String>) {
     let mut rust: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
-    for (path, source) in rust_sources(tree) {
+    for (path, source) in rust_sources(tree, report) {
         for found in text::cached(RUST_BIT).captures_iter(&source.text) {
             rust.entry(normalised(&found[1])).or_default().push((
                 path.display().to_string(),
@@ -941,7 +962,7 @@ fn bit_findings(tree: &Tree) -> (Vec<String>, BTreeSet<String>) {
 
     let mut out = Vec::new();
     let mut used = BTreeSet::new();
-    for (path, source) in swift_sources(tree) {
+    for (path, source) in swift_sources(tree, report) {
         let here_file = path.display().to_string();
         for found in text::cached(SWIFT_BIT).captures_iter(&source.text) {
             let (name, bit) = (&found[1], &found[2]);
@@ -967,7 +988,7 @@ fn bit_findings(tree: &Tree) -> (Vec<String>, BTreeSet<String>) {
 #[must_use]
 pub fn the_wire_flag_bits_agree(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let (drifted, _) = bit_findings(tree);
+    let (drifted, _) = bit_findings(tree, &mut report);
     if !drifted.is_empty() {
         report.fail(format!(
             "a shared alphabet drifted —\n{}\nA bit position is only a shared law when the byte crosses, \
@@ -988,9 +1009,9 @@ pub fn the_wire_flag_bits_agree(tree: &Tree) -> Report {
 #[must_use]
 pub fn every_allowlist_entry_is_alive(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let used_homonyms = shared_pairs(tree).used_homonyms;
-    let (_, used_aliases) = enum_findings(tree);
-    let (_, used_bit_files) = bit_findings(tree);
+    let used_homonyms = shared_pairs(tree, &mut report).used_homonyms;
+    let (_, used_aliases) = enum_findings(tree, &mut report);
+    let (_, used_bit_files) = bit_findings(tree, &mut report);
 
     let mut dead = Vec::new();
     for (file, name, _) in HOMONYMS {
@@ -1158,6 +1179,43 @@ mod tests {
                 .any(|violation| violation.contains("stopped checking anything")),
             "{report:?}"
         );
+    }
+
+    /// A corpus that came back empty finds no drift, and finding no drift is what passing looks
+    /// like. `Report::same` refuses two empty extractions, but only once both sides have been read
+    /// — a walk returning nothing never builds the pair for it to refuse.
+    #[test]
+    fn a_side_with_no_sources_at_all_is_red_rather_than_undrifted() {
+        let swiftless = Fixture::new("shared-no-swift");
+        swiftless.write("rust/slopdesk-wire/src/lib.rs", "pub const CAP: usize = 8;\n");
+        let report = super::a_shared_number_is_asked_for_or_ratcheted(&swiftless.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("no product Swift under")),
+            "{report:?}"
+        );
+
+        let rustless = Fixture::new("shared-no-rust");
+        rustless.write("Sources/A/Model.swift", "let cap = 8\n");
+        let report = super::a_shared_number_is_asked_for_or_ratcheted(&rustless.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("no .rs under rust/")),
+            "{report:?}"
+        );
+    }
+
+    /// The enum and bit passes read the same two corpora, and lose the same way.
+    #[test]
+    fn the_enum_and_bit_passes_report_an_empty_corpus_too() {
+        let fixture = Fixture::new("shared-empty-corpora");
+        fixture.write("docs/00-overview.md", "no source at all\n");
+        assert!(!super::the_wire_enums_agree(&fixture.tree()).is_clean());
+        assert!(!super::the_wire_flag_bits_agree(&fixture.tree()).is_clean());
     }
 
     /// The one judgement in the evaluator: `<<` mixed with arithmetic means two different numbers

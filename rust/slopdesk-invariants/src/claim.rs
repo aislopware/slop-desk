@@ -16,6 +16,31 @@
 //! `grep -q` over a renamed file is a silent pass, and `sed -n …p` over one is an empty string that
 //! compares equal to another empty string — and they are the only bugs in a gate that cannot be
 //! noticed by reading its output.
+//!
+//! That promise is the DSL's, and the rules written by hand are the other half of the crate. They
+//! now keep it through the two primitives on [`Report`](crate::report::Report): `source` for one
+//! named file, `corpus` for a walk. The pairing matters because vacuity is the BAN's quiet
+//! direction, and the bans are exactly what the comment sweep declared safe. A comment cannot
+//! satisfy a ban — that is what [`crate::tree::Source::statements`] settled, and why a ban may read
+//! prose where a positive claim may not. An ABSENCE satisfies one perfectly: no file, no corpus, no
+//! match, no violation, green for ever. `repo_invariants::pkill_never_reaches_the_developers_host`
+//! was scanning `scripts/**/*.sh` after the last shell script left the tree, and half of it had
+//! simply stopped asserting.
+//!
+//! That one is worth following to the end, because the obvious repair was the same bug again. A
+//! corpus that came back empty is almost never a subject that ceased to exist; it is a subject that
+//! MOVED. The shell harnesses were ported, so the kills went with them into `rust/`, and narrowing
+//! the ban to the justfile — where a gate is invoked from, and where the sole surviving `pkill`
+//! supposedly lived — would have left it scanning a file that spells `pkill` nowhere. Green, again,
+//! and for the second time by construction. So a floor is the alarm, not the fix: when `corpus`
+//! fires, the question it asks is where the subject went, and the answer is a new corpus far more
+//! often than it is a deletion.
+//!
+//! One shape needs no floor and is worth recognising rather than re-deriving: the two-sided ledger.
+//! `handle_lifetime` and `swift_floor` each compare a scan against a booked list in BOTH
+//! directions, so a scan that dies takes every booked entry with it and the ledger fires on all of
+//! them. A rule that already fails loud when its corpus disappears does not need to be told it is
+//! empty.
 
 use std::collections::{BTreeMap, BTreeSet};
 

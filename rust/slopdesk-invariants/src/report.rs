@@ -11,6 +11,7 @@
 //! and lets a break-test be a unit test.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use crate::tree::{Source, Tree};
 
@@ -125,6 +126,54 @@ impl Report {
         found
     }
 
+    /// Reads the whole corpus a rule scans, failing when the walk found nothing.
+    ///
+    /// [`Report::source`] closes the one-file half of vacuity; this is the other half, and it is
+    /// the half a ban falls into. A ban cannot be satisfied by a COMMENT — that is what
+    /// [`crate::tree::Source::statements`] settled — but it is satisfied perfectly by an EMPTY set,
+    /// and an empty set is what a moved root leaves behind. `Sources/` renamed, `scripts/` emptied
+    /// of the last shell script, an extension list that stops matching: the loop runs zero times,
+    /// nothing is reported, and the rule reads green for ever. That is not a hypothetical here —
+    /// `repo_invariants::pkill_never_reaches_the_developers_host` scanned `scripts/**/*.sh` after
+    /// the last `.sh` in the tree was ported away, so half of it had already stopped asserting.
+    ///
+    /// `roots` and `extensions` are named in the failure so the message says which walk came back
+    /// empty, and a rule scanning two corpora fails once per corpus rather than once in total.
+    ///
+    /// When this fires, the repair is almost never to delete the half that went quiet. A subject
+    /// that leaves a root has usually MOVED to another one — the shell harnesses became Rust, and
+    /// the `pkill` above went with them — so the question the failure asks is "where is it now",
+    /// and the answer is a new corpus far more often than it is a rule that has outlived its
+    /// point.
+    #[must_use]
+    pub fn corpus<'a>(
+        &mut self,
+        tree: &'a Tree,
+        roots: &[&'a str],
+        extensions: &[&str],
+    ) -> Vec<(&'a Path, &'a Source)> {
+        let mut out = Vec::new();
+        for root in roots {
+            for (path, source) in tree.under(root) {
+                let wanted = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extensions.contains(&extension));
+                if wanted {
+                    out.push((path, source));
+                }
+            }
+        }
+        if out.is_empty() {
+            self.fail(format!(
+                "no .{} under {} — this rule scans an empty corpus and passes by asking nobody anything",
+                extensions.join("/."),
+                roots.join(", "),
+            ));
+        }
+        out
+    }
+
     /// Every violation recorded, in order.
     #[must_use]
     pub fn violations(&self) -> &[String] {
@@ -148,6 +197,46 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::Report;
+    use crate::tests::Fixture;
+
+    /// The corpus half of the same failure `source` closes: a walk that came back empty must be a
+    /// violation, because every ban over it is satisfied and none of them was asked anything.
+    #[test]
+    fn a_walk_that_found_nothing_fails_rather_than_passing_quietly() {
+        let fixture = Fixture::new("report-corpus-empty");
+        fixture.write("Sources/A/A.swift", "// present, and the wrong extension\n");
+
+        let tree = fixture.tree();
+        let mut report = Report::new();
+        let found = report.corpus(&tree, &["Sources"], &["rs"]);
+        assert!(found.is_empty());
+        assert!(!report.is_clean());
+        assert!(report.violations()[0].contains("empty corpus"), "{report:?}");
+    }
+
+    /// Both halves of the message are named, so a rule scanning two roots says WHICH walk died.
+    #[test]
+    fn the_failure_names_the_roots_and_the_extensions() {
+        let fixture = Fixture::new("report-corpus-names");
+        fixture.write("Sources/A/A.swift", "// nothing under scripts\n");
+
+        let mut report = Report::new();
+        let _ = report.corpus(&fixture.tree(), &["scripts", "golden"], &["sh", "py"]);
+        let message = &report.violations()[0];
+        assert!(message.contains("scripts, golden"), "{message}");
+        assert!(message.contains(".sh/.py"), "{message}");
+    }
+
+    /// A walk that found files says nothing at all — the floor is not a second ban.
+    #[test]
+    fn a_walk_that_found_files_is_silent() {
+        let fixture = Fixture::new("report-corpus-full");
+        fixture.write("Sources/A/A.swift", "// found\n");
+
+        let mut report = Report::new();
+        assert_eq!(report.corpus(&fixture.tree(), &["Sources"], &["swift"]).len(), 1);
+        assert!(report.is_clean());
+    }
 
     /// The load-bearing one. Two stale extractions must not read as agreement.
     #[test]

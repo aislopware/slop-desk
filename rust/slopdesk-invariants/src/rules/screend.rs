@@ -91,7 +91,13 @@ pub fn address(tree: &Tree) -> Report {
     }
 
     // screend's server may resolve its own address only if it does not have a rule of its own.
-    if let (Some(server), Some(_)) = (tree.get(RUST_SERVER), tree.get(RUST_PROTOCOL)) {
+    //
+    // Read through `report.source` rather than `tree.get`: this half used to be an
+    // `if let (Some(server), Some(_))` over both files, so RENAMING either of them turned the ban
+    // off instead of turning it red. `RUST_PROTOCOL`'s absence was already loud through the claims
+    // above; `RUST_SERVER`'s was not named anywhere, which made the daemon's own file the one path
+    // in this rule that could move silently.
+    if let Some(server) = report.source(tree, RUST_SERVER, "screend's own end of the address lives there") {
         report.fail_if(
             server.text.contains("fn default_socket_path") && !server.text.contains("protocol::socket_path"),
             format!("{RUST_SERVER} resolves its own address instead of the wire crate's rule"),
@@ -224,6 +230,13 @@ pub enum Status {
                 super::RUST_PROTOCOL,
                 "pub const SOCKET_ENV_KEY: &str = \"SLOPDESK_SCREEND_SOCKET\";\npub fn socket_path() \
                  {}\nconst NAME: &str = \"slopdesk-screend.sock\";\n",
+            )
+            // The daemon's own file, which this fixture did NOT write until the rule started
+            // demanding it: the server half used to be reached through a `tree.get` whose `None`
+            // turned the ban off, so a fixture missing it read exactly as green as one passing it.
+            .write(
+                super::RUST_SERVER,
+                "pub fn bind() { let path = protocol::socket_path(); }\n",
             );
         assert!(super::address(&fixture.tree()).is_clean());
 
@@ -238,6 +251,31 @@ pub enum Status {
                 .violations()
                 .iter()
                 .any(|v| v.contains("builds the address itself")),
+            "{report:?}"
+        );
+    }
+
+    /// Renaming screend's own server module must RED this rule rather than silence its last ban.
+    #[test]
+    fn the_daemons_file_going_missing_is_reported_rather_than_skipped() {
+        let fixture = Fixture::new("screend-server-gone");
+        fixture
+            .write(
+                super::CLIENT_PATHS,
+                "pub const SOCKET_ENV_KEY: &str = \"SLOPDESK_SCREEND_SOCKET\";\npub fn resolve() -> PathBuf \
+                 { slopdesk_screenwire::socket_path(override_path) }\n",
+            )
+            .write(
+                super::RUST_PROTOCOL,
+                "pub const SOCKET_ENV_KEY: &str = \"SLOPDESK_SCREEND_SOCKET\";\npub fn socket_path() \
+                 {}\nconst NAME: &str = \"slopdesk-screend.sock\";\n",
+            );
+        let report = super::address(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains(super::RUST_SERVER) && v.contains("is gone")),
             "{report:?}"
         );
     }

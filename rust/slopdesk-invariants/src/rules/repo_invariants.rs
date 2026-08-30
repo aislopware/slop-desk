@@ -33,23 +33,6 @@ use crate::report::Report;
 use crate::text;
 use crate::tree::{Source, Tree};
 
-/// Every file under `roots` whose extension is in `extensions`, in path order.
-fn collect<'a>(tree: &'a Tree, roots: &[&'a str], extensions: &[&str]) -> Vec<(&'a Path, &'a Source)> {
-    let mut out = Vec::new();
-    for root in roots {
-        for (path, source) in tree.under(root) {
-            let wanted = path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extensions.contains(&extension));
-            if wanted {
-                out.push((path, source));
-            }
-        }
-    }
-    out
-}
-
 /// Every `path:line: text` where `pattern` matches real code rather than a comment.
 fn hits(files: &[(&Path, &Source)], pattern: &str) -> Vec<String> {
     let regex = text::cached(pattern);
@@ -109,7 +92,7 @@ pub fn no_app_layer_crypto(tree: &Tree) -> Report {
         &stale,
     );
 
-    let swift = collect(tree, &SWIFT_ROOTS, &["swift"]);
+    let swift = report.corpus(tree, &SWIFT_ROOTS, &["swift"]);
     let found: Vec<String> = hits(&swift, r"^\s*import\s+(CryptoKit|CommonCrypto)\b")
         .into_iter()
         .filter(|line| {
@@ -159,8 +142,8 @@ pub fn no_swiftpm_build_plugin(tree: &Tree) -> Report {
 #[must_use]
 pub fn no_fused_multiply_add(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let swift = collect(tree, &SWIFT_ROOTS, &["swift"]);
-    let rust = collect(tree, &["rust"], &["rs"]);
+    let swift = report.corpus(tree, &SWIFT_ROOTS, &["swift"]);
+    let rust = report.corpus(tree, &["rust"], &["rs"]);
     // `(?:^|[^\w.])` is the negative lookbehind the Python spelled `(?<![\w.])`: a bare `fma(` is a
     // fusion and `path.fma(` or `wfma(` is not.
     let mut found = hits(&swift, r"\.addingProduct\(|(?:^|[^\w.])fma\(");
@@ -175,23 +158,65 @@ pub fn no_fused_multiply_add(tree: &Tree) -> Report {
 
 /// `CLAUDE.md`: "Never `pkill` the host — `just host-restart` replays hostd's recorded launch."
 ///
-/// The harnesses under `scripts/` DO kill hosts, and must: each spawns its own on a private port
-/// and reaps it. What is banned is the UNQUALIFIED form, which reaches the developer's running
-/// hostd as readily as the harness's own. So the question is not "does this script say pkill" but
-/// "does a pkill naming hostd carry the qualifier that scopes it to a host this script started".
+/// A harness that kills a host it STARTED is fine, and several do: each spawns its own on a private
+/// port and reaps it. What is banned is the UNQUALIFIED form, which reaches the developer's running
+/// hostd as readily as the harness's own. So the question is not "does this say pkill" but "does a
+/// pkill naming hostd carry the qualifier that scopes it to a host this recipe started".
+///
+/// This rule had already stopped asserting half of what it claimed, and the reason is the whole
+/// point of [`Report::corpus`]. The corpus was `scripts/**/*.sh` plus the justfile; the last `.sh`
+/// left `scripts/` when the harnesses were ported, the walk returned nothing, and the shell half
+/// sat green for as long as it took anybody to notice. The tempting repair — narrow to the
+/// justfile, which is where a gate is invoked from — is the SAME bug one step on: the justfile
+/// spells `pkill` nowhere, so the ban would still be asking nobody anything. The subject did not
+/// disappear, it MOVED, and a rule that does not follow its subject is vacuous however loudly it is
+/// written.
+///
+/// So the corpus is `rust/**/*.rs` — where every harness that kills anything now lives — plus the
+/// justfile, which is still allowed to shell out. Two spellings reach the syscall: the one wrapper,
+/// `gui::kill_matching`, and a raw `Command::new("/usr/bin/pkill")`. In Rust the verb and its
+/// target land on different lines, so a site is the matching line joined with the [`WINDOW`] after
+/// it: that is what makes `.args(["-f", …])` two lines below a `Command::new` readable at all. A
+/// window can pull in an unrelated `slopdesk-hostd` three lines down and report a site that is not
+/// one — a false alarm, never a false pass, which is the direction a ban is allowed to be wrong in.
+///
+/// The window closes the gap between a verb and a pattern WRITTEN NEXT TO IT, and nothing further.
+/// A `kill_matching(app_pattern)` whose pattern was built somewhere else is invisible here, and
+/// several sites are spelled that way. That is the standing reach of a token ban rather than a hole
+/// to fill: following a `String` to where it was made is dataflow analysis, and this crate reads
+/// text.
+///
+/// `rust/slopdesk-invariants` is the one exclusion, and the module header above says why: a grep
+/// for `pkill` matching the gate's OWN failure message is one of the three silent failures this
+/// file was ported to stop. The break-test fixtures below spell the banned form as string literals,
+/// and [`Source::statements`] keeps string literals on purpose, so the crate that states the ban
+/// would convict itself for stating it.
 #[must_use]
 pub fn pkill_never_reaches_the_developers_host(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let mut shells = collect(tree, &["scripts"], &["sh"]);
-    if let Some(justfile) = report.source(tree, "justfile", "every gate is invoked from it") {
-        shells.push((Path::new("justfile"), justfile));
-    }
-    let found: Vec<String> = hits(&shells, r"pkill\s+-f")
+    let mut corpus: Vec<(&Path, &Source)> = report
+        .corpus(tree, &["rust"], &["rs"])
         .into_iter()
-        .filter(|line| {
-            line.contains("slopdesk-hostd") && !line.contains("--port") && !line.contains("DerivedData")
-        })
+        .filter(|(path, _)| !path.starts_with(STATES_THE_BAN))
         .collect();
+    if let Some(justfile) = report.source(tree, "justfile", "a recipe may still shell out to one") {
+        corpus.push((Path::new("justfile"), justfile));
+    }
+    let a_kill = text::cached(r"pkill|kill_matching\s*\(");
+    let mut found = Vec::new();
+    for (path, source) in &corpus {
+        let lines: Vec<&str> = source.statements().lines().collect();
+        for (number, line) in lines.iter().enumerate() {
+            if !a_kill.is_match(line) {
+                continue;
+            }
+            let end = lines.len().min(number + WINDOW);
+            let site = lines[number..end].join(" ");
+            if site.contains("slopdesk-hostd") && !site.contains("--port") && !site.contains("DerivedData") {
+                found.push(format!("{}:{}: {}", path.display(), number + 1, line.trim()));
+            }
+        }
+    }
     sites(
         &mut report,
         "an unqualified pkill names slopdesk-hostd — it would reap the running host",
@@ -199,6 +224,12 @@ pub fn pkill_never_reaches_the_developers_host(tree: &Tree) -> Report {
     );
     report
 }
+
+/// The crate whose failure message quotes the ban it enforces, and so cannot be in its own corpus.
+const STATES_THE_BAN: &str = "rust/slopdesk-invariants";
+
+/// How many lines a kill and its pattern may be apart — `Command::new`, `.args`, and slack for one.
+const WINDOW: usize = 4;
 
 /// The prek config, which is not under [`ROOTS`](crate::tree) and so is read rather than walked.
 const HOOKS: &str = ".pre-commit-config.yaml";
@@ -222,8 +253,14 @@ const HOOKS: &str = ".pre-commit-config.yaml";
 /// justfile, and the prek hooks. The hooks half is the easiest to lose — `.pre-commit-config`'s
 /// `rustfmt (apply)` enters `just fmt-rust` rather than cargo, precisely so the commit path cannot
 /// disagree with the gate — and that file is outside the walked roots, so it arrives through
-/// [`Tree::read`] rather than the tree. A missing one is not a violation: this rule is about what a
-/// config SAYS, not about whether hooks are installed.
+/// [`Tree::read`] rather than the tree.
+///
+/// A missing one IS a violation, and the sentence here used to say the opposite: "this rule is
+/// about what a config says, not about whether hooks are installed". That reasoning confused two
+/// files. The hooks are installed under `.git/`, which nothing here reads;
+/// `.pre-commit-config.yaml` is TRACKED, so its absence is a rename or a deletion rather than a
+/// machine that never ran `prek install` — and swallowing it left half this ban asserting nothing
+/// on a tree that still had a nightly pinned in the other half's blind spot.
 #[must_use]
 pub fn nightly_is_never_pinned_to_a_date(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -234,15 +271,23 @@ pub fn nightly_is_never_pinned_to_a_date(tree: &Tree) -> Report {
             r"nightly-\d{4}-\d{2}-\d{2}",
         ));
     }
-    if let Ok(hooks) = tree.read(HOOKS) {
-        let a_date = text::cached(r"nightly-\d{4}-\d{2}-\d{2}");
-        dated.extend(
-            hooks
-                .lines()
-                .enumerate()
-                .filter(|(_, line)| !line.trim_start().starts_with('#') && a_date.is_match(line))
-                .map(|(number, line)| format!("{HOOKS}:{}: {}", number + 1, line.trim())),
-        );
+    match tree.read(HOOKS) {
+        Ok(hooks) => {
+            let a_date = text::cached(r"nightly-\d{4}-\d{2}-\d{2}");
+            dated.extend(
+                hooks
+                    .lines()
+                    .enumerate()
+                    .filter(|(_, line)| !line.trim_start().starts_with('#') && a_date.is_match(line))
+                    .map(|(number, line)| format!("{HOOKS}:{}: {}", number + 1, line.trim())),
+            );
+        },
+        Err(error) => {
+            report.fail(format!(
+                "{HOOKS}: {error} — the commit path's half of this ban was not read, and an unread half is \
+                 a half that passes"
+            ));
+        },
     }
     sites(
         &mut report,
@@ -261,7 +306,7 @@ pub fn nightly_is_never_pinned_to_a_date(tree: &Tree) -> Report {
 #[must_use]
 pub fn shell_quoting_has_one_owner(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let swift = collect(tree, &["Sources"], &["swift"]);
+    let swift = report.corpus(tree, &["Sources"], &["swift"]);
     let found = hits(&swift, r#"replacingOccurrences\(of: "'""#);
     sites(
         &mut report,
@@ -380,7 +425,7 @@ pub fn the_release_ships_every_sidecar_the_host_needs(tree: &Tree) -> Report {
     let locate = text::cached(
         r#"RustServicePaths\.locate(?:Beside)?\(\s*(?:"(?P<literal>slopdesk-[a-z]+)"|(?P<symbol>\w+))"#,
     );
-    for (_, source) in collect(tree, &["Sources"], &["swift"]) {
+    for (_, source) in report.corpus(tree, &["Sources"], &["swift"]) {
         let constants = text::capture_set(source.statements(), r#"\bbinaryName\s*=\s*"(slopdesk-[a-z]+)""#);
         for capture in locate.captures_iter(source.statements()) {
             if let Some(literal) = capture.name("literal") {
@@ -595,7 +640,7 @@ const STRANDED_RUST_MODULES: [&str; 1] = ["slopdesk-workspace::connection"];
 #[must_use]
 pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let sources = collect(tree, &["rust"], &["rs"]);
+    let sources = report.corpus(tree, &["rust"], &["rs"]);
     let mut found = Vec::new();
 
     for (lib, source) in sources.iter().filter(|(path, _)| path.ends_with("lib.rs")) {
@@ -711,16 +756,28 @@ const SINK_DECLARATION: &str = r"public var (on[A-Z][A-Za-z0-9]*)\s*:\s*\(";
 /// Tests are deliberately not counted as binders, which is the whole point of the gate. Assignment
 /// anywhere in product code counts, including inside the declaring file — an `init` that takes the
 /// closure and stores it to `self` is a binding, made by whoever calls the initialiser.
+///
+/// [`Report::corpus`] floors the two walks, but the SUBJECTS are an extraction rather than a walk,
+/// and an extraction has its own empty. The day `SINK_DECLARATION` stops matching — a spelling
+/// change, an attribute rename — this rule finds no sinks, finds nothing unbound, and reports the
+/// tree as clean while asserting nothing about it. So the subject count is floored too, and the
+/// number is 1 rather than today's: a tree that legitimately has one sink left must not have to
+/// re-tune a gate to keep it.
 #[must_use]
 pub fn every_injected_sink_has_someone_who_binds_it(tree: &Tree) -> Report {
     let mut report = Report::new();
     let mut sinks: BTreeMap<String, String> = BTreeMap::new();
-    for (path, source) in collect(tree, &["Sources"], &["swift"]) {
+    for (path, source) in report.corpus(tree, &["Sources"], &["swift"]) {
         for name in text::capture_all(source.statements(), SINK_DECLARATION) {
             sinks.entry(name).or_insert_with(|| path.display().to_string());
         }
     }
-    let product = collect(tree, &["Sources", "Apps", "ThirdParty"], &["swift"]);
+    report.fail_if(
+        sinks.is_empty(),
+        "no injected sink was extracted from Sources/ — the declaration pattern stopped matching, and this \
+         rule now asks nobody to bind anything",
+    );
+    let product = report.corpus(tree, &["Sources", "Apps", "ThirdParty"], &["swift"]);
     let found: Vec<String> = sinks
         .iter()
         .filter(|(name, _)| {
@@ -796,6 +853,7 @@ const DELETION_HEADINGS: [&str; 3] = ["What this deleted", "Deleted", "Removed"]
 pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
     let mut report = Report::new();
     let mut found = Vec::new();
+    let mut examined = 0_usize;
     for name in LIVE_DOCS {
         let Some(source) = tree.get(name) else {
             found.push(format!(
@@ -822,6 +880,7 @@ pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
                 {
                     continue;
                 }
+                examined += 1;
                 let trimmed = suffix.replace(raw, "");
                 let cited = trimmed.split('#').next().unwrap_or_default();
                 let cited = cited.split('§').next().unwrap_or_default();
@@ -844,6 +903,16 @@ pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
             }
         }
     }
+    // The list being present is checked above, file by file. This is the other absence: sixteen
+    // docs all readable and not one backticked span in them starting with a path root. Every way
+    // that can happen is a broken extraction — the span pattern, `PATH_ROOTS`, or a
+    // `DELETION_HEADINGS` entry grown general enough to swallow every section — and each of them
+    // leaves this rule green over docs it never actually read.
+    report.fail_if(
+        examined == 0,
+        "not one path citation was extracted from the live docs — the spans, the roots or the deletion \
+         headings stopped matching, and this rule is reporting on documents it did not read",
+    );
     sites(
         &mut report,
         "a doc CLAUDE.md sends readers to cites a path that is not in the tree",
@@ -887,14 +956,31 @@ const CITED_ROOTS: [&str; 8] = [
 /// is in the tree and none of them should be — a gate that demanded they were would be demanding
 /// the comment lie. So the addressable set is the repo roots plus whatever sits one level inside
 /// the three source roots, which is derived, never listed.
-fn addressable_first_segments(tree: &Tree) -> BTreeSet<String> {
+///
+/// Derived is the safer half of that trade and the quieter one, so it carries a floor. Every module
+/// name a comment can cite — `SlopDeskWorkspaceCore/…`, `SlopDeskPhoneUI/…` — enters this set HERE
+/// and nowhere else, and the [`Report::corpus`] floor downstream cannot see it: that floor asks
+/// whether all eight [`CITED_ROOTS`] came back empty, and `Sources` alone going dark leaves seven
+/// standing. The rule would keep reading every comment in the tree and quietly stop recognising a
+/// module citation as a citation at all. So each root asserts it contributed a name: three roots
+/// that between them hold no directory is a walk that died, not a tree anyone shipped.
+fn addressable_first_segments(tree: &Tree, report: &mut Report) -> BTreeSet<String> {
     let mut segments: BTreeSet<String> = CITED_ROOTS.iter().map(|root| (*root).to_owned()).collect();
     for root in ["Sources", "Tests", "Apps"] {
+        let mut named = 0_usize;
         for (path, _) in tree.under(root) {
             if let Some(child) = path.components().nth(1) {
                 segments.insert(child.as_os_str().to_string_lossy().into_owned());
+                named += 1;
             }
         }
+        report.fail_if(
+            named == 0,
+            format!(
+                "{root}/ contributed no module name — every citation of one is now unaddressable, and this \
+                 rule reads the same comments while recognising fewer of them"
+            ),
+        );
     }
     segments
 }
@@ -928,11 +1014,11 @@ pub fn source_comments_cite_files_that_exist(tree: &Tree) -> Report {
             known.entry(name).or_default().push(display);
         }
     }
-    let addressable = addressable_first_segments(tree);
+    let addressable = addressable_first_segments(tree, &mut report);
     let citation = text::cached(r"`{1,2}([A-Za-z0-9_./+-]+/[A-Za-z0-9_+.-]+)`{1,2}");
 
     let mut found = Vec::new();
-    for (path, source) in collect(tree, &CITED_ROOTS, &["swift", "rs"]) {
+    for (path, source) in report.corpus(tree, &CITED_ROOTS, &["swift", "rs"]) {
         for (number, line) in source.text.lines().enumerate() {
             for capture in citation.captures_iter(line) {
                 let cited = &capture[1];
@@ -1025,7 +1111,7 @@ const OPS_UNCONTAINED: [(&str, &str); 2] = [
 #[must_use]
 pub fn an_ops_harness_that_starts_a_daemon_contains_it(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let files = collect(tree, &[OPS], &["rs"]);
+    let files = report.corpus(tree, &[OPS], &["rs"]);
     report.fail_if(
         files.is_empty(),
         format!("{OPS}: the walk found no modules — this rule reads nothing and would pass vacuously"),
@@ -1407,11 +1493,61 @@ mod tests {
     #[test]
     fn an_unqualified_pkill_is_red_and_a_scoped_one_is_not() {
         let fixture = Fixture::new("pkill");
-        fixture.write("justfile", "all:\n    echo hi\n");
-        fixture.write("scripts/soak.sh", "pkill -f slopdesk-hostd --port 9999\n");
+        fixture.write("rust/harness/src/lib.rs", "fn reap() {}\n");
+        fixture.write("justfile", "soak:\n    pkill -f slopdesk-hostd --port 9999\n");
         assert!(pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean());
-        fixture.write("scripts/reap.sh", "pkill -f slopdesk-hostd\n");
+        fixture.write(
+            "justfile",
+            "soak:\n    pkill -f slopdesk-hostd --port 9999\nreap:\n    pkill -f slopdesk-hostd\n",
+        );
         assert!(!pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean());
+    }
+
+    /// The spelling that actually ships: a Rust harness, with the verb and its pattern on separate
+    /// lines. A line-at-a-time read sees `Command::new` and `"-f"` and never sees what is killed.
+    #[test]
+    fn a_rust_harness_kills_across_lines_and_is_still_read() {
+        let fixture = Fixture::new("pkill-rust-window");
+        fixture.write("justfile", "soak:\n    cargo run\n");
+        fixture.write(
+            "rust/harness/src/lib.rs",
+            "fn scoped(port: u16) {\n    kill_matching(&format!(\"slopdesk-hostd --port {port}\"));\n}\n",
+        );
+        assert!(
+            pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean(),
+            "a kill scoped by --port is the harness reaping its own host"
+        );
+        fixture.write(
+            "rust/harness/src/lib.rs",
+            "fn reap() {\n    Command::new(\"/usr/bin/pkill\")\n        .args([\"-f\", \
+             \"slopdesk-hostd\"])\n        .status();\n}\n",
+        );
+        assert!(!pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean());
+    }
+
+    /// The corpus is the harnesses plus the justfile, and losing either is losing half the subject.
+    #[test]
+    fn a_pkill_ban_with_no_corpus_is_red_rather_than_green() {
+        let no_rust = Fixture::new("pkill-no-rust");
+        no_rust.write("justfile", "soak:\n    cargo run\n");
+        assert!(!pkill_never_reaches_the_developers_host(&no_rust.tree()).is_clean());
+
+        let no_justfile = Fixture::new("pkill-no-justfile");
+        no_justfile.write("rust/harness/src/lib.rs", "fn reap() {}\n");
+        assert!(!pkill_never_reaches_the_developers_host(&no_justfile.tree()).is_clean());
+    }
+
+    /// The crate that states the ban quotes it, so it may not be convicted of stating it.
+    #[test]
+    fn the_crate_that_states_the_ban_is_not_in_its_own_corpus() {
+        let fixture = Fixture::new("pkill-self-match");
+        fixture.write("justfile", "soak:\n    cargo run\n");
+        fixture.write("rust/harness/src/lib.rs", "fn reap() {}\n");
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/repo_invariants.rs",
+            "fn message() -> &'static str {\n    \"pkill -f slopdesk-hostd is banned\"\n}\n",
+        );
+        assert!(pkill_never_reaches_the_developers_host(&fixture.tree()).is_clean());
     }
 
     /// The floating spelling passes; a date fires from either file a toolchain can be named in.
@@ -1436,6 +1572,19 @@ mod tests {
         assert!(
             !nightly_is_never_pinned_to_a_date(&hook.tree()).is_clean(),
             "a hook can pin a toolchain the justfile never names"
+        );
+    }
+
+    /// The hooks file is TRACKED, so its absence is a rename rather than a machine without prek —
+    /// and an unread half of a ban is a half that passes.
+    #[test]
+    fn a_missing_hooks_config_is_red_rather_than_half_a_ban() {
+        let fixture = Fixture::new("nightly-no-hooks");
+        fixture.write("justfile", "fmt-rust:\n    cargo +nightly fmt --all\n");
+        let report = nightly_is_never_pinned_to_a_date(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains(HOOKS)),
+            "{report:?}"
         );
     }
 
@@ -1556,6 +1705,23 @@ mod tests {
         assert!(every_injected_sink_has_someone_who_binds_it(&bound.tree()).is_clean());
     }
 
+    /// Swift under `Sources/` that declares no sink at all is the extraction dying, not a tree with
+    /// nothing to check — every sink in it would be unbound and none of them would be reported.
+    #[test]
+    fn a_tree_whose_sink_pattern_matches_nothing_is_red() {
+        let fixture = Fixture::new("sinks-none-extracted");
+        fixture.write("Sources/A/Model.swift", "public var title: String = \"\"\n");
+        fixture.write("Sources/A/View.swift", "model.title = \"hi\"\n");
+        let report = every_injected_sink_has_someone_who_binds_it(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no injected sink was extracted")),
+            "{report:?}"
+        );
+    }
+
     /// `==` is a comparison and `onXY` is a different name; neither binds `onX`.
     #[test]
     fn a_comparison_and_a_longer_name_are_not_bindings() {
@@ -1589,11 +1755,26 @@ mod tests {
         assert!(!live_docs_cite_files_that_exist(&fixture.tree()).is_clean());
 
         let deleting = with_live_docs("live-docs-deleted");
+        deleting.write("Sources/A/Here.swift", "// still here\n");
+        // The live one above the heading is what keeps the extraction floor satisfied, so this
+        // test proves the deletion section is EXEMPT rather than proving the scan died.
         deleting.write(
             "CLAUDE.md",
-            &format!("## What this deleted\n\n- {TICK}Sources/A/Gone.swift{TICK}, folded in\n"),
+            &format!(
+                "see {TICK}Sources/A/Here.swift{TICK}\n\n## What this deleted\n\n- \
+                 {TICK}Sources/A/Gone.swift{TICK}, folded in\n"
+            ),
         );
         assert!(live_docs_cite_files_that_exist(&deleting.tree()).is_clean());
+    }
+
+    /// Sixteen readable docs and no citation extracted from any of them is the scan dying, not the
+    /// tree being clean.
+    #[test]
+    fn live_docs_that_yield_no_citation_at_all_are_red() {
+        let fixture = with_live_docs("live-docs-no-citations");
+        fixture.write("CLAUDE.md", "prose with no backticked path in it at all\n");
+        assert!(!live_docs_cite_files_that_exist(&fixture.tree()).is_clean());
     }
 
     /// A live doc that has gone missing is the gate's own blindness, and it is reported as one.
@@ -1604,9 +1785,18 @@ mod tests {
         assert!(!live_docs_cite_files_that_exist(&fixture.tree()).is_clean());
     }
 
+    /// Each of the three source roots has to contribute a module name or the addressable set is a
+    /// dead walk, so every fixture for this rule seeds all three before it says anything else.
+    fn addressable(fixture: &Fixture) {
+        fixture.write("Sources/A/Note.swift", "// a module\n");
+        fixture.write("Tests/ATests/NoteTests.swift", "// a suite\n");
+        fixture.write("Apps/ClientApp-iOS/App.swift", "// an app\n");
+    }
+
     #[test]
     fn a_comment_citing_a_tail_that_resolves_is_green_and_one_that_does_not_is_red() {
         let fixture = Fixture::new("comment-cites");
+        addressable(&fixture);
         fixture.write("Sources/SlopDeskPhoneUI/Settings/Pages.swift", "// the page\n");
         fixture.write(
             "Sources/A/Note.swift",
@@ -1615,6 +1805,7 @@ mod tests {
         assert!(source_comments_cite_files_that_exist(&fixture.tree()).is_clean());
 
         let stale = Fixture::new("comment-cites-stale");
+        addressable(&stale);
         stale.write("Sources/SlopDeskPhoneUI/Settings/Pages.swift", "// the page\n");
         stale.write(
             "Sources/A/Note.swift",
@@ -1628,11 +1819,30 @@ mod tests {
     #[test]
     fn a_citation_outside_the_addressable_roots_is_ignored() {
         let fixture = Fixture::new("comment-cites-upstream");
+        addressable(&fixture);
         fixture.write(
             "Sources/A/Note.swift",
             &format!("/// libghostty's own {TICK}Helpers/Cursor.swift{TICK}\n"),
         );
         assert!(source_comments_cite_files_that_exist(&fixture.tree()).is_clean());
+    }
+
+    /// A module citation is recognised HERE and nowhere else, so a root that went dark is red even
+    /// though seven other roots keep the corpus floor satisfied and the comments keep being read.
+    #[test]
+    fn a_source_root_that_names_no_module_is_red() {
+        let fixture = Fixture::new("comment-cites-dead-root");
+        fixture.write("Tests/ATests/NoteTests.swift", "// a suite\n");
+        fixture.write("Apps/ClientApp-iOS/App.swift", "// an app\n");
+        fixture.write("docs/00-overview.md", "the tree\n");
+        let report = source_comments_cite_files_that_exist(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("Sources/ contributed no module name")),
+            "{report:?}"
+        );
     }
 
     /// The container is what makes a harness safe to run, so a harness without one is RED.
