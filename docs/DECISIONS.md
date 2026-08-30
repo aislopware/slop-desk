@@ -17478,3 +17478,50 @@ old flow ever saw the bytes. *Folding the sockets into `slopdesk-video`* — tha
 rules, `forbid(unsafe_code)`, no I/O, every function a fold a test can drive without a machine; a
 `UdpSocket` inside it ends that for the whole crate, which is the line `slopdesk-devicelink` drew
 against `slopdesk-devicepanel` two campaigns ago.
+
+## The commit-subject rule shipped dead for three weeks, and all 1144 violations stay (2026-08-31)
+
+**The gate was correct, tested, and never called.** `b52e5175` (2026-08-11) added the
+`commit-msg-conventional` hook to `.pre-commit-config.yaml` and added `commit-msg` to
+`default_install_hook_types` in the same change. Both were right. But `prek install` writes one file
+per entry in that list at the moment it is TYPED, and it had last been typed on 2026-06-14, when the
+list was `[pre-commit, pre-push]`. So `.git/hooks/` held two files, git called two hooks, and the
+subject rule — the grammar `cliff.toml` reads to file a commit in `CHANGELOG.md` and
+`git cliff --bumped-version` reads to compute the next version — was never asked a question.
+
+Nothing about this is visible from the tree. The config is correct, the rule is correct, its unit
+tests pass, and every gate that reads the tree agrees. The entire defect is the gap between a
+tracked file and an untracked directory.
+
+**Measured before it was fixed, over the window the rule actually existed.** 658 commits between
+`b52e5175` and 2026-08-31; the checker rejects **97** of them — 58 past the 72-character ceiling, 39
+opening on an article, and **0** outside the conventional grammar. That last zero is the one that
+matters for the release: every subject in the window is still typed and scoped, so `cliff.toml`
+filed all 658 correctly and no version bump was wrong. What was lost is the published prose — 97
+release-note bullets that read as descriptions of the code rather than as instructions, or that
+GitHub ellipses in the commit list.
+
+**Ratcheted by `slopdesk-gate hooks`, on `just lint-reach`.** This cannot be a `slopdesk-invariants`
+rule: those are pure functions of the tree, and the tree is the half that was already right. The
+question is "what would GIT run", the same shape as `reach`'s question about `just`, and its answer
+lives in `.git/` — untracked, per-clone, movable by `core.hooksPath`, and elsewhere entirely inside a
+worktree. The gate reads `default_install_hook_types` and demands a file for each entry.
+
+One thing it must not do, and the reason it is on `lint-reach` rather than on the `pre-push` stage:
+in the state it detects, the hooks are the thing that is missing, so a gate reachable only through a
+hook would be silent exactly when it matters. `just check` and `just quick` both reach `lint-reach`
+by hand.
+
+**Rejected.** *Rewriting the 4 unpushed over-length subjects* — the tree cites `a0d0aa54` in five
+places (`docs/52`, `docs/DECISIONS.md`, `rust/slopdesk-ffi/src/sanitize.rs`, and two
+`slopdesk-invariants` rules), and that commit sits above the oldest of the four, so a rebase that
+fixed them would invalidate every one of those citations. Five live cross-references traded for four
+bullets GitHub truncates is a bad trade, and the four are conventional, so the changelog and the
+version bump are already right. *Rewriting the rest* — the checker rejects **1144** of all **1914**
+commits in this history, and once the 97 above are set aside, **1047** of them predate the rule
+entirely: the WF-era subjects and the `polish(`/`refine(`/`tweak(`/`spike(`/`reapply(` types are from
+before `b52e5175` invented the type list, so counting them as "the gate was dead" would be measuring
+a rule against commits it was never applied to. They are also all pushed. *Making the
+gate demand that no UNDECLARED hook be installed* — a hand-written `post-checkout` in someone's own
+clone is a choice, not drift, and a gate about the contents of `.git/` should assert only what this
+repo declared.

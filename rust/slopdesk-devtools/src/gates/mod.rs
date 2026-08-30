@@ -1,10 +1,10 @@
-//! The gate RUNNERS — the seven that had to build, boot or execute something.
+//! The gate RUNNERS — the ones that had to build, boot or execute something.
 //!
 //! ## Why these are here and not in `slopdesk-invariants`
 //! That crate holds the rules a gate can decide by READING the tree, and its gate is `cargo test`.
 //! Nothing in it may spawn `xcodebuild`, boot a simulator or run `swift test`, because a unit test
-//! that takes eighty-five seconds and needs a provisioned toolchain is not a unit test. These seven
-//! are the other half: orchestration whose verdict comes from a process, not from a pattern.
+//! that takes eighty-five seconds and needs a provisioned toolchain is not a unit test. These are
+//! the other half: orchestration whose verdict comes from a process, not from a pattern.
 //!
 //! What they have in common is what makes them worth porting together — every one of them was a
 //! shell script whose only untested part was the DECIDABLE half:
@@ -33,11 +33,17 @@
 //! With them the `scripts/` directory holds no code at all: two Swift probes, a set of pins and a
 //! fixture tree.
 //!
+//! [`hooks`] arrived last and is the only one that was never a script. It asks what GIT would run,
+//! which is the same shape as [`reach`]'s question about `just` and unanswerable from the tree for
+//! the same reason: the answer is in `.git/`, which is untracked, per-clone, and movable by
+//! `core.hooksPath`. It exists because the answer had been NO for three weeks without a red line
+//! anywhere — see its own header for the count.
+//!
 //! ## Can a COMMENT satisfy one of these? The census, so nobody re-runs it
 //! `slopdesk-invariants` closed that class over the tree: a positive claim — one that must be
 //! SATISFIED — answered by a sentence rather than by code. These gates read text too, so the same
 //! question was asked of every reading site here, and the answer is per-site rather than global.
-//! ALL TEN modules are below, including the four that read no source text at all, because "not
+//! ALL ELEVEN modules are below, including the four that read no source text at all, because "not
 //! listed" and "listed as clean" are the same line to whoever reads this next and only one of them
 //! is a fact.
 //!
@@ -73,6 +79,10 @@
 //!   filesystem `is_file`, not a scanner.
 //! * [`supervisor`] — no. It reads nothing; it builds the sidecar binaries the Swift suites launch
 //!   and lets `cargo`'s exit code be the verdict.
+//! * [`hooks`] — no, and the `#` test is the FIRST thing `declared_stages` does. A commented
+//!   `default_install_hook_types:` is not a declaration `prek` would read either, so honouring it
+//!   would have this gate demand files for stages nothing installs. The other half of the claim is
+//!   a directory listing, which no comment can write.
 //!
 //! The discriminator is the one that crate arrived at: a claim that must be SATISFIED must not read
 //! prose, and a BAN may, because a comment makes a ban fail loud rather than pass quiet.
@@ -85,6 +95,7 @@ pub mod android;
 pub mod code_text;
 pub mod ffi;
 pub mod golden;
+pub mod hooks;
 pub mod prepush;
 pub mod reach;
 pub mod stamp;

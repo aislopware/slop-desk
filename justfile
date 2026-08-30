@@ -258,10 +258,14 @@ lint-swift:
 # a real daemon. Behind its own recipe for the reason it was behind a `--tests` flag: the rules above
 # are what is worth running on every commit.
 
-# every workspace crate is reached by a just recipe, and the FFI artifact is fresh
+# the three questions no rule can answer by reading the tree: every workspace crate is reached by a
+# just recipe, the FFI artifact is not older than its sources, and every hook stage the config
+# declares is installed in THIS clone. The third has to be reached by a hand-typed recipe — `check`
+# and `quick` both are — because in the state it detects the hooks are the thing that is missing.
 lint-reach:
     @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- reach
     @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi --check
+    @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- hooks
 
 # the hostd/superd suites that need a live daemon (slow; not in `check`)
 supervisor-tests:

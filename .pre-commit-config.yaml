@@ -11,7 +11,13 @@
 #     (say) runs ONLY the shell hooks — prek skips every other hook entirely.
 #   • prek runs independent hooks in PARALLEL and starts ~instantly (Rust, no venv).
 #
-# Install (idempotent):   prek install      # installs BOTH pre-commit + pre-push hooks
+# Install (idempotent):   prek install      # one file per `default_install_hook_types` entry
+#
+# That install happens ONCE, when it is typed — adding a stage to `default_install_hook_types`
+# later changes THIS file and not the clone, so every hook on the new stage is dead and nothing
+# says so. `commit-msg` was added on 2026-08-11 and installed on 2026-08-31; in between, 97 of 658
+# subjects broke the rule below and none was rejected. `slopdesk-gate hooks`, on `just lint-reach`,
+# is what makes the gap loud now — re-run `prek install` whenever that list changes.
 # Run manually:           prek run --all-files
 #                         prek run --all-files --hook-stage pre-push
 # Skip once:              git commit --no-verify   /   git push --no-verify
