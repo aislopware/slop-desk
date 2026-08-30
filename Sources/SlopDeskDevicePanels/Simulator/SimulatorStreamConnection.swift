@@ -1,25 +1,26 @@
 // SimulatorStreamConnection — the one socket the simulator panel holds: H.264 down, gestures up.
 //
-// `NWProtocolWebSocket` rather than `URLSessionWebSocketTask`, for the reason every other socket in
-// this project is an `NWConnection`: ``TransportParameters/makeTCP()`` is the single place TCP
-// parameters are decided, and `TCP_NODELAY` is the one that matters here. The upstream traffic is
-// the definition of what Nagle ruins — a `touch1-move` every few milliseconds during a drag, each
-// one a ~60-byte write. Coalesced into a delayed-ACK stall, a drag arrives as a stutter.
+// The socket itself is `slopdesk-devicelink`'s (`slopdesk_device_ws_*`). What is left here is the
+// panel's own dialect: which downstream message is worth an event, and what a gesture looks like
+// going up. ONE socket carries both directions because the server defines it that way — binary
+// frames down, JSON text up — which is also why there is no separate input connection to keep in
+// sync: a gesture cannot outlive the stream it belongs to, and both die together on disconnect.
 //
-// ONE socket carries both directions because the server defines it that way: binary frames down,
-// JSON text up. That is also why there is no separate input connection to keep in sync — a gesture
-// cannot outlive the stream it belongs to, and both die together on disconnect.
+// Three things this file used to hold and no longer does, each for the same reason — they were the
+// SOCKET rather than the panel:
 //
-// Hang-safety: this constructs a real network object, so nothing here may be built in a unit test.
-// Everything it decides is delegated to pure code that is (``SimulatorWireProtocol``,
-// ``SimulatorInputEnvelope``, ``SimulatorEndpoints``); this file is the plumbing between them.
+//   * the `NWConnection` state machine, shared with the console through a protocol extension;
+//   * `TCP_NODELAY`, which the upstream gesture path depends on. `slopdesk_devicelink::session`
+//     sets it on the dial and pins it with a test that reads the option back off a real socket;
+//   * the explicit pong, and the measured paragraph about `autoReplyPing` storing a COPY of its
+//     options object. That trap belonged to `Network.framework`; the crate answers every ping in
+//     its read loop and carries the history in its own header.
 
+import CSlopDeskFFI
 import Foundation
-import Network
-import SlopDeskNet
 
 /// What the panel learns from the socket. Delivered on the main actor — the consumer is a view
-/// model, and hopping once here is cheaper than making every observer thread-safe.
+/// model, and hopping once at the boundary is cheaper than making every observer thread-safe.
 package enum SimulatorStreamEvent {
     /// The socket is up. No frames yet; the server sends the JPEG seed first.
     case connected
@@ -32,10 +33,9 @@ package enum SimulatorStreamEvent {
     case ended(reason: String?)
 }
 
-/// The stream as its consumer sees it — three verbs, no network types. The model holds one of these
-/// rather than the concrete class so a test can drive the whole panel (select, frames, teardown)
-/// without a socket: constructing an `NWConnection` in a unit test is exactly the hang-safety rule
-/// this project keeps.
+/// The stream as its consumer sees it — three verbs, no transport types. The model holds one of
+/// these rather than the concrete class so a test can drive the whole panel (select, frames,
+/// teardown) without a socket.
 @MainActor
 package protocol SimulatorStreaming: AnyObject {
     func connect(host: String, port: UInt16, udid: String)
@@ -44,12 +44,11 @@ package protocol SimulatorStreaming: AnyObject {
 }
 
 @MainActor
-package final class SimulatorStreamConnection: SimulatorStreaming, SimulatorWebSocketLane {
-    package var connection: NWConnection?
+package final class SimulatorStreamConnection: SimulatorStreaming {
     private let sink: (SimulatorStreamEvent) -> Void
-    /// Set on teardown so a receive completion that was already in flight cannot resurrect a
-    /// cancelled connection or deliver an event after `.ended`.
-    package private(set) var isTornDown = false
+    private var lane: DeviceWebSocket?
+    /// Cleared on teardown so a hop already queued cannot deliver an event after `.ended`.
+    private var events: DeviceSocketSink?
 
     package init(sink: @escaping (SimulatorStreamEvent) -> Void) {
         self.sink = sink
@@ -63,79 +62,49 @@ package final class SimulatorStreamConnection: SimulatorStreaming, SimulatorWebS
             sink(.ended(reason: "no endpoint"))
             return
         }
-
-        isTornDown = false
-        // A URL endpoint, not host+port: the websocket handshake's request line comes from it, and
-        // `format`/`version` ride the QUERY STRING. Dialling host+port would open a socket to the
-        // right machine and ask it for the server's default dialect.
-        let connection = NWConnection(to: .url(url), using: Self.parameters())
-        self.connection = connection
-        connection.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in self?.handle(state) }
-        }
-        connection.start(queue: Self.queue)
+        // A URL, not host+port: the handshake's request line comes from it, and `format`/`version`
+        // ride the QUERY STRING. Dialling host+port would open a socket to the right machine and ask
+        // it for the server's default dialect.
+        let events = DeviceSocketSink { [weak self] kind, payload in self?.deliver(kind, payload) }
+        self.events = events
+        lane = DeviceWebSocket(url: url.absoluteString, sink: events)
     }
 
     package func disconnect() {
-        isTornDown = true
-        connection?.cancel()
-        connection = nil
+        events?.silence()
+        events = nil
+        lane = nil
     }
 
     /// Send one input envelope. Silently dropped when the socket is not up — a gesture fired during
     /// a reconnect is not worth queueing, and delivering it late would replay a tap the user has
     /// already moved on from.
     package func send(_ envelope: SimulatorInputEnvelope) {
-        guard let connection, connection.state == .ready, let json = envelope.json else { return }
-        let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
-        let context = NWConnection.ContentContext(identifier: "input", metadata: [metadata])
-        connection.send(content: Data(json.utf8), contentContext: context, completion: .idempotent)
+        guard let json = envelope.json else { return }
+        lane?.sendText(json)
     }
 
     // MARK: Plumbing
 
-    /// One shared queue: a single socket carrying one device's frames has no head-of-line problem to
-    /// solve, and the receive handler does nothing but hop to the main actor.
-    private static let queue = DispatchQueue(label: "slopdesk.simulator.stream")
-
-    /// The websocket runs over ``TransportParameters/makeTCP()`` so it inherits `TCP_NODELAY` —
-    /// reaching for `NWParameters.tcp` here would silently restore Nagle on the gesture path.
-    /// `autoReplyPing` keeps the connection alive without a keepalive of our own.
-    /// `nonisolated` because it reads no state — which is also what makes it directly testable
-    /// without hopping an actor to build a value object.
-    ///
-    /// `autoReplyPing` is deliberately NOT set. Measured: inserting an options object into
-    /// `defaultProtocolStack.applicationProtocols` stores a COPY (`stack.first === options` is
-    /// false) and the copy reads the flag back as its default. So setting it would look like
-    /// keepalive handling while providing none — the failure mode being a socket the server drops on
-    /// its own idle timer, minutes into a session, for no visible reason. ``replyToPing(_:)`` does
-    /// the job explicitly instead, where it can be read and reasoned about.
-    package nonisolated static func parameters() -> NWParameters {
-        let parameters = TransportParameters.makeTCP()
-        parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
-        return parameters
-    }
-
-    /// This lane's own message dispatch — the one thing the two websocket lanes do not share.
-    package func deliver(_ data: Data?, context: NWConnection.ContentContext?) {
-        guard let data, !data.isEmpty else { return }
-        let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
-        switch (metadata as? NWProtocolWebSocket.Metadata)?.opcode {
-        case .text:
-            if let text = String(data: data, encoding: .utf8) { sink(.text(text)) }
-        case .binary:
+    /// This lane's own message dispatch — the one thing the two simulator sockets do not share.
+    private func deliver(_ kind: UInt32, _ payload: Data) {
+        switch kind {
+        case UInt32(SLOPDESK_DEVICE_WS_CONNECTED):
+            sink(.connected)
+        case UInt32(SLOPDESK_DEVICE_WS_TEXT):
+            // swiftlint:disable:next optional_data_string_conversion
+            sink(.text(String(decoding: payload, as: UTF8.self)))
+        case UInt32(SLOPDESK_DEVICE_WS_BINARY):
             // An unknown type byte is dropped here rather than forwarded: a message this build has
             // no case for is not an event the panel can act on.
-            if let message = SimulatorWireProtocol.decode(data), !message.isUnknown {
+            if let message = SimulatorWireProtocol.decode(payload), !message.isUnknown {
                 sink(.message(message))
             }
-        case .ping:
-            replyToPing(data)
-        case .close:
-            sink(.ended(reason: nil))
-            disconnect()
         default:
-            break
+            // swiftlint:disable:next optional_data_string_conversion
+            let reason = String(decoding: payload, as: UTF8.self)
+            sink(.ended(reason: reason.isEmpty ? nil : reason))
+            disconnect()
         }
     }
 }
@@ -145,12 +114,4 @@ package extension SimulatorStreamMessage {
         if case .unknown = self { return true }
         return false
     }
-}
-
-package extension SimulatorStreamConnection {
-    /// The socket came up.
-    func noteConnected() { sink(.connected) }
-
-    /// The socket is over; `nil` is a clean close.
-    func noteEnded(reason: String?) { sink(.ended(reason: reason)) }
 }

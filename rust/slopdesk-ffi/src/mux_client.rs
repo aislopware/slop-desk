@@ -5,8 +5,8 @@
 //! ## Why the pool is a handle and the policies are calls
 //! §4b's test is whether the far side reads the part that is big. The pool holds a lane set per
 //! endpoint and an allocator, and the near side asks it one id at a time — never the whole map — so
-//! it is a handle. The re-arm decision, the backoff and the send-path mapping are pure questions
-//! about one integer, so they cross as calls with nothing to own.
+//! it is a handle. The re-arm decision and the backoff are pure questions about one integer, so
+//! they cross as calls with nothing to own.
 //!
 //! ## Why the loop policies live HERE and not once per side
 //! The receive loop's re-arm rule was written out twice in Swift, once in the host module and once
@@ -14,15 +14,17 @@
 //! reading rather than by the compiler. There is one rule; a datagram loop is a datagram loop. Both
 //! sides now call this, so the agreement is the artifact.
 //!
-//! ## The flow objects stay on the near side
-//! A flow is an `NWConnection`, which this crate cannot hold and does not want to. The pool keys
-//! endpoints by their three parts and answers whether the caller must BUILD a flow, join one, or
-//! close one — the object that answer is about lives where objects live.
+//! ## The pool decides, [`crate::video_flow`] holds
+//! The pool keys endpoints by their three parts and answers whether the caller must BUILD a flow,
+//! join one, or close one. What it answers ABOUT is a `slopdesk_videolink::flow::Flow` — two
+//! sockets and two reader threads — behind its own handle next door, because a refcount is not a
+//! socket and the crate that owns the count should not own the fd. That flow used to be an
+//! `NWConnection` on the near side, which is why this header once said the objects stayed there.
 
 use slopdesk_video::mux_client_pool::{
     AcquireOutcome, FlowEndpoint, ReleaseOutcome, VideoFlowPool, request_send_offsets,
 };
-use slopdesk_video::mux_flow::{ConnectionStateKind, receive_backoff, should_rearm};
+use slopdesk_video::mux_flow::{receive_backoff, should_rearm};
 
 use crate::borrow;
 
@@ -32,19 +34,6 @@ pub const SLOPDESK_LANE_UNKNOWN: u32 = 0;
 pub const SLOPDESK_LANE_REMOVED: u32 = 1;
 /// The last lane released: unregister it, then close the shared flow.
 pub const SLOPDESK_LANE_FLOW_CLOSED: u32 = 2;
-
-/// Created, not yet started.
-pub const SLOPDESK_CONN_SETUP: u32 = 0;
-/// Bringing the path up.
-pub const SLOPDESK_CONN_PREPARING: u32 = 1;
-/// Usable.
-pub const SLOPDESK_CONN_READY: u32 = 2;
-/// The path is down and the framework will queue rather than send.
-pub const SLOPDESK_CONN_WAITING: u32 = 3;
-/// The connection failed.
-pub const SLOPDESK_CONN_FAILED: u32 = 4;
-/// The connection was cancelled.
-pub const SLOPDESK_CONN_CANCELLED: u32 = 5;
 
 /// The refcounted pool of shared client flows, one per endpoint.
 #[derive(Debug)]
@@ -89,19 +78,6 @@ const fn release_code(outcome: ReleaseOutcome) -> u32 {
         ReleaseOutcome::Unknown => SLOPDESK_LANE_UNKNOWN,
         ReleaseOutcome::LaneRemoved => SLOPDESK_LANE_REMOVED,
         ReleaseOutcome::FlowClosed => SLOPDESK_LANE_FLOW_CLOSED,
-    }
-}
-
-/// The connection state a code names. An unknown code reads as `Setup`, the state that carries no
-/// verdict — the safe reading of a code this side never emitted.
-const fn state_of(code: u32) -> ConnectionStateKind {
-    match code {
-        SLOPDESK_CONN_PREPARING => ConnectionStateKind::Preparing,
-        SLOPDESK_CONN_READY => ConnectionStateKind::Ready,
-        SLOPDESK_CONN_WAITING => ConnectionStateKind::Waiting,
-        SLOPDESK_CONN_FAILED => ConnectionStateKind::Failed,
-        SLOPDESK_CONN_CANCELLED => ConnectionStateKind::Cancelled,
-        _ => ConnectionStateKind::Setup,
     }
 }
 
@@ -257,30 +233,6 @@ pub extern "C" fn slopdesk_mux_receive_backoff(consecutive_errors: u32) -> f64 {
     receive_backoff(consecutive_errors)
 }
 
-/// The send-path viability after observing a connection state, or no verdict at all.
-///
-/// Answers whether the state carries a verdict; the verdict itself is written through
-/// `out_viable`. The bring-up states carry none and leave the caller's previous reading alone —
-/// spelled as an absence rather than as a third value, because "unchanged" is not a viability.
-///
-/// # Safety
-/// `out_viable` must be null or point to one writable `bool` for the call.
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn slopdesk_mux_send_path_viability(state: u32, out_viable: *mut bool) -> bool {
-    let Some(viable) = slopdesk_video::mux_flow::send_path_viability(state_of(state)) else {
-        return false;
-    };
-    if !out_viable.is_null() {
-        // SAFETY: the caller's obligation that this points at one writable bool.
-        unsafe { *out_viable = viable };
-    }
-    true
-}
-
 /// The offsets, in seconds from the start, at which a one-shot request should go out.
 ///
 /// The video path is fire-and-forget UDP with no request-and-response machinery, so a discovery
@@ -321,11 +273,10 @@ pub unsafe extern "C" fn slopdesk_video_request_send_offsets(
 )]
 mod tests {
     use super::{
-        SLOPDESK_CONN_CANCELLED, SLOPDESK_CONN_PREPARING, SLOPDESK_CONN_READY, SLOPDESK_CONN_SETUP,
-        SLOPDESK_CONN_WAITING, SLOPDESK_LANE_FLOW_CLOSED, SLOPDESK_LANE_REMOVED, SLOPDESK_LANE_UNKNOWN,
-        slopdesk_mux_receive_backoff, slopdesk_mux_send_path_viability, slopdesk_mux_should_rearm,
-        slopdesk_video_pool_acquire, slopdesk_video_pool_free, slopdesk_video_pool_lane_count,
-        slopdesk_video_pool_new, slopdesk_video_pool_release, slopdesk_video_pool_shared_flow_count,
+        SLOPDESK_LANE_FLOW_CLOSED, SLOPDESK_LANE_REMOVED, SLOPDESK_LANE_UNKNOWN,
+        slopdesk_mux_receive_backoff, slopdesk_mux_should_rearm, slopdesk_video_pool_acquire,
+        slopdesk_video_pool_free, slopdesk_video_pool_lane_count, slopdesk_video_pool_new,
+        slopdesk_video_pool_release, slopdesk_video_pool_shared_flow_count,
     };
 
     const HOST: &[u8] = b"10.7.0.2";
@@ -431,35 +382,5 @@ mod tests {
             (slopdesk_mux_receive_backoff(100) - 0.250).abs() < 1e-12,
             "capped, never overflowing"
         );
-    }
-
-    #[test]
-    fn only_the_settled_states_carry_a_send_verdict() {
-        let mut viable = false;
-        unsafe {
-            assert!(slopdesk_mux_send_path_viability(
-                SLOPDESK_CONN_READY,
-                &raw mut viable
-            ));
-            assert!(viable);
-            assert!(slopdesk_mux_send_path_viability(
-                SLOPDESK_CONN_WAITING,
-                &raw mut viable
-            ));
-            assert!(!viable);
-            assert!(slopdesk_mux_send_path_viability(
-                SLOPDESK_CONN_CANCELLED,
-                &raw mut viable
-            ));
-            assert!(!viable);
-            assert!(
-                !slopdesk_mux_send_path_viability(SLOPDESK_CONN_SETUP, &raw mut viable),
-                "bring-up leaves the caller's reading alone",
-            );
-            assert!(!slopdesk_mux_send_path_viability(
-                SLOPDESK_CONN_PREPARING,
-                std::ptr::null_mut()
-            ));
-        }
     }
 }

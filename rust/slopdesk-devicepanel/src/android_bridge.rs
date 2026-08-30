@@ -140,8 +140,19 @@ pub fn request_line(op: BridgeOp, serial: &str, argument: &str, max_size: i64) -
 /// The panel's word for a host that said `ok: false` and named no reason.
 pub const REFUSED: &str = "The host refused.";
 
-/// The panel's word for a reply line that is not a JSON object at all.
+/// The panel's word for a reply line it cannot read.
+///
+/// Two cases, one answer, because the reason is the same one: a line that is not a JSON object at
+/// all, and a line that ran past the ceiling `slopdesk_devicelink::bridge` will buffer looking for
+/// its newline. Either way the host said something this side cannot read as a reply.
 pub const UNREADABLE_REPLY: &str = "The host's reply made no sense.";
+
+/// The panel's word for a socket that ended before the host had acked at all.
+///
+/// Read by `slopdesk_devicelink::bridge`, which is the only place that can observe it: a call whose
+/// connection dies mid-request has no reply line to word a failure out of, and a caller awaiting
+/// one must be told something rather than left waiting for a socket that is already gone.
+pub const HOST_CLOSED: &str = "The host closed the connection.";
 
 /// The refusals the panel words ITSELF, because no host ever saw them.
 ///

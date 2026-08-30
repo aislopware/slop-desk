@@ -130,7 +130,8 @@ same socket**.
 printing and the encoder starts emitting the moment the host acks. A read-until-newline that discards
 its remainder loses the head of the stream; for `open` that is the codec id and the parameter sets,
 i.e. a permanently black rectangle with no error to explain it. The split lives in exactly one place
-(`AndroidBridgeSocket.consume`) and is pinned.
+— `slopdesk_devicelink::bridge::split`, a pure function over the receive buffer — and is pinned by
+`the_stream_head_that_shares_a_receive_with_the_ack_is_not_lost`.
 
 ⚠️ **The host reads its request line byte at a time** for the mirror of that reason: the bytes right
 after the newline may already be the client's first control messages, and a buffered read would

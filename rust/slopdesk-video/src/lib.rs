@@ -306,9 +306,7 @@ pub use keepalive::{StallInputs, StallVerdict, StreamStallPolicy};
 pub use ltr::{LtrController, RecoveryAction, RecoveryRequestKind};
 pub use mint_rescue::{DeminiaturizeOutcome, Observation, Rescue, Step};
 pub use mux_client_pool::{AcquireOutcome, FlowEndpoint, ReleaseOutcome, VideoFlowPool};
-pub use mux_flow::{
-    ConnectionStateKind, FlowId, MuxFlowTable, UnboundByeRateLimiter, send_path_viability, warrants_bye,
-};
+pub use mux_flow::{FlowId, MuxFlowTable, UnboundByeRateLimiter, warrants_bye};
 pub use mux_header::MuxFrameFragmentHeader;
 pub use mux_routing::{
     BootstrapAction, DispatchDecision, MuxDecision, VideoMuxRouter, bootstrap_action, dispatch_decision,

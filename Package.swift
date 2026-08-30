@@ -433,13 +433,6 @@ let package = Package(
                 "SlopDeskWorkspaceModel",
                 // The metadata RPC the simulator control client rides.
                 "SlopDeskProtocol",
-                // `TransportParameters` — the Android bridge and the simulator stream each build an
-                // `NWConnection`, and there is one place that sets TCP_NODELAY and the keepalive
-                // ladder. This target no longer names `SlopDeskTransport` at all: the mux is
-                // `rust/slopdesk-clientnet`'s since `docs/63` G.3, and G.5 moved the last two files
-                // it held for this graph — `TransportParameters` here, `AltScreenCutScanner` INTO
-                // `Android/`, beside its one caller.
-                "SlopDeskNet",
                 // `DevicePanelGeometry` maps a touch into VIDEO pixels (docs/48 — the jank fix), which
                 // is the video path's coordinate domain, not the panel's.
                 "SlopDeskVideoProtocol",
@@ -1033,7 +1026,7 @@ let package = Package(
         // an `NWConnection` framing seam and a `CMSampleBuffer` sink directly.
         .testTarget(
             name: "SlopDeskDevicePanelsTests",
-            dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol", "SlopDeskNet"],
+            dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol"],
         ),
 
         // docs/56: the client's presentation-logic suite, moved out of `SlopDeskClientUITests` with

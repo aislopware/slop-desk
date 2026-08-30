@@ -1,15 +1,13 @@
-// AndroidBridgeSocketTests — the ack/stream split, which is the one subtle thing every bridge
-// connection does.
+// AndroidBridgeSocketTests — the two GRAMMAR faces a bridge connection is built out of.
 //
-// The hazard is that the reply line and the first bytes of the stream arrive in the SAME receive:
-// `logcat` starts printing and the encoder starts emitting the moment the host acks. A
-// read-until-newline that throws away its remainder loses the head of the stream — for `open` that is
-// the codec id and the parameter sets, and the panel shows a permanently black rectangle with no
-// error to explain it.
+// The framing used to be here, and it is not: the ack/stream split, the reply ceiling and the
+// "everything after the newline belongs to the stream" rule are `slopdesk_devicelink::bridge`'s, and
+// its own tests drive them over a real socket rather than by calling a method with a buffer. What is
+// left on this side is what stayed Swift — the request line and the reply verdict, each one door —
+// so this file tests exactly the two things this file's target still decides nothing about but must
+// still spell correctly.
 //
-// Hang-safety: nothing here calls `connect`, so no `NWConnection` is ever constructed. `consume` is a
-// plain method over a buffer, which is exactly why the framing was put there rather than in the
-// receive handler.
+// Hang-safety: nothing here calls `connect`, so no socket is ever opened.
 
 #if os(macOS)
 import Foundation
@@ -18,134 +16,62 @@ import XCTest
 
 @MainActor
 final class AndroidBridgeSocketTests: XCTestCase {
-    private final class Capture {
-        var replies: [AndroidBridgeReply] = []
-        var bytes = Data()
-        var ends: [String?] = []
-    }
-
-    private func socket(_ capture: Capture) throws -> AndroidBridgeSocket {
-        let request = try XCTUnwrap(AndroidBridgeRequest.list)
-        return AndroidBridgeSocket(
-            request: request,
-            onReply: { capture.replies.append($0) },
-            onBytes: { capture.bytes.append($0) },
-            onEnd: { capture.ends.append($0) },
-        )
-    }
-
     private func line(_ object: [String: Any]) -> Data {
-        var data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
-        data.append(UInt8(ascii: "\n"))
-        return data
+        (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
     }
 
-    // MARK: The split
+    // MARK: The reply verdict
 
-    func testTheStreamsFirstBytesInTheAcksOwnChunkAreKept() throws {
-        // THE assertion in this file. Losing this tail costs `open` its codec id and parameter sets.
-        let capture = Capture()
-        let connection = try socket(capture)
-        connection.consume(line(["ok": true]) + Data("h264".utf8))
-        XCTAssertEqual(capture.replies.count, 1)
-        XCTAssertEqual(capture.bytes, Data("h264".utf8))
-    }
-
-    func testAnAckSplitAcrossReceivesIsHeldUntilItsNewline() throws {
-        let capture = Capture()
-        let connection = try socket(capture)
-        let ack = line(["ok": true, "port": 7421])
-        connection.consume(ack.prefix(4))
-        XCTAssertTrue(capture.replies.isEmpty)
-        connection.consume(ack.dropFirst(4))
-        XCTAssertEqual(capture.replies.count, 1)
-        XCTAssertTrue(capture.bytes.isEmpty)
-    }
-
-    func testEverythingAfterTheAckIsStreamBytesAndNothingElseIsParsed() throws {
-        // A payload that happens to contain a newline must not be mistaken for a second reply.
-        let capture = Capture()
-        let connection = try socket(capture)
-        connection.consume(line(["ok": true]))
-        connection.consume(Data([0x00, 0x0A, 0xFF]))
-        XCTAssertEqual(capture.replies.count, 1)
-        XCTAssertEqual(capture.bytes, Data([0x00, 0x0A, 0xFF]))
-    }
-
-    // MARK: The reply itself
-
-    func testTheSuccessCaseCarriesTheRawLine() throws {
+    func testTheSuccessCaseCarriesTheRawLine() {
         // Raw bytes rather than a decoded dictionary, so the one decoder that knows the wire shape
         // reads them directly instead of a second copy of its field rules picking through
         // `[String: Any]` — which is also not `Sendable` and could not cross the continuation's hop.
-        let capture = Capture()
-        let connection = try socket(capture)
         let ack = line(["ok": true, "devices": []])
-        connection.consume(ack)
-        guard case let .ok(payload) = capture.replies.first else {
+        guard case let .ok(payload) = AndroidBridgeReply.decode(ack) else {
             XCTFail("expected an ok reply")
             return
         }
-        XCTAssertEqual(payload, ack.dropLast()) // the newline is not part of the object
+        XCTAssertEqual(payload, ack)
     }
 
-    func testTheHostsOwnComplaintIsSurfacedRatherThanSwallowed() throws {
+    func testTheHostsOwnComplaintIsSurfacedRatherThanSwallowed() {
         // A missing `adb`, an AVD that will not boot and a device that vanished mid-request all say
         // so here and nowhere else.
-        let capture = Capture()
-        let connection = try socket(capture)
-        connection.consume(line(["ok": false, "error": "no such avd"]))
-        XCTAssertEqual(capture.replies.first, .failed("no such avd"))
+        XCTAssertEqual(
+            AndroidBridgeReply.decode(line(["ok": false, "error": "no such avd"])),
+            .failed("no such avd"),
+        )
     }
 
-    func testAReplyThatIsNotAnObjectFails() throws {
-        let capture = Capture()
-        let connection = try socket(capture)
-        connection.consume(Data("this is not json\n".utf8))
-        guard case .failed = capture.replies.first else {
+    func testAReplyThatIsNotAnObjectFails() {
+        guard case .failed = AndroidBridgeReply.decode(Data("this is not json".utf8)) else {
             XCTFail("expected a failure")
             return
         }
     }
 
-    func testARefusalWithNoMessageStillReadsAsASentence() throws {
-        let capture = Capture()
-        let connection = try socket(capture)
-        connection.consume(line(["ok": false]))
-        XCTAssertEqual(capture.replies.first, .failed("The host refused."))
+    func testARefusalWithNoMessageStillReadsAsASentence() {
+        // The door never answers an empty sentence, which is what makes its `0` sentinel sound.
+        XCTAssertEqual(AndroidBridgeReply.decode(line(["ok": false])), .failed("The host refused."))
     }
 
-    // MARK: Bounds
-
-    func testAPeerThatNeverSendsANewlineIsABoundedMistake() throws {
-        let capture = Capture()
-        let connection = try socket(capture)
-        connection.consume(Data(repeating: UInt8(ascii: "x"), count: AndroidBridgeSocket.replyLimit + 1))
-        guard case .failed = capture.replies.first else {
-            XCTFail("expected the reply to be abandoned")
-            return
-        }
-        XCTAssertEqual(capture.ends.count, 1)
-    }
-
-    func testTheReplyIsDeliveredAtMostOnce() throws {
-        let capture = Capture()
-        let connection = try socket(capture)
-        connection.consume(line(["ok": true]))
-        connection.consume(line(["ok": true]))
-        XCTAssertEqual(capture.replies.count, 1)
-    }
+    // MARK: The request line
 
     func testARequestMissingItsRequiredFieldBuildsNoLineAtAll() {
         // The one refusal left, and it is the daemon's own rule one hop earlier: `adb -s "" shell`
         // is a different command from the one that was meant, so an empty field is an absent field
-        // and a request carrying one is never sent. There is no longer an "unencodable" case — the
-        // dictionary that could hold a `Date` is gone, and with it the Objective-C exception
-        // `JSONSerialization` raised rather than threw.
+        // and a request carrying one is never sent.
         XCTAssertNil(AndroidBridgeRequest.shutdown(serial: ""))
         XCTAssertNil(AndroidBridgeRequest.boot(avd: ""))
         XCTAssertNil(AndroidBridgeRequest.console("rotate", serial: ""))
         XCTAssertNotNil(AndroidBridgeRequest.list)
+    }
+
+    func testTheRequestLineArrivesTerminated() throws {
+        // The framing is the door's: the crate writes one whole line and the socket writes it
+        // verbatim, so nothing on this side appends a newline and nothing may strip one.
+        let request = try XCTUnwrap(AndroidBridgeRequest.list)
+        XCTAssertEqual(request.last, UInt8(ascii: "\n"))
     }
 }
 #endif

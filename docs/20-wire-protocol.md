@@ -727,7 +727,7 @@ topology). See docs/DECISIONS.md 2026-07-28.
 > the FEC's GF(2⁸) NEON kernel isolated in `rust/slopdesk-gfsimd`). The two ends are no longer the
 > same language: the HOST is `rust/slopdesk-videohostd`, which captures, encodes and drives its
 > sockets entirely in Rust (docs/61 deleted the `SlopDeskVideoHost` target), while the CLIENT is
-> still `SlopDeskVideoClient` (`NWVideoMuxClientFlow`) decoding and rendering. This secondary GUI
+> still `SlopDeskVideoClient` (`VideoMuxClientFlow` over `slopdesk-videolink`) decoding and rendering. This secondary GUI
 > video path (doc 17 §3, doc 18 measured spike config) is **independent of PATH 1** — its own
 > protocol over plain UDP, with NO TCP, no `WireMessage`, no `FrameDecoder`.
 

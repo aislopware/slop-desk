@@ -739,9 +739,11 @@ catch for itself, is caught.
   lane, not the mux; `one-nwconnection-byte-channel` (`rules/transport_lanes.rs:290`) is scoped to
   exactly those and `docs/60` §7 already records it as untouched by the host campaign. It is
   untouched by this one for the same reason.
-- **`Sources/SlopDeskVideoClient`'s `NWVideoMuxClientFlow`** is PATH 2 over UDP, a different wire
-  with a different crate (`slopdesk-video`). Out of scope, named here so the next census does not
-  read its absence as an oversight.
+- **`Sources/SlopDeskVideoClient`'s `NWVideoMuxClientFlow`** was PATH 2 over UDP, a different wire
+  with a different crate (`slopdesk-video`). Out of scope HERE, and named so the next census did
+  not read its absence as an oversight — it has since had its own campaign and is
+  `rust/slopdesk-videolink`, the mirror of `rust/slopdesk-videohostd`'s `mux_transport`, behind
+  the `slopdesk_video_flow_*` doors. See the closing paragraph of this section.
 - **`golden/golden_vectors.json`** is not regenerated at any stage, and the minter is not ported. Its
   whole value is being Swift: it pins the Swift marshalling faces against the frozen corpus, so a
   Rust rewrite would be Rust pinning Rust. It shrinks as the faces it exercises shrink, and it
@@ -786,6 +788,24 @@ inspector channel — the `NWConnection` at `:3439` is its only `Network` use), 
 plus `TransportParameters` at its new address in `Sources/SlopDeskNet`. None is the client mux, which
 is the claim this campaign actually gets to make. The device-panel and proxy lanes are their own
 campaigns and are not scoped here.
+
+**The device-panel half of that deferral is closed; the list above is history, not state.** The four
+device-panel names in it — `AndroidBridgeSocket`, `SimulatorWebSocketLane`, `SimulatorLogConnection`
+and `SimulatorStreamConnection` — import no `Network` any more, and the middle one does not exist:
+the RFC 6455 handshake, the frame codec with its reassembler, the reader thread and the Android
+bridge's line-then-stream call are `rust/slopdesk-devicelink`, reached through the six
+`slopdesk_device_ws_*` / `slopdesk_device_bridge_*` doors and the one Swift near side
+(`DeviceSocket.swift`). The `SlopDeskNet` dependency left the `SlopDeskDevicePanels` target with
+them. `CodeSidebarProxy` is the proxy campaign and is still deferred.
+
+**And the PATH-2 half is closed too, which leaves the list one name long.** `NWVideoMuxClientFlow`
+is gone: the two sockets, the two readers and the lane table are `rust/slopdesk-videolink`,
+reached through the seven `slopdesk_video_flow_*` doors and the one Swift near side
+(`VideoMuxClientFlow.swift`, which holds a handle and decides nothing). `UDPSendPathPolicy` went
+with it rather than being ported — it existed only to read an `NWConnection.State`, and a raw
+`sendto` has no state to read; see `docs/DECISIONS.md`. So §6's `import Network` grep now answers
+FOUR files: `CodeSidebarProxy` (deferred, and dying with code-server anyway), `NWByteChannel` and
+`WorkspaceStore` (PATH-4 and the inspector), and `TransportParameters`.
 
 **Porting the E2E suite exposed an isolation hole the Swift original had all along, and it was not a
 Swift problem.** `SubprocessE2ETests` set a sandbox `HOME` and, later, the four container variables —

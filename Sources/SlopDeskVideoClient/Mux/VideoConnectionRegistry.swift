@@ -5,8 +5,8 @@ import SlopDeskVideoProtocol
 
 /// The shared-flow seam the ``VideoConnectionRegistry`` refcounts — the UDP-mux
 /// counterpart of the TCP-mux `MuxNWConnection`. The production conformer is
-/// ``NWVideoMuxClientFlow`` (real `NWConnection`s); a test injects an in-memory fake so
-/// the registry's refcount / teardown logic is provable WITHOUT a socket.
+/// ``VideoMuxClientFlow`` (a handle on `slopdesk_videolink`'s two real sockets); a test injects
+/// an in-memory fake so the registry's refcount / teardown logic is provable without opening one.
 public protocol VideoMuxClientFlowing: AnyObject, Sendable {
     /// Opens the shared media + cursor connections once (idempotent).
     func startIfNeeded()
@@ -23,7 +23,7 @@ public protocol VideoMuxClientFlowing: AnyObject, Sendable {
     /// Tears the shared connections down (only when the LAST lane releases).
     func close()
     /// Whether the media send path is currently viable (dead-path gate for the session's
-    /// PERIODIC senders — see ``UDPSendPathPolicy``). Defaulted `true` for conformers
+    /// PERIODIC senders — see ``VideoMuxClientFlow/isSendPathViable``). Defaulted `true` for conformers
     /// without path tracking (in-memory fakes keep today's always-send behaviour).
     var isSendPathViable: Bool { get }
 }
@@ -32,9 +32,7 @@ public extension VideoMuxClientFlowing {
     var isSendPathViable: Bool { true }
 }
 
-#if canImport(Network)
-extension NWVideoMuxClientFlow: VideoMuxClientFlowing {}
-#endif
+extension VideoMuxClientFlow: VideoMuxClientFlowing {}
 
 /// Refcounted pool of shared UDP video flows, ONE per host — the UDP-mux (Stage S3)
 /// sibling of the TCP-mux `ConnectionRegistry`. The heart of "share one UDP flow
@@ -168,14 +166,10 @@ public enum VideoMuxInstaller {
     /// pane then vends its lane from this per-host shared UDP flow (one flow per host, N panes).
     /// Idempotent.
     ///
-    /// The production flow factory builds real ``NWVideoMuxClientFlow``s — the only video wire there is.
+    /// The production flow factory builds real ``VideoMuxClientFlow``s — the only video wire there is.
     public static func install() {
         VideoWindowPipeline.sharedRegistry = VideoConnectionRegistry { host, mediaPort, cursorPort in
-            #if canImport(Network)
-            return NWVideoMuxClientFlow(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
-            #else
-            fatalError("the GUI video mux path requires Network.framework")
-            #endif
+            VideoMuxClientFlow(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
         }
     }
 }

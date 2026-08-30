@@ -384,45 +384,6 @@ pub fn receive_backoff(consecutive_errors: u32) -> f64 {
     scaled.min(RECEIVE_MAX_BACKOFF)
 }
 
-/// The connection states the send path is mapped from, mirrored without the networking dependency
-/// so the mapping stays testable headlessly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionStateKind {
-    /// Created, not yet started.
-    Setup,
-    /// Bringing the path up.
-    Preparing,
-    /// Usable.
-    Ready,
-    /// The path is down and the framework will queue rather than send.
-    Waiting,
-    /// The connection failed.
-    Failed,
-    /// The connection was cancelled.
-    Cancelled,
-}
-
-/// The new send-path viability after observing a state, or `None` to keep the previous reading.
-///
-/// While the tunnel is down the connection sits in `Waiting` and the framework queues every
-/// datagram in-process with the completion deferred indefinitely — so the client's PERIODIC
-/// producers, its stats reports and its keepalive, must skip their fire while the path is not
-/// viable. Sparse best-effort sends, user input and the hello, are NOT gated: the user expects them
-/// to ride the first viable window.
-///
-/// The bring-up states carry no verdict of their own and leave the reading unchanged. Initial
-/// viability is optimistic, so sends during bring-up are not held back.
-#[must_use]
-pub const fn send_path_viability(state: ConnectionStateKind) -> Option<bool> {
-    match state {
-        ConnectionStateKind::Ready => Some(true),
-        ConnectionStateKind::Waiting | ConnectionStateKind::Failed | ConnectionStateKind::Cancelled => {
-            Some(false)
-        },
-        ConnectionStateKind::Setup | ConnectionStateKind::Preparing => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -431,8 +392,8 @@ mod tests {
     )]
 
     use super::{
-        ConnectionStateKind, MuxFlowTable, RECEIVE_BASE_BACKOFF, RECEIVE_MAX_BACKOFF, UnboundByeRateLimiter,
-        payload_is_keepalive, receive_backoff, send_path_viability, should_rearm, warrants_bye,
+        MuxFlowTable, RECEIVE_BASE_BACKOFF, RECEIVE_MAX_BACKOFF, UnboundByeRateLimiter, payload_is_keepalive,
+        receive_backoff, should_rearm, warrants_bye,
     };
     use crate::recovery_routing::VideoChannel;
     use crate::video_control::VideoControlMessage;
@@ -671,20 +632,5 @@ mod tests {
         assert_eq!(receive_backoff(3), RECEIVE_BASE_BACKOFF * 4.0);
         assert_eq!(receive_backoff(100), RECEIVE_MAX_BACKOFF);
         assert_eq!(receive_backoff(u32::MAX), RECEIVE_MAX_BACKOFF);
-    }
-
-    /// A queued datagram whose completion never comes is worse than a skipped periodic fire.
-    #[test]
-    fn the_periodic_producers_stand_down_while_the_path_is_dead() {
-        assert_eq!(send_path_viability(ConnectionStateKind::Ready), Some(true));
-        assert_eq!(send_path_viability(ConnectionStateKind::Waiting), Some(false));
-        assert_eq!(send_path_viability(ConnectionStateKind::Failed), Some(false));
-        assert_eq!(send_path_viability(ConnectionStateKind::Cancelled), Some(false));
-    }
-
-    #[test]
-    fn bring_up_carries_no_verdict_so_the_first_sends_are_not_held_back() {
-        assert_eq!(send_path_viability(ConnectionStateKind::Setup), None);
-        assert_eq!(send_path_viability(ConnectionStateKind::Preparing), None);
     }
 }

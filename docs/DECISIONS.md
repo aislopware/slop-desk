@@ -17365,3 +17365,113 @@ adding a ninth for the sequence* — two ways to drive the same protocol is the 
 one-implementation rule names, and the eight had no caller left. *Retiring `DropdE2ETests`* — the
 codec and splitter suites lost their subjects and went, but the E2E is now the only test that
 crosses the FFI boundary into a real daemon, which is the one thing no Rust test can see.
+
+## The device panels' three sockets were one websocket written twice, and `NWConnection` was hiding the protocol (2026-08-30)
+
+`docs/63` §6 deferred these by name — *"the device-panel and proxy lanes are their own campaigns and
+are not scoped here"* — and named four files: `AndroidBridgeSocket`, `SimulatorWebSocketLane`,
+`SimulatorLogConnection` and `SimulatorStreamConnection`. `docs/67` §5 booked the middle one as its
+only `DevicePanelLane` floor entry, the one row on that list that was a deferral rather than a
+reason. This is that campaign, and both entries are gone with it.
+
+**What was actually Swift's was a framework, not a decision.** `NWConnection` with
+`NWProtocolWebSocket` reassembles a fragmented message, answers a ping, and hands up whole frames,
+so the two lanes could each say "there is no defragmentation here" and be right about the framework
+while being wrong about the wire. Porting to a raw socket makes that a claim somebody has to keep:
+`rust/slopdesk-devicelink`'s `ws::frame` carries a `Reassembler` and its two tests, and the
+handshake it sits behind VERIFIES `Sec-WebSocket-Accept` rather than glancing at the status —
+RFC 6455 §4.1 makes it a MUST, and on a mesh where any port may be forwarded to anything it is what
+turns "the first frame is malformed" into "that is not a websocket".
+
+**The RFC's own vector caught a wrong constant on the first run.** `ACCEPT_GUID` was typed ending
+`…C5AB0DC85B39`; it is `…C5AB0DC85B11`, and every handshake against a real server would have failed.
+Three independent digests (`shasum`, `hashlib`, node's `crypto`) agreed with the implementation and
+not with the constant, which is the only way that particular error is findable — no amount of
+round-tripping our own client against our own fake would have said a word.
+
+**Ordering is `DispatchQueue.main.async`, not `Task { @MainActor }`.** The Swift lanes re-armed the
+receive inside their own hop, so at most one delivery was ever in flight and ordering came free. A
+Rust reader thread delivers back to back, and two `Task`s enqueued in order carry no mutual ordering
+guarantee where a serial queue does — two access units arriving swapped is a corrupt picture, not a
+late one.
+
+**`Session::drop` tears down and then JOINS**, which is `slopdesk_pane_driver_free`'s promise and the
+reason the Swift near side owns its sink by reference count instead of a torn-down flag of its own.
+`Link::tear_down` sets the flag BEFORE the `shutdown`, so a teardown mid-read delivers nothing: the
+read returns zero, the reader sees the flag, and it exits without wording an ending the caller
+already knows about. The other order races.
+
+**Six doors, one near side.** `slopdesk_device_ws_open/_send_text/_free` and
+`slopdesk_device_bridge_open/_send/_free`, over `DeviceSocket.swift` — which holds doors and is
+therefore not floor at all. `SimulatorStreamConnection`, `SimulatorLogConnection` and
+`AndroidBridgeSocket` keep their faces (`SimulatorStreamEvent`, `SimulatorLogStreaming`,
+`AndroidBridgeRequest`/`AndroidBridgeReply`) and lost their state machines; `SimulatorWebSocketLane`
+is deleted; `SlopDeskNet` left the `SlopDeskDevicePanels` target with them, and `docs/63` §6's
+`import Network` list is five files, not eight.
+
+**Rejected.** *tokio + tungstenite* — this tree carries no async runtime, and three sockets that each
+want one thread parked in `read` would buy a scheduler for multiplexing nobody asked for. *RustCrypto's
+`sha1`* — six crates to compute twenty bytes once per dial; `sha1_smol` has no dependencies at all.
+*Folding this into `slopdesk-devicepanel`* — that crate's whole charter is that it is pure, and a
+`TcpStream` inside it is the charter gone. *Keeping `DevicePanelLane` as an empty class for the proxy
+campaign* — a deferral kept warm reads as a reason, and the proxy gets booked when it lands.
+
+## `NWConnection` was buying the video client a state machine, and the state machine was the bug (2026-08-30)
+
+`NWVideoMuxClientFlow.swift` was the last `Network.framework` object on PATH 2 and the last one on
+the video path in either direction — the host's half became `rust/slopdesk-videohostd`'s
+`mux_transport` some time ago. It is now `rust/slopdesk-videolink`, reached through seven
+`slopdesk_video_flow_*` doors, with `VideoMuxClientFlow.swift` holding the handle and deciding
+nothing.
+
+**The split was already made; only the socket was left.** Every rule the flow obeyed was
+`slopdesk-video`'s and was CALLED, not restated: `mux_header` framed the datagrams, `mux_flow`
+answered the re-arm and its backoff ladder, `mux_client_pool` decided which panes shared a flow. What
+was Swift was two connections, two receive re-arms and a dictionary from channel id to a pair of
+closures. That is the shape a port should have — the decisions crossed years before the I/O did — and
+it is why this campaign is one crate and one near-side file rather than a rewrite.
+
+**`UDPSendPathPolicy` was deleted, not ported, and its door and its six `SLOPDESK_CONN_*` codes went
+with it.** The policy existed because `Network.framework` parks a `.waiting` connection's datagrams
+in-process with the completion deferred indefinitely: a client whose wifi had flapped kept handing
+20 Hz stats reports to a queue that would never drain, so the periodic producers had to be told to
+stand down, and being told meant mapping six connection states onto a viability. A `sendto` on a raw
+socket has no such queue. It fails, synchronously, with `ENETDOWN`/`EHOSTUNREACH`/`ENETUNREACH`. So
+viability is now the LAST SEND's answer, which is not a weaker signal but a strictly stronger one: it
+reports the path the datagrams actually took rather than what a framework thought of the path.
+`ECONNREFUSED` deliberately does NOT revoke it — an ICMP port-unreachable proves a working path to a
+host that is not listening, which is a different fact.
+
+**Three more things the framework was charging for.** A bring-up failure now answers `Flow::open`
+instead of arriving later through a `stateUpdateHandler`, so the pane retries instead of waiting on a
+state that never settles. The class carried a "COMPILED + reviewed, NEVER instantiated in a test"
+warning, and `slopdesk-videolink`'s suite drives the real thing — the framing, the demux, the drop
+rules, the prime, the teardown — against a second `UdpSocket` on loopback. And the near side is a
+handle plus two callback boxes, so there is no `@unchecked Sendable` class holding two connections,
+two liveness objects and four mutable fields under one lock.
+
+**What a plain socket costs, stated rather than hidden.** `UdpSocket` has no `shutdown`, so a reader
+parked in `recv` cannot be woken by the close the way `cancel()` woke a `receiveMessage`. The wake is
+the socket's own read timeout, which makes a teardown BOUNDED rather than instant — at most one
+timeout plus one backoff, pinned by a test. Nothing is delivered after the drop returns, which is the
+guarantee that was ever actually needed.
+
+**The release callback, and why the door has one when `slopdesk_device_ws_*` does not.** A websocket
+handle owns its one reader, so `_free` joining that thread is enough to promise "no callback after
+this returns" — one obligation, one lifetime. A flow's lanes share two readers, so unregistering ONE
+lane cannot join a thread that still serves the others, and there is no moment `unregister_lane` can
+name as the last callback. `on_release` is that moment instead: this side calls it exactly once per
+registration, whenever the last reference to the lane is dropped, on whichever thread drops it. The
+near side retains its box across the door and releases it there.
+
+**Rejected.** *Keeping `UDPSendPathPolicy` against a future transport that has states* — porting a
+mapping for a state machine that no longer exists is a fallback under another name, and the
+one-implementation rule does not make an exception for one that maps nothing. *An async runtime* —
+two sockets and two parked reads is two threads, the same ruling `slopdesk-devicelink` records.
+*Delivering the read window to Swift as a borrow instead of a `Data` copy* — the sink enqueues what it
+is handed on the session's inbound queue, so a view onto the window would dangle the moment the
+reader loops; the copy is at most a datagram and is the same one `Network.framework` made before the
+old flow ever saw the bytes. *Folding the sockets into `slopdesk-video`* — that crate is PATH 2's
+rules, `forbid(unsafe_code)`, no I/O, every function a fold a test can drive without a machine; a
+`UdpSocket` inside it ends that for the whole crate, which is the line `slopdesk-devicelink` drew
+against `slopdesk-devicepanel` two campaigns ago.

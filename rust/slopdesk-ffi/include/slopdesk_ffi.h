@@ -3101,13 +3101,6 @@ typedef struct SlopDeskVideoFlowPool SlopDeskVideoFlowPool;
 #define SLOPDESK_LANE_REMOVED 1u
 #define SLOPDESK_LANE_FLOW_CLOSED 2u
 
-#define SLOPDESK_CONN_SETUP 0u
-#define SLOPDESK_CONN_PREPARING 1u
-#define SLOPDESK_CONN_READY 2u
-#define SLOPDESK_CONN_WAITING 3u
-#define SLOPDESK_CONN_FAILED 4u
-#define SLOPDESK_CONN_CANCELLED 5u
-
 SlopDeskVideoFlowPool *slopdesk_video_pool_new(uint32_t seed);
 void slopdesk_video_pool_free(SlopDeskVideoFlowPool *handle);
 size_t slopdesk_video_pool_shared_flow_count(SlopDeskVideoFlowPool *handle);
@@ -3127,7 +3120,62 @@ size_t slopdesk_video_request_send_offsets(double timeout_seconds, double retry_
 
 bool slopdesk_mux_should_rearm(bool connection_is_alive);
 double slopdesk_mux_receive_backoff(uint32_t consecutive_errors);
-bool slopdesk_mux_send_path_viability(uint32_t state, bool *out_viable);
+
+/* ---------------------------------------------------------------------------- *
+ * The flow the pool above refcounts: one media socket and one cursor socket to a host,
+ * shared by every video pane pointed at it and demultiplexed by channel id.
+ *
+ * Plain UDP, not `NWConnection`, so three things the Swift flow could not say are said here: a
+ * bring-up failure is answered by `open` instead of arriving through a state handler, a test can
+ * drive the whole thing against a second socket, and there is no send-path STATE — viability is
+ * the last send's answer, which is a strictly better signal because it reports the path the
+ * datagrams actually took.
+ *
+ * FOUR obligations:
+ *   1. `context` stays valid until `on_release` is called for it. This side calls it EXACTLY
+ *      once per successful register, from whichever thread drops the lane's last reference —
+ *      yours inside unregister/free, or a reader's if it was mid-delivery. Unregistering cannot
+ *      join the reader that still serves the OTHER lanes, so `on_release` is the only promise
+ *      this door can keep.
+ *   2. The callbacks run on the flow's own reader threads, never yours. The media and cursor
+ *      callbacks for the SAME lane can run CONCURRENTLY — two sockets, two threads.
+ *   3. No callback may re-enter `slopdesk_video_flow_free`. It joins those threads.
+ *   4. Every pointer in every callback is LENT for that call. Keep nothing.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskVideoFlow SlopDeskVideoFlow;
+
+// Opens the two sockets and starts both readers. NULL when `host` is not UTF-8, does not
+// resolve, or either socket cannot be bound — no lane is registered then, so nothing to release.
+SlopDeskVideoFlow *slopdesk_video_flow_open(const uint8_t *host, size_t host_len,
+                                            uint16_t media_port, uint16_t cursor_port);
+// Registers a lane's sinks under `channel_id` and PRIMES its cursor flow — the one datagram that
+// has to go out for the lane to receive cursor updates at all, since the host accepts a cursor
+// flow only on an inbound datagram. Re-registering an id replaces it: the old lane's
+// `on_release` runs and the new one is primed. `false` only for a NULL handle.
+bool slopdesk_video_flow_register_lane(SlopDeskVideoFlow *flow, uint32_t channel_id,
+                                       void *context,
+                                       void (*on_media)(void *context, uint8_t tag,
+                                                        const uint8_t *bytes, size_t len),
+                                       void (*on_cursor)(void *context, const uint8_t *bytes,
+                                                         size_t len),
+                                       void (*on_release)(void *context));
+// Drops a lane's sinks. Datagrams for it are dropped from the next one on. An id that is not
+// registered is a no-op.
+void slopdesk_video_flow_unregister_lane(SlopDeskVideoFlow *flow, uint32_t channel_id);
+// Sends one media datagram, tag-stamped, or one cursor datagram (the lane's re-prime). `false`
+// when it did not leave.
+bool slopdesk_video_flow_send_media(SlopDeskVideoFlow *flow, uint32_t channel_id, uint8_t tag,
+                                    const uint8_t *payload, size_t payload_len);
+bool slopdesk_video_flow_send_cursor(SlopDeskVideoFlow *flow, uint32_t channel_id,
+                                     const uint8_t *payload, size_t payload_len);
+// Whether the LAST media send reached the path. The session's PERIODIC producers skip their
+// fire while this is false; sparse best-effort sends are not gated. `true` for NULL, the same
+// optimism a fresh flow starts with.
+bool slopdesk_video_flow_send_path_viable(const SlopDeskVideoFlow *flow);
+// Tears both sockets down and releases the handle. JOINS both readers and runs every remaining
+// lane's `on_release`, so no callback is running when this returns. NULL is a no-op.
+void slopdesk_video_flow_free(SlopDeskVideoFlow *flow);
 
 
 /* ---------------------------------------------------------------------------- *
@@ -10803,6 +10851,82 @@ size_t slopdesk_android_bridge_refusals(unsigned char *out, size_t cap);
 //         either way and the flag is the only thing that decides.
 size_t slopdesk_android_device_list(const unsigned char *line, size_t line_len,
                                     unsigned char *out, size_t cap);
+
+// ---------------------------------------------------------------------------
+// The device panels' two SOCKETS. `slopdesk-devicelink` behind them: RFC 6455
+// framing and reassembly for the simulator's two lanes, and the line-then-stream
+// split for the Android bridge. `docs/63` §6 named these lanes and deferred
+// them; this is that campaign, and `SimulatorWebSocketLane.swift`,
+// `SimulatorLogConnection.swift` and the socket half of
+// `SimulatorStreamConnection.swift` and `AndroidBridgeSocket.swift` are gone
+// with it.
+//
+// FOUR OBLIGATIONS, the pane driver's four, for both families:
+//   1. `context` stays valid until the matching `_free` RETURNS, not until it is
+//      entered. `_free` tears the socket down and JOINS the reader.
+//   2. The callback runs on the socket's OWN thread — never the caller's, and
+//      never concurrently with itself. Synchronise anything it shares.
+//   3. No callback may re-enter `_free`: it joins the thread the callback is on.
+//   4. Every pointer in every callback is LENT for that call. Keep nothing.
+//
+// An empty payload crosses as a NULL pointer and a zero length, this crate's
+// convention everywhere. The LENGTH decides, never the pointer.
+// ---------------------------------------------------------------------------
+
+// What a websocket event is. Every field is the payload's meaning.
+#define SLOPDESK_DEVICE_WS_CONNECTED 0u /* the handshake completed. No payload */
+#define SLOPDESK_DEVICE_WS_TEXT      1u /* a whole text message, NOT validated as UTF-8 */
+#define SLOPDESK_DEVICE_WS_BINARY    2u /* a whole binary message, reassembled */
+#define SLOPDESK_DEVICE_WS_ENDED     3u /* over. The payload is why, EMPTY for a clean close */
+
+typedef struct SlopDeskDeviceWs SlopDeskDeviceWs;
+
+// Opens one `ws://` URL and starts reading it. Returns AT ONCE — the dial happens
+// on the socket's own thread, so the first thing the callback says is either
+// CONNECTED or ENDED.
+//
+// A URL this client will not open — anything that is not `ws://` (there is no TLS
+// on the mesh, by the security invariant), or an authority it cannot dial — ends
+// through the callback rather than answering NULL, so the near side has ONE
+// failure path instead of two. NULL only when `url` is not UTF-8, and then no
+// callback has run or ever will, so `context` may be freed at once.
+SlopDeskDeviceWs *slopdesk_device_ws_open(const uint8_t *url, size_t url_len,
+                                          void *context,
+                                          void (*on_event)(void *context, uint32_t kind,
+                                                           const uint8_t *bytes, size_t len));
+// Sends one text message. `false` when the socket is not up, which is a DROP and
+// not a queue: a gesture delivered late replays a tap the user has moved on from.
+bool slopdesk_device_ws_send_text(SlopDeskDeviceWs *lane, const uint8_t *text, size_t text_len);
+// Closes the socket and releases the handle. Joins the reader, so no callback is
+// running when this returns and none ever will be again. NULL is a no-op.
+void slopdesk_device_ws_free(SlopDeskDeviceWs *lane);
+
+// What a bridge-call event is.
+#define SLOPDESK_DEVICE_BRIDGE_REPLY 0u /* the ack line, without its newline. At most once */
+#define SLOPDESK_DEVICE_BRIDGE_BYTES 1u /* bytes after the ack. `logcat` and `open` only */
+#define SLOPDESK_DEVICE_BRIDGE_ENDED 2u /* over. The payload is why, EMPTY for a clean close */
+
+typedef struct SlopDeskDeviceBridge SlopDeskDeviceBridge;
+
+// Dials the Android bridge and writes one request line. `request` is a WHOLE
+// line, newline included — `slopdesk_android_bridge_request` built it and is the
+// only thing that can refuse to. Returns at once, as the websocket does.
+//
+// A call whose socket dies before the host acks still answers through REPLY, with
+// the panel's own sentence: a caller awaiting a reply must not wait forever for a
+// connection that is already gone. NULL only when `host` is not UTF-8.
+SlopDeskDeviceBridge *slopdesk_device_bridge_open(const uint8_t *host, size_t host_len,
+                                                  uint16_t port,
+                                                  const uint8_t *request, size_t request_len,
+                                                  void *context,
+                                                  void (*on_event)(void *context, uint32_t kind,
+                                                                   const uint8_t *bytes, size_t len));
+// Sends bytes upstream — `open`'s control channel, and nothing else uses it.
+// `false` when the socket is not up, for the websocket send's reason.
+bool slopdesk_device_bridge_send(SlopDeskDeviceBridge *call, const uint8_t *bytes, size_t bytes_len);
+// Closes the call and releases the handle. Joins, as the websocket's free does.
+// NULL is a no-op.
+void slopdesk_device_bridge_free(SlopDeskDeviceBridge *call);
 
 typedef struct SlopDeskAndroidLogLines SlopDeskAndroidLogLines;
 

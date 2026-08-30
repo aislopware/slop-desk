@@ -8,7 +8,7 @@ import SlopDeskVideoProtocol
 /// a CGWindowID.
 ///
 /// It rides the SAME per-host shared UDP flow as streaming (``VideoConnectionRegistry`` /
-/// ``NWVideoMuxClientFlow``): it acquires a transient lane (a collision-safe channelID), sends a
+/// ``VideoMuxClientFlow``): it acquires a transient lane (a collision-safe channelID), sends a
 /// ``VideoControlMessage/listWindows`` on the `.control` channel — NOT a `hello`, so the host NEVER mints
 /// a capture session — and awaits the ``VideoControlMessage/windowList`` reply. Because the whole video
 /// path is fire-and-forget UDP (no request/response infra), this builds its own retry + timeout: it

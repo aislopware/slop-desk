@@ -886,6 +886,26 @@ devicelog-test:
 devicepanel-test:
     cd rust/slopdesk-devicepanel && cargo test
 
+# The same two panels' SOCKETS — the RFC 6455 handshake, the frame codec and its reassembler, the
+# reader thread, and the Android bridge's line-then-stream call. Its own crate rather than a module
+# of `slopdesk-devicepanel` because that crate is PURE by charter and this one opens `TcpStream`s
+# and spawns threads; folding them would put a socket inside the one crate whose whole claim is
+# that it has none.
+
+# cargo test for the device panel sockets (rust/slopdesk-devicelink)
+devicelink-test:
+    cd rust/slopdesk-devicelink && cargo test
+
+# PATH 2's CLIENT sockets — the two UDP flows, their reader threads, the lane table a datagram is
+# admitted against, and the teardown that joins. Its own crate rather than a module of
+# `slopdesk-video` for the reason that crate's charter states, the same one that split
+# `slopdesk-devicelink` off `slopdesk-devicepanel`: a `UdpSocket` inside it would end the property
+# that every function in it is a fold a test can drive without a machine.
+
+# cargo test for the client video sockets (rust/slopdesk-videolink)
+videolink-test:
+    cd rust/slopdesk-videolink && cargo test
+
 # The client control socket's vocabulary — its method names, its three token sets and its NDJSON
 # framing. Its own crate because TWO programs speak that socket: `slopdesk` writes the requests and
 # the app's `ClientControlDispatcher` reads them, and the app reaches it through `slopdesk-ffi`,
@@ -1394,7 +1414,7 @@ host-status:
 # closes that.
 
 # cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + one client pane session's driver + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test devicelink-test videolink-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # The same six sidecars, for the same reason as `test` above and with more at stake: this is the

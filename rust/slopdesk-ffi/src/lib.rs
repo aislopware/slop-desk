@@ -106,6 +106,7 @@ pub mod decode_admission;
 // directly. See the module.
 pub mod decoder;
 pub mod device_geometry;
+pub mod device_link;
 pub mod device_log;
 pub mod device_panel;
 pub mod device_sections;
@@ -231,6 +232,7 @@ pub mod upload_progress;
 pub mod vi_hints;
 pub mod video_control;
 pub mod video_fec;
+pub mod video_flow;
 pub mod video_fragment;
 pub mod video_frame;
 pub mod video_packetize;

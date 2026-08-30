@@ -1,11 +1,15 @@
 import CSlopDeskFFI
 import Foundation
 
-// The Swift face of `rust/slopdesk-video`'s `mux_flow` loop policies, reached through the
+// The Swift face of `rust/slopdesk-video`'s `mux_flow` receive-loop policy, reached through the
 // `mux_client` door. ONE copy, in the module both ends already import: the re-arm rule used to be
 // written out twice — once in the host module, once in the client's, each copy commented with the
-// fact that the other existed — and a contract kept by reading is not kept. No Network import here,
-// so the mapping stays testable headlessly on either side.
+// fact that the other existed — and a contract kept by reading is not kept.
+//
+// Both loops that ASK it are Rust now — `slopdesk-videohostd`'s `mux_transport` and
+// `slopdesk-videolink`'s reader threads — so this face's remaining job is to pin the two doors
+// against `golden/golden_vectors.json`, which is what a face is for. `UDPSendPathPolicy` used to
+// sit below it and does not: it mapped an `NWConnection.State`, and there is no longer one to map.
 
 /// Re-arm decision + backoff for a UDP `receiveMessage` loop (BUG-L).
 ///
@@ -30,46 +34,5 @@ public enum UDPReceiveLoopPolicy {
     /// - Parameter consecutiveErrors: back-to-back errors INCLUDING the one just observed.
     public static func nextBackoff(consecutiveErrors: Int) -> TimeInterval {
         slopdesk_mux_receive_backoff(UInt32(clamping: consecutiveErrors))
-    }
-}
-
-/// Send-path viability mapping for the shared client UDP flow (wifi-flap hardening).
-///
-/// While the WireGuard/utun path is down the media `NWConnection` sits in `.waiting` and
-/// `Network.framework` queues every datagram in-process with the completion deferred indefinitely —
-/// so the client's PERIODIC producers (the 20 Hz NetworkStats reports, the 5 s keepalive) must skip
-/// their fire while the path is not viable. Sparse best-effort sends (user input, hello) are NOT
-/// gated: the user expects them to ride the first viable window.
-public enum UDPSendPathPolicy {
-    /// The `NWConnection.State` kinds, mirrored without the Network dependency so the mapping stays
-    /// testable headlessly.
-    public enum StateKind: Sendable {
-        case setup
-        case preparing
-        case ready
-        case waiting
-        case failed
-        case cancelled
-
-        /// The code this state crosses as.
-        var code: UInt32 {
-            switch self {
-            case .setup: SLOPDESK_CONN_SETUP
-            case .preparing: SLOPDESK_CONN_PREPARING
-            case .ready: SLOPDESK_CONN_READY
-            case .waiting: SLOPDESK_CONN_WAITING
-            case .failed: SLOPDESK_CONN_FAILED
-            case .cancelled: SLOPDESK_CONN_CANCELLED
-            }
-        }
-    }
-
-    /// The new send-path viability after observing `state`, or `nil` to keep the previous reading —
-    /// the bring-up states carry no verdict of their own, and "unchanged" is not a viability.
-    /// Initial viability is optimistic (true) so sends during bring-up are not held back.
-    public static func viability(after state: StateKind) -> Bool? {
-        var viable = false
-        guard slopdesk_mux_send_path_viability(state.code, &viable) else { return nil }
-        return viable
     }
 }

@@ -271,7 +271,9 @@ pub fn one_pasteboard_and_one_open(tree: &Tree) -> Report {
 /// `autoReplyPing` is the one worth naming: setting it on an INSERTED options object is inert — the
 /// stack stores a copy that reads the flag back as its default — so a lane without an explicit pong
 /// is dropped on the server's idle timer minutes in. That was measured once and written down twice,
-/// and there is no error anywhere in the failure.
+/// and there is no error anywhere in the failure. The flag itself is `Network.framework`'s and the
+/// lanes are Rust now, so what the rule guards is a RELAPSE: an `NWConnection` websocket back in
+/// Swift would arrive with the same inert line and the same silent drop.
 ///
 /// `VideoDecoder.stampDisplayImmediately` is deliberately NOT one of these: it is a different
 /// target with a lower dependency floor (`SlopDeskVideoProtocol` carries no media framework on
@@ -294,7 +296,7 @@ pub fn the_small_rules_are_spelled_once(tree: &Tree) -> Report {
             view: View::Code,
             exempt: &[],
             message: "{files} sets autoReplyPing on an inserted options object, where it is INERT — \
-                      SimulatorWebSocketLane sends the pong",
+                      slopdesk-devicelink's ws lane sends the pong",
         },
         Claim::NoneUnder {
             roots: &[

@@ -705,15 +705,19 @@ one control in the panel with no response to the pointer at all — share it.
   object into `defaultProtocolStack.applicationProtocols` stores a **copy** (`stack.first === options`
   is `false`) and the copy reads the flag back at its default. Setting it looks like keepalive
   handling while providing none — the failure being a socket the server drops on its own idle timer,
-  minutes in, for no visible reason. `SimulatorStreamConnection.replyToPing` answers explicitly
-  instead; `SimulatorStreamParametersTests` pins the framework behaviour so a future refactor cannot
-  quietly reintroduce the flag.
+  minutes in, for no visible reason. The lane is `slopdesk-devicelink` now and the flag is not
+  reachable from it — `ws::lane` answers a `Ping` with a masked `Pong` and its test drives a real
+  listener through one. What the measurement still buys is the `autoReplyPing = true` ban in
+  `slopdesk-invariants` (`small-rules-once`): an `NWConnection` websocket back in Swift would arrive
+  with the same inert line and the same silent drop.
 - **A stream for a non-booted device is SILENT, not refused** — `101` and then nothing, forever. No
   error text, no close frame. Any "why is it loading?" question about this panel starts here; the
   measurements and the client-side deadline are under *The stream socket*.
-- **Dial `NWEndpoint.url(...)`, not host+port.** The handshake's request line comes from the URL, and
+- **Dial the whole URL, not host+port.** The handshake's request line comes from the URL, and
   `format`/`version` ride the query string. Host+port opens a socket to the right machine and asks it
-  for the server's default dialect.
+  for the server's default dialect. `NWEndpoint.url(...)` was the Swift spelling; the door takes the
+  URL string and `slopdesk_devicelink::ws::handshake::dial` builds the request line from it, with a
+  test that pins the query string onto that line for exactly this reason.
 - **Booted devices die when Simulator.app quits** — baguette's own warning. `baguette lifetime
   --detach` is the fix, but it is a MACHINE-WIDE setting and is not flipped by SlopDesk.
 - **Never `URLComponents.path` for a UDID route** — it re-escapes (`%2F` → `%252F`). Assign
@@ -825,7 +829,7 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorScreenLayout.swift` | fitted rect ↔ device point, edge bands, pinch pair — a face over `slopdesk_devicepanel::geometry` |
 | `Simulator/SimulatorScrollGesture.swift` | handle over `slopdesk_panel_scroll_accept`: wheel scale, un-rotation, plant, re-grip |
 | `Shared/DevicePanelVideoStream.swift` | handle over `slopdesk_panel_video_*`: the avcC record in, the encoded size out, one `CMSampleBuffer` per access unit — the ONE face over `slopdesk-apple-vt`, shared with the Android panel |
-| `Simulator/SimulatorStreamConnection.swift` | the one socket (`NWConnection` + websocket) |
+| `Simulator/SimulatorStreamConnection.swift` | handle over `slopdesk_device_ws_*`: the one socket, dispatch only — handshake, framing and reassembly are `slopdesk-devicelink` |
 | `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |
 | `Simulator/SimulatorDeviceKind.swift` | face over `slopdesk_simulator_device_kind(s)`: the family, its glyph name and its heading |
 | `Simulator/SimulatorDeviceSections.swift` | face over `slopdesk_simulator_sections`: running first, families in rank order, the runtime a group lifts, the row identity. ONE fold with the Android panel's — see `Shared/DeviceSectionReading.swift` for the delivery both read |
@@ -839,7 +843,7 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorDeviceHeader.swift` | the panel's one top bar: back, name, measured facts, and the verbs |
 | `Simulator/SimulatorConsoleView.swift` | the log drawer: level menu, filter, follow latch, rows |
 | `Simulator/SimulatorLogMessage.swift` | face over `slopdesk_sim_log_message`: the batch envelope; plus the level set, which is a menu and stays |
-| `Simulator/SimulatorLogConnection.swift` | the console's socket (`NWConnection` + websocket) |
+| `Simulator/SimulatorLogConnection.swift` | handle over `slopdesk_device_ws_*`: the console's socket, dispatch only |
 | `Simulator/SimulatorPlace.swift` | face over `slopdesk_devicepanel::sim_place`: coordinate parse / readout + the preset shortlist. The POST BODY is `slopdesk_sim_location_body` — one door, so the rounding cannot disagree with the readout beside it |
 | `Simulator/SimulatorLocationPopover.swift` | the location picker: presets, field, clear |
 | `Simulator/SimulatorDeviceList.swift` | the device list — Running as cards, then families as rows, both in width-driven grids |

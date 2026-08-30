@@ -531,13 +531,18 @@ pub fn swipe_nav(tree: &Tree) -> Report {
 /// it is what separates two clients' id RANGES: a copy that counted from one would put both
 /// clients' first lane on the same id, and the host's reply maps are keyed by the bare id.
 ///
-/// The receive-loop re-arm and the send-path mapping are ONE type each, in the module both ends
-/// import. They used to be byte-identical twins in the host and client modules, each commented with
-/// the fact that the other existed — a contract kept by reading rather than by the compiler.
+/// The receive-loop re-arm is ONE type, in the module both ends import. It used to be a
+/// byte-identical twin in the host and client modules, each commented with the fact that the other
+/// existed — a contract kept by reading rather than by the compiler.
+///
+/// The FLOW itself is `rust/slopdesk-videolink` now, so the near side may hold a handle and may not
+/// hold a connection: an `NWConnection` back in that file is the whole campaign coming undone, and
+/// with it the send-path POLICY that only ever existed to read one's `.State`.
 #[must_use]
 pub fn client_mux(tree: &Tree) -> Report {
     const SWIFT_POOL: &str = "Sources/SlopDeskVideoClient/Mux/VideoConnectionRegistry.swift";
     const SWIFT_LOOP: &str = "Sources/SlopDeskVideoProtocol/UDPFlowPolicy.swift";
+    const SWIFT_FLOW: &str = "Sources/SlopDeskVideoClient/Mux/VideoMuxClientFlow.swift";
 
     let claims = [
         Claim::Doors {
@@ -562,11 +567,7 @@ pub fn client_mux(tree: &Tree) -> Report {
         },
         Claim::Doors {
             path: SWIFT_LOOP,
-            entries: &[
-                "slopdesk_mux_should_rearm",
-                "slopdesk_mux_receive_backoff",
-                "slopdesk_mux_send_path_viability",
-            ],
+            entries: &["slopdesk_mux_should_rearm", "slopdesk_mux_receive_backoff"],
             message: "Sources/SlopDeskVideoProtocol/UDPFlowPolicy.swift no longer calls {entry} — the loop \
                       policies are rust/slopdesk-video's",
         },
@@ -587,7 +588,32 @@ pub fn client_mux(tree: &Tree) -> Report {
         },
         Claim::Absent {
             path: "Sources/SlopDeskVideoClient/Mux/UDPSendPathPolicy.swift",
-            message: "the send-path policy is ONE type, in SlopDeskVideoProtocol",
+            message: "the send-path policy went with the connection state it read — a raw sendto has none",
+        },
+        Claim::Doors {
+            path: SWIFT_FLOW,
+            entries: &[
+                "slopdesk_video_flow_open",
+                "slopdesk_video_flow_register_lane",
+                "slopdesk_video_flow_unregister_lane",
+                "slopdesk_video_flow_send_media",
+                "slopdesk_video_flow_send_cursor",
+                "slopdesk_video_flow_send_path_viable",
+                "slopdesk_video_flow_free",
+            ],
+            message: "Sources/SlopDeskVideoClient/Mux/VideoMuxClientFlow.swift no longer calls {entry} — \
+                      the client's two UDP sockets are rust/slopdesk-videolink's",
+        },
+        Claim::Lacks {
+            path: SWIFT_FLOW,
+            pattern: r"import Network|NWConnection|NWEndpoint|receiveMessage",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoClient/Mux/VideoMuxClientFlow.swift holds a connection again — \
+                      it may hold a HANDLE, and the socket behind it is slopdesk-videolink's",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskVideoClient/Mux/NWVideoMuxClientFlow.swift",
+            message: "the client flow is rust/slopdesk-videolink, reached through slopdesk_video_flow_*",
         },
     ];
     check_all(tree, &claims)
@@ -915,7 +941,11 @@ use slopdesk_video::audio_source::CHANNEL_COUNT;
                 "Sources/SlopDeskVideoClient/Mux/VideoConnectionRegistry.swift",
                 POOL_DOORS,
             )
-            .write("Sources/SlopDeskVideoProtocol/UDPFlowPolicy.swift", LOOP_DOORS);
+            .write("Sources/SlopDeskVideoProtocol/UDPFlowPolicy.swift", LOOP_DOORS)
+            .write(
+                "Sources/SlopDeskVideoClient/Mux/VideoMuxClientFlow.swift",
+                FLOW_DOORS,
+            );
         assert!(super::client_mux(&fixture.tree()).is_clean());
 
         fixture.write(
@@ -925,6 +955,38 @@ use slopdesk_video::audio_source::CHANNEL_COUNT;
         let report = super::client_mux(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("ONE type")),
+            "{report:?}"
+        );
+    }
+
+    /// The near side may hold a HANDLE. A connection back in that file is the campaign undone: the
+    /// socket, the reader threads and the lane table would be Swift's again, and the send-path
+    /// policy that only ever existed to read an `NWConnection.State` would follow it back.
+    #[test]
+    fn a_connection_back_in_the_client_flow_is_caught() {
+        let fixture = Fixture::new("client-flow-connection");
+        fixture
+            .write(
+                "Sources/SlopDeskVideoClient/Mux/VideoConnectionRegistry.swift",
+                POOL_DOORS,
+            )
+            .write("Sources/SlopDeskVideoProtocol/UDPFlowPolicy.swift", LOOP_DOORS)
+            .write(
+                "Sources/SlopDeskVideoClient/Mux/VideoMuxClientFlow.swift",
+                FLOW_DOORS,
+            );
+        assert!(super::client_mux(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskVideoClient/Mux/VideoMuxClientFlow.swift",
+            &format!("{FLOW_DOORS}import Network\nlet c = NWConnection()\n"),
+        );
+        let report = super::client_mux(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("holds a connection again")),
             "{report:?}"
         );
     }
@@ -980,7 +1042,15 @@ slopdesk_video_pool_release(x)
     const LOOP_DOORS: &str = "\
 slopdesk_mux_should_rearm(x)
 slopdesk_mux_receive_backoff(x)
-slopdesk_mux_send_path_viability(x)
+";
+    const FLOW_DOORS: &str = "\
+slopdesk_video_flow_open(x)
+slopdesk_video_flow_register_lane(x)
+slopdesk_video_flow_unregister_lane(x)
+slopdesk_video_flow_send_media(x)
+slopdesk_video_flow_send_cursor(x)
+slopdesk_video_flow_send_path_viable(x)
+slopdesk_video_flow_free(x)
 ";
 
     /// The resampler's Swift face was not ported — it was DELETED, into the thread that posts. A

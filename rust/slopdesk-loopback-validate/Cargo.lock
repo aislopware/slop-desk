@@ -868,6 +868,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1107,6 +1113,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-devicelink"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "sha1_smol",
+ "slopdesk-devicepanel",
+]
+
+[[package]]
 name = "slopdesk-devicelog"
 version = "0.1.0"
 
@@ -1153,6 +1168,7 @@ dependencies = [
  "slopdesk-clilink",
  "slopdesk-clipboard",
  "slopdesk-codepanel",
+ "slopdesk-devicelink",
  "slopdesk-devicelog",
  "slopdesk-devicepanel",
  "slopdesk-dropd",
@@ -1175,6 +1191,7 @@ dependencies = [
  "slopdesk-terminal",
  "slopdesk-tree",
  "slopdesk-video",
+ "slopdesk-videolink",
  "slopdesk-wire",
  "slopdesk-workspace",
 ]
@@ -1367,6 +1384,13 @@ dependencies = [
  "slopdesk-hostlaunch",
  "slopdesk-posix",
  "slopdesk-terminal",
+ "slopdesk-video",
+]
+
+[[package]]
+name = "slopdesk-videolink"
+version = "0.1.0"
+dependencies = [
  "slopdesk-video",
 ]
 

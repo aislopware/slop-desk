@@ -12,6 +12,16 @@
 //! So the face set is built FIRST, out of the tree, and subtracted: a file is a candidate only if
 //! it is non-UI, holds no door, AND names no face. That leaves the files below.
 //!
+//! ## The row that was a deferral, and is not here
+//!
+//! `docs/67` §5 carried a seventh reason, `DevicePanelLane`, for the one `import Network` socket
+//! `docs/63` §6 had explicitly deferred — "the device-panel and proxy lanes are their own campaigns
+//! and are not scoped here". That campaign landed: the handshake, the framing and the two lanes are
+//! `rust/slopdesk-devicelink`, reached through the `slopdesk_device_ws_*` and
+//! `slopdesk_device_bridge_*` doors, and the Swift file that held the state machine is deleted. A
+//! deferral is not a floor, so it does not get a variant kept warm against the next one — every
+//! reason below is a reason a file STAYS.
+//!
 //! ## What this rule is not
 //!
 //! It is not the census. Encoding "count the undelegated lines" as a gate would be a second
@@ -55,14 +65,6 @@ enum Floor {
     /// disagree. What it decides is PRESENTATION; the value is that it is written once for
     /// both.
     ShellDeDuplication,
-    /// An `import Network` lane of a device panel. `docs/63` §6 names these and rules that "the
-    /// device-panel and proxy lanes are their own campaigns and are not scoped here"; `docs/67`
-    /// does not fold them in.
-    ///
-    /// The ONLY row that is a deferral rather than a floor, and after `docs/67`'s correction it is
-    /// one file. Everything else the class once held either gained a face or belonged to a reason
-    /// already in this list — a lane is not a bucket for "device panel", it is the socket.
-    DevicePanelLane,
 }
 
 /// Every file the census names, and why it stays. Kept sorted by path.
@@ -161,10 +163,6 @@ const FLOOR: &[(&str, Floor)] = &[
     (
         "Sources/SlopDeskDevicePanels/Shared/DeviceVeilWait.swift",
         Floor::SwiftRuntime,
-    ),
-    (
-        "Sources/SlopDeskDevicePanels/Shared/SimulatorWebSocketLane.swift",
-        Floor::DevicePanelLane,
     ),
     (
         "Sources/SlopDeskDevicePanels/Simulator/SimulatorFrameSink.swift",
@@ -427,8 +425,8 @@ pub fn the_swift_floor_is_exactly_what_is_booked(tree: &Tree) -> Report {
             !booked.contains(path.as_str()),
             format!(
                 "{path} decides something without reaching a door and is not booked in docs/67 §5 — \
-                 classify it under one of the seven reasons in `swift_floor::Floor`, or move the decision \
-                 to Rust"
+                 classify it under one of the six reasons in `swift_floor::Floor`, or move the decision to \
+                 Rust"
             ),
         );
     }

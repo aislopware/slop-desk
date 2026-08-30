@@ -715,8 +715,11 @@ corrupted layout tree.
 residue is where the tree deliberately crosses threads and would have to silence the compiler to do
 it: `KeyRepeater`'s production `DispatchRepeatScheduler` fires on a background serial queue
 (`KeyRepeater.swift:36-41`) and hops back with `Task { @MainActor [weak self] in }`
-(`TerminalInputHost.swift:~124`); the video decode and stats callbacks; `AndroidBridgeSocket` and
-`SimulatorStreamConnection` reads; screend/superd replies. `MainActor.assumeIsolated` is legal only
+(`TerminalInputHost.swift:~124`); the video decode and stats callbacks; the device panels' socket
+reads, which are one place now — `DeviceSocketSink.say` hops off the `slopdesk-devicelink` reader
+thread with `DispatchQueue.main.async`, deliberately NOT `Task { @MainActor }`, because a reader
+thread delivers back to back and two enqueued `Task`s carry no mutual ordering where a serial queue
+does; screend/superd replies. `MainActor.assumeIsolated` is legal only
 where the caller has already guaranteed isolation — `MacSplitCanvasView.swift:507` is inside a
 `DispatchQueue.main.async`, which is the guarantee; `VideoWindowPipeline.swift:426-441` is inside a
 `CADisplayLink` callback, which is another. `PaneDropReceiver.swift` has **five** such sites

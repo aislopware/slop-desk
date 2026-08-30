@@ -112,7 +112,7 @@ door is inside the header's `MACOS-ONLY` region and the Swift file is `#if os(ma
 
 ## 5. The floor, as a list
 
-The other 71 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
+The other 70 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
 that fits none of them does not belong on the list, which is the question §7's rule forces someone
 to answer the next time one appears.
 
@@ -123,14 +123,24 @@ to answer the next time one appears.
 | `SwiftRuntime` | 14 | Drives a Swift or Foundation primitive with no counterpart that can cross a C ABI: `withObservationTracking`, `Task`, `AsyncStream`, `DispatchQueue`, `NWConnection`, `JSONEncoder`, `ProcessInfo`, `async` re-entrancy, the first-responder generation, a virtual clock, `DeviceVeilWait`'s sleep-and-cancellation-check. §6 closes `docs/65` §5's triad into this class. |
 | `CallingConvention` | 8 | The NEAR side of the FFI boundary: `FFIDelivery`, `ArenaText`, `RustHandle`, `LentText`, `CodecBytes`, `DevicePanelDelivery`, plus the two seams that decide what does NOT need to cross — `DeviceSectionReading` walks a blob a door filled, and `SimulatorFrameSink` holds three payloads (`docs/55` §4b: Rust would copy an IDR in and out to be told which one it was). A door's caller cannot itself be behind a door. |
 | `DrawingArt` | 6 | `SlateVectorArt`, `AndroidMarkPath`, the remaining `*Art` files — CoreGraphics path data. `docs/63` §6's floor by name. |
-| `DevicePanelLane` | 1 | `SimulatorWebSocketLane` — an `import Network` socket. `docs/63` §6 names it and rules that "the device-panel and proxy lanes are their own campaigns and are not scoped here". |
 | `WebKit` | 1 | `CodeSidebarFontSchemeHandler`. `docs/63` §6's floor by name. |
 
-`DevicePanelLane` is the only row that is a deferral rather than a floor, and it is now ONE file.
-The class started at nine and read as a bucket for "device panel"; six of those gained a face once
-§5's `package` bug was fixed, and the other two belonged to a reason already in the list. What is
-left is what `docs/63` §6 actually deferred: the socket. **Everything else on this list is where it
-belongs, and nothing on it is waiting on a later campaign.**
+**Every row above is a reason a file STAYS, and nothing on this list is waiting on a later
+campaign.** That was not true when the list landed: there was a seventh row, `DevicePanelLane`,
+holding the one `import Network` socket `docs/63` §6 had explicitly deferred. The class started at
+nine and read as a bucket for "device panel"; six of those gained a face once §5's `package` bug was
+fixed, two belonged to a reason already in the list, and the last one — `SimulatorWebSocketLane` —
+was the socket itself.
+
+That socket is gone, and so is the row. The RFC 6455 handshake, the frame codec and its
+reassembler, the reader thread and teardown, the websocket lane and the Android bridge's
+line-then-stream call are `rust/slopdesk-devicelink`; Swift reaches them through six
+`slopdesk_device_ws_*` / `slopdesk_device_bridge_*` doors and one near side, `DeviceSocket.swift`,
+which holds doors and is therefore not floor at all. `SimulatorStreamConnection`,
+`SimulatorLogConnection` and `AndroidBridgeSocket` kept their names and lost their state machines;
+`SlopDeskNet` left the `SlopDeskDevicePanels` target with them. A deferral is not a floor, so the
+variant is deleted rather than kept warm for the next one — the proxy campaign `docs/63` §6 deferred
+alongside it will be booked when it lands, not before.
 
 ### 70, not 82 — the rule's own first bug
 
@@ -141,8 +151,8 @@ family, not an exception. A file whose every body forwards into a `package enum`
 undelegated.
 
 `SimulatorScreenLayout` is the case that exposed it: five of its six functions are one call into
-`package enum DevicePanelGeometry`, which holds eleven doors. It was booked as a `DevicePanelLane`
-floor entry while being a pure forwarder. The same slip booked `AndroidScreenLayout`,
+`package enum DevicePanelGeometry`, which holds eleven doors. It was booked under the since-deleted
+`DevicePanelLane` class while being a pure forwarder. The same slip booked `AndroidScreenLayout`,
 `AndroidFrameSink`, `AndroidStreamConnection`, `SimulatorChromeArt`, `SimulatorChromeBundle`,
 `SimulatorLogConnection`, `CodeSidebarFontScheme`, `DeviceDropInstall`, `DeviceStageVeil`,
 `PaneDropChipArt` and `PaneStatusPillArt`.
@@ -152,7 +162,7 @@ was an inflated ledger somebody had to justify — never a portable file waved t
 side a census should fail on, and it is why the fix shrank the list rather than growing it. A
 break-test now pins all three modifiers.
 
-**71, not 44.** The shell pipeline in §1 answers 44 and the rule answers 71, and the rule is right:
+**70, not 44.** The shell pipeline in §1 answers 44 and the rule answers 70, and the rule is right:
 its candidate filter runs over `Source::code()`, which strips a comment LINE wherever it opens,
 where the pipeline's `grep` was matching raw text. A file whose only mention of a face is in a doc
 comment reads as delegated to `grep` and as undelegated to the rule. That gap is exactly how
