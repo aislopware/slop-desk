@@ -885,12 +885,21 @@ pub fn every_injected_sink_has_someone_who_binds_it(tree: &Tree) -> Report {
 // Prose that points at files
 // ------------------------------------------------------------------------------------------- //
 
-/// The docs `CLAUDE.md` sends a reader to before touching anything, plus the two front doors.
+/// The docs a reader is sent to whose citations are checked by SPAN, plus the two front doors.
 ///
 /// These must not lie. Every OTHER document — `docs/19`, the `27` to `31` handoffs, `docs/40`, and
 /// all of `docs/ui-shell/` — is a record of a plan as it stood, and a path that was real then is
 /// not a defect now. 476 stale citations live in those; 5 lived here, which is the whole argument
 /// for drawing the line where `CLAUDE.md` already draws it.
+///
+/// It stops at `docs/55` on purpose, and the list is not the read-first table.
+/// `doc_citations::every_cited_path_exists` covers `docs/57`–`62` and `DESIGN.md`, and covers them
+/// with the two things this rule has no shape for: an EXTENSION requirement and `PATH_TOMBSTONES`.
+/// Those documents are port LEDGERS — running this rule's semantics over them reports 74 spans, and
+/// they are overwhelmingly `Sources/SlopDeskHost` and `rust/slopdesk-workspace::key_repeat`: a
+/// deleted target named as the thing a stage deleted, and a Rust module path that is not a file at
+/// all. Adding them here would be the gate arguing with the documents' subject, which is the same
+/// answer `DELETION_HEADINGS` gives one scale down.
 const LIVE_DOCS: [&str; 16] = [
     "CLAUDE.md",
     "README.md",
@@ -910,17 +919,8 @@ const LIVE_DOCS: [&str; 16] = [
     "docs/55-ffi-boundary.md",
 ];
 
-/// The roots a backticked span must start with to be read as a claim about this tree.
-const PATH_ROOTS: [&str; 8] = [
-    "Sources/",
-    "Tests/",
-    "Apps/",
-    "rust/",
-    "scripts/",
-    "docs/",
-    "golden/",
-    "ThirdParty/",
-];
+// The roots a backticked span must start with are read off the filesystem — see
+// `doc_citations::top_level_directories`, which this rule's twin already calls.
 
 /// A citation whose whole point is that the file is gone. `docs/51` has a "What this deleted"
 /// section; flagging it would be the gate arguing with the document's subject.
@@ -932,11 +932,23 @@ const DELETION_HEADINGS: [&str; 3] = ["What this deleted", "Deleted", "Removed"]
 /// "`…/HostOutputSnifferGoldenGuardTests.swift` asserts the frozen vector still round-trips" — for
 /// a test that had moved to Rust with the sniffer. A reader checking whether the blind spot was
 /// covered would grep, find nothing, and conclude it was not.
+///
+/// The roots come off the filesystem rather than a list. The list this replaced was the SAME one
+/// `doc_citations::every_cited_path_exists` had already retired for drifting both ways, and it had
+/// drifted the same way again: `hid-bridge` and `packaging` were never in it, so `docs/49`'s two
+/// `packaging/homebrew` citations were exempt without anyone deciding they should be. Both happen
+/// to resolve today, which is the whole shape of the defect — an exemption nobody chose reports
+/// nothing until the day it matters.
 #[must_use]
 pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
     let mut report = Report::new();
     let mut found = Vec::new();
     let mut examined = 0_usize;
+    let Some(roots) = super::doc_citations::top_level_directories(tree) else {
+        report.fail("the repository root could not be read — no path citation could be scoped");
+        return report;
+    };
+    let roots: Vec<String> = roots.into_iter().map(|root| format!("{root}/")).collect();
     for name in LIVE_DOCS {
         let Some(source) = tree.get(name) else {
             found.push(format!(
@@ -959,8 +971,7 @@ pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
                 let raw = span[1]
                     .trim_matches('(')
                     .trim_end_matches(['.', ',', ':', ';', ')']);
-                if !PATH_ROOTS.iter().any(|root| raw.starts_with(root)) || raw.contains(['*', '{', '}', '…'])
-                {
+                if !roots.iter().any(|root| raw.starts_with(root)) || raw.contains(['*', '{', '}', '…']) {
                     continue;
                 }
                 examined += 1;
@@ -988,7 +999,7 @@ pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
     }
     // The list being present is checked above, file by file. This is the other absence: sixteen
     // docs all readable and not one backticked span in them starting with a path root. Every way
-    // that can happen is a broken extraction — the span pattern, `PATH_ROOTS`, or a
+    // that can happen is a broken extraction — the span pattern, the derived root set, or a
     // `DELETION_HEADINGS` entry grown general enough to swallow every section — and each of them
     // leaves this rule green over docs it never actually read.
     report.fail_if(
@@ -2077,9 +2088,15 @@ mod tests {
     #[test]
     fn a_live_doc_citing_a_missing_path_is_red_and_a_deletion_section_is_not() {
         let fixture = with_live_docs("live-docs");
+        // A live file under `Sources` so the root EXISTS to be derived, and so the extraction floor
+        // is satisfied by something — otherwise this fixture goes red for having read nothing, and
+        // the assertion below would pass without the citation being scoped at all.
+        fixture.write("Sources/A/Here.swift", "// still here\n");
         fixture.write(
             "CLAUDE.md",
-            &format!("see {TICK}Sources/A/Gone.swift{TICK} for the seam\n"),
+            &format!(
+                "see {TICK}Sources/A/Here.swift{TICK} and {TICK}Sources/A/Gone.swift{TICK} for the seam\n"
+            ),
         );
         assert!(!live_docs_cite_files_that_exist(&fixture.tree()).is_clean());
 
@@ -2095,6 +2112,34 @@ mod tests {
             ),
         );
         assert!(live_docs_cite_files_that_exist(&deleting.tree()).is_clean());
+    }
+
+    /// A root the hand-written list never named is still a root.
+    ///
+    /// The list this replaced held eight names and the tree has ten; `hid-bridge` and `packaging`
+    /// were exempt because nobody added them, which is the drift
+    /// `doc_citations::every_cited_path_exists` had already retired the same list for. The fixture
+    /// uses a root name that could not have been in any such list, so it fails on the old shape by
+    /// construction rather than by which two names happen to be missing today.
+    #[test]
+    fn a_root_no_list_would_have_named_is_still_read() {
+        let fixture = with_live_docs("live-docs-derived-root");
+        fixture.write("packaging/homebrew/here.rb", "# still here\n");
+        fixture.write(
+            "CLAUDE.md",
+            &format!(
+                "see {TICK}packaging/homebrew/here.rb{TICK} and {TICK}packaging/homebrew/gone.rb{TICK}\n"
+            ),
+        );
+        assert!(!live_docs_cite_files_that_exist(&fixture.tree()).is_clean());
+
+        let clean = with_live_docs("live-docs-derived-root-clean");
+        clean.write("packaging/homebrew/here.rb", "# still here\n");
+        clean.write(
+            "CLAUDE.md",
+            &format!("see {TICK}packaging/homebrew/here.rb{TICK}\n"),
+        );
+        assert!(live_docs_cite_files_that_exist(&clean.tree()).is_clean());
     }
 
     /// Sixteen readable docs and no citation extracted from any of them is the scan dying, not the

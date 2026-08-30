@@ -456,7 +456,11 @@ fn cited_paths(tree: &Tree, docs: &[String], roots: &[String]) -> BTreeSet<Strin
 }
 
 /// The repository's top-level directory names, which bound what counts as a rooted path.
-fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
+///
+/// `repo_invariants::live_docs_cite_files_that_exist` asks the same question over a different
+/// corpus and reads this too — the hand-written alternation it used to carry is exactly the one
+/// this function replaced, and keeping a second copy of the answer is how the first one drifted.
+pub(super) fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
     let mut found: Vec<String> = fs::read_dir(tree.root())
         .ok()?
         .filter_map(Result::ok)

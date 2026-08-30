@@ -17652,3 +17652,33 @@ citing should spell the path. *Unifying `live_docs_cite_files_that_exist`'s corp
 `DESIGN.md` and `docs/57`–`62`, and drops `docs/45`, `docs/47`, `README.md` and `justfile`, which
 `CLAUDE.md`'s table does not name. Which docs that rule should read is a coverage decision, not a
 mechanical one, and it is its own change.
+
+## The root list one rule retired was still live in its twin (2026-08-31)
+
+`doc_citations::every_cited_path_exists` reads the repository's top-level directories off the
+filesystem, and its doc comment says why: the hand-written alternation it replaced "had drifted both
+ways at once — `manifests` and `research` no longer existed, and `hid-bridge`, which does, was never
+in it, so any path cited into that tree was exempt without anyone deciding it should be."
+
+`repo_invariants::live_docs_cite_files_that_exist` asks the same question over a different corpus,
+and it still carried that list. Eight names against the tree's ten: `hid-bridge` and `packaging` were
+missing, and `docs/49` cites `packaging/homebrew/Formula/slopdesk.rb` and its Cask twice each. Both
+resolve today, so the rule reported nothing and was right to — that is the shape of the defect, not a
+mitigation of it. A fix applied to one of two copies leaves the bug at full strength in the other,
+and the copy is what let it come back.
+
+Both rules now call one `top_level_directories`. The break test cites into `packaging/`, a root no
+version of that list ever named, so it fails on the old shape by construction rather than by which
+two names happen to be absent this month.
+
+**Rejected.** *Merging the two rules, or unioning their corpora* — measured, and they differ by
+INTENT rather than drift. Running the span rule's semantics over the derived corpus reports 74 spans,
+and they are overwhelmingly `Sources/SlopDeskHost` and `rust/slopdesk-workspace::key_repeat`: a
+deleted target named as the thing a stage deleted, and a Rust module path that is not a file. The
+derived rule handles `docs/57`–`62` with an extension requirement and `PATH_TOMBSTONES`, neither of
+which the span rule has a shape for; the span rule handles `README.md`, `justfile`, `docs/45` and
+`docs/47`, which `CLAUDE.md`'s table does not name at all. *Extending `LIVE_DOCS` to `docs/57`–`62`*
+— the same 74, and the same answer `DELETION_HEADINGS` already gives one scale down: the gate would
+be arguing with the documents' subject. *Teaching the derived rule to read DIRECTORY citations* —
+that is where ~20 of the 74 come from, all of them `docs/60` reciting which target each stage
+deleted.
