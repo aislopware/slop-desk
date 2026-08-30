@@ -59,7 +59,11 @@ slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 # to find out what a byte means. See `rust/slopdesk-altscreen/Cargo.toml`.
 slopdesk-altscreen = { path = "../slopdesk-altscreen" }
 nix = { version = "0.31", features = ["fs", "hostname", "ioctl", "poll", "process", "signal", "socket", "term", "uio"] }
-serde = { version = "1", features = ["derive"] }
+# `serde_json` and NOT `serde`: every reply this daemon writes is built with `serde_json::to_vec`
+# over a value it assembles. Nothing here derives — the hand-written `Serialize` impls that
+# `sniffer.rs` and `blocks.rs` remember went with the types when those moved to
+# `slopdesk-superwire` — so the derive crate was a dependency no source named. See
+# `rust/slopdesk-androidd/Cargo.toml`, which carried the same one for the same reason.
 serde_json = "1"
 
 # TEST-ONLY, and the boundary is the point: superd does not know the protocol and must not. The

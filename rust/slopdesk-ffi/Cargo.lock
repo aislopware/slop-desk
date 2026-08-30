@@ -483,7 +483,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags",
- "libc",
  "objc2",
  "objc2-foundation",
 ]
@@ -569,7 +568,6 @@ checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
 dependencies = [
  "bitflags",
  "dispatch2",
- "libc",
  "objc2",
  "objc2-core-foundation",
  "objc2-io-surface",
@@ -623,15 +621,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "objc2-io-kit"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
-dependencies = [
- "objc2-core-foundation",
-]
-
-[[package]]
 name = "objc2-io-surface"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -640,22 +629,6 @@ dependencies = [
  "bitflags",
  "objc2",
  "objc2-core-foundation",
-]
-
-[[package]]
-name = "objc2-screen-capture-kit"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74b7c5390f477482f001bc354d6571a70db7e4f8d5288e860c45521fbce11394"
-dependencies = [
- "block2",
- "dispatch2",
- "libc",
- "objc2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-media",
- "objc2-foundation",
 ]
 
 [[package]]
@@ -916,16 +889,7 @@ dependencies = [
 name = "slopdesk-androidd"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
-]
-
-[[package]]
-name = "slopdesk-apple-app"
-version = "0.1.0"
-dependencies = [
- "objc2-app-kit",
- "objc2-foundation",
 ]
 
 [[package]]
@@ -950,56 +914,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-apple-cgdisplay"
-version = "0.1.0"
-dependencies = [
- "objc2-core-foundation",
- "objc2-core-graphics",
- "slopdesk-video",
-]
-
-[[package]]
-name = "slopdesk-apple-cgevent"
-version = "0.1.0"
-dependencies = [
- "objc2-core-foundation",
- "objc2-core-graphics",
- "slopdesk-video",
-]
-
-[[package]]
-name = "slopdesk-apple-cgvirtualdisplay"
-version = "0.1.0"
-dependencies = [
- "block2",
- "dispatch2",
- "objc2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "slopdesk-apple-cgdisplay",
- "slopdesk-video",
-]
-
-[[package]]
-name = "slopdesk-apple-cgwindow"
-version = "0.1.0"
-dependencies = [
- "objc2-core-foundation",
- "objc2-core-graphics",
- "slopdesk-video",
-]
-
-[[package]]
-name = "slopdesk-apple-cursor"
-version = "0.1.0"
-dependencies = [
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
-]
-
-[[package]]
 name = "slopdesk-apple-pasteboard"
 version = "0.1.0"
 dependencies = [
@@ -1008,31 +922,6 @@ dependencies = [
  "objc2-foundation",
  "objc2-ui-kit",
  "objc2-uniform-type-identifiers",
-]
-
-[[package]]
-name = "slopdesk-apple-power"
-version = "0.1.0"
-dependencies = [
- "objc2-core-foundation",
- "objc2-io-kit",
-]
-
-[[package]]
-name = "slopdesk-apple-sck"
-version = "0.1.0"
-dependencies = [
- "block2",
- "dispatch2",
- "objc2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-media",
- "objc2-core-video",
- "objc2-foundation",
- "objc2-screen-capture-kit",
- "slopdesk-apple-cgdisplay",
- "slopdesk-video",
 ]
 
 [[package]]
@@ -1139,17 +1028,9 @@ dependencies = [
  "slopdesk-agent",
  "slopdesk-altscreen",
  "slopdesk-androidd",
- "slopdesk-apple-app",
  "slopdesk-apple-audio",
  "slopdesk-apple-ax",
- "slopdesk-apple-cgdisplay",
- "slopdesk-apple-cgevent",
- "slopdesk-apple-cgvirtualdisplay",
- "slopdesk-apple-cgwindow",
- "slopdesk-apple-cursor",
  "slopdesk-apple-pasteboard",
- "slopdesk-apple-power",
- "slopdesk-apple-sck",
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
  "slopdesk-clientctl",
@@ -1165,20 +1046,14 @@ dependencies = [
  "slopdesk-dropd",
  "slopdesk-fuzzy",
  "slopdesk-git",
- "slopdesk-hookevent",
  "slopdesk-hostlaunch",
  "slopdesk-ids",
  "slopdesk-inspectord",
  "slopdesk-muxnet",
- "slopdesk-muxsession",
- "slopdesk-panecensus",
  "slopdesk-posix",
  "slopdesk-rowscan",
  "slopdesk-sanitize",
- "slopdesk-screenwire",
  "slopdesk-settings",
- "slopdesk-sidecars",
- "slopdesk-superwire",
  "slopdesk-terminal",
  "slopdesk-tree",
  "slopdesk-video",
@@ -1202,13 +1077,6 @@ dependencies = [
  "git2",
  "libz-sys",
  "slopdesk-wire",
-]
-
-[[package]]
-name = "slopdesk-hookevent"
-version = "0.1.0"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]
@@ -1240,38 +1108,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-muxsession"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "slopdesk-ids",
- "slopdesk-probe",
- "slopdesk-wire",
-]
-
-[[package]]
-name = "slopdesk-panecensus"
-version = "0.1.0"
-dependencies = [
- "slopdesk-agent",
- "slopdesk-posix",
- "slopdesk-probe",
- "slopdesk-wire",
-]
-
-[[package]]
 name = "slopdesk-posix"
 version = "0.1.0"
 dependencies = [
  "libc",
  "nix",
-]
-
-[[package]]
-name = "slopdesk-probe"
-version = "0.1.0"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]
@@ -1288,36 +1129,11 @@ name = "slopdesk-sanitize"
 version = "0.1.0"
 
 [[package]]
-name = "slopdesk-screenwire"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "slopdesk-settings"
 version = "0.1.0"
 dependencies = [
  "slopdesk-terminal",
  "toml",
-]
-
-[[package]]
-name = "slopdesk-sidecars"
-version = "0.1.0"
-dependencies = [
- "nix",
- "serde_json",
-]
-
-[[package]]
-name = "slopdesk-superwire"
-version = "0.1.0"
-dependencies = [
- "base64",
- "serde",
- "serde_json",
 ]
 
 [[package]]

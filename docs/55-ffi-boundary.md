@@ -71,6 +71,22 @@ get is last week's, and nothing says so.
 > is invisible to the closure, and the stamp will call a stale library fresh — precisely the
 > failure this section exists to prevent.
 
+And the converse, which costs time rather than correctness and so goes unnoticed for longer:
+
+> **Every edge in the shim's manifest must be NAMED by a source file in the shim.** An edge no
+> source names contributes no object to `libslopdesk_ffi.a` — the linker never sees the crate — so a
+> change to it cannot make the artifact stale, and putting it in the closure only re-runs the most
+> expensive gate in the tree for a crate the artifact does not contain.
+
+Fourteen such edges were swept out on 2026-08-31, and none was ever added by mistake: every one was
+named by a door here until the commit that retired that door — `d7e2acb5` (the GUI video host),
+`62264bb6` and `10fcb58a` (the Swift host and its FFI half). Retiring a door takes its `use` lines
+with it and leaves the manifest line standing, which is why this is ratcheted (`lint-invariants` →
+`ffi-edges-are-named`) rather than left to review: nothing breaks, every test passes, and the gate
+just gets slower. The direct check is `ar t` on either slice — a linked crate is an archive member
+named `slopdesk_<name>-<hash>.…rcgu.o` — but the rule asks the textual question instead, because
+answering the direct one would mean building the shim inside `just lint`.
+
 ## 4. The calling convention
 
 One shape, every entry point, no exceptions:

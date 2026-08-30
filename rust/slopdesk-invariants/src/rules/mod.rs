@@ -29,6 +29,7 @@ pub mod device_frames;
 pub mod device_law;
 pub mod device_streams;
 pub mod doc_citations;
+pub mod ffi_edges;
 pub mod frozen_pairs;
 pub mod gate_health;
 pub mod handle_lifetime;
@@ -397,6 +398,11 @@ pub fn registry() -> Vec<Rule> {
             name: "nothing-heavy-in-the-package-walk",
             origin: "docs/46 — the inner loop",
             check: target_dirs::no_generated_tree_sits_in_the_package_walk,
+        },
+        Rule {
+            name: "ffi-edges-are-named",
+            origin: "docs/55 §3 — the ffi content stamp",
+            check: ffi_edges::every_ffi_edge_is_named_by_a_source,
         },
         Rule {
             name: "one-home-per-operation",

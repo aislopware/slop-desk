@@ -163,7 +163,6 @@ dependencies = [
  "base64",
  "libc",
  "nix",
- "serde",
  "serde_json",
  "slopdesk-altscreen",
  "slopdesk-posix",

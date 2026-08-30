@@ -48,6 +48,29 @@ name = "slopdesk_ffi"
 crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
+# ⛔️ EVERY EDGE HERE MUST BE NAMED BY A SOURCE FILE IN THIS CRATE.
+#
+# Four of the comments below say the same thing from one side — a crate the shim NAMES gets a DIRECT
+# edge rather than a re-export through an intermediary, because `slopdesk-gate ffi` builds its
+# content stamp by walking this manifest's `path = "../…"` graph transitively (`gates/ffi.rs`
+# `input_crates`, `docs/55` §3), and only a direct edge is guaranteed to be in it.
+#
+# This is the OTHER side, and it is not symmetric. An edge no source names contributes no object to
+# `libslopdesk_ffi.a` — the linker never sees the crate — so a change to it cannot make the shipped
+# artifact stale, and putting it in the stamp only re-runs the most expensive gate in the tree for a
+# crate the artifact does not contain. It is also a claim about this shim's shape that reading the
+# manifest would get wrong.
+#
+# FOURTEEN such edges were swept out at once, and none of them was ever added by mistake: every one
+# was named by a door here until the commit that retired it — `d7e2acb5` (the GUI video host),
+# `62264bb6` and `10fcb58a` (the Swift host and its FFI half). A door's deletion takes its `use`
+# lines with it and leaves the manifest line standing, so this is the drift a ratchet catches and a
+# reviewer does not. Each of the fourteen still has other consumers; nothing was orphaned.
+#
+# The check is `ar t` on either slice: a linked crate is an archive member called
+# `slopdesk_<name>-<hash>.…rcgu.o`. Ratcheted by `lint-invariants` → `ffi-edges-are-named`, which
+# asks the cheaper question — is the crate NAMED by a source file here — because an edge no source
+# names is the only way an unlinked one gets in.
 [dependencies]
 slopdesk-agent = { path = "../slopdesk-agent" }
 slopdesk-androidd = { path = "../slopdesk-androidd" }
@@ -57,8 +80,8 @@ slopdesk-androidd = { path = "../slopdesk-androidd" }
 # a vocabulary whose whole point is that the two ends cannot drift.
 slopdesk-clientctl = { path = "../slopdesk-clientctl" }
 # The decision half of one pane's CLIENT session: the dedup high-water mark, the resume verdict, the
-# ack gate and the retry ladder. `slopdesk-muxsession` below is its opposite number on hostd; this is
-# the same carve from the other end of the wire.
+# ack gate and the retry ladder. `slopdesk-muxsession` is its opposite number on hostd — that one is
+# NOT declared here, because hostd is not this shim; see the note above `[dependencies]`.
 slopdesk-clientsession = { path = "../slopdesk-clientsession" }
 # The DRIVER half of the same session: the supervisor thread, the tickers and the retry campaign.
 # `pane_driver.rs` is its door, and the direct edge is what puts it inside the ffi content stamp.
@@ -84,13 +107,8 @@ slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
 slopdesk-hostlaunch = { path = "../slopdesk-hostlaunch" }
 
 slopdesk-rowscan = { path = "../slopdesk-rowscan" }
-slopdesk-hookevent = { path = "../slopdesk-hookevent" }
 slopdesk-inspectord = { path = "../slopdesk-inspectord" }
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }
-slopdesk-screenwire = { path = "../slopdesk-screenwire" }
-slopdesk-sidecars = { path = "../slopdesk-sidecars" }
-slopdesk-superwire = { path = "../slopdesk-superwire" }
-slopdesk-muxsession = { path = "../slopdesk-muxsession" }
 slopdesk-terminal = { path = "../slopdesk-terminal" }
 slopdesk-video = { path = "../slopdesk-video" }
 # PATH 2's client sockets. Separate from `slopdesk-video`, which is that path's RULES and opens
@@ -149,46 +167,14 @@ slopdesk-audio-out = { path = "../slopdesk-audio-out" }
 # two, so this cfg cannot quietly stop matching the header.
 [target.'cfg(target_os = "macos")'.dependencies]
 slopdesk-git = { path = "../slopdesk-git" }
-# The injection doors' other half, and the FIRST `slopdesk-apple-*` crate — CoreGraphics event
-# synthesis, called through `objc2`. Gated exactly as `slopdesk-git` is, and for a stronger reason:
-# there is no CoreGraphics event injection on iOS at all, so an ungated edge would not merely cost
-# bytes, it would fail to link. `docs/57-apple-frameworks-in-rust.md` §3 names this bijection as the
-# only route a macOS-only crate may take into this graph.
-slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
-slopdesk-apple-cgdisplay = { path = "../slopdesk-apple-cgdisplay" }
-# The virtual display's other half — the four private `CGVirtualDisplay*` classes, reached through
-# `objc2`'s runtime lookup. Gated with the rest of the family, and for the plainest reason in it:
-# there is no `WindowServer` on iOS to register a display with. The GEOMETRY doors in
-# `virtual_display.rs` are NOT gated — they are arithmetic, they are golden-pinned, and both slices
-# already declare them — so only the handle half of that module sits inside the header's
-# `MACOS-ONLY` region.
-slopdesk-apple-cgvirtualdisplay = { path = "../slopdesk-apple-cgvirtualdisplay" }
-# The capture doors' other half — `ScreenCaptureKit`, called through `objc2`. Gated with the rest of
-# the family, and for the strongest reason in it: `ScreenCaptureKit` does not exist on iOS at all,
-# so an ungated edge would fail to link rather than merely cost bytes. Capture is the HOST's.
-slopdesk-apple-sck = { path = "../slopdesk-apple-sck" }
-slopdesk-apple-cgwindow = { path = "../slopdesk-apple-cgwindow" }
-slopdesk-apple-app = { path = "../slopdesk-apple-app" }
-# The cursor side-channel's shape read — `NSCursor` and the offscreen PNG render, through `objc2`.
-# Gated with the rest of the family: there is no `NSCursor` on iOS, so an ungated edge would fail to
-# link rather than merely cost bytes.
-slopdesk-apple-cursor = { path = "../slopdesk-apple-cursor" }
 # The accessibility tree — one app's windows, their frames, and the four effects on one of them.
 # Gated with the rest of the family: `AXUIElement` is a macOS-only API, and iOS has no window it
 # would name.
 slopdesk-apple-ax = { path = "../slopdesk-apple-ax" }
-# The two sleep assertions — IOKit power management, through `objc2`. Gated with the rest of the
-# family: `IOPMAssertion` is macOS-only, and a phone that stopped its own screen from sleeping
-# because a pane was busy would be a bug rather than a feature.
-slopdesk-apple-power = { path = "../slopdesk-apple-power" }
 # The foreground doors' probe half. Gated for the same reason `slopdesk-git` is, and one more: this
 # crate is otherwise linked by the iOS app, and `slopdesk-posix` exists to stay tiny for a daemon —
 # an ungated edge would drag `fork`/`openpty` into a slice that has no use for either.
 slopdesk-posix = { path = "../slopdesk-posix" }
-# The pane census — the processes and listening ports behind one PTY master. Gated with its two
-# dependencies above for the same reason: it is Darwin `proc_*` and an `lsof` spawn, and there is no
-# pane, no PTY and no `lsof` in an iOS slice.
-slopdesk-panecensus = { path = "../slopdesk-panecensus" }
 
 # Linked into an app, and one of the two consumers is the terminal's hot output path. `panic` is
 # `abort` on purpose and it is not a size choice: unwinding across a C ABI frame into Swift is

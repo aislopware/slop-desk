@@ -917,7 +917,6 @@ dependencies = [
 name = "slopdesk-androidd"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
 ]
 
@@ -1158,17 +1157,9 @@ dependencies = [
  "slopdesk-agent",
  "slopdesk-altscreen",
  "slopdesk-androidd",
- "slopdesk-apple-app",
  "slopdesk-apple-audio",
  "slopdesk-apple-ax",
- "slopdesk-apple-cgdisplay",
- "slopdesk-apple-cgevent",
- "slopdesk-apple-cgvirtualdisplay",
- "slopdesk-apple-cgwindow",
- "slopdesk-apple-cursor",
  "slopdesk-apple-pasteboard",
- "slopdesk-apple-power",
- "slopdesk-apple-sck",
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
  "slopdesk-clientctl",
@@ -1184,20 +1175,14 @@ dependencies = [
  "slopdesk-dropd",
  "slopdesk-fuzzy",
  "slopdesk-git",
- "slopdesk-hookevent",
  "slopdesk-hostlaunch",
  "slopdesk-ids",
  "slopdesk-inspectord",
  "slopdesk-muxnet",
- "slopdesk-muxsession",
- "slopdesk-panecensus",
  "slopdesk-posix",
  "slopdesk-rowscan",
  "slopdesk-sanitize",
- "slopdesk-screenwire",
  "slopdesk-settings",
- "slopdesk-sidecars",
- "slopdesk-superwire",
  "slopdesk-terminal",
  "slopdesk-tree",
  "slopdesk-video",
@@ -1221,13 +1206,6 @@ dependencies = [
  "git2",
  "libz-sys",
  "slopdesk-wire",
-]
-
-[[package]]
-name = "slopdesk-hookevent"
-version = "0.1.0"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]
@@ -1269,38 +1247,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-muxsession"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "slopdesk-ids",
- "slopdesk-probe",
- "slopdesk-wire",
-]
-
-[[package]]
-name = "slopdesk-panecensus"
-version = "0.1.0"
-dependencies = [
- "slopdesk-agent",
- "slopdesk-posix",
- "slopdesk-probe",
- "slopdesk-wire",
-]
-
-[[package]]
 name = "slopdesk-posix"
 version = "0.1.0"
 dependencies = [
  "libc",
  "nix",
-]
-
-[[package]]
-name = "slopdesk-probe"
-version = "0.1.0"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]
@@ -1317,36 +1268,11 @@ name = "slopdesk-sanitize"
 version = "0.1.0"
 
 [[package]]
-name = "slopdesk-screenwire"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "slopdesk-settings"
 version = "0.1.0"
 dependencies = [
  "slopdesk-terminal",
  "toml",
-]
-
-[[package]]
-name = "slopdesk-sidecars"
-version = "0.1.0"
-dependencies = [
- "nix",
- "serde_json",
-]
-
-[[package]]
-name = "slopdesk-superwire"
-version = "0.1.0"
-dependencies = [
- "base64",
- "serde",
- "serde_json",
 ]
 
 [[package]]

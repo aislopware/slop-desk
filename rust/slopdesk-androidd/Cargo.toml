@@ -30,11 +30,16 @@ path = "src/main.rs"
 name = "slopdesk_androidd"
 path = "src/lib.rs"
 
-# serde only, and only for the request line: the bridge's first line is JSON because the CLIENT
-# writes JSON (`AndroidBridgeClient`), which is not a shape worth hand-rolling a parser for when
-# superd already carries this exact pair. Everything after that line is raw bytes and needs nothing.
+# `serde_json` only, and only for the request line: the bridge's first line is JSON because the
+# CLIENT writes JSON (`AndroidBridgeClient`), which is not a shape worth hand-rolling a parser for
+# when superd already carries this exact pair. Everything after that line is raw bytes and needs
+# nothing.
+#
+# `serde` ITSELF is deliberately absent. This crate reads that line through `serde_json::Value` and
+# writes replies by building one — there is no `#[derive(Deserialize)]` anywhere in it, so the derive
+# crate was a dependency no source named. That is not free: it is an entry in the lock, a unit in the
+# build graph, and a claim about this crate's shape that reading its manifest would get wrong.
 [dependencies]
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [profile.release]
