@@ -22,10 +22,13 @@
 //! this gate may not be wrong: `rust/slopdesk-codepanel/resources/recommendation-tips.json` is
 //! compiled into the library, and the lock decides every external version the three slices resolve,
 //! so editing either changed the artifact while the stamp reported it fresh. "Rust sources" was
-//! never the same set as "what the artifact is built from". A second run with nothing changed exits
-//! in milliseconds, so wiring it
-//! in front of `just build`/`test`/`check` costs nothing on a warm tree. [`Mode::Force`] skips the
-//! check; [`Mode::Check`] reports staleness without building, which is what `just lint` uses.
+//! never the same set as "what the artifact is built from".
+//!
+//! Each `.rs` is hashed as CODE, not as bytes — see [`current_stamp`] for the measurement and for
+//! the two things that boundary depends on. A second run with nothing changed exits in
+//! milliseconds, so wiring it in front of `just build`/`test`/`check` costs nothing on a warm tree.
+//! [`Mode::Force`] skips the check; [`Mode::Check`] reports staleness without building, which is
+//! what `just lint` uses.
 //!
 //! SLICES: arm64 only, matching the rest of the project (`docs/49` "arm64 only — a constraint, not
 //! a default"): macos-arm64, ios-arm64, ios-arm64-simulator.
@@ -47,7 +50,7 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
-use super::stamp;
+use super::{code_text, stamp};
 
 /// The shim crate, whose path dependencies decide what the artifact is built from.
 const SHIM: &str = "slopdesk-ffi";
@@ -389,12 +392,30 @@ fn resolve_relative(source: &str, target: &str) -> Option<String> {
 
 /// The digest of every input's contents AND name.
 ///
+/// A `.rs` input is hashed as CODE — [`code_text`] strips its comments — because 39.2% of what this
+/// stamp digested was comment text (measured 2026-08-31: 4 787 251 of 12 220 384 bytes across 673
+/// files), and every byte of it cost a 110 MB, three-slice rebuild for a change that cannot move
+/// one instruction. The boundary that makes this true rather than convenient: a doc comment reaches
+/// the binary only through a proc macro that reads one, and the shim's closure has none —
+/// `serde_derive`, `thiserror-impl`, `num-derive`, `num_enum_derive` and `rustversion` are the
+/// whole proc-macro set as of 2026-08-31, and not one of them consumes `///`. A `displaydoc` or a
+/// `clap`-derive arriving in the closure would make this stamp lie.
+///
+/// The HEADER is deliberately NOT stripped, and that asymmetry with [`stamp`] is load-bearing: its
+/// `/* MACOS-ONLY BEGIN */` markers are comments to C and configuration to
+/// [`macos_only_symbols`], which reads them to decide which doors each slice must carry. Strip them
+/// and a marker-only edit leaves the stamp warm, [`run`] reports "up to date", and the bijection is
+/// never re-checked — a phone slice missing a newly-required door would ship green.
+///
 /// # Errors
 /// When [`stamp_inputs`] cannot be built.
 pub fn current_stamp(root: &Path) -> Result<String, String> {
     let mut outer = Sha256::new();
     for path in stamp_inputs(root)? {
-        let bytes = fs::read(root.join(&path)).unwrap_or_default();
+        let mut bytes = fs::read(root.join(&path)).unwrap_or_default();
+        if Path::new(&path).extension().and_then(|value| value.to_str()) == Some("rs") {
+            bytes = code_text::code_only(&bytes, code_text::Dialect::Rust);
+        }
         let mut inner = Sha256::new();
         inner.update(&bytes);
         outer.update(format!("{:x}  {path}\n", inner.finalize()));
@@ -786,8 +807,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        SHIM_LOCK, declared_symbols, exported_symbols, included_paths, input_crates, macos_only_symbols,
-        path_dependencies, stamp_inputs, verdict,
+        SHIM_LOCK, current_stamp, declared_symbols, exported_symbols, included_paths, input_crates,
+        macos_only_symbols, path_dependencies, stamp_inputs, verdict,
     };
 
     fn set(names: &[&str]) -> BTreeSet<String> {
@@ -905,6 +926,63 @@ regex = "1"
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("Cargo.toml"), "[dependencies]\nregex = \"1\"\n").unwrap();
         assert!(input_crates(&root).is_err());
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    /// The asymmetry, both halves: a Rust comment cannot move the stamp and a HEADER comment must.
+    ///
+    /// The second half is the one that would be silent if it broke. `/* MACOS-ONLY BEGIN */` is a
+    /// comment to C and configuration to [`macos_only_symbols`], so a stamp that stripped the
+    /// header would report "up to date" after a marker moved, skip the build, and never re-run
+    /// the bijection that decides which doors each slice must carry.
+    #[test]
+    fn a_rust_comment_cannot_move_the_stamp_and_a_header_comment_must() {
+        let root = std::env::temp_dir().join(format!("slopdesk-ffi-strip-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&root);
+        let shim = root.join("rust/slopdesk-ffi");
+        fs::create_dir_all(shim.join("include")).unwrap();
+        fs::create_dir_all(shim.join("src")).unwrap();
+        fs::write(
+            shim.join("Cargo.toml"),
+            "[dependencies]\nslopdesk-leaf = { path = \"../slopdesk-leaf\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            shim.join("src/lib.rs"),
+            "//! A leaf.\npub fn door() -> u8 { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            shim.join("include/slopdesk_ffi.h"),
+            "/* MACOS-ONLY BEGIN */\nsize_t slopdesk_git_status(void);\n",
+        )
+        .unwrap();
+        let leaf = root.join("rust/slopdesk-leaf");
+        fs::create_dir_all(&leaf).unwrap();
+        fs::write(leaf.join("Cargo.toml"), "[dependencies]\n").unwrap();
+
+        let before = current_stamp(&root).unwrap();
+        fs::write(
+            shim.join("src/lib.rs"),
+            "/// A door, described at length.\npub fn door() -> u8 { 1 }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            current_stamp(&root).unwrap(),
+            before,
+            "a Rust comment cannot change what the slices compile"
+        );
+
+        fs::write(
+            shim.join("include/slopdesk_ffi.h"),
+            "/* MACOS-ONLY END */\nsize_t slopdesk_git_status(void);\n",
+        )
+        .unwrap();
+        assert_ne!(
+            current_stamp(&root).unwrap(),
+            before,
+            "the header's markers are this gate's own configuration"
+        );
         let _ignored = fs::remove_dir_all(&root);
     }
 

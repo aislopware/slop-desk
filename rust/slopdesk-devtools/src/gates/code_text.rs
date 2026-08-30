@@ -22,15 +22,25 @@
 //! because Swift interpolation can nest a whole expression — including another string — inside a
 //! literal, the state has to be a STACK. `"\(names["/*"])"` is the case that decides the shape.
 //!
-//! ## Two dialects, and why the difference is not cosmetic
-//! Swift block comments NEST, so `/* /* */ */` is one comment; C's do not, so the same text ends at
-//! the first `*/` and the trailing `*/` is code. Stripping C with Swift's rule would eat that code
-//! — the forbidden direction — so the nesting rule is per-dialect rather than shared. C is here at
-//! all because the FFI header is generated FROM Rust doc comments and is in the same stamp: without
-//! this a Rust doc edit rebuilds both app triples through a regenerated `.h`.
+//! ## Three dialects, and why the differences are not cosmetic
+//! Swift and Rust block comments NEST, so `/* /* */ */` is one comment; C's do not, so the same
+//! text ends at the first `*/` and the trailing `*/` is code. Stripping C with the nesting rule
+//! would eat that code — the forbidden direction — so nesting is per-dialect rather than shared. C
+//! is here because `rust/slopdesk-ffi/include/slopdesk_ffi.h` is a large, heavily commented file in
+//! the app stamp; it is HAND-WRITTEN, not generated (cbindgen was rejected — `docs/55` §"cbindgen
+//! would have to run somewhere"), so nothing regenerates it behind a doc edit.
 //!
-//! Swift has no character literal, so `'` is ordinary punctuation there; C does, and `'"'` would
-//! otherwise open a string that never closes. Each dialect gets exactly the delimiters it has.
+//! Swift has no character literal, so `'` is ordinary punctuation there. C does, and `'"'` would
+//! otherwise open a string that never closes. Rust has BOTH a character literal and a lifetime
+//! spelled with the same byte, which is the one place this module needs a rule rather than a
+//! delimiter: `'` opens a literal only when what follows is an escape, or exactly one character and
+//! then a closing `'`. `&'a str` fails that test and is punctuation; `'"'` passes it and is data.
+//! Reading `<'a, 'b>` as a literal would swallow the code between the two lifetimes.
+//!
+//! Raw strings are spelled differently in the two dialects that have them — Swift puts the hashes
+//! BEFORE the quote (`#"…"#`), Rust puts an `r` first (`r#"…"#`) — and Rust's zero-hash `r"…"` is
+//! still raw, so "raw" cannot be inferred from the hash count the way Swift allows. `r"a\"b"` is
+//! the input that decides it: read as escaped, the literal never closes where it really does.
 
 use std::path::Path;
 
@@ -41,6 +51,8 @@ pub enum Dialect {
     Swift,
     /// Flat block comments, `'x'` character literals, no raw strings and no interpolation.
     C,
+    /// Nesting block comments, `r#"…"#` raw strings, `'x'` literals sharing a byte with lifetimes.
+    Rust,
 }
 
 impl Dialect {
@@ -54,13 +66,14 @@ impl Dialect {
         match path.extension().and_then(|value| value.to_str()) {
             Some("swift") => Some(Self::Swift),
             Some("h") => Some(Self::C),
+            Some("rs") => Some(Self::Rust),
             _ => None,
         }
     }
 
     /// Whether a `/*` inside a block comment opens a second one that must also be closed.
     const fn nests(self) -> bool {
-        matches!(self, Self::Swift)
+        matches!(self, Self::Swift | Self::Rust)
     }
 }
 
@@ -72,8 +85,13 @@ impl Dialect {
 #[derive(Debug, Clone, Copy)]
 enum Ctx {
     /// Inside a string literal. `hashes` is the raw-string delimiter count, `multi` a `"""`
-    /// literal.
-    Str { hashes: usize, multi: bool },
+    /// literal, `raw` whether a backslash is data.
+    ///
+    /// `raw` is carried rather than derived. Swift's raw form is exactly the `#`-delimited one, so
+    /// `hashes > 0` answers it there; Rust's `r"…"` is raw with ZERO hashes, and inferring from the
+    /// count would read `r"a\"b"` as holding an escaped quote, hold the literal open past its real
+    /// end, and strip whatever came after as if it were a comment.
+    Str { hashes: usize, multi: bool, raw: bool },
     /// Inside `\(…)` — code again, until this many parentheses have closed.
     Interp { depth: usize },
 }
@@ -98,10 +116,20 @@ pub fn code_only(text: &[u8], dialect: Dialect) -> Vec<u8> {
     let mut index = 0;
 
     // Emits the one byte a run of whitespace or a comment collapsed to.
+    //
+    // Not before the FIRST token: a separator there separates nothing, and emitting one made a
+    // file's own header comment change the stamp — add `//! …` above a module that had none and the
+    // code hashed differently for it. Trailing whitespace was already dropped for the same reason;
+    // this is the same normalisation at the other end, and it cannot join two tokens because there
+    // is no preceding token to join to.
     macro_rules! flush {
         ($out:expr) => {
             if space || newline {
-                $out.push(if newline { b'\n' } else { b' ' });
+                // The pending run is CONSUMED either way. Clearing it only when a byte is written
+                // would carry it to the second token and split `pub` into `p` and `ub`.
+                if !$out.is_empty() {
+                    $out.push(if newline { b'\n' } else { b' ' });
+                }
                 space = false;
                 newline = false;
             }
@@ -112,37 +140,8 @@ pub fn code_only(text: &[u8], dialect: Dialect) -> Vec<u8> {
         let byte = text[index];
 
         // ── Inside a string literal ────────────────────────────────────────────────────────────
-        if let Some(&Ctx::Str { hashes, multi }) = stack.last() {
-            // An escape is a backslash followed by exactly the literal's own hash count. In a raw
-            // string with no hashes that is the bare backslash; with hashes, `\#(`.
-            if byte == b'\\' && dialect == Dialect::Swift && has_hashes(text, index + 1, hashes) {
-                let after = index + 1 + hashes;
-                if text.get(after) == Some(&b'(') {
-                    out.extend_from_slice(&text[index..=after]);
-                    index = after + 1;
-                    stack.push(Ctx::Interp { depth: 1 });
-                    continue;
-                }
-                // Any other escape consumes its escapee, so a `\"` cannot close the literal.
-                let end = (after + 1).min(text.len());
-                out.extend_from_slice(&text[index..end]);
-                index = end;
-                continue;
-            }
-            if byte == b'\\' && dialect == Dialect::C {
-                let end = (index + 2).min(text.len());
-                out.extend_from_slice(&text[index..end]);
-                index = end;
-                continue;
-            }
-            if let Some(len) = closes_string(text, index, hashes, multi) {
-                out.extend_from_slice(&text[index..index + len]);
-                index += len;
-                stack.pop();
-                continue;
-            }
-            out.push(byte);
-            index += 1;
+        if let Some(&literal @ Ctx::Str { .. }) = stack.last() {
+            index = inside_literal(text, index, dialect, literal, &mut out, &mut stack);
             continue;
         }
 
@@ -168,12 +167,23 @@ pub fn code_only(text: &[u8], dialect: Dialect) -> Vec<u8> {
             continue;
         }
 
-        if let Some((len, hashes, multi)) = opens_string(text, index, dialect) {
+        if let Some((len, hashes, multi, raw)) = opens_string(text, index, dialect) {
             flush!(out);
             out.extend_from_slice(&text[index..index + len]);
             index += len;
-            stack.push(Ctx::Str { hashes, multi });
+            stack.push(Ctx::Str { hashes, multi, raw });
             continue;
+        }
+        if dialect == Dialect::Rust && byte == b'\'' {
+            // A lifetime is spelled with the same byte and is NOT a literal, so this asks the
+            // question rather than assuming: `None` falls through and `'` is emitted as
+            // punctuation, which is what `&'a str` needs.
+            if let Some(end) = rust_char_literal_end(text, index) {
+                flush!(out);
+                out.extend_from_slice(&text[index..end]);
+                index = end;
+                continue;
+            }
         }
         if dialect == Dialect::C && byte == b'\'' {
             // A character literal, emitted whole so that `'"'` cannot open a string. The escape is
@@ -209,16 +219,67 @@ pub fn code_only(text: &[u8], dialect: Dialect) -> Vec<u8> {
     out
 }
 
+/// One step of the lexer while it is INSIDE a literal, answering the next index.
+///
+/// Split out of [`code_only`] only for length. Everything a literal's bytes can do is here: they
+/// are emitted verbatim, an escape consumes its escapee so a `\"` cannot close the literal, a Swift
+/// `\(` re-enters code, and the matching delimiter pops back out.
+fn inside_literal(
+    text: &[u8],
+    index: usize,
+    dialect: Dialect,
+    literal: Ctx,
+    out: &mut Vec<u8>,
+    stack: &mut Vec<Ctx>,
+) -> usize {
+    let Ctx::Str { hashes, multi, raw } = literal else {
+        return index + 1;
+    };
+    let byte = text[index];
+
+    // An escape is a backslash followed by exactly the literal's own hash count. In a raw string
+    // with no hashes that is the bare backslash; with hashes, `\#(`.
+    if byte == b'\\' && dialect == Dialect::Swift && has_hashes(text, index + 1, hashes) {
+        let after = index + 1 + hashes;
+        if text.get(after) == Some(&b'(') {
+            out.extend_from_slice(&text[index..=after]);
+            stack.push(Ctx::Interp { depth: 1 });
+            return after + 1;
+        }
+        let end = (after + 1).min(text.len());
+        out.extend_from_slice(&text[index..end]);
+        return end;
+    }
+    // C has no raw form, and Rust's raw form is the one place a backslash is DATA.
+    if byte == b'\\' && (dialect == Dialect::C || (dialect == Dialect::Rust && !raw)) {
+        let end = (index + 2).min(text.len());
+        out.extend_from_slice(&text[index..end]);
+        return end;
+    }
+    if let Some(len) = closes_string(text, index, hashes, multi) {
+        out.extend_from_slice(&text[index..index + len]);
+        stack.pop();
+        return index + len;
+    }
+    out.push(byte);
+    index + 1
+}
+
 /// Whether `text[at..]` begins with exactly `count` `#` bytes.
 fn has_hashes(text: &[u8], at: usize, count: usize) -> bool {
     (0..count).all(|offset| text.get(at + offset) == Some(&b'#'))
 }
 
-/// The delimiter opening a string literal at `at`, as `(length, hashes, multiline)`.
+/// The delimiter opening a string literal at `at`, as `(length, hashes, multiline, raw)`.
 ///
 /// Swift's raw form is `#`-prefixed and its multiline form is `"""`, so the two combine as `#"""`;
-/// the closing delimiter mirrors the same counts, which is what [`closes_string`] rebuilds.
-fn opens_string(text: &[u8], at: usize, dialect: Dialect) -> Option<(usize, usize, bool)> {
+/// the closing delimiter mirrors the same counts, which is what [`closes_string`] rebuilds. Rust's
+/// raw form leads with `r`, optionally behind the `b`/`c` literal prefix, and its CLOSING delimiter
+/// is the same quote-then-hashes shape — so only the opener differs.
+fn opens_string(text: &[u8], at: usize, dialect: Dialect) -> Option<(usize, usize, bool, bool)> {
+    if dialect == Dialect::Rust {
+        return opens_rust_string(text, at);
+    }
     let mut hashes = 0;
     if dialect == Dialect::Swift {
         while text.get(at + hashes) == Some(&b'#') {
@@ -238,7 +299,75 @@ fn opens_string(text: &[u8], at: usize, dialect: Dialect) -> Option<(usize, usiz
         && text.get(at + hashes + 2) == Some(&b'"')
         && rest_of_line_is_blank(text, at + hashes + 3);
     let quotes = if multi { 3 } else { 1 };
-    Some((hashes + quotes, hashes, multi))
+    Some((hashes + quotes, hashes, multi, hashes > 0))
+}
+
+/// The Rust literal opening at `at`, as `(length, hashes, multiline, raw)`.
+///
+/// The `b`/`c` prefix and the `r` are only prefixes when they are not the tail of an IDENTIFIER —
+/// `for r in items` has an `r` that opens nothing, and by the time the lexer reaches the `c` of
+/// `abc"…"` it has already emitted `ab`, so the look-back is what tells the two apart.
+fn opens_rust_string(text: &[u8], at: usize) -> Option<(usize, usize, bool, bool)> {
+    let mut offset = usize::from(
+        matches!(text.get(at), Some(b'b' | b'c')) && matches!(text.get(at + 1), Some(b'r' | b'"')),
+    );
+    let mut raw = false;
+    if text.get(at + offset) == Some(&b'r') {
+        raw = true;
+        offset += 1;
+    }
+    if offset > 0 && at > 0 && is_identifier_byte(text[at - 1]) {
+        return None;
+    }
+    let mut hashes = 0;
+    if raw {
+        while text.get(at + offset + hashes) == Some(&b'#') {
+            hashes += 1;
+        }
+    }
+    if text.get(at + offset + hashes) != Some(&b'"') {
+        return None;
+    }
+    Some((offset + hashes + 1, hashes, false, raw))
+}
+
+/// Whether `byte` could continue a Rust identifier.
+const fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
+}
+
+/// The index just past the Rust character literal starting at `at`, or `None` for a LIFETIME.
+///
+/// The rule is Rust's own: a literal holds an escape, or exactly one character, and then closes.
+/// `'a` in `&'a str` holds one character and does NOT close, so it answers `None` — which matters,
+/// because reading it as a literal would consume every byte up to the next `'` in the file, and
+/// `<'a, 'b>` would lose the code between the two.
+fn rust_char_literal_end(text: &[u8], at: usize) -> Option<usize> {
+    if text.get(at + 1) == Some(&b'\\') {
+        // `'\u{10FFFF}'` is the longest escape Rust spells, at eleven bytes; anything past that
+        // window is not a literal, and scanning further is how a lifetime would swallow a file.
+        // The escapee is consumed WITH its backslash, so the scan starts past both: `'\''` ends at
+        // its LAST quote, never at the one it escapes.
+        let limit = (at + 14).min(text.len());
+        return (at + 3..limit)
+            .find(|&index| text[index] == b'\'')
+            .map(|index| index + 1);
+    }
+    let first = *text.get(at + 1)?;
+    let width = utf8_width(first);
+    // Past the closing quote at `at + 1 + width`, and NOT a byte further: one more would swallow
+    // whatever follows the literal, and a swallowed `"` re-lexes a string's contents as code.
+    (text.get(at + 1 + width) == Some(&b'\'')).then_some(at + width + 2)
+}
+
+/// The byte length of the UTF-8 character a lead byte begins.
+const fn utf8_width(lead: u8) -> usize {
+    match lead {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        _ => 4,
+    }
 }
 
 /// Whether everything from `at` to the next line break is horizontal whitespace.
@@ -318,6 +447,10 @@ mod tests {
 
     fn c(text: &str) -> String {
         String::from_utf8(code_only(text.as_bytes(), Dialect::C)).unwrap()
+    }
+
+    fn rust(text: &str) -> String {
+        String::from_utf8(code_only(text.as_bytes(), Dialect::Rust)).unwrap()
     }
 
     /// The property the whole module is for, stated as one assertion.
@@ -417,6 +550,107 @@ mod tests {
         assert_eq!(c(r"char e = '\''; int b;").trim(), r"char e = '\''; int b;");
     }
 
+    /// The input that decides Rust's raw-string design: zero hashes and still raw.
+    ///
+    /// `r"a\"` holds a backslash and ENDS at that quote, because a raw literal has no escapes. So
+    /// everything after it is code, and the block comment in it is a comment. Infer "raw" from the
+    /// hash count the way Swift allows and the `\"` reads as an escape: the literal stays open, the
+    /// comment is swallowed as string data, and the output would be the input verbatim — which is
+    /// what the second assertion rules out.
+    #[test]
+    fn a_zero_hash_rust_raw_string_takes_no_escape() {
+        let text = r#"let s = r"a\"; /* gone */ let t = 1"#;
+        assert_eq!(rust(text).trim(), r#"let s = r"a\"; let t = 1"#);
+        assert_ne!(rust(text).trim(), text, "the literal ended at its own quote");
+    }
+
+    #[test]
+    fn a_rust_raw_string_closes_only_on_its_own_hash_count() {
+        let text = r##"let s = r#"a "b" /*"#; let t = 1"##;
+        assert_eq!(rust(text).trim(), text);
+    }
+
+    /// The prefix is a prefix only when it is not the tail of an identifier.
+    #[test]
+    fn a_trailing_r_in_an_identifier_opens_nothing() {
+        assert_eq!(rust("for r in v { } // gone").trim(), "for r in v { }");
+        assert_eq!(
+            rust(r#"let b = br"x"; /* gone */ let c = 1"#).trim(),
+            r#"let b = br"x"; let c = 1"#
+        );
+    }
+
+    /// A lifetime and a character literal are the same byte, and only one of them is data.
+    #[test]
+    fn a_lifetime_is_punctuation_and_a_char_literal_is_data() {
+        // Read as a literal, `'a` would swallow everything up to the next `'` — here, the code
+        // between the two lifetimes.
+        assert_eq!(
+            rust("fn f<'a, 'b>(x: &'a str) -> &'b str { x } // gone").trim(),
+            "fn f<'a, 'b>(x: &'a str) -> &'b str { x }"
+        );
+        assert_eq!(
+            rust(r#"let q = '"'; /* gone */ let t = 1"#).trim(),
+            r#"let q = '"'; let t = 1"#
+        );
+        assert_eq!(
+            rust(r"let e = '\''; let t = 1").trim(),
+            r"let e = '\''; let t = 1"
+        );
+        assert_eq!(rust("let u = 'é'; // gone").trim(), "let u = 'é';");
+        assert_eq!(
+            rust("let s: &'_ str = \"x\"; // gone").trim(),
+            "let s: &'_ str = \"x\";"
+        );
+        assert_eq!(rust("let u = '_'; // gone").trim(), "let u = '_';");
+    }
+
+    /// Every other fixture puts a `;` after the literal, so an end that overshoots by one byte
+    /// swallows the semicolon and re-emits it verbatim — identical output, passing test. These two
+    /// put a byte that MEANS something there instead.
+    #[test]
+    fn a_char_literal_ends_at_its_own_quote_and_not_a_byte_later() {
+        let opens_a_string = rust(r#"let c = 'a'"/*"; let t = 1"#);
+        assert!(
+            opens_a_string.contains("let t = 1"),
+            "the quote after the literal opened a string whose `/*` ate the file: {opens_a_string}"
+        );
+        let opens_a_comment = rust("let c = 'a'// gone\nlet t = 1");
+        assert!(
+            !opens_a_comment.contains("gone") && opens_a_comment.contains("let t = 1"),
+            "the first `/` was swallowed, so the comment survived: {opens_a_comment}"
+        );
+    }
+
+    /// The property the Rust dialect was added for, and the guard that it is not a blanket erasure.
+    #[test]
+    fn a_rust_doc_edit_leaves_the_code_identical() {
+        let before = "/// The door.\n//! And the module.\npub fn open() -> u8 { 1 }\n";
+        let after = "/// The door, at length.\n//! And the module, at more.\npub fn open() -> u8 { 1 }\n";
+        assert_eq!(rust(before), rust(after));
+        assert_ne!(
+            rust("pub fn open() -> u8 { 1 }"),
+            rust("pub fn open() -> u8 { 2 }")
+        );
+    }
+
+    /// A header comment added above a module that had none is still a comment-only edit.
+    #[test]
+    fn a_leading_comment_leaves_no_separator_of_its_own() {
+        assert_eq!(rust("pub fn f() {}"), rust("//! A module.\npub fn f() {}"));
+        assert_eq!(swift("func f() {}"), swift("/// A door.\nfunc f() {}"));
+        // And the token-joining rule is untouched where it matters: BETWEEN two tokens.
+        assert_ne!(rust("a b"), rust("ab"));
+    }
+
+    #[test]
+    fn rust_block_comments_nest() {
+        assert_eq!(
+            rust("let a = 1; /* outer /* inner */ still */ let b = 2;").trim(),
+            "let a = 1; let b = 2;"
+        );
+    }
+
     /// A stripped comment must still SEPARATE the tokens it stood between.
     #[test]
     fn a_stripped_comment_leaves_a_separator() {
@@ -460,20 +694,31 @@ mod tests {
     fn no_source_in_this_tree_leaves_the_lexer_inside_a_literal() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut checked = 0_usize;
-        for dir in ["Sources", "Apps", "Tests", "ThirdParty/slopdesk-ffi"] {
+        // The marker is ASSEMBLED rather than written, because this file is now one of the sources
+        // the walk reads and its own test data holds comment markers. Spelled whole, the probe
+        // would find itself and every run of this test would fail on `code_text.rs`.
+        let mark = format!("{}{}", "LEXER-", "CANARY");
+        let stripped = format!("{mark} */");
+        for dir in ["Sources", "Apps", "Tests", "ThirdParty/slopdesk-ffi", "rust"] {
             let mut files = Vec::new();
             walk(&root.join(dir), &mut files);
             for file in files {
                 let dialect = Dialect::of(&file).unwrap();
-                let tail: &[u8] = match dialect {
-                    Dialect::Swift => b"\n/* canary */\nlet canary = 1\n",
-                    Dialect::C => b"\n/* canary */\nint canary = 1;\n",
+                let (tail, kept) = match dialect {
+                    Dialect::Swift => (format!("\n/* {mark} */\nlet probe = 4242\n"), "probe = 4242"),
+                    Dialect::C => (format!("\n/* {mark} */\nint probe = 4242;\n"), "probe = 4242"),
+                    Dialect::Rust => {
+                        (
+                            format!("\n/* {mark} */\nstatic PROBE: u16 = 4242;\n"),
+                            "PROBE: u16 = 4242",
+                        )
+                    },
                 };
                 let mut bytes = std::fs::read(&file).unwrap();
-                bytes.extend_from_slice(tail);
+                bytes.extend_from_slice(tail.as_bytes());
                 let code = String::from_utf8_lossy(&code_only(&bytes, dialect)).into_owned();
                 assert!(
-                    code.contains("canary = 1") && !code.contains("canary */"),
+                    code.contains(kept) && !code.contains(&stripped),
                     "{} left the lexer inside a literal",
                     file.display()
                 );
@@ -481,18 +726,27 @@ mod tests {
             }
         }
         assert!(
-            checked > 500,
+            checked > 2000,
             "the walk found only {checked} sources — it is not reaching the tree"
         );
     }
 
     /// Every source this module normalises under `dir`, recursively.
+    ///
+    /// `target` is pruned for the reason `super::ffi::stamp_inputs` prunes it: `rust/slopdesk-ffi`
+    /// holds the three slice directories, measured at ~592 000 names, and none of it is a source
+    /// anyone wrote. Dot-directories go with it.
     fn walk(dir: &Path, into: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "target" || name.starts_with('.') {
+                continue;
+            }
             if path.is_dir() {
                 walk(&path, into);
             } else if Dialect::of(&path).is_some() {
@@ -502,9 +756,11 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_source_extensions_are_normalised() {
+    fn only_the_three_source_extensions_are_normalised() {
         assert_eq!(Dialect::of(Path::new("A.swift")), Some(Dialect::Swift));
         assert_eq!(Dialect::of(Path::new("a.h")), Some(Dialect::C));
+        assert_eq!(Dialect::of(Path::new("lib.rs")), Some(Dialect::Rust));
+        assert_eq!(Dialect::of(Path::new("Cargo.lock")), None);
         assert_eq!(Dialect::of(Path::new("project.yml")), None);
         assert_eq!(Dialect::of(Path::new("Info.plist")), None);
         assert_eq!(Dialect::of(Path::new("shader.metal")), None);

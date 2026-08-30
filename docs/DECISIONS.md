@@ -17760,3 +17760,74 @@ a 25–60 s rebuild for a resolution the artifact never used. *Listing the JSON 
 the next spliced resource would not be in the list, which is the whole defect. *Recomputing the
 wanted stamp after the build instead of `--locked`* — it would record mid-build source edits as
 checked, trading one wrong-direction hole for another.
+
+## The FFI stamp hashed 4.8 MB of prose it could not compile (2026-08-31)
+
+The same stamp, the other direction. Once it hashed the right SET of inputs, it was still hashing
+them as bytes — and 39.2% of those bytes were comment text: 4 787 251 of 12 220 384, across 673 files
+in the shim's closure. Every one of them charged a comment-only edit a 110 MB, three-slice, ~2-minute
+rebuild for a change that cannot move one instruction. `gates/code_text.rs` had solved exactly this
+for the two app triples in `016f9960`; it understood `swift` and `h`, and simply had no Rust.
+
+`Dialect::Rust` is that gap closed. Three things differ from the dialects already there, and none is
+cosmetic:
+
+- **Block comments nest**, like Swift's and unlike C's.
+- **Raw strings lead with `r`**, not with hashes, and `r"…"` is raw with ZERO of them — so `raw` is
+  now carried on `Ctx::Str` instead of inferred from the hash count. `r"a\"` is the input that
+  decides it: read as an escape, the literal never closes where it really does, and the code after it
+  is swallowed as string data. The `b`/`c`/`r` prefix is a prefix only when the preceding byte is not
+  an identifier byte, which is what tells `br"x"` from `for r in`.
+- **`'` is both a character literal and a lifetime.** The rule is Rust's own: a literal holds an
+  escape, or exactly one character — measured at UTF-8 width, so `'é'` works — and then closes.
+  `&'a str` fails that test and is punctuation. Reading it as a literal would consume every byte up
+  to the next `'` in the file, and `<'a, 'b>` would lose the code between the two.
+
+**The header is deliberately NOT stripped, and the asymmetry with the app stamp is the point.** The
+`/* MACOS-ONLY BEGIN */` markers are comments to C and CONFIGURATION to `macos_only_symbols`, which
+reads them to decide which doors each slice must carry. Strip them from this stamp and a marker-only
+edit leaves it warm, `run` reports "up to date", the bijection is never re-checked, and a phone slice
+missing a newly-required door ships green. The app stamp may strip `.h` because nothing there reads
+those markers; this one may not.
+
+**The boundary that makes the Rust stripping TRUE rather than merely convenient.** A doc comment
+reaches a binary only through a proc macro that consumes one. The shim's closure has none: the whole
+proc-macro set as of 2026-08-31 is `serde_derive`, `thiserror-impl`, `num-derive`, `num_enum_derive`
+and `rustversion`, and not one reads `///`. A `displaydoc` or a `clap`-derive arriving in the closure
+would make this stamp lie, so the doc comment names them.
+
+**The tree canary now walks `rust/` too** — 2 294 sources, up from the Swift and C alone — pruning
+`target` for the reason `stamp_inputs` prunes it. Writing it exposed a defect in the canary itself:
+its marker was the literal string `/* canary */`, which appears in `code_text.rs`'s own test data, so
+the moment this file joined the corpus the probe found itself. The marker is assembled at runtime
+now. That is the same species one scale down — a check whose reach had grown past what its own
+fixture assumed.
+
+**Rejected.** *Stripping `.h` in this stamp too, for symmetry with the app stamp* — the markers are
+this gate's configuration; see above. *Adding `code_text.rs` to `SELF_FILES`* — an algorithm change
+moves the computed digest itself, so the gate colds in the safe direction with no list to maintain.
+*Regex comment removal instead of a fourth lexer dialect* — the module note has ruled that out since
+it was written, and a Rust lifetime is precisely the ambiguity a regex resolves the forbidden way.
+
+**One more thing the new test found, in the module that was already shipping.** Writing the
+asymmetry down as an assertion — a Rust comment may not move the stamp, a header comment must —
+failed on its FIRST half for a reason that had nothing to do with Rust: a comment at the very top of
+a file left a separator at position 0, so adding a `//!` header to a module that had none changed the
+code hash. Trailing whitespace had been dropped since the module was written; leading whitespace had
+not. A separator before the first token separates nothing and cannot join two tokens, so it is
+dropped now, and both stamps stop rebuilding for a file header. The pending run is consumed either
+way — clearing it only when a byte is written carried it to the second token and split `pub` into
+`p` and `ub`, which the test caught in the same minute.
+
+**And one the new tests did not find, because every fixture hid it.** `rust_char_literal_end`
+returned a byte too many: the closing quote of `'a'` sits at `at + 1 + width`, so just-past-end is
+`at + width + 2`, and the code said `+ 3`. All seven fixtures happened to write a `;` immediately
+after the literal, and a swallowed `;` is re-emitted verbatim — byte-identical output, seven green
+assertions, one live defect. The two inputs that discriminate are `'a'"/*"` (the swallowed byte is
+the opening quote, so the string's contents re-lex as code and its `/*` strips the rest of the file —
+the forbidden direction) and `'a'// x` (the swallowed byte is the first `/`, so the comment survives
+into the hash). Both are pinned now. The escape arm had the mirror of it: scanning for the closing
+quote from `at + 2` finds the quote `'\''` ESCAPES, ending the literal a byte early; the scan starts
+past the escapee now, the way the C arm has consumed backslash-and-escapee since it was written. The
+lesson is the round's own species one more scale down — a fixture set that agrees on an irrelevant
+detail tests less than its assertion count suggests.
