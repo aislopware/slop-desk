@@ -59,7 +59,7 @@ ThirdParty/ghostty/GhosttyKit.xcframework/
 ThirdParty/ghostty/*.xcframework*
 .work/
 
-# Release artifacts built by scripts/package-release.sh (dmg / tarball / SHA256SUMS).
+# Release artifacts built by `slopdesk-release package` (dmg / tarball / SHA256SUMS).
 # They live on the GitHub Release, never in git.
 dist/
 
@@ -84,6 +84,6 @@ rust/**/target
 rust/target/
 rust/target
 
-# Built by scripts/build-ffi.sh from rust/slopdesk-ffi — 17 MB of slices that change on every
+# Built by `just ffi` (`slopdesk-gate ffi`) from rust/slopdesk-ffi — 17 MB of slices that change on every
 # Rust edit. Same reasoning as libghostty above: a build output, not a source.
 ThirdParty/slopdesk-ffi/

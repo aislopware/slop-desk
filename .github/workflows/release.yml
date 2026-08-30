@@ -278,7 +278,7 @@ jobs:
           set -euo pipefail
 
           # The notes are the CHANGELOG.md section for this version — generated from the
-          # commit log by git-cliff when the release was cut (`scripts/cut-release.sh`),
+          # commit log by git-cliff when the release was cut (`slopdesk-release cut-release`),
           # so they cannot drift from what shipped. This is the only part of the body that
           # differs between versions; without it a reader learns the same nothing from
           # v0.2.1 and v0.2.2.

@@ -1085,6 +1085,35 @@ fn addressable_first_segments(tree: &Tree, report: &mut Report) -> BTreeSet<Stri
 #[must_use]
 pub fn source_comments_cite_files_that_exist(tree: &Tree) -> Report {
     let mut report = Report::new();
+    let known = cited_file_index(tree);
+    let addressable = addressable_first_segments(tree, &mut report);
+    let citation = text::cached(r"`{1,2}([A-Za-z0-9_./+-]+/[A-Za-z0-9_+.-]+)`{1,2}");
+
+    let mut found = Vec::new();
+    for (path, source) in report.corpus(tree, &CITED_ROOTS, &["swift", "rs"]) {
+        for (number, line) in source.text.lines().enumerate() {
+            for capture in citation.captures_iter(line) {
+                let cited = &capture[1];
+                if is_dead_citation(cited, &addressable, &known, tree) {
+                    found.push(format!("{}:{}: {cited}", path.display(), number + 1));
+                }
+            }
+        }
+    }
+    sites(
+        &mut report,
+        "a comment cites a source path that is not in the tree — a rename walked past it",
+        &found,
+    );
+    report
+}
+
+/// Every citable file in the tree, indexed by BASE NAME.
+///
+/// The index is by name rather than by path because a citation is usually a TAIL
+/// (`SlopDeskPhoneUI/Pane/SplitCanvasView.swift`) rather than a repo path, and a name lookup turns
+/// the tail test into one `ends_with` over the few files that could possibly answer it.
+fn cited_file_index(tree: &Tree) -> BTreeMap<String, Vec<String>> {
     let mut known: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for path in tree.paths() {
         let display = path.display().to_string();
@@ -1097,41 +1126,149 @@ pub fn source_comments_cite_files_that_exist(tree: &Tree) -> Report {
             known.entry(name).or_default().push(display);
         }
     }
+    known
+}
+
+/// Whether one captured token is a path claim about THIS tree that nothing answers.
+///
+/// The three filters are in cost order and each drops a different kind of non-claim: a token with
+/// no source suffix is a place or a `DocC` symbol, a token whose head is not an addressable segment
+/// is somebody else's tree (upstream libghostty, a system header, a runtime `config.toml`), and
+/// only what survives both is asked to resolve.
+fn is_dead_citation(
+    cited: &str,
+    addressable: &BTreeSet<String>,
+    known: &BTreeMap<String, Vec<String>>,
+    tree: &Tree,
+) -> bool {
+    if !CITED_SUFFIXES.iter().any(|suffix| cited.ends_with(suffix)) {
+        return false;
+    }
+    let tail = cited.trim_start_matches(['.', '/']);
+    if !tail
+        .split('/')
+        .next()
+        .is_some_and(|head| addressable.contains(head))
+    {
+        return false;
+    }
+    let name = tail.rsplit('/').next().unwrap_or_default();
+    let resolved = known
+        .get(name)
+        .is_some_and(|paths| paths.iter().any(|real| real.ends_with(tail)));
+    // The tree holds the roots a rule reads, which is not quite every file `git` sees: the vendored
+    // dependency's own scripts sit outside it and are citable. So a tail the index cannot place is
+    // asked of the filesystem before it is called a lie.
+    !resolved && !tree.root().join(tail).exists()
+}
+
+/// The repo's own configuration, which cites paths and is read by no compiler.
+///
+/// Every one of these is outside the walk in [`crate::tree::Tree`] — top-level dotfiles are not
+/// under a root, and `justfile` is held there but is scanned by neither citation rule, since it has
+/// no extension and its sibling reads two. So the whole corpus comes through the `read` escape
+/// hatch. `.github/workflows` is enumerated rather than listed — a workflow added tomorrow is
+/// covered the day it lands, which is the only way this corpus stays honest without somebody
+/// maintaining it.
+///
+/// `justfile` is the one whose RECIPES are read as well as its comments, and deliberately: a recipe
+/// that names a deleted path is a worse failure than a comment that does, and it costs nothing to
+/// judge both — the tree's own recipes cite no path that is not there.
+const CITING_CONFIGS: [&str; 8] = [
+    ".editorconfig",
+    ".gitignore",
+    ".pre-commit-config.yaml",
+    ".shellcheckrc",
+    ".swiftformat",
+    ".swiftlint.yml",
+    "cliff.toml",
+    "justfile",
+];
+/// The workflow directory, walked whole. `.disabled` files included: a dormant workflow whose own
+/// header says it is "kept CORRECT because a dormant workflow rots silently" is the one that most
+/// needs asking.
+const WORKFLOW_DIR: &str = ".github/workflows";
+
+/// The same claim as [`source_comments_cite_files_that_exist`], asked of the CONFIGURATION.
+///
+/// That rule reads `.swift` and `.rs`, which is where a citation usually rots. It is not where the
+/// shell port's citations rotted. When `scripts/` stopped holding programs, four references to the
+/// deleted scripts survived — in a `.gitignore` comment, in the live release workflow, and in the
+/// dormant one whose own header claims it is "kept CORRECT because a dormant workflow rots
+/// silently" — and every one of them was invisible: no compiler parses these files, no formatter
+/// rewrites them, and the citation rule's corpus stopped at two extensions.
+///
+/// TWO differences from its sibling, both forced by what these files are. The corpus is a list of
+/// FILES rather than roots, because configuration is where it is rather than under a tree. And a
+/// citation here need not be BACKTICKED: `.gitignore` and `.editorconfig` are plain prose with no
+/// markup convention at all, so the backticks are stripped and the bare token is what is read.
+/// That is only safe because the head test does the real filtering — a URL's `github.com/…`, a
+/// glob, a formula path under `packaging/` are all rejected before anything is asked to resolve.
+///
+/// `.md` is deliberately NOT here, and widening it there would be a mistake rather than an
+/// improvement: `docs/DECISIONS.md` is a DATED record, and a 2026-07 entry that names the script
+/// which was live in 2026-07 is telling the truth. [`live_docs_cite_files_that_exist`] already
+/// covers the docs a reader is actively sent to.
+#[must_use]
+pub fn config_files_cite_files_that_exist(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let known = cited_file_index(tree);
     let addressable = addressable_first_segments(tree, &mut report);
-    let citation = text::cached(r"`{1,2}([A-Za-z0-9_./+-]+/[A-Za-z0-9_+.-]+)`{1,2}");
+    // No backtick in the pattern: the caller blanks them first, so one spelling reads both a
+    // markdown-ish `path` and a bare one. Rust's regex has no lookbehind, so the left boundary is a
+    // consumed character class and the path is group 1.
+    let citation = text::cached(r"(?:^|[^A-Za-z0-9_./+-])([A-Za-z0-9_.+-]+(?:/[A-Za-z0-9_.+-]+)+)");
+
+    let mut corpus: Vec<(String, String)> = Vec::new();
+    for name in CITING_CONFIGS {
+        if let Ok(text) = tree.read(name) {
+            corpus.push(((*name).to_owned(), text));
+        }
+    }
+    let mut workflows = 0_usize;
+    if let Ok(entries) = std::fs::read_dir(tree.root().join(WORKFLOW_DIR)) {
+        let mut named: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_file())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        named.sort();
+        for file in named {
+            let path = format!("{WORKFLOW_DIR}/{file}");
+            if let Ok(text) = tree.read(&path) {
+                workflows += 1;
+                corpus.push((path, text));
+            }
+        }
+    }
+    // The floor [`Report::corpus`] carries, restated for a corpus assembled by hand. A rename of
+    // `.github/workflows`, or a dotfile list that has drifted off every real name, leaves this rule
+    // reading nothing and reporting green — which is the failure it exists to catch, one level up.
+    report.fail_if(
+        corpus.len() < 2 || workflows == 0,
+        format!(
+            "the config corpus came back as {} file(s) and {workflows} workflow(s) — this rule scans almost \
+             nothing and passes by asking nobody anything",
+            corpus.len()
+        ),
+    );
 
     let mut found = Vec::new();
-    for (path, source) in report.corpus(tree, &CITED_ROOTS, &["swift", "rs"]) {
-        for (number, line) in source.text.lines().enumerate() {
-            for capture in citation.captures_iter(line) {
+    for (path, text) in &corpus {
+        for (number, line) in text.lines().enumerate() {
+            let plain = line.replace('`', " ");
+            for capture in citation.captures_iter(&plain) {
                 let cited = &capture[1];
-                if !CITED_SUFFIXES.iter().any(|suffix| cited.ends_with(suffix)) {
-                    continue;
-                }
-                let tail = cited.trim_start_matches(['.', '/']);
-                if !tail
-                    .split('/')
-                    .next()
-                    .is_some_and(|head| addressable.contains(head))
-                {
-                    continue;
-                }
-                let name = tail.rsplit('/').next().unwrap_or_default();
-                let resolved = known
-                    .get(name)
-                    .is_some_and(|paths| paths.iter().any(|real| real.ends_with(tail)));
-                // The tree holds the roots a rule reads, which is not quite every file `git` sees:
-                // the vendored dependency's own scripts sit outside it and are citable. So a tail
-                // the index cannot place is asked of the filesystem before it is called a lie.
-                if !resolved && !tree.root().join(tail).exists() {
-                    found.push(format!("{}:{}: {cited}", path.display(), number + 1));
+                if is_dead_citation(cited, &addressable, &known, tree) {
+                    found.push(format!("{path}:{}: {cited}", number + 1));
                 }
             }
         }
     }
     sites(
         &mut report,
-        "a comment cites a source path that is not in the tree — a rename walked past it",
+        "a config file cites a source path that is not in the tree — no compiler reads these, so nothing \
+         else would have noticed",
         &found,
     );
     report
@@ -1363,9 +1500,10 @@ pub fn the_replay_boots_the_agent_out_first(tree: &Tree) -> Report {
 mod tests {
     use super::{
         HOOKS, a_guarded_keepalive_supervises_a_daemon_that_exits_zero,
-        an_ops_harness_that_starts_a_daemon_contains_it, every_injected_sink_has_someone_who_binds_it,
-        live_docs_cite_files_that_exist, nightly_is_never_pinned_to_a_date, no_app_layer_crypto,
-        no_fused_multiply_add, no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
+        an_ops_harness_that_starts_a_daemon_contains_it, config_files_cite_files_that_exist,
+        every_injected_sink_has_someone_who_binds_it, live_docs_cite_files_that_exist,
+        nightly_is_never_pinned_to_a_date, no_app_layer_crypto, no_fused_multiply_add,
+        no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
         pkill_never_reaches_the_developers_host, scripting_is_rust, source_comments_cite_files_that_exist,
         the_formula_installs_every_binary_the_release_ships, the_replay_boots_the_agent_out_first,
     };
@@ -2016,6 +2154,72 @@ mod tests {
             &format!("/// libghostty's own {TICK}Helpers/Cursor.swift{TICK}\n"),
         );
         assert!(source_comments_cite_files_that_exist(&fixture.tree()).is_clean());
+    }
+
+    /// The corpus its sibling cannot reach. The break seeds the EXACT shape the shell port left
+    /// behind: a `scripts/` program that stopped existing, still named in a file no compiler,
+    /// formatter or other rule reads — and named without backticks, which is the other half of why
+    /// nothing caught it.
+    #[test]
+    fn a_config_citing_a_live_path_is_green_and_a_deleted_one_is_red() {
+        let fixture = Fixture::new("config-cites");
+        addressable(&fixture);
+        fixture.write("rust/slopdesk-devtools/src/lib.rs", "// the tool\n");
+        fixture.write(
+            ".gitignore",
+            "# built by rust/slopdesk-devtools/src/lib.rs\ndist/\n",
+        );
+        fixture.write("cliff.toml", "[changelog]\n");
+        fixture.write(
+            ".github/workflows/release.yml",
+            &format!("# see {TICK}rust/slopdesk-devtools/src/lib.rs{TICK}\nname: Release\n"),
+        );
+        assert!(
+            config_files_cite_files_that_exist(&fixture.tree()).is_clean(),
+            "the fixture must start clean, or the break below proves nothing"
+        );
+
+        for (name, file, line) in [
+            (
+                "gitignore",
+                ".gitignore",
+                "# built by scripts/build-ffi.sh\ndist/\n",
+            ),
+            (
+                "workflow",
+                ".github/workflows/release.yml",
+                "# cut by scripts/cut-release.sh\nname: Release\n",
+            ),
+        ] {
+            let stale = Fixture::new(&format!("config-cites-{name}"));
+            addressable(&stale);
+            stale.write("cliff.toml", "[changelog]\n");
+            stale.write(".gitignore", "dist/\n");
+            stale.write(".github/workflows/release.yml", "name: Release\n");
+            stale.write(file, line);
+            assert!(
+                !config_files_cite_files_that_exist(&stale.tree()).is_clean(),
+                "{name} at {file} did not fire"
+            );
+        }
+    }
+
+    /// The corpus is assembled by hand, so it carries its own floor: a workflow directory that was
+    /// renamed leaves this rule reading dotfiles alone and reporting green.
+    #[test]
+    fn a_config_corpus_with_no_workflow_is_red() {
+        let fixture = Fixture::new("config-cites-floor");
+        addressable(&fixture);
+        fixture.write("cliff.toml", "[changelog]\n");
+        fixture.write(".gitignore", "dist/\n");
+        let report = config_files_cite_files_that_exist(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("asking nobody anything")),
+            "{report:?}"
+        );
     }
 
     /// A module citation is recognised HERE and nowhere else, so a root that went dark is red even

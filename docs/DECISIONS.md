@@ -17525,3 +17525,49 @@ a rule against commits it was never applied to. They are also all pushed. *Makin
 gate demand that no UNDECLARED hook be installed* — a hand-written `post-checkout` in someone's own
 clone is a choice, not drift, and a gate about the contents of `.git/` should assert only what this
 repo declared.
+
+## The citation gate stopped at two extensions, and the shell port's ghosts lived in the gap (2026-08-31)
+
+**`comments-cite-real-files` reads `.swift` and `.rs`. Four dead citations were in neither.** When
+`scripts/` stopped holding programs — every gate, harness and release step is Rust now — four
+references to the deleted scripts survived the sweep, and each sat in a file with no reader at all:
+
+| Where | Cited | Should be |
+| --- | --- | --- |
+| `.gitignore` | `scripts/package-release.sh` | `slopdesk-release package` |
+| `.gitignore` | `scripts/build-ffi.sh` | `just ffi` |
+| `.github/workflows/release.yml` | `scripts/cut-release.sh` | `slopdesk-release cut-release` |
+| `.github/workflows/ci.yml.disabled` | `scripts/build-ffi.sh` | `just ffi` |
+
+No compiler parses these files, no formatter rewrites them, and the citation rule's corpus was two
+extensions under eight source roots. The last one is the one worth naming: the dormant CI workflow's
+own header says it is "kept, and kept CORRECT, because a dormant workflow rots silently" — and it
+had rotted, in the sentence three lines below that claim.
+
+**`configs-cite-real-files` is the same claim asked of the configuration.** It shares
+`is_dead_citation` and the addressable-segment derivation with its sibling and differs in exactly
+two ways, both forced by what these files are. The corpus is a LIST OF FILES rather than roots,
+because configuration is where it is rather than under a tree: seven top-level dotfiles and the
+`justfile` through `Tree::read`, plus every file in `.github/workflows` enumerated rather than
+listed, so a workflow added tomorrow is covered the day it lands. The `justfile`'s RECIPES are
+judged as well as its comments — a recipe naming a deleted path is the worse failure of the two, and
+it costs nothing. And a citation here need not be BACKTICKED — `.gitignore`
+and `.editorconfig` are prose with no markup convention, so the backticks are blanked and the bare
+token is read. That is only safe because the head test does the filtering: a URL's `github.com/…`, a
+glob, a `packaging/` formula path are all rejected before anything is asked to resolve. Measured on
+the tree: over those ten files the bare form finds the four above and nothing else.
+
+The corpus is assembled by hand, so it carries by hand the floor `Report::corpus` gives the others —
+fewer than two config files, or zero workflows, is a walk that died rather than a tree anyone
+shipped, and it reds rather than passing quiet.
+
+**Rejected.** *Widening it to `.md`* — `docs/DECISIONS.md` is a DATED record, and an entry from
+2026-07 naming the script that was live in 2026-07 is telling the truth; `live-docs-cite-real-files`
+already covers the docs `CLAUDE.md` actively sends a reader to. *Deleting the shell-lint surface*
+(`lint-shell`, `fmt-shell`, the two `prek` hooks) now that no `.sh` outside `ThirdParty/` remains —
+the justfile already argues the other way where `SHELL_FILES` is defined, and it is right: the globs
+stay so a script that comes back is linted rather than silently unlinted, and `scripting-is-rust`
+fails the moment one does. *Pointing that surface at `ThirdParty/ghostty/build-libghostty.sh`*, the
+one `.sh` left — it is the vendored fork's build recipe, carried close to upstream's shape,
+`shfmt -d` wants 744 lines of it, and every other tool in this tree excludes `ThirdParty/` on
+purpose.

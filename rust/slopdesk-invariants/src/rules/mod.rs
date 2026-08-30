@@ -1705,6 +1705,11 @@ pub fn registry() -> Vec<Rule> {
             check: repo_invariants::source_comments_cite_files_that_exist,
         },
         Rule {
+            name: "configs-cite-real-files",
+            origin: "CLAUDE.md §Read before you touch",
+            check: repo_invariants::config_files_cite_files_that_exist,
+        },
+        Rule {
             name: "injected-sinks-are-bound",
             origin: "docs/55 §6",
             check: repo_invariants::every_injected_sink_has_someone_who_binds_it,

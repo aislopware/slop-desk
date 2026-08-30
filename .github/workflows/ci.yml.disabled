@@ -6,7 +6,7 @@
 # target", and both halves are gone — the C target was deleted when the SIMD kernels moved to
 # `rust/slopdesk-gfsimd`, and `Package.swift` now declares a `binaryTarget` at
 # `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework`, which is gitignored. A fresh checkout therefore
-# cannot RESOLVE the package, let alone build it, until `scripts/build-ffi.sh` has run — the same
+# cannot RESOLVE the package, let alone build it, until `just ffi` has run — the same
 # defect `release.yml` carried until it grew a build step (docs/49, docs/55).
 #
 # It also ran no Rust at all: seventeen workspaces of clippy and cargo test, and the Miri audit that
