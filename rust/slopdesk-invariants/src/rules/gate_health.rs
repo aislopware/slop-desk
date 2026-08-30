@@ -54,13 +54,28 @@ const GUIDANCE: &str = "Each is one of three things, and the fix differs: a SECO
 /// person to touch `slopdesk_block_status` has to work out whether it is the way to ask, a second
 /// way to ask, or a way nobody asks. The audit that found the first four had to answer that
 /// question by hand four times.
+///
+/// ## ⚠️ BOTH SIDES READ `statements()`, AND THE DEFECT WAS TWO-DIRECTIONAL
+///
+/// This rule is a DIFFERENCE, so a comment could lie in either direction and each lie was quiet in
+/// its own way. A commented door name in the HEADER minted a phantom door that nothing could call;
+/// a commented name in SWIFT marked a real door called. The second one shipped: `slopdesk_sanitize`
+/// lost its only Swift caller in `a0d0aa54` and this rule stayed green, because two doc comments —
+/// `NerdSymbolFont.swift` and `AnsiStyledText.swift` — still spelled the name while describing the
+/// transform. Blanking comments on both sides is what turned an orphan into a red, and the door was
+/// then deleted rather than allowlisted: it had no second way to ask, it was not a test hook, and
+/// nobody would have written the DELIBERATE reason for it.
+///
+/// `statements()` leaves string literals intact, so a name inside a Swift string still counts as a
+/// call. That is deliberate — this crate's own fixtures are literals — and it is the residual
+/// `Claim::Doors` documents at length.
 #[must_use]
 pub fn every_ffi_door_is_opened_or_declared_deliberate(tree: &Tree) -> Report {
     let mut report = Report::new();
     let Some(header) = report.source(tree, HEADER, "there would be no doors to read") else {
         return report;
     };
-    let doors = text::capture_set(&header.text, r"\b(slopdesk_[a-z0-9_]+)\s*\(");
+    let doors = text::capture_set(header.statements(), r"\b(slopdesk_[a-z0-9_]+)\s*\(");
     if doors.is_empty() {
         report.fail(format!(
             "{HEADER}: no doors parsed out of the header — this rule is blind"
@@ -72,7 +87,10 @@ pub fn every_ffi_door_is_opened_or_declared_deliberate(tree: &Tree) -> Report {
     for &root in SWIFT_ROOTS {
         for (path, source) in tree.under(root) {
             if path.extension().is_some_and(|extension| extension == "swift") {
-                called.extend(text::capture_set(&source.text, r"\b(slopdesk_[a-z0-9_]+)\b"));
+                called.extend(text::capture_set(
+                    source.statements(),
+                    r"\b(slopdesk_[a-z0-9_]+)\b",
+                ));
             }
         }
     }
@@ -296,6 +314,44 @@ mod tests {
         );
         opened.write("Sources/A/Call.swift", "let w = slopdesk_ws_min_weight()\n");
         assert!(every_ffi_door_is_opened_or_declared_deliberate(&opened.tree()).is_clean());
+    }
+
+    /// A COMMENT on either side is not a door and not a call.
+    ///
+    /// Both directions, because this rule is a difference and a comment could lie either way. In
+    /// Swift, the tombstone that explains a retired door kept it looking called — which is how
+    /// `slopdesk_sanitize` outlived its caller. In the header, a commented declaration would mint a
+    /// door nothing could possibly call and red the rule for a door that is not there.
+    #[test]
+    fn a_commented_name_is_neither_a_door_nor_a_call() {
+        // Both fixtures declare the DELIBERATE face for the reason the first test names: an
+        // allowlist entry whose door is not in the header is itself a finding, and it would red
+        // these for a reason that has nothing to do with comments.
+        let swift_side = Fixture::new("ffi-doors-comment-call");
+        swift_side.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi.h",
+            "void slopdesk_ws_min_weight(void);\nvoid slopdesk_zoom_reset_policy_free(void);\n",
+        );
+        swift_side.write(
+            "Sources/A/Call.swift",
+            "/// The weight, which used to come from slopdesk_ws_min_weight() before the port.\nlet w = 1\n",
+        );
+        assert!(
+            !every_ffi_door_is_opened_or_declared_deliberate(&swift_side.tree()).is_clean(),
+            "a door named only in Swift PROSE is a door nothing opens"
+        );
+
+        let header_side = Fixture::new("ffi-doors-comment-door");
+        header_side.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi.h",
+            "void slopdesk_ws_min_weight(void);\nvoid slopdesk_zoom_reset_policy_free(void);\n// Retired: \
+             void slopdesk_ghost_door(void);\n",
+        );
+        header_side.write("Sources/A/Call.swift", "let w = slopdesk_ws_min_weight()\n");
+        assert!(
+            every_ffi_door_is_opened_or_declared_deliberate(&header_side.tree()).is_clean(),
+            "a declaration commented OUT is not a door, and must not be reported as unopened"
+        );
     }
 
     /// An allowlisted door that came back to life is the same bug wearing the other hat.

@@ -63,31 +63,17 @@ size_t slopdesk_altscreen_reopen(const uint8_t *dropped, size_t dropped_len,
                                  const uint8_t *kept_head, size_t kept_head_len,
                                  uint8_t *out, size_t cap);
 
-// -- The replay buffer: the handle convention ------------------------------------------------- //
-
-// Opaque. Its layout is Rust's and must never be assumed here.
-// The scrollback REPLAY transform — retained PTY bytes in, the same history without the churn out.
-//
-// `rust/slopdesk-sanitize`, linked rather than dialled: it was a screend verb, so reaching it cost
-// an AF_UNIX round trip carrying the whole history each way, and an absent daemon meant the history
-// replayed RAW — which can transiently arm a client's input reporting. The replay handle runs the
-// same function internally; this is for the detached-window backlog, compacted outside the ring.
-//
-// `distill` selects the one pass a caller may decline. `reassert_input_modes` re-appends the
-// stream's net final input-mode state: the live ring wants it, the disk journal must not.
-size_t slopdesk_sanitize(const uint8_t *bytes, size_t len, bool distill, bool reassert_input_modes,
-                         uint8_t *out, size_t cap);
 // The Unicode private-use ranges, as [u32 low][u32 high] pairs, big-endian, inclusive.
 //
-// A TABLE where every other door here answers a QUESTION, and deliberately: the strip above DROPS
-// these codepoints while the chrome SPLICES the bundled Nerd face over exactly them, so it is one
+// A TABLE where every other door here answers a QUESTION, and deliberately: the plaintext strip
+// DROPS these codepoints while the chrome SPLICES the bundled Nerd face over exactly them, so it is one
 // set used two ways. It was typed on both sides until 2026-08-26 and the copies disagreed about
 // plane 16, which is where the material-design icons live. Classification is per-scalar on a title
 // redrawn every keystroke, so the caller reads this ONCE into a static and asks it locally.
 size_t slopdesk_private_use_ranges(uint8_t *out, size_t cap);
 // The sync-input fan-out's mirror: client→host bytes with everything a KEYBOARD did not
-// produce removed — replies, mouse reports, focus events. The other direction from
-// `slopdesk_sanitize`, which drops the QUERIES rather than the answers.
+// produce removed — replies, mouse reports, focus events. The other direction from the replay
+// transform, which drops the QUERIES rather than the answers and runs inside hostd, not here.
 size_t slopdesk_sync_input_keyboard_only(const uint8_t *bytes, size_t len, uint8_t *out,
                                         size_t cap);
 

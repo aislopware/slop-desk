@@ -11073,7 +11073,9 @@ gate is what turns "two copies" into "one copy checked twice".
 
 `sanitize` — the seven-pass scrollback replay transform — used to be verb 7 on the screend socket.
 It is `rust/slopdesk-sanitize` now: a dependency-free `forbid(unsafe_code)` crate that screend and
-the app both link, reached from Swift as `slopdesk_sanitize` through the `make ffi` artifact.
+the app both link. It was reached from Swift as the `slopdesk_sanitize` door through the FFI
+artifact until `a0d0aa54` retired the replay doors; hostd calls the crate directly now, and the door
+was deleted with the last caller.
 
 The rule that decided it is `CLAUDE.md`'s own — a socket is for a component that must outlive its
 caller, be `execve`d, or be dialled by two processes — and `sanitize` is a pure function of its

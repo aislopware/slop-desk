@@ -1,61 +1,33 @@
-//! The scrollback REPLAY transform, in C.
+//! What the SANITIZE passes still owe C, once the replay transform itself stopped crossing.
 //!
-//! One entry point over [`slopdesk_sanitize::sanitize`], under the crate's pure convention: bytes
-//! in, bytes out, nothing remembered. The replay handle calls the same function internally on a
-//! cold reattach; this exists for the caller's OTHER user of it — the detached-window backlog,
-//! which is compacted outside the ring.
+//! The doors over `slopdesk-sanitize`, under the crate's pure convention: bytes in, bytes out,
+//! nothing remembered. The whole-history transform is NOT among them any more. It crossed as
+//! `slopdesk_sanitize` for the detached-window backlog, which was compacted outside the ring by a
+//! Swift `ReplayBuffer` wrapper; `a0d0aa54` retired the replay doors and that wrapper together, and
+//! the backlog is hostd's now — `slopdesk-hostd` calls `slopdesk_sanitize::sanitize` as a CRATE, in
+//! `spawn.rs` and `transcripts.rs`, with no boundary in the middle. The door outlived its only
+//! caller by one commit and was found by the door gate the day after.
 //!
-//! It replaces a socket. The transform was a screend verb, so reaching it meant an `AF_UNIX` round
-//! trip carrying the whole retained history in each direction, and an absent daemon meant the
-//! history replayed RAW — which is not merely uglier: raw history can transiently arm a client's
-//! input reporting until the shell's next prompt. A pure function has no lifetime that wants a
-//! daemon, so it is linked, and the degraded path stopped existing.
+//! What crossed here replaced a socket, and that argument still holds for the three that remain:
+//! reaching a screend verb meant an `AF_UNIX` round trip carrying the payload each way, and an
+//! absent daemon meant the bytes went through RAW — which for the replay direction was not merely
+//! uglier, since raw history can transiently arm a client's input reporting until the next prompt.
+//! A pure function has no lifetime that wants a daemon, so it is linked, and the degraded path
+//! stopped existing. Where the CALLER is Rust too, the link is a `use`, not a door.
 
 use core::ffi::c_uchar;
 
-use slopdesk_sanitize::{Options, plaintext, sanitize, styled, syncinput};
+use slopdesk_sanitize::{plaintext, styled, syncinput};
 
 use crate::{borrow, deliver};
 
-/// The replay transform's answer, under §4's convention.
-///
-/// `distill` selects the line-editor collapse — the one pass a caller may decline. The other six
-/// always run. `reassert_input_modes` re-appends the stream's NET final input-mode state after the
-/// passes: the live ring wants it, so a session still inside a TUI keeps that TUI's modes across a
-/// cold reattach, and the disk journal must not, because after a daemon restart there is no TUI to
-/// serve.
-///
-/// # Safety
-/// `bytes` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_sanitize(
-    bytes: *const c_uchar,
-    len: usize,
-    distill: bool,
-    reassert_input_modes: bool,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
-    let input = unsafe { borrow(bytes, len) };
-    let answer = sanitize(input, Options {
-        distill,
-        reassert_input_modes,
-    });
-    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
-    unsafe { deliver(&answer, out, cap) }
-}
-
 /// The private-use ranges, as `[u32 low][u32 high]` pairs, big-endian.
 ///
-/// The strip above DROPS these codepoints; the chrome SPLICES the bundled Nerd face over exactly
-/// them (`NerdSymbolFont`). Opposite operations over one set, which is why the set crosses instead
-/// of being typed on both sides — it was typed on both sides until 2026-08-26, and the two copies
-/// disagreed about plane 16 and about where plane 15 ends. `plaintext`'s module doc has the detail.
+/// The plaintext strip DROPS these codepoints; the chrome SPLICES the bundled Nerd face over
+/// exactly them (`NerdSymbolFont`). Opposite operations over one set, which is why the set crosses
+/// instead of being typed on both sides — it was typed on both sides until 2026-08-26, and the two
+/// copies disagreed about plane 16 and about where plane 15 ends. `plaintext`'s module doc has the
+/// detail.
 ///
 /// A TABLE crosses here where every other door in this file crosses an ANSWER, and that is the
 /// point: the classification is per-scalar over a title redrawn on every keystroke, so a door per
@@ -81,10 +53,11 @@ pub unsafe extern "C" fn slopdesk_private_use_ranges(out: *mut c_uchar, cap: usi
 
 /// An input chunk with everything a KEYBOARD did not produce removed, for the sync-input fan-out.
 ///
-/// The other direction from [`slopdesk_sanitize`]. That one reads host→client bytes and drops the
-/// queries a replay would make a fresh terminal answer again; this reads client→host bytes and
-/// drops the ANSWERS — terminal replies, mouse reports, focus events — because the tap rides the
-/// pane's single OUT funnel and a sibling shell that never asked would run them as a command.
+/// The other direction from the replay transform. That one reads host→client bytes and drops the
+/// queries a replay would make a fresh terminal answer again — and it runs entirely inside hostd
+/// now, as `slopdesk_sanitize::sanitize`; this reads client→host bytes and drops the ANSWERS —
+/// terminal replies, mouse reports, focus events — because the tap rides the pane's single OUT
+/// funnel and a sibling shell that never asked would run them as a command.
 ///
 /// # Safety
 /// `bytes` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes.
@@ -190,7 +163,7 @@ const fn colour(value: Option<styled::Color>) -> [u8; 4] {
               before it is read"
 )]
 mod tests {
-    use super::{slopdesk_sanitize, slopdesk_styled_lines, slopdesk_sync_input_keyboard_only};
+    use super::{slopdesk_styled_lines, slopdesk_sync_input_keyboard_only};
 
     /// The sync-input door answers under the same convention, and strips the input direction's
     /// reports rather than the output direction's queries.
@@ -214,44 +187,25 @@ mod tests {
         );
     }
 
-    /// The passes run, and the answer fits the convention: a closed alt-screen segment is dropped
-    /// and the history either side of it survives.
-    #[test]
-    fn a_closed_segment_is_stripped_and_its_neighbours_are_not() {
-        let mut raw = b"before\n".to_vec();
-        raw.extend_from_slice(b"\x1b[?1049h");
-        raw.extend_from_slice(b"a whole TUI redrawing itself\n");
-        raw.extend_from_slice(b"\x1b[?1049l");
-        raw.extend_from_slice(b"after\n");
-        let mut out = [0_u8; 256];
-        // SAFETY: both buffers are live locals.
-        let written =
-            unsafe { slopdesk_sanitize(raw.as_ptr(), raw.len(), true, false, out.as_mut_ptr(), out.len()) };
-        let text = String::from_utf8_lossy(out.get(..written).unwrap_or(&[])).into_owned();
-        assert!(text.contains("before"), "{text:?}");
-        assert!(text.contains("after"), "{text:?}");
-        assert!(!text.contains("redrawing"), "{text:?}");
-    }
+    // The two tests that called the retired `slopdesk_sanitize` went with it, and neither took an
+    // assertion out of the tree: the closed-alt-screen strip is asserted natively over the function
+    // itself in `slopdesk-sanitize/src/sanitize.rs` and eight ways in that crate's `altscreen.rs`,
+    // and §4's undersized-buffer retry is the shape every counted door here shares — `audio_codec`,
+    // `simulator_decode` and `blocks` each pin it. A door's test may not be the last home of a
+    // behaviour, or deleting the door deletes the coverage.
 
     /// A buffer too small writes NOTHING and reports what it needed, so the caller's retry is a
     /// clean second call rather than a truncated screen.
     #[test]
     fn an_undersized_buffer_writes_nothing_and_asks_again() {
-        let raw = b"plain history with no churn in it at all\n";
-        let mut tiny = [0xAA_u8; 4];
+        let input = b"cc\x1b[<65;31;18M\r";
+        let mut tiny = [0xAA_u8; 2];
         // SAFETY: both buffers are live locals.
         let needed = unsafe {
-            slopdesk_sanitize(
-                raw.as_ptr(),
-                raw.len(),
-                true,
-                false,
-                tiny.as_mut_ptr(),
-                tiny.len(),
-            )
+            slopdesk_sync_input_keyboard_only(input.as_ptr(), input.len(), tiny.as_mut_ptr(), tiny.len())
         };
         assert!(needed > tiny.len(), "the answer outgrew the buffer");
-        assert_eq!(tiny, [0xAA; 4], "and nothing was written into it");
+        assert_eq!(tiny, [0xAA; 2], "and nothing was written into it");
     }
 
     /// One decoded run: the attribute flags, the foreground, the background, the text.

@@ -146,13 +146,23 @@ pub fn one_navigator_per_platform(tree: &Tree) -> Report {
         // `NavigatorRowCell`, `NavigatorSectionHeaderCell` and `SidebarGitLineView` in `Columns/` —
         // and two of the three names went with the cells. The claim stayed green only because the
         // agent that split it listed all five ClientCore owners in the controller's HEADER PROSE:
-        // `Mentions` reads `source.text` raw, so a comment satisfies it. That is a gate held green by
-        // a comment, which is the failure [`Claim::MentionsUnder`]'s own doc says it exists to
-        // prevent — "would make an ordinary split of a big view look like a regression". Reading the
-        // directory asks the question the law actually cares about: does the phone's navigator read
-        // these, wherever its author put them.
+        // every positive anchor read `source.text` raw back then, so a comment satisfied it. That is
+        // a gate held green by a comment, which is the failure [`Claim::MentionsUnder`]'s own doc
+        // says it exists to prevent — "would make an ordinary split of a big view look like a
+        // regression". Reading the directory asks the question the law actually cares about: does
+        // the phone's navigator read these, wherever its author put them.
+        //
+        // ⚠️ AND `Columns` WAS NOT WHEREVER — it was one of the two directories stage D split the
+        // navigator ACROSS, so the root contradicted the sentence directly above it. `SidebarRowMenu`
+        // is read from `Shell/NavigatorColumnViewController.swift`, in code, and the narrow root saw
+        // none of it; only a doc comment down in `Columns/` kept the name answered. Both defects had
+        // to go at once, and they are one defect: 2026-08-30 made the anchors read `statements()`
+        // (see `Claim::Doors`), which turned the comment-shaped pass into the red it should have
+        // been, and the red is what showed the root was the wrong half of the navigator. The root is
+        // the TARGET now, because the claim is about the navigator, and the navigator is both
+        // directories.
         Claim::MentionsUnder {
-            root: "Sources/SlopDeskPhoneUI/Columns",
+            root: "Sources/SlopDeskPhoneUI",
             names: &["SidebarRowPresentation", "SidebarRowMenu", "SidebarGitLine"],
             message: "the phone's navigator stopped reading {entry} — two rows, and the drift would be \
                       silent",

@@ -330,6 +330,25 @@ pub enum Claim {
     /// The commonest shape in the whole gate: a Swift file that used to hold an implementation is
     /// now a face over a Rust one, and the way to say so is that it still calls each door. A door
     /// it stopped calling is an implementation that came back.
+    ///
+    /// ## ⚠️ A POSITIVE ANCHOR READS `statements()`, AND HAD TO LEARN TO
+    ///
+    /// This arm and the three below it — [`Claim::Mentions`], [`Claim::MentionsUnder`],
+    /// [`Claim::Names`] — are the gate's POSITIVE anchors: they fail when a name is ABSENT. Every
+    /// one of them read `source.text` until 2026-08-30, which made a COMMENT satisfy them, and the
+    /// comment that satisfies one is almost always the TOMBSTONE the deletion left behind: the
+    /// sentence saying "there is no `slopdesk_inspector_decoder_buffered`" kept the anchor
+    /// demanding that door green for as long as the door was gone. A negative claim
+    /// ([`Claim::NoneUnder`], [`Claim::Absent`]) fails LOUD on a comment, so the defect is
+    /// one-directional and lives here. The flip found three live anchors that no longer named
+    /// any code, and one uncalled FFI door held open by two doc comments in Swift.
+    ///
+    /// The residual, so the next reader does not overstate what this buys: `statements()` blanks
+    /// every comment, TRAILING ones included — which `code()`, that only drops whole comment lines,
+    /// would not have — but it leaves STRING LITERALS intact, deliberately, because this crate's
+    /// own break-tests write Swift and Rust fixtures as literals. So a name that appears only
+    /// inside a string still satisfies a positive anchor. That is the one hole left, and it is
+    /// the one a fixture needs.
     Doors {
         /// Repo-relative path.
         path: &'static str,
@@ -1054,7 +1073,7 @@ impl Claim {
                 if let Some(source) = report.source(tree, path, message) {
                     for entry in *entries {
                         report.fail_if(
-                            !source.text.contains(&format!("{entry}(")),
+                            !source.statements().contains(&format!("{entry}(")),
                             fill(message, "entry", entry),
                         );
                     }
@@ -1063,7 +1082,7 @@ impl Claim {
             Self::Mentions { path, names, message } => {
                 if let Some(source) = report.source(tree, path, message) {
                     for name in *names {
-                        report.fail_if(!source.text.contains(*name), fill(message, "entry", name));
+                        report.fail_if(!source.statements().contains(*name), fill(message, "entry", name));
                     }
                 }
             },
@@ -1076,7 +1095,9 @@ impl Claim {
                     return;
                 }
                 for name in *names {
-                    let read = corpus.iter().any(|(_, source)| source.text.contains(*name));
+                    let read = corpus
+                        .iter()
+                        .any(|(_, source)| source.statements().contains(*name));
                     report.fail_if(!read, fill(message, "entry", name));
                 }
             },
@@ -1121,7 +1142,7 @@ impl Claim {
                 message,
             } => {
                 if let Some(source) = report.source(tree, path, message) {
-                    report.fail_if(!source.text.contains(*needle), (*message).to_owned());
+                    report.fail_if(!source.statements().contains(*needle), (*message).to_owned());
                 }
             },
             Self::Matches {
@@ -2281,6 +2302,84 @@ mod tests {
         }];
         assert!(!check_all(&fixture.tree(), &reads_all).is_clean());
         let _ = RUST;
+    }
+
+    /// A COMMENT does not satisfy any of the four positive anchors.
+    ///
+    /// The failure this pins is one-directional and therefore quiet: a negative claim fails LOUD on
+    /// a comment that names the banned thing, so it gets fixed the day it lands, while a positive
+    /// one just keeps passing. And the comment that does it is almost always the TOMBSTONE — a
+    /// deletion is exactly when someone writes the deleted name into prose, and exactly when the
+    /// anchor demanding that name should have gone red. Three live anchors in this crate were held
+    /// green that way until 2026-08-30.
+    #[test]
+    fn a_comment_does_not_satisfy_a_positive_anchor() {
+        let fixture = Fixture::new("prose-anchor");
+        // Every mention is inside a comment, in both of the styles `CommentStyle` knows about.
+        fixture.write(
+            "Sources/A/Face.swift",
+            "/// There is no slopdesk_door() any more — the caller reads the store directly.\nlet x = 1  // \
+             and slopdesk_named is gone too\n",
+        );
+        fixture.write(
+            "rust/a/src/lib.rs",
+            "// slopdesk_door() was retired here\npub fn f() {}\n",
+        );
+
+        let doors = [Claim::Doors {
+            path: "Sources/A/Face.swift",
+            entries: &["slopdesk_door"],
+            message: "the face stopped calling {entry}",
+        }];
+        assert!(
+            !check_all(&fixture.tree(), &doors).is_clean(),
+            "prose is not a call"
+        );
+
+        let mentions = [Claim::Mentions {
+            path: "Sources/A/Face.swift",
+            names: &["slopdesk_named"],
+            message: "the face stopped naming {entry}",
+        }];
+        assert!(
+            !check_all(&fixture.tree(), &mentions).is_clean(),
+            "prose is not a mention"
+        );
+
+        let under = [Claim::MentionsUnder {
+            root: "rust/a/src",
+            names: &["slopdesk_door"],
+            message: "the half stopped reading {entry}",
+        }];
+        assert!(
+            !check_all(&fixture.tree(), &under).is_clean(),
+            "prose is not a read"
+        );
+
+        let names = [Claim::Names {
+            path: "rust/a/src/lib.rs",
+            needle: "slopdesk_door",
+            message: "the file stopped naming the door",
+        }];
+        assert!(
+            !check_all(&fixture.tree(), &names).is_clean(),
+            "prose is not a name"
+        );
+
+        // And the code beside the prose still answers all four, so this is a comment rule and not a
+        // rule against files that happen to carry the word.
+        fixture.write(
+            "Sources/A/Face.swift",
+            "/// There is no slopdesk_door() any more.\nlet x = slopdesk_door()\nlet y = slopdesk_named\n",
+        );
+        fixture.write(
+            "rust/a/src/lib.rs",
+            "// retired\npub fn f() { slopdesk_door(); }\n",
+        );
+        assert!(check_all(&fixture.tree(), &doors).is_clean());
+        assert!(check_all(&fixture.tree(), &mentions).is_clean());
+        assert!(check_all(&fixture.tree(), &under).is_clean());
+        assert!(check_all(&fixture.tree(), &names).is_clean());
     }
 
     /// One file per shell, plus the padding a corpus floor needs.

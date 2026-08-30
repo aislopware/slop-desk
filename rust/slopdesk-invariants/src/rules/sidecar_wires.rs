@@ -455,9 +455,14 @@ fn the_panel_holds_no_bridge_grammar() -> Vec<Claim> {
 /// two-ENDS document, which it was not — both ends deserialised the same body. The tags and the
 /// ceiling themselves are [`the_inspector_tags_are_one_alphabet`].
 ///
-/// `slopdesk_inspector_decoder_buffered` is the one door with no Swift caller: it is the door's own
-/// assertion that a drained splitter has compacted, exercised by the crate's tests, while Swift
-/// sizes its body buffer from the AGAIN verdict instead. It is pinned on the Rust side only.
+/// ⚠️ `slopdesk_inspector_decoder_buffered` DOES NOT EXIST, and this doc claimed the opposite for
+/// as long as the claim below it did. It was the one door with no Swift caller — the door's own
+/// assertion that a drained splitter had compacted — and it was deleted, because Swift sizes its
+/// body buffer from the AGAIN verdict and never asked. The `Claim::Mentions` demanding it survived
+/// the deletion by reading the TOMBSTONE that replaced it: a positive anchor read raw text until
+/// 2026-08-30, so the sentence "there is no `slopdesk_inspector_decoder_buffered`" answered a claim
+/// that the name be present. It is a stay-deleted claim now, over `View::Statements` for exactly
+/// that reason — the tombstone must be free to say the name.
 ///
 /// BREAK-TEST: dropped `slopdesk_inspector_decoder_next` from the face ⇒ FAIL "stopped calling".
 /// Separately wrote `16 * 1024 * 1024` into the face ⇒ FAIL "respells the inspector frame".
@@ -483,12 +488,13 @@ pub fn the_inspector_frame_has_one_spelling(tree: &Tree) -> Report {
             message: "rust/slopdesk-ffi/src/inspector.rs no longer exports {entry} — the inspector's client \
                       door has moved (docs/55)",
         },
-        Claim::Mentions {
+        Claim::Lacks {
             path: INSPECTOR_FFI,
-            names: &["slopdesk_inspector_decoder_buffered"],
-            message: "rust/slopdesk-ffi/src/inspector.rs no longer exports {entry} — the one door with no \
-                      Swift caller is still the door's own assertion that a drained splitter compacted \
-                      (docs/55)",
+            pattern: "slopdesk_inspector_decoder_buffered",
+            view: View::Statements,
+            message: "rust/slopdesk-ffi/src/inspector.rs exports slopdesk_inspector_decoder_buffered again \
+                      — a door no Swift caller opens, and Swift sizes its body buffer from the AGAIN \
+                      verdict instead (docs/55)",
         },
         Claim::Mentions {
             path: INSPECTOR_FACE,
@@ -903,8 +909,7 @@ mod tests {
          slopdesk_inspector_decode_payload() {}\npub extern \"C\" fn slopdesk_inspector_constant() {}\npub \
          extern \"C\" fn slopdesk_inspector_decoder_new() {}\npub extern \"C\" fn \
          slopdesk_inspector_decoder_free() {}\npub extern \"C\" fn slopdesk_inspector_decoder_append() \
-         {}\npub extern \"C\" fn slopdesk_inspector_decoder_next() {}\npub extern \"C\" fn \
-         slopdesk_inspector_decoder_buffered() {}\n";
+         {}\npub extern \"C\" fn slopdesk_inspector_decoder_next() {}\n";
     const INSPECTOR_FACE_BODY: &str =
         "let a = slopdesk_inspector_encode_subscribe()\nlet b = slopdesk_inspector_decode_payload()\nlet c \
          = slopdesk_inspector_constant(0)\nlet d = slopdesk_inspector_decoder_new()\nlet e = \
@@ -1247,19 +1252,32 @@ mod tests {
         );
     }
 
-    /// The one door with no Swift caller is pinned on the Rust side only, so the face may drop it.
+    /// The door with no Swift caller stays DELETED, and a tombstone naming it is not a revival.
+    ///
+    /// The claim ran the other way round until 2026-08-30 — it demanded the door be present, and
+    /// the deletion satisfied it by leaving a comment that spelled the name. Both halves are pinned
+    /// here now: the comment is green, the declaration is red.
     #[test]
-    fn the_buffered_door_is_pinned_on_the_rust_side_only() {
+    fn the_buffered_door_stays_deleted_and_its_tombstone_is_not_a_revival() {
         let fixture = Fixture::new("inspector-buffered");
         wires(&fixture);
         assert!(super::the_inspector_frame_has_one_spelling(&fixture.tree()).is_clean());
 
         fixture.write(
             super::INSPECTOR_FFI,
-            &INSPECTOR_SHIM.replace(
-                "pub extern \"C\" fn slopdesk_inspector_decoder_buffered() {}\n",
-                "",
+            &format!(
+                "// There is no slopdesk_inspector_decoder_buffered: Swift sizes its body buffer from the \
+                 AGAIN verdict.\n{INSPECTOR_SHIM}"
             ),
+        );
+        assert!(
+            super::the_inspector_frame_has_one_spelling(&fixture.tree()).is_clean(),
+            "the tombstone must be free to say the name"
+        );
+
+        fixture.write(
+            super::INSPECTOR_FFI,
+            &format!("{INSPECTOR_SHIM}pub extern \"C\" fn slopdesk_inspector_decoder_buffered() {{}}\n"),
         );
         let report = super::the_inspector_frame_has_one_spelling(&fixture.tree());
         assert!(

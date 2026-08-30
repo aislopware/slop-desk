@@ -156,11 +156,18 @@ pub fn one_spelling_of_the_superd_frame(tree: &Tree) -> Report {
         },
         // The SCM_RIGHTS half stayed per side through the port, and for the same reason it always
         // did: the descriptor has to land in the READING process, so neither end can borrow the
-        // other's `recvmsg`. Both ends are Rust now, which makes the temptation to share it real
+        // other's receive. Both ends are Rust now, which makes the temptation to share it real
         // rather than theoretical — this is where that gets argued.
+        //
+        // ⚠️ The needle was `recvmsg` until 2026-08-30, and by then the file spelled that word in
+        // three COMMENTS and nowhere else: the raw syscall moved behind `slopdesk_posix::fdpass`
+        // when that crate took the syscall wrapper, and the anchor kept passing on the prose that
+        // described the move. `recv_tagged` is the affordance actually called, so it names what the
+        // claim means; a positive anchor now reads `statements()` (see `Claim::Doors`) and a fourth
+        // comment would not revive it.
         Claim::Mentions {
             path: HOST_FRAME,
-            names: &["recvmsg", "ScmRights"],
+            names: &["recv_tagged", "ScmRights"],
             message: "rust/slopdesk-superclient/src/frame.rs lost {entry} — the SCM_RIGHTS lane stays on \
                       this side on purpose",
         },
@@ -443,11 +450,13 @@ mod tests {
     ///
     /// It used to seed the seven `slopdesk_supervisor_*` DOORS and their four Swift call helpers.
     /// hostd's end is `slopdesk-superclient` now and calls superwire directly, so the seam it must
-    /// spell is the `use` rather than the door — and the two `recvmsg` names, which stay per side.
+    /// spell is the `use` rather than the door — and the two descriptor-passing names, which stay
+    /// per side. Those two were `recvmsg` and `ScmRights` until 2026-08-30; the raw syscall moved
+    /// behind `slopdesk_posix::fdpass` and the affordance is `recv_tagged` now.
     const FRAME_SEAM: [&str; 4] = [
         "slopdesk_superwire::body_length",
         "slopdesk_superwire::Header",
-        "recvmsg",
+        "recv_tagged",
         "ScmRights",
     ];
 

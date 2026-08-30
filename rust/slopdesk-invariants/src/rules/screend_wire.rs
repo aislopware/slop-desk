@@ -209,9 +209,11 @@ pub fn opaque_budget(tree: &Tree) -> Report {
 /// The six byte machines of the scrollback replay transform are the likeliest of all the moved code
 /// to grow a "tiny local fallback": each is small, pure and framework-free, and an absent screend
 /// now means a RAW replay rather than a partly-cleaned one, which is the documented passthrough
-/// policy and not an invitation. `ScrollbackReplayTransform` itself is NOT named — it stayed, as
-/// the caller that picks the options — and the ban is scoped to DECLARATIONS so prose explaining
-/// where the passes went does not fail its own gate.
+/// policy and not an invitation. `ScrollbackReplayTransform` itself is NOT named, and the reason
+/// changed under this sentence: it used to be the CALLER that picked the options, and `a0d0aa54`
+/// deleted it along with the replay doors, so the options are picked in hostd and there is no Swift
+/// caller left to name. The ban is scoped to DECLARATIONS either way, so prose explaining where the
+/// passes went does not fail its own gate.
 ///
 /// The CHUNK BOUNDARY was the last byte machine hostd kept, on the theory that the ring boundary is
 /// the host's bookkeeping. It is not: every rule is read out of the bytes (stage 26). Keeping it

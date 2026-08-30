@@ -203,9 +203,11 @@ derives it in Swift any more.
 | `PaneScreenScanner` (detection, ~300 ms/pane) | `detect` / `forget` | publish nothing this tick |
 | ctl `screen` verb | `snapshot` | an error response |
 
-`ScrollbackReplayTransform` (ring + journal replay) is absent from that table on purpose: it calls
-`slopdesk_sanitize` in-process and has no fallback column, because there is nothing to fall back
-from.
+The replay transform (ring + journal) is absent from that table on purpose: it has no fallback
+column, because there is nothing to fall back from. It has no Swift caller either — `a0d0aa54`
+retired the replay doors and the `ScrollbackReplayTransform` / `ReplayBuffer` classes over them, so
+the ring and the journal both reach `slopdesk_sanitize::sanitize` as a CRATE from inside hostd
+(`spawn.rs`, `transcripts.rs`), which is a `use` and not a boundary at all.
 
 Every fallback is a PASSTHROUGH or a refusal, never a second parser. That is deliberate: a Swift
 renderer standing by "just in case" is the cross-language mirror this tree forbids, and it is
@@ -220,7 +222,7 @@ in case" is the cross-language mirror this tree forbids. `rust/slopdesk-invarian
 build if any of the six pass declarations reappears under `Sources/`.
 
 **The chunk boundary is a linked rule, since stage 26.** Holding back the trailing half of an
-escape sequence cut by PTY chunking (`ScrollbackReplayTransform`, `sanitize`, linked) or of a cut UTF-8
+escape sequence cut by PTY chunking (the replay transform, `sanitize`, linked) or of a cut UTF-8
 scalar (`TerminalReplaySnapshot`, `compose` / `transcript`) was the last byte machine hostd kept, on
 the theory that the ring boundary is the host's own bookkeeping. It is not: every rule is read out
 of the bytes — a lone `ESC`, a CSI with no final byte, an OSC with no `BEL`/`ST`, a UTF-8 lead with

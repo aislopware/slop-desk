@@ -41,7 +41,7 @@ package enum NerdSymbolFont {
             || code == CTFontManagerError.duplicatedName.rawValue
     }()
 
-    /// The Unicode private-use ranges, read from `slopdesk_sanitize` ONCE per process.
+    /// The Unicode private-use ranges, read from `slopdesk_private_use_ranges` ONCE per process.
     ///
     /// The sanitizer DROPS these codepoints so an agent reads clean text; this file SPLICES the
     /// bundled face over exactly them so a human sees a glyph instead of a notdef box. Opposite
