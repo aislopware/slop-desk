@@ -42,7 +42,7 @@
 //! `scripts/tool-stamps.pin` was re-seeded under the new digest in the same change; no version
 //! moved, because no source did.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -338,12 +338,6 @@ impl Pin {
         }
         fs::write(root.join(PIN), text).map_err(|error| format!("{PIN}: {error}"))
     }
-}
-
-/// Every name the pin lists, for a caller that only needs the keys.
-#[must_use]
-pub fn pinned_names(pin: &Pin) -> BTreeSet<String> {
-    pin.entries.iter().map(|entry| entry.tool.clone()).collect()
 }
 
 #[cfg(test)]

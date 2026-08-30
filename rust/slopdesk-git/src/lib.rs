@@ -29,4 +29,4 @@ pub mod porcelain;
 pub mod project_key;
 pub mod status;
 
-pub use status::{encoded_of_path, of_path};
+pub use status::of_path;

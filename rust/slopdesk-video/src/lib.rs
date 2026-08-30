@@ -295,7 +295,7 @@ pub use fragment::{Flags, FrameFragment, FrameFragmentHeader};
 pub use frame_gate::{FrameObligations, StillnessCrispDecider};
 pub use frame_hash::{LumaPlane, StreamHasher};
 pub use geometry::{VideoContentMode, VideoPoint, VideoRect, VideoSize};
-pub use hevc_parameter_sets::{ParameterSets, extract as extract_parameter_sets};
+pub use hevc_parameter_sets::ParameterSets;
 pub use idle_reap::{FlowRecord, IdleReapDecider};
 pub use input_event::{InputEvent, InputModifiers, MouseButton};
 pub use input_routing::{

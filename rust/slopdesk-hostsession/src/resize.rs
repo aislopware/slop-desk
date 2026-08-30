@@ -247,14 +247,6 @@ impl Resize {
             .attachments()
     }
 
-    /// Whether a contributor-set change is still settling. A regression seam.
-    pub(crate) fn is_settling(&self) -> bool {
-        self.fold
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_settling()
-    }
-
     /// How many delayed redraw nudges this pane has scheduled, ever. A regression seam: the nudge
     /// itself is a `SIGWINCH` to somebody else's process group, which a test cannot observe.
     pub(crate) fn scheduled_nudges(&self) -> u64 {

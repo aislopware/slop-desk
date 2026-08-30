@@ -900,12 +900,6 @@ impl PaneSession {
         });
     }
 
-    /// Applies whatever the fold resolves right now, superseding nothing — the flush every non-size
-    /// control message takes so a settled size is never stranded.
-    pub fn flush_size(&self) {
-        self.resize.flush();
-    }
-
     /// The grid the fold resolved for this pane, as the roster publishes it.
     #[must_use]
     pub fn resolved_grid(&self) -> (u16, u16) {
@@ -917,12 +911,6 @@ impl PaneSession {
     #[must_use]
     pub fn size_contributions(&self) -> Vec<Attachment> {
         self.resize.attachments()
-    }
-
-    /// Whether a contributor-set change is still settling. A regression seam.
-    #[must_use]
-    pub fn is_size_settling(&self) -> bool {
-        self.resize.is_settling()
     }
 
     /// How many delayed redraw nudges this pane has scheduled, ever. A regression seam: the nudge
@@ -1241,18 +1229,6 @@ impl PaneSession {
             .broadcast_control(&[WireMessage::ProjectGitStatus(status.clone())]);
     }
 
-    /// Re-sends the pane's block backfill to every member — the reattach half of the block feed.
-    ///
-    /// Here rather than at C.2d because it needs nothing but the snapshot superd already holds, and
-    /// the ONE constructor it goes through is what keeps a re-sent block and a live one from
-    /// disagreeing about a field.
-    pub fn resend_blocks(&self) {
-        let Some(messages) = self.block_backfill() else {
-            return;
-        };
-        self.shared.broadcast_control(&messages);
-    }
-
     /// The same backfill, addressed to ONE member — what a join and a rebind want.
     ///
     /// Addressed rather than broadcast because a re-assert is a fact about what THAT client has yet
@@ -1370,13 +1346,6 @@ impl PaneSession {
         self.shared.with_truths(|truths| String::from(truths.title()))
     }
 
-    /// The title beside the uptime it was sniffed at — the `pane/titleFresh` verdict's first half.
-    #[must_use]
-    pub fn title_and_stamp(&self) -> (String, Option<f64>) {
-        self.shared
-            .with_truths(|truths| (String::from(truths.title()), truths.title_at()))
-    }
-
     /// When the CURRENT command block opened, `None` at a prompt — the verdict's other half.
     #[must_use]
     pub fn command_running_since(&self) -> Option<f64> {
@@ -1454,21 +1423,6 @@ impl PaneSession {
             (
                 folds.detector.status(),
                 folds.detector.status_label().map(String::from),
-            )
-        })
-    }
-
-    /// The type-27 triple the status stream stands at, plus the agent's session intent — one
-    /// acquisition, for the same reason [`Self::agent_status`] is one.
-    #[must_use]
-    pub fn agent_published_state(&self) -> (u8, u8, Option<String>, Option<String>) {
-        self.shared.with_folds(|folds| {
-            let triple = folds.detector.last_emitted_status();
-            (
-                triple.map_or(0, |triple| triple.state),
-                triple.map_or(0, |triple| triple.kind),
-                folds.detector.status_label().map(String::from),
-                folds.detector.session_intent().map(String::from),
             )
         })
     }

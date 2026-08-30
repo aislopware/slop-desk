@@ -27,9 +27,6 @@ use crate::qp_control::clamped_int_from_env;
 /// may raise it and why the ceiling is a constructor argument rather than this constant.
 pub const DEFAULT_BITRATE: i64 = 12_000_000;
 
-/// How long to wait before retrying a create that lost the encoder-service XPC race.
-pub const CREATE_RETRY_BACKOFF_MILLIS: u64 = 75;
-
 /// The `[1, 51]` HEVC quantiser range every QP knob here is clamped into.
 pub const QP_MIN: i32 = 1;
 /// The coarsest quantiser HEVC has.

@@ -225,48 +225,6 @@ pub fn table(kind: TableKind, rows_json: &str, format: OutputFormat, no_headers:
     }
 }
 
-/// Renders an aligned table from JSON texts: an array of header strings, and an array of row
-/// arrays of strings. The general renderer, for the lists a subcommand builds itself.
-#[must_use]
-pub fn table_from_json(headers_json: &str, rows_json: &str, no_headers: bool) -> String {
-    let headers = string_list(headers_json);
-    let borrowed: Vec<&str> = headers.iter().map(String::as_str).collect();
-    let rows: Vec<Vec<String>> = serde_json::from_str::<Value>(rows_json)
-        .ok()
-        .and_then(|value| {
-            match value {
-                Value::Array(items) => Some(items),
-                _ => None,
-            }
-        })
-        .unwrap_or_default()
-        .iter()
-        .map(|item| string_list(&item.to_string()))
-        .collect();
-    render_table(&borrowed, &rows, no_headers)
-}
-
-/// The strings of a JSON array, with anything that is not a string dropped.
-fn string_list(json: &str) -> Vec<String> {
-    serde_json::from_str::<Value>(json)
-        .ok()
-        .and_then(|value| {
-            match value {
-                Value::Array(items) => Some(items),
-                _ => None,
-            }
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|item| {
-            match item {
-                Value::String(text) => Some(text),
-                _ => None,
-            }
-        })
-        .collect()
-}
-
 /// Re-emits any JSON text compact and key-sorted, without a trailing newline.
 ///
 /// The list formatters take rows, but the CLI also prints whole `result` objects straight through

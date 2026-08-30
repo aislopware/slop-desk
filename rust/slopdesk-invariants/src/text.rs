@@ -87,13 +87,6 @@ pub fn count_lines(haystack: &str, pattern: &str) -> usize {
     haystack.lines().filter(|line| regex.is_match(line)).count()
 }
 
-/// The lines that match — `grep`.
-#[must_use]
-pub fn lines_matching<'a>(haystack: &'a str, pattern: &str) -> Vec<&'a str> {
-    let regex = cached(pattern);
-    haystack.lines().filter(|line| regex.is_match(line)).collect()
-}
-
 /// The first capture group of the first match — `sed -n 's/…/\1/p' | head -1`.
 ///
 /// `None` when nothing matched, which is the case the shell spelled as the empty string and every

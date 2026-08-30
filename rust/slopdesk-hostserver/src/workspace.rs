@@ -358,13 +358,6 @@ impl WorkspaceDocument {
         true
     }
 
-    /// Replaces one pane's liveness fields, leaving its topology fields untouched.
-    pub fn merge_liveness(&self, record: &PaneLiveness) -> bool {
-        self.mutate(|state| {
-            document::merge_pane_liveness(state, record);
-        })
-    }
-
     /// One reconciler pass: fold in what was captured, and decide what the rest of the panes are.
     ///
     /// The decision the naive "reap what was not captured" rule gets wrong once topology lives

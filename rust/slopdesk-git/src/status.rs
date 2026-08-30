@@ -23,7 +23,7 @@
 use std::path::Path;
 
 use git2::{ErrorCode, Repository, RepositoryOpenFlags, StatusOptions, StatusShow};
-use slopdesk_wire::metadata::{GitFileChange, GitStatusPayload, encode_git_status};
+use slopdesk_wire::metadata::{GitFileChange, GitStatusPayload};
 
 use crate::porcelain;
 
@@ -262,15 +262,4 @@ fn conflict_pairs(repository: &Repository) -> Vec<(String, (char, char))> {
             ))
         })
         .collect()
-}
-
-/// The same answer, already in the bytes the metadata reply carries.
-///
-/// The encode lives here rather than in the FFI shim for the reason the shim's own header gives:
-/// nothing in `slopdesk-ffi` may make a decision, and choosing which encoder an answer goes through
-/// is one. It is also what lets the host ship the reply without touching the fields — the watcher
-/// decodes them when it needs to compare, and the responder does not need to.
-#[must_use]
-pub fn encoded_of_path(path: &str) -> Vec<u8> {
-    encode_git_status(&of_path(path))
 }

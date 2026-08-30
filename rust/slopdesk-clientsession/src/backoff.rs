@@ -23,13 +23,6 @@ pub const DEFAULT_MULTIPLIER: f64 = 2.0;
 /// copy both mirror this, so a mismatch cannot render an impossible "attempt 25 of 20".
 pub const MAX_RECONNECT_ATTEMPTS: u32 = 20;
 
-/// How many attempts the DIRECT, awaited reconnect makes.
-///
-/// Deliberately not the supervised ceiling: this path has a caller waiting on the result rather
-/// than a UI watching a countdown, and it ends by throwing the last error rather than by flipping a
-/// pane to unreachable.
-pub const DIRECT_RECONNECT_ATTEMPTS: u32 = 64;
-
 /// An exponential retry schedule, capped.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Backoff {

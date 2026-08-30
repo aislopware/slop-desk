@@ -450,12 +450,6 @@ impl Capturer {
         self.inner.gates
     }
 
-    /// The heartbeat IDR cadence this capture resolved, in seconds.
-    #[must_use]
-    pub fn heartbeat_seconds(&self) -> f64 {
-        self.inner.heartbeat
-    }
-
     /// The resolved delivery ceiling in Hz — the same rule the stream itself is configured with, so
     /// a caller that sizes a timeout against it cannot disagree with the stream.
     #[must_use]
