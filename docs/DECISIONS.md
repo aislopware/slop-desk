@@ -17571,3 +17571,46 @@ fails the moment one does. *Pointing that surface at `ThirdParty/ghostty/build-l
 one `.sh` left — it is the vendored fork's build recipe, carried close to upstream's shape,
 `shfmt -d` wants 744 lines of it, and every other tool in this tree excludes `ThirdParty/` on
 purpose.
+
+## A Cargo feature is a rule until a third crate enables it (2026-08-31)
+
+`slopdesk-posix` declares one feature, `winsize-set`, and it is the only `[features]` block in the
+tree. It exists to spell a rule cargo can enforce: `TIOCSWINSZ` on a pane's terminal belongs to hostd
+and to hostd alone (`docs/51` §6.9, `docs/60` §6), because hostd is the side that knows the client's
+PIXEL geometry and a second writer on one terminal is a lost update rather than a duplicate. superd's
+`resize` verb only records the numbers hostd reports, and `openpty` is handed the initial size, so
+its spawn path needs no ioctl either.
+
+The claim was written out in four places — the declaration in `slopdesk-posix/Cargo.toml`, the
+enablement in `slopdesk-hostpane/Cargo.toml`, the dev-only enablement in `slopdesk-superd/Cargo.toml`,
+and `set_window_size`'s own doc comment — and each of them says the same sentence: two crates enable
+it, and WHICH KIND of dependency they enable it on IS the rule. Nothing read any of the four.
+
+What cargo actually enforces is narrower than what the four claim. superd's placement in
+`[dev-dependencies]` means `cargo build --release` of the daemon does not compile the function at
+all, so a production caller *inside superd* is a link failure rather than a review comment — that
+half is real and it is the half the comments celebrate. The other half is not enforced at all: a
+THIRD crate adding `features = ["winsize-set"]` to its own `[dependencies]` compiles green, and what
+it has bought is exactly the second writer the rule forbids. The link error cannot see it, because
+there is no link error — the function is there, and the new crate is entitled to call it.
+
+`pty-winsize-single-writer` (`crate_policy.rs`) pins the set in BOTH directions: the declaration must
+exist, the non-dev enablers must be exactly `{slopdesk-hostpane}`, and the dev-only enablers exactly
+`{slopdesk-superd}`. The second direction is this rule's empty-corpus floor wearing a feature's
+clothes — a renamed feature or a deleted enablement would otherwise leave it scanning for a string
+nobody writes, passing by asking nobody anything.
+
+Two shapes forced the implementation. The section a line sits under is the rule rather than context
+for it, so `sectioned` carries the current `[header]` down each line instead of recovering it later.
+And comments are dropped, because both enablers ARGUE about the feature in `#` comments above the
+line that enables it: a rule that counted prose would read the argument FOR the policy as a breach of
+it. The fixture puts superd's prose under `[dependencies]` on purpose, so that discrimination is what
+the clean case is testing.
+
+**Rejected.** *Enforcing it in `superd_bodies.rs` by banning the call* — the call is already a link
+error there, and the crate that needs watching is the one nobody has written yet, which no source
+scanner can see. *Generalising to "every feature has a named enabler set"* — there is one feature in
+the tree, and a table with a single row is a rule with a longer name. *Pinning transitive enablement
+too* — cargo unifies features, so everything depending on `slopdesk-hostpane` gets the setter
+compiled; that is not a second writer, it is the one writer's dependents, and forbidding it would
+forbid hostd from linking its own pane.

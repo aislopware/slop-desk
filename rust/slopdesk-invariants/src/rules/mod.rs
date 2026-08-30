@@ -390,6 +390,11 @@ pub fn registry() -> Vec<Rule> {
             check: crate_policy::scoped_opt_outs,
         },
         Rule {
+            name: "pty-winsize-single-writer",
+            origin: "docs/51 §6.9 — superd owns read, hostd owns the size",
+            check: crate_policy::pty_winsize_single_writer,
+        },
+        Rule {
             name: "targets-outside-the-checkout",
             origin: "docs/46 — the inner loop",
             check: target_dirs::build_products_live_outside_the_checkout,

@@ -1,11 +1,17 @@
-//! Which crates may write `unsafe`, and which lints every workspace must refuse.
+//! Which crates may write `unsafe`, which lints every workspace must refuse, and who may resize a
+//! terminal.
 //!
-//! Ported from the deleted `check-supervisor.sh`. Both rules read MANIFESTS rather than source, and
+//! Ported from the deleted `check-supervisor.sh`. The rules read MANIFESTS rather than source, and
 //! for the same reason: rustc already enforces `unsafe_code = "forbid"` inside a crate that states
 //! it, and clippy already enforces a lint level a crate configures. What neither can notice is the
 //! POLICY drifting — a new crate that quietly says `deny` instead of `forbid`, or one that says
 //! nothing and inherits nothing, or a workspace that never opted out of a lint whose only offered
 //! fix breaks a repo invariant. Those are manifest facts, and a manifest is what this file reads.
+//!
+//! The fourth rule is the same shape with a different subject: a Cargo FEATURE is how "only hostd
+//! may issue `TIOCSWINSZ`" is spelled, and cargo turns a violation into a link error only for the
+//! one crate that argued itself into `[dev-dependencies]`. Who else enables it is a manifest fact
+//! too, and until this rule nothing read it.
 
 use std::collections::BTreeSet;
 
@@ -13,6 +19,19 @@ use crate::report::Report;
 use crate::tree::Tree;
 
 const ROOT_MANIFEST: &str = "rust/Cargo.toml";
+
+/// The tree's one Cargo feature, and the three crates the single-writer rule names.
+///
+/// A feature rather than a doc line because `TIOCSWINSZ` has exactly one legitimate caller and
+/// cargo can say so; see [`pty_winsize_single_writer`] for which kind of dependency each enabler
+/// must use, and why the split is the rule.
+const WINSIZE_FEATURE: &str = "winsize-set";
+/// The crate that declares the feature and holds the ioctl behind it.
+const WINSIZE_DECLARER: &str = "rust/slopdesk-posix/Cargo.toml";
+/// hostd's half of a pane — the one writer, so the one crate that may enable it non-dev.
+const WINSIZE_REAL_ENABLER: &str = "rust/slopdesk-hostpane/Cargo.toml";
+/// superd, whose TESTS stand in for hostd's ioctl and whose release build must not link it.
+const WINSIZE_DEV_ENABLER: &str = "rust/slopdesk-superd/Cargo.toml";
 
 /// The three crates that may HAND-WRITE `unsafe`, each about one narrow obligation.
 ///
@@ -679,6 +698,117 @@ pub fn scoped_opt_outs(tree: &Tree) -> Report {
     report
 }
 
+/// The one writer of `TIOCSWINSZ`, spelled as a Cargo feature and read back out of the manifests.
+///
+/// `slopdesk-posix` declares `winsize-set`, and `set_window_size` in
+/// `rust/slopdesk-posix/src/pty.rs` compiles only when something
+/// turns it on. That gate is not a convenience: `TIOCSWINSZ` on a pane's terminal belongs to hostd
+/// and to hostd alone (`docs/51` §6.9, `docs/60` §6), because hostd is the side that knows the
+/// client's PIXEL geometry and a second writer on one terminal is a LOST UPDATE rather than a
+/// duplicate. superd's `resize` verb only records the numbers hostd reports.
+///
+/// Two crates enable it, and WHICH KIND of dependency they enable it on is the rule rather than a
+/// detail of it. `slopdesk-hostpane` is hostd's half of a pane — the one writer — so it enables the
+/// feature as an ordinary dependency. superd enables it in `[dev-dependencies]` only, where the
+/// setter stands in for hostd's ioctl so superd's recording can be checked against a real one;
+/// `cargo build --release` of the daemon therefore does not compile the function at all, and a
+/// production caller inside superd is a link failure rather than a review comment.
+///
+/// ## What the link error does NOT catch, and why this rule exists
+/// That failure mode is real and it is also narrow: it fires only for a call inside superd. A
+/// THIRD crate adding `features = ["winsize-set"]` to its own `[dependencies]` compiles green, and
+/// what it has bought is exactly the second writer the rule forbids. The claim "exactly two crates
+/// turn it on, and the split between them is the rule" is written out in four places — this
+/// crate's declaration, both enablers' manifests, and `set_window_size`'s own doc comment — and
+/// until now nothing read any of them.
+///
+/// So the set is pinned in BOTH directions. A third enabler fails, and so does a missing one: a
+/// renamed feature or a deleted enablement would otherwise leave this rule scanning for a string
+/// nobody writes, passing by asking nobody anything.
+#[must_use]
+pub fn pty_winsize_single_writer(tree: &Tree) -> Report {
+    let mut report = Report::new();
+
+    let declared = tree.get(WINSIZE_DECLARER).is_some_and(|source| {
+        sectioned(&source.text)
+            .any(|(section, line)| section == "features" && line.starts_with(WINSIZE_FEATURE))
+    });
+    report.fail_if(
+        !declared,
+        format!(
+            "{WINSIZE_DECLARER} does not declare the {WINSIZE_FEATURE} feature — without it the ioctl \
+             compiles unconditionally and the single-writer rule below is enforced by nothing (docs/51 §6.9)",
+        ),
+    );
+
+    let mut real = BTreeSet::new();
+    let mut dev = BTreeSet::new();
+    for manifest in manifests(tree) {
+        let Some(source) = tree.get(&manifest) else {
+            continue;
+        };
+        for (section, line) in sectioned(&source.text) {
+            // A dependency line, never prose: both enablers ARGUE about the feature in `#`
+            // comments above the line that enables it, and a rule that counted those would read
+            // the argument for the policy as a breach of it.
+            if !line.contains("features") || !line.contains(WINSIZE_FEATURE) {
+                continue;
+            }
+            let crate_name = crate_name_of(&manifest);
+            if section.rsplit('.').next() == Some("dev-dependencies") {
+                dev.insert(crate_name);
+            } else {
+                real.insert(crate_name);
+            }
+        }
+    }
+
+    let expected_real = BTreeSet::from([crate_name_of(WINSIZE_REAL_ENABLER)]);
+    let expected_dev = BTreeSet::from([crate_name_of(WINSIZE_DEV_ENABLER)]);
+    report.fail_if(
+        real != expected_real,
+        format!(
+            "the non-dev enablers of {WINSIZE_FEATURE} are {{{}}} and the one writer of TIOCSWINSZ is \
+             {{{}}} — hostd knows the client's pixel geometry and a second writer on one terminal is a lost \
+             update, not a duplicate (docs/51 §6.9, docs/60 §6)",
+            real.iter().cloned().collect::<Vec<_>>().join(", "),
+            expected_real.iter().cloned().collect::<Vec<_>>().join(", "),
+        ),
+    );
+    report.fail_if(
+        dev != expected_dev,
+        format!(
+            "the dev-only enablers of {WINSIZE_FEATURE} are {{{}}} and should be {{{}}} — superd stands in \
+             for hostd's ioctl in its TESTS and nowhere else, which is what keeps the setter out of the \
+             released daemon entirely (docs/51 §6.9)",
+            dev.iter().cloned().collect::<Vec<_>>().join(", "),
+            expected_dev.iter().cloned().collect::<Vec<_>>().join(", "),
+        ),
+    );
+    report
+}
+
+/// Every non-comment, non-blank line of a manifest, paired with the `[section]` it sits under.
+///
+/// The section is the rule for [`pty_winsize_single_writer`] rather than context for it — the same
+/// `features = ["winsize-set"]` is the policy under `[dependencies]` and a test stand-in under
+/// `[dev-dependencies]` — so it is carried rather than recovered. Comments are dropped here for the
+/// same reason [`states`] anchors at column 0: a `#`-commented copy of a setting is prose about it.
+fn sectioned(text: &str) -> impl Iterator<Item = (String, &str)> {
+    let mut section = String::new();
+    text.lines().filter_map(move |line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            return None;
+        }
+        if let Some(header) = trimmed.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+            header.clone_into(&mut section);
+            return None;
+        }
+        Some((section.clone(), trimmed))
+    })
+}
+
 /// Whether a manifest STATES something, at the start of a line — the shell's `grep -q '^…'`.
 ///
 /// Anchored, because a `#`-commented copy of a lint level is prose about the policy and not the
@@ -1320,5 +1450,87 @@ mod tests {
                 );
         }
         fixture
+    }
+
+    /// A tree spelling the single-writer rule exactly: the declaration, the one non-dev enabler,
+    /// and superd's dev-only stand-in. Both enablers carry the `#` comment the real manifests do,
+    /// so a rule that read prose as policy would fail every case below rather than the one it is
+    /// about.
+    fn winsize_fixture(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(
+                super::WINSIZE_DECLARER,
+                "[workspace]\n[features]\n# hostd owns TIOCSWINSZ (docs/51 §6.9).\nwinsize-set = []\n",
+            )
+            .write(
+                super::WINSIZE_REAL_ENABLER,
+                "[workspace]\n[dependencies]\n# `winsize-set` is enabled HERE, for real.\nslopdesk-posix = \
+                 { path = \"../slopdesk-posix\", features = [\"winsize-set\"] }\n",
+            )
+            .write(
+                super::WINSIZE_DEV_ENABLER,
+                // The prose sits under `[dependencies]` ON PURPOSE: a rule that read comments as
+                // policy would book superd as a NON-DEV enabler here and fail the clean fixture,
+                // which is the discrimination this shape is testing.
+                "[workspace]\n[dependencies]\n# superd may not issue TIOCSWINSZ, so features = \
+                 [\"winsize-set\"] is dev-only below.\nlibc = \"0.2\"\n[dev-dependencies]\nslopdesk-posix = \
+                 { path = \"../slopdesk-posix\", features = [\"winsize-set\"] }\n",
+            );
+        fixture
+    }
+
+    /// The ceiling and the split, which are the two halves of the rule.
+    ///
+    /// A third crate enabling the feature non-dev is the second writer `docs/51` §6.9 forbids, and
+    /// superd's enablement sliding out of `[dev-dependencies]` links the setter into the released
+    /// daemon — the exact thing the dev-only placement buys.
+    #[test]
+    fn a_third_enabler_and_a_promoted_dev_enabler_are_both_caught() {
+        let fixture = winsize_fixture("winsize-breaks");
+        assert!(
+            super::pty_winsize_single_writer(&fixture.tree()).is_clean(),
+            "the fixture must start clean, or the breaks below prove nothing",
+        );
+
+        let breaks: [(&str, &str, &str); 2] = [
+            (
+                "rust/slopdesk-hostd/Cargo.toml",
+                "[workspace]\n[dependencies]\nslopdesk-posix = { path = \"../slopdesk-posix\", features = \
+                 [\"winsize-set\"] }\n",
+                "non-dev enablers",
+            ),
+            (
+                super::WINSIZE_DEV_ENABLER,
+                "[workspace]\n[dependencies]\nslopdesk-posix = { path = \"../slopdesk-posix\", features = \
+                 [\"winsize-set\"] }\n",
+                "dev-only enablers",
+            ),
+        ];
+        for (index, (path, manifest, expected)) in breaks.into_iter().enumerate() {
+            let broken = winsize_fixture(&format!("winsize-break-{index}"));
+            broken.write(path, manifest);
+            let report = super::pty_winsize_single_writer(&broken.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains(expected)),
+                "{path}: {report:?}",
+            );
+        }
+    }
+
+    /// A renamed or deleted feature must fail rather than pass by finding nothing.
+    ///
+    /// This is the empty-corpus floor wearing a feature's clothes: without it, dropping
+    /// `winsize-set = []` from the declaring manifest would leave the ioctl compiling
+    /// unconditionally and every enabler check scanning for a string nobody writes.
+    #[test]
+    fn an_undeclared_feature_is_red() {
+        let fixture = winsize_fixture("winsize-undeclared");
+        fixture.write(super::WINSIZE_DECLARER, "[workspace]\n[features]\nother = []\n");
+        let report = super::pty_winsize_single_writer(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("does not declare")),
+            "{report:?}",
+        );
     }
 }
