@@ -665,8 +665,11 @@ public extension WorkspaceStore {
                 return WorkspaceChannelClient.Handle(transport)
             },
             close: { _ in
-                // The transport owns its own pool entry and releases it on `close()`, which the
-                // handle drives when the run ends. Nothing here holds one to release by id.
+                // Nothing to release by id: the transport owns its own pool entry, and ARC is what
+                // gives it back. The handle and the verdict closure are the only strong references
+                // to it, so the run dropping them frees the channel — which is deliberate rather
+                // than incidental, because an explicit close would have to run while a handshake
+                // waiter is still parked on the raw pointer.
             },
         )
     }

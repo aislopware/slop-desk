@@ -123,8 +123,14 @@ public actor MuxClientTransport {
 
     private let inboundStream: AsyncThrowingStream<WireMessage, Error>
     private let inbox: Inbox
-    /// The open channel, or `nil` before ``open(host:port:resume:lastReceivedSeq:)`` and after
-    /// ``close()``. Dropping it IS the close.
+    /// The open channel, or `nil` before ``open(host:port:resume:lastReceivedSeq:)``.
+    ///
+    /// Set once and never cleared, because ARC is the only clock that can safely free it. Dropping
+    /// ``Held`` frees the Rust channel, and ``awaitAccepted(within:)`` copies the raw pointer out and
+    /// then parks OFF the actor for the whole handshake window — an actor is re-entrant across that
+    /// suspension, so a method that cleared this would free the channel under a waiter still holding
+    /// its pointer. That is the shape `docs/63` records for the video flow, and the answer is the
+    /// same: the last release of the transport is the close, and nothing else is.
     private var held: Held?
 
     public init(registry: ConnectionRegistry, channelClass: UInt8 = MuxChannelClass.pane.rawValue) {
@@ -205,18 +211,6 @@ public actor MuxClientTransport {
     /// an `.input`, which rides DATA and belongs to `slopdesk_pane_driver_send_input`.
     public func sendControl(_ message: WireMessage) throws {
         try send(message, "control message")
-    }
-
-    /// Releases the channel and finishes the inbound stream.
-    ///
-    /// Idempotent. Dropping ``Held`` frees the Rust channel, which closes it, releases its pool
-    /// entry and JOINS both forwarders — so when this returns no Rust thread is holding the
-    /// callback context. A transport that is never closed frees at deallocation instead, by the
-    /// same `deinit`, which is what keeps the workspace document's handle from leaking a channel
-    /// on a path that has no explicit close.
-    public func close() {
-        held = nil
-        inbox.continuation.finish()
     }
 
     // MARK: - Internals
