@@ -29,10 +29,10 @@
 //!
 //! ## The ledger
 //!
-//! So the rule is: every `slopdesk_*_free(` call in `Sources/` is inside a `deinit`, unless the
-//! file is booked below with the proof that makes it safe. Both directions are checked — a booked
-//! file that has since moved its free into `deinit` is stale bookkeeping, and stale bookkeeping
-//! reads exactly like a satisfied entry.
+//! So the rule is: every `slopdesk_*_free(` call in `Sources/` or `Apps/` is inside a `deinit`,
+//! unless the file is booked below with the proof that makes it safe. Both directions are checked —
+//! a booked file that has since moved its free into `deinit` is stale bookkeeping, and stale
+//! bookkeeping reads exactly like a satisfied entry.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -148,19 +148,26 @@ fn frees_outside_deinit(code: &str) -> BTreeSet<String> {
     escapes
 }
 
-/// Every Swift file under `Sources/` that frees a handle somewhere other than its `deinit`.
+/// Every Swift file that frees a handle somewhere other than its `deinit`.
+///
+/// Both Swift roots, not just the package: `Apps/` holds the two app targets, and a shell that
+/// freed a handle out of a lifecycle callback would be the same bug with the same fatality. It has
+/// none today, and a rule that walked only `Sources/` would read green either way — which is the
+/// difference between a ratchet and a coincidence.
 fn escapees(tree: &Tree) -> BTreeMap<String, BTreeSet<String>> {
     let mut found = BTreeMap::new();
-    for (path, source) in tree.under("Sources") {
-        if path.extension().is_none_or(|extension| extension != "swift") {
-            continue;
-        }
-        let Some(path) = path.to_str() else {
-            continue;
-        };
-        let escapes = frees_outside_deinit(source.code());
-        if !escapes.is_empty() {
-            found.insert(path.to_owned(), escapes);
+    for root in ["Sources", "Apps"] {
+        for (path, source) in tree.under(root) {
+            if path.extension().is_none_or(|extension| extension != "swift") {
+                continue;
+            }
+            let Some(path) = path.to_str() else {
+                continue;
+            };
+            let escapes = frees_outside_deinit(source.code());
+            if !escapes.is_empty() {
+                found.insert(path.to_owned(), escapes);
+            }
         }
     }
     found
@@ -244,6 +251,29 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("VideoMuxClientFlow")),
             "freeing from a `close()` is the shape the rule exists to catch"
+        );
+    }
+
+    /// The app targets are walked too, and that is the half a passing tree cannot demonstrate:
+    /// `Apps/` has no escapee today, so a rule that skipped it would read green either way. This is
+    /// what tells the two apart.
+    #[test]
+    fn an_app_target_is_walked_the_same_as_the_package() {
+        let fixture = Fixture::new("handle-lifetime-apps");
+        booked(&fixture);
+        let path = "Apps/ClientApp-macOS/AppDelegate.swift";
+        fixture.write(
+            path,
+            "import CSlopDeskFFI\nfinal class Delegate {\n    func applicationWillTerminate() { \
+             slopdesk_thing_free(handle) }\n    deinit {}\n}\n",
+        );
+        let report = super::a_handle_is_freed_only_by_its_owners_deinit(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("AppDelegate")),
+            "a shell that frees out of a lifecycle callback is the same bug, {report:?}"
         );
     }
 
