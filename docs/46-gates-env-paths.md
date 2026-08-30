@@ -65,7 +65,7 @@ The layout has two halves and both are ratcheted by `lint-invariants`
   rather than optional. Root-workspace MEMBERS are exempt and the rule derives that from `members`
   rather than a list — a member builds into `rust/target` and owns no directory of its own.
 - **each crate's `target`**, a gitignored SYMLINK, rebuilt by **`just relink-targets`** (idempotent).
-  This is the READ half: six production locators and three justfile sites resolve a daemon as
+  This is the READ half: ten production files, three justfile sites and one Swift test resolve a daemon as
   `<crate>/target/release/<name>`, and `cargo clean` removes the link rather than its contents. Run
   the recipe after a fresh clone and after any `cargo clean` that took a link out.
 

@@ -23,7 +23,7 @@
 //!   That is why the root workspace's config is required here too rather than treated as one more
 //!   crate: it is the backstop for every invocation that is not `cd`'d into a crate.
 //! * `rust/<crate>/target` — a SYMLINK, gitignored, rebuilt by `just relink-targets`. It is the
-//!   READ half: six production locators and three justfile sites resolve a daemon as
+//!   READ half: ten production files, three justfile sites and one Swift test resolve a daemon as
 //!   `<crate>/target/release/<name>`, and `cargo clean` removes a link rather than its contents.
 //!
 //! A crate with the config but no link builds correctly and cannot be LOCATED; a crate with the
@@ -246,8 +246,9 @@ fn check_link(report: &mut Report, root: &Path, relative: &str) {
     let path = root.join(relative);
     let Ok(entry) = fs::symlink_metadata(&path) else {
         report.fail(format!(
-            "{relative} is gone — six production locators resolve a daemon as `<crate>/target/release/…` \
-             and `cargo clean` removes the link, not its contents; run `just relink-targets`"
+            "{relative} is gone — ten production files and one Swift test resolve a daemon as \
+             `<crate>/target/release/…` and `cargo clean` removes the link, not its contents; run `just \
+             relink-targets`"
         ));
         return;
     };

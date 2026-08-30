@@ -105,7 +105,8 @@ help:
 # Cargo build products live OUTSIDE the checkout, in a `slopdesk-targets` sibling directory, and
 # each crate's `target` is a SYMLINK to its slice of it. The committed half is the per-crate
 # `.cargo/config.toml` — 72 of them plus the root workspace's — which is what makes cargo WRITE
-# there; the symlink is the read half, for the six production locators and the three justfile sites
+# there; the symlink is the read half, for the ten production files, three justfile sites and one
+# Swift test
 # that name `<crate>/target/release/...` as a path.
 #
 # ⚠️ THE REASON IS MEASURED AND IT IS NOT ABOUT DISK. Both app specs declare the SwiftPM package as
