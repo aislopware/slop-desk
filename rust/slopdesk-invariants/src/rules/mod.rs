@@ -31,6 +31,7 @@ pub mod device_streams;
 pub mod doc_citations;
 pub mod frozen_pairs;
 pub mod gate_health;
+pub mod handle_lifetime;
 pub mod held_values;
 pub mod host_probes;
 pub mod hot_paths;
@@ -1165,6 +1166,11 @@ pub fn registry() -> Vec<Rule> {
             name: "swift-floor-booked",
             origin: "docs/67 §5",
             check: swift_floor::the_swift_floor_is_exactly_what_is_booked,
+        },
+        Rule {
+            name: "handle-freed-in-deinit",
+            origin: "docs/55 §4, docs/63",
+            check: handle_lifetime::a_handle_is_freed_only_by_its_owners_deinit,
         },
         Rule {
             name: "ui-test-edges",
