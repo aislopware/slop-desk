@@ -121,13 +121,16 @@ to answer the next time one appears.
 | `ShellDeDuplication` | 24 | A decision AppKit and UIKit would each otherwise write, hoisted so the two cannot disagree — `PanePointer`, `DeviceBezelGeometry`, `PanelChromeActions`, `HoverSelectionGate`, the `*Copy` files, the rung enums the design floor resolves. What it decides is PRESENTATION; the value is that it is written once for both. |
 | `Vocabulary` | 17 | The types the wire, the config or the ABI is typed in on this side — `WireMessage`, `MetadataVerb`, `VideoChannel`, `KeyChord`, the config enums — plus the module-doc files that carry no code at all. |
 | `SwiftRuntime` | 13 | Drives a Swift or Foundation primitive with no counterpart that can cross a C ABI: `withObservationTracking`, `Task`, `AsyncStream`, `DispatchQueue`, `NWConnection`, `JSONEncoder`, `ProcessInfo`, `async` re-entrancy, the first-responder generation, a virtual clock. §6 closes `docs/65` §5's triad into this class. |
-| `CallingConvention` | 6 | The NEAR side of the FFI boundary: `FFIDelivery`, `ArenaText`, `RustHandle`, `LentText`, `CodecBytes`, `DevicePanelDelivery`. A door's caller cannot itself be behind a door. |
+| `CallingConvention` | 8 | The NEAR side of the FFI boundary: `FFIDelivery`, `ArenaText`, `RustHandle`, `LentText`, `CodecBytes`, `DevicePanelDelivery`, plus the two seams that decide what does NOT need to cross — `DeviceSectionReading` walks a blob a door filled, and `SimulatorFrameSink` holds three payloads (`docs/55` §4b: Rust would copy an IDR in and out to be told which one it was). A door's caller cannot itself be behind a door. |
 | `DrawingArt` | 6 | `SlateVectorArt`, `AndroidMarkPath`, the remaining `*Art` files — CoreGraphics path data. `docs/63` §6's floor by name. |
-| `DevicePanelLane` | 3 | `DeviceSectionReading`, `SimulatorWebSocketLane`, `SimulatorFrameSink`. `docs/63` §6 defers the lane to `docs/47` / `docs/48` BY NAME, and this stage does not fold it in. |
+| `DevicePanelLane` | 1 | `SimulatorWebSocketLane` — an `import Network` socket. `docs/63` §6 names it and rules that "the device-panel and proxy lanes are their own campaigns and are not scoped here". |
 | `WebKit` | 1 | `CodeSidebarFontSchemeHandler`. `docs/63` §6's floor by name. |
 
-`DevicePanelLane` is the only row that is a deferral rather than a floor. Everything above it is
-where it belongs.
+`DevicePanelLane` is the only row that is a deferral rather than a floor, and it is now ONE file.
+The class started at nine and read as a bucket for "device panel"; six of those gained a face once
+§5's `package` bug was fixed, and the other two belonged to a reason already in the list. What is
+left is what `docs/63` §6 actually deferred: the socket. **Everything else on this list is where it
+belongs, and nothing on it is waiting on a later campaign.**
 
 ### 70, not 82 — the rule's own first bug
 

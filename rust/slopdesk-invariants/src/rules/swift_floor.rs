@@ -39,7 +39,12 @@ enum Floor {
     /// clock. `docs/67` §6 closes `docs/65` §5's parked triad here.
     SwiftRuntime,
     /// The NEAR side of the FFI boundary: the arena cursor, the delivery retry, the handle's
-    /// `Sendable` claim, the lent-text pair. A door's caller cannot itself be behind a door.
+    /// `Sendable` claim, the lent-text pair, and the seams that decide what does NOT need to cross.
+    /// A door's caller cannot itself be behind a door.
+    ///
+    /// `SimulatorFrameSink` is the second kind: `docs/55` §4b asks whether the far side READS the
+    /// part that is big, and a sink that holds an avcC record, a JPEG seed and one keyframe for
+    /// replay would have Rust copy an IDR in and out to be told which one it was.
     CallingConvention,
     /// `WebKit`. `docs/63` §6's floor by name.
     WebKit,
@@ -50,8 +55,13 @@ enum Floor {
     /// disagree. What it decides is PRESENTATION; the value is that it is written once for
     /// both.
     ShellDeDuplication,
-    /// The simulator and Android lanes. `docs/63` §6 defers these to `docs/47` / `docs/48` by name,
-    /// and `docs/67` does not fold them in.
+    /// An `import Network` lane of a device panel. `docs/63` §6 names these and rules that "the
+    /// device-panel and proxy lanes are their own campaigns and are not scoped here"; `docs/67`
+    /// does not fold them in.
+    ///
+    /// The ONLY row that is a deferral rather than a floor, and after `docs/67`'s correction it is
+    /// one file. Everything else the class once held either gained a face or belonged to a reason
+    /// already in this list — a lane is not a bucket for "device panel", it is the socket.
     DevicePanelLane,
 }
 
@@ -146,7 +156,7 @@ const FLOOR: &[(&str, Floor)] = &[
     ),
     (
         "Sources/SlopDeskDevicePanels/Shared/DeviceSectionReading.swift",
-        Floor::DevicePanelLane,
+        Floor::CallingConvention,
     ),
     (
         "Sources/SlopDeskDevicePanels/Shared/SimulatorWebSocketLane.swift",
@@ -154,7 +164,7 @@ const FLOOR: &[(&str, Floor)] = &[
     ),
     (
         "Sources/SlopDeskDevicePanels/Simulator/SimulatorFrameSink.swift",
-        Floor::DevicePanelLane,
+        Floor::CallingConvention,
     ),
     (
         "Sources/SlopDeskInspector/NWByteChannelConformance.swift",
