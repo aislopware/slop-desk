@@ -62,6 +62,7 @@ pub mod split_surfaces;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
 pub mod swift_floor;
+pub mod target_dirs;
 pub mod terminal_config;
 pub mod terminal_grammar;
 pub mod terminal_surface;
@@ -386,6 +387,11 @@ pub fn registry() -> Vec<Rule> {
             name: "scoped-opt-outs",
             origin: "rust/*/Cargo.toml, docs/DECISIONS.md",
             check: crate_policy::scoped_opt_outs,
+        },
+        Rule {
+            name: "targets-outside-the-checkout",
+            origin: "docs/46 — the inner loop",
+            check: target_dirs::build_products_live_outside_the_checkout,
         },
         Rule {
             name: "one-home-per-operation",

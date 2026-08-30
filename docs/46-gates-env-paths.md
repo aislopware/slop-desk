@@ -37,14 +37,52 @@ That pid matters because **a pane census is taken of superd, never of hostd**: s
 
 The cost is structural, not a misconfiguration: the test target carries `SWIFT_ENABLE_TESTABILITY: YES` and the app target does not, so the two builds are different configurations and share no compiled module — the package graph compiles a second time for seven test files. Five of those seven `@testable import`, so the setting cannot come off. Only the RATE was available, so the bundle build has its own verb (`slopdesk-gate ios-bundle`), its own stamp (`.build/check-ios-bundle.sha256`) and its own recipe, and it runs before a push instead of after a keystroke. Two stamps rather than one on purpose: a shared stamp would let a `quick` that built only the app record "iOS inputs checked" and let the pre-push `check` skip a bundle it never built.
 
+## ⛔️ THE CARGO TARGET DIRECTORIES LIVE OUTSIDE THE CHECKOUT, AND IT IS THE INNER LOOP'S BIGGEST SINGLE COST
+
+Both app specs declare the SwiftPM package as `path: ../..` — the **repo root**. Xcode enumerates that
+whole tree on every invocation, single-threaded, one `lstat` per file
+(`IDEContainer _locateFileReferencesRecursivelyInGroup:` → `IDESwiftPackageAbstractGroup.expectedSubitemPathsToTypes()`
+→ `DVTFilePath _locked_vnodeKnownDoesNotExist:`). Measured 2026-08-31, both directions, with `sample`
+naming the frames:
+
+| `rust/**/target` | files under the package root | `slopdesk-gate ios --force`, no source change |
+| --- | --- | --- |
+| in place | 3,108,486 | **987 s** |
+| moved to a sibling tree | 1,499 | **22 s** |
+
+⚠️ **An `xcodebuild` with no compiler children and no derived-data writes is not building — `sample` it
+before assuming it is.** The 987 s run compiled nothing at all.
+
+The layout has two halves and both are ratcheted by `lint-invariants`
+(`targets-outside-the-checkout`):
+
+- **a `.cargo/config.toml` per crate directory**, committed, plus the root workspace's. This is
+  the half that makes cargo WRITE outside. It is a RELATIVE `target-dir` into a `slopdesk-targets`
+  sibling of the checkout, never an absolute one — the file is committed, so an absolute path would
+  bake this machine's checkout location into the repository. ⚠️ **cargo discovers config from the CWD,
+  not from the manifest**: `cargo --manifest-path rust/X/Cargo.toml` run from the repo root reads
+  `rust/.cargo/config.toml` and not the crate's, which is why the root workspace's config is required
+  rather than optional. Root-workspace MEMBERS are exempt and the rule derives that from `members`
+  rather than a list — a member builds into `rust/target` and owns no directory of its own.
+- **each crate's `target`**, a gitignored SYMLINK, rebuilt by **`just relink-targets`** (idempotent).
+  This is the READ half: six production locators and three justfile sites resolve a daemon as
+  `<crate>/target/release/<name>`, and `cargo clean` removes the link rather than its contents. Run
+  the recipe after a fresh clone and after any `cargo clean` that took a link out.
+
+**The symlinks do not undo the win, and that is the surprising half** — an earlier round recorded the
+opposite and was wrong. Xcode's walk uses `lstat`, which does not follow a symlink, so the link is a
+leaf to the enumerator and a directory to everything else. Re-measured five ways with the links live:
+`-showBuildSettings` 15–29 s, a full `ios --force` 31 s.
+
 It is cheap because nothing in it re-does work whose inputs did not move:
 
 - **`slopdesk-gate ffi`** hashes the shim's sources and every crate reachable from it by a `path = "../…"` edge, plus the header and the script itself. A second run on a warm tree exits in milliseconds; `--check` (in `just lint`) reports staleness without building. Its three slices build CONCURRENTLY, each into its own directory under the shim crate's derived `target/ffi` — separate directories rather than one, because cargo takes an exclusive lock on a target directory and three builds sharing one merely queue. Measured on one edit to a wrapped crate: 70 s serial, 55 s backgrounded onto the shared directory, **14 s** as it stands. The header⇄library symbol check on each slice is two `comm` passes over sorted sets, not 776 `grep -c` sweeps per slice (which cost 20 s and, being substring matches, let a door renamed to a longer name pass).
-- **`check-ios.sh`** is stamped as the table row above describes: **0 s** when no iOS-compiled input moved. A Swift edit does move it, and then the gate costs what one xcodebuild plan costs — which is why `quick` runs it CONCURRENTLY with `test-touched`, the other cost a Swift edit pays. Those two share nothing but the SwiftPM lock, and the only thing that lock delays is `golden`.
+- **`slopdesk-gate ios`** is stamped as the table row above describes: **0 s** when no iOS-compiled input moved. A Swift edit does move it, and then the gate costs what one xcodebuild plan costs — which is why `quick` runs it CONCURRENTLY with `test-touched`, the other cost a Swift edit pays. Those two share nothing but the SwiftPM lock, and the only thing that lock delays is `golden`.
+- **A `.swift` or a `.h` is stamped as CODE, not as bytes** — `gates/code_text.rs` strips comments and normalises inter-token whitespace before the digest, so a doc-comment edit leaves both Xcode stamps exactly where they were. Measured: a one-word doc edit in `Sources/SlopDeskVideoProtocol`, which sits deep in BOTH app graphs, cost fifteen minutes across the two triples for a change the lexer discards before it parses a declaration. It is a real lexer and not a regex because the only failure that matters is the one direction — classifying CODE as a comment would leave a warm stamp over a live change — so it carries Swift's nesting block comments, raw and multiline literals and interpolation stack, C's char literals, and a canary test that appends a comment plus a statement to EVERY source in the tree and asserts the lexer is not left inside a literal.
 - **`just lint`** runs its five linters concurrently into per-linter logs, replayed in the declared order once all have finished — ordered output without interleaving, and without just's `[parallel]` attribute, which does not order its output either. 55 s → **34 s**. It was bounded by the shell ratchet until that became `rust/slopdesk-invariants`; what is left of it is `lint-reach`, four `just --dry-run` expansions and one content stamp. The fourteen repo-wide token bans it used to start as a background Python process are rules in the same crate, and run with the rest of that registry under `lint-invariants`.
 - **`test-touched.sh`** selects by dependency closure and escalates to the full suite on any path it cannot attribute — fail-toward-slow.
 
-The one thing to remember: `quick`'s speed is entirely a claim that a stamp is honest. When a verdict looks wrong, `slopdesk-gate ffi --force` / `check-ios.sh --force` re-run unconditionally, and `just check` is always the answer of record.
+The one thing to remember: `quick`'s speed is entirely a claim that a stamp is honest. When a verdict looks wrong, `slopdesk-gate ffi --force` / `slopdesk-gate ios --force` re-run unconditionally, and `just check` is always the answer of record.
 
 Ratchets inside `just lint`: `slopdesk-invariants` rules `design-token-leaks` (Slate tokens live in `Sources/SlopDeskSlate/SlateDesign.swift`) and `menu-shortcutless` (no `.keyboardShortcut` in `WorkspaceCommands.swift`), plus the rest of that registry (row above).
 

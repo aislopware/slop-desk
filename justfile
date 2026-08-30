@@ -102,6 +102,39 @@ LINTERS := "lint-swift lint-shell lint-rust lint-reach lint-invariants"
 help:
     @{{just_executable()}} --list
 
+# Cargo build products live OUTSIDE the checkout, in a `slopdesk-targets` sibling directory, and
+# each crate's `target` is a SYMLINK to its slice of it. The committed half is the per-crate
+# `.cargo/config.toml` — 72 of them plus the root workspace's — which is what makes cargo WRITE
+# there; the symlink is the read half, for the six production locators and the three justfile sites
+# that name `<crate>/target/release/...` as a path.
+#
+# ⚠️ THE REASON IS MEASURED AND IT IS NOT ABOUT DISK. Both app specs declare the SwiftPM package as
+# `path: ../..` — the REPO ROOT — and Xcode enumerates that whole tree on every invocation, single
+# threaded, one `lstat` per file. With 3.1M cargo artifacts under it a `slopdesk-gate ios` that
+# compiled NOTHING took 987 s, all of it in `IDEContainer _locateFileReferencesRecursivelyInGroup:`.
+# Moved out: 22 s. Measured 2026-08-31, both directions, with `sample` naming the frames.
+#
+# The symlinks do NOT undo it, which is the surprising half and was re-measured five ways before
+# being relied on (an earlier round recorded the opposite and was wrong): `-showBuildSettings` runs
+# 15–29 s with them live, a full `ios --force` 31 s. Xcode's walk uses `lstat`, which does not
+# follow a symlink, so the link is a leaf to the enumerator and a directory to everything else.
+#
+# Run this after a fresh clone, and after any `cargo clean` that removed a link rather than its
+# contents. It is idempotent and costs nothing on a tree that is already linked.
+
+# Re-create the per-crate target symlinks into the sibling slopdesk-targets tree
+relink-targets:
+    @set -eu; \
+    outside="$(cd rust && pwd)/../../slopdesk-targets"; \
+    mkdir -p "$outside/_workspace"; \
+    ln -sfn "../../slopdesk-targets/_workspace" rust/target; \
+    for config in rust/*/.cargo/config.toml; do \
+      crate="$(basename "$(dirname "$(dirname "$config")")")"; \
+      mkdir -p "$outside/$crate"; \
+      ln -sfn "../../../slopdesk-targets/$crate" "rust/$crate/target"; \
+    done; \
+    echo "==> relinked $(ls -d rust/*/target | wc -l | tr -d ' ') crate target directories"
+
 # ---------------------------------------------------------------------------- #
 # Formatting (writes)
 

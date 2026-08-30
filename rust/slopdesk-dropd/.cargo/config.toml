@@ -1,0 +1,5 @@
+# Build products live OUTSIDE the checkout. Xcode enumerates the whole SwiftPM package
+# root — this repo — on every invocation, and 3.1M cargo artifacts under it cost 987s of lstat
+# per `slopdesk-gate ios`. See docs/46 and `just relink-targets`.
+[build]
+target-dir = "../../../slopdesk-targets/slopdesk-dropd"

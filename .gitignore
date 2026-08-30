@@ -71,13 +71,18 @@ docs/ui-shell/screenshots/*.webm
 # python bytecode from repo scripts
 __pycache__/
 
-# Rust build products. TWO workspaces, so two target directories: `rust/` (the Claude Code hook
-# relay) and `rust/slopdesk-superd`, which is `exclude`d from the first and therefore builds into
-# its own. A pattern per workspace would miss the next one silently — hundreds of megabytes of
-# artifacts one `git add -A` away — so this matches any `target/` under `rust/`, which is a
-# directory name cargo owns there and nothing else uses.
+# Rust build products. A pattern per workspace would miss the next one silently — hundreds of
+# megabytes of artifacts one `git add -A` away — so this matches any `target` under `rust/`, which
+# is a name cargo owns there and nothing else uses.
+#
+# BOTH spellings, and the one without the slash is the load-bearing half: since the artifacts moved
+# out of the checkout (`just relink-targets`, docs/46) each `target` is a SYMLINK to the sibling
+# `slopdesk-targets` tree, and a trailing-slash pattern does not match a symlink — git would offer
+# 73 of them as untracked.
 rust/**/target/
+rust/**/target
 rust/target/
+rust/target
 
 # Built by scripts/build-ffi.sh from rust/slopdesk-ffi — 17 MB of slices that change on every
 # Rust edit. Same reasoning as libghostty above: a build output, not a source.

@@ -82,6 +82,7 @@
 //! stamps live under `.build/`, so the first run after this port rebuilds once and is warm after.
 
 pub mod android;
+pub mod code_text;
 pub mod ffi;
 pub mod golden;
 pub mod prepush;

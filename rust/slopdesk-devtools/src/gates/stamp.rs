@@ -30,6 +30,15 @@
 //! parse, a product list nothing in the graph vends — falls back to the WHOLE source tree, because
 //! a scope that guessed low would be a green over code it never compiled.
 //!
+//! ## Source is hashed as CODE, not as bytes
+//! A `.swift` or a `.h` in the set is digested through [`super::code_text`] — comments removed,
+//! inter-token whitespace normalised — so a doc-comment edit leaves the stamp exactly where it was.
+//! That is not a loosening: a comment is discarded by the lexer before one declaration is parsed,
+//! so two files that differ only in comments compile to the same thing and a rebuild between them
+//! asserts nothing. It is measured rather than assumed — a one-word doc edit in
+//! `Sources/SlopDeskVideoProtocol`, which sits deep in both app graphs, cost fifteen minutes across
+//! the two triples. Everything else in the set is still hashed byte-for-byte.
+//!
 //! ## The paths are repo-RELATIVE
 //! The shell fed `shasum` absolute paths, so the digest was a property of WHERE the tree was
 //! checked out. Two checkouts of one commit stamped differently and each paid the eighty-five
@@ -39,6 +48,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
+
+use super::code_text;
 
 /// The file extensions the two typecheck gates compile or read.
 const COMPILED: &[&str] = &["swift", "yml", "plist", "metal", "h"];
@@ -62,10 +73,11 @@ const GRAPH: &[&str] = &["Package.swift", "Package.resolved"];
 /// The gate's own logic is an input to its verdict: a stamp that survived an edit to the selection
 /// rules would cache a verdict the new rules never reached.
 ///
-/// These FIVE files and not the `gates/` tree, for the reason [`super::ffi`]'s own `SELF_FILES`
-/// gives: only what decides this verdict belongs here. The input set ([`inputs_for`]), the scope
-/// expansion ([`super::swift_graph`]), the package description [`Scope::sources`] expands it
-/// THROUGH ([`super::touched`]), the two gates that consume them ([`super::xcode`]) and the entry
+/// These SIX files and not the `gates/` tree, for the reason [`super::ffi`]'s own `SELF_FILES`
+/// gives: only what decides this verdict belongs here. The input set ([`inputs_for`]), the
+/// normaliser each source is hashed through ([`super::code_text`]), the scope expansion
+/// ([`super::swift_graph`]), the package description [`Scope::sources`] expands it THROUGH
+/// ([`super::touched`]), the two gates that consume them ([`super::xcode`]) and the entry
 /// point that dispatches — a sibling gate cannot change what type-checks, and while the whole tree
 /// was in the set, editing the golden gate or the FFI producer cost a twelve-minute rebuild of both
 /// app triples.
@@ -74,6 +86,10 @@ const GRAPH: &[&str] = &["Package.swift", "Package.resolved"];
 /// a file here the moment a scope decision starts flowing through it.
 const SELF_FILES: &[&str] = &[
     "rust/slopdesk-devtools/src/bin/gate.rs",
+    // The normaliser decides what a source file HASHES AS, so it decides the verdict as directly as
+    // the input set does: a stripper edit that changed one file's digest would otherwise be cached
+    // behind a stamp computed under the old rule.
+    "rust/slopdesk-devtools/src/gates/code_text.rs",
     "rust/slopdesk-devtools/src/gates/stamp.rs",
     "rust/slopdesk-devtools/src/gates/swift_graph.rs",
     "rust/slopdesk-devtools/src/gates/touched.rs",
@@ -215,9 +231,16 @@ pub fn current(root: &Path) -> Result<String, String> {
 pub fn current_for(root: &Path, scope: Scope) -> Result<String, String> {
     let mut outer = Sha256::new();
     for path in inputs_for(root, scope)? {
-        let bytes = fs::read(root.join(&path)).unwrap_or_default();
+        let file = PathBuf::from(&path);
+        let bytes = fs::read(root.join(&file)).unwrap_or_default();
         let mut inner = Sha256::new();
-        inner.update(&bytes);
+        // Source is hashed as CODE, everything else as bytes. See [`code_text`] for the
+        // measurement: a doc-comment edit under `Sources/` used to cost fifteen minutes of
+        // `xcodebuild` for a change the lexer discards before it parses a declaration.
+        match code_text::Dialect::of(&file) {
+            Some(dialect) => inner.update(code_text::code_only(&bytes, dialect)),
+            None => inner.update(&bytes),
+        }
         outer.update(format!("{:x}  {path}\n", inner.finalize()));
     }
     Ok(format!("{:x}", outer.finalize()))
