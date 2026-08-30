@@ -1,40 +1,53 @@
 # 61 — Deleting `Sources/SlopDeskVideoHost`
 
-`CLAUDE.md` says a port deletes its original in the same change. This tree is the ONE place that
-rule is deferred, and this file is why it is safe to defer it and what the deferral owes.
+**This is a record. `Sources/SlopDeskVideoHost` is deleted and `rust/slopdesk-videohostd` is the
+daemon.** The file is kept because every section below holds a REASON — why a rule was re-aimed
+rather than dropped, why an instrument was dissolved rather than ported, which divergences from the
+Swift are deliberate — and those are what a reader needs the day one of them looks like a mistake.
+Read §3 for what is knowingly not the same as the Swift; the rest is history with its arguments
+attached.
 
-The reason is arithmetic, not preference. `SlopDeskVideoHostSession.swift` is 2051 code lines and is
-the only thing that OWNS the other 46 files — the capturer, the encoder, the packetizer, the
-injector and the window feed are all reached through it and through nothing else. Deleting the tree
-before that file is ported would delete a working daemon and leave nothing that serves; deleting it
-one file at a time would mean a fallback, a shim or a cross-language mirror at every step, each of
-which `CLAUDE.md` names by name. So the tree goes in ONE commit, with the session, and every row
-below has to be green in that same commit.
+`CLAUDE.md` says a port deletes its original in the same change. This tree was the ONE place that
+rule was deferred, and the deferral is what this file bought.
 
-**The Rust side is landing meanwhile.** `rust/slopdesk-videohostd` already holds the argv grammar,
-the settings overlay, `--list`, the UDP mux and the encoder's lifetime. None of it is reachable from
-Swift, by design: no FFI door was added for any of it, so there is no bridge to unpick later.
+The reason was arithmetic, not preference. `SlopDeskVideoHostSession.swift` was 2051 code lines and
+the only thing that OWNED the other 46 files — the capturer, the encoder, the packetizer, the
+injector and the window feed were reached through it and through nothing else. Deleting the tree
+before that file was ported would have deleted a working daemon and left nothing that serves;
+deleting it one file at a time would have meant a fallback, a shim or a cross-language mirror at
+every step, each of which `CLAUDE.md` names by name. So the tree went in ONE commit, with the
+session, and every row of §1 was green in that same commit.
 
-## §1 The cascade — everything that must move in the deletion commit
+**The Rust side landed meanwhile, and reached Swift at no point.** No FFI door was ever added for
+any of `rust/slopdesk-videohostd`, which is why the deletion had no bridge to unpick — §5 is the
+door surface that died with the Swift, not a surface that had to be disconnected first.
 
-| # | What | Where | What it needs |
+## §1 The cascade — everything that moved in the deletion commit
+
+**Every row below is CLOSED.** The table is kept as a record rather than a plan, because each row's
+fourth column holds the reason the thing was done the way it was, and those reasons are what a
+reader needs the day one of them looks re-openable. `Where` is where the thing USED to be; the ✅
+column says what stands there now. Nothing here is outstanding — the open work this document still
+tracks is in §3's named divergences, not in this table.
+
+| # | What | Where it was | What it took |
 | --- | --- | --- | --- |
-| 1 | `SlopDeskVideoHostSession.swift` | `Sources/SlopDeskVideoHost/` | the port itself: 2051 lines, the keystone |
-| 2 | the `SlopDeskVideoHost` library product | `Package.swift:121` | deleted |
-| 3 | the `SlopDeskVideoHost` target | `Package.swift:699` | deleted |
-| 4 | the `slopdesk-videohostd` executable target | `Package.swift:811-817` | deleted — the Rust binary is the daemon |
-| 5 | `slopdesk-perfbench` | `Package.swift:832-836` | dissolve or retarget onto the Rust encoder. It drives `VideoEncoder` + `VideoDecoder` + the packetizer at real host configs, and every one of those is Rust already |
+| 1 | `SlopDeskVideoHostSession.swift` | `Sources/SlopDeskVideoHost/` | ✅ the port itself: 2051 lines, the keystone. The whole directory is gone |
+| 2 | the `SlopDeskVideoHost` library product | `Package.swift:121` | ✅ deleted |
+| 3 | the `SlopDeskVideoHost` target | `Package.swift:699` | ✅ deleted |
+| 4 | the `slopdesk-videohostd` executable target | `Package.swift:811-817` | ✅ deleted — the Rust binary is the daemon |
+| 5 | `slopdesk-perfbench` | `Package.swift:832-836` | ✅ DISSOLVED, not retargeted. The headless encode/decode timing benchmark is `rust/slopdesk-loopback-validate` (`just loopback-validate`, `docs/46`). It was a Swift target only because it drove `VideoEncoder`, `VideoDecoder` and the packetizer directly, and all three are Rust now — a Swift harness over the door would have measured a reimplementation rather than the object the host drives, which is §2's own argument. Its encode-wall findings survive in `docs/research/perf-2026-07-04-encode-wall.md` |
 | 6 | `slopdesk-framewatch` | `Package.swift:816-820` | ✅ RETARGETED. It had NO `SlopDeskVideoHost` edge — an SCK capture that logs arrival timestamps — and `rust/slopdesk-apple-sck` covered it, so it is `rust/slopdesk-instruments`' `slopdesk-framewatch` bin: same flags, same stdout format, `CaptureStream` instead of a hand-rolled `SCStreamConfiguration`, and the luma plane read as a `&[u8]` through `slopdesk-apple-vt` so the instruments workspace stays `forbid(unsafe_code)`. The Swift target is deleted and `deleted_host_swift::swift_instruments_stay_deleted` keeps it deleted; `rust_boundaries::capture_is_rusts` lost its last exemption with it |
-| 7 | `SlopDeskVideoHostTests` | `Package.swift:1071` | deleted with its target |
-| 8 | the `apple_floors` rules that name the tree | `rust/slopdesk-invariants/src/rules/apple_floors.rs:35,188,358,405,575,583` | each names a path under `Sources/SlopDeskVideoHost/` or `Sources/slopdesk-videohostd/`. A rule whose subject is deleted must be RE-AIMED at the Rust that replaced it, never merely dropped — and its break-test with it |
-| 9 | the devtools GUI's video page | `rust/slopdesk-devtools/src/gui/mod.rs`, `gui/video.rs` | check whether they name the Swift target or only the daemon's socket |
-| 10 | `EnvBridge.loadDefaultSidecarIntoEnvConfig` | Swift client side | the daemon's `setenv` fold. `crate::env::Overlay` replaced it; the Swift call site dies with the launch path |
-| 11 | `docs/00` and `docs/01` | prose | the "genuinely left to Swift: Network.framework" line is no longer true of this path |
+| 7 | `SlopDeskVideoHostTests` | `Package.swift:1071` | ✅ deleted with its target. What it tested — the host-session state machine, the resize ladder, the recovery verbs — is `rust/slopdesk-videohostd`'s and `rust/slopdesk-video`'s now, under `just videohostd-test` |
+| 8 | the `apple_floors` rules that name the tree | `rust/slopdesk-invariants/src/rules/apple_floors.rs:35,188,358,405,575,583` | ✅ RE-AIMED, never dropped, and their break-tests with them. Each named a path under `Sources/SlopDeskVideoHost/` or `Sources/slopdesk-videohostd/`; the surviving pair points at `rust/slopdesk-apple-cgevent/src/inject.rs` and `rust/slopdesk-videohostd/src/injector.rs` — the Rust that replaced the subject, which is the treatment rows 12 and 14 both cite |
+| 9 | the devtools GUI's video page | `rust/slopdesk-devtools/src/gui/mod.rs`, `gui/video.rs` | ✅ nothing to move: it names the DAEMON — `slopdesk-videohostd --list`, its binary and its socket — and never named the Swift target. The check was the row's whole content and it came back clean |
+| 10 | `EnvBridge.loadDefaultSidecarIntoEnvConfig` | Swift client side | ✅ gone with the launch path; `crate::env::Overlay` is the daemon's `setenv` fold. `EnvBridge.swift` keeps a note at the old site saying so, which is what stops the one-liner being re-added by someone reading the file rather than this table |
+| 11 | `docs/00` and `docs/01` | prose | ✅ `docs/00` §"The system calls are Rust's too" now names `slopdesk-videohostd` as the Rust GUI video host and narrows the Swift remainder to Metal/CAMetalLayer, Network.framework on the CLIENT, and the two view layers. `docs/01` never carried the claim |
 | 12 | the four `slopdesk-videohostd` names in `STRANDED_RUST_MODULES` | `rust/slopdesk-invariants/src/rules/repo_invariants.rs` | ✅ PAID, and then paid AGAIN for a reason the register could not show. `encode`, `feed`, `mux_registry` and `windowgeometry` came off as the port reached them and the list is `[&str; 0]`. But an empty register only means no name is EXCUSED — and `windowgeometry` and `cursor` were passing on text rather than on a caller: a sibling's `///` link spelling the qualified path, a homonym module in `slopdesk-video` reached with `crate::`, and that crate's root re-exporting its own `cursor`. Both modules were written, unit-tested and CONSTRUCTED NOWHERE. Closing the three holes turned them red, and `session_geometry.rs` is the composition that answers — every door they needed was already open. Each hole now carries its own break-test |
-| 13 | the host's whole FFI door surface | `rust/slopdesk-ffi/` | 248 doors across 26 modules had the deleted Swift as their ONLY caller, so they die with it — plus the three settings faces that were the last thing keeping four of those modules alive (`HostGateTable`, `CaptureGateTable`, `InjectorGateTable`). Six more modules SHRINK to the doors a client still opens. See §5 |
-| 14 | the `drag-cadence-ratchet` rule | `rust/slopdesk-invariants/src/rules/window_placement.rs` | it pins `WindowGeometryWatcher.swift`'s poll cadence to `windowgeometry.rs`'s. Its Swift subject dies here, so it is re-aimed or dropped WITH its break-test, the same way row 8 treats `apple_floors` |
+| 13 | the host's whole FFI door surface | `rust/slopdesk-ffi/` | ✅ 248 doors across 26 modules had the deleted Swift as their ONLY caller and died with it — plus the three settings faces that were the last thing keeping four of those modules alive (`HostGateTable`, `CaptureGateTable`, `InjectorGateTable`). Six more modules SHRANK to the doors a client still opens. See §5 |
+| 14 | the `drag-cadence-ratchet` rule | `rust/slopdesk-invariants/src/rules/window_placement.rs` | ✅ RE-AIMED the way row 8 treats `apple_floors`, and its break-tests came along. It used to be a `SameSet` across the port — `dragPollHz` and `unionPollDivider` in the Swift watcher had to equal `DRAG_POLL_HZ` and `UNION_POLL_DIVIDER` — and a `SameSet` whose Swift side does not exist is the vacuous pass this crate refuses. What it protected outlived its Swift half: both are still NAMED constants in `windowgeometry.rs`, and the daemon may not type either as a literal. A hand-typed `from_millis(33)` is 30.3 Hz — near enough that nothing looks wrong, far enough that the region sample drifts off the drag it belongs to |
 
-## §2 The one architectural debt the port took on — PAID, in this commit
+## §2 The one architectural debt the port took on — PAID, in the deletion commit
 
 `rust/slopdesk-videohostd` used to depend on `slopdesk-ffi`, which is the Swift shim crate, and that
 edge would be wrong in any other daemon. It was there because `slopdesk-ffi::encoder` held the
@@ -203,11 +216,25 @@ None of these is an accident, and none should be "fixed" without reading why:
    `exit()`s run the atexit handlers twice, which is undefined behaviour. An abort racing an exit is
    not. It only ever fires on a daemon that is already wedged.
 5. **The adaptive-`m` FEC ladder is unreachable, and so is small-frame duplication.** Both need
-   `m > 1`, and there is no `SLOPDESK_FEC_M` gate in `host_gates` — `Session::new` pins
-   `ReedSolomonFec::default()` at `m = 1`. The GROUP-SIZE ladder (`SLOPDESK_ADAPTIVE_FEC`) is live
-   and stepped per report; the `m` ladder's step, its three tiers 5/6/7 and the small-frame
-   duplicate that keys off them are all dead code paths until that gate exists.
-   `session_pump::wire_tier` names the exact argument that must become the gate.
+   `m > 1`, and nothing resolves one: `Session::new` pins `ReedSolomonFec::default()` at `m = 1`.
+   The GROUP-SIZE ladder (`SLOPDESK_ADAPTIVE_FEC`) is live and stepped per report; the `m` ladder's
+   step, its three tiers 5/6/7 and the small-frame duplicate that keys off them are all dead code
+   paths until the host resolves `m`. `session_pump::wire_tier` names the exact argument.
+
+   ⚠️ **This one is NOT symmetric, and that is a hazard rather than a divergence.** The audit that
+   wrote this paragraph found the other half live: Swift's `AdaptiveFECPolicy.MultiLoss.parityCount`
+   resolves `SLOPDESK_FEC_M` from the client's own environment and `makeFECScheme()` hands the
+   result to the session, so the CLIENT honours a key the HOST ignores. `Pending::new` takes
+   `parity_shards_per_group` from the receiver's configured scheme and not off the wire — by
+   design, which is what the multi-loss note's **DEPLOY TOGETHER** warning is about — so a client
+   with `SLOPDESK_FEC_M=3` mis-maps the parity boundary of every frame an `m = 1` host sends and
+   silently stops repairing. The key is documented, clamped, unit-tested on both sides, and folded
+   into the daemon's env by `env.rs` from `video.fec_m`; only the host's read is missing.
+
+   Wiring the host's read is therefore the fix, and it is NOT a one-line one: `session_pump`'s
+   header records that small-frame duplication was left unported precisely BECAUSE `m > 1` was
+   unreachable, so resolving `m` makes that branch reachable and its absence becomes a live
+   divergence in the same stroke. The two land together or neither does.
 
 ## §5 The door surface the deletion took with it
 
