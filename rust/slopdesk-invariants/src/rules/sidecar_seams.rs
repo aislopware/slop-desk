@@ -6,7 +6,7 @@
 //! creates it — it diverges on the seventh channel, the next daemon, the one manager somebody edits
 //! alone — so the moment to catch it is while there is still only one copy.
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
@@ -275,8 +275,15 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
     ];
 
     let mut claims = vec![
+        // `Sources` alone, for [`crate::claim::SWIFT_ROOTS`]'s third reason, and the message below
+        // already says why: a fixture is meant to reach these through the door, and
+        // `ClipboardSyncEngineTests` does — it bounds a payload with
+        // `MetadataCodec.maxClipboardContentBytes` rather than re-typing the number, and it names
+        // `.tiff` only to read the board BACK and assert the AppKit twin landed. Reading a flavour
+        // to check it shipped is this rule's enforcement; converting into one is the ban. The view
+        // cannot tell those apart, and the assertion has no other spelling.
         Claim::NoneUnder {
-            roots: &["Sources/"],
+            roots: &["Sources"],
             extensions: SWIFT,
             pattern: r"forType: \.tiff|MetadataCodec\.maxClipboardContentBytes|org\.nspasteboard\.ConcealedType|public\.file-url",
             all: &[],
@@ -366,7 +373,7 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
 pub fn one_sidecar_encoder(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::NoFileUnder {
-            roots: &["Sources/"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"outputFormatting",
             rescued_by: Some(r"\.sortedKeys"),
@@ -402,8 +409,13 @@ pub fn one_sidecar_encoder(tree: &Tree) -> Report {
 /// ban against documenting the flag.
 #[must_use]
 pub fn one_debug_gate_spelling(tree: &Tree) -> Report {
+    // Shipping only, for [`crate::claim::SWIFT_ROOTS`]'s third reason. The ban is about a TRACE
+    // staying coherent across three readers, which is a property of the running client; a test that
+    // sets the gate to prove `DebugTrace` reads it has to spell the name, and that is this rule's
+    // own enforcement rather than a fourth reader. The same fragility the `View::Code` note above
+    // records — most mentions are prose about the flag — is worse in a suite, not better.
     check_all(tree, &[Claim::NoneUnder {
-        roots: &["Sources/"],
+        roots: &["Sources"],
         extensions: &["swift"],
         pattern: r"SLOPDESK_BLOCKS_DEBUG|SLOPDESK_WORKSPACE_DEBUG",
         all: &[],
@@ -441,7 +453,7 @@ pub fn one_channel_tag(tree: &Tree) -> Report {
 
     check_all(tree, &[
         Claim::NoneUnder {
-            roots: &["Sources/", "Tests/"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"enum VideoChannel",
             all: &[],

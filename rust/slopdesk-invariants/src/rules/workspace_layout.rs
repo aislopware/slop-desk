@@ -5,7 +5,7 @@
 //! ordinary kind. The fourth is a PERFORMANCE claim held the same way, because the only durable
 //! statement about a measurement is which call site still exists to make it.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -115,7 +115,7 @@ pub fn one_pixel_weight_conversion_seam(tree: &Tree) -> Report {
                       has two answers",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"Double\(span\)|/ *Double\(.*[Ss]pan\)|axisSpan|PaneMath",
             all: &[],

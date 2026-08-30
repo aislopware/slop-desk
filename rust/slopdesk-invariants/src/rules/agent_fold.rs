@@ -9,7 +9,7 @@
 //! afterwards, constructed by nothing in `Sources/` and kept alive by a test file each: the shape
 //! `CLAUDE.md` names outright, a second implementation surviving as a test fake.
 
-use crate::claim::{Claim, Extract, RUST, View, check_all};
+use crate::claim::{Claim, Extract, RUST, SWIFT_ROOTS, View, check_all};
 use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
@@ -91,18 +91,18 @@ pub fn one_badge_ladder_for_a_tab_row(tree: &Tree) -> Report {
 pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"(enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift hook-body parser is back in Sources/ ({files}) — rust/slopdesk-hookevent owns \
+            message: "a Swift hook-body parser is back in Swift ({files}) — rust/slopdesk-hookevent owns \
                       the reading AND the mapping",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: "slopdesk_hook_event_parse",
             all: &[],
@@ -166,14 +166,14 @@ pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
 pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"ClaudeStatusMachine\(",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a ClaudeStatusMachine is constructed in Sources/ ({files}) — the ONE per pane is \
+            message: "a ClaudeStatusMachine is constructed in Swift ({files}) — the ONE per pane is \
                       rust/slopdesk-agent's PaneDetector (docs/50)",
         },
         Claim::Matches {
@@ -237,15 +237,15 @@ pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
                       vocabulary's, not an emitter's",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: "struct StatusTriple",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a second status triple is declared in Sources/ ({files}) — ClaudeStatusTriple is the \
-                      one shape of a type-27 emit",
+            message: "a second status triple is declared in Swift ({files}) — ClaudeStatusTriple is the one \
+                      shape of a type-27 emit",
         },
     ];
     check_all(tree, &claims)
@@ -453,7 +453,7 @@ mod tests {
         detector(&fixture);
         assert!(super::one_pane_detector_and_the_probes_only_probe(&fixture.tree()).is_clean());
 
-        // A machine constructed anywhere in Sources/, even if nothing but a test reaches it.
+        // A machine constructed in any Swift root, even if nothing but a test reaches it.
         fixture.append("Sources/Generated.swift", "let m = ClaudeStatusMachine()\n");
         assert!(!super::one_pane_detector_and_the_probes_only_probe(&fixture.tree()).is_clean());
 

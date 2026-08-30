@@ -19,7 +19,7 @@
 //! translated into a second language, and one list of test-lint relaxations shared by link rather
 //! than by copy.
 
-use crate::claim::{Claim, Extract, SWIFT, View, check_all};
+use crate::claim::{Claim, Extract, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -691,7 +691,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
 #[must_use]
 pub fn the_static_mirror_stays_deleted(tree: &Tree) -> Report {
     check_all(tree, &[Claim::NoneUnder {
-        roots: &["Sources", "Apps"],
+        roots: SWIFT_ROOTS,
         extensions: SWIFT,
         pattern: "staticMirror",
         all: &[],

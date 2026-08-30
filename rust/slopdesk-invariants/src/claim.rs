@@ -2038,6 +2038,66 @@ pub const SWIFT: &[&str] = &["swift"];
 /// Rust sources.
 pub const RUST: &[&str] = &["rs"];
 
+/// Every root a Swift file can be in, for the bans that say "this implementation is Rust's now".
+///
+/// Named once for the reason [`SWIFT`] is: the three roots are not a preference, they are the
+/// complete answer to "where could a second implementation land", and a claim that listed two of
+/// them would be green while covering less than it says. `Sources` is the shipping code, `Tests` is
+/// where a mirror FIXTURE would go — which `CLAUDE.md`'s one-implementation rule bans by name, so a
+/// port ban that stops at `Sources` misses the spelling the rule calls out — and `Apps` holds both
+/// app entry points plus `Apps/ClientApp-iOS/Tests`, a Swift test target that is under neither of
+/// the other two.
+///
+/// This is for PORT bans specifically. A rule about the SHAPE of shipping UI — which module may
+/// import `AppKit`, how a view is composed — is right to read `Sources` alone, because a test that
+/// builds a view is not a design violation. The question to ask before reaching for this is whether
+/// a hit in a test file would be a bug: for "the syscall is Rust's" it is, for "this module may not
+/// import `UIKit`" it is not.
+///
+/// The sweep that introduced this constant found a third answer, and it is the one worth naming
+/// because it looks exactly like the first. Some `Sources`-only bans are shipping-only because the
+/// test spelling IS the enforcement: `wire_codecs::big_endian_helpers` bans `appendBE` outside a
+/// fixture and then PINS that fixture's existence, `device_law`'s `SLOPDESK_MODE_EVENT_*` claim
+/// forbids a second discriminant mapping while a Swift test naming the constant is the parity
+/// check, and `host_probes` bans a wasteful call shape that a door's own test has to make to
+/// measure it. Each reads like a port ban and would fire on the test that proves it. So the rule is
+/// not "port ban ⇒ widen" but the sentence itself: **a ban is only worth widening when the widened
+/// form still means one thing.**
+///
+/// Two of that category are worth separating out, because the ban is RIGHT about tests and the VIEW
+/// is what cannot be widened: `video_control`'s depth-ring identifiers hit only a TRAILING comment
+/// (`View::Code` strips whole-line comments, not trailing ones) and `video_client`'s `lostAhead`
+/// hits only an `XCTAssert` message, which no view strips. A rule that reports a test's prose as a
+/// relapse teaches people to stop reading it, so those two stay narrow until the view can tell the
+/// difference — the limitation is recorded at each site rather than worked around with a path
+/// exemption.
+///
+/// The category has one more face, and `ui_seams` is the clean example: a ban whose subject is a
+/// MUTABLE seam — assigning `TerminalRendererFactory.shared` — where a test assignment is a test
+/// DOUBLE, not a second installer. Its sentence, "a second registrar resolves by mount order", is a
+/// claim about a shipped process and is empty inside a harness. That is the same test as everything
+/// above, applied to a `var` rather than to a name.
+///
+/// Green on today's tree is necessary, never sufficient, and the sweep proved it in both
+/// directions: seven widenings reddened on real test files and were reverted after READING them,
+/// while `device_law`'s two and `host_probes`' one are GREEN widened and still wrong — nothing in
+/// the tree would have told anyone.
+pub const SWIFT_ROOTS: &[&str] = &["Sources", "Tests", "Apps"];
+
+/// [`SWIFT_ROOTS`] plus the fourth place Swift lives: the ghostty embedder.
+///
+/// `ThirdParty/ghostty/integration` is a `Tree::ROOTS` entry holding OUR Swift — the paste and
+/// clipboard cluster, the renderer seam — not vendored upstream code, so a ban that reads the three
+/// normal roots and stops is blind to a whole target. It is a separate constant rather than a
+/// fourth entry in `SWIFT_ROOTS` because most bans should NOT read it: a rule about client
+/// architecture has nothing to say about an embedder, and widening every port ban into vendored
+/// territory would report code we do not own. Its one user bans a DECLARATION the embedder could
+/// plausibly hold a second copy of — `sidecar_clis`' libghostty pointer enums. The other rule that
+/// reads the embedder, `ui_seams`' seam installer, spells three roots by hand instead: it is the
+/// SAME set minus `Tests`, for the reason written at that site, and a shared constant that fits it
+/// would have to drop `Tests` for everyone.
+pub const SWIFT_ROOTS_AND_GHOSTTY: &[&str] = &["Sources", "Tests", "Apps", "ThirdParty/ghostty/integration"];
+
 /// Where this gate's own rule tables live, exempted from every tree-wide ban that reads `rust/`.
 ///
 /// A ban has to WRITE DOWN the thing it forbids, so the file stating "no second base64 alphabet"

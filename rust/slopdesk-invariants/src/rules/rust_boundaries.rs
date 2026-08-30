@@ -6,6 +6,17 @@
 //! a symbol compiled beside it, and a C entry point next to the logic it marshals is a pointer bug
 //! one edit away from being a terminal bug.
 //!
+//! ## Where a second implementation can land
+//! Every Swift ban below reads [`SWIFT_ROOTS`] — all three of them — because that is the complete
+//! answer to the question these rules ask. They used to disagree with each other: the probe and
+//! agent bans read `Sources`, the three video ones read `Sources` and `Tests`, and none reached
+//! `Apps`, which holds both app entry points and `Apps/ClientApp-iOS/Tests`, a Swift test target
+//! under neither. The prose was already arguing the wider scope — "no exemption possible", "no
+//! Swift target could hold a legitimate one" — while the mechanism checked less, which is the shape
+//! of defect this crate exists to catch, found in its own source. `Tests` is not a courtesy either:
+//! `CLAUDE.md`'s one-implementation rule bans a test fake and a mirror fixture BY NAME, so a port
+//! ban that stops at `Sources` is green on the spelling the rule calls out.
+//!
 //! The rest ask "is this still a caller and not a second answer", which is a question about
 //! CONTENT: it asks for the verdict, and it does not hold the table. `docs/61` changed WHO gets
 //! asked that, not what it asks. Encode and capture used to be Swift faces over C doors, and both
@@ -19,7 +30,7 @@
 //! Swift host left there is no target that could hold a legitimate compression session or capture
 //! stream.
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -153,6 +164,14 @@ pub fn replay_buffer(tree: &Tree) -> Report {
 ///
 /// The six banned strings are the tables and the walks a re-implementation would need and a wrapper
 /// cannot have.
+///
+/// Those six are the ONE claim here that stays rooted at the module rather than at
+/// [`SWIFT_ROOTS`], and the reason is what they are. They are that module's former INTERIOR —
+/// `cancelOnly`, `pendingIdleStartedAt`, a `blockLedger` — names that are unambiguous beside the
+/// detector and ordinary anywhere else; `cancelOnly` on a UI type is a button's affordance, not a
+/// detection table. A ban is only worth widening when the widened form still means one thing, and
+/// this one would start reporting unrelated code. The tree-wide claim above it covers what a
+/// re-implementation cannot hide in any case: DECLARING the machine, the signal or the classifier.
 #[must_use]
 pub fn agent_detection(tree: &Tree) -> Report {
     const FACES: &[&str] = &[
@@ -175,7 +194,7 @@ pub fn agent_detection(tree: &Tree) -> Report {
     }
     report.absorb(check_all(tree, &[
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b",
             all: &[],
@@ -327,7 +346,7 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
     );
     check_all(tree, &[
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: SYSCALLS,
             all: &[],
@@ -339,7 +358,7 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
                       (docs/55 §6)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: FRONTMOST,
             all: &[],
@@ -351,7 +370,7 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
                       pumps no run loop (docs/57 §5)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: CURSOR,
             all: &[],
@@ -364,7 +383,7 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
                       (docs/57 §5)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: ACCESSIBILITY,
             all: &[],
@@ -397,8 +416,8 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
 /// `docs/61` deleted the Swift video host's `VideoEncoder`, and with it the last Swift that had
 /// any business near a compression session. The ban did not narrow when its one plausible
 /// offender left — it widened, because there is now no host target left that could hold a
-/// legitimate one. Every `VTCompressionSession*` under `Sources` or `Tests` is a re-port, with no
-/// exemption possible and none granted.
+/// legitimate one. Every `VTCompressionSession*` in any Swift root is a re-port, with no exemption
+/// possible and none granted.
 ///
 /// ## What the CONTENT half re-aimed onto
 /// The old rule checked the Swift face by content: it must call the door, and it must not hold the
@@ -443,7 +462,7 @@ pub fn hevc_encode_is_rusts(tree: &Tree) -> Report {
     );
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: COMPRESSION,
             all: &[],
@@ -554,7 +573,7 @@ pub fn hevc_decode_is_rusts(tree: &Tree) -> Report {
 
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: DECOMPRESSION,
             all: &[],
@@ -669,7 +688,7 @@ pub fn capture_is_rusts(tree: &Tree) -> Report {
     );
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: STREAM,
             all: &[],
@@ -1370,6 +1389,58 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("frontmost/app read")),
             "{report:?}"
+        );
+    }
+
+    /// A port ban reads every Swift root, not just the shipping one.
+    ///
+    /// The three roots are seeded with three different rules on purpose: each of the families that
+    /// used to disagree about scope is represented, so a later narrowing cannot pass by leaving one
+    /// of them behind. `Apps/ClientApp-iOS/Tests` is the location that motivated the widening — a
+    /// Swift test target under neither `Sources` nor `Tests` — and a mirror in `Tests` is the
+    /// spelling `CLAUDE.md`'s one-implementation rule bans by name.
+    #[test]
+    fn a_second_implementation_is_caught_in_tests_and_in_apps_too() {
+        let in_tests = Fixture::new("probe-in-tests");
+        in_tests.write(
+            "Tests/SlopDeskHostTests/FakeProbe.swift",
+            "func fake() -> pid_t { tcgetpgrp(masterFD) }\n",
+        );
+        let report = super::one_probe_per_reading(&in_tests.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("foreground PROBE")),
+            "a test fake is the mirror CLAUDE.md bans by name — {report:?}"
+        );
+
+        // The other two rules also demand an ask of the daemon and a face that calls the door,
+        // neither of which a one-file fixture has — so each asserts on its BAN's own sentence
+        // rather than on redness, which every fixture here would satisfy for the wrong reason.
+        let in_apps = Fixture::new("capture-in-apps");
+        in_apps.write(
+            "Apps/ClientApp-iOS/Tests/HostedRaster.swift",
+            "let filter = SCContentFilter(display: display, excludingWindows: [])\n",
+        );
+        let report = super::capture_is_rusts(&in_apps.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("capture stream is back")),
+            "Apps/ClientApp-iOS/Tests is a Swift target under neither of the other two roots — {report:?}"
+        );
+
+        let machine = Fixture::new("machine-in-apps");
+        machine.write(
+            "Apps/ClientApp-macOS/AppMain.swift",
+            "enum ClaudeSignal { case idle }\n",
+        );
+        let report = super::agent_detection(&machine.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("machine/signal wrapper is back")),
+            "an app entry point is Swift like any other — {report:?}"
         );
     }
 

@@ -7,7 +7,7 @@
 //! and none of them fails a test that only ever exercised one side — which is why what is pinned
 //! here is the call, not the behaviour.
 
-use crate::claim::{Claim, RUST, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT_ROOTS, View, check_all};
 use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
@@ -120,15 +120,14 @@ pub fn one_key_vocabulary_whichever_grammar(tree: &Tree) -> Report {
 pub fn one_vt_grammar_for_styled(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift VT grammar is back in Sources/ — slopdesk-sanitize::styled owns the styled \
-                      pass",
+            message: "a Swift VT grammar is back in Swift — slopdesk-sanitize::styled owns the styled pass",
         },
         Claim::Names {
             path: "Sources/SlopDeskWorkspaceCore/Terminal/AnsiStyledText.swift",

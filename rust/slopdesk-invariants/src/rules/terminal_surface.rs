@@ -2,7 +2,7 @@
 //!
 //! Ported from the deleted `check-supervisor.sh`, the stretch after the terminal-mode tracker.
 
-use crate::claim::{Claim, Extract, SWIFT, View, check_all};
+use crate::claim::{Claim, Extract, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -51,7 +51,7 @@ pub fn input_surface(tree: &Tree) -> Report {
             message: "rust/slopdesk-terminal's dedup crosses inside the input box",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(struct|enum|final class) InputDedupRing\b|func expectedEchoBytes\(|func stepFilter\(",
             all: &[],
@@ -161,8 +161,14 @@ pub fn grid_readout(tree: &Tree) -> Report {
             message: "MirrorFold no longer calls {entry} — who clamped a pane's grid, and what the pane \
                       says about it, are slopdesk_workspace::grid_readout's",
         },
+        // `Sources` alone, for [`crate::claim::SWIFT_ROOTS`]'s third reason and the same one the
+        // libghostty action strings carry below: the readout is a SENTENCE a door returns, so the
+        // only way a test can check the join is to spell the expected sentence —
+        // `WorkspaceMirrorFactsTests` asserts `paneGridReadout` equals `120×40 · sized by MacBook
+        // Pro`. That assertion IS this rule, run against the shipped door. A test that could only
+        // say "the readout equals whatever the readout returns" would pin nothing.
         Claim::NoneUnder {
-            roots: &["Sources", "Apps"],
+            roots: &["Sources"],
             extensions: SWIFT,
             pattern: r"· sized by|TerminalGridReadout",
             all: &[],
@@ -216,7 +222,7 @@ pub fn link_scan(tree: &Tree) -> Report {
         // failing a test that has no CJK in it. (`ViLineMotion.cellWidth(_ line: String, at:)` is a
         // CALLER of the door, not a table, and stays.)
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func (trimWrapping|classifyURL|classifyMailto|classifyPath|pathShape|splitLineCol|lexicallyNormalize|fileURLPath)\(|func (isWide|isZeroWidth)\(_? ?[a-z]*: ?Unicode\.Scalar|func cellWidth(Of)?\(_? ?[a-z]*: ?(Character|String)\)",
             all: &[],
@@ -284,7 +290,7 @@ pub fn command_blocks(tree: &Tree) -> Report {
                       {entry} — the command blocks are rust/slopdesk-terminal's",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func evictIfNeeded\(|var requestGeneration\b|var bookmarkOrder\b",
             all: &[],
@@ -347,6 +353,11 @@ pub fn search_surface(tree: &Tree) -> Report {
             message: "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift no longer calls \
                       {entry} — where the selection lands after a rescan or a step is find_bar's",
         },
+        // `Sources` alone, and it belongs there — this is [`crate::claim::SWIFT_ROOTS`]'s third
+        // category. Six suites spell these literals, and `FindBarPresentationTests` spells all five
+        // in one `XCTAssertEqual` block against `.wire`: that IS the enforcement. A test that could
+        // only say "`.wire` equals what `.wire` returns" would assert nothing, which is the same
+        // argument `wire_codecs::big_endian_helpers` makes about its byte fixture.
         Claim::NoneUnder {
             roots: &["Sources"],
             extensions: SWIFT,
@@ -363,7 +374,7 @@ pub fn search_surface(tree: &Tree) -> Report {
         // written out at. Either one growing back is the drift that let the case-sensitive arm land on
         // one search surface and not the other.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(isRegex|controller\.isRegex) *\|\| *(controller\.)?wholeWord|!isRegex, *!caseSensitive",
             all: &[],

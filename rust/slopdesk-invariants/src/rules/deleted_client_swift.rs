@@ -42,7 +42,7 @@
 //! and two live comments elsewhere in the tree (`VideoConnectionRegistry.swift`, `main.swift`'s
 //! vector generator) explain the deletion by naming the deleted type.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -392,7 +392,7 @@ fn the_client_session_swift_stays_deleted() -> Vec<Claim> {
 fn no_deleted_type_is_declared_again() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
-            roots: &["Sources", "Tests", "Apps"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: concat!(
                 r"(enum|struct|final class|class|actor|protocol) ",

@@ -6,7 +6,7 @@
 //! overlay spelled `60` and the config text spelled `60.0`, a committed chip promised a gesture the
 //! host swallowed. None of them is a crash, and each is invisible from either side alone.
 
-use crate::claim::{Claim, RUST, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -198,7 +198,7 @@ pub fn the_swipe_nav_operating_point_is_a_handle(tree: &Tree) -> Report {
                       second answer is a committed chip promising a fire the host swallows (docs/61 §3)",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: "SwipeNavPolicy",
             all: &[],
@@ -208,7 +208,10 @@ pub fn the_swipe_nav_operating_point_is_a_handle(tree: &Tree) -> Report {
             message: "{files} brings the Swift allowlist face back — it is swipe_nav_config's question now",
         },
         Claim::NoneUnder {
-            roots: &["rust/slopdesk-ffi", "Sources"],
+            // The FFI crate plus every Swift root: these are RETIRED door names, so a resurrection in a
+            // test target or an app entry point is the same relapse as one in a shipping module. A
+            // literal rather than [`crate::claim::SWIFT_ROOTS`] because the Rust half is one crate.
+            roots: &["rust/slopdesk-ffi", "Sources", "Tests", "Apps"],
             extensions: &["rs", "h", "swift"],
             pattern:
                 "slopdesk_swipe_is_navigable|slopdesk_swipe_extra_apps|slopdesk_swipe_fire_travel_from_env",

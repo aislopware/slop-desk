@@ -21,7 +21,7 @@
 //! deleted in the doc comments of the Rust that replaced it, and a raw read would fire on the
 //! explanation rather than on a revival.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -80,7 +80,7 @@ fn the_swift_targets_stay_deleted() -> Vec<Claim> {
 /// daemon's `sendlane::DatagramSink`.
 fn no_swift_declares_a_video_host_type() -> Vec<Claim> {
     vec![Claim::NoneUnder {
-        roots: &["Sources", "Tests"],
+        roots: SWIFT_ROOTS,
         extensions: SWIFT,
         pattern: r"\b(enum|struct|final class|class|actor|protocol) (AudioStreamEncoder|CaptureRegionRecovery|CursorSampler|FPSGovernor|HostDisplayWake|HostFrontmostApp|HostNavHistory|HostPrivacyBlank|IdleReapDecider|InputInjector|LTRController|LiveBitratePolicy|LiveCongestionController|MuxFlowTable|NWVideoMuxDatagramTransport|OffScreenWindowMintRescue|PacketizeLane|QPController|RecoveryIDRPolicy|RecoveryRequestDeduper|RetransmitRing|StaticFrameSuppressionDecider|StillnessCrispDecider|StreamableWindowListOrder|SwipeNavHostConfig|UnboundLaneByePolicy|VideoDatagramTransport|VideoEncoder|VideoMuxChannelTransport|VideoMuxRouter|VideoMuxSessionRegistry|VideoSendLane|VideoSessionLogic|VirtualDisplay|VirtualDisplayRecoveryPolicy|WindowCapturer|WindowFeedAXSupport|WindowFeedCache|WindowFeedSnapshotBuilder|WindowFeedSubscribers|WindowGeometryWatcher|WindowParkingLedger|WindowParkingManager|WindowParkingSidecar|WindowPlacement)\b",
         all: &[],
@@ -162,5 +162,25 @@ mod tests {
              = 1\n",
         );
         assert!(deleted_video_swift(&fixture.tree()).is_clean());
+    }
+
+    /// The video types stay deleted in every Swift root, including the one under `Apps`.
+    ///
+    /// `a_video_host_type_declared_in_a_live_target_is_red` makes the sideways-drift argument for
+    /// `Sources`; this makes it for the root that is under neither `Sources` nor `Tests`, where the
+    /// ban had no reach at all until it read [`crate::claim::SWIFT_ROOTS`].
+    #[test]
+    fn a_deleted_video_type_is_caught_in_an_app_test_bundle() {
+        let fixture = Fixture::new("video-type-in-apps");
+        fixture.write("Apps/ClientApp-iOS/Tests/A.swift", "let ordinary = 1\n");
+        assert!(deleted_video_swift(&fixture.tree()).is_clean());
+        fixture.append(
+            "Apps/ClientApp-iOS/Tests/A.swift",
+            "final class VideoMuxRouter {}\n",
+        );
+        assert!(
+            !deleted_video_swift(&fixture.tree()).is_clean(),
+            "a test bundle is Swift like any other"
+        );
     }
 }

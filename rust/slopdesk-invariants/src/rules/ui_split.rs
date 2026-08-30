@@ -11,7 +11,7 @@
 //! IMPERATIVE renderers can hold a decision in a stored property and pass it across the seam, and a
 //! declarative one re-derives it in a body where the other half cannot read it.
 
-use crate::claim::{Claim, Corpus, SWIFT, View, check_all};
+use crate::claim::{Claim, Corpus, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -237,7 +237,7 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
 pub fn no_declarative_framework_survives(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: SWIFT_TREE,
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"^\s*import SwiftUI|canImport\(SwiftUI\)",
             all: &[],
@@ -278,9 +278,6 @@ pub fn no_declarative_framework_survives(tree: &Tree) -> Report {
     ];
     check_all(tree, &claims)
 }
-
-/// Every root that holds Swift, which is what makes the ban above a TREE-wide one.
-const SWIFT_TREE: &[&str] = &["Sources", "Apps", "Tests"];
 
 /// The video surface stays split, and the engine under it holds no views
 ///

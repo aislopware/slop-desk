@@ -145,7 +145,10 @@ pub fn one_width_table_under_that_clustering(tree: &Tree) -> Report {
                       drifts",
         },
         Claim::NoneUnder {
-            roots: &["rust", "Sources"],
+            // Every Rust crate plus every Swift root. A second width table inside a TEST is precisely
+            // the cross-language mirror fixture CLAUDE.md bans by name, and it would drift silently
+            // because nothing compares it to `slopdesk-sanitize`.
+            roots: &["rust", "Sources", "Tests", "Apps"],
             extensions: &["rs", "swift"],
             pattern: "0x4E00|0x4e00",
             all: &[],

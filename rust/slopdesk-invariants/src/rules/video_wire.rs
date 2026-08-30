@@ -9,7 +9,7 @@
 //! So none of these assert BEHAVIOUR. They assert SHAPE: the Swift file still calls each door, and
 //! the names a re-implementation would need are absent.
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -76,7 +76,7 @@ pub fn send_path(tree: &Tree) -> Report {
             message: "the FEC field lives in rust/slopdesk-video, its kernel in rust/slopdesk-gfsimd",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b",
             all: &[],
@@ -473,7 +473,7 @@ pub fn frame_measurements(tree: &Tree) -> Report {
         // Sources/: each is small, pure and framework-free, which is exactly the shape a "tiny local
         // helper" takes.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b",
             all: &[],
@@ -533,11 +533,11 @@ pub fn pure_policies(tree: &Tree) -> Report {
             message: "Sources/SlopDeskVideoProtocol/StreamStallPolicy.swift no longer calls {entry} — the \
                       policy is rust/slopdesk-video's",
         },
-        // The arithmetic itself, which may not grow back anywhere in Sources/. `windowPoint(pixel:`
+        // The arithmetic itself, which may not grow back in any Swift root. `windowPoint(pixel:`
         // and the CG↔Cocoa flip went with this port: they had no caller outside their own tests, and
         // the Rust twin that survives them is the only one left.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b",
             all: &[],
@@ -591,7 +591,7 @@ pub fn mode_tracker(tree: &Tree) -> Report {
             message: "the golden corpus is the oracle, not a second machine",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(struct|enum|final class) LegacyTerminalModeTracker\b|case (oscEscape|stringConsume|stringConsumeEscape)\b|func (handleCSI|handleOSC)\b",
             all: &[],

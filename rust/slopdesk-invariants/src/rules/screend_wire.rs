@@ -6,7 +6,7 @@
 //! ends is silent by construction — an old daemon serving a new client reports nothing, answers
 //! plausibly, and is wrong.
 
-use crate::claim::{Claim, Extract, SWIFT, View, check_all};
+use crate::claim::{Claim, Extract, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -230,7 +230,7 @@ pub fn opaque_budget(tree: &Tree) -> Report {
 pub fn deleted_screen_swift(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: "enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum \
                       TerminalSnapshotRenderer",
@@ -242,7 +242,7 @@ pub fn deleted_screen_swift(tree: &Tree) -> Report {
                       (docs/52)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b",
             all: &[],
@@ -253,7 +253,7 @@ pub fn deleted_screen_swift(tree: &Tree) -> Report {
                       (docs/52)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=]",
             all: &[],
@@ -264,7 +264,7 @@ pub fn deleted_screen_swift(tree: &Tree) -> Report {
                       (docs/52 §4)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b",
             all: &[],
@@ -275,7 +275,7 @@ pub fn deleted_screen_swift(tree: &Tree) -> Report {
                       §6.8)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r#"(createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$)"#,
             all: &[],
@@ -475,5 +475,21 @@ let version = slopdesk_screenwire::build_version(&hello);
                 "pub use slopdesk_screenwire::{Snapshot, State, Status, Verdict};\n",
             );
         fixture
+    }
+
+    /// The stripper family stays deleted in every Swift root.
+    ///
+    /// A journal re-declared in a test bundle is the second implementation, and the one place it
+    /// would go unseen: `Apps/ClientApp-iOS/Tests` is under neither `Sources` nor `Tests`.
+    #[test]
+    fn a_deleted_screen_type_is_caught_in_an_app_test_bundle() {
+        let fixture = Fixture::new("screen-type-in-apps");
+        fixture.write("Apps/ClientApp-iOS/Tests/A.swift", "let ordinary = 1\n");
+        assert!(super::deleted_screen_swift(&fixture.tree()).is_clean());
+        fixture.append("Apps/ClientApp-iOS/Tests/A.swift", "enum ScrollbackJournal {}\n");
+        assert!(
+            !super::deleted_screen_swift(&fixture.tree()).is_clean(),
+            "a test bundle is Swift like any other"
+        );
     }
 }

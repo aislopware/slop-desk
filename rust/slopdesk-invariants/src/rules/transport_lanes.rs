@@ -7,7 +7,7 @@
 //! times. A second spelling of a byte LAYOUT is worse than a second spelling of a rule, because it
 //! shows up as a desynchronised socket rather than as a wrong value.
 
-use crate::claim::{Claim, GATE_RULES, View, check_all};
+use crate::claim::{Claim, GATE_RULES, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -246,7 +246,7 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
                       half of §4c",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"String\(decoding: UnsafeRawBufferPointer\(rebasing:|UInt32\(clamping: arena.count\)|arena\[start\.\.<end\]|String\(bytes: arena",
             all: &[],
@@ -299,7 +299,7 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
 pub fn one_nwconnection_byte_channel(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"connection\.receive\(minimumIncompleteLength",
             all: &[],
@@ -323,42 +323,47 @@ pub fn one_nwconnection_byte_channel(tree: &Tree) -> Report {
 /// SIX copies: the agent control listener, the client control server, the mux channel session,
 /// `slopdesk-client`'s stdout path, the supervisor's frame writer and the screend client. Every one
 /// of them folded in EINTR-is-a-retry and short-writes-are-normal, and four dropped the failure
-/// while two threw. `SlopDeskTTY::FileDescriptorWrite` is the loop; the DIFFERENCE — drop or report
+/// while two threw. `rust/slopdesk-posix/src/fdio.rs` is the loop; the DIFFERENCE — drop or report
 /// — is a real contract and survives as the outcome each caller switches on.
+///
+/// Both arms carried an `exempt` for `Sources/SlopDeskTTY/`, and that target is GONE — the whole
+/// library crossed with `slopdesk-client` (`a9fd1833`), which is why the loop is named in Rust
+/// above. A carve-out for a directory that does not exist reads as "one copy is allowed" and
+/// permits nothing, so the bans are now what they actually mean: NO raw `write(2)` loop and NO
+/// `readExactly` anywhere in Swift, because neither has a Swift home left to be the one.
 ///
 /// The comma in the pattern is load-bearing. `write(fd, buffer, count)` is the syscall;
 /// `write(socket: fd, body:)` is `SupervisorFrame`'s own frame writer, whose argument LABEL happens
-/// to be the same word and whose `writeAll` delegates to `FileDescriptorWrite.all` exactly as this
-/// rule asks.
+/// to be the same word and whose `writeAll` delegated to the loop exactly as this rule asks.
 #[must_use]
 pub fn one_write_loop_and_one_read_exactly(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"(Darwin\.)?write\((fd|socket),",
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &["Sources/SlopDeskTTY/"],
-            message: "a raw write(fd) grew back outside SlopDeskTTY ({files}) — FileDescriptorWrite.all is \
-                      the write loop",
+            exempt: &[],
+            message: "a raw write(fd) grew back in Swift ({files}) — slopdesk_posix's fdio is the write loop",
         },
         // The mirror: `readExactly` was the supervisor's frame reader and the screend client, same
-        // loop and same must-report contract spelled with two error types. Both of those two keep
-        // their own, and are named — a THIRD is the regression.
+        // loop and same must-report contract spelled with two error types. Both crossed, so there is
+        // no Swift reader left to name — ANY of them is the regression now.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: "func readExactly",
             all: &[],
             unless: &[],
             view: View::Code,
-            // Down to ONE since `docs/60` Batch B: the two host-side readers were deleted with
-            // `Sources/SlopDeskSupervisor` and `Sources/SlopDeskScreen`, and their Rust replacements
-            // read through `std::io::Read::read_exact`, which is the loop, not a copy of it.
-            exempt: &["Sources/SlopDeskTTY/"],
-            message: "a third readExactly grew back ({files}) — FileDescriptorRead.exactly is the loop",
+            // Down to ZERO: `docs/60` Batch B deleted the two host-side readers with
+            // `Sources/SlopDeskSupervisor` and `Sources/SlopDeskScreen`, and `a9fd1833` took the
+            // last one with `Sources/SlopDeskTTY`. Every Rust replacement reads through
+            // `std::io::Read::read_exact`, which is the loop, not a copy of it.
+            exempt: &[],
+            message: "a readExactly grew back in Swift ({files}) — std::io::Read::read_exact is the loop",
         },
     ];
     check_all(tree, &claims)
@@ -586,16 +591,21 @@ mod tests {
     #[test]
     fn the_write_loop_stays_in_one_target() {
         let fixture = Fixture::new("transport-write-loop");
+        // NO exempted target any more — `Sources/SlopDeskTTY` crossed with the client, so the clean
+        // seed is what the ban still ALLOWS rather than who used to be allowed to break it. Both
+        // lines are the pattern's near-misses: the labelled `write(socket:` frame writer the doc
+        // comment calls out as load-bearing, and a `readExactly` that is a CALL rather than a
+        // declaration. A seed of the banned spelling would now redden this test's own precondition.
         let seed = |fixture: &Fixture| {
             fixture
                 .write(
-                    "Sources/SlopDeskTTY/FileDescriptorWrite.swift",
-                    "Darwin.write(fd, p, n)\n",
+                    "Sources/SlopDeskHost/Frame.swift",
+                    "try write(socket: fd, body: payload)\n",
                 )
-                // ONE reader since `docs/60` Batch B took the other two with their targets. The
-                // exemption narrowed with them, so the fixture has to as well — seeding the deleted
-                // pair here would have made the ban look wider than it is.
-                .write("Sources/SlopDeskTTY/FileDescriptorRead.swift", "func readExactly(\n");
+                .write(
+                    "Sources/SlopDeskHost/Reader.swift",
+                    "let head = try readExactly(4)\n",
+                );
         };
         seed(&fixture);
         assert!(super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());
@@ -606,7 +616,8 @@ mod tests {
         );
         assert!(!super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());
 
-        // The one named reader keeps its own; a second does not.
+        // Calling `readExactly` is fine; DECLARING one is the regression, and there is no longer a
+        // Swift target allowed to.
         seed(&fixture);
         fixture.write("Sources/SlopDeskHost/Other.swift", "func readExactly(_ n: Int)\n");
         assert!(!super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());

@@ -1,7 +1,7 @@
 //! What a CLIENT decides about the stream the host is sending it, and it is
 //! `rust/slopdesk-clientsession`'s.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -103,7 +103,7 @@ pub fn client_session(tree: &Tree) -> Report {
         // marks are two boundaries away rather than one, so a Swift copy would no longer sit in the
         // same file as the call it disagrees with.
         Claim::NoneUnder {
-            roots: &["Sources", "Apps"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"var highestSeqFed\b|var presentedResumeSeq\b|var ackPending\b",
             all: &[],
@@ -120,7 +120,7 @@ pub fn client_session(tree: &Tree) -> Report {
         // `Retry` event for exactly that reason, and a Swift side that recomputed either would be
         // rendering a countdown against a ladder it does not walk.
         Claim::NoneUnder {
-            roots: &["Sources", "Apps"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             // Narrower than the `ReconnectManager.swift`-scoped pattern it replaces, and in a
             // different DIRECTION: this is tree-wide now, so it cannot ban a NAME. Two live files

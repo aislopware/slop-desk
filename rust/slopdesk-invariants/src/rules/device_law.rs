@@ -223,6 +223,12 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
 /// is deliberately out of scope: it READS the return of `NSWorkspace.open` to answer `.ok`/`.error`
 /// over the wire, it never has a `UIKit` arm to fork on, and its target cannot see the phone half.
 /// Same call, different law — which is why the ban's corpus is the phone half alone.
+///
+/// Its corpus is `Sources` alone, and stays there. A `.general` write inside a test IS a bug, but a
+/// different one — it clobbers the developer's clipboard, which is what the per-process board above
+/// exists to prevent — and this ban's sentence ("a second client pasteboard write") would be the
+/// wrong thing to say about it. That is the test [`crate::claim::SWIFT_ROOTS`] asks: a widened ban
+/// has to still mean ONE thing, and this one would mean two.
 #[must_use]
 pub fn one_pasteboard_and_one_open(tree: &Tree) -> Report {
     const PASTEBOARD: &str = "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift";
@@ -280,6 +286,13 @@ pub fn one_pasteboard_and_one_open(tree: &Tree) -> Report {
 /// purpose) and a different reason — Parsec-parity present-on-decode before a VT submit, not
 /// marking a panel's sample for an `AVSampleBufferDisplayLayer`. Sharing it would widen a leaf's
 /// purpose for three lines of `CoreFoundation`.
+///
+/// Both claims read `Sources` alone on purpose, for the reason
+/// [`crate::claim::SWIFT_ROOTS`] names. `autoReplyPing = true` is a ban on setting an INERT flag,
+/// and a test that sets it to assert the inertness is doing the rule's own work, not relapsing;
+/// `SLOPDESK_MODE_EVENT_ENTERED_ALT_SCREEN` is a C constant, and a Swift test naming it to check
+/// the two spellings agree is the parity assertion this whole crate is built out of. Widened, both
+/// would fire on their own enforcement.
 ///
 /// One discriminant-to-enum mapping per enum: `docs/55` §6 makes the case list a contract, and a
 /// `SLOPDESK_MODE_EVENT_*` added to one reader and not the other is that contract silently

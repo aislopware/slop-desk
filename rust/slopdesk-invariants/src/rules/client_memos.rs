@@ -5,7 +5,7 @@
 //! hides best: it is called once per keystroke, it is easy to write badly, and a ranking that
 //! disagrees with the one the row title used reads as the list being jumpy, never as two rules.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -20,14 +20,14 @@ use crate::tree::Tree;
 pub fn one_fuzzy_ranking_for_every(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"(let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift fuzzy scorer is back in Sources/ — rust/slopdesk-fuzzy owns FuzzyMatchV2",
+            message: "a Swift fuzzy scorer is back in Swift — rust/slopdesk-fuzzy owns FuzzyMatchV2",
         },
         Claim::Names {
             path: "Sources/SlopDeskClientCore/Palette/FuzzyMatcher.swift",

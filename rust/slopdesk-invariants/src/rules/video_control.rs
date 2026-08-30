@@ -23,7 +23,7 @@
 //! The "no Swift brings any of this back" half is stated tree-wide, at full strength, in
 //! [`crate::rules::deleted_video_swift`].
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -160,7 +160,7 @@ pub fn rate_law(tree: &Tree) -> Report {
         // Each names a decision the law makes, and a second speller of any one of them is a second
         // control law that agrees on the easy cases.
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func decideInner\(|func applyDecrease\(|func appLimitedDecay\(|func increaseStep\(|func utilizationPermitsRamp\(",
             all: &[],
@@ -171,7 +171,7 @@ pub fn rate_law(tree: &Tree) -> Report {
                       slopdesk_abr_decide",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"static let (rttAlpha|lossAlpha|minRTTDecay)\b",
             all: &[],
@@ -323,6 +323,15 @@ pub fn presentation_depth(tree: &Tree) -> Report {
             message: "Sources/SlopDeskVideoClient/OwdLateDetector.swift no longer calls {entry} — the spike \
                       detector is rust/slopdesk-video's",
         },
+        // Both of these stay at `Sources` for [`crate::claim::SWIFT_ROOTS`]'s third reason, and each
+        // shows a different face of it. The knob names are the door's own contract: `OwdLateDetector`
+        // and `PacerDepthPolicy` are configured through the environment, so the suite that proves the
+        // clamps SETS `SLOPDESK_OWD_LATE_FRAC_PCT` to 9999 — spelling the name is how it asks. The
+        // identifier ban is the subtler one: its only hit in `Tests` is `lateTimes` in a TRAILING
+        // comment explaining a ring size, and `View::Code` strips whole-line comments, not trailing
+        // ones — so widening this would report a test's prose as a relapse. The ban itself is right
+        // about tests; the VIEW cannot tell them apart, and a rule that fires on a comment teaches
+        // people to stop reading it.
         Claim::NoneUnder {
             roots: &["Sources"],
             extensions: SWIFT,

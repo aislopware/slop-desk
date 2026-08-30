@@ -5,7 +5,7 @@
 //! value types stayed Swift on purpose — 262 files import them — so the line is INSIDE the module
 //! rather than around it, and every rule here is a per-file question.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 use crate::vocabulary::{SectionedVocabulary, Vocabulary, agrees, sections_agree};
@@ -270,7 +270,7 @@ pub fn state_file(tree: &Tree) -> Report {
                       (docs/55 §6)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"static let persistedPaneFields\b|(struct|private struct) Row: Codable\b",
             all: &[],

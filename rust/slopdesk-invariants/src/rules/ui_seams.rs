@@ -198,6 +198,10 @@ pub fn the_canvas_registers_itself_in_appkit(tree: &Tree) -> Report {
             message: "MacContentColumn stopped spelling mainWindowFrame — the canvas is un-droppable, and \
                       no test goes red for it (docs/56 stage F, P5)",
         },
+        // `Sources` alone, the same MUTABLE-SEAM argument the installer ban below spells out:
+        // "two providers for one key resolve by mount order" is a claim about a shipped process,
+        // and `PaneCanvasDragControllerTests` registers a provider because that is what driving a
+        // drop target from a harness requires. See [`crate::claim::SWIFT_ROOTS`].
         Claim::NoneUnder {
             roots: &["Sources"],
             extensions: SWIFT,
@@ -307,6 +311,13 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
                       unregistered seam ships the BUILD-STATUS placeholder where the terminal should be, \
                       and no compiler in `just check` opens this file (docs/56 stage F, P4)",
         },
+        // Every Swift root that ships, plus the embedder — and deliberately NOT `Tests`, which is
+        // [`crate::claim::SWIFT_ROOTS`]'s third category. Assigning `shared` is how a test installs
+        // a DOUBLE: `LeafSeamSlotTests` sets it to a stub, asserts `make` carries mount focus
+        // through, and clears it in `tearDown`. The sentence this ban says — "a second registrar
+        // resolves by mount order" — is a claim about what SHIPS, and it means nothing inside a
+        // harness that owns the whole process. Widened, the ban would mean two things and would
+        // fire on the suite that proves the seam works.
         Claim::NoneUnder {
             roots: &["Sources", "Apps", "ThirdParty/ghostty/integration"],
             extensions: SWIFT,

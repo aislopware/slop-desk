@@ -121,6 +121,12 @@ pub fn one_vocabulary_for_foreground_process(tree: &Tree) -> Report {
 /// a DIRECTORY named `code-server` on `PATH` was handed to `posix_spawn`, where Rust's
 /// `mode & 0o111` walks past it. Neither disagreement can raise an error, because only one side
 /// ever runs on a given path.
+///
+/// The null-output half reads `Sources` alone and stays there. It is a ban on a CALL SHAPE that
+/// costs a caller a wasted rule evaluation, not on a second implementation — and a test that asks a
+/// door for its length is exercising the door's own contract, where the waste is the point of the
+/// measurement. [`crate::claim::SWIFT_ROOTS`] is for the bans a test hit would be a bug for; this
+/// is not one of them.
 #[must_use]
 pub fn hostd_finds_program_by_one(tree: &Tree) -> Report {
     let claims = [

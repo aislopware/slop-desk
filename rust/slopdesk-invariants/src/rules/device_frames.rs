@@ -6,7 +6,7 @@
 //! end drops without a word, an access unit that decodes to green, or a gesture the device reads as
 //! a system swipe.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -291,7 +291,7 @@ pub fn one_builder_for_every_coremedia_object(tree: &Tree) -> Report {
     const FACE: &str = "Sources/SlopDeskDevicePanels/Shared/DevicePanelVideoStream.swift";
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources", "Apps", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"CMVideoFormatDescriptionCreate|CMBlockBufferCreate|CMBlockBufferReplaceDataBytes|CMSampleBufferCreate|CMSampleBufferGetSampleAttachmentsArray",
             all: &[],

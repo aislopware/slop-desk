@@ -14,7 +14,7 @@
 //! it went, and a gate that could not tell a declaration from a sentence about one would teach
 //! people to delete the explanation.
 
-use crate::claim::{ByteMap, Claim, Corpus, Extract, RUST, SWIFT, View, check_all};
+use crate::claim::{ByteMap, Claim, Corpus, Extract, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::text;
@@ -117,14 +117,14 @@ pub fn the_drop_client_holds_no_layout(tree: &Tree) -> Report {
                       accessor at a time: {files}",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift file-drop receiver is back in Sources/ — dropd owns the receiving end, and a \
+            message: "a Swift file-drop receiver is back in Swift — dropd owns the receiving end, and a \
                       'small fallback for when dropd is missing' is the cross-language mirror the tree \
                       forbids: when dropd is absent hostd logs it and there is no file transfer, which is \
                       the whole design (docs/53): {files}",
@@ -426,15 +426,15 @@ fn the_panel_holds_no_bridge_grammar() -> Vec<Claim> {
                       (docs/48): {files}",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift Android bridge is back in Sources/ — androidd owns adb and the pump \
-                      (docs/48): {files}",
+            message: "a Swift Android bridge is back in Swift — androidd owns adb and the pump (docs/48): \
+                      {files}",
         },
     ]
 }
@@ -505,20 +505,20 @@ pub fn the_inspector_frame_has_one_spelling(tree: &Tree) -> Report {
                       back one line at a time (docs/54)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift inspector producer is back in Sources/ — inspectord owns the fold, and \
+            message: "a Swift inspector producer is back in Swift — inspectord owns the fold, and \
                       `InspectorSource` is named here because it was the HOST end of the wire \
                       (`InspectorClient` and `InspectorViewModel` are the far end, which is allowed) \
                       (docs/54): {files}",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor|protocol) (InspectorEvent|ToolCard|TodoItem|SubagentNode|MessageEvent|ThinkingMarker|WorkflowMarker|SessionInfo|PendingToolSummary|InspectorStoreRules)\b",
             all: &[],

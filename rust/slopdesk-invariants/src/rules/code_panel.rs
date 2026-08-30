@@ -6,7 +6,7 @@
 //! one fact that makes that split safe, plus the boundary that keeps the client half from growing a
 //! second implementation.
 
-use crate::claim::{Claim, Extract, View, check_all};
+use crate::claim::{Claim, Extract, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -75,7 +75,7 @@ pub fn dressing_is_one_implementation(tree: &Tree) -> Report {
                       {entry} — the dressing is one implementation",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             all: &[],
             unless: &[],

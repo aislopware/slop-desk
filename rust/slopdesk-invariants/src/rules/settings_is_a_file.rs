@@ -20,7 +20,7 @@
 //!
 //! Read `View::Code` like every other ban here — the prose above a ban names what it forbids.
 
-use crate::claim::{Claim, Extract, SWIFT, View, check_all};
+use crate::claim::{Claim, Extract, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -86,7 +86,7 @@ pub fn the_settings_gui_stays_deleted(tree: &Tree) -> Report {
                       docs/config.schema.json, with no GUI (docs/58)",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Apps"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(struct|final class|enum|actor|protocol) (MacSettingsWindow|MacSettingsPage|MacSettingsNavigator|MacAllSettingsIndex|MacKeybindingsEditor|SettingsSheet|SettingsPages|AllSettingsListView|KeybindingsEditorView|KeybindingsEditorModel|KeybindingCaptureHost|FirstLaunchView|FirstLaunchModel|MacFirstLaunchSheet|SettingsCatalog|AllSettingsCatalog|SettingsLayout|SettingsTaxonomy|SettingsSectionHeader)\b",
             all: &[],
@@ -97,7 +97,7 @@ pub fn the_settings_gui_stays_deleted(tree: &Tree) -> Report {
                       chord recorder were deleted with the GUI (docs/58)",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Apps"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"hasCompletedFirstLaunch|didCompleteOnboarding|firstLaunchComplete|needsOnboarding",
             all: &[],

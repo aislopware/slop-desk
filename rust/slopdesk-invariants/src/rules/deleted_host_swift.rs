@@ -30,7 +30,7 @@
 //! Read `View::Code`, like every other ban in this crate: the prose above a ban names the thing it
 //! forbids, and a raw read would fire on the explanation.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -121,7 +121,7 @@ pub fn deleted_host_swift(tree: &Tree) -> Report {
 /// file is bans.
 fn pane_outbound_queue() -> Vec<Claim> {
     vec![Claim::NoneUnder {
-        roots: &["Sources"],
+        roots: SWIFT_ROOTS,
         extensions: SWIFT,
         pattern: r"\b(takeMergedFrame|advanceFIFOHead|fifoHead|outFIFO)\b",
         all: &[],
@@ -153,7 +153,7 @@ fn pane_outbound_queue() -> Vec<Claim> {
 /// bans across the tree.
 fn pane_subscriber_set() -> Vec<Claim> {
     vec![Claim::NoneUnder {
-        roots: &["Sources"],
+        roots: SWIFT_ROOTS,
         extensions: SWIFT,
         pattern: r"\b(mintSubscriberIDLocked|nextSubscriberID|lastAckedSeq|lastSentSeq|exitDelivered|subscriberLagBytes)\b|SLOPDESK_SUB_LAG_BYTES",
         all: &[],
@@ -179,7 +179,7 @@ fn pane_subscriber_set() -> Vec<Claim> {
 /// that `Bool` is one of the latches now. A re-declared `EchoModeDetector` is a second anchor.
 fn pane_truths() -> Vec<Claim> {
     vec![Claim::NoneUnder {
-        roots: &["Sources"],
+        roots: SWIFT_ROOTS,
         extensions: SWIFT,
         pattern: r"var +(_currentTitle|_currentTitleAt|pendingTitleCoalescingReset|titleAnchorRetirements|lastProgress|lastProgressPair|lastExitTruth|lastDurationTruth|commandRunningSince|_runningCommand|_completionEpoch|_lastCompletionStatus|echoWarmedUp|lastCwdTruth|lastProjectKey|projectKeyWarmedUp)\b[^{\n]*(\n|$)|\b(EchoModeDetector|latchProgress)\b",
         all: &[],
@@ -340,7 +340,7 @@ fn supervisor_protocol_stays_deleted() -> Vec<Claim> {
 fn engines_and_taps() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b",
             all: &[],
@@ -351,7 +351,7 @@ fn engines_and_taps() -> Vec<Claim> {
                       ladder (docs/50 §3)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-",
             all: &[],
@@ -362,7 +362,7 @@ fn engines_and_taps() -> Vec<Claim> {
                       (rust/slopdesk-superd/src/shellintegration.rs)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b",
             all: &[],
@@ -373,7 +373,7 @@ fn engines_and_taps() -> Vec<Claim> {
                       (rust/slopdesk-superd/src/sniffer.rs)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b",
             all: &[],
@@ -384,7 +384,7 @@ fn engines_and_taps() -> Vec<Claim> {
                       (rust/slopdesk-superd/src/blocks.rs)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"autoProgressCommands: \[String\]|autoProgressPrefixes",
             all: &[],
@@ -434,11 +434,12 @@ fn engines_and_taps() -> Vec<Claim> {
 /// grammar's flags and the record's file name are banned here because they are the anchors a
 /// revival would have to write; `rust/slopdesk-hostlaunch` is the one declaration both ends read.
 ///
-/// **The PTY echo probe.** Not the `tcgetattr` — the client's own `SlopDeskTTY` still makes that
-/// call about its own terminal, which is a different question — but the two termios bits and what
-/// they MEAN. `ECHO` cleared is not a secret on its own: a line editor and every full-screen TUI
-/// clear it too, which is why an ECHO-only rule latched the Secure-Input pill on every ordinary
-/// prompt. The discrimination is `slopdesk-posix`'s and the edge is `slopdesk-terminal`'s.
+/// **The PTY echo probe.** Not the `tcgetattr` — asking about one's OWN terminal is a different
+/// question, and the client that used to ask it in Swift asks it from Rust now
+/// (`Sources/SlopDeskTTY` crossed in `a9fd1833`) — but the two termios bits and what they MEAN.
+/// `ECHO` cleared is not a secret on its own: a line editor and every full-screen TUI clear it too,
+/// which is why an ECHO-only rule latched the Secure-Input pill on every ordinary prompt. The
+/// discrimination is `slopdesk-posix`'s and the edge is `slopdesk-terminal`'s.
 ///
 /// **The two sleep assertions.** This one is not a drift ban, and saying so is the point: an
 /// `IOPMAssertion` created in Swift would not disagree with anything — it would simply be a second
@@ -475,7 +476,7 @@ fn folds_that_moved_to_rust() -> Vec<Claim> {
 fn pane_shape_folds() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"struct ResizeContribution\b|func (foldOffers|creditsOffer|contributingCountLocked)\b",
             all: &[],
@@ -486,7 +487,7 @@ fn pane_shape_folds() -> Vec<Claim> {
                       and hostd owns only the TIOCSWINSZ (docs/45 §8.3)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func (canonicalCwd|unwrapLogicalLines)\b|(enum|struct) ProjectKeyResolver\b|isRepoRoot:",
             all: &[],
@@ -498,7 +499,7 @@ fn pane_shape_folds() -> Vec<Claim> {
                       it, each behind one door",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r#""NCURSES_NO_UTF8_ACS"|"CW_TERM"|"TERMINFO_DIRS""#,
             all: &[],
@@ -509,7 +510,7 @@ fn pane_shape_folds() -> Vec<Claim> {
                       spawn_env names the twelve keys, and hostd passes the parent WHOLE",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"outstanding >= capacity|replayPause \|\||fanoutBacklog >=",
             all: &[],
@@ -520,7 +521,7 @@ fn pane_shape_folds() -> Vec<Claim> {
                       mux::flow::PausableQueueGate ORs them and hostd owns only the lock and the sink",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"tcflag_t\((ECHO|ICANON)\)",
             all: &[],
@@ -539,7 +540,7 @@ fn pane_shape_folds() -> Vec<Claim> {
 fn pane_activity_folds() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"next == \.done \{ return previous != \.done \}|previous == \.working \|\| previous == \.needsPermission",
             all: &[],
@@ -550,7 +551,7 @@ fn pane_activity_folds() -> Vec<Claim> {
                       slopdesk_agent_finished_turn is the rule (rust/slopdesk-agent, attention)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=",
             all: &[],
@@ -561,7 +562,7 @@ fn pane_activity_folds() -> Vec<Claim> {
                       (docs/52)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func (shouldHoldWorkingToIdle|shouldHoldBlockedToIdle|stableVisibleSignalRefreshDue)\b|awaitingRepaintAfterRebuild|syncFrameOpenSince",
             all: &[],
@@ -573,7 +574,7 @@ fn pane_activity_folds() -> Vec<Claim> {
                       working-to-idle hold is a pane that publishes an idle screend never confirmed",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"static let shellNames|func sharedComponents\b|no terminal pane is open in this project",
             all: &[],
@@ -592,7 +593,7 @@ fn pane_activity_folds() -> Vec<Claim> {
 fn machine_folds() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"HOST_CPU_LOAD_INFO|HOST_VM_INFO64|host_statistics64?\(|memorystatus_vm_pressure_level|f_bavail",
             all: &[],
@@ -603,7 +604,7 @@ fn machine_folds() -> Vec<Claim> {
                       syscalls and rust/slopdesk-panecensus's vitals interprets them",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r#"(enum|struct) (TerminfoResolver|ClaudeCodeProfile)\b|"terminfo", "--requested""#,
             all: &[],
@@ -615,7 +616,7 @@ fn machine_folds() -> Vec<Claim> {
                       two names hostd advertises are the only part of it that is Swift's",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"ThirdParty/tools",
             all: &[],
@@ -626,7 +627,7 @@ fn machine_folds() -> Vec<Claim> {
                       the marker and the two paths, next to the search order they fill",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r#"case "--inspector"|case "--transcript"|struct HostLaunchRecord\b|hostd-launch\.json|_NSGetExecutablePath"#,
             all: &[],
@@ -645,7 +646,7 @@ fn machine_folds() -> Vec<Claim> {
 /// nobody paired with a release. Nothing turns red for it — see [`rules_that_moved_to_rust`].
 fn resources_that_moved_to_rust() -> Vec<Claim> {
     vec![Claim::NoneUnder {
-        roots: &["Sources"],
+        roots: SWIFT_ROOTS,
         extensions: SWIFT,
         pattern: r"IOPMAssertion|kIOPMAssertion|IOKit\.pwr_mgt",
         all: &[],
@@ -1005,6 +1006,24 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("drops the shellIntegration flag")),
             "{report:?}"
+        );
+    }
+
+    /// The deleted host Swift stays deleted in every Swift root, not only the shipping one.
+    ///
+    /// Seeded under `Apps/ClientApp-iOS/Tests` because that is the root the ban could not see at
+    /// all: a Swift target under neither `Sources` nor `Tests`. A sniffer re-declared in a test
+    /// bundle is the mirror fixture `CLAUDE.md` bans by name, not a test — the suites go green
+    /// against the copy while the shipping path answers from Rust.
+    #[test]
+    fn a_deleted_host_type_is_caught_in_an_app_test_bundle() {
+        let fixture = Fixture::new("host-type-in-apps");
+        fixture.write("Apps/ClientApp-iOS/Tests/A.swift", "let ordinary = 1\n");
+        assert!(deleted_host_swift(&fixture.tree()).is_clean());
+        fixture.append("Apps/ClientApp-iOS/Tests/A.swift", "enum HostOutputSniffer {}\n");
+        assert!(
+            !deleted_host_swift(&fixture.tree()).is_clean(),
+            "a test bundle is Swift like any other"
         );
     }
 }

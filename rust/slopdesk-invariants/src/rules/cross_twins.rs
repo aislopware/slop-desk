@@ -7,7 +7,7 @@
 //! a pair is not a whole function reappearing; it is one predicate, one cast or one line of index
 //! arithmetic written by hand beside a door that already answers it.
 
-use crate::claim::{Claim, GATE_RULES, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, GATE_RULES, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -159,7 +159,7 @@ pub fn four_cross_language_twins(tree: &Tree) -> Report {
                       one register down (docs/55 §8)",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests", "Apps"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"UInt16\(raw\)|0\.\.\.65535|1\.\.\.65535",
             all: &[],
@@ -217,7 +217,7 @@ pub fn four_cross_language_twins(tree: &Tree) -> Report {
 pub fn the_loop_shaped_crossings_are_whole_collection_doors(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: "slopdesk_replay_",
             all: &[],
@@ -302,7 +302,7 @@ pub fn one_private_use_table(tree: &Tree) -> Report {
         // Anywhere in Swift, not just in the face: what regrows is one predicate written beside a
         // door that already answers it, and the second writer is never the file that lost the rule.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"0x10FFFD|0xF8FF|0xFFFFD",
             all: &[],
@@ -532,6 +532,27 @@ mod tests {
         assert!(
             report.violations().iter().any(|v| v.contains("waituntil.rs")),
             "{report:?}"
+        );
+    }
+
+    /// The private-use table has one home, and a test bundle is not a second one.
+    ///
+    /// The riskiest of the widened bans and the one worth pinning: these are CODEPOINTS, so a file
+    /// that spells one is holding a copy of the table whatever it calls itself. A fixture asserting
+    /// against a literal sentinel is exactly the cross-language mirror the twins rule exists to
+    /// catch, and `Apps/ClientApp-iOS/Tests` is where it would have gone unseen.
+    #[test]
+    fn a_sentinel_codepoint_is_caught_in_an_app_test_bundle() {
+        let fixture = Fixture::new("sentinel-in-apps");
+        // The face and its ask, so the rule's other two claims pass and the sentinel is the only
+        // thing this test can turn red.
+        fixture.write(super::NERD_FONT, "let ranges = slopdesk_private_use_ranges()\n");
+        fixture.write("Apps/ClientApp-iOS/Tests/A.swift", "let ordinary = 1\n");
+        assert!(super::one_private_use_table(&fixture.tree()).is_clean());
+        fixture.append("Apps/ClientApp-iOS/Tests/A.swift", "let marker = 0x10FFFD\n");
+        assert!(
+            !super::one_private_use_table(&fixture.tree()).is_clean(),
+            "a test bundle is Swift like any other"
         );
     }
 }

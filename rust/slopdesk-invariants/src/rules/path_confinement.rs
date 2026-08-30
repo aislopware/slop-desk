@@ -8,7 +8,7 @@
 //! the deleted versions compiled and all three passed their own tests while disagreeing with each
 //! other.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -41,7 +41,7 @@ const MUX_ENVELOPE_RUST: &str = "rust/slopdesk-wire/src/mux/envelope.rs";
 pub fn no_second_path_opinion_in_swift(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::NoneUnder {
-            roots: &["Sources/"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r#"containsTraversal|contains\("\.\."\)|hasPrefix\("\.\./"\)|== "\.\."|components\(\).*"\.\.""#,
             all: &[],
@@ -52,7 +52,7 @@ pub fn no_second_path_opinion_in_swift(tree: &Tree) -> Report {
                       is slopdesk_path_confine's answer alone (rust/slopdesk-probe/src/path_confine.rs)",
         },
         Claim::NoneUnder {
-            roots: &["Sources/"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"\.hasPrefix\((root|projectRoot|cwd|folder|workspaceRoot)\b",
             all: &[],
@@ -63,7 +63,7 @@ pub fn no_second_path_opinion_in_swift(tree: &Tree) -> Report {
                       PathConfinement.isWithin, which is component-wise and refuses '..'",
         },
         Claim::NoneUnder {
-            roots: &["Sources/"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             pattern: r"static func (pathComponents|isWithin)\(_ ",
             all: &[],
@@ -74,7 +74,7 @@ pub fn no_second_path_opinion_in_swift(tree: &Tree) -> Report {
                       is rust/slopdesk-probe/src/path_confine.rs",
         },
         Claim::NoFileUnder {
-            roots: &["Sources/"],
+            roots: SWIFT_ROOTS,
             extensions: &["swift"],
             // The `grep -A3` window: the signature, then the string test under it.
             pattern: r"func contains\(root:[^\n]*\n?[^\n]*\n?[^\n]*\n?[^\n]*hasPrefix",

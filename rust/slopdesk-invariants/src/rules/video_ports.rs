@@ -9,7 +9,7 @@
 //! reverted by hand in the working copy, the rule was run, and the file was restored from the copy.
 //! Each rule's comment records the verdict.
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -370,7 +370,7 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
 /// `LiveBitratePolicy`'s `SLOPDESK_BPP`, and eighteen client knobs across `MetalVideoRenderer`,
 /// `SlopDeskVideoClientSession`, `VideoWindowPipeline`, `TerminalPaneWiring` and `AppSupport` — for
 /// the reason a one-file ban always does: it says nothing at all about the file the next knob is
-/// written in. So the scope is now every `.swift` file under `Sources` and `Tests`, and
+/// written in. So the scope is now every `.swift` file under [`crate::claim::SWIFT_ROOTS`], and
 /// `FPSGovernor`'s own `Lacks` is folded into it rather than kept beside it, because the tree-wide
 /// claim already covers that path and a second spelling of one law is what this whole rule is
 /// about.
@@ -528,7 +528,7 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
         // The corpus is the whole Swift tree; if it ever reads as fewer than 200 files the walk has
         // gone stale and the two bans below are passing on nothing.
         Claim::Populated {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             minimum: 200,
             message: "the tree-wide Swift corpus read as {found} files — the EnvConfig bans are passing \
@@ -538,7 +538,7 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
         // including the ones in this rule's own subjects; the single `unless` excuses ONE key rather
         // than any file, so the three files holding the most tunables stay covered.
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"ProcessInfo\.processInfo\.environment",
             all: &[],
@@ -550,7 +550,7 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
                       and is then read past; resolve it through EnvConfig.string",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"EnvConfig\.(int|double)\(",
             all: &[],

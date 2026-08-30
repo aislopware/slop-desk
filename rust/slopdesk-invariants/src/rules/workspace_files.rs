@@ -11,7 +11,7 @@
 //! a fresh UUID. Every launch renamed every seam, and every remembered divider position was lost.
 //! Nothing crashed; the arrangement just kept resetting.
 
-use crate::claim::{ByteMap, Claim, SWIFT, View, check_all};
+use crate::claim::{ByteMap, Claim, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -136,18 +136,18 @@ pub fn one_answer_to_the_saved_arrangement(tree: &Tree) -> Report {
                       anything (docs/55 §6)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(struct|private struct) (RawWeightedChild|SpecEntry)\b|func (decodeRaw|decodeChildren|rawNode)\(",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift workspace-file decoder is back in Sources/ — the tree's JSON lives in \
+            message: "a Swift workspace-file decoder is back in Swift — the tree's JSON lives in \
                       rust/slopdesk-workspace (docs/55 §6): {files}",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"\b(SplitNode|WeightedChild|SplitWeight|TreeWorkspace|DetachedPane|PaneSpec|VideoEndpoint|Session|Tab)\b *: *(any )?(Codable|Decodable|Encodable)\b",
             all: &[],

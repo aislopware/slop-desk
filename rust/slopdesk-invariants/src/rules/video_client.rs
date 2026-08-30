@@ -7,7 +7,7 @@
 //! is the ban — the shapes a re-implementation would grow back — because a door can be called AND
 //! second-guessed, and the second guess is what diverges on the link that was already in trouble.
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -39,7 +39,7 @@ pub fn gradient(tree: &Tree) -> Report {
                       gradient detector is rust/slopdesk-video's",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"meanX\b|meanY\b|smoothedDelayMs\b|accumulatedDelayMs\b|overuseStartMs\b|= 0\.0087|= 0\.039",
             all: &[],
@@ -50,7 +50,7 @@ pub fn gradient(tree: &Tree) -> Report {
                       in trendline.rs",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r#""SLOPDESK_TREND_"#,
             all: &[],
@@ -126,6 +126,11 @@ pub fn decode_admission(tree: &Tree) -> Report {
             message: "Sources/SlopDeskVideoClient/DecodeAdmissionBudget.swift no longer calls {entry} — the \
                       admission budget is rust/slopdesk-video's",
         },
+        // `Sources` alone, same shape as `video_control`'s depth ring and for the same reason: the
+        // one hit in `Tests` is `lostAhead` inside an `XCTAssert` MESSAGE — "12 skips via lostAhead",
+        // a sentence naming the law it is checking. No view strips a string literal, so this ban
+        // cannot be widened without reporting the test that proves it. See
+        // [`crate::claim::SWIFT_ROOTS`].
         Claim::NoneUnder {
             roots: &["Sources"],
             extensions: SWIFT,
@@ -225,7 +230,7 @@ const fn audio_bans() -> [Claim; 6] {
         // A Swift block list is a second reorder law and a second play frontier; the pump's two
         // sample budgets and its starvation test are the door's too.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"consumedBlocks\b|headSampleOffset\b|playFrontier\b|effectiveFrontier\b|func copyAvailable\(",
             all: &[],
@@ -238,7 +243,7 @@ const fn audio_bans() -> [Claim; 6] {
         // And the knobs themselves: a second reader of either variable is a second fallback rule,
         // which is the part the doors above exist to own.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"SLOPDESK_AUDIO_CODEC|SLOPDESK_AUDIO_BITRATE",
             all: &[],
@@ -252,7 +257,7 @@ const fn audio_bans() -> [Claim; 6] {
         // The encoder's half of the same ban: the remainder the capture cadence leaves behind, and
         // the fold that turns whatever ScreenCaptureKit delivered into the wire's stereo.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"func encodePCM\(|func packS16LE\(|aacInputProc\b|func resetAccumulator\(|func resetConverterState\(",
             all: &[],
@@ -265,7 +270,7 @@ const fn audio_bans() -> [Claim; 6] {
         // The hand-off ring is `rtrb` and the output stream is `cpal`. A door for either would mean
         // the near side had grown a producer or a render callback again.
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"slopdesk_audio_ring_|slopdesk_audio_stage_",
             all: &[],
@@ -383,7 +388,7 @@ pub fn present_queue(tree: &Tree) -> Report {
                       presentation law is rust/slopdesk-video's",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"^[^/]*(queueSubmittedAt\b|underflowRun (\+=|= 0)|primed = true|queue: \[CVImageBuffer\])",
             all: &[],

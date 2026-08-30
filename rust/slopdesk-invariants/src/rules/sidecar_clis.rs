@@ -24,7 +24,7 @@
 //! point is invisible to a test — the ANSWER is identical, only the cost and the number of
 //! declaration orders changed — so the ratchet is here or nowhere.
 
-use crate::claim::{Claim, Extract, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, Extract, RUST, SWIFT, SWIFT_ROOTS, SWIFT_ROOTS_AND_GHOSTTY, View, check_all};
 use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
@@ -192,14 +192,14 @@ pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
                       user still types it (docs/DECISIONS.md, stage 22)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift profile seeder is back in Sources/ — slopdesk-codeseed owns the code-server \
+            message: "a Swift profile seeder is back in Swift — slopdesk-codeseed owns the code-server \
                       profile, and the ~2.7k lines it replaced went in one change (docs/DECISIONS.md, stage \
                       22): {files}",
         },
@@ -304,14 +304,14 @@ pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
                       23)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift hooks installer is back in Sources/ — slopdesk-agenthooks owns \
+            message: "a Swift hooks installer is back in Swift — slopdesk-agenthooks owns \
                       ~/.claude/settings.json, and the merge, the marker, the event list and the paths \
                       moved in one change (docs/DECISIONS.md, stage 23): {files}",
         },
@@ -371,19 +371,19 @@ pub fn the_probe_subcommands_are_one_alphabet(tree: &Tree) -> Report {
                       still types it (docs/DECISIONS.md, stage 24)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"(struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "a Swift git/session/terminfo parser is back in Sources/ — slopdesk-probe owns \
-                      porcelain, the slug, the diff bases and the TERM table (docs/DECISIONS.md, stages 24 \
-                      and 25): {files}",
+            message: "a Swift git/session/terminfo parser is back in Swift — slopdesk-probe owns porcelain, \
+                      the slug, the diff bases and the TERM table (docs/DECISIONS.md, stages 24 and 25): \
+                      {files}",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r#""/usr/bin/(git|infocmp)""#,
             all: &[],
@@ -535,7 +535,7 @@ pub fn the_pointer_tables_are_one_table(tree: &Tree) -> Report {
                       that brings it back fails nothing and crashes nothing (docs/56, increment 50)",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests", "ThirdParty/ghostty/integration"],
+            roots: SWIFT_ROOTS_AND_GHOSTTY,
             extensions: SWIFT,
             pattern: r"enum OSCPointerShape|enum MouseVisibility[^M]",
             all: &[],

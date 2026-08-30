@@ -12,15 +12,17 @@
 
 use std::collections::BTreeSet;
 
+// `SWIFT_ROOTS` is the Swift that may call a door. Tests count: a door called only from a test is
+// still a door somebody reaches, which is where this differs from the constant pass. This rule asked
+// that question first and held its own copy of the list; it is `claim`'s now, because two copies of
+// "every Swift root" is the drift this crate exists to catch.
+use crate::claim::SWIFT_ROOTS;
 use crate::report::Report;
 use crate::text;
 use crate::tree::Tree;
 
 /// The header every door is declared in — the artifact Swift links against.
 const HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
-/// The Swift that may call one. Tests count: a door called only from a test is still a door
-/// somebody reaches, which is where this differs from the constant pass.
-const SWIFT_ROOTS: [&str; 3] = ["Sources", "Tests", "Apps"];
 
 /// A door with no Swift caller, and the reason it stays.
 ///
@@ -65,7 +67,7 @@ pub fn every_ffi_door_is_opened_or_declared_deliberate(tree: &Tree) -> Report {
     }
 
     let mut called: BTreeSet<String> = BTreeSet::new();
-    for root in SWIFT_ROOTS {
+    for &root in SWIFT_ROOTS {
         for (path, source) in tree.under(root) {
             if path.extension().is_some_and(|extension| extension == "swift") {
                 called.extend(text::capture_set(&source.text, r"\b(slopdesk_[a-z0-9_]+)\b"));

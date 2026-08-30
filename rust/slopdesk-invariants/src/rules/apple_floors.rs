@@ -28,7 +28,7 @@
 //! Four live client files argue in prose about `CGEventSource` latching modifiers, and the
 //! now-tree-wide injection ban would delete those paragraphs if it read them.
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::report::Report;
 use crate::text::matches_line;
 use crate::tree::Tree;
@@ -38,7 +38,7 @@ use crate::tree::Tree;
 /// A DIRECTORY rather than a file: `docs/61` split what the Swift host held across a dozen modules,
 /// and which one holds a given ask is the daemon's business. What is not is that it ASKS.
 const DAEMON: &str = "rust/slopdesk-videohostd";
-/// Every extension a private Objective-C class could be named in under `Sources`.
+/// Every extension a private Objective-C class could be named in, across [`SWIFT_ROOTS`].
 ///
 /// Wider than [`SWIFT`] on purpose: the shape this bans is not "Swift calls the class" but "the
 /// clang-module shim comes back", and a shim is an `.h` that declares the interface plus a `.m`
@@ -63,9 +63,11 @@ const SOURCES: &[&str] = &["swift", "m", "h"];
 /// ## The ban went from ONE FILE to the whole tree
 /// It used to name the ARC owner, because that was the file somebody would reach for to add "just
 /// one" direct post to. With the owner deleted there is no such file, and a per-file ban would have
-/// nothing to check — so the ban is now tree-wide over `Sources` and `Tests`, which is what it
-/// should always have been. A `CGEvent` posted from the client, from a device panel or from a test
-/// helper is the same bug in a target nobody was watching.
+/// nothing to check — so the ban is now tree-wide over [`crate::claim::SWIFT_ROOTS`], which is what
+/// it should always have been. A `CGEvent` posted from the client, from a device panel or from a
+/// test helper is the same bug in a target nobody was watching. The test helper is why the third
+/// root is in that list: this sentence named one before the ban could reach `Apps` at all, and
+/// `Apps/ClientApp-iOS/Tests` is a Swift target under neither of the other two.
 ///
 /// The prose is deliberately untouched by this: [`View::Code`] drops whole-line comments, and four
 /// live client files argue in PROSE about the shared `CGEventSource(.hidSystemState)` latching
@@ -114,7 +116,7 @@ pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
                       in between (docs/57 §5, docs/61 §3)",
         },
         Claim::NoneUnder {
-            roots: &["Sources", "Tests"],
+            roots: SWIFT_ROOTS,
             extensions: SWIFT,
             pattern: r"CGEvent\(|\.setIntegerValueField|\.post\(tap:|\.postToPid\(|CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition|CGEventSource\(",
             all: &[],
@@ -217,7 +219,7 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
         tree,
         &[
             Claim::NoneUnder {
-                roots: &["Sources"],
+                roots: SWIFT_ROOTS,
                 extensions: SWIFT,
                 pattern: "CGWindowListCopyWindowInfo|CGGetActiveDisplayList|CGGetOnlineDisplayList|CGGetDisplaysWithPoint",
                 all: &[],
@@ -233,7 +235,7 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
                           docs/61 §3)",
             },
             Claim::NoneUnder {
-                roots: &["Sources"],
+                roots: SWIFT_ROOTS,
                 extensions: SWIFT,
                 pattern: r"NSWorkspace\.shared\.frontmostApplication|NSWorkspace\.shared\.menuBarOwningApplication",
                 all: &[],
@@ -315,7 +317,7 @@ pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
         tree,
         &[
             Claim::NoneUnder {
-                roots: &["Sources", "Tests"],
+                roots: SWIFT_ROOTS,
                 extensions: SWIFT,
                 pattern: r"enum CaptureRegionMath|enum WindowDisplayResolver|CaptureRegionMath\.|WindowDisplayResolver\.",
                 all: &[],
@@ -416,7 +418,7 @@ const DELETED_VIRTUAL_DISPLAY_SHIM: &[&str] = &[
 /// forced the link. `objc2::runtime::AnyClass::get` answers an `Option`, which is the existence
 /// GATE and the lookup in one call, so the shim had nothing left to do and the whole target went.
 /// That makes two claims checkable here that the other rows cannot make: the shim's two files are
-/// GONE, and no source under `Sources` names one of the four classes.
+/// GONE, and no source in any Swift root names one of the four classes.
 ///
 /// That deletion also fixed a live bug, which is the argument for keeping it deleted rather than
 /// dormant: the class-dumped header declared `CGVirtualDisplayMode`'s width and height
@@ -458,7 +460,7 @@ pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
         }]));
     }
     report.absorb(check_all(tree, &[Claim::NoneUnder {
-        roots: &["Sources"],
+        roots: SWIFT_ROOTS,
         extensions: SOURCES,
         pattern: r"CGVirtualDisplay(Descriptor|Settings|Mode)?\b",
         all: &[],
@@ -804,6 +806,28 @@ mod tests {
                 .any(|v| v.contains("no Rust behind it")),
             "{:?}",
             report.violations(),
+        );
+    }
+
+    /// The framework floors read every Swift root, which is what the test-helper case above needs.
+    ///
+    /// `swift_that_builds_an_event_is_red` already names "a test helper" as somewhere the drift
+    /// could land, and until [`crate::claim::SWIFT_ROOTS`] the ban did not reach one. The seed is
+    /// under `Apps/ClientApp-iOS/Tests` — a Swift target under neither of the two roots the rule
+    /// used to read — and a window record decoded there is the host's decode, wherever it sits.
+    #[test]
+    fn a_framework_read_is_caught_in_an_app_test_bundle() {
+        let fixture = Fixture::new("apple-floor-in-apps");
+        floors(&fixture);
+        fixture.write("Apps/ClientApp-iOS/Tests/A.swift", "let ordinary = 1\n");
+        assert!(super::the_host_decodes_no_window_record(&fixture.tree()).is_clean());
+        fixture.append(
+            "Apps/ClientApp-iOS/Tests/A.swift",
+            "let info = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)\n",
+        );
+        assert!(
+            !super::the_host_decodes_no_window_record(&fixture.tree()).is_clean(),
+            "a test bundle is Swift like any other"
         );
     }
 }
