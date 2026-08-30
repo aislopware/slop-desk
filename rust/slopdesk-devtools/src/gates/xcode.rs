@@ -44,6 +44,13 @@ use crate::proc;
 /// The iOS gate's cached verdict.
 const IOS_STAMP: &str = ".build/check-ios.sha256";
 
+/// The iOS TEST BUNDLE build's cached verdict, which is a second stamp over the SAME inputs.
+///
+/// Two stamps rather than one because the two builds now run at different rates: the app build is
+/// in `quick`, the bundle build only in `check`. One stamp would let a `quick` that ran the app
+/// build record "iOS inputs checked" and let the pre-push `check` skip the bundle it never built.
+const IOS_TESTS_STAMP: &str = ".build/check-ios-bundle.sha256";
+
 /// The macOS app-shell gate's cached verdict.
 const MACOS_STAMP: &str = ".build/check-macos-apps.sha256";
 
@@ -84,15 +91,9 @@ fn generate(root: &Path, spec: &str) -> Result<(), String> {
 /// would have caught, the app spec dropping that dependency, cannot happen quietly: the app does
 /// not build without it.
 ///
-/// ⚠️ THE TEST BUNDLE IS THE OPPOSITE CASE, and it is why there are two builds here rather than
-/// one. `Apps/ClientApp-iOS/Tests` is a strict SUPERSET — its own sources compile in no other gate,
-/// since `swift build` never sees `Apps/` and `swift test` compiles the macOS branch of every
-/// `#if os(iOS)` fork. Left uncompiled it went unbuildable for weeks with every gate green, which
-/// is the same hole `check-macos-apps` exists to close on the other shell. `build-for-testing` is
-/// headless against `generic/platform=iOS Simulator`, so it belongs in this gate; RUNNING those
-/// assertions still needs a booted simulator and stays in `check-ios-tests`, out of `check`. The
-/// two builds share one derived-data path, so the second compiles the test sources and links — not
-/// the app graph again.
+/// ⚠️ THE TEST BUNDLE USED TO BUILD HERE TOO, AND IT COST 25 MINUTES A KEYSTROKE. It is
+/// [`ios_test_bundle_build`] now, in `check` rather than in `quick` — see that function for the
+/// measurement and for why the two builds cannot share their compiled modules.
 ///
 /// # Errors
 /// When xcodegen is absent, the build fails, or the stamp cannot be written.
@@ -123,6 +124,57 @@ pub fn ios_typecheck(root: &Path, force: bool) -> Result<(), String> {
         root,
     )?;
 
+    // Recomputed rather than reused: xcodegen rewrote the .xcodeproj above, and a source edited
+    // while the build ran must not be recorded as checked.
+    stamp::record(
+        &root.join(IOS_STAMP),
+        &stamp::current_for(root, stamp::Scope::Ios)?,
+    )?;
+    println!("==> iOS typecheck OK");
+    Ok(())
+}
+
+/// The iOS TEST BUNDLE compiles — the half of the iOS gate that is not in the inner loop.
+///
+/// `Apps/ClientApp-iOS/Tests` is a strict SUPERSET of what any other gate compiles: `swift build`
+/// never sees `Apps/`, and `swift test` compiles the macOS branch of every `#if os(iOS)` fork. Left
+/// uncompiled it went unbuildable for weeks with every gate green, which is the same hole
+/// `check-macos-apps` closes on the other shell. So it must be built by something; the question this
+/// function answers differently from its predecessor is HOW OFTEN.
+///
+/// ## ⚠️ IT IS NOT IN `quick`, AND THE REASON IS A MEASUREMENT
+///
+/// This ran inside [`ios_typecheck`] until 2026-08-30, which put it in `quick` — after every edit.
+/// A `quick` whose iOS stamp missed took **41 minutes**, of which this build alone was **25+**, at
+/// 94% of ONE core out of ten. The stamp covers the closure of the products the iOS spec names, so
+/// the miss is not exotic: editing `SlopDeskWorkspaceCore`, `SlopDeskClientCore`, `SlopDeskPhoneUI`
+/// or the FFI header — most of the tree — pays it. Warm, `quick` is 72 seconds.
+///
+/// The predecessor's doc asserted the second build "compiles the test sources and links — not the
+/// app graph again". That was wrong, and the spec says why: the bundle carries
+/// `SWIFT_ENABLE_TESTABILITY: YES` and the app target does not, so the two are different build
+/// configurations and NOTHING is shared. Five of the seven test files `@testable import`, so the
+/// setting is not removable either — the second compile of the package graph is the price of the
+/// bundle existing, and the only lever left is its RATE.
+///
+/// Hence `check` and not `quick`: the protection is unchanged before a push, where a 25-minute
+/// build is one cost against a whole branch rather than against one keystroke. Its own stamp
+/// ([`IOS_TESTS_STAMP`]) is what keeps that honest — see the note there.
+///
+/// RUNNING these assertions still needs a booted simulator and stays in `check-ios-tests`, out of
+/// `check` entirely.
+///
+/// # Errors
+/// When xcodegen is absent, the build fails, or the stamp cannot be written.
+pub fn ios_test_bundle_build(root: &Path, force: bool) -> Result<(), String> {
+    let want = stamp::current_for(root, stamp::Scope::Ios)?;
+    if !force && stamp::is_warm(&root.join(IOS_TESTS_STAMP), &want) {
+        println!("==> iOS test bundle OK (cached — no iOS-compiled input changed)");
+        return Ok(());
+    }
+    need_xcodegen()?;
+    generate(root, IOS_SPEC)?;
+
     println!("==> iOS-triple build-for-testing: ClientApp-iOSTests");
     proc::run(
         "xcodebuild",
@@ -141,13 +193,12 @@ pub fn ios_typecheck(root: &Path, force: bool) -> Result<(), String> {
         root,
     )?;
 
-    // Recomputed rather than reused: xcodegen rewrote the .xcodeproj above, and a source edited
-    // while the build ran must not be recorded as checked.
+    // Recomputed rather than reused, for [`ios_typecheck`]'s reason.
     stamp::record(
-        &root.join(IOS_STAMP),
+        &root.join(IOS_TESTS_STAMP),
         &stamp::current_for(root, stamp::Scope::Ios)?,
     )?;
-    println!("==> iOS typecheck OK");
+    println!("==> iOS test bundle OK");
     Ok(())
 }
 

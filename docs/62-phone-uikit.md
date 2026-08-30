@@ -947,10 +947,13 @@ That is a defect in either framework; the port is when it is noticed.
 This had to be checked rather than assumed, and the finding is uncomfortable enough to be §6's
 governing constraint.
 
-- **`just check` runs ZERO iOS assertions.** `justfile:339` — `check: lint build test miri golden
-  check-ios check-macos-apps`. `check-ios` is `slopdesk-gate ios` (`justfile:401-403`) — the binary is
-  `rust/slopdesk-devtools/src/bin/gate.rs`, and the body is `gates/xcode.rs:89-124`, an `xcodebuild
-  … build` against `generic/platform=iOS Simulator`. It **type-checks and nothing more**.
+- **`just check` runs ZERO iOS assertions.** `check: lint build test miri golden check-ios
+  check-ios-bundle check-macos-apps`. `check-ios` is `slopdesk-gate ios` — the binary is
+  `rust/slopdesk-devtools/src/bin/gate.rs`, and the body is `gates::xcode::ios_typecheck`, an
+  `xcodebuild … build` against `generic/platform=iOS Simulator`. It **type-checks and nothing more**.
+  `check-ios-bundle` (added 2026-08-30, when it was split out of `check-ios` to get its 25-minute
+  build out of `quick` — `docs/46`) does not change that sentence: `build-for-testing` COMPILES the
+  bundle and executes none of it.
   `check-ios-tests` — whose own comment says *"`slopdesk-gate ios-tests` is the only thing in the repo
   that executes an assertion on the iOS triple"* — is **deliberately not in `check`**, because it boots
   a simulator (`justfile:421-431`). When it is run it is strict: `xcode.rs:373-390` asserts

@@ -18,6 +18,7 @@ usage: slopdesk-gate [--repo-root DIR] <verb> [options]
   pre-push                              the full suite, with the green-tree cache
   golden                                the wire corpus, byte for byte
   ios [--force]                         iOS-triple typecheck (stamped)
+  ios-bundle [--force]                  BUILD the iOS test bundle (stamped; check, not quick)
   macos-apps [--force]                  macOS app-shell typecheck (stamped)
   ios-tests [--device NAME] [--keep-booted]
                                         RUN the iOS tests on a simulator
@@ -59,6 +60,7 @@ fn main() -> ExitCode {
         "pre-push" => finish(prepush::run(&root)),
         "golden" => finish(golden::run(&root)),
         "ios" => finish(xcode::ios_typecheck(&root, has_flag(rest, "--force"))),
+        "ios-bundle" => finish(xcode::ios_test_bundle_build(&root, has_flag(rest, "--force"))),
         "macos-apps" => finish(xcode::macos_apps_typecheck(&root, has_flag(rest, "--force"))),
         "ios-tests" => ios_tests(&root, rest),
         "android" => finish(android::run(&root)),

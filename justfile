@@ -344,7 +344,7 @@ lint-swift-analyze:
 # Full gate
 
 # lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
-check: lint build test miri golden check-ios check-macos-apps
+check: lint build test miri golden check-ios check-ios-bundle check-macos-apps
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
 #
@@ -361,6 +361,19 @@ check: lint build test miri golden check-ios check-macos-apps
 #                         (gates::stamp explains it). It stays IN the inner loop for
 #                         that reason — the `#if os(iOS)` surface breaks on a Swift edit like any
 #                         other, and now noticing costs nothing on the edits that cannot break it.
+#   check-ios-bundle      NOT here, and this is the one substitution that is about COST rather than
+#     omitted             about what an edit can break. Building `Apps/ClientApp-iOS/Tests` used to
+#                         happen inside `check-ios`, so it ran after every edit. MEASURED
+#                         2026-08-30: a `quick` whose iOS stamp missed took 41 MINUTES, of which
+#                         that one build was 25+, at 94% of ONE core out of ten — and the stamp
+#                         covers the closure of the iOS spec's products, so `SlopDeskWorkspaceCore`,
+#                         `SlopDeskClientCore`, `SlopDeskPhoneUI` and the FFI header all pay it.
+#                         Warm, this whole recipe is 72 s. The bundle carries
+#                         `SWIFT_ENABLE_TESTABILITY: YES` where the app target does not, so the two
+#                         builds are different configurations and share NOTHING; five of the seven
+#                         test files `@testable import`, so the setting cannot come off either. The
+#                         rate was the only lever. It is in `check` with its own stamp — the
+#                         protection before a push is identical, it just is not charged per keystroke.
 #   miri omitted          ~47 s to re-audit `rust/slopdesk-gfsimd`, which only a change to that crate
 #                         can affect. `just miri` by hand when touching it; `check` runs it anyway.
 #
@@ -376,7 +389,8 @@ check: lint build test miri golden check-ios check-macos-apps
 # Swift edit `test-touched` and `check-ios` are the two costs left, they share nothing but the
 # SwiftPM lock (which only makes `golden` wait, and `golden` is three seconds), and serially the
 # inner loop paid their sum. Measured on one Swift edit: 5:46 serial, and the iOS half of that was
-# two schemes where one does the work.
+# two schemes where one does the work — the other, the test bundle, is `check-ios-bundle` now and is
+# not in this list at all.
 QUICK_SLOW := "test-touched golden check-ios check-macos-apps"
 
 # The INNER LOOP: lint + only the tests the change reaches + golden + the (stamped) iOS triple
@@ -409,6 +423,18 @@ quick: ffi lint
 # iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
 check-ios: ffi
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios
+
+# The iOS TEST BUNDLE, which no other gate compiles: `swift build` never sees `Apps/`, and
+# `swift test` compiles the macOS branch of every `#if os(iOS)` fork. It went unbuildable for weeks
+# with every gate green, which is why it is gated at all.
+#
+# In `check` and NOT in `quick`, on a measurement rather than a preference — `QUICK_SLOW`'s comment
+# carries the numbers, and `gates::xcode::ios_test_bundle_build` carries why the cost is structural.
+# RUNNING these assertions needs a booted simulator and is `check-ios-tests`, which is in neither.
+
+# BUILD the iOS test bundle (stamped; pre-push, not per-edit)
+check-ios-bundle: ffi
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios-bundle
 
 # The OTHER half of the same hole. `check-ios` compiles `Apps/ClientApp-iOS`; `swift build` compiles
 # `Sources/` and `Tests/`. Nothing compiled the two macOS app shells, because they are Xcode targets
