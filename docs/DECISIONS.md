@@ -17718,3 +17718,45 @@ while the fallback always won, and wrong in the one direction this gate may not 
 satisfy a scan. *Widening `COMPILED` to `json` so the asset catalog reaches the digest* — an asset
 catalog does not change what type-checks, and it would put every `Contents.json` in the tree into
 both stamps.
+
+## The FFI stamp read the Rust sources, not what the artifact is built from (2026-08-31)
+
+`gates/ffi.rs` decides whether `SlopDeskFFI.xcframework` is stale by hashing every input, and its
+filter was `Cargo.toml`, `module.modulemap`, `.rs`, `.h`. That set is the shim's closure of *Rust
+sources*. It is not the set the three slices compile, and the two differed in two places, both in the
+one direction `docs/55` names as the linked port's own failure mode: a stale artifact reported fresh.
+
+**One input is spliced into the library by the code itself.**
+`rust/slopdesk-codepanel/src/tips.rs` does `include_str!("../resources/recommendation-tips.json")`,
+so that JSON is as much a part of the archive as any `.rs` — and editing it changed the built binary
+while the stamp's digest did not move. It is now DERIVED, not listed: `included_paths` scans each
+non-test `.rs` in the closure for `include!`/`include_str!`/`include_bytes!` and resolves the literal
+against the containing directory. A list would be a second thing to forget, and forgetting this one
+is exactly the defect. A first argument that is not a string literal, or one naming a file that is
+not there, is an `Err` — the species this round is mining is a gate that answers "nothing to see"
+about an input it cannot read, and adding a fresh silence to fix one would be absurd.
+
+`tests/` and `benches/` are excluded because the staticlib does not compile them. Reading their
+includes would pull `golden/golden_vectors.json` into this stamp, and a golden re-mint would then
+cold an artifact containing not one byte of it.
+
+**The other input is the lock.** Every crate here is its own workspace, so the only lock that governs
+this build is `rust/slopdesk-ffi/Cargo.lock`: it pins every external version the three slices
+resolve, and a `cargo update` changes what the archive is compiled from without touching one line of
+source. `stamp.rs` hashes `Package.resolved` for precisely this reason on the Swift side.
+
+**Hashing the lock forced `--locked`, and that is the load-bearing half.** `run` reads the wanted
+stamp BEFORE building and records it AFTER. If a manifest edit left the lock out of date, the build
+would rewrite `Cargo.lock` in between — so the recorded stamp would disagree with the very next
+check, and `just lint` would announce the artifact stale seconds after building it. That is the
+self-firing shape the `target/` pruning already exists to prevent, arriving through a new door. It
+also settled a race the three concurrent slices already had: they share `crate_dir` and could all
+rewrite that one file at once. With `--locked`, an out-of-date lock fails in cargo's own words
+instead of being silently repaired mid-run.
+
+**Rejected.** *Hashing all 36 `Cargo.lock` files in the closure* — correctness-safe but wrong: a
+wrapped crate's lock governs only its own test runs, so its churn would cold the xcframework and buy
+a 25–60 s rebuild for a resolution the artifact never used. *Listing the JSON next to `SELF_FILES`* —
+the next spliced resource would not be in the list, which is the whole defect. *Recomputing the
+wanted stamp after the build instead of `--locked`* — it would record mid-build source edits as
+checked, trading one wrong-direction hole for another.

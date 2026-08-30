@@ -17,7 +17,13 @@
 //!
 //! ## Why it is cheap to run anyway
 //! [`current_stamp`] hashes every input — the Rust sources of the shim and the crates it wraps, the
-//! header, and this module. A second run with nothing changed exits in milliseconds, so wiring it
+//! header, this module, whatever those sources SPLICE IN with `include_str!`, and the shim's
+//! `Cargo.lock`. The last two were absent until 2026-08-31, and their absence pointed the one way
+//! this gate may not be wrong: `rust/slopdesk-codepanel/resources/recommendation-tips.json` is
+//! compiled into the library, and the lock decides every external version the three slices resolve,
+//! so editing either changed the artifact while the stamp reported it fresh. "Rust sources" was
+//! never the same set as "what the artifact is built from". A second run with nothing changed exits
+//! in milliseconds, so wiring it
 //! in front of `just build`/`test`/`check` costs nothing on a warm tree. [`Mode::Force`] skips the
 //! check; [`Mode::Check`] reports staleness without building, which is what `just lint` uses.
 //!
@@ -245,6 +251,56 @@ pub fn path_dependencies(manifest: &str) -> Vec<String> {
     found
 }
 
+/// The shim's lock, which decides every EXTERNAL version the three slices compile.
+///
+/// Each crate here is its own workspace, so the only lock that governs this build is the one cargo
+/// resolves against in `rust/slopdesk-ffi` — a wrapped crate's own lock governs its tests and
+/// nothing this artifact contains. [`stamp`] hashes `Package.resolved` for exactly this reason on
+/// the Swift side: a `cargo update` changes what the archive is compiled from without touching one
+/// line of source, and a stamp that reads only sources calls the result fresh.
+const SHIM_LOCK: &str = "rust/slopdesk-ffi/Cargo.lock";
+
+/// The files a `.rs` source splices into the crate at compile time.
+///
+/// `include_str!("../resources/recommendation-tips.json")` makes that JSON part of the library as
+/// surely as any `.rs`, and the extension filter below never had a reason to look at it. Derived
+/// rather than listed, for the reason [`input_crates`] is: a list is a second thing to forget, and
+/// forgetting this one is the failure `docs/55` names — a stale artifact reported fresh.
+///
+/// A `//` line is skipped, so a doc comment TALKING about the macro is not an input. A first
+/// argument that is not a string literal answers `Err` rather than nothing: `include!(concat!(…))`
+/// is an input this cannot resolve, and a gate that shrugged at one would be exactly the silence
+/// this function exists to end.
+///
+/// # Errors
+/// When an `include*!` names something that is not a string literal.
+pub fn included_paths(source: &str) -> Result<Vec<String>, String> {
+    let mut found = Vec::new();
+    for line in source.lines() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        for macro_name in ["include_str!", "include_bytes!", "include!"] {
+            for (index, _) in line.match_indices(macro_name) {
+                let rest = line[index + macro_name.len()..].trim_start();
+                let Some(after) = rest.strip_prefix('(') else {
+                    continue;
+                };
+                let after = after.trim_start();
+                let Some(literal) = after.strip_prefix('"').and_then(|tail| tail.split('"').next()) else {
+                    return Err(format!(
+                        "{macro_name} is given something other than a string literal — the stamp cannot \
+                         tell what the artifact is built from: {}",
+                        line.trim()
+                    ));
+                };
+                found.push(literal.to_owned());
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Every input path the stamp consumes, repo-relative and sorted.
 ///
 /// `target` is PRUNED by [`stamp::walk`] itself, and that is load-bearing rather than tidiness.
@@ -278,12 +334,57 @@ pub fn stamp_inputs(root: &Path) -> Result<Vec<String>, String> {
             name == "Cargo.toml" || name == "module.modulemap" || matches!(extension, "rs" | "h")
         })?;
     }
+    let mut spliced: Vec<String> = Vec::new();
+    for path in &found {
+        // `tests/` and `benches/` are not compiled into the staticlib, and reading their includes
+        // would drag `golden/golden_vectors.json` into this stamp — a golden re-mint would then
+        // cold the xcframework, which compiles not one byte of it.
+        if Path::new(path).extension().and_then(|value| value.to_str()) != Some("rs")
+            || path.contains("/tests/")
+            || path.contains("/benches/")
+        {
+            continue;
+        }
+        let source = fs::read_to_string(root.join(path)).unwrap_or_default();
+        for target in included_paths(&source)? {
+            let resolved = resolve_relative(path, &target)
+                .ok_or_else(|| format!("{path} splices in {target}, which escapes the repository root"))?;
+            if !root.join(&resolved).is_file() {
+                return Err(format!(
+                    "{path} splices in {resolved}, which is not a file — the stamp cannot read what the \
+                     artifact is built from"
+                ));
+            }
+            spliced.push(resolved);
+        }
+    }
+    found.extend(spliced);
     for file in SELF_FILES {
         found.push(file.to_owned());
     }
+    found.push(SHIM_LOCK.to_owned());
     found.sort_unstable();
     found.dedup();
     Ok(found)
+}
+
+/// `target` read relative to the DIRECTORY holding `source`, the way `rustc` reads an include.
+///
+/// `None` when the `..` components walk above the repository root, which is a path this gate has no
+/// way to hash and no business hashing.
+fn resolve_relative(source: &str, target: &str) -> Option<String> {
+    let mut parts: Vec<&str> = source.split('/').collect();
+    parts.pop();
+    for step in target.split('/') {
+        match step {
+            "." | "" => {},
+            ".." => {
+                parts.pop()?;
+            },
+            other => parts.push(other),
+        }
+    }
+    Some(parts.join("/"))
 }
 
 /// The digest of every input's contents AND name.
@@ -443,6 +544,13 @@ fn slice_dir(root: &Path, target: &str) -> PathBuf {
 /// Every slice is JOINED before the first failure is reported, so a doomed run does not leave two
 /// compilers racing the tree the next command is about to edit — which is what the shell's `wait`
 /// on each known pid bought, and what a bare `wait` (zero however the jobs died) did not.
+///
+/// `--locked` is what makes [`SHIM_LOCK`] safe to hash. Without it an out-of-date lock is REWRITTEN
+/// by the build, between the stamp `run` wants and the stamp it records — the same self-firing
+/// shape the `target/` pruning above exists to prevent, arriving through a different door. It also
+/// settles a race the three slices already had: they share `crate_dir`, so all three could rewrite
+/// that one file at once. With the flag, a lock that does not match its manifests fails in cargo's
+/// own words instead of being silently repaired.
 fn build_slices(root: &Path) -> Result<(), String> {
     let crate_dir = root.join("rust/slopdesk-ffi");
     let outcomes = std::thread::scope(|scope| {
@@ -456,7 +564,7 @@ fn build_slices(root: &Path) -> Result<(), String> {
                 scope.spawn(move || {
                     println!("build-ffi: building {target}");
                     Command::new("cargo")
-                        .args(["build", "--release", "--target", target, "--quiet"])
+                        .args(["build", "--release", "--locked", "--target", target, "--quiet"])
                         .current_dir(&crate_dir)
                         .env("CARGO_TARGET_DIR", &slice)
                         .output()
@@ -678,7 +786,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        declared_symbols, exported_symbols, input_crates, macos_only_symbols, path_dependencies, verdict,
+        SHIM_LOCK, declared_symbols, exported_symbols, included_paths, input_crates, macos_only_symbols,
+        path_dependencies, stamp_inputs, verdict,
     };
 
     fn set(names: &[&str]) -> BTreeSet<String> {
@@ -796,6 +905,74 @@ regex = "1"
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("Cargo.toml"), "[dependencies]\nregex = \"1\"\n").unwrap();
         assert!(input_crates(&root).is_err());
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    /// A doc comment naming the macro is prose; a call is an input.
+    #[test]
+    fn only_a_real_include_is_read_out_of_a_source() {
+        let source = "\
+//! The tips are `include_str!(\"../nowhere.json\")` in spirit only.
+// include_bytes!(\"../commented.bin\")
+static TIPS: &str = include_str!(\"../resources/tips.json\");
+";
+        assert_eq!(included_paths(source).unwrap(), vec!["../resources/tips.json"]);
+    }
+
+    /// An include this cannot resolve is an ERROR, not a silence — the whole species of defect this
+    /// round fixed was a stamp that answered "nothing to see" about an input it could not read.
+    #[test]
+    fn an_include_that_is_not_a_literal_is_an_error() {
+        let source = "static GEN: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"));\n";
+        assert!(included_paths(source).is_err());
+    }
+
+    /// The spliced resource is an input; the golden a TEST splices in is not, because the staticlib
+    /// does not compile that test and a re-mint must not cold the artifact.
+    #[test]
+    fn a_spliced_resource_is_an_input_and_a_test_fixture_is_not() {
+        let root = std::env::temp_dir().join(format!("slopdesk-ffi-splice-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&root);
+        let shim = root.join("rust/slopdesk-ffi");
+        fs::create_dir_all(&shim).unwrap();
+        fs::write(
+            shim.join("Cargo.toml"),
+            "[dependencies]\nslopdesk-tips = { path = \"../slopdesk-tips\" }\n",
+        )
+        .unwrap();
+
+        let wrapped = root.join("rust/slopdesk-tips");
+        fs::create_dir_all(wrapped.join("src")).unwrap();
+        fs::create_dir_all(wrapped.join("resources")).unwrap();
+        fs::create_dir_all(wrapped.join("tests")).unwrap();
+        fs::write(wrapped.join("Cargo.toml"), "[dependencies]\n").unwrap();
+        fs::write(
+            wrapped.join("src/lib.rs"),
+            "static TIPS: &str = include_str!(\"../resources/tips.json\");\n",
+        )
+        .unwrap();
+        fs::write(wrapped.join("resources/tips.json"), "[]\n").unwrap();
+        fs::write(
+            wrapped.join("tests/golden.rs"),
+            "static G: &str = include_str!(\"../fixtures/golden.json\");\n",
+        )
+        .unwrap();
+        fs::create_dir_all(wrapped.join("fixtures")).unwrap();
+        fs::write(wrapped.join("fixtures/golden.json"), "{}\n").unwrap();
+
+        let inputs = stamp_inputs(&root).unwrap();
+        assert!(
+            inputs.contains(&"rust/slopdesk-tips/resources/tips.json".to_owned()),
+            "the spliced resource is compiled into the library: {inputs:?}"
+        );
+        assert!(
+            !inputs.contains(&"rust/slopdesk-tips/fixtures/golden.json".to_owned()),
+            "a test's fixture is not linked into the artifact: {inputs:?}"
+        );
+        assert!(
+            inputs.contains(&SHIM_LOCK.to_owned()),
+            "the lock picks every external version: {inputs:?}"
+        );
         let _ignored = fs::remove_dir_all(&root);
     }
 }
