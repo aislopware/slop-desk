@@ -215,26 +215,57 @@ None of these is an accident, and none should be "fixed" without reading why:
    — and it is the right price: the deadline thread races the drain thread, and two concurrent
    `exit()`s run the atexit handlers twice, which is undefined behaviour. An abort racing an exit is
    not. It only ever fires on a daemon that is already wedged.
-5. **The adaptive-`m` FEC ladder is unreachable, and so is small-frame duplication.** Both need
-   `m > 1`, and nothing resolves one: `Session::new` pins `ReedSolomonFec::default()` at `m = 1`.
-   The GROUP-SIZE ladder (`SLOPDESK_ADAPTIVE_FEC`) is live and stepped per report; the `m` ladder's
-   step, its three tiers 5/6/7 and the small-frame duplicate that keys off them are all dead code
-   paths until the host resolves `m`. `session_pump::wire_tier` names the exact argument.
+5. ~~**The adaptive-`m` FEC ladder is unreachable, and so is small-frame duplication.**~~ ✅ **CLOSED
+   2026-08-31, and it was never a divergence — it was a one-sided silent hazard.**
 
-   ⚠️ **This one is NOT symmetric, and that is a hazard rather than a divergence.** The audit that
-   wrote this paragraph found the other half live: Swift's `AdaptiveFECPolicy.MultiLoss.parityCount`
-   resolves `SLOPDESK_FEC_M` from the client's own environment and `makeFECScheme()` hands the
-   result to the session, so the CLIENT honours a key the HOST ignores. `Pending::new` takes
-   `parity_shards_per_group` from the receiver's configured scheme and not off the wire — by
-   design, which is what the multi-loss note's **DEPLOY TOGETHER** warning is about — so a client
-   with `SLOPDESK_FEC_M=3` mis-maps the parity boundary of every frame an `m = 1` host sends and
-   silently stops repairing. The key is documented, clamped, unit-tested on both sides, and folded
-   into the daemon's env by `env.rs` from `video.fec_m`; only the host's read is missing.
+   What the row said, and it was true as far as it went: both need `m > 1`, nothing on the host
+   resolved one, `Session::new` pinned `ReedSolomonFec::default()` at `m = 1`, and so the `m`
+   ladder's step, its three tiers 5/6/7 and the small-frame duplicate keying off them were all
+   unreachable. The audit that re-read it found the other half LIVE. Swift's
+   `AdaptiveFECPolicy.MultiLoss.parityCount` resolves `SLOPDESK_FEC_M` from the client's own
+   environment and `makeFECScheme()` hands the result to the session, so the CLIENT honoured a key
+   the HOST ignored. `Pending::new` takes `parity_shards_per_group` from the receiver's configured
+   scheme and never off the wire — by design, which is what the multi-loss note's **DEPLOY
+   TOGETHER** warning is about — so a client with `SLOPDESK_FEC_M=3` mis-mapped the parity boundary
+   of every frame an `m = 1` host sent and silently stopped repairing. Nothing failed to decode and
+   nothing logged. That is not "a feature is off"; that is two ends disagreeing with both configs
+   looking correct.
 
-   Wiring the host's read is therefore the fix, and it is NOT a one-line one: `session_pump`'s
-   header records that small-frame duplication was left unported precisely BECAUSE `m > 1` was
-   unreachable, so resolving `m` makes that branch reachable and its absence becomes a live
-   divergence in the same stroke. The two land together or neither does.
+   **The fix, in one change, because the two halves make each other reachable.**
+   `session::configured_fec` resolves `SLOPDESK_FEC_K` / `_FEC_M` through
+   `adaptive_fec::multi_loss`'s own `resolve_group_size` / `resolve_parity_count` — the same two
+   functions the client calls, so there is no second clamp and no second GF(2^8) cap to keep in
+   agreement. Unset resolves to `(k 5, m 1)`, which IS `ReedSolomonFec::default`, so an untouched
+   fleet is byte-identical and this needed no deploy step of its own. Resolving `m` then made the
+   small-frame branch reachable in the same stroke, so it was ported in the same change:
+   `session_wiring::should_dup_small_delta`, folded into the SAME `duplicate` verdict the keyframe
+   gate feeds, because one frame earns one second copy or none.
+
+   Two deliberate departures from the Swift, both recorded in `session_pump`'s header. Its inline
+   arm tested `stateMachine.mediaFlowing` and its lane arm did not; `wire_frame` tests it twice for
+   both arms before either is reached, so the asymmetry has nowhere to live. And the ladder rung is
+   passed as `Option<u8>` — `None` when the parity ladder is not running — rather than compared
+   against a sentinel: `PARITY_TIER_CLEAN` is a RUNG, so a not-running ladder sitting at
+   `DEFAULT_TIER` would read as "stepped" and arm the gate on every small delta forever.
+
+   **One real divergence surfaced by making the ladder reachable, and closed in the same pass: the
+   SEED.** `Controllers::new` seeded `TierState::default()` — tier 0 — unconditionally, while the
+   Swift seeded `parityTierNormal` (6) whenever adaptive `m` was on, for the reason its own comment
+   gave. While the ladder was unreachable that difference could not be observed; the moment it can
+   run, an unreported session stamps a tier from OUTSIDE the ladder's `{5, 6, 7}` set on every frame
+   until the first feedback report, which is exactly what `adaptive_fec::wire_tier`'s pass-through
+   is documented not to do. `Controllers::new` now takes the resolved switch and seeds
+   `PARITY_TIER_NORMAL` under it. Two of the three consequences are nil and one is the point:
+   `m_level_for_tier` maps tier 0 and tier 6 to the same level, so the ladder steps identically from
+   either, and both are `!= PARITY_TIER_CLEAN`, so the small-delta gate arms either way. What
+   changes is the PARITY COUNT of the pre-report frames, and it is not cosmetic —
+   `packetizer.rs` calls `adaptive_fec::parity_count(fec_tier, m)` per frame and `reassembler.rs`
+   calls it off the stamped tier, so under multi-loss the tier is what the ladder actuates through.
+   Tier 0 falls through that table to the configured `m`; tier 6 is the baseline 3. Both ends read
+   the same stamped tier through the same table, so there is no disagreement in either seed — the
+   fix is that the frames before the first report now carry the ladder's baseline, which is what the
+   ladder means by baseline. `session_inbound::adaptive_m_enabled` became `pub(crate)` over `&Overlay` for it, since
+   `Session::new` must answer the question before there is a `Session` to ask.
 
 ## §5 The door surface the deletion took with it
 

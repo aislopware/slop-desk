@@ -36,7 +36,7 @@
 
 use std::sync::Arc;
 
-use slopdesk_video::adaptive_fec::TierState;
+use slopdesk_video::adaptive_fec::{PARITY_TIER_CLEAN, PARITY_TIER_NORMAL, TierState};
 use slopdesk_video::congestion::{CongestionConfig, LiveCongestionController};
 use slopdesk_video::fps_governor::{FpsGovernor, FpsGovernorConfig};
 use slopdesk_video::host_gates::HostGates;
@@ -125,6 +125,18 @@ pub struct Controllers {
     /// [`slopdesk_video::adaptive_fec::next_parity_tier_state`] is the step when adaptive `m` is
     /// on; [`slopdesk_video::adaptive_fec::next_tier_state`] otherwise. The default is
     /// [`slopdesk_video::adaptive_fec::DEFAULT_TIER`], which is also the value multi-loss forces.
+    ///
+    /// The SEED is the exception, and it depends on which ladder is in force: with the parity
+    /// ladder on it is [`PARITY_TIER_NORMAL`], not the default tier. That is not cosmetic. The
+    /// parity ladder's tier set is `{5, 6, 7}` and
+    /// [`slopdesk_video::adaptive_fec::wire_tier`] passes a ladder tier THROUGH to the wire
+    /// unmapped precisely because those three all resolve to the configured group size; seeding at
+    /// [`slopdesk_video::adaptive_fec::DEFAULT_TIER`] would stamp a tier from OUTSIDE that set on
+    /// every frame until the first feedback report lands, which is the one thing the pass-through
+    /// is documented not to do. It costs nothing to get right — `m_level_for_tier` maps tier 0 and
+    /// tier 6 to the same level, so the ladder steps identically from either — and it is what the
+    /// Swift host seeded, for the reason its own comment gave: the very first frame should already
+    /// ride the ladder's tier set rather than join it one report later.
     pub fec_tier: TierState,
 }
 
@@ -137,8 +149,13 @@ impl Controllers {
     ///
     /// Every controller that is gated OFF is `None` rather than constructed-and-idle, so the report
     /// path's cost when a feature is off is a discriminant test, not a tick.
+    ///
+    /// `adaptive_m` is `SLOPDESK_ADAPTIVE_FEC_M`'s resolved switch, and it is a PARAMETER rather
+    /// than an overlay read here because this type has no overlay and should not grow one: it is
+    /// the controller set, not the configuration. See [`Controllers::fec_tier`] for why the seed
+    /// depends on it at all.
     #[must_use]
-    pub fn new(recovery_idr: RecoveryIdrConfig) -> Self {
+    pub fn new(recovery_idr: RecoveryIdrConfig, adaptive_m: bool) -> Self {
         Self {
             estimate: NetworkEstimate::default(),
             congestion: None,
@@ -149,7 +166,11 @@ impl Controllers {
             last_actuated_bps: 0,
             policy_ceiling_bps: 0,
             offered_bytes_per_frame: 0.0,
-            fec_tier: TierState::default(),
+            fec_tier: if adaptive_m {
+                TierState::new(PARITY_TIER_NORMAL, 0, 0)
+            } else {
+                TierState::default()
+            },
         }
     }
 
@@ -638,6 +659,32 @@ pub fn should_dup_keyframe(loss_rate: f64, now: f64, fast_attack_until: f64, thr
     loss_rate >= threshold || now < fast_attack_until
 }
 
+/// Whether to duplicate-send this small DELTA — [`should_dup_keyframe`]'s twin, gated far harder.
+///
+/// A keyframe earns a second copy on the measured loss alone, because an IDR's delivery time IS the
+/// client's recovery time. A delta does not, so this asks three things past the operator's switch:
+/// the frame must be a delta (a keyframe already has its own verdict, and OR-ing two would pay
+/// twice for one frame), it must be SMALL enough that a second copy is close to free, and the
+/// adaptive-`m` ladder must have stepped OFF its clean rung.
+///
+/// `ladder` is `None` when the parity ladder is not running at all, and that is the honest shape
+/// rather than a sentinel tier: [`PARITY_TIER_CLEAN`] is a RUNG, so a not-running ladder sitting at
+/// [`slopdesk_video::adaptive_fec::DEFAULT_TIER`] would compare unequal to it and arm this gate on
+/// every small delta forever — the exact inversion a `!= clean` test invites. The ladder's own
+/// switch is `SLOPDESK_ADAPTIVE_FEC_M` and nothing else: `next_tier` routes to the parity ladder on
+/// that flag alone, independently of `SLOPDESK_ADAPTIVE_FEC`.
+///
+/// The ladder term is what makes this narrow enough to ship default-OFF and still be worth having.
+/// It covers exactly the window between "the link started losing" and "the raised parity reaches
+/// the wire", and on a clean link that window does not exist.
+#[must_use]
+pub fn should_dup_small_delta(gates: &HostGates, keyframe: bool, bytes: usize, ladder: Option<u8>) -> bool {
+    gates.small_dup
+        && !keyframe
+        && i64::try_from(bytes).unwrap_or(i64::MAX) <= gates.small_dup_max_bytes
+        && ladder.is_some_and(|tier| tier != PARITY_TIER_CLEAN)
+}
+
 /// The two components a teardown takes back, each absent when it was never installed.
 ///
 /// Named because it is the ANSWER of a fallible take: `None` for a stale caller, and inside it a
@@ -786,6 +833,43 @@ mod tests {
     }
 
     #[test]
+    fn every_term_of_the_small_delta_gate_can_veto_it_alone() {
+        let mut gates = HostGates::from_env(&[], CONTEXT);
+        gates.small_dup = true;
+        let stepped = Some(PARITY_TIER_NORMAL);
+        assert!(
+            should_dup_small_delta(&gates, false, 30, stepped),
+            "a small delta on a ladder that has stepped is the one case this exists for"
+        );
+        assert!(
+            !should_dup_small_delta(&gates, true, 30, stepped),
+            "a keyframe is the keyframe gate's verdict and must not be paid for twice"
+        );
+        assert!(
+            !should_dup_small_delta(&gates, false, 30, None),
+            "a ladder that is not running has no rung, so there is nothing to have stepped off"
+        );
+        assert!(
+            !should_dup_small_delta(&gates, false, 30, Some(PARITY_TIER_CLEAN)),
+            "on the clean rung there is no parity raise in flight to cover"
+        );
+        assert!(
+            !should_dup_small_delta(
+                &gates,
+                false,
+                usize::try_from(gates.small_dup_max_bytes + 1).unwrap_or(usize::MAX),
+                stepped
+            ),
+            "one byte past the ceiling is a large delta, and duplicating those is the amplification"
+        );
+        gates.small_dup = false;
+        assert!(
+            !should_dup_small_delta(&gates, false, 30, stepped),
+            "the switch is default-OFF and must veto every other term"
+        );
+    }
+
+    #[test]
     fn backpressure_never_drops_a_frame_carrying_an_obligation() {
         assert!(
             !backpressure_skip(true, 999, 3, true),
@@ -817,7 +901,7 @@ mod tests {
 
     #[test]
     fn the_offered_ewma_reads_as_absent_until_a_delta_lands() {
-        let mut controllers = Controllers::new(RecoveryIdrConfig::default());
+        let mut controllers = Controllers::new(RecoveryIdrConfig::default(), false);
         assert!(
             controllers.offered_bps(60).is_none(),
             "before the first delta the probe must not be gated at all"

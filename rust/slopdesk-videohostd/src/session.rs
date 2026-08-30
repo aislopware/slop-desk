@@ -54,6 +54,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use slopdesk_video::adaptive_fec::multi_loss;
 use slopdesk_video::cursor::CursorChannelMessage;
 use slopdesk_video::fec::ReedSolomonFec;
 use slopdesk_video::geometry::{VideoRect, VideoSize};
@@ -71,6 +72,7 @@ use crate::mux_registry::LaneSession;
 use crate::packetize::PacketizeLane;
 use crate::privacy::{HostGamma, PrivacyBlank};
 use crate::sendlane::{DatagramSink, RetransmitLog, VideoSendLane};
+use crate::session_inbound::adaptive_m_enabled;
 use crate::session_wiring::{ClientLiveness, Controllers, FrameCounters, Live, SessionSpec, Target};
 
 /// What the session needs from a live capture stream.
@@ -304,6 +306,36 @@ pub struct Session {
     pub(crate) stopped: AtomicBool,
 }
 
+/// The codec this session packetizes with, resolved from `SLOPDESK_FEC_K` / `SLOPDESK_FEC_M`.
+///
+/// The host used to pin [`ReedSolomonFec::default`] here, and that made `SLOPDESK_FEC_M` a
+/// CLIENT-ONLY key on a wire both ends have to read the same way. The client's
+/// `AdaptiveFECPolicy.MultiLoss` resolved it from its own environment and mapped the parity
+/// boundary of every group at that `m`; this end kept emitting one parity shard per group. The
+/// reassembler takes `parity_shards_per_group` from its OWN configured scheme and never off the
+/// wire — deliberately, since `m` is not a wire field — so the disagreement is silent in the worst
+/// way available: nothing fails to decode and nothing logs, repairs simply stop happening. Reading
+/// the same two keys here is what makes multi-loss's **DEPLOY TOGETHER** note
+/// ([`multi_loss`](slopdesk_video::adaptive_fec::multi_loss)) something an operator can obey at
+/// all.
+///
+/// Unset is byte-identical to what shipped, which is the property that lets this land without a
+/// fleet step: `resolve_group_size(None, None)` is `DEFAULT_K` = 5 and `resolve_parity_count(None)`
+/// is `DEFAULT_M` = 1, and that pair IS [`ReedSolomonFec::default`].
+///
+/// Resolution, clamping and the GF(2^8) `k + m <= 255` cap are `multi_loss`'s, asked for rather
+/// than restated: both ends call the same two functions, and a second clamp here is exactly the
+/// kind of near-agreement that puts a host and a client one shard apart with both configs looking
+/// correct.
+fn configured_fec(overlay: &Overlay) -> ReedSolomonFec {
+    let m = overlay.get("SLOPDESK_FEC_M");
+    let k = overlay.get("SLOPDESK_FEC_K");
+    ReedSolomonFec::new(
+        multi_loss::resolve_group_size(k.as_deref(), m.as_deref()),
+        multi_loss::resolve_parity_count(m.as_deref()),
+    )
+}
+
 impl Session {
     /// Builds a listening session for one lane.
     ///
@@ -326,7 +358,7 @@ impl Session {
             // Stamped here and NOWHERE else — see the module note on the clock.
             epoch: Instant::now(),
             state: Mutex::new(state),
-            controllers: Mutex::new(Controllers::new(recovery_idr)),
+            controllers: Mutex::new(Controllers::new(recovery_idr, adaptive_m_enabled(&overlay))),
             counters: Mutex::new(FrameCounters::default()),
             // Zero, because the liveness window is measured in seconds since `epoch` and `epoch`
             // is the instant above: the session starts at time zero on its own clock.
@@ -337,7 +369,7 @@ impl Session {
             privacy: Mutex::new(None),
             // `fec_disabled` is the gate's own spelling of "data fragments only", which is what a
             // `None` scheme means to the packetizer — asked rather than restated.
-            packetize: PacketizeLane::new((!gates.fec_disabled).then(ReedSolomonFec::default)),
+            packetize: PacketizeLane::new((!gates.fec_disabled).then(|| configured_fec(&overlay))),
             send_lane: gates.send_lane_enabled.then(|| VideoSendLane::new(sink)),
             // Both bounds are GATES, not constants here. The frame count bounds what a client can
             // still name and the byte ceiling is what actually holds the memory down — sixteen 4K

@@ -123,9 +123,16 @@ public enum AdaptiveFECPolicy {
 
     /// Builds the process's configured ``FECScheme``: the env-gated multi-loss Reed-Solomon codec when
     /// `SLOPDESK_FEC_M >= 2` (FIXED `[k + m, k]`, `k = SLOPDESK_FEC_K`), else the production `m == 1`
-    /// default (XOR-equivalent, byte-identical wire). The DEFAULT-ARGUMENT for both the host
-    /// packetizer's and client reassembler's `fec:`, so BOTH ends resolve the SAME env at the SAME
-    /// site — no way to build one end multi-loss and the other single-loss within a process.
+    /// default (XOR-equivalent, byte-identical wire). The DEFAULT-ARGUMENT for the client
+    /// reassembler's `fec:`.
+    ///
+    /// It used to be the host packetizer's too, and the "one site, so the two ends cannot disagree"
+    /// guarantee died with the Swift host without being noticed: `slopdesk-videohostd` pinned
+    /// `(5, 1)` while this factory still honoured the two keys, so an operator who set
+    /// `SLOPDESK_FEC_M` got a client mapping a parity boundary the host was not emitting — silently,
+    /// since nothing fails to decode and nothing logs. Since 2026-08-31 the host resolves them in
+    /// `session::configured_fec`, through the SAME two doors this type calls. One site is now one
+    /// RESOLUTION rather than one call: `docs/61` §4 divergence 5.
     ///
     /// `m == 1` returns `RustReedSolomonFEC(groupSize: 5, parityCount: 1)` — bit-for-bit the legacy
     /// default `XORParityFEC()`.

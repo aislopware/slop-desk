@@ -661,12 +661,17 @@ public actor SlopDeskVideoClientSession {
     ///   - transport: the UDP transport (production: ``VideoMuxClientTransport``).
     ///   - gui: the main-actor GUI hand-off seams (submit-frame / cursor / shape).
     ///   - fec: FEC scheme matching the host. The DEFAULT is the process's env-gated scheme
-    ///     (``AdaptiveFECPolicy/makeFECScheme()``) — the SAME factory the host uses — so the client
-    ///     reassembler is built with the SAME `(k, m)`: production `m == 1` (XOR-equivalent) unless
+    ///     (``AdaptiveFECPolicy/makeFECScheme()``): production `m == 1` (XOR-equivalent) unless
     ///     `SLOPDESK_FEC_M >= 2` activates the fixed multi-loss `[k + m, k]` code. The reassembler
-    ///     derives `m` from this scheme's `parityCount`, so host and client MUST read the same
-    ///     `SLOPDESK_FEC_M` / `SLOPDESK_FEC_K` and deploy together (the per-group parity count
-    ///     changes on the wire when `m > 1`).
+    ///     derives `m` from this scheme's `parityCount` and NEVER off the wire, so host and client
+    ///     MUST read the same `SLOPDESK_FEC_M` / `SLOPDESK_FEC_K` and deploy together (the per-group
+    ///     parity count changes on the wire when `m > 1`).
+    ///
+    ///     Not the same FACTORY as the host's any more — the host is `slopdesk-videohostd` and
+    ///     builds its codec in `session::configured_fec` — but it is the same RESOLUTION: both call
+    ///     `slopdesk_adaptive_fec_resolve_group_size` / `_parity_count`, so there is one clamp and
+    ///     one GF(2^8) cap. Until 2026-08-31 the host resolved neither key and pinned `(5, 1)`
+    ///     while this end honoured both; `docs/61` §4 divergence 5 records what that cost.
     public init(
         requestedWindowID: UInt32,
         viewport: VideoSize,

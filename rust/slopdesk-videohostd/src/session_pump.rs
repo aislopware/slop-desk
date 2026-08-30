@@ -57,11 +57,23 @@
 //! live with the bring-up that arms them, in [`crate::session_capture`]. They were named in this
 //! file's brief and moved before it was written; nothing here duplicates them.
 //!
-//! ## One branch of the Swift that does not appear
-//! * **Small-frame duplication** (`:2869`). Every one of its terms needs `adaptiveMEnabled`, and no
-//!   `SLOPDESK_FEC_M` gate exists in [`slopdesk_video::host_gates`] — [`Session::new`] builds the
-//!   packetizer with [`slopdesk_video::fec::ReedSolomonFec::default`], whose `m` is one. The branch
-//!   is unreachable, and a port of unreachable code is a claim about behaviour nobody can check.
+//! ## The branch that used to not appear, and what made it appear
+//! **Small-frame duplication** (`:2869`) was left out on the grounds that every one of its terms
+//! needs `adaptiveMEnabled` and no host-side `SLOPDESK_FEC_M` read existed — [`Session::new`]
+//! pinned [`slopdesk_video::fec::ReedSolomonFec::default`] at `m = 1`, so the branch was
+//! unreachable and a port of unreachable code is a claim about behaviour nobody can check.
+//!
+//! The premise was true and the conclusion was still the wrong way round. `SLOPDESK_FEC_M` was read
+//! on the CLIENT all along, which made the pin not "the feature is off" but "the two ends disagree
+//! about the parity boundary, silently" — see `Session::new`'s `configured_fec` for what that
+//! costs. Resolving `m` here makes the branch reachable in the same stroke that makes it necessary,
+//! which is why the two landed together: `should_dup_small_delta` is the port, folded into the SAME
+//! `duplicate` verdict the keyframe gate feeds, because one frame gets one second copy or none.
+//!
+//! Two things the Swift did that this deliberately does not. Its inline arm additionally tested
+//! `stateMachine.mediaFlowing` and its lane arm did not; here [`wire_frame`] tests it twice for
+//! both arms before either is reached, so the asymmetry has nowhere to live. And its two call sites
+//! are one verdict here, so the keyframe throttle cannot be stamped by a delta.
 //!
 //! ## The self-heal disarm, which used to be listed beside it
 //! It is here now, on the encoded-keyframe edge, and the note that called it a missing door was
@@ -91,7 +103,9 @@ use crate::encode::{EncodedFrameSink, Encoder, FinishedFrame};
 use crate::mux_registry::LaneSession;
 use crate::sendlane::Job;
 use crate::session::Session;
-use crate::session_wiring::{KF_DUP_MIN_INTERVAL, PacePlan, backpressure_skip, should_dup_keyframe};
+use crate::session_wiring::{
+    KF_DUP_MIN_INTERVAL, PacePlan, backpressure_skip, should_dup_keyframe, should_dup_small_delta,
+};
 
 /// A send gap past this many seconds is what the debug trace reports.
 ///
@@ -273,11 +287,18 @@ fn wire_frame(session: &Session, frame: &FinishedFrame<'_>) {
     // taken together so the hot path touches this lock twice per frame rather than three times.
     // The verdict is DECIDED here and acted on outside, because the guard may not be held across a
     // send.
+    // The parity ladder's rung, or `None` when the ladder is not running — resolved OUTSIDE the
+    // counters hold because it reaches the overlay, and the hot path's rule is that no lock is held
+    // across a read that can leave the struct. `ladder_tier` is the fold's own value, taken under
+    // the fold's lock above and never re-read, exactly as `wire_tier` states.
+    let ladder = session.adaptive_m_enabled().then_some(ladder_tier);
+    let small_dup = should_dup_small_delta(&session.gates, frame.keyframe, bytes, ladder);
+
     let (gap, duplicate) = {
         let mut counters = session.locked_counters();
         let gap = (counters.last_send_at > 0.0).then(|| now - counters.last_send_at);
         counters.last_send_at = now;
-        let duplicate = session.gates.kf_dup
+        let keyframe_dup = session.gates.kf_dup
             && frame.keyframe
             && should_dup_keyframe(
                 loss_rate,
@@ -292,11 +313,15 @@ fn wire_frame(session: &Session, frame: &FinishedFrame<'_>) {
             // IDR the fast-attack window exists to protect.
             && (counters.last_keyframe_dup <= 0.0
                 || now - counters.last_keyframe_dup >= KF_DUP_MIN_INTERVAL);
-        if duplicate {
+        // The throttle is the KEYFRAME's, and only the keyframe's. A small delta is bounded by
+        // `small_dup_max_bytes` rather than by a minimum interval — the whole point of the size
+        // term is that these copies are cheap enough not to need spacing, and stamping this clock
+        // from a delta would suppress the next recovery IDR's duplicate for a quarter-second.
+        if keyframe_dup {
             counters.last_keyframe_dup = now;
         }
         drop(counters);
-        (gap, duplicate)
+        (gap, keyframe_dup || small_dup)
     };
     if let Some(gap) = gap.filter(|gap| *gap > SEND_GAP_TRACE_SECONDS) {
         trace(session, || format!("send gap {:.0}ms", gap * 1000.0));
@@ -333,7 +358,13 @@ fn wire_frame(session: &Session, frame: &FinishedFrame<'_>) {
     // goes out byte-for-byte as the lane would have sent it, and it refuses whenever the lane is
     // busy, so a keystroke can never overtake an earlier frame. Keyframes always take the lane:
     // their duplicate must stay ordered behind the primary on the one consumer.
-    let inlined = !frame.keyframe && lane.try_send_inline(&job);
+    //
+    // `!duplicate` is that same ordering rule, now that a small DELTA can also produce a second
+    // copy: inlining the primary and enqueuing the duplicate would put the two copies of one frame
+    // on two different consumers, where the lane's leading delay no longer separates them from each
+    // other. The comment above already said "produces no second copy" — this is the term that makes
+    // it true.
+    let inlined = !frame.keyframe && !duplicate && lane.try_send_inline(&job);
     if !inlined {
         lane.enqueue(job.clone());
     }
@@ -408,10 +439,11 @@ fn park_until(session: &Session, deadline: f64) -> bool {
 /// [`slopdesk_video::adaptive_fec::DEFAULT_TIER`] under multi-loss. A `false` here would therefore
 /// clobber, on the wire, the exact ladder the fold had just stepped.
 ///
-/// With the shipped codec the two branches are byte-identical — `Session::new` pins
-/// [`slopdesk_video::fec::ReedSolomonFec::default`] at `m = 1`, so multi-loss is inactive and
-/// nothing is forced either way. The wiring is here for the build where `m` is not 1, because that
-/// is the build where a hardcode would be silent.
+/// With `SLOPDESK_FEC_M` unset the two branches are byte-identical: `Session::new`'s
+/// `configured_fec` resolves the shipped `m = 1`, multi-loss is inactive, and nothing is forced
+/// either way. Since that resolution reads the operator's key rather than pinning the default, the
+/// `m > 1` branch is now reachable in a running host instead of only in a hypothetical build —
+/// which is exactly the case a hardcode here would have been silent about.
 fn wire_tier(session: &Session, ladder_tier: u8) -> u8 {
     let adaptive = if session.gates.adaptive_fec_enabled {
         ladder_tier
@@ -736,6 +768,13 @@ mod tests {
     /// A listening session with no socket under it, and no send lane — every test here is about
     /// what reaches the wire, and the lane's own thread would only add a wait.
     fn harness(edit: impl FnOnce(&mut HostGates)) -> Harness {
+        harness_with("", edit)
+    }
+
+    /// The same session over an operator's sidecar JSON — the seam the adaptive-`m` gate reads,
+    /// which is an OVERLAY question rather than a gate-table one and so cannot be reached by
+    /// `edit`.
+    fn harness_with(sidecar: &str, edit: impl FnOnce(&mut HostGates)) -> Harness {
         let registry = Arc::new(Registry);
         // The unsizing happens at this typed binding, not inside `downgrade`. `registry` outlives
         // the strong handle dropped here, so the weak one still upgrades.
@@ -767,7 +806,7 @@ mod tests {
             transport,
             gates,
             RecoveryIdrConfig::default(),
-            Overlay::from_text(""),
+            Overlay::from_text(sidecar),
             VideoSessionStateMachine::new(1, false),
         ));
         Harness {
@@ -1021,6 +1060,137 @@ mod tests {
         assert!(
             lossy.frame_ids().iter().all(|id| *id == 0),
             "the duplicate reuses the frame id, which is what lets the client dedupe it"
+        );
+    }
+
+    /// The sidecar that turns the parity ladder on. `rawOverrides` rather than a typed key because
+    /// `SLOPDESK_ADAPTIVE_FEC_M` is a host knob with no `video.*` spelling — the free-text box is
+    /// documented as exactly that route.
+    const LADDER_ON: &str = r#"{"rawOverrides":{"SLOPDESK_ADAPTIVE_FEC_M":"1"}}"#;
+
+    #[test]
+    fn the_codec_is_the_operators_k_and_m_and_the_shipped_default_when_nobody_set_one() {
+        let shipped = harness(|_| {});
+        let scheme = shipped.session.packetize.fec().expect("FEC is on by default");
+        assert_eq!(
+            (scheme.group_size(), scheme.parity_count()),
+            (5, 1),
+            "an unset sidecar must stay byte-identical to the pinned default that shipped"
+        );
+
+        let tuned = harness_with(r#"{"video":{"fecM":3,"fecK":8}}"#, |_| {});
+        let scheme = tuned.session.packetize.fec().expect("FEC is on by default");
+        assert_eq!(
+            (scheme.group_size(), scheme.parity_count()),
+            (8, 3),
+            "the host must read the same two keys the client resolves, or the two disagree silently"
+        );
+    }
+
+    #[test]
+    fn a_small_delta_is_duplicated_only_once_the_parity_ladder_has_left_its_clean_rung() {
+        let clean = harness_with(LADDER_ON, |gates| gates.small_dup = true);
+        flowing(&clean.session);
+        clean.session.locked_controllers().fec_tier.tier = adaptive_fec::PARITY_TIER_CLEAN;
+        wire_frame(&clean.session, &finished(&[5; 30], false));
+        let once = clean.sent().len();
+
+        let lossy = harness_with(LADDER_ON, |gates| gates.small_dup = true);
+        flowing(&lossy.session);
+        lossy.session.locked_controllers().fec_tier.tier = adaptive_fec::PARITY_TIER_NORMAL;
+        wire_frame(&lossy.session, &finished(&[5; 30], false));
+        assert_eq!(
+            lossy.sent().len(),
+            once * 2,
+            "the raise this covers takes a report to reach the wire; the copy covers that window"
+        );
+        assert!(
+            lossy.frame_ids().iter().all(|id| *id == 0),
+            "the delta's duplicate dedupes on the frame id exactly as the keyframe's does"
+        );
+    }
+
+    #[test]
+    fn the_parity_ladder_starts_on_its_own_rung_rather_than_joining_one_report_later() {
+        // The state every operator of this config actually hits: a session that has taken no
+        // feedback report yet. The seed must already be INSIDE the ladder's `{5, 6, 7}` set,
+        // because `wire_tier` passes a ladder tier through to the wire unmapped on the strength of
+        // exactly that claim — and it must arm the small-delta copy, since a host that has not
+        // heard from the client yet has no evidence the link is clean.
+        let fresh = harness_with(LADDER_ON, |gates| gates.small_dup = true);
+        assert_eq!(
+            fresh.session.locked_controllers().fec_tier.tier,
+            adaptive_fec::PARITY_TIER_NORMAL,
+            "the parity ladder seeds at its baseline rung, not at the static ladder's tier 0"
+        );
+        flowing(&fresh.session);
+        wire_frame(&fresh.session, &finished(&[5; 30], false));
+        let seeded = fresh.sent().len();
+
+        let dark = harness(|_| {});
+        flowing(&dark.session);
+        wire_frame(&dark.session, &finished(&[5; 30], false));
+        assert_eq!(
+            seeded,
+            dark.sent().len() * 2,
+            "an unreported session is not a clean one; the copy covers the window before the first report"
+        );
+
+        // The other ladder is untouched by this: with the parity gate off the seed is the static
+        // ladder's own tier, which is what `wire_tier` forces anyway.
+        assert_eq!(
+            dark.session.locked_controllers().fec_tier.tier,
+            adaptive_fec::DEFAULT_TIER,
+            "seeding the parity rung on a host that is not running the parity ladder would stamp a tier the \
+             static mapping does not own"
+        );
+    }
+
+    #[test]
+    fn a_small_delta_is_not_duplicated_while_the_parity_ladder_is_switched_off() {
+        // Same gate, same tier, no `SLOPDESK_ADAPTIVE_FEC_M` — a ladder that is not running has no
+        // rung, and a tier that merely differs from CLEAN is not evidence that it stepped.
+        let dark = harness(|gates| gates.small_dup = true);
+        flowing(&dark.session);
+        dark.session.locked_controllers().fec_tier.tier = adaptive_fec::PARITY_TIER_NORMAL;
+        wire_frame(&dark.session, &finished(&[5; 30], false));
+        let stepped = dark.sent().len();
+
+        let plain = harness(|_| {});
+        flowing(&plain.session);
+        wire_frame(&plain.session, &finished(&[5; 30], false));
+        assert_eq!(
+            stepped,
+            plain.sent().len(),
+            "the default host must send a small delta exactly once"
+        );
+    }
+
+    #[test]
+    fn a_delta_past_the_size_ceiling_is_never_duplicated() {
+        // Counted against the SAME payload through a gate-off host rather than against each other:
+        // a 30-byte delta and a 3000-byte one fragment differently, so "the big one sent more
+        // datagrams" would be true whether it was duplicated or not.
+        let armed = |payload: &[u8]| {
+            let armed = harness_with(LADDER_ON, |gates| {
+                gates.small_dup = true;
+                gates.small_dup_max_bytes = 64;
+            });
+            flowing(&armed.session);
+            armed.session.locked_controllers().fec_tier.tier = adaptive_fec::PARITY_TIER_BURST;
+            wire_frame(&armed.session, &finished(payload, false));
+            let dark = harness(|_| {});
+            flowing(&dark.session);
+            wire_frame(&dark.session, &finished(payload, false));
+            (armed.sent().len(), dark.sent().len())
+        };
+
+        let (under, once) = armed(&[5; 30]);
+        assert_eq!(under, once * 2, "under the ceiling is the case the gate arms for");
+        let (over, once) = armed(&[6; 3000]);
+        assert_eq!(
+            over, once,
+            "past the ceiling the second copy is the byte amplification this gate exists to refuse"
         );
     }
 

@@ -63,6 +63,7 @@ use slopdesk_video::session_state::clamp_capture_size;
 use slopdesk_video::video_control::VideoControlMessage;
 
 use crate::encode::Encoder;
+use crate::env::Overlay;
 use crate::injector::HeldInput;
 use crate::mux_sink::LaneSink;
 use crate::session::{CaptureStream, Session};
@@ -250,7 +251,7 @@ impl SessionExtras {
             settings: Mutex::new(UserSettings::default()),
             thread: Mutex::new(None),
             scroll_interval: Duration::from_secs_f64(session.gates.scroll_inject_interval.max(0.0)),
-            adaptive_m: adaptive_m_enabled(session),
+            adaptive_m: adaptive_m_enabled(&session.overlay),
             fec_allow_off: session.overlay.get("SLOPDESK_FEC_ALLOW_OFF").as_deref() == Some("1"),
             congestion_config: CongestionConfig::from_env(&abr),
         }
@@ -338,9 +339,8 @@ impl SessionExtras {
 /// It does not carry the parity count. `m` comes from the codec
 /// ([`slopdesk_video::fec::ReedSolomonFec::parity_count`]), and this gate only says whether the
 /// ladder is allowed to steer it.
-fn adaptive_m_enabled(session: &Session) -> bool {
-    session
-        .overlay
+pub(crate) fn adaptive_m_enabled(overlay: &Overlay) -> bool {
+    overlay
         .get("SLOPDESK_ADAPTIVE_FEC_M")
         .is_some_and(|text| text == "1")
 }
@@ -504,7 +504,7 @@ impl Session {
     #[must_use]
     pub(crate) fn adaptive_m_enabled(&self) -> bool {
         self.extras()
-            .map_or_else(|| adaptive_m_enabled(self), |extras| extras.adaptive_m)
+            .map_or_else(|| adaptive_m_enabled(&self.overlay), |extras| extras.adaptive_m)
     }
 
     /// The client's live bitrate ceiling, or `None` for auto.
