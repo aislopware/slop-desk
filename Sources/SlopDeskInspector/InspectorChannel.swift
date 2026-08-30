@@ -137,7 +137,18 @@ private func decodeStream(
 /// An in-process ``ByteChannel`` pair for deterministic transport round-trip tests.
 /// `a.send` bytes surface on `b.inbound` and vice-versa, frame boundaries preserved by
 /// the framing (each `send` is one frame; the decoder reassembles regardless).
-public final class LoopbackByteChannel: ByteChannel, @unchecked Sendable {
+///
+/// It is `public` and in `Sources/` rather than in a test target because TWO test targets use it —
+/// `SlopDeskInspectorTests` and `SlopDeskWorkspaceCoreTests` — and it is the genuine in-process seam
+/// they exercise rather than a fake of one: the same `ByteChannel` the production `NWByteChannel`
+/// conforms to, carrying the same framing.
+///
+/// `Sendable` is EARNED here rather than asserted: a final class whose two stored properties are both
+/// `let` and both already `Sendable` — the stream, and the PEER's continuation, which the stdlib
+/// documents as safe to yield to from any thread. It carried `@unchecked` for a while with nothing to
+/// check; an `@unchecked` over state the compiler can verify is a claim that outranks the checker for
+/// no reason, and the next field added under it would inherit the exemption silently.
+public final class LoopbackByteChannel: ByteChannel, Sendable {
     private let outbound: AsyncThrowingStream<Data, Error>.Continuation
     public let inbound: AsyncThrowingStream<Data, Error>
 

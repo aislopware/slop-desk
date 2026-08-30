@@ -18,16 +18,27 @@ import SlopDeskVideoProtocol
 public extension WorkspaceBindingRegistry {
     /// The process-wide live keybinding overrides, published by the ``PreferencesStore`` on a settings
     /// change. EMPTY by default ⇒ every binding resolves to its registry default ⇒ behaviour-identical
-    /// to the no-override registry. `nonisolated(unsafe)` for the same write-once-then-read-many contract
-    /// as ``EnvConfig/overlay``: the store sets it on the main actor; the dispatcher reads it.
+    /// to the no-override registry.
+    ///
+    /// `nonisolated(unsafe)` because it is MAIN-ACTOR CONFINED, not because it is written once — it is
+    /// rewritten on every settings reload (``PreferencesStore/reapplyLiveSettings()``, which
+    /// ``ConfigFile/reload`` drives on each activation), and the getter below writes a second global on
+    /// top of it. What actually holds is narrower and checkable: every writer and every reader is
+    /// `@MainActor` — the store, the two shells' dispatchers (`WorkspaceKeyDispatcher`,
+    /// `TerminalLeafView`), ``TerminalKeyInterceptor`` and the `WorkspaceStore` extension that builds
+    /// it. A key event and a settings write are the same actor's turns, so neither can interleave with
+    /// the other. The annotation is here only because a `static var` on an extension cannot carry the
+    /// isolation the enclosing type's other statics get; adding an off-main reader is the change this
+    /// note exists to stop.
     nonisolated(unsafe) static var activeOverrides = KeybindingPreferences() {
         didSet { liveChordTable = nil }
     }
 
     /// ``resolvedChordTable``'s answer, held until ``activeOverrides`` is written again.
     ///
-    /// The table is a pure function of the registry (a `let`) and the overrides (write-once-then-read-
-    /// many), so rebuilding it per key event was recomputing a constant: 85 rows resolved, 85 chords
+    /// Written by a GETTER, which is why it carries the same confinement note as the overrides above
+    /// rather than a weaker one. The table is a pure function of the registry (a `let`) and the
+    /// overrides, so rebuilding it per key event was recomputing a constant: 85 rows resolved, 85 chords
     /// hashed and a dictionary allocated, on every keystroke the app sees, plus one crossing per
     /// override to re-map a chord that had not changed. The invalidation is the SETTER's rather than a
     /// revision compare, because the setter is the only thing that can make the answer stale.

@@ -280,6 +280,11 @@ public final class DispatchRepeatScheduler: RepeatScheduler, @unchecked Sendable
     }
 }
 
+/// `@unchecked Sendable` over two fields with two different reasons, which is why it is spelled out:
+/// `timer` is a `DispatchSourceTimer`, and GCD's own contract is that a source may be cancelled from
+/// any thread, so it needs no help from here; `cancelled` is the only Swift state and every touch of
+/// it is under `lock`, which is also what makes a second `cancel()` a no-op rather than a race
+/// between two callers reading the flag at once.
 private final class DispatchTimerHandle: RepeatSchedulerHandle, @unchecked Sendable {
     private let timer: DispatchSourceTimer
     private let lock = NSLock()

@@ -27,6 +27,11 @@ public final class ManualRepeatScheduler: RepeatScheduler, @unchecked Sendable {
         }
     }
 
+    /// `@unchecked Sendable` because it holds NO state of its own: `lock` is the scheduler's own lock
+    /// handed down, and the only mutation — `item?.cancelled` — happens under it, on the same
+    /// `Item` the scheduler is walking. The reference is `weak` so a cancel after the item has been
+    /// dropped is a no-op rather than a resurrection, which is what lets the scheduler forget an
+    /// item without asking whether anyone still holds a handle to it.
     private final class Handle: RepeatSchedulerHandle, @unchecked Sendable {
         weak var item: Item?
         let lock: NSLock
