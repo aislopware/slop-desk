@@ -94,6 +94,83 @@ fn sample_memory_for(crate_dir: &str) -> Option<&'static SampleMemory> {
     SAMPLE_MEMORY.iter().find(|exempt| exempt.crate_dir == crate_dir)
 }
 
+/// `docs/57` §3.4's bar: a wrapper past this many lines of CODE drew its framework area too wide.
+///
+/// Lines of [`Source::code`](crate::tree::Source::code) before the first `#[cfg(test)]`, counting
+/// neither blank lines nor comments — these crates run about half prose, because every `unsafe`
+/// block owes a `# Safety` note naming a framework rule, and a bar that counted the prose would be
+/// a bar on writing it down.
+const BAR: usize = 600;
+
+/// One crate booked over [`BAR`]: where it is, and how wide it measured.
+struct Wide {
+    /// The crate directory, without a trailing slash.
+    crate_dir: &'static str,
+    /// The width MEASURED when the row was written, never [`BAR`] — see [`WIDE`].
+    cap: usize,
+}
+
+/// One `slopdesk-apple-*` crate past [`BAR`], and its measured width.
+///
+/// §3.4 states the bar and the ONE-framework-area rule above it, and it already decided which wins
+/// where they collide: `slopdesk-apple-ax` is booked there at "the accessibility client API
+/// genuinely is [that wide], and splitting it would break the rule above it". Four more rows have
+/// landed on the same side of that collision since, so the sentence is a PATTERN rather than one
+/// crate's excuse — and a pattern with no instrument is drift.
+///
+/// Each was checked for the OTHER thing an over-bar count can mean: portable RULES that belong one
+/// crate down, the way `slopdesk-apple-vt`'s Swift original was mostly rules before they moved.
+/// Every module in all five names its framework — the thinnest are `sck/handoff.rs` and
+/// `cgvirtualdisplay/classes.rs`, at one call each — so no rules-only module hides in any of them
+/// and the width really is the area's:
+///
+/// * `slopdesk-apple-vt` — `VideoToolbox` publishes compression and decompression as two session
+///   types with no shared object between them: each owns a session, an output handler and a sample
+///   shape, and the format-description and pixel-buffer reads belong to neither alone. A split
+///   would put the session on one side of a crate edge and the sample it emits on the other, and
+///   would mint a second §2 admission budget for one framework's ownership rules.
+/// * `slopdesk-apple-sck` — `ScreenCaptureKit` is ONE handshake in four parts: the
+///   shareable-content query, the filter built from it, the stream that filter configures, and the
+///   output tap the stream delivers to. Every seam a split could use runs THROUGH the handshake
+///   rather than around it.
+/// * `slopdesk-apple-audio` — the converter, the encoder and the decoder are one codec pipeline
+///   over one `AudioStreamBasicDescription`, and this crate holds the family's sample-memory
+///   exemption for exactly that pipeline. Splitting it would carry the exemption to both halves.
+/// * `slopdesk-apple-cgvirtualdisplay` — a PRIVATE framework reached by runtime class lookup. The
+///   descriptor, the settings and the main-thread hop are three stages of constructing one object,
+///   and the class handles they look up are the crate's whole vocabulary.
+/// * `slopdesk-apple-ax` — §3.4's own row, and the one this table generalises.
+///
+/// `cap` is the width measured when the row was written: a crate excused for its AREA may not also
+/// GROW unremarked. Raising one is a number here and a sentence in the commit, which is the review.
+const WIDE: [Wide; 5] = [
+    Wide {
+        crate_dir: "rust/slopdesk-apple-vt",
+        cap: 1248,
+    },
+    Wide {
+        crate_dir: "rust/slopdesk-apple-sck",
+        cap: 836,
+    },
+    Wide {
+        crate_dir: "rust/slopdesk-apple-audio",
+        cap: 815,
+    },
+    Wide {
+        crate_dir: "rust/slopdesk-apple-cgvirtualdisplay",
+        cap: 705,
+    },
+    Wide {
+        crate_dir: "rust/slopdesk-apple-ax",
+        cap: 664,
+    },
+];
+
+/// The booking for one crate directory, or `None` when it has none.
+fn wide_for(crate_dir: &str) -> Option<&'static Wide> {
+    WIDE.iter().find(|wide| wide.crate_dir == crate_dir)
+}
+
 /// Every crate is `unsafe_code = "forbid"` except two named families.
 ///
 /// rustc enforces the level a crate states. What it cannot notice is the SHAPE drifting back: a new
@@ -232,6 +309,8 @@ struct Spend {
     /// admission in two spellings, so the two counts are added rather than kept apart. At most one
     /// per crate, independently of the Copy rule's.
     get_rule_sites: usize,
+    /// Non-blank lines of code before the first `#[cfg(test)]`, against [`BAR`].
+    code_lines: usize,
 }
 
 /// Counts one crate's `src` tree. Split out of [`apple_family`] because the WALK and the VERDICTS
@@ -243,7 +322,15 @@ fn scan_spend(tree: &Tree, src: &str, sample_memory: bool) -> Spend {
             continue;
         }
         spend.read_any = true;
+        // The size bar measures the crate somebody READS. A test module is not that — it grows with
+        // the assertions rather than with the framework area, which is the thing the bar is about —
+        // so counting stops at its attribute. `code()` has already dropped the comment lines.
+        let mut sized = true;
         for line in file.code().lines() {
+            sized &= !line.contains("#[cfg(test)]");
+            if sized && !line.trim().is_empty() {
+                spend.code_lines += 1;
+            }
             // The admission is recognised BEFORE the ban, and by the qualified path only. A bare
             // `from_raw` is still a raw-pointer operation whatever it is reconstructing.
             if line.contains("CFRetained::from_raw") {
@@ -300,20 +387,7 @@ pub fn apple_family(tree: &Tree) -> Report {
         "no slopdesk-apple-* crate exists — this gate reads nothing and would pass (docs/57)".to_owned(),
     );
 
-    // A ratchet naming a crate that has been renamed or folded away protects nothing, and reads for
-    // years like it does — the same failure `unsafe_policy` checks for its own exemption list, which
-    // cannot see this one because this one is a subset chosen by hand rather than by glob.
-    for exempt in &SAMPLE_MEMORY {
-        let manifest = format!("{}/Cargo.toml", exempt.crate_dir);
-        report.fail_if(
-            tree.get(&manifest).is_none(),
-            format!(
-                "{} holds a sample-memory exemption and does not exist — the ratchet has gone stale \
-                 (docs/57 §2's amendment)",
-                exempt.crate_dir,
-            ),
-        );
-    }
+    stale_bookings(tree, &mut report);
 
     for manifest in family {
         let Some(source) = tree.get(&manifest) else {
@@ -345,6 +419,7 @@ pub fn apple_family(tree: &Tree) -> Report {
             sample_memory_sites,
             copy_rule_sites,
             get_rule_sites,
+            code_lines,
         } = scan_spend(tree, &src, sample_memory.is_some());
         report.fail_if(
             !read_any,
@@ -394,8 +469,73 @@ pub fn apple_family(tree: &Tree) -> Report {
                  boundary the framework hands it across (docs/57 §2)",
             ),
         );
+        size_verdict(crate_dir, code_lines, &mut report);
     }
     report
+}
+
+/// Every hand-written booking names a crate that still exists.
+///
+/// A ratchet naming a crate that has been renamed or folded away protects nothing, and reads for
+/// years like it does — the same failure `unsafe_policy` checks for its own exemption list, which
+/// cannot see either of these because both are subsets chosen by hand rather than by glob. The two
+/// tables are walked separately because they overlap in two crates and agree in neither direction.
+fn stale_bookings(tree: &Tree, report: &mut Report) {
+    for exempt in &SAMPLE_MEMORY {
+        report.fail_if(
+            !tree.has(&format!("{}/Cargo.toml", exempt.crate_dir)),
+            format!(
+                "{} holds a sample-memory exemption and does not exist — the ratchet has gone stale \
+                 (docs/57 §2's amendment)",
+                exempt.crate_dir,
+            ),
+        );
+    }
+    for wide in &WIDE {
+        report.fail_if(
+            !tree.has(&format!("{}/Cargo.toml", wide.crate_dir)),
+            format!(
+                "{} is booked over the size bar and does not exist — the ratchet has gone stale (docs/57 \
+                 §3.4)",
+                wide.crate_dir,
+            ),
+        );
+    }
+}
+
+/// One crate against [`BAR`] and, if it has one, against its [`WIDE`] booking.
+///
+/// Split out of [`apple_family`] for the reason [`scan_spend`] is: the bar is a different argument
+/// from the admissions, and reading them interleaved makes neither easier to check.
+fn size_verdict(crate_dir: &str, code_lines: usize, report: &mut Report) {
+    let Some(wide) = wide_for(crate_dir) else {
+        report.fail_if(
+            code_lines > BAR,
+            format!(
+                "{crate_dir} is {code_lines} lines of code against docs/57 §3.4's ~{BAR}-line bar — either \
+                 the framework area was drawn too wide and the crate splits, or the area genuinely is this \
+                 wide and it joins WIDE with the reason, which is the review (docs/57 §3.4)",
+            ),
+        );
+        return;
+    };
+    report.fail_if(
+        code_lines <= BAR,
+        format!(
+            "{crate_dir} is booked over docs/57 §3.4's ~{BAR}-line bar and measures {code_lines} — it is \
+             UNDER the bar now, so the booking excuses nothing and comes out with the commit that narrowed \
+             it (docs/57 §3.4)",
+        ),
+    );
+    report.fail_if(
+        code_lines > wide.cap,
+        format!(
+            "{crate_dir} measures {code_lines} lines of code against a booked {} — the booking is a RATCHET \
+             at the width it was written for rather than a licence to grow, so a wider crate moves the \
+             number and says why in the same commit (docs/57 §3.4)",
+            wide.cap,
+        ),
+    );
 }
 
 /// The two lints that would talk you out of bit-exact floats.
@@ -777,6 +917,90 @@ mod tests {
         }
     }
 
+    /// An unbooked crate over the bar is the case the whole table exists for: §3.4 states a width
+    /// and, until this rule, nothing read one.
+    #[test]
+    fn an_unbooked_crate_past_the_size_bar_is_caught() {
+        let fixture = policy_fixture("apple-size-unbooked");
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            &"pub fn f() {}\n".repeat(super::BAR + 1),
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk-apple-cgevent") && v.contains("drawn too wide")),
+            "{report:?}"
+        );
+    }
+
+    /// A booking is a ratchet at ONE width, and it has to bind per crate at that crate's own
+    /// number — otherwise the widest row protects every narrower one.
+    #[test]
+    fn a_booked_crate_growing_past_its_own_width_is_caught() {
+        for wide in &super::WIDE {
+            let fixture = policy_fixture(&format!("apple-size-grown-{}", wide.cap));
+            fixture.write(
+                &format!("{}/src/lib.rs", wide.crate_dir),
+                &format!("{ONE_RAW_SITE}{}", "pub fn wide() {}\n".repeat(wide.cap + 1)),
+            );
+            let report = super::apple_family(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains(wide.crate_dir) && v.contains("RATCHET at the width")),
+                "{} must ratchet at {}: {report:?}",
+                wide.crate_dir,
+                wide.cap,
+            );
+        }
+    }
+
+    /// The excuse has to expire. A crate that has come back under the bar keeps a booking that now
+    /// argues for nothing, and reads for years like a crate that still needs one.
+    #[test]
+    fn a_booking_for_a_crate_that_is_no_longer_wide_is_caught() {
+        for wide in &super::WIDE {
+            let fixture = policy_fixture(&format!("apple-size-narrowed-{}", wide.cap));
+            fixture.write(&format!("{}/src/lib.rs", wide.crate_dir), ONE_RAW_SITE);
+            let report = super::apple_family(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains(wide.crate_dir) && v.contains("UNDER the bar")),
+                "{}: {report:?}",
+                wide.crate_dir,
+            );
+        }
+    }
+
+    /// A test module grows with its assertions rather than with the framework area, so it is not
+    /// what the bar is about — and a rule that counted it would push a crate over the bar for
+    /// writing the leak test §3.3 demands of it.
+    #[test]
+    fn a_test_module_does_not_count_towards_the_size_bar() {
+        let fixture = policy_fixture("apple-size-tests-free");
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            &format!(
+                "pub fn f() {{}}\n#[cfg(test)]\nmod tests {{\n{}}}\n",
+                "    // a body\n    fn t() {}\n".repeat(super::BAR)
+            ),
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            !report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk-apple-cgevent") && v.contains("drawn too wide")),
+            "{report:?}"
+        );
+    }
+
     /// An exemption nothing spends is an exemption to delete, and it reads for years like a crate
     /// that needs it.
     #[test]
@@ -1075,6 +1299,24 @@ mod tests {
             fixture
                 .write(&format!("{}/Cargo.toml", exempt.crate_dir), APPLE_MANIFEST)
                 .write(&format!("{}/src/lib.rs", exempt.crate_dir), ONE_RAW_SITE);
+        }
+        // Every crate booked over the size bar, each written at a width its booking is TRUE of:
+        // over the bar and inside its cap. A booking whose crate reads UNDER the bar is a stale
+        // excuse and fails, so a fixture that left these thin would fail every case above for a
+        // reason the case is not about. This loop runs LAST because two crates are in both tables
+        // and the sample-memory line has to survive the padding.
+        for wide in &super::WIDE {
+            let raw = if super::sample_memory_for(wide.crate_dir).is_some() {
+                ONE_RAW_SITE
+            } else {
+                ""
+            };
+            fixture
+                .write(&format!("{}/Cargo.toml", wide.crate_dir), APPLE_MANIFEST)
+                .write(
+                    &format!("{}/src/lib.rs", wide.crate_dir),
+                    &format!("{raw}{}", "pub fn wide() {}\n".repeat(super::BAR + 1)),
+                );
         }
         fixture
     }

@@ -227,13 +227,25 @@ no-op, not a fault.`
 3. A LEAK test: the crate's central object is created and dropped in a loop, and the test asserts the
    process's resident footprint does not climb. Generated bindings are the risk this covers.
 4. Small enough to read in a sitting. If a wrapper crosses ~600 lines of CODE, the framework area
-   was drawn too wide. **Code**, counting neither blank lines nor comments, and the distinction is
-   not a loophole — these crates run about half prose, because every `unsafe` block owes a `# Safety`
-   note naming a framework rule and every door owes the reason it answers nothing rather than
-   failing. A bar that counted those would be a bar on writing them down. The family as it stands:
-   `app` 67, `cgdisplay` 131, `cursor` 140, `power` 141, `cgwindow` 270, `cgevent` 317, `ax` 472 — the last is the
-   widest because the accessibility client API genuinely is, and splitting it would break the rule
-   above it.
+   was drawn too wide. **Code**, counting neither blank lines nor comments and stopping at the first
+   `#[cfg(test)]`, and the distinction is not a loophole — these crates run about half prose, because
+   every `unsafe` block owes a `# Safety` note naming a framework rule and every door owes the reason
+   it answers nothing rather than failing. A bar that counted those would be a bar on writing them
+   down, and one that counted the leak test §3.3 demands would be a bar on writing that.
+
+   **Where the bar and the rule above it collide, the rule wins — and the crate is BOOKED.** `ax`
+   was the first: the accessibility client API genuinely is that wide, and splitting it would draw
+   two crates across one framework area. Four more rows have landed on the same side since — `vt`,
+   `sck`, `audio`, `cgvirtualdisplay` — so it is a pattern rather than one crate's excuse, and a
+   pattern with no instrument is drift. `rules::crate_policy::apple_family` now counts every crate in
+   the family and holds each booked one to the width it MEASURED, so an excused crate cannot also
+   grow unremarked, and one that comes back under the bar loses its booking. The per-crate numbers
+   live in that rule's `WIDE` table with the reason each area is indivisible; a census here would be
+   a second place for them to be wrong.
+
+   The other thing an over-bar count can mean is portable RULES that belong one crate down, the way
+   `vt`'s Swift original was mostly rules before they moved. That is the question to answer BEFORE
+   booking one: a module that names no framework at all is a move, not an excuse.
 5. `cargo test` runs it on macOS; on any other host every module is `#[cfg(target_os = "macos")]` and
    the crate compiles to nothing.
 
