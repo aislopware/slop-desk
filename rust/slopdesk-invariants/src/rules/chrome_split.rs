@@ -338,15 +338,17 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            // The two DEVICE panels turn a view on purpose and say so: a simulator bezel is a device
-            // rotating, and its own header records why the turn is a CUT rather than an animation
-            // (an `AVSampleBufferDisplayLayer` mid-turn cross-fades every arriving frame). The shell
-            // never had to decide this — its `Panel/*.swift` glob did not descend — so the exemption
-            // is the decision that glob was making silently.
-            exempt: &[
-                "Sources/SlopDeskMacUI/Panel/Simulator/",
-                "Sources/SlopDeskMacUI/Panel/Android/",
-            ],
+            // The SIMULATOR panel turns a view on purpose and says so: a simulator bezel is a device
+            // rotating, and `MacSimulatorBezelView`'s own header records why the turn is a CUT rather
+            // than an animation (an `AVSampleBufferDisplayLayer` mid-turn cross-fades every arriving
+            // frame). The shell never had to decide this — its `Panel/*.swift` glob did not descend —
+            // so the exemption is the decision that glob was making silently.
+            //
+            // `Panel/Android/` was exempt beside it and never used the API: an Android mirror has no
+            // bezel to turn, so the carve-out described a device that does not rotate in this panel.
+            // A carve-out over a directory that never types the banned spelling permits nothing and
+            // reads as a second licence, so the licence is now the one file's law it actually is.
+            exempt: &["Sources/SlopDeskMacUI/Panel/Simulator/"],
             message: "a panel tab turns its VIEW again ({files}) — turn the content, or the rail's hit \
                       areas overlap",
         },

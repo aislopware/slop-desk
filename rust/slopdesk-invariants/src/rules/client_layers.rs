@@ -67,8 +67,14 @@ pub fn presentation_logic_draws_nothing_both(tree: &Tree) -> Report {
 /// ⚠️ THIS SAID "A TENTH" WHILE THE LIST HELD NINE, and the count went stale the first time the
 /// list grew. It is spelled without a number now for the same reason the rungs of an ink table are
 /// READ rather than listed: a doc that restates a length is a second place to update, and the one
-/// nobody does. The MESSAGE still counts, because a failure that says "the ten seams" tells a
-/// reader how big the list they are about to join is.
+/// nobody does.
+///
+/// ⚠️ AND THE MESSAGE NO LONGER COUNTS EITHER, which reverses what this paragraph used to argue.
+/// The claim was that a failure saying "the ten seams" tells a reader how big the list they are
+/// about to join is, and that this was worth one hand-maintained number. It was not: the list lost
+/// three entries on 2026-08-30 and the number would have been the fourth restatement to go stale in
+/// this one file. A count is worth carrying only where something recomputes it — the `Populated`
+/// floors below say `{found}` because the claim fills it in.
 ///
 /// A separate rule rather than a third claim on the one above, because the two have different
 /// SUBJECTS: that one is about a layer that draws nothing, this one is about a layer that draws
@@ -86,10 +92,10 @@ pub fn domain_layers_hold_only_named_view_seams(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: DOMAIN_VIEW_FRAMEWORK_SEAMS,
-            message: "{files} — a DOMAIN target imported a view framework and is not one of the ten seams \
-                      that already do. Either the file belongs up in SlopDeskMacUI / SlopDeskPhoneUI, or it \
-                      is an eleventh seam and belongs in DOMAIN_VIEW_FRAMEWORK_SEAMS with the reason \
-                      written beside it (docs/56 §3, docs/00 'Core / shell split')",
+            message: "{files} — a DOMAIN target imported a view framework and is not one of the seams that \
+                      already do. Either the file belongs up in SlopDeskMacUI / SlopDeskPhoneUI, or it is a \
+                      new seam and belongs in DOMAIN_VIEW_FRAMEWORK_SEAMS with the reason written beside it \
+                      (docs/56 §3, docs/00 'Core / shell split')",
         },
         // ⚠️ THE FLOOR IS PER-TARGET, for `ui_split`'s reason and not for tidiness. The ban above is
         // a ban with nothing required alongside it, so a root that globbed to zero files would
@@ -250,47 +256,56 @@ const PLATFORM_ARGUMENT_DOORS: &[&str] = &["Sources/SlopDeskVideoClientMac/MacMe
 /// read a reason out of. It is covered by `package_graph`'s layering instead.
 const DOMAIN_LAYERS: &[&str] = &["Sources/SlopDeskWorkspaceCore", "Sources/SlopDeskDevicePanels"];
 
-/// The NINE files in the domain layers that may name a view framework, and why each may.
+/// The files in the domain layers that may name a view framework, and why each may.
 ///
 /// `SlopDeskClientCore` above them draws nothing at all, which is the rule directly above this one.
 /// Below it the bar is different and weaker on purpose: a domain target may hold the SEAM a
 /// renderer mounts, because the alternative is a protocol whose only implementation lives one
-/// target up and a second copy of the domain types it reads. What it may not hold is a tenth of
-/// them arriving unnoticed — every entry here was argued for in the file's own header, and an
-/// unlisted import is a file that skipped the argument.
+/// target up and a second copy of the domain types it reads. What it may not hold is a further one
+/// arriving unnoticed — every entry here was argued for in the file's own header, and an unlisted
+/// import is a file that skipped the argument.
 ///
-/// Three kinds, and the kind decides whether a future entry is legitimate:
-/// * **A frame surface** — `SimulatorScreenSurface`, `AndroidScreenNSView`. An `NSView` whose whole
-///   body reads domain types (layout, gesture, video format, key map), so it sits with them and the
-///   `NSViewRepresentable` stays up in `SlopDeskMacUI`. Moving these UP would ADD an import edge,
-///   not remove one; their headers record that measurement.
-/// * **A headless-build seam** — `TerminalRenderingView`, `VideoWindowSeam`. A protocol plus a thin
-///   mount point that exists so the headless build never links libghostty or `VideoToolbox`.
-/// * **A platform read** — `ClientPasteboard`, `DeviceKeyEvent`, `PhoneKey`,
-///   `PaneFocusCoordinator`, `TerminalViewModel`. Reading a key, a pasteboard or the first
-///   responder off the platform. These are the entries most likely to be wrong later: a READ is
-///   floor, but a DECISION taken beside one belongs in Rust, and `TerminalViewModel` at ~1,230 code
-///   lines is the one to look at first.
+/// Two kinds, and the kind decides whether a future entry is legitimate:
+/// * **A frame surface** — `SimulatorScreenSurface`, `AndroidScreenNSView`, `PlatformView`. An
+///   `NSView` whose whole body reads domain types (layout, gesture, video format, key map), so it
+///   sits with them and the `NSViewRepresentable` stays up in `SlopDeskMacUI`. Moving these UP
+///   would ADD an import edge, not remove one; their headers record that measurement.
+/// * **A platform read** — `DeviceKeyEvent`, `PhoneKey`, `PaneFocusCoordinator`,
+///   `TerminalViewModel`. Reading a key or the first responder off the platform. These are the
+///   entries most likely to be wrong later: a READ is floor, but a DECISION taken beside one
+///   belongs in Rust, and `TerminalViewModel` at ~1,230 code lines is the one to look at first.
+///
+/// ⚠️ THE THIRD KIND IS GONE, and so are the THREE entries that were the whole reason to have a
+/// list rather than a ban — found 2026-08-30 by
+/// `gate_health::every_exemption_names_a_path_the_tree_has` once it learned to read a list spelled
+/// as a `const` rather than inline. The kind was "a headless-build seam", a protocol plus a mount
+/// point so the headless build never linked libghostty or `VideoToolbox`:
+/// * `TerminalRenderingView.swift` had been DELETED outright, and this list went on naming it;
+/// * `VideoWindowSeam.swift` still exists and imports `CoreGraphics` alone — the view frameworks
+///   arrived through `import SwiftUI` transitively, and left with it;
+/// * `ClientPasteboard.swift` reads the board through `slopdesk-apple-pasteboard` now, and its own
+///   header says there is no `#if canImport(AppKit)` left anywhere in it.
+///
+/// None of the three was a decision anyone took to keep a Swift copy alive; all three were an
+/// exemption outliving the import it excused. An exemption is a licence, and a licence for a file
+/// that no longer does the thing is one the next file to do it can quietly borrow.
 ///
 /// ⚠️ THE GATE IN EACH IS `canImport(...)`, NEVER `os(macOS)` — `ui_split` holds that separately,
 /// and the reason is in `SimulatorScreenSurface`'s header: the question is whether there is an
 /// `NSView` to subclass, which is a framework question rather than a product one.
 const DOMAIN_VIEW_FRAMEWORK_SEAMS: &[&str] = &[
-    "Sources/SlopDeskWorkspaceCore/Video/VideoWindowSeam.swift",
     "Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift",
-    "Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift",
-    "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift",
     "Sources/SlopDeskWorkspaceCore/iOS/PaneFocusCoordinator.swift",
     "Sources/SlopDeskWorkspaceCore/iOS/PhoneKey.swift",
     "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift",
     "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
     "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
-    // THE TENTH, added 2026-08-28 by `416e0c74`, and it is a SUBSTITUTION rather than growth. The
-    // leaf seams hand a renderer's view back to a canvas that must add it as a subview, and that
+    // THE LAST ONE ADDED, on 2026-08-28 by `416e0c74`, and it is a SUBSTITUTION rather than growth.
+    // The leaf seams hand a renderer's view back to a canvas that must add it as a subview, and that
     // used to be phrased in `AnyView` — a SwiftUI type, so the seam forced every AppKit and UIKit
     // canvas to interpose a hosting view over the one surface that must take every keystroke. With
     // SwiftUI banned from the tree there is no framework-neutral view type left to phrase it in, so
-    // the seam is now a plain `NSView`/`UIView` alias. It is admitted on the same terms as the nine
+    // the seam is now a plain `NSView`/`UIView` alias. It is admitted on the same terms as the ones
     // above: the argument is in the file's own header, and that header also carries the ⚠️ that
     // keeps it from growing — it aliases a CLASS NAME and nothing else, no shared protocol, no
     // wrapper, no `#if` cascade over `isFlipped` / `layer` / `setNeedsLayout`. The day it grows one,
@@ -326,7 +341,7 @@ mod tests {
     }
 
     /// The domain ban has to be shown doing BOTH halves of its job, because they fail in opposite
-    /// directions: a new file that imports a framework must be caught, and one of the ten that
+    /// directions: a new file that imports a framework must be caught, and one of the seams that
     /// already do must NOT be — an exemption list nobody proves is honoured is a list that could be
     /// spelled wrong and would never say so.
     #[test]
@@ -345,10 +360,11 @@ mod tests {
             "the exemption list is not being honoured — check the paths in it",
         );
 
-        // The TENTH seam, proved the same way and for the same reason: it was added from a live
-        // gate run, and a path admitted that way is spelled right only on the day it is added. This
-        // one is UIKit because `PlatformView` is the alias that replaced a `SwiftUI` seam, so the
-        // half that would actually regress is the phone's.
+        // The seam added most recently, proved the same way and for the same reason: it was added
+        // from a live gate run, and a path admitted that way is spelled right only on the
+        // day it is added. This one is UIKit because `PlatformView` is the alias that
+        // replaced a `SwiftUI` seam, so the half that would actually regress is the
+        // phone's.
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/UI/PlatformView.swift",
             "#if canImport(UIKit)\nimport UIKit\ntypealias PlatformView = UIView\n#endif\n",
@@ -358,7 +374,7 @@ mod tests {
             "PlatformView is in the seam list but its path is not being honoured",
         );
 
-        // AN ELEVENTH one is the whole point of the rule.
+        // AN UNLISTED one is the whole point of the rule.
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceRail.swift",
             // UIKit rather than SwiftUI, which is not cosmetic: SwiftUI is banned from every Swift

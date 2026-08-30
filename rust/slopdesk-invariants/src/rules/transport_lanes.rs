@@ -194,7 +194,14 @@ pub fn one_receive_buffer_and_one_narrowing(tree: &Tree) -> Report {
         Claim::NoneUnder {
             roots: &["rust"],
             extensions: &["rs"],
-            pattern: r"^(pub )?(const )?fn (truncating|saturating)_u(8|16|32)\(",
+            // `pub(crate)` is a visibility, not a different declaration — and the needle used to
+            // read `^(pub )?(const )?fn`, which cannot see one. Both of `slopdesk-ffi`'s copies are
+            // spelled `pub(crate) const fn`, so the ban was blind to the crate it names in its own
+            // message AND that crate's exemption carved out nothing: a fourth copy written
+            // `pub(crate) fn truncating_u16(` would have passed anywhere in `rust/`. The
+            // restricted forms are `pub(crate)`, `pub(super)` and `pub(in …)`; the first two are the
+            // ones a helper like this is ever written with, and both are one alternation.
+            pattern: r"^(pub(\((crate|super)\))? )?(const )?fn (truncating|saturating)_u(8|16|32)\(",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -203,8 +210,8 @@ pub fn one_receive_buffer_and_one_narrowing(tree: &Tree) -> Report {
                 "rust/slopdesk-wire/src/bytes.rs",
                 "rust/slopdesk-ffi/src/lib.rs",
             ],
-            message: "a narrowing cast helper grew back ({files}) — slopdesk-video::bytes and \
-                      slopdesk-ffi's root spell them",
+            message: "a narrowing cast helper grew back ({files}) — slopdesk-video::bytes, \
+                      slopdesk-wire::bytes and slopdesk-ffi's root spell them",
         },
     ];
     check_all(tree, &claims)
@@ -295,17 +302,35 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
 /// PATH 4 has since left entirely: its socket is `rust/slopdesk-dropd`'s, reached through one door,
 /// so `SlopDeskFileTransfer` no longer dials anything. The inspector's lane is the last one, and
 /// the `NoneUnder` claim is what keeps a second actor from growing beside it anyway.
+///
+/// ⚠️ THE BAN WAS BLIND FROM THE DAY IT LANDED, and its exemption is what proved it — the needle
+/// read `connection\.receive\(minimumIncompleteLength`, naming the RECEIVER as well as the call,
+/// and `NWByteChannel` breaks that line after `connection`. So the pattern matched nothing anywhere
+/// in the tree: not the exempted lane, and not `CodeSidebarProxy`, which had been spelling
+/// `source.receive(minimumIncompleteLength:` in `SlopDeskClientCore` the whole time. A ban keyed on
+/// a receiver NAME is a ban that a rename, a `self.`, or one line break switches off silently. The
+/// needle is the CALL now, which is the thing being rationed.
 #[must_use]
 pub fn one_nwconnection_byte_channel(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
             roots: SWIFT_ROOTS,
             extensions: &["swift"],
-            pattern: r"connection\.receive\(minimumIncompleteLength",
+            pattern: r"\.receive\(minimumIncompleteLength",
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &["Sources/SlopDeskNet/"],
+            // The second entry is a RELAY, not a channel, and the distinction is the rule's whole
+            // subject. `NWByteChannel` is the actor that owns a lane's lifetime — the `onTermination`
+            // cancel, the `cancel()` beside every `finish()`, the idempotent `start()` — and a second
+            // copy of THAT is what drifts. `CodeSidebarProxy` pumps bytes between two connections it
+            // already owns, with no continuation, no protocol and no stream to finish; routing it
+            // through `NWByteChannel` would mean an `AsyncStream` per direction to undo one line
+            // later. Its own header carries the argument for the relay existing at all.
+            exempt: &[
+                "Sources/SlopDeskNet/",
+                "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarProxy.swift",
+            ],
             message: "a second NWConnection byte channel grew back ({files}) — SlopDeskNet::NWByteChannel \
                       is the one lane",
         },
@@ -494,6 +519,17 @@ mod tests {
             "fn saturating_u16(v: usize) -> u16 { 0 }\n",
         );
         assert!(!super::one_receive_buffer_and_one_narrowing(&fixture.tree()).is_clean());
+
+        // The copy the old needle could not see: a RESTRICTED visibility is still a declaration,
+        // and `slopdesk-ffi`'s two are spelled exactly this way — which is why the ban read
+        // clean over a crate it names, and why that crate's exemption was carving out
+        // nothing.
+        seed(&fixture);
+        fixture.write(
+            "rust/slopdesk-superd/src/n.rs",
+            "pub(crate) const fn truncating_u16(v: usize) -> u16 { 0 }\n",
+        );
+        assert!(!super::one_receive_buffer_and_one_narrowing(&fixture.tree()).is_clean());
     }
 
     /// The manifest's real shape: a single-line `.library(…)` that names the same target FIRST, and
@@ -584,6 +620,23 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskInspector/Lane.swift",
             "connection.receive(minimumIncompleteLength: 1)\n",
+        );
+        assert!(!super::one_nwconnection_byte_channel(&fixture.tree()).is_clean());
+
+        // THE HOLE THE NEEDLE HAD: the ban used to name the receiver as well as the call, so a copy
+        // that reached the same API off any other variable — or off `connection` with the chain
+        // broken across two lines, which is how the exempted lane itself spells it — passed. Both
+        // spellings are seeded, because the fix has to hold for a rename AND for a line break.
+        fixture.write(
+            "Sources/SlopDeskInspector/Relay.swift",
+            "source.receive(minimumIncompleteLength: 1)\n",
+        );
+        assert!(!super::one_nwconnection_byte_channel(&fixture.tree()).is_clean());
+
+        seed(&fixture);
+        fixture.write(
+            "Sources/SlopDeskInspector/Wrapped.swift",
+            "connection\n    .receive(minimumIncompleteLength: 1)\n",
         );
         assert!(!super::one_nwconnection_byte_channel(&fixture.tree()).is_clean());
     }

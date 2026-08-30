@@ -63,8 +63,13 @@ const CODE_SIDEBAR: &str = "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarMo
 const PHONE_TAB_GROUP: &str = "Sources/SlopDeskPhoneUI/Panel/PhonePanelTabGroup.swift";
 /// The phone's panel subtree, where the device surfaces live.
 const PHONE_PANEL: &[&str] = &["Sources/SlopDeskPhoneUI/Panel/"];
-/// The one file allowed to draw a clear key.
-const PANEL_CHROME: &str = "Sources/SlopDeskPhoneUI/Panel/DevicePanelChrome.swift";
+/// The one file allowed to draw a clear key — `PhoneDevicePanelChrome`'s home under `UIKit`.
+///
+/// It was `Panel/DevicePanelChrome.swift` and that file is DELETED: the `UIKit` crossing folded the
+/// chrome and the parts that use it into one file, and `PhoneDevicePanelParts`' own header says why
+/// they are together. The exemption kept naming the old path, which exempted nothing — and nothing
+/// went red, because the ban below had gone blind at the same time.
+const PANEL_CHROME: &str = "Sources/SlopDeskPhoneUI/Panel/PhoneDevicePanelParts.swift";
 /// The two device consoles.
 const CONSOLES: &[&str] = &[
     "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorConsoleView.swift",
@@ -387,15 +392,37 @@ pub fn the_panel_opens_on_a_named_surface(tree: &Tree) -> Report {
 /// The needle grew a `(UI)?` prefix in the same pass. `Image(systemSymbol:)` is `SwiftUI`; the
 /// `UIKit` clear key is `UIImage(systemSymbol:)`, so the old needle would have been un-typeable
 /// drift the day the panel came back — vacuous a second time, over a corpus that was no longer
-/// empty. The law is "one clear affordance, spelled in `DevicePanelChrome`", and it is indifferent
+/// empty. The law is "one clear affordance, spelled in the panel's chrome", and it is indifferent
 /// to which framework draws the glyph.
+///
+/// ## ⚠️ VACUOUS A THIRD TIME, AND RE-SPELLED FOR THE LAST TIME 2026-08-30
+/// The paragraph above guessed the `UIKit` spelling and guessed wrong. Stage H did not write
+/// `UIImage(systemSymbol:)`; it wrote `UIImage(systemName: SFSymbol.xmarkCircleFill.rawValue,` —
+/// over two lines, through the symbol ENUM, with the initialiser and the glyph no longer adjacent.
+/// `(UI)?Image\(systemSymbol: \.xmarkCircleFill\)` matched nothing in the tree, so the ban passed
+/// over a full corpus while checking nothing, and the `Populated` floor cannot see that: the floor
+/// proves there are files, never that the needle is still typeable. The exemption had rotted in the
+/// same window — `DevicePanelChrome.swift` was deleted into `PhoneDevicePanelParts.swift` — and one
+/// dead half hid the other, which is why nothing was red for either.
+///
+/// The needle is now the SYMBOL alone. Three respellings in three passes is the evidence: every
+/// version that named the call site was drift waiting to happen, because the call site is exactly
+/// what a framework crossing rewrites. `xmarkCircleFill` is the affordance — a phone panel file
+/// naming it at all is drawing a clear key, whatever the surrounding syntax is that year — and the
+/// one file allowed to name it is exempt. That also survives the next crossing without an edit.
+///
+/// BREAK-TEST (this pass): pasted `UIImage(systemName: SFSymbol.xmarkCircleFill.rawValue)` into
+/// PhoneSimulatorDeviceList.swift ⇒ FAIL naming that file; removed ⇒ PASS. And with the needle
+/// restored to its old `systemSymbol:` spelling the live tree passes while `PhoneDevicePanelParts`
+/// draws the key, which is the vacuity this section is about.
 #[must_use]
 pub fn one_clear_key_per_filter_field(tree: &Tree) -> Report {
     let mut report = check_all(tree, &[
-        // ⚠️ THE FLOOR BEFORE THE BAN. Two ways this rule went vacuous at once in `3f11c6e6`: the
-        // corpus emptied, and the needle is `SwiftUI`'s `Image(systemSymbol:)` where `UIKit` writes
-        // `UIImage(systemSymbol:)`. The floor fixes the first; the needle below carries BOTH
-        // spellings so the ban survives the framework change (docs/62 §4.8).
+        // ⚠️ THE FLOOR BEFORE THE BAN, and it only catches ONE of the two vacuities. `3f11c6e6`
+        // emptied the corpus, which this floor now sees. It cannot see the other: a needle no file
+        // could type any more, over a corpus that is full. That one happened too (docs/62 §4.8, and
+        // the section on it above), and the answer is below — the needle names the SYMBOL, not the
+        // call that draws it, because the call is what a framework crossing rewrites.
         Claim::Populated {
             roots: PHONE_PANEL,
             extensions: SWIFT,
@@ -406,19 +433,19 @@ pub fn one_clear_key_per_filter_field(tree: &Tree) -> Report {
         Claim::NoneUnder {
             roots: PHONE_PANEL,
             extensions: SWIFT,
-            pattern: r"(UI)?Image\(systemSymbol: \.xmarkCircleFill\)",
+            pattern: "xmarkCircleFill",
             all: &[],
             unless: &[],
             view: View::Code,
             exempt: &[PANEL_CHROME],
-            message: "a device panel spells its own clear key ({files}) — DevicePanelChrome.clearKey is the \
-                      one affordance, and four copies of it is how two of them ended up missing",
+            message: "a device panel spells its own clear key ({files}) — PhoneDevicePanelChrome.clearKey \
+                      is the one affordance, and four copies of it is how two of them ended up missing",
         },
     ]);
     for console in CONSOLES {
         report.absorb(check_all(tree, &[Claim::Matches {
             path: console,
-            pattern: r"DevicePanelChrome\.clearKey",
+            pattern: r"PhoneDevicePanelChrome\.clearKey",
             view: View::Code,
             message: "a device console has no way to clear its filter — its own device list clears in a \
                       tap, and the two sit one scroll apart",
@@ -1009,17 +1036,17 @@ mod tests {
         fixture
             .write(
                 super::PANEL_CHROME,
-                "enum DevicePanelChrome {\n    static func clearKey() -> some View {\n\x20       \
-                 Image(systemSymbol: .xmarkCircleFill)\n    }\n}\n",
+                "enum PhoneDevicePanelChrome {\n    static func clearKey() -> UIControl {\n\x20       \
+                 UIImage(systemName: SFSymbol.xmarkCircleFill.rawValue)\n    }\n}\n",
             )
             .write(
                 "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
-                "SlateSearchField(text: $query) { DevicePanelChrome.clearKey() }\n",
+                "clear = PhoneDevicePanelChrome.clearKey(ink: .icon) { clearAction?() }\n",
             );
         for console in super::CONSOLES {
             fixture.write(
                 console,
-                "SlateSearchField(text: $filter) { DevicePanelChrome.clearKey() }\n",
+                "clear = PhoneDevicePanelChrome.clearKey(ink: .icon) { clearAction?() }\n",
             );
         }
         assert!(super::one_clear_key_per_filter_field(&fixture.tree()).is_clean());
@@ -1038,10 +1065,13 @@ mod tests {
                 .any(|line| line.contains("PhoneSimulatorDeviceList"))
         );
 
-        // And the same copy in UIKit's spelling, which the old needle could not see.
+        // The SHIPPED UIKit spelling, which neither earlier needle could see: the initialiser is
+        // `systemName:`, the glyph arrives through the symbol enum, and the two are not adjacent.
+        // A needle written against the call site would go blind here for a third time.
         fixture.write(
             "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorDeviceList.swift",
-            "clear.setImage(UIImage(systemSymbol: .xmarkCircleFill), for: .normal)\n",
+            "clear.setImage(\n    UIImage(\n        systemName: SFSymbol.xmarkCircleFill.rawValue,\n\x20   \
+             ),\n    for: .normal,\n)\n",
         );
         let found = super::one_clear_key_per_filter_field(&fixture.tree());
         assert!(
@@ -1061,10 +1091,10 @@ mod tests {
         let fixture = Fixture::new("clear-key-drained");
         fixture.write(
             super::PANEL_CHROME,
-            "enum DevicePanelChrome {\n    static func clearKey() {}\n}\n",
+            "enum PhoneDevicePanelChrome {\n    static func clearKey() {}\n}\n",
         );
         for console in super::CONSOLES {
-            fixture.write(console, "DevicePanelChrome.clearKey\n");
+            fixture.write(console, "PhoneDevicePanelChrome.clearKey\n");
         }
         assert!(super::one_clear_key_per_filter_field(&fixture.tree()).is_clean());
 

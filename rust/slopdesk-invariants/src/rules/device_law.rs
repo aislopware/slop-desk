@@ -22,9 +22,14 @@ use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-/// The two panel targets a shared law could be respelled in, and the one directory that holds it.
+/// The two panel targets a shared law could be respelled in, and the one file that asks for it.
+///
+/// There is no `PANEL_SHARED` carve-out any more. `Shared/` used to be the one directory allowed to
+/// spell each law by hand, and it is not: every law below crossed to Rust, and `Shared/` reaches
+/// them through a door — `DevicePanelGeometry` is four lines over `slopdesk_panel_fitted_rect`. An
+/// exemption for a directory that no longer types any of the three banned shapes carves out nothing
+/// and reads as "one Swift copy is allowed", which is the opposite of what these bans now mean.
 const PANEL_ROOTS: &[&str] = &["Sources/SlopDeskPhoneUI", "Sources/SlopDeskDevicePanels"];
-const PANEL_SHARED: &str = "Sources/SlopDeskDevicePanels/Shared/";
 const GEOMETRY: &str = "Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.swift";
 /// Every target that draws a device list: the shared panel code and the two renderers over it.
 const SECTION_ROOTS: &[&str] = &[
@@ -159,9 +164,9 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &[PANEL_SHARED],
-            message: "{files} grew a device-panel law back outside Sources/SlopDeskDevicePanels/Shared — it \
-                      is shared",
+            exempt: &[],
+            message: "{files} spells the fitted-rect arithmetic by hand — slopdesk_panel_fitted_rect is the \
+                      answer and DevicePanelGeometry is the door to it",
         },
         Claim::Names {
             path: GEOMETRY,
@@ -193,7 +198,7 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &[PANEL_SHARED],
+            exempt: &[],
             message: "{files} clamps a dragged point to the fitted rect by hand again — the shared rule \
                       clamps to the last ADDRESSABLE point, one less on each axis",
         },
@@ -229,10 +234,18 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
 /// exists to prevent — and this ban's sentence ("a second client pasteboard write") would be the
 /// wrong thing to say about it. That is the test [`crate::claim::SWIFT_ROOTS`] asks: a widened ban
 /// has to still mean ONE thing, and this one would mean two.
+///
+/// ## The exemption is gone, because the funnel stopped being Swift
+/// `ClientPasteboard.swift` was the one file allowed to name `NSPasteboard`/`UIPasteboard`, and it
+/// no longer names either: it is a door onto `slopdesk_clipboard_*`, and the board itself — both
+/// platform arms, the `clearContents` that has to precede a `setString`, the per-process named
+/// board under `XCTest` — is `rust/slopdesk-apple-pasteboard`'s. An exemption for a file that no
+/// longer types the banned spelling permits nothing while reading as "one Swift copy is allowed",
+/// so the ban is now what it means: NO Swift touches the general board, because none of it has to.
+/// The `Names` below is the other half — it pins that the door is still a door rather than a file
+/// that quietly grew its own board back under a different API.
 #[must_use]
 pub fn one_pasteboard_and_one_open(tree: &Tree) -> Report {
-    const PASTEBOARD: &str = "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift";
-
     let claims = [
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -241,8 +254,15 @@ pub fn one_pasteboard_and_one_open(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &[PASTEBOARD],
-            message: "{files} is a second client pasteboard write — ClientPasteboard.write is the only one",
+            exempt: &[],
+            message: "{files} is a client pasteboard write in Swift — slopdesk-apple-pasteboard owns the \
+                      board and ClientPasteboard is the only door to it",
+        },
+        Claim::Names {
+            path: "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift",
+            needle: "slopdesk_clipboard_read",
+            message: "ClientPasteboard stopped reading the board through slopdesk_clipboard_read — the ban \
+                      above has no home left to point at",
         },
         Claim::Names {
             path: "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift",
@@ -324,7 +344,7 @@ pub fn the_small_rules_are_spelled_once(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &[PANEL_SHARED],
+            exempt: &[],
             message: "{files} grew an NDJSON control-line or CoreMedia rule back — the control lanes parse \
                       in Rust and DevicePanelSampleBuffer owns the other",
         },
@@ -518,13 +538,15 @@ mod tests {
         );
         assert!(!super::one_device_panel_law(&fixture.tree()).is_clean());
 
-        // `Shared/` holds the one legal caller and is exempt by CORPUS, not by comparison.
+        // `Shared/` is NOT exempt — it holds the door, not a copy. The clamp crossed to Rust with
+        // the fitted rect, so a hand-rolled one there is the same bug it is anywhere else, and this
+        // used to be the assertion that the carve-out worked.
         panels(&fixture);
         fixture.write(
             super::GEOMETRY,
             "slopdesk_panel_fitted_rect(w, h, cw, ch)\nlet x = max(point.x - fitted.minX, 0)\n",
         );
-        assert!(super::one_device_panel_law(&fixture.tree()).is_clean());
+        assert!(!super::one_device_panel_law(&fixture.tree()).is_clean());
 
         // The other half of the same bug: a view that stopped clamping at all.
         panels(&fixture);
@@ -550,9 +572,12 @@ mod tests {
 
     fn funnels(fixture: &Fixture) -> &Fixture {
         fixture
+            // The door as it SHIPS: no `NSPasteboard` anywhere in it, because the board is Rust's.
+            // Seeding the banned spelling here would redden this test's own precondition now that
+            // the file is no longer exempt.
             .write(
                 "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift",
-                "NSPasteboard.general.clearContents()\nUIPasteboard.general.string = text\n",
+                "let text = read(slopdesk_clipboard_read(handle))\n",
             )
             .write(
                 "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift",
@@ -573,6 +598,16 @@ mod tests {
         // A copy path that reaches `.general` clobbers the developer's own clipboard under XCTest.
         fixture.write(
             "Sources/SlopDeskMacUI/Terminal/MacCopy.swift",
+            "NSPasteboard.general.clearContents()\n",
+        );
+        assert!(!super::one_pasteboard_and_one_open(&fixture.tree()).is_clean());
+
+        // And the door itself growing the board back, which the old carve-out let through: with
+        // `slopdesk-apple-pasteboard` owning both platform arms there is no Swift file left that
+        // may name `.general`, including the one that used to be the only one that could.
+        funnels(&fixture);
+        fixture.append(
+            "Sources/SlopDeskWorkspaceCore/Terminal/ClientPasteboard.swift",
             "NSPasteboard.general.clearContents()\n",
         );
         assert!(!super::one_pasteboard_and_one_open(&fixture.tree()).is_clean());

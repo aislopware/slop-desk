@@ -1778,6 +1778,11 @@ pub fn registry() -> Vec<Rule> {
             check: gate_health::every_ffi_door_is_opened_or_declared_deliberate,
         },
         Rule {
+            name: "exemptions-are-alive",
+            origin: "CLAUDE.md — the ratchet",
+            check: gate_health::every_exemption_names_a_path_the_tree_has,
+        },
+        Rule {
             name: "deleted-host-swift",
             origin: "docs/50 §3, docs/51 §6.14, docs/52",
             check: deleted_host_swift::deleted_host_swift,
