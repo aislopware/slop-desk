@@ -1833,6 +1833,11 @@ pub fn registry() -> Vec<Rule> {
             check: doc_citations::every_cited_path_exists,
         },
         Rule {
+            name: "tombstones-bury-something",
+            origin: "docs/DECISIONS.md 2026-08-16",
+            check: doc_citations::every_tombstone_still_buries_something,
+        },
+        Rule {
             name: "opaque-cap-inequality",
             origin: "check-supervisor.sh (deleted), docs/55 §8",
             check: shared_constants::the_opaque_cap_carries_its_inequality,

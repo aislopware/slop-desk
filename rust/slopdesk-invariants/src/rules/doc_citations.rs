@@ -47,12 +47,14 @@ const DOCC_EXTERNAL: [&str; 4] = [
 /// four `slopdesk-ffi` doors that reached them. Repointing those names at the crates that replaced
 /// them would make the document lie about what it is describing: the whole point of a projection
 /// record is which Swift file each handle was cut out of.
-/// The third block is `docs/60` Batch B's, and it is the same argument one step further out. Those
-/// two targets were hostd's ENDS of the superd and screend wires, and the documents that name them
-/// are recording which end each rule used to live on. `docs/51` and `docs/52` describe a protocol
-/// by walking both sides of it; repointing hostd's side at `slopdesk-superclient` where the
-/// sentence says "and Swift resolved it through `NSTemporaryDirectory()`" would make the doc claim
-/// a Rust crate did something it never did.
+/// The third block is `docs/60` Batch B's, and it is the same argument one step further out: those
+/// two targets were hostd's ENDS of the superd and screend wires, and `docs/51` and `docs/52`
+/// describe a protocol by walking both sides of it. Ten of its eleven entries are gone as of
+/// `tombstones-bury-something`'s first run — the whole `SlopDeskSupervisor` group and two of the
+/// three `SlopDeskScreen` files — because those sentences were rewritten and the exemptions
+/// outlived them by however long nobody looked. `ScreenClient.swift` is what the argument still
+/// has: `docs/52` names it as the end screend's protocol was cut out of, so repointing it at
+/// `slopdesk-screenclient` would make the doc claim a Rust crate did something it never did.
 /// The fourth block is `docs/62`'s, and it is the smallest case of the same argument: stage A's
 /// "Moves" line names the `App` struct it replaced, by the path it was at, because the whole
 /// content of that line is which file each half of `PhoneAppDelegate`/`PhoneSceneDelegate` was cut
@@ -69,7 +71,7 @@ const DOCC_EXTERNAL: [&str; 4] = [
 /// recording a deleted file is not fixed by an entry here; it is fixed by not spelling a backticked
 /// PATH, which that rule's own doc says stays legal. Adding the name here instead silently does
 /// nothing.
-const PATH_TOMBSTONES: [&str; 32] = [
+const PATH_TOMBSTONES: [&str; 22] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -83,17 +85,7 @@ const PATH_TOMBSTONES: [&str; 32] = [
     "rust/slopdesk-ffi/src/pane_fanout.rs",
     "rust/slopdesk-ffi/src/pane_outbox.rs",
     "rust/slopdesk-ffi/src/pane_truths.rs",
-    "Sources/SlopDeskSupervisor/SupervisorPaths.swift",
-    "Sources/SlopDeskSupervisor/SupervisorMessages.swift",
-    "Sources/SlopDeskSupervisor/SupervisorDoors.swift",
-    "Sources/SlopDeskSupervisor/SupervisorFrame.swift",
-    "Sources/SlopDeskSupervisor/SupervisorClient.swift",
-    "Sources/SlopDeskSupervisor/SupervisorConnection.swift",
-    "Sources/SlopDeskSupervisor/RustServicePaths.swift",
-    "Sources/SlopDeskSupervisor/FileDescriptorPassing.swift",
     "Sources/SlopDeskScreen/ScreenClient.swift",
-    "Sources/SlopDeskScreen/ScreenPaths.swift",
-    "Sources/SlopDeskScreen/ScreenProtocol.swift",
     "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift",
     "Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift",
     "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
@@ -361,6 +353,76 @@ pub fn every_cited_path_exists(tree: &Tree) -> Report {
     report
 }
 
+/// Which tombstones stopped burying anything, and which of the two ways each one died.
+///
+/// Kept apart from the rule so it can be tested against a SMALL list. Inlining the check into
+/// [`every_cited_path_exists`] was the obvious move and the wrong one: that rule's fixtures cite
+/// one or two paths, so all thirty-odd real entries would read unspent and every "clean" fixture
+/// would assert red. A ledger's liveness half has to be reachable without the ledger.
+fn unspent_tombstones(cited: &BTreeSet<String>, root: &std::path::Path, entries: &[&str]) -> Vec<String> {
+    let mut dead = Vec::new();
+    for entry in entries {
+        let buried = !root.join(entry).exists();
+        let named = cited.contains(*entry);
+        let why = match (named, buried) {
+            (false, true) => "no read-first doc cites it any more",
+            (true, false) => "the file is back — the citation resolves on its own",
+            (false, false) => "the file is back AND nothing cites it",
+            (true, true) => continue,
+        };
+        dead.push(format!("  {entry} — {why}"));
+    }
+    dead
+}
+
+/// Every tombstone still buries something.
+///
+/// [`PATH_TOMBSTONES`] is the one list in this module that CHANGES what a pass does, and until now
+/// it was the only suppression list in the crate with no half asking whether its entries still
+/// suppress. That is the same defect one level up from the rule it serves: an exemption outliving
+/// its reason reads exactly like a rule with nothing to report. Two ways an entry dies, and the
+/// message says which — the sentence that named it was rewritten, or the file came back and the
+/// citation resolves without any help. `every_allowlist_entry_is_alive` is this rule's twin over in
+/// `shared_constants`, and the two exist for the same reason.
+///
+/// A tombstone's whole justification is a SENTENCE in a document. When that sentence goes, the
+/// entry is not merely unused — it is a standing permission for a doc to cite a deleted file
+/// silently, which is precisely what [`every_cited_path_exists`] exists to refuse.
+#[must_use]
+pub fn every_tombstone_still_buries_something(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let (live, _) = read_first_docs(tree);
+    let Some(roots) = top_level_directories(tree) else {
+        report.fail("the repository root could not be read — no tombstone could be checked");
+        return report;
+    };
+    let pattern = format!("`(({})/[A-Za-z0-9_./+-]+\\.[a-z]+)`", roots.join("|"));
+    let mut cited: BTreeSet<String> = BTreeSet::new();
+    for doc in &live {
+        if let Some(source) = tree.get(doc) {
+            cited.extend(text::capture_set(&source.text, &pattern));
+        }
+    }
+    if cited.is_empty() {
+        report.fail(
+            "no file path is cited by any read-first doc — this rule cannot tell a live tombstone from a \
+             dead one, and would call every entry dead",
+        );
+        return report;
+    }
+
+    let dead = unspent_tombstones(&cited, tree.root(), &PATH_TOMBSTONES);
+    if !dead.is_empty() {
+        report.fail(format!(
+            "a tombstone buries nothing —\n{}\nEach entry is one document's sentence about a file that was \
+             DELETED, and it stays only as long as that sentence does. Delete the entry, and the paragraph \
+             above it that exists to justify it.",
+            dead.join("\n")
+        ));
+    }
+    report
+}
+
 /// The repository's top-level directory names, which bound what counts as a rooted path.
 fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
     let mut found: Vec<String> = fs::read_dir(tree.root())
@@ -378,8 +440,36 @@ fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
 mod tests {
     use super::{
         cited_symbols, every_cited_path_exists, every_docc_link_resolves, the_read_first_table_resolves,
+        unspent_tombstones,
     };
     use crate::tests::Fixture;
+
+    /// The two ways a tombstone dies, and the one way it stays alive.
+    #[test]
+    fn a_tombstone_is_spent_only_while_it_is_cited_and_the_file_is_gone() {
+        let fixture = Fixture::new("tombstone-liveness");
+        fixture.write("Sources/A/Back.swift", "// it came back\n");
+        let root = fixture.tree();
+        let cited = [
+            "Sources/A/Gone.swift".to_owned(),
+            "Sources/A/Back.swift".to_owned(),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(
+            unspent_tombstones(&cited, root.root(), &["Sources/A/Gone.swift"]).is_empty(),
+            "cited, and the file is gone — the entry is doing its job"
+        );
+
+        let resurrected = unspent_tombstones(&cited, root.root(), &["Sources/A/Back.swift"]);
+        assert_eq!(resurrected.len(), 1);
+        assert!(resurrected[0].contains("the file is back"), "{resurrected:?}");
+
+        let uncited = unspent_tombstones(&cited, root.root(), &["Sources/A/Unnamed.swift"]);
+        assert_eq!(uncited.len(), 1);
+        assert!(uncited[0].contains("no read-first doc cites it"), "{uncited:?}");
+    }
 
     /// A single backtick is prose; a double one is a promise.
     #[test]

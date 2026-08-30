@@ -581,8 +581,12 @@ pub fn the_formula_installs_every_binary_the_release_ships(tree: &Tree) -> Repor
 /// name here is the last step of finishing that port; adding one is a change `docs/DECISIONS.md`
 /// must record.
 ///
-/// `ConnectionTarget.swift` is a four-field `Codable` value 20 files hold and `SwiftUI` diffs — a
-/// vocabulary by `docs/55` §6, so the Rust twin is the copy that should go, not the Swift.
+/// The list is EMPTY, and the liveness loop in the rule below is what keeps it honest. It used to
+/// hold `slopdesk-workspace::connection`, registered while `ConnectionTarget.swift` was the copy
+/// that should go — and by the time anyone looked, `connect_gate.rs` and `pane_empty.rs` were both
+/// spelling `use crate::connection::StatusKind`. The module was reached, the entry excused nothing,
+/// and the debt register said the port was unfinished for as long as nobody checked. Debt that has
+/// been paid and not struck off is indistinguishable from debt.
 ///
 /// `slopdesk-videohostd::encode`, `::feed`, `::mux_registry` and `::windowgeometry` USED to be
 /// here, registered as debt with a known end date: `docs/61` §3 said the capture half was not
@@ -594,7 +598,7 @@ pub fn the_formula_installs_every_binary_the_release_ships(tree: &Tree) -> Repor
 /// this gate is red on a `slopdesk-videohostd` module, the daemon's composition has not reached it
 /// yet and the answer is to WIRE it; putting the name back would re-register debt the deletion
 /// already spent.
-const STRANDED_RUST_MODULES: [&str; 1] = ["slopdesk-workspace::connection"];
+const STRANDED_RUST_MODULES: [&str; 0] = [];
 
 /// A crate module nothing reaches is a port that stopped one step short of finishing.
 ///
@@ -642,6 +646,7 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
     let mut report = Report::new();
     let sources = report.corpus(tree, &["rust"], &["rs"]);
     let mut found = Vec::new();
+    let mut spent = Vec::new();
 
     for (lib, source) in sources.iter().filter(|(path, _)| path.ends_with("lib.rs")) {
         let Some(directory) = lib.parent() else {
@@ -722,7 +727,11 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
                 }
                 reaches.is_match(&held.text)
             });
-            let known_debt = STRANDED_RUST_MODULES.contains(&format!("{crate_name}::{module}").as_str());
+            let named = format!("{crate_name}::{module}");
+            let known_debt = STRANDED_RUST_MODULES.contains(&named.as_str());
+            if known_debt && wired {
+                spent.push(named.clone());
+            }
             if !wired && !known_debt {
                 found.push(format!("{}: pub mod {module};", lib.display()));
             }
@@ -732,6 +741,15 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
         &mut report,
         "a Rust module is written and tested and reached by nothing — finish or drop it",
         &found,
+    );
+    // The other half of the register: an entry excusing a module that IS reached is debt already
+    // paid, and it reads exactly like debt outstanding. This costs no fixture anything while the
+    // list is empty, and bites the moment a name goes back in and the port behind it finishes.
+    sites(
+        &mut report,
+        "a stranded-module entry excuses a module that is reached — the port finished and the debt register \
+         did not hear about it, so strike the name off",
+        &spent,
     );
     report
 }

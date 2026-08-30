@@ -71,7 +71,10 @@ const fn same(mine: f64, yours: f64) -> bool {
 }
 
 // ------------------------------------------------------------------------------------------- //
-// The declared tables. Every one is checked for DEADNESS by `every_allowlist_entry_is_alive`.
+// The declared tables. Every one is checked for DEADNESS by `every_allowlist_entry_is_alive` — a
+// sentence that was written here while it covered three of the five, and is true as of the sweep
+// that added `HOMONYM_ENUMS` and `DERIVED_RATCHETS` to it. A header claiming coverage it does not
+// have is worse than none: it is the reason nobody re-checks.
 // ------------------------------------------------------------------------------------------- //
 
 /// Names that collide but do NOT describe the same law, each with the reason.
@@ -103,7 +106,9 @@ const HOMONYM_BIT_FILES: [&str; 0] = [];
 /// Enums that share a name across the two languages without sharing a meaning.
 ///
 /// None yet: every pair found so far is one wire alphabet. An entry here needs the reason the two
-/// are unrelated.
+/// are unrelated — and, from the moment it lands, it has to keep suppressing something: the enum
+/// pass records each skip so `every_allowlist_entry_is_alive` can tell a live exemption from a name
+/// that stopped colliding.
 const HOMONYM_ENUMS: [&str; 0] = [];
 
 /// One alphabet under two names, because a Swift type carries its namespace in the NAME and a Rust
@@ -166,7 +171,9 @@ const VOCABULARIES: [(&str, &str, &[(&str, &str)]); 1] = [(
 /// the Swift half is gone and `slopdesk-screenclient` IMPORTS the flags, so the pin became "there
 /// is one copy" instead of "the two agree". The array stays because the ESCAPE HATCH is the point —
 /// a derived gate names no constant, so without a row here it is invisible to the sweep below, and
-/// the next one to be written needs somewhere to say so.
+/// the next one to be written needs somewhere to say so. An escape hatch is the shape most in need
+/// of a liveness half, so the const pass records which row let a pair through and the entry has to
+/// earn its place on every run.
 const DERIVED_RATCHETS: [(&str, &str, &str); 0] = [];
 
 // ------------------------------------------------------------------------------------------- //
@@ -714,6 +721,18 @@ fn rust_alphabets(tree: &Tree, report: &mut Report) -> BTreeMap<String, Readings
 struct Pairs {
     findings: Vec<String>,
     used_homonyms: BTreeSet<(String, String)>,
+    used_derived: BTreeSet<String>,
+}
+
+/// What the enum pass found, and both kinds of exemption it spent doing so.
+///
+/// Two sets rather than one because the two lists mean opposite things: an ALIAS says these two
+/// alphabets are the same one under two names, a HOMONYM says they are unrelated. Folding them into
+/// one `used` set would let a spent alias vouch for a dead homonym.
+struct Enums {
+    findings: Vec<String>,
+    used_aliases: BTreeSet<String>,
+    used_homonyms: BTreeSet<String>,
 }
 
 /// Every Swift constant that restates a Rust one, and the exemptions that were spent doing it.
@@ -747,6 +766,7 @@ fn shared_pairs(tree: &Tree, report: &mut Report) -> Pairs {
     let vocabulary: BTreeSet<&str> = VOCABULARIES.iter().map(|(swift, ..)| *swift).collect();
     let mut findings = Vec::new();
     let mut used_homonyms = BTreeSet::new();
+    let mut used_derived = BTreeSet::new();
     for (path, source) in swift_sources(tree, report) {
         let here = path.display().to_string();
         if vocabulary.contains(here.as_str()) {
@@ -764,10 +784,11 @@ fn shared_pairs(tree: &Tree, report: &mut Report) -> Pairs {
                 if ratcheted.contains(name) || ratcheted.contains(rust_name.as_str()) {
                     continue;
                 }
-                let derived = DERIVED_RATCHETS.iter().any(|(swift, rust_file, label)| {
+                let derived = DERIVED_RATCHETS.iter().find(|(swift, rust_file, label)| {
                     *swift == here && rust_file == rust_path && ratcheted.contains(label)
                 });
-                if derived {
+                if let Some((_, _, label)) = derived {
+                    used_derived.insert((*label).to_owned());
                     continue;
                 }
                 // LAST, not first: an entry only counts as USED when it is the sole reason a real
@@ -790,6 +811,7 @@ fn shared_pairs(tree: &Tree, report: &mut Report) -> Pairs {
     Pairs {
         findings,
         used_homonyms,
+        used_derived,
     }
 }
 
@@ -878,15 +900,20 @@ pub fn the_field_vocabularies_agree(tree: &Tree) -> Report {
 }
 
 /// Every wire enum whose two spellings stopped agreeing, case for case, and the aliases spent.
-fn enum_findings(tree: &Tree, report: &mut Report) -> (Vec<String>, BTreeSet<String>) {
+fn enum_findings(tree: &Tree, report: &mut Report) -> Enums {
     let rust = rust_alphabets(tree, report);
     let mut out = BTreeSet::new();
     let mut used = BTreeSet::new();
+    let mut used_homonyms = BTreeSet::new();
     for (path, source) in swift_sources(tree, report) {
         let here_file = path.display().to_string();
         for held in declarations(&source.text, SWIFT_ENUM) {
             let here = discriminants(&held, false);
-            if here.is_empty() || HOMONYM_ENUMS.contains(&held.name.as_str()) {
+            if here.is_empty() {
+                continue;
+            }
+            if HOMONYM_ENUMS.contains(&held.name.as_str()) {
+                used_homonyms.insert(held.name.clone());
                 continue;
             }
             let mut spelt = rust.get(&held.name).cloned().unwrap_or_default();
@@ -929,14 +956,18 @@ fn enum_findings(tree: &Tree, report: &mut Report) -> (Vec<String>, BTreeSet<Str
             }
         }
     }
-    (out.into_iter().collect(), used)
+    Enums {
+        findings: out.into_iter().collect(),
+        used_aliases: used,
+        used_homonyms,
+    }
 }
 
 /// A wire enum's discriminants agree in both languages, case for case.
 #[must_use]
 pub fn the_wire_enums_agree(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let (drifted, _) = enum_findings(tree, &mut report);
+    let drifted = enum_findings(tree, &mut report).findings;
     if !drifted.is_empty() {
         report.fail(format!(
             "a shared alphabet drifted —\n{}\nA verb byte that moved in one language is a request the other \
@@ -1009,8 +1040,9 @@ pub fn the_wire_flag_bits_agree(tree: &Tree) -> Report {
 #[must_use]
 pub fn every_allowlist_entry_is_alive(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let used_homonyms = shared_pairs(tree, &mut report).used_homonyms;
-    let (_, used_aliases) = enum_findings(tree, &mut report);
+    let pairs = shared_pairs(tree, &mut report);
+    let used_homonyms = pairs.used_homonyms;
+    let enums = enum_findings(tree, &mut report);
     let (_, used_bit_files) = bit_findings(tree, &mut report);
 
     let mut dead = Vec::new();
@@ -1025,8 +1057,20 @@ pub fn every_allowlist_entry_is_alive(tree: &Tree) -> Report {
         }
     }
     for (swift, rust) in ENUM_ALIASES {
-        if !used_aliases.contains(swift) {
+        if !enums.used_aliases.contains(swift) {
             dead.push(format!("  ENUM_ALIASES: `{swift}` no longer pairs with `{rust}`"));
+        }
+    }
+    for name in HOMONYM_ENUMS {
+        if !enums.used_homonyms.contains(name) {
+            dead.push(format!("  HOMONYM_ENUMS: `{name}` suppressed nothing"));
+        }
+    }
+    for (swift, rust_file, label) in DERIVED_RATCHETS {
+        if !pairs.used_derived.contains(label) {
+            dead.push(format!(
+                "  DERIVED_RATCHETS: `{label}` no longer derives {swift} against {rust_file}"
+            ));
         }
     }
 

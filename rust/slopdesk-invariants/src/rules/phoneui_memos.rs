@@ -44,7 +44,7 @@ const PHONE_UI_FLOOR: usize = 60;
 const CLIENT_CORE: &str = "Sources/SlopDeskClientCore";
 /// The same, as a claim's root list.
 const CLIENT_CORE_ROOTS: &[&str] = &[CLIENT_CORE];
-/// 125 files live there today.
+/// 126 files live there today.
 const CLIENT_CORE_FLOOR: usize = 90;
 
 /// A closure-sink assignment: `row.onTap = {`, `keys.onResign = {`, `empty.onAction = {`.
