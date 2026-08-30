@@ -49,8 +49,11 @@ pub fn agrees(tree: &Tree, report: &mut Report, vocab: &Vocabulary) {
         return;
     };
 
-    let swift_set = normalise(text::capture_pairs(&swift_source.text, vocab.swift_pattern));
-    let rust_set = normalise(text::capture_pairs(&rust_source.text, vocab.rust_pattern));
+    let swift_set = normalise(text::capture_pairs(
+        swift_source.statements(),
+        vocab.swift_pattern,
+    ));
+    let rust_set = normalise(text::capture_pairs(rust_source.statements(), vocab.rust_pattern));
 
     report.fail_if(
         swift_set.len() < vocab.minimum,
@@ -122,8 +125,8 @@ pub fn sections_agree(tree: &Tree, report: &mut Report, vocab: &SectionedVocabul
         return;
     };
 
-    let swift_set = sectioned(swift_source.code(), vocab.swift_section, vocab.swift_entry);
-    let rust_set = sectioned(rust_source.code(), vocab.rust_section, vocab.rust_entry);
+    let swift_set = sectioned(swift_source.statements(), vocab.swift_section, vocab.swift_entry);
+    let rust_set = sectioned(rust_source.statements(), vocab.rust_section, vocab.rust_entry);
 
     report.fail_if(
         swift_set.len() < vocab.minimum,
@@ -252,6 +255,44 @@ mod tests {
             report.violations().iter().any(|v| v.contains("disagrees")),
             "{report:?}"
         );
+    }
+
+    /// The revert this guards against is one character wide — `statements()` back to `code()` — and
+    /// nothing else in the crate would notice, because both views drop a WHOLE comment line and the
+    /// difference is only a trailing one. A retired entry left in prose at the end of a live line
+    /// is exactly what a vocabulary must not accept: the far side still spells it, so the two
+    /// sets agree over a constant that no longer exists.
+    #[test]
+    fn a_retired_entry_left_in_a_trailing_comment_does_not_make_the_two_sides_agree() {
+        let fixture = Fixture::new("vocab-comment");
+        fixture
+            .write(
+                "Sources/F.swift",
+                "public enum WorkspacePaneField {\n    static let title: UInt8 = 1\n}\npublic enum \
+                 WorkspaceTabField {\n    static let title: UInt8 = 2\n    static let other: UInt8 = 3\n}\n",
+            )
+            .write(
+                "rust/f/src/fields.rs",
+                "pub mod pane {\n    pub const TITLE: u8 = 1;\n}\npub mod tab {\n    pub const OTHER: u8 = \
+                 3;  // pub const TITLE: u8 = 2; retired\n}\n",
+            );
+        let mut report = Report::new();
+        sections_agree(&fixture.tree(), &mut report, &SECTIONED);
+        assert!(
+            report.violations().iter().any(|v| v.contains("disagrees")),
+            "{report:?}"
+        );
+
+        // And the same tree with the entry actually declared is clean, so the assertion above is
+        // reading the comment rather than some other difference between the two files.
+        fixture.write(
+            "rust/f/src/fields.rs",
+            "pub mod pane {\n    pub const TITLE: u8 = 1;\n}\npub mod tab {\n    pub const OTHER: u8 = 3;\n \
+             pub const TITLE: u8 = 2;\n}\n",
+        );
+        let mut report = Report::new();
+        sections_agree(&fixture.tree(), &mut report, &SECTIONED);
+        assert!(report.is_clean(), "{report:?}");
     }
 
     const SECTIONED: SectionedVocabulary = SectionedVocabulary {

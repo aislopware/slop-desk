@@ -61,9 +61,9 @@ pub fn one_badge_ladder_for_a_tab_row(tree: &Tree) -> Report {
         },
         Claim::Census {
             label: "the TabBadgeKind / TabBadge::ALL case count",
-            cases: Extract::code(SWIFT_BADGE_KIND, "^    case ")
+            cases: Extract::statements(SWIFT_BADGE_KIND, "^    case ")
                 .within(r"^public enum TabBadgeKind[:\s{]", "^}"),
-            declared: Extract::code(
+            declared: Extract::statements(
                 "rust/slopdesk-agent/src/badge.rs",
                 r"pub const ALL: \[Self; ([0-9]+)\]",
             ),
@@ -119,7 +119,7 @@ pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOST_HOOKS,
             pattern: r"slopdesk_hookevent::parse\(",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-hostd/src/hooks.rs no longer reads a hook body through \
                       rust/slopdesk-hookevent — the reading and the meaning are one crate, and a router \
                       that re-derived either is where a payload case gains a field nothing folds",
@@ -179,7 +179,7 @@ pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOST_FOLDS,
             pattern: r"PaneDetector::new\(",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-hostsession/src/shared.rs no longer constructs the ONE detector a pane \
                       gets — the fold that used to be constructed per emitter is the arithmetic this rule \
                       counts (docs/50)",
@@ -290,8 +290,9 @@ pub fn one_vocabulary_of_secret_shapes(tree: &Tree) -> Report {
         },
         Claim::Census {
             label: "the PasteRisk case count",
-            cases: Extract::code(SWIFT_SECRET_PASTE, "^    case ").within("^public enum PasteRisk", "^}"),
-            declared: Extract::code(
+            cases: Extract::statements(SWIFT_SECRET_PASTE, "^    case ")
+                .within("^public enum PasteRisk", "^}"),
+            declared: Extract::statements(
                 "rust/slopdesk-workspace/src/secrets.rs",
                 r"pub const ALL: \[Self; ([0-9]+)\]",
             ),

@@ -62,11 +62,11 @@ pub fn address(tree: &Tree) -> Report {
         // default, and dials a socket the daemon never bound.
         Claim::SameValue {
             label: "screend socket override key",
-            swift: Extract::code(
+            swift: Extract::statements(
                 CLIENT_PATHS,
                 r#"^pub const SOCKET_ENV_KEY: &str = "([A-Z0-9_]*)""#,
             ),
-            rust: Extract::code(
+            rust: Extract::statements(
                 RUST_PROTOCOL,
                 r#"^pub const SOCKET_ENV_KEY: &str = "([A-Z0-9_]*)""#,
             ),

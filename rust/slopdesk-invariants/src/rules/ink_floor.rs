@@ -47,7 +47,7 @@ const PILL_INK_SRC: &str = "Sources/SlopDeskWorkspaceModel/Reading/PaneStatusPil
 /// reads as `fixed` — which is also what the renderer probe below matches, since `(` is a word
 /// boundary and `case \.fixed\b` catches `case .fixed:` and `case .fixed(let ink):` alike.
 const fn rungs_of(path: &'static str, enumeration: &'static str) -> Extract {
-    Extract::raw(path, r"^[[:space:]]*case ([a-zA-Z]+)").within(enumeration, r"^\}")
+    Extract::statements(path, r"^[[:space:]]*case ([a-zA-Z]+)").within(enumeration, r"^\}")
 }
 
 /// A frameworkless value goes to the floor, not into a pair
@@ -95,14 +95,14 @@ pub fn a_frameworkless_value_goes_to_the_floor(tree: &Tree) -> Report {
         Claim::Matches {
             path: SLATE_DESIGN,
             pattern: r"static let accentRing\b",
-            view: View::Code,
+            view: View::Statements,
             message: "`Slate` stopped minting `accentRing` — its readers span two renderers and the literal \
                       cannot be compared across them (docs/56 stage F, P6)",
         },
         Claim::Matches {
             path: SLATE_DESIGN,
             pattern: r"static let glyphPlate\b",
-            view: View::Code,
+            view: View::Statements,
             message: "`Slate` stopped minting `glyphPlate` — its readers span two renderers and the literal \
                       cannot be compared across them (docs/56 stage F, P6)",
         },
@@ -364,7 +364,7 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
             path: SLATE_DESIGN,
             pattern: "static func paneStatusPillFill",
             count: 1,
-            view: View::Code,
+            view: View::Statements,
             message: "{found} paneStatusPillFill declarations in the floor, not the one native switch — the \
                       switch split back into a per-renderer pair (docs/56 §3.5, docs/62 stage I)",
         },
@@ -600,7 +600,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
             ],
             template: r"case (let |var )?\.{needle}\b",
-            view: View::Code,
+            view: View::Statements,
             message: "{half} does not resolve the DropZoneInk .{needle} rung — the renderers would ink it \
                       differently (docs/56 §3.5)",
         },
@@ -615,7 +615,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskMacUI/Pane/MacGuiPaneOverlays.swift",
             ],
             template: r"case (let |var )?\.{needle}\b",
-            view: View::Code,
+            view: View::Statements,
             message: "{half} does not resolve the GuiUploadTint .{needle} rung — the renderers would ink it \
                       differently (docs/56 §3.5)",
         },
@@ -630,7 +630,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift",
             ],
             template: r"case (let |var )?\.{needle}\b",
-            view: View::Code,
+            view: View::Statements,
             message: "{half} does not resolve the FindTogglePillAppearance .{needle} rung — the find bar \
                       and the global-search bar render the pills identically (docs/56 §3.5)",
         },
@@ -650,7 +650,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
             needles: rungs_of(PILL_INK_SRC, "^package enum PaneStatusPillFill[:[:space:]{]"),
             halves: PILL_HALVES,
             template: r"case (let |var )?\.{needle}\b",
-            view: View::Code,
+            view: View::Statements,
             message: "{half} does not resolve the PaneStatusPillFill .{needle} rung — the renderers would \
                       ink it differently (docs/56 §3.5)",
         },
@@ -665,7 +665,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
                 "Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift",
             ],
             template: r"case (let |var )?\.{needle}\b",
-            view: View::Code,
+            view: View::Statements,
             message: "{half} does not resolve the DropZoneLabelInk .{needle} rung — the renderers would ink \
                       it differently (docs/56 §3.5)",
         },

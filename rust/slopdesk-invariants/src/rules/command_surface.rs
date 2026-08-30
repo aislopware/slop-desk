@@ -85,7 +85,7 @@ pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
             path: DRAG_CTL,
             first: r"recordPlacement\(",
             second: r"detachPaneToWindow\(",
-            view: View::Code,
+            view: View::Statements,
             message: "the tear-off detaches BEFORE recording the placement — the satellite opens at the \
                       cascade, and only sometimes (docs/56 §3)",
         },
@@ -161,8 +161,8 @@ pub fn a_palette_verb_names_its_platform_once(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::SameSet {
             label: "palette verb ids",
-            swift: Extract::raw(SWIFT_PALETTE, r#"id: "(action\.[A-Za-z]+)""#),
-            rust: Extract::raw(
+            swift: Extract::statements(SWIFT_PALETTE, r#"id: "(action\.[A-Za-z]+)""#),
+            rust: Extract::statements(
                 "rust/slopdesk-workspace/src/palette_rows.rs",
                 r#"row\("(action\.[A-Za-z]+)""#,
             ),
@@ -212,14 +212,14 @@ pub fn every_keybinding_is_reachable_from_the_palette(tree: &Tree) -> Report {
         Claim::Matches {
             path: SWIFT_PALETTE,
             pattern: r"static let registryRows: \[PaletteItem\] = WorkspaceBindingRegistry\.bindings",
-            view: View::Code,
+            view: View::Statements,
             message: "the palette no longer DERIVES its registry rows — a transcribed list goes stale in \
                       silence (docs/56 §3.6)",
         },
         Claim::Matches {
             path: SWIFT_PALETTE,
             pattern: r"static let coveredActions: Set<WorkspaceAction> = Set\(declared\.compactMap",
-            view: View::Code,
+            view: View::Statements,
             message: "the palette no longer reads its covered actions off its own rows — the join between \
                       the two id spaces has become one somebody maintains (docs/56 §3.6)",
         },
@@ -287,14 +287,14 @@ pub fn a_keybinding_names_its_platform_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: SWIFT_BINDINGS,
             pattern: r"static let bindings: \[WorkspaceBinding\] = WorkspaceBindingTable\.current\.listed",
-            view: View::Code,
+            view: View::Statements,
             message: "the shipped table no longer comes from the one read — a registry that assembles its \
                       own rows is a second table however it is spelled",
         },
         Claim::Matches {
             path: BINDING_TABLE,
             pattern: r"slopdesk_ws_binding_rows\(mac, buffer\.baseAddress, buffer\.count\)",
-            view: View::Code,
+            view: View::Statements,
             message: "the table is not read through the whole-table door — a call per row per field is what \
                       the one crossing exists to replace",
         },
@@ -338,8 +338,8 @@ pub fn the_action_vocabulary_is_typed_once(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::SameSet {
             label: "workspace action tags",
-            swift: Extract::raw(ACTION_TAG, r"case \.[a-zA-Z]+: ([0-9]+)$"),
-            rust: Extract::raw(RUST_BINDINGS, r"^    [A-Z][A-Za-z]* = ([0-9]+),$"),
+            swift: Extract::statements(ACTION_TAG, r"case \.[a-zA-Z]+: ([0-9]+)$"),
+            rust: Extract::statements(RUST_BINDINGS, r"^    [A-Z][A-Za-z]* = ([0-9]+),$"),
         },
         Claim::Lacks {
             path: SWIFT_BINDINGS,
@@ -374,7 +374,7 @@ pub fn the_chord_table_is_held_not_rebuilt(tree: &Tree) -> Report {
         Claim::Matches {
             path: SWIFT_BINDINGS,
             pattern: r"static let allBindings: \[WorkspaceBinding\] = bindings \+ selectPaneBindings",
-            view: View::Code,
+            view: View::Statements,
             message: "allBindings is not a stored `let` — a computed one re-concatenates 85 rows per READ, \
                       and the chord table reads it 86 times per key event",
         },
@@ -388,14 +388,14 @@ pub fn the_chord_table_is_held_not_rebuilt(tree: &Tree) -> Report {
         Claim::Matches {
             path: BINDING_OVERRIDES,
             pattern: r"if let liveChordTable \{ return liveChordTable \}",
-            view: View::Code,
+            view: View::Statements,
             message: "resolvedChordTable no longer reads its memo — it is a pure function of a `let` and a \
                       write-once var, rebuilt on every keystroke the app sees",
         },
         Claim::Matches {
             path: BINDING_OVERRIDES,
             pattern: r"didSet \{ liveChordTable = nil \}",
-            view: View::Code,
+            view: View::Statements,
             message: "activeOverrides no longer invalidates the memo on write — a rebind would not take \
                       effect until relaunch",
         },

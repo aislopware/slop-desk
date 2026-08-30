@@ -139,8 +139,8 @@ pub fn ios_typecheck(root: &Path, force: bool) -> Result<(), String> {
 /// `Apps/ClientApp-iOS/Tests` is a strict SUPERSET of what any other gate compiles: `swift build`
 /// never sees `Apps/`, and `swift test` compiles the macOS branch of every `#if os(iOS)` fork. Left
 /// uncompiled it went unbuildable for weeks with every gate green, which is the same hole
-/// `check-macos-apps` closes on the other shell. So it must be built by something; the question this
-/// function answers differently from its predecessor is HOW OFTEN.
+/// `check-macos-apps` closes on the other shell. So it must be built by something; the question
+/// this function answers differently from its predecessor is HOW OFTEN.
 ///
 /// ## ⚠️ IT IS NOT IN `quick`, AND THE REASON IS A MEASUREMENT
 ///

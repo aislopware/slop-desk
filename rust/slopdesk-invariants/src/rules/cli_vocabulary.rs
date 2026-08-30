@@ -201,11 +201,11 @@ pub fn the_client_control_socket_has_one_vocabulary(tree: &Tree) -> Report {
     let doors = report.source(tree, RUST_CLIENTCTL_DOORS, "the face's doors live there");
     for door in DOORS {
         report.fail_if(
-            !doors.is_some_and(|source| source.text.contains(door)),
+            !doors.is_some_and(|source| source.statements().contains(door)),
             format!("{RUST_CLIENTCTL_DOORS} no longer exports {door} — the face has nothing to call"),
         );
         report.fail_if(
-            !face.text.contains(door),
+            !face.statements().contains(door),
             format!(
                 "{SWIFT_CONTROL_FACE} no longer calls {door} — a decision it does not ask for is one it is \
                  making itself"

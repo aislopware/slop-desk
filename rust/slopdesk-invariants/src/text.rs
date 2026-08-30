@@ -185,6 +185,38 @@ pub fn range(haystack: &str, start: &str, end: &str) -> String {
     out
 }
 
+/// [`range`] with the anchors read from one view and the CONTENT taken from another.
+///
+/// The two views must number their lines the same way — `Raw` and `Statements` do, `Code` does not,
+/// because it DROPS a comment line rather than blanking it.
+///
+/// This exists because an anchor and a row are asking different questions. A range's opening line
+/// is structure: sometimes the only unique one in the file is a doc line, which is not a defect —
+/// `PaneKind::as_byte` and `NewTabPosition::as_byte` have byte-identical signatures, so the doc
+/// sentence above the first is what tells them apart, and the uniqueness check is what keeps that
+/// honest. The ROWS inside the range are a different matter: a `Self::Desktop => 1` spelled in a
+/// comment is a wire byte that exists in prose only, and reading the range raw let one in.
+#[must_use]
+pub fn range_across(anchors: &str, content: &str, start: &str, end: &str) -> String {
+    let (start_re, end_re) = (cached(start), cached(end));
+    let mut out = String::new();
+    let mut open = false;
+    for (anchor, line) in anchors.lines().zip(content.lines()) {
+        if !open {
+            if !start_re.is_match(anchor) {
+                continue;
+            }
+            open = true;
+        }
+        out.push_str(line);
+        out.push('\n');
+        if end_re.is_match(anchor) && out.lines().count() > 1 {
+            break;
+        }
+    }
+    out
+}
+
 /// The lines BEFORE the first match of `pattern` — `awk '/pattern/ { exit } { print }'`.
 ///
 /// The shell used this to read a Rust file's code while leaving its `#[cfg(test)]` module out: a

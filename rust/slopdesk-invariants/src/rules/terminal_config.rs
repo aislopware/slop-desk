@@ -161,7 +161,7 @@ pub fn reset_backstop_built_from_set(tree: &Tree) -> Report {
         Claim::Matches {
             path: TRANSCRIPTS,
             pattern: r"slopdesk_sanitize::inputmode::reset_suffix\(",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-hostd/src/transcripts.rs no longer builds the reset from inputmode.rs's \
                       TRACKED_MODES — a restore that skips it leaves a mode the passes never saw turned on",
         },

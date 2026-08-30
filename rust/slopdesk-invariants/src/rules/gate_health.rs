@@ -10,7 +10,7 @@
 //! bans are `Claim::NoneUnder`s in `rules::deleted_host_swift` and `rules::screend_wire`, which
 //! scan a root directly, so there is no filter left to be wrong about.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 // `SWIFT_ROOTS` is the Swift that may call a door. Tests count: a door called only from a test is
 // still a door somebody reaches, which is where this differs from the constant pass. This rule asked
@@ -187,7 +187,7 @@ pub fn every_exemption_names_a_path_the_tree_has(tree: &Tree) -> Report {
         if path.extension().is_none_or(|extension| extension != "rs") {
             continue;
         }
-        let code = source.code();
+        let code = source.statements();
         for (name, value) in text::capture_pairs(code, r#"const ([A-Z][A-Z0-9_]*): &str = "([^"]*)";"#) {
             literals.insert((name, value));
         }
@@ -201,7 +201,7 @@ pub fn every_exemption_names_a_path_the_tree_has(tree: &Tree) -> Report {
                 }
                 continue;
             }
-            // A DECLARATION starts its line. `code()` leaves string literals intact, and one
+            // A DECLARATION starts its line. `statements()` leaves string literals intact, and one
             // break-test in this crate writes `"const SUBCOMMANDS: &[&str] = &[…]"` as
             // a fixture — reading that as a declaration would open a list here and
             // swallow every line after it.
@@ -240,7 +240,7 @@ pub fn every_exemption_names_a_path_the_tree_has(tree: &Tree) -> Report {
         if path.extension().is_none_or(|extension| extension != "rs") {
             continue;
         }
-        let shipped = text::before(source.code(), r"#\[cfg\(test\)\]");
+        let shipped = text::before(source.statements(), r"#\[cfg\(test\)\]");
         let inline = text::capture_all(&shipped, r"(?s)exempt: &\[(.*?)\]");
         let named = text::capture_all(&shipped, r"exempt: ([A-Za-z][A-Za-z0-9_:]*),");
         for list in inline.iter().chain(named.iter()) {
@@ -287,11 +287,67 @@ pub fn every_exemption_names_a_path_the_tree_has(tree: &Tree) -> Report {
     report
 }
 
+/// No two break-tests seed the same fixture directory.
+///
+/// [`crate::tests::Fixture::new`] keys its root on the name and `remove_dir_all`s it first, so two
+/// tests sharing one name delete each other's tree mid-run. The tests are concurrent, so the loser
+/// is whichever the scheduler picks: the collision this rule was written for — `vocab-stale`,
+/// spelled once in `vocabulary` and once in `wire_codecs` — passed a full `cargo test` and only
+/// failed under a filter that narrowed the run. A break-test that fails at random is worse than one
+/// that does not exist, because the first red is read as flake and the rule it guards is then never
+/// trusted again.
+///
+/// Every OCCURRENCE counts, not every file: two tests in ONE module race exactly the same way, and
+/// a single test that seeds one name twice wipes its own first tree. Deduplicating by file would
+/// have caught the collision that prompted this and missed both of those — the same defect one file
+/// over, which is the shape this whole round was about. The live crate spells 500 names and no name
+/// twice, so the strict form is what the tree already satisfies.
+#[must_use]
+pub fn every_fixture_name_is_spelled_once(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let mut seen: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (path, source) in tree.under(CRATE_SRC) {
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        // `statements()`, because a commented-out call seeds no directory — and this rule's own doc
+        // above names `vocab-stale` twice, which a raw read would report as the collision it
+        // describes.
+        for name in text::capture_all(source.statements(), r#"Fixture::new\("([^"]*)"\)"#) {
+            seen.entry(name)
+                .or_default()
+                .push(path.to_string_lossy().into_owned());
+        }
+    }
+    for (name, sites) in &seen {
+        report.fail_if(
+            sites.len() > 1,
+            format!(
+                "the fixture name \"{name}\" is spelled {} times, in {} — one temp directory, two tests \
+                 wiping it, and a red that only appears under some orderings",
+                sites.len(),
+                sites.join(" and "),
+            ),
+        );
+    }
+    report.fail_if(
+        seen.len() < 300,
+        format!(
+            "only {} fixture names parsed out of {CRATE_SRC} — this rule is reading an empty set",
+            seen.len()
+        ),
+    );
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
 
-    use super::{every_exemption_names_a_path_the_tree_has, every_ffi_door_is_opened_or_declared_deliberate};
+    use super::{
+        every_exemption_names_a_path_the_tree_has, every_ffi_door_is_opened_or_declared_deliberate,
+        every_fixture_name_is_spelled_once,
+    };
     use crate::tests::Fixture;
 
     /// A header with a door and a Swift tree that never names it.
@@ -474,6 +530,86 @@ mod tests {
         assert!(
             found.violations().iter().any(|line| line.contains("Vanished")),
             "{found:?}"
+        );
+    }
+
+    /// Two tests seeding one temp directory, which is the collision that hid behind a full-suite
+    /// green until a filtered run reordered it.
+    ///
+    /// The calls are BUILT rather than spelled, because this file is inside `CRATE_SRC` and the
+    /// rule reads string literals: a break-test that wrote `Fixture::new` with its quotes
+    /// intact would seed the duplicate into the live tree and red the gate from its own
+    /// fixture.
+    #[test]
+    fn two_tests_sharing_one_fixture_name_are_red() {
+        let call = |name: &str| {
+            format!(
+                "#[test]\nfn t() {{\n    let f = Fixture::new({0}{name}{0});\n}}\n",
+                '"'
+            )
+        };
+        let fixture = Fixture::new("gate-fixture-names");
+        fixture
+            .write("rust/slopdesk-invariants/src/rules/one.rs", &call("shared"))
+            .write("rust/slopdesk-invariants/src/rules/two.rs", &call("shared"));
+        let report = every_fixture_name_is_spelled_once(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("\"shared\" is spelled 2 times")),
+            "{report:?}"
+        );
+
+        // And the same name twice inside ONE file, which is the half a per-file dedup would miss.
+        fixture
+            .write(
+                "rust/slopdesk-invariants/src/rules/one.rs",
+                &format!("{}{}", call("twice"), call("twice")),
+            )
+            .write("rust/slopdesk-invariants/src/rules/two.rs", &call("other"));
+        let report = every_fixture_name_is_spelled_once(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("\"twice\" is spelled 2 times")),
+            "{report:?}"
+        );
+
+        // The same two files with two names raise only the vacuity floor, so the assertion above is
+        // reading the collision rather than the size of the fixture.
+        fixture
+            .write("rust/slopdesk-invariants/src/rules/one.rs", &call("one"))
+            .write("rust/slopdesk-invariants/src/rules/two.rs", &call("two"));
+        let report = every_fixture_name_is_spelled_once(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .all(|violation| violation.contains("reading an empty set")),
+            "{report:?}"
+        );
+    }
+
+    /// A commented-out call seeds no directory, so it cannot collide with a live one.
+    #[test]
+    fn a_fixture_name_in_a_comment_is_not_a_second_seeding() {
+        let call = |name: &str| format!("    let f = Fixture::new({0}{name}{0});\n", '"');
+        let fixture = Fixture::new("gate-fixture-names-comment");
+        fixture
+            .write("rust/slopdesk-invariants/src/rules/one.rs", &call("shared"))
+            .write(
+                "rust/slopdesk-invariants/src/rules/two.rs",
+                &format!("// was {}", call("shared")),
+            );
+        let report = every_fixture_name_is_spelled_once(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .all(|violation| violation.contains("reading an empty set")),
+            "{report:?}"
         );
     }
 

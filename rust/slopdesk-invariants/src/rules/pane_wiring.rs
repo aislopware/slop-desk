@@ -75,14 +75,14 @@ pub fn one_terminal_wiring_and_its_teardown_order(tree: &Tree) -> Report {
         Claim::Matches {
             path: LIFECYCLE,
             pattern: r"wiring\.wire\(",
-            view: View::Code,
+            view: View::Statements,
             message: "the terminal lifecycle stopped calling wiring.wire( — a renderer is wiring itself \
                       again (docs/56 §3)",
         },
         Claim::Matches {
             path: LIFECYCLE,
             pattern: r"wiring\.clear\(",
-            view: View::Code,
+            view: View::Statements,
             message: "the terminal lifecycle stopped calling wiring.clear( — five wire/clear pairs are \
                       retain-cycle obligations, not layout (docs/56 §3)",
         },
@@ -97,7 +97,7 @@ pub fn one_terminal_wiring_and_its_teardown_order(tree: &Tree) -> Report {
             start: r"secureInput\.teardown\(\)",
             end: r"^    \}",
             pattern: r"guard let model = live\?\.terminalModel",
-            view: View::Raw,
+            view: View::Statements,
             message: "TerminalPaneWiring: the secure-input teardown is no longer above its guard — a pane \
                       whose model died keeps the lock",
         },
@@ -365,14 +365,14 @@ pub fn one_connect_one_ladder(tree: &Tree) -> Report {
         Claim::Matches {
             path: CONNECT_DIALLERS[0],
             pattern: r"private let connectRun = ConnectRun\(\)",
-            view: View::Code,
+            view: View::Statements,
             message: "ConnectionViewModel.swift no longer holds a ConnectRun — the ladder it answers is \
                       what keeps a superseded attempt from painting a torn-down pane green (docs/45 Phase 6)",
         },
         Claim::Matches {
             path: CONNECT_DIALLERS[1],
             pattern: r"private let connectRun = ConnectRun\(\)",
-            view: View::Code,
+            view: View::Statements,
             message: "AppConnection.swift no longer holds a ConnectRun — the same ladder, minus the two \
                       host latches it never sets (docs/45 Phase 6)",
         },

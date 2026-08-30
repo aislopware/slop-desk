@@ -164,14 +164,15 @@ pub fn the_drop_type_bytes_are_one_alphabet(tree: &Tree) -> Report {
     /// whole-file pattern, and the file holds no other `out.push(<digit>)`. If one ever appears
     /// outside an encoder the pinned set below is what says so, by name.
     ///
-    /// [`View::Raw`], and that is the one place in this file where it is load-bearing rather than
-    /// incidental. The comment stripper treats a line whose first character is `*` as the
-    /// continuation of a block comment, which is what `    *kind = 3;` looks like to it — so the
-    /// code view deletes the chunk writer's byte, the one frame that carries a body and the exact
-    /// type a match-only sweep would already have missed. A comment cannot begin with a digit or
-    /// with `out.push(`, so reading raw costs nothing here.
+    /// [`View::Statements`], and the reason it is not [`View::Code`] is the reason this read was
+    /// [`View::Raw`] until 2026-08-30: `code()` is LINE-based, and it treats a line whose first
+    /// character is `*` as the continuation of a block comment — which is what `    *kind = 3;`
+    /// looks like to it. The code view therefore deletes the chunk writer's byte, the one frame
+    /// that carries a body and the exact type a match-only sweep would already have missed.
+    /// `statements()` is a scanner rather than a heuristic, so it keeps that line and blanks the
+    /// comments the raw read was letting through.
     const WRITTEN: Extract =
-        Extract::raw(DROP_CLIENT, r"^ *out\.push\(([0-9]+)\);$").also(&[r"^ *\*kind = ([0-9]+);$"]);
+        Extract::statements(DROP_CLIENT, r"^ *out\.push\(([0-9]+)\);$").also(&[r"^ *\*kind = ([0-9]+);$"]);
     check_all(tree, &[
         Claim::PinnedSet {
             label: "dropd request type bytes",
@@ -181,26 +182,26 @@ pub fn the_drop_type_bytes_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Subset {
             label: "dropd request type",
             subject: WRITTEN,
-            universe: Extract::raw(DROP_PROTOCOL, r"^ *([0-9]+) => \{$"),
+            universe: Extract::statements(DROP_PROTOCOL, r"^ *([0-9]+) => \{$"),
             message: "the client encodes request type {orphans} but rust/slopdesk-dropd/src/protocol.rs has \
                       no arm decoding it — dropd would read an offer's id out of a chunk body (docs/53)",
         },
         // Both sides are Rust here; the field names are the shape's, not the languages'.
         Claim::SameSet {
             label: "dropd reply type bytes",
-            swift: Extract::raw(DROP_CLIENT, r"^ *([0-9]+) => \{$")
+            swift: Extract::statements(DROP_CLIENT, r"^ *([0-9]+) => \{$")
                 .within(r"pub fn decode_reply_payload", r"^\}$"),
-            rust: Extract::raw(DROP_PROTOCOL, r"^ *out\.push\(([0-9]+)\);$")
+            rust: Extract::statements(DROP_PROTOCOL, r"^ *out\.push\(([0-9]+)\);$")
                 .within(r"pub fn encode_reply_payload", r"^\}$"),
         },
         Claim::Pinned {
             label: "dropd's wire version",
-            from: Extract::code(DROP_PROTOCOL, r"VERSION: u8 = ([0-9]+);$"),
+            from: Extract::statements(DROP_PROTOCOL, r"VERSION: u8 = ([0-9]+);$"),
             expect: "1",
         },
         Claim::Pinned {
             label: "dropd's frame ceiling",
-            from: Extract::code(DROP_PROTOCOL, r"MAX_FRAME_PAYLOAD: usize = (.*);$"),
+            from: Extract::statements(DROP_PROTOCOL, r"MAX_FRAME_PAYLOAD: usize = (.*);$"),
             expect: "16 * 1024 * 1024",
         },
     ])
@@ -282,11 +283,11 @@ pub fn the_android_bridge_agrees_both_ways(tree: &Tree) -> Report {
     let mut claims = the_op_crosses_its_three_links();
     claims.push(Claim::Subset {
         label: "bridge device field",
-        subject: Extract::code(
+        subject: Extract::statements(
             ANDROID_BRIDGE,
             r#"(?:optional_text\(entry, |optional_number\(entry, |entry\.get\()"([a-zA-Z]+)"\)"#,
         ),
-        universe: Extract::code(ANDROID_PROTOCOL, r#""([a-zA-Z]+)""#),
+        universe: Extract::statements(ANDROID_PROTOCOL, r#""([a-zA-Z]+)""#),
         message: "the panel decodes device field '{orphans}' but rust/slopdesk-androidd/src/protocol.rs \
                   never encodes it — the panel renders what it finds, which is what makes a quietly emptied \
                   column silent (docs/48)",
@@ -310,7 +311,7 @@ pub fn the_android_bridge_agrees_both_ways(tree: &Tree) -> Report {
 }
 
 /// The verbs the panel crate writes into `op`, read from the one `match` that spells them.
-const VERBS: Extract = Extract::code(ANDROID_BRIDGE, r#"^ *Self::[A-Za-z]+ => "([a-z]+)",$"#);
+const VERBS: Extract = Extract::statements(ANDROID_BRIDGE, r#"^ *Self::[A-Za-z]+ => "([a-z]+)",$"#);
 
 /// The op's three hops: the face's names against the header, the header's bytes against the enum's
 /// discriminants, and the enum's verbs against androidd's arms — with the verbs pinned as a set so
@@ -323,9 +324,8 @@ fn the_op_crosses_its_three_links() -> Vec<Claim> {
                 root: ANDROID_DIR,
                 extensions: SWIFT,
                 pattern: r"SLOPDESK_ANDROID_BRIDGE_OP_([A-Z]+)\b",
-                view: View::Code,
             },
-            universe: Extract::code(ANDROID_HEADER, r"^#define SLOPDESK_ANDROID_BRIDGE_OP_([A-Z]+) "),
+            universe: Extract::statements(ANDROID_HEADER, r"^#define SLOPDESK_ANDROID_BRIDGE_OP_([A-Z]+) "),
             floor: 7,
             message: "the panel names op '{orphans}', which slopdesk_ffi.h does not define — the header is \
                       hand-written and it is the only thing that makes a door reachable from Swift \
@@ -338,14 +338,12 @@ fn the_op_crosses_its_three_links() -> Vec<Claim> {
                 marker: r"#define SLOPDESK_ANDROID_BRIDGE_OP_LIST ",
                 end: r"#define SLOPDESK_ANDROID_BRIDGE_OP_OPEN ",
                 pattern: r"#define SLOPDESK_ANDROID_BRIDGE_OP_([A-Z]+) ([0-9]+)u",
-                view: View::Code,
             },
             rust: ByteMap {
                 path: ANDROID_BRIDGE,
                 marker: r"pub enum BridgeOp \{",
                 end: r"^\}$",
                 pattern: r"^ *([A-Z][a-zA-Z]*) = ([0-9]+),",
-                view: View::Code,
             },
         },
         Claim::PinnedSet {
@@ -364,7 +362,7 @@ fn the_op_crosses_its_three_links() -> Vec<Claim> {
         Claim::Subset {
             label: "bridge ops",
             subject: VERBS,
-            universe: Extract::code(ANDROID_SERVER, r#"^ *"([a-z]+)" =>"#),
+            universe: Extract::statements(ANDROID_SERVER, r#"^ *"([a-z]+)" =>"#),
             message: "the panel sends op '{orphans}' but rust/slopdesk-androidd/src/server.rs has no arm \
                       serving it — the daemon answers `bad request` and the tab just reads as broken \
                       (docs/48)",
@@ -562,7 +560,7 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_EVENT: u8 = 1;",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 1 for an event — an unknown \
                       tag is SKIPPED at both ends, so nothing errors and the panel just stays empty \
                       (docs/54)",
@@ -570,7 +568,7 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_KEEP_ALIVE: u8 = 2;",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 2 for a keep-alive — an \
                       unknown tag is SKIPPED at both ends, so nothing errors and the feed just stops \
                       (docs/54)",
@@ -578,28 +576,28 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_SUBSCRIBE: u8 = 3;",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-inspectord/src/wire.rs no longer spells the client's subscribe tag as 3 \
                       (docs/54)",
         },
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_EVENT => Ok\(ClientFrame::Event",
-            view: View::Code,
+            view: View::Statements,
             message: "wire.rs's decode_client no longer reads tag 1 as an event — the client end must \
                       decode exactly the two host → client tags and refuse its own (docs/54)",
         },
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_KEEP_ALIVE => Ok\(ClientFrame::KeepAlive\)",
-            view: View::Code,
+            view: View::Statements,
             message: "wire.rs's decode_client no longer reads tag 2 as a keep-alive — the client end must \
                       decode exactly the two host → client tags and refuse its own (docs/54)",
         },
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"MAX_FRAME_PAYLOAD: usize = 16 \* 1024 \* 1024;",
-            view: View::Code,
+            view: View::Statements,
             message: "the inspector's frame cap is not the 16 MiB ceiling the other four paths use — a \
                       LOWER cap refuses a large replay frame the daemon just built, a HIGHER one has the \
                       client throw frameTooLarge, which is the one unrecoverable decode error (docs/54)",
@@ -666,7 +664,7 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: parser,
                 pattern: text::intern(format!("slopdesk_{daemon}::server::ANNOUNCE_PREFIX")),
-                view: View::Code,
+                view: View::Statements,
                 message: text::intern(format!(
                     "{parser} no longer learns {daemon}'s announce marker from the crate that prints it — \
                      hostd would wait out its timeout, kill a healthy service and respawn it on every \
@@ -676,7 +674,7 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: parser,
                 pattern: text::intern(format!("slopdesk_{daemon}::server::ANNOUNCE_VERSION_PREFIX")),
-                view: View::Code,
+                view: View::Statements,
                 message: text::intern(format!(
                     "{parser} no longer reads {daemon}'s version marker off the crate that prints it — a \
                      parse that stopped matching reads None, which the audit reports as 'unknown' rather \
@@ -686,7 +684,7 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: server,
                 pattern: r"ANNOUNCE_VERSION_PREFIX\}\{\}",
-                view: View::Code,
+                view: View::Statements,
                 message: text::intern(format!(
                     "rust/slopdesk-{daemon}/src/server.rs no longer announces a version after the marker — \
                      hostd would report `unknown` and go on running last week's daemon behind this week's \
@@ -696,7 +694,7 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: server,
                 pattern: r#"env!\("CARGO_PKG_VERSION"\)"#,
-                view: View::Code,
+                view: View::Statements,
                 message: text::intern(format!(
                     "rust/slopdesk-{daemon}/src/server.rs no longer announces its OWN compile-time version \
                      — a daemon reporting the version it read off disk compares equal to it forever, which \
@@ -738,7 +736,7 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::PinnedSet {
             label: "sidecar restart policies",
-            from: Extract::code(
+            from: Extract::statements(
                 SIDECARS,
                 r"^    (Automatic|SelfRetiring|OperatorChoice|NotResident),$",
             ),
@@ -747,14 +745,14 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: SIDECARS,
             pattern: r"pub fn policy\(tool: &str\) -> RestartPolicy",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-sidecars no longer holds the policy table — it has two callers in two \
                       languages, which is the exact shape a Swift copy skews quietly in (docs/49)",
         },
         Claim::Matches {
             path: SIDECARS_MANIFEST,
             pattern: r"pub fn plan\(",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-sidecars/src/manifest.rs no longer holds the manifest diff (docs/49)",
         },
         Claim::NoneUnder {
@@ -772,21 +770,21 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOSTD_AUDIT,
             pattern: r"use slopdesk_sidecars::",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-hostd/src/audit.rs no longer asks rust/slopdesk-sidecars for its \
                       verdict — it would be a second table, in the one binary that acts on it (docs/49)",
         },
         Claim::Matches {
             path: SIDECAR_CLI,
             pattern: r"slopdesk_sidecars::manifest::plan|manifest::plan\b|use slopdesk_sidecars",
-            view: View::Code,
+            view: View::Statements,
             message: "`slopdesk sidecars` no longer asks rust/slopdesk-sidecars for the upgrade plan — it \
                       would be a second diff of the same two manifests (docs/49)",
         },
         Claim::Matches {
             path: HOMEBREW_FORMULA,
             pattern: r#"sidecars", "--record""#,
-            view: View::Code,
+            view: View::Statements,
             message: "the formula no longer records the manifest — every upgrade would read as a first \
                       install, which is a table that never says anything (docs/49)",
         },

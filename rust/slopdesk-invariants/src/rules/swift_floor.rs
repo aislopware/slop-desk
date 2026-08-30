@@ -380,7 +380,7 @@ fn candidates(tree: &Tree) -> BTreeSet<String> {
         let Some(path) = path.to_str() else {
             continue;
         };
-        let code = source.code();
+        let code = source.statements();
         if code.contains("slopdesk_") {
             declared_types(code, &mut faces);
             continue;

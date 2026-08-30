@@ -78,7 +78,7 @@ pub fn the_mirror_topology_is_projected_once(tree: &Tree) -> Report {
             path: MIRROR_MEMO,
             pattern: r"workspaceMirror\.topology",
             maximum: 2,
-            view: View::Code,
+            view: View::Statements,
             message: "the store reads workspaceMirror.topology {found} times; the memo has ONE miss path. A \
                       further read belongs inside `mirroredTopology` or it is not memoized",
         },
@@ -144,7 +144,7 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
             // one call inside `refresh()`, with both `rows` and `lines` derived from `built`. Pinning
             // the binding still works; pinning the old right-hand side would not.
             pattern: r"^ *let built = OpenQuicklySources\.sections\($",
-            view: View::Code,
+            view: View::Statements,
             message: "the picker stopped binding one sections() build — every reader re-ranks all five \
                       sources (~145 µs a keystroke)",
         },
@@ -187,7 +187,7 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
             // optional segment is the two modules' own naming, not a wildcard over the predicate.
             pattern: r"Presentation\.(Console\.)?visible\(",
             count: 1,
-            view: View::Code,
+            view: View::Statements,
             message: "a device console derives its visible lines {found} times, not once — a second call is \
                       the 0.78–1.50 ms filter back on a second reader, and none is the filter re-rolled \
                       inline (docs/55 §4c)",
@@ -205,7 +205,7 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
             path: list,
             pattern: r"Presentation\.matches\(",
             count: 1,
-            view: View::Code,
+            view: View::Statements,
             message: "a device list derives its matching devices {found} times, not once — the emptiness \
                       test and the sections must read ONE derivation, at ~1.6 µs per field per device",
         });
@@ -272,7 +272,7 @@ pub fn the_index_doors_guess_they_do_not_probe(tree: &Tree) -> Report {
         Claim::Matches {
             path: FRECENCY,
             pattern: r"answer\(sizedAt:",
-            view: View::Code,
+            view: View::Statements,
             message: "W1c: the folder face no longer sizes its first buffer from the ceiling it holds — the \
                       index doors are back to being asked twice (docs/55 §4)",
         },
@@ -280,14 +280,14 @@ pub fn the_index_doors_guess_they_do_not_probe(tree: &Tree) -> Report {
         Claim::Matches {
             path: FIND,
             pattern: r"expecting: matches\.count",
-            view: View::Code,
+            view: View::Statements,
             message: "W2a: the find bar stopped carrying the previous keystroke's match count into the next \
                       scan — every query matching more than the stack guess scans the scrollback twice",
         },
         Claim::Matches {
             path: GLOBALFIND,
             pattern: r"expecting: expected",
-            view: View::Code,
+            view: View::Statements,
             message: "W2b: the global find stopped carrying a guess across panes — the first pane's answer \
                       sizes the rest, and without it every pane pays the second scan",
         },
@@ -345,7 +345,7 @@ pub fn the_scan_and_the_mirror_derive_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: ROWFIND,
             pattern: r"fn stands_alone\(units: &\[u16\]",
-            view: View::Code,
+            view: View::Statements,
             message: "W3a: the whole-word filter takes a row again instead of the units its caller already \
                       holds — it re-encodes the whole line once per HIT",
         },
@@ -367,7 +367,7 @@ pub fn the_scan_and_the_mirror_derive_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: ROWFIND,
             pattern: r"line\.get\(counted_bytes\.\.hit\.start\(\)\)",
-            view: View::Code,
+            view: View::Statements,
             message: "W3c: the row scan no longer carries a byte cursor between regex hits on one row — \
                       each column is measured over the row's whole prefix again, which is quadratic in the \
                       row",
@@ -378,7 +378,7 @@ pub fn the_scan_and_the_mirror_derive_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: ROWFIND,
             pattern: "to_ascii_lowercase",
-            view: View::Code,
+            view: View::Statements,
             message: "W3d: the row scan folds every code unit through the full Unicode mapping again — a \
                       ToLowercase iterator per character of every row, per keystroke",
         },
@@ -393,7 +393,7 @@ pub fn the_scan_and_the_mirror_derive_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: LOOPBACK,
             pattern: r"let resolved = box\.resolved",
-            view: View::Code,
+            view: View::Statements,
             message: "W4: the loopback document no longer hoists the resolved mirror above its projectKey \
                       closure — see WorkspaceMirrorBox.stageIntent, which is the same contract",
         },

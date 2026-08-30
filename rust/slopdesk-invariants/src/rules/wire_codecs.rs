@@ -892,7 +892,7 @@ mod tests {
     /// comparing two empty sets and calling them equal.
     #[test]
     fn a_vocabulary_that_stopped_extracting_says_so() {
-        let fixture = Fixture::new("vocab-stale");
+        let fixture = Fixture::new("wire-vocab-stale");
         fixture
             .write(
                 "Sources/SlopDeskProtocol/Metadata/MetadataVerb.swift",

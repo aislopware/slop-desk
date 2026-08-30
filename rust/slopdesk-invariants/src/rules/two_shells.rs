@@ -266,7 +266,7 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
             Claim::Matches {
                 path: owner,
                 pattern: quoted,
-                view: View::Code,
+                view: View::Statements,
                 message: says,
             },
             Claim::NoneUnder {
@@ -358,7 +358,6 @@ pub fn the_shared_vocabulary_only_shrinks(tree: &Tree) -> Report {
             root,
             extensions: SWIFT,
             pattern: PHRASE,
-            view: View::Code,
         }
     }
 

@@ -152,7 +152,7 @@ pub fn rail_render_reads_its_badge(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift",
             pattern: r"commandGates \?\? store.commandBadgeGates",
-            view: View::Raw,
+            view: View::Statements,
             message: "Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift: chrome() no longer accepts \
                       pre-read command gates — the batch entry has nothing to hand it and the per-row reads \
                       come back",

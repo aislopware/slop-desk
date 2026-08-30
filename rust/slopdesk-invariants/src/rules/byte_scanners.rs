@@ -44,7 +44,7 @@ pub fn one_vt_grammar_for_plain_text(tree: &Tree) -> Report {
         claims.push(Claim::Matches {
             path: render,
             pattern: r"slopdesk_sanitize::plaintext::strip\(",
-            view: View::Code,
+            view: View::Statements,
             message: "a render stopped asking slopdesk_sanitize::plaintext — the VT grammar is \
                       plaintext.rs's, and a second machine over the same bytes is how the strip and the \
                       holdback drifted before",
@@ -292,7 +292,7 @@ pub fn one_base64_and_one_secret_notation(tree: &Tree) -> Report {
         },
         Claim::Pinned {
             label: "the secret shapes secrets.rs carries",
-            from: crate::claim::Extract::code(
+            from: crate::claim::Extract::statements(
                 "rust/slopdesk-workspace/src/secrets.rs",
                 r"const PATTERNS: \[\(&str, Action\); ([0-9]+)\]",
             ),

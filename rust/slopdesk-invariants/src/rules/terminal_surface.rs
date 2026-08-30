@@ -237,13 +237,13 @@ pub fn link_scan(tree: &Tree) -> Report {
         // that no test sees.
         Claim::SameValue {
             label: "link scan matches per row",
-            swift: Extract::code(SWIFT_LINKS, r"static let maxMatchesPerRow = ([0-9]+)"),
-            rust: Extract::code(RUST_LINK, r"pub const MAX_MATCHES_PER_ROW: usize = ([0-9]+)"),
+            swift: Extract::statements(SWIFT_LINKS, r"static let maxMatchesPerRow = ([0-9]+)"),
+            rust: Extract::statements(RUST_LINK, r"pub const MAX_MATCHES_PER_ROW: usize = ([0-9]+)"),
         },
         Claim::SameValue {
             label: "link scan column bound",
-            swift: Extract::code(SWIFT_LINKS, r"static let maxScanColumnsDefault = ([0-9]+)"),
-            rust: Extract::code(RUST_LINK, r"pub const MAX_SCAN_COLUMNS: usize = ([0-9]+)"),
+            swift: Extract::statements(SWIFT_LINKS, r"static let maxScanColumnsDefault = ([0-9]+)"),
+            rust: Extract::statements(RUST_LINK, r"pub const MAX_SCAN_COLUMNS: usize = ([0-9]+)"),
         },
     ];
     check_all(tree, &claims)
@@ -305,13 +305,13 @@ pub fn command_blocks(tree: &Tree) -> Report {
         // evicted.
         Claim::SameValue {
             label: "block ring cap",
-            swift: Extract::code(SWIFT_BLOCKS, r"static let maxBlocks = ([0-9]+)"),
-            rust: Extract::code(RUST_BLOCKS, r"pub const MAX_BLOCKS: usize = ([0-9]+)"),
+            swift: Extract::statements(SWIFT_BLOCKS, r"static let maxBlocks = ([0-9]+)"),
+            rust: Extract::statements(RUST_BLOCKS, r"pub const MAX_BLOCKS: usize = ([0-9]+)"),
         },
         Claim::SameValue {
             label: "bookmark cap",
-            swift: Extract::code(SWIFT_BLOCKS, r"static let maxBookmarks = ([0-9]+)"),
-            rust: Extract::code(RUST_BLOCKS, r"pub const MAX_BOOKMARKS: usize = ([0-9]+)"),
+            swift: Extract::statements(SWIFT_BLOCKS, r"static let maxBookmarks = ([0-9]+)"),
+            rust: Extract::statements(RUST_BLOCKS, r"pub const MAX_BOOKMARKS: usize = ([0-9]+)"),
         },
     ];
     check_all(tree, &claims)

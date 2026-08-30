@@ -26,7 +26,12 @@ use crate::tree::Tree;
 /// Which view of a file a claim reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
-    /// The file verbatim. For a claim about what a file SAYS — a doc citation, a declaration.
+    /// The file verbatim. For a BAN whose subject is what the file SAYS — a doc citation, a
+    /// heading, a prose anchor.
+    ///
+    /// ⚠️ NOT for a claim that must be SATISFIED. A positive claim on this view is answered by a
+    /// comment, and the comment that answers it is the tombstone the deletion left behind. Every
+    /// positive claim in this crate reads [`Self::Statements`]; see the block on [`Claim::Doors`].
     Raw,
     /// The file with whole-line comments stripped. For a BAN, because the prose above a ban names
     /// the thing it forbids and a raw read would fire on the explanation.
@@ -35,7 +40,8 @@ pub enum View {
     /// that must spell the banned thing.
     CodeBeforeTests,
     /// Every comment blanked by a tokenizer, string literals intact. For a TOKEN ban, where the
-    /// banned spelling can appear at the end of a line of real code.
+    /// banned spelling can appear at the end of a line of real code — and for EVERY positive
+    /// claim, which is the only view that cannot be answered by prose.
     Statements,
 }
 
@@ -63,8 +69,6 @@ impl View {
 pub struct Extract {
     /// Repo-relative path.
     pub path: &'static str,
-    /// Which view of the file to read.
-    pub view: View,
     /// An `awk` range to narrow to first, inclusive of both ends.
     pub within: Option<(&'static str, &'static str)>,
     /// The pattern whose first capture group is the value.
@@ -86,25 +90,18 @@ pub struct Extract {
 }
 
 impl Extract {
-    /// The whole file, comment-stripped, matched by one pattern — the common case.
+    /// The whole file with every comment blanked, matched by one pattern.
+    ///
+    /// There is no view to pick, and that is the point. Every extraction feeds a claim that must be
+    /// SATISFIED — a set the other language has to match, a value that has to be pinned — so a
+    /// member spelled in a comment is a member the far side is then obliged to have. Two tombstones
+    /// agreeing is the failure mode: `SameSet` passes on prose, and a rung that left the tree stays
+    /// "present" on both sides. [`View::Code`] was not enough either; it drops a whole comment line
+    /// and keeps a trailing one.
     #[must_use]
-    pub const fn code(path: &'static str, pattern: &'static str) -> Self {
+    pub const fn statements(path: &'static str, pattern: &'static str) -> Self {
         Self {
             path,
-            view: View::Code,
-            within: None,
-            pattern,
-            also: &[],
-            serde_fields: false,
-        }
-    }
-
-    /// The whole file verbatim, matched by one pattern.
-    #[must_use]
-    pub const fn raw(path: &'static str, pattern: &'static str) -> Self {
-        Self {
-            path,
-            view: View::Raw,
             within: None,
             pattern,
             also: &[],
@@ -136,10 +133,10 @@ impl Extract {
     /// Reads the set this extraction names, or `None` when the file is absent.
     fn set(self, tree: &Tree, report: &mut Report) -> Option<BTreeSet<String>> {
         let source = report.source(tree, self.path, "one side of a comparison lives there")?;
-        let view = self.view.of(source);
+        let view = source.statements();
         let haystack = match self.within {
-            Some((start, end)) => text::range(&view, start, end),
-            None => view.clone().into_owned(),
+            Some((start, end)) => text::range(view, start, end),
+            None => view.to_owned(),
         };
         let mut set = if self.serde_fields {
             serde_field_names(&haystack)
@@ -147,7 +144,7 @@ impl Extract {
             text::capture_set(&haystack, self.pattern)
         };
         for pattern in self.also {
-            set.extend(text::capture_set(&view, pattern));
+            set.extend(text::capture_set(view, pattern));
         }
         Some(set)
     }
@@ -155,10 +152,10 @@ impl Extract {
     /// Counts the LINES this extraction matches — the shell's `sed -n '/a/,/b/p' | grep -c`.
     fn count(self, tree: &Tree, report: &mut Report) -> Option<usize> {
         let source = report.source(tree, self.path, "one side of a census lives there")?;
-        let view = self.view.of(source);
+        let view = source.statements();
         let haystack = match self.within {
-            Some((start, end)) => std::borrow::Cow::Owned(text::range(&view, start, end)),
-            None => view,
+            Some((start, end)) => std::borrow::Cow::Owned(text::range(view, start, end)),
+            None => std::borrow::Cow::Borrowed(view),
         };
         Some(text::count_lines(&haystack, self.pattern))
     }
@@ -167,10 +164,10 @@ impl Extract {
     /// the shell's `| head -1 | tr -d ' '`.
     fn value(self, tree: &Tree, report: &mut Report) -> Option<String> {
         let source = report.source(tree, self.path, "one side of a comparison lives there")?;
-        let view = self.view.of(source);
+        let view = source.statements();
         let haystack = match self.within {
-            Some((start, end)) => std::borrow::Cow::Owned(text::range(&view, start, end)),
-            None => view,
+            Some((start, end)) => std::borrow::Cow::Owned(text::range(view, start, end)),
+            None => std::borrow::Cow::Borrowed(view),
         };
         Some(text::capture_first(&haystack, self.pattern)?.replace(' ', ""))
     }
@@ -216,8 +213,6 @@ pub struct Corpus {
     pub extensions: &'static [&'static str],
     /// The pattern whose first capture group joins the set.
     pub pattern: &'static str,
-    /// Which view of each file to read.
-    pub view: View,
 }
 
 impl Corpus {
@@ -229,7 +224,7 @@ impl Corpus {
                     .and_then(|ext| ext.to_str())
                     .is_some_and(|ext| self.extensions.contains(&ext))
             })
-            .flat_map(|(_, source)| text::capture_set(&self.view.of(source), self.pattern))
+            .flat_map(|(_, source)| text::capture_set(source.statements(), self.pattern))
             .collect()
     }
 }
@@ -255,17 +250,19 @@ pub struct ByteMap {
     pub end: &'static str,
     /// The pattern whose first two capture groups are the case NAME and its byte.
     pub pattern: &'static str,
-    /// Which view of the file to read.
-    pub view: View,
 }
 
 impl ByteMap {
     /// The `name -> byte` map this switch declares, lower-cased so `centerHorizontal` and
     /// `CenterHorizontal` are the same claim spelled two ways.
+    ///
+    /// There is no view to pick, because the two halves of the read want opposite answers: the
+    /// ANCHORS are located on the raw text — a marker is allowed to be a doc line, and for
+    /// `PaneKind` it has to be — while the ROWS come from [`Source::statements`], where a byte
+    /// spelled in a comment is blank. See [`text::range_across`].
     fn read(self, tree: &Tree, report: &mut Report, label: &str) -> Option<BTreeMap<String, String>> {
         let source = report.source(tree, self.path, "one side of a byte map lives there")?;
-        let view = self.view.of(source);
-        let marks = text::count_lines(&view, self.marker);
+        let marks = text::count_lines(&source.text, self.marker);
         if marks != 1 {
             report.fail(format!(
                 "{label}: the marker in {} matches {marks} times, not once — a range restarts on every \
@@ -275,7 +272,8 @@ impl ByteMap {
             return None;
         }
         let mut map = BTreeMap::new();
-        for caps in text::cached(self.pattern).captures_iter(&text::range(&view, self.marker, self.end)) {
+        let rows = text::range_across(&source.text, source.statements(), self.marker, self.end);
+        for caps in text::cached(self.pattern).captures_iter(&rows) {
             let (Some(name), Some(byte)) = (caps.get(1), caps.get(2)) else {
                 continue;
             };
@@ -349,6 +347,52 @@ pub enum Claim {
     /// own break-tests write Swift and Rust fixtures as literals. So a name that appears only
     /// inside a string still satisfies a positive anchor. That is the one hole left, and it is
     /// the one a fixture needs.
+    ///
+    /// ## The same defect, one round out: a positive PATTERN
+    ///
+    /// A NAME is what these four arms take, so flipping them closed the class they could state.
+    /// The claims that take a PATTERN took a view with it — [`Claim::Matches`], [`Claim::Exactly`],
+    /// [`Claim::Before`], [`Claim::Within`], [`Claim::Resolved`], [`Claim::PerFileCounts`],
+    /// [`Claim::AtMost`], every [`Extract`] and every [`Corpus`] — and 33 of those sites asked for
+    /// [`View::Raw`], which is the same hole with a regex in it: `// paletteResults reads the memo`
+    /// answers a rule demanding that the memo be read. The remaining ~200 read [`View::Code`],
+    /// which is the narrower half of the same hole — it drops a whole comment line and keeps a
+    /// TRAILING one, so `let x = 1  // memo.read()` still answered. [`Claim::AtLeast`] had no view
+    /// to ask for and read `code()` too.
+    ///
+    /// Every positive claim reads `statements()` now, and the three shapes that had a view to pick
+    /// no longer have one: [`Extract`], [`Corpus`] and [`ByteMap`] all dropped the field, because
+    /// each of them only ever feeds a claim that must be SATISFIED — a set the far side has to
+    /// match, a value that has to be pinned — and there is no honest reason for one to read prose.
+    /// The per-claim `view` STAYS, because a ban's subject is legitimately what a file says.
+    /// [`ByteMap`] could not simply flip — its MARKER is allowed to be prose,
+    /// and for `PaneKind` it has to be, since `session.rs` holds two byte-identical `as_byte`
+    /// signatures — so it locates its range on the raw text and reads the ROWS out of
+    /// `statements()` ([`text::range_across`]). That split is the general answer: an anchor is
+    /// structure and may be a sentence, a row is a fact and may not.
+    ///
+    /// A handful of rules read a [`crate::tree::Source`] directly rather than through a claim, and
+    /// the same sweep went through them: `cli_vocabulary`'s door pair, `repo_invariants`' injected
+    /// sinks, its `pub use` re-export map and its daemon-name scan, and `vocabulary::agrees`. Two
+    /// families were left raw ON PURPOSE and are not oversights — `doc_citations` and the live-doc
+    /// scan, whose entire subject is prose, and `shared_constants`, where the ratchet corpus is
+    /// this crate's own text and a rule's DOC naming a constant is what ratchets it. `crate_policy`
+    /// reads raw and is safe by construction: its `states` helper wants the needle at the START of
+    /// a line, which no TOML comment can be.
+    ///
+    /// The hand-rolled reads off `code()` are the same class one view over, and went with them:
+    /// `vocabulary::sections_agree` (the sibling of `agrees`, same file, same set comparison),
+    /// `rust_boundaries`' Swift-case count and its `ALL: [Self; N]` length, `screend_wire`'s
+    /// `HELLO_BANNER` capture, `gate_health`'s constant corpus and its `exempt:` lists, all four
+    /// extractions in `choice_tokens` — enum cases, call sites, the key table, the fallback token —
+    /// and `swift_floor`'s census, where a `slopdesk_` or a face name in a comment EXEMPTED a file
+    /// from the floor. Every one of those is a satisfier: a set, a length, a token, an exemption.
+    /// What stayed on `code()` are the bans — `apple_floors`' direct-reach check,
+    /// `handle_lifetime`, `cli_vocabulary`'s literal ban, `workspace_document`'s two scanners,
+    /// and the three `before(…, #[cfg(test)])` reads in
+    /// `screend`/`screend_wire`/`supervisor_envelope`, each of which already carries the
+    /// paragraph saying why: their own prose and their own break-tests NAME the thing they ban,
+    /// and matching either would be a gate failing on its own proof.
     Doors {
         /// Repo-relative path.
         path: &'static str,
@@ -1108,7 +1152,7 @@ impl Claim {
                 message,
             } => {
                 if let Some(source) = report.source(tree, path, message) {
-                    let found = text::count_lines(source.code(), pattern);
+                    let found = text::count_lines(source.statements(), pattern);
                     report.fail_if(found < *minimum, fill(message, "found", &found.to_string()));
                 }
             },
@@ -2135,7 +2179,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::{Claim, Extract, RUST, SWIFT, View, check_all};
+    use super::{ByteMap, Claim, Extract, RUST, SWIFT, View, check_all};
     use crate::tree::Tree;
 
     struct Fixture(PathBuf);
@@ -2196,9 +2240,8 @@ mod tests {
                     root: "Sources/Panel",
                     extensions: SWIFT,
                     pattern: r#""op": "([a-z]+)""#,
-                    view: View::Code,
                 },
-                universe: Extract::code("rust/d/src/server.rs", r#"^ *"([a-z]+)" =>"#),
+                universe: Extract::statements("rust/d/src/server.rs", r#"^ *"([a-z]+)" =>"#),
                 floor,
                 message: "the panel sends {orphans} with no arm serving it",
             }]
@@ -2382,6 +2425,118 @@ mod tests {
         assert!(check_all(&fixture.tree(), &names).is_clean());
     }
 
+    /// The same defect one round out, where the anchor is a PATTERN rather than a name.
+    ///
+    /// [`Claim::Matches`], [`Claim::Exactly`], [`Claim::Before`] and every extraction take a view
+    /// from the rule that uses them, and 33 of them asked for [`View::Raw`] — so the tombstone that
+    /// could not satisfy a `Doors` any more could still satisfy the regex beside it. `AtLeast` is
+    /// here too and had no view to ask for: it read `code()`, which drops a whole-line comment and
+    /// keeps a TRAILING one.
+    #[test]
+    fn a_comment_does_not_satisfy_a_positive_pattern() {
+        let fixture = Fixture::new("prose-pattern");
+        // The call is prose in both spellings a comment has: whole-line, and trailing.
+        fixture.write(
+            "Sources/A/Face.swift",
+            "// let n = memo.read() — deleted, the caller reads the store\nlet x = 1  // memo.read() twice \
+             over\nlet y = 2\n",
+        );
+
+        let matches = [Claim::Matches {
+            path: "Sources/A/Face.swift",
+            pattern: r"memo\.read\(\)",
+            view: View::Statements,
+            message: "the face stopped reading the memo",
+        }];
+        let exactly = [Claim::Exactly {
+            path: "Sources/A/Face.swift",
+            pattern: r"memo\.read\(\)",
+            count: 2,
+            view: View::Statements,
+            message: "the face reads the memo {found} times",
+        }];
+        let at_least = [Claim::AtLeast {
+            path: "Sources/A/Face.swift",
+            pattern: r"memo\.read\(\)",
+            minimum: 1,
+            message: "the face reads the memo {found} times",
+        }];
+        let before = [Claim::Before {
+            path: "Sources/A/Face.swift",
+            first: r"memo\.read\(\)",
+            second: r"let y",
+            view: View::Statements,
+            message: "the read is no longer above the write",
+        }];
+        for (label, claims) in [
+            ("a match", &matches[..]),
+            ("a count", &exactly[..]),
+            ("a floor", &at_least[..]),
+            ("an order", &before[..]),
+        ] {
+            assert!(
+                !check_all(&fixture.tree(), claims).is_clean(),
+                "prose satisfied {label}"
+            );
+        }
+
+        // The same four, answered in code, still pass — this is a rule about comments, not about
+        // files that happen to carry the pattern.
+        fixture.write(
+            "Sources/A/Face.swift",
+            "// let n = memo.read() — the prose stays\nlet a = memo.read()\nlet b = memo.read()\nlet y = 2\n",
+        );
+        for claims in [&matches[..], &exactly[..], &at_least[..], &before[..]] {
+            assert!(check_all(&fixture.tree(), claims).is_clean());
+        }
+
+        // The rows a set comparison reads are the same claim through an extraction, and a byte map
+        // reads them through a RANGE, which is the shape that let one in: the range was located and
+        // read on the same raw text.
+        fixture.write(
+            "rust/a/src/lib.rs",
+            "impl Kind {\n    // the on-wire byte\n    pub const fn as_byte(self) -> u8 {\n        match \
+             self {\n            Self::Terminal => 0,\n            // Self::Desktop => 1, retired\n        \
+             }\n    }\n}\n",
+        );
+        let both = [Claim::SameByteMap {
+            label: "Kind",
+            swift: ByteMap {
+                path: "rust/a/src/lib.rs",
+                marker: r"the on-wire byte",
+                end: r"^ *\}",
+                pattern: r"Self::([A-Za-z]+) *=> *([0-9]+)",
+            },
+            rust: ByteMap {
+                path: "rust/b/src/lib.rs",
+                marker: r"the on-wire byte",
+                end: r"^ *\}",
+                pattern: r"Self::([A-Za-z]+) *=> *([0-9]+)",
+            },
+        }];
+        // The other side spells BOTH rows in code, so the commented one is the whole difference.
+        fixture.write(
+            "rust/b/src/lib.rs",
+            "impl Kind {\n    // the on-wire byte\n    pub const fn as_byte(self) -> u8 {\n        match \
+             self {\n            Self::Terminal => 0,\n            Self::Desktop => 1,\n        }\n    \
+             }\n}\n",
+        );
+        assert!(
+            !check_all(&fixture.tree(), &both).is_clean(),
+            "a row spelled in a comment answered for a wire byte"
+        );
+
+        // Uncommented, the two agree — and the MARKER stayed prose throughout, which is the half
+        // that has to keep working: `PaneKind`'s only unique anchor is its doc line.
+        fixture.write(
+            "rust/a/src/lib.rs",
+            "impl Kind {\n    // the on-wire byte\n    pub const fn as_byte(self) -> u8 {\n        match \
+             self {\n            Self::Terminal => 0,\n            Self::Desktop => 1,\n        }\n    \
+             }\n}\n",
+        );
+        assert!(check_all(&fixture.tree(), &both).is_clean());
+    }
+
     /// One file per shell, plus the padding a corpus floor needs.
     fn shells(fixture: &Fixture, left: &str, right: &str) {
         for (root, body) in [("Left", left), ("Right", right)] {
@@ -2534,14 +2689,14 @@ mod tests {
         fixture.write("rust/a/src/lib.rs", "pub const CAP: usize = 4 * 1024 * 1024;\n");
         let ok = [Claim::Pinned {
             label: "cap",
-            from: Extract::code("rust/a/src/lib.rs", r"CAP: usize = (.*);"),
+            from: Extract::statements("rust/a/src/lib.rs", r"CAP: usize = (.*);"),
             expect: "4*1024*1024",
         }];
         assert!(check_all(&fixture.tree(), &ok).is_clean());
 
         let wrong = [Claim::Pinned {
             label: "cap",
-            from: Extract::code("rust/a/src/lib.rs", r"CAP: usize = (.*);"),
+            from: Extract::statements("rust/a/src/lib.rs", r"CAP: usize = (.*);"),
             expect: "8*1024*1024",
         }];
         assert!(!check_all(&fixture.tree(), &wrong).is_clean());

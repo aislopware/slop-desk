@@ -42,8 +42,9 @@ const DOMAIN: &str = "Sources/SlopDeskWorkspaceModel/Domain";
 /// literal is the no-migration rule spelled twice, where the smaller number refuses files the other
 /// happily writes; a base64 call is the row codec; a pane-field name is the filter itself.
 ///
-/// [`View::Code`] throughout, because naming what moved is how a boundary stays legible and only
-/// CODE can re-implement it.
+/// No claim here reads prose: the ban is [`View::Code`] so that naming what moved stays legible,
+/// and the two positive halves read `statements()` so that naming it cannot ANSWER for it — only
+/// code can re-implement a boundary, and only code may say it still calls one.
 ///
 /// BREAK-TEST: dropped `slopdesk_ws_state_file_status` from the face ⇒ FAIL "stopped asking".
 /// Separately wrote `JSONEncoder()` into it ⇒ FAIL "decides something again". Separately deleted
@@ -232,7 +233,7 @@ pub fn the_solvers_live_in_rust(tree: &Tree) -> Report {
         report.absorb(check_all(tree, &[Claim::Matches {
             path,
             pattern: r"import CSlopDeskFFI",
-            view: View::Code,
+            view: View::Statements,
             message: crate::text::intern(format!(
                 "{path} no longer calls the Rust crate — the port was undone (docs/55 §6)"
             )),
@@ -271,10 +272,15 @@ pub fn the_solvers_live_in_rust(tree: &Tree) -> Report {
 /// number is written for the third time.
 ///
 /// `PaneKind`'s Rust marker is a DOC LINE rather than a signature, because `session.rs` holds two
-/// `as_byte` bodies with identical signatures — `PaneKind`'s and `NewTabPosition`'s. That is also
-/// why every map here reads raw and why the marker's uniqueness is checked rather than assumed: the
-/// unlucky version of a duplicated marker was live on 2026-08-22, where the sibling body is
-/// `self as u8` and contributes no rows, so the gate stayed green while covering nothing.
+/// `as_byte` bodies with identical signatures — `PaneKind`'s and `NewTabPosition`'s. That is why
+/// the marker's uniqueness is checked rather than assumed: the unlucky version of a duplicated
+/// marker was live on 2026-08-22, where the sibling body is `self as u8` and contributes no rows,
+/// so the gate stayed green while covering nothing.
+///
+/// It is ALSO why a [`ByteMap`] takes no view. Every map here used to read raw, which the prose
+/// marker seemed to force — and that let a `// Self::Desktop => 1, retired` answer for a wire byte
+/// on both sides at once. The anchors and the rows want opposite views, so the range is located on
+/// the raw text and read out of `statements()`; the marker may be prose, and a row may not.
 ///
 /// BREAK-TEST: renumbered `case .centerHorizontal` in `WorkspaceTreeOps` ⇒ FAIL "disagree about
 /// which byte". Separately spelled `pub const fn ffi_byte(self) -> u8` a second time in
@@ -376,7 +382,6 @@ const fn swift_map(path: &'static str, marker: &'static str) -> ByteMap {
         marker,
         end: r"^ *\}",
         pattern: r"case \.([a-zA-Z]+): *([0-9]+)",
-        view: View::Raw,
     }
 }
 
@@ -388,7 +393,6 @@ const fn rust_map(path: &'static str, marker: &'static str) -> ByteMap {
         marker,
         end: r"^ *\}",
         pattern: r"Self::([A-Za-z]+) *(?:\{[^}]*\}|\([^)]*\))? *=> *([0-9]+)",
-        view: View::Raw,
     }
 }
 

@@ -38,13 +38,13 @@ pub fn font_pair_agrees_across_the_seam(tree: &Tree) -> Report {
     let claims = [
         Claim::SameValue {
             label: "the injected mono family and the seeded one",
-            swift: Extract::code(CODEPANEL, r#"^pub const MONO_FONT_FAMILY: &str = "(.*)";$"#),
-            rust: Extract::code(CODESEED, r#"^pub const MONO_FONT_FAMILY: &str = "(.*)";$"#),
+            swift: Extract::statements(CODEPANEL, r#"^pub const MONO_FONT_FAMILY: &str = "(.*)";$"#),
+            rust: Extract::statements(CODESEED, r#"^pub const MONO_FONT_FAMILY: &str = "(.*)";$"#),
         },
         Claim::SameValue {
             label: "the injected nerd family and the seeded one",
-            swift: Extract::code(CODEPANEL, r#"^pub const NERD_FONT_FAMILY: &str = "(.*)";$"#),
-            rust: Extract::code(CODESEED, r#"^pub const NERD_FONT_FAMILY: &str = "(.*)";$"#),
+            swift: Extract::statements(CODEPANEL, r#"^pub const NERD_FONT_FAMILY: &str = "(.*)";$"#),
+            rust: Extract::statements(CODESEED, r#"^pub const NERD_FONT_FAMILY: &str = "(.*)";$"#),
         },
         Claim::NoneOf {
             paths: &[CODESEED],

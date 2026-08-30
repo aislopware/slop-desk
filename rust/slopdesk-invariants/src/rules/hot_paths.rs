@@ -120,7 +120,7 @@ pub fn one_regex_engine_over_untrusted(tree: &Tree) -> Report {
         Claim::Matches {
             path: "rust/slopdesk-rowscan/Cargo.toml",
             pattern: r"^regex = ",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-rowscan dropped the regex crate — a hand-written or backtracking \
                       matcher is the hang",
         },
@@ -153,7 +153,7 @@ pub fn palette_ranks_once_per_query(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift",
             pattern: r"var paletteResults: \[[A-Za-z]+\] \{ memoizedResults\.",
-            view: View::Raw,
+            view: View::Statements,
             message: "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift: paletteResults no \
                       longer reads the memo — each read is a whole ~150 µs fzf pass, and three of them ride \
                       one arrow key",
@@ -161,7 +161,7 @@ pub fn palette_ranks_once_per_query(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift",
             pattern: r"var rankedResults: \[[A-Za-z]+\] \{ memoizedResults\.",
-            view: View::Raw,
+            view: View::Statements,
             message: "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift: rankedResults no longer \
                       reads the memo — each read is a whole ~150 µs fzf pass, and three of them ride one \
                       arrow key",
@@ -169,7 +169,7 @@ pub fn palette_ranks_once_per_query(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift",
             pattern: r"var selectableResults: \[[A-Za-z]+\] \{ memoizedResults\.",
-            view: View::Raw,
+            view: View::Statements,
             message: "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift: selectableResults no \
                       longer reads the memo — each read is a whole ~150 µs fzf pass, and three of them ride \
                       one arrow key",
@@ -201,7 +201,7 @@ pub fn nerd_font_run_splitter_linear(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskFontFaces/NerdSymbolFont.swift",
             pattern: r"guard text.unicodeScalars.contains\(where: isPrivateUse\)",
-            view: View::Raw,
+            view: View::Statements,
             message: "Sources/SlopDeskFontFaces/NerdSymbolFont.swift: runs(of:) lost its scalar pre-scan — \
                       every ordinary title pays a per-Character walk and a String per run again",
         },
@@ -362,7 +362,7 @@ pub fn one_open_one_route(tree: &Tree) -> Report {
         Claim::Matches {
             path,
             pattern: r"pub const FROM_NOW_ON: u64 = u64::MAX;",
-            view: View::Code,
+            view: View::Statements,
             message: "one of the three live-edge sentinels stopped spelling itself u64::MAX — \
                       slopdesk-hostpane's stream, slopdesk-muxsession's lifecycle and its open_route must \
                       agree, and nothing in the build graph makes them (docs/59 §5, step 6)",

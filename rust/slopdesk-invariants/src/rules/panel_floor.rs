@@ -116,14 +116,14 @@ pub fn both_device_panels_draw_on_both_platforms(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorScreenView.swift",
             pattern: r": UIView\b",
-            view: View::Code,
+            view: View::Statements,
             message: "PhoneSimulatorScreenView lost its UIKit half — the phone's device stage is a UIView, \
                       which is what makes the simulator mirror draw on the phone at all (docs/62 §4.8)",
         },
         Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidScreenView.swift",
             pattern: r": UIView\b",
-            view: View::Code,
+            view: View::Statements,
             message: "PhoneAndroidScreenView lost its UIKit half — the phone's device stage is a UIView, \
                       which is what makes the Android mirror draw on the phone at all (docs/62 §4.8)",
         },
@@ -227,7 +227,7 @@ pub fn the_code_panel_crosses(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Panel/PhoneCodeWorkbenchView.swift",
             pattern: r"CodeSidebarWebViewPool\.shared\.webView\(",
-            view: View::Code,
+            view: View::Statements,
             message: "the phone's code mount stopped taking its page from the pool — the code panel mounts \
                       on both platforms, off ONE warm page each (docs/56 increment 45, docs/62 §4.8)",
         },

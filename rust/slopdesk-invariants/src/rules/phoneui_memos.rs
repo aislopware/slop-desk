@@ -512,7 +512,7 @@ pub fn slate_sits_below_the_client_core(tree: &Tree) -> Report {
             start: r#"name: "SlopDeskClientCore",$"#,
             end: r"^\s+linkerSettings: ffiCLibraries,$",
             pattern: r#""SlopDeskSlate","#,
-            view: View::Code,
+            view: View::Statements,
             message: "`SlopDeskClientCore` no longer depends on `SlopDeskSlate` — that edge is what lets \
                       the shared placement floor spend `Slate.Metric` instead of re-deriving it, and \
                       re-deriving it is what produced the clone this rule was written after (docs/56 \
@@ -520,7 +520,7 @@ pub fn slate_sits_below_the_client_core(tree: &Tree) -> Report {
         },
         Claim::PinnedSet {
             label: "SlopDeskSlate's dependencies",
-            from: Extract::code("Package.swift", r#"^\s+(?:\.product\(name: )?"([A-Za-z]+)"[,)]"#)
+            from: Extract::statements("Package.swift", r#"^\s+(?:\.product\(name: )?"([A-Za-z]+)"[,)]"#)
                 .within(r#"name: "SlopDeskSlate",$"#, r"^\s+\],$"),
             expect: &[
                 "SFSafeSymbols",

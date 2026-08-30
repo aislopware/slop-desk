@@ -158,7 +158,7 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
                 (r"^#if os\(iOS\)$", 1),
                 (r"^#endif$", 1),
             ],
-            view: View::Code,
+            view: View::Statements,
             exempt: &[],
             message: "{files} carries more than the one whole-file '#if os(iOS)' — the readings are \
                       total/opens/ends, and every other arm is always-true scaffolding (docs/56 §3)",
@@ -339,7 +339,7 @@ pub fn the_video_surface_stays_split(tree: &Tree) -> Report {
         Claim::Matches {
             path: actuator,
             pattern: r"^[[:space:]]*#if.*os\(macOS\)",
-            view: View::Raw,
+            view: View::Statements,
             // The sentence names the path itself, since a table cannot carry a placeholder the claim
             // does not fill.
             message: "a named video actuator no longer carries the platform arm this carve-out exists for — \
@@ -447,13 +447,11 @@ pub fn the_two_video_halves_agree(tree: &Tree) -> Report {
                 root: MAC_HALF,
                 extensions: SWIFT,
                 pattern: SEAM_SINK,
-                view: View::Raw,
             },
             right: Corpus {
                 root: PHONE_HALF,
                 extensions: SWIFT,
                 pattern: SEAM_SINK,
-                view: View::Raw,
             },
             left_only: &["onSystemKeyInjectorReady"],
             floor: 14,
@@ -464,13 +462,11 @@ pub fn the_two_video_halves_agree(tree: &Tree) -> Report {
                 root: MAC_HALF,
                 extensions: SWIFT,
                 pattern: PIPELINE_SINK,
-                view: View::Raw,
             },
             right: Corpus {
                 root: PHONE_HALF,
                 extensions: SWIFT,
                 pattern: PIPELINE_SINK,
-                view: View::Raw,
             },
             left_only: &["onRemoteCursorChanged"],
             floor: 8,

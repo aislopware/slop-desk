@@ -381,8 +381,8 @@ pub fn the_release_ships_every_sidecar_the_host_needs(tree: &Tree) -> Report {
         r#"RustServicePaths\.locate(?:Beside)?\(\s*(?:"(?P<literal>slopdesk-[a-z]+)"|(?P<symbol>\w+))"#,
     );
     for (_, source) in collect(tree, &["Sources"], &["swift"]) {
-        let constants = text::capture_set(&source.text, r#"\bbinaryName\s*=\s*"(slopdesk-[a-z]+)""#);
-        for capture in locate.captures_iter(&source.text) {
+        let constants = text::capture_set(source.statements(), r#"\bbinaryName\s*=\s*"(slopdesk-[a-z]+)""#);
+        for capture in locate.captures_iter(source.statements()) {
             if let Some(literal) = capture.name("literal") {
                 wanted.insert(literal.as_str().to_owned());
             } else if capture
@@ -611,7 +611,7 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
         // module without ever spelling `module::`, which is the ordinary shape for a crate whose
         // public surface is flat.
         let mut exported: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for (module, group) in text::capture_pairs(&source.text, r"(?s)^pub use (\w+)::\{(.*?)\};") {
+        for (module, group) in text::capture_pairs(source.statements(), r"(?s)^pub use (\w+)::\{(.*?)\};") {
             let names = group.replace('\n', " ");
             for name in names.split(',') {
                 let name = name.trim().split(" as ").next().unwrap_or_default().trim();
@@ -623,11 +623,11 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
                 }
             }
         }
-        for (module, name) in text::capture_pairs(&source.text, r"^pub use (\w+)::(\w+);") {
+        for (module, name) in text::capture_pairs(source.statements(), r"^pub use (\w+)::(\w+);") {
             exported.entry(module).or_default().insert(name);
         }
 
-        for module in text::capture_all(&source.text, r"^pub mod (\w+);") {
+        for module in text::capture_all(source.statements(), r"^pub mod (\w+);") {
             let file = directory.join(format!("{module}.rs"));
             let folder = directory.join(&module);
             let inside: Vec<&(&Path, &Source)> = sources
@@ -716,7 +716,7 @@ pub fn every_injected_sink_has_someone_who_binds_it(tree: &Tree) -> Report {
     let mut report = Report::new();
     let mut sinks: BTreeMap<String, String> = BTreeMap::new();
     for (path, source) in collect(tree, &["Sources"], &["swift"]) {
-        for name in text::capture_all(&source.text, SINK_DECLARATION) {
+        for name in text::capture_all(source.statements(), SINK_DECLARATION) {
             sinks.entry(name).or_insert_with(|| path.display().to_string());
         }
     }
@@ -727,7 +727,9 @@ pub fn every_injected_sink_has_someone_who_binds_it(tree: &Tree) -> Report {
             // `(?:^|[^A-Za-z0-9_])` and `(?:$|[^=])` are the two lookarounds the Python spelled
             // directly: an assignment, not a comparison, and not the tail of a longer name.
             let assigned = text::cached(&format!(r"(?:^|[^A-Za-z0-9_]){name}\s*=(?:$|[^=])"));
-            !product.iter().any(|(_, source)| assigned.is_match(&source.text))
+            !product
+                .iter()
+                .any(|(_, source)| assigned.is_match(source.statements()))
         })
         .map(|(name, home)| format!("{home}: {name}"))
         .collect();
@@ -1180,7 +1182,7 @@ pub fn the_replay_boots_the_agent_out_first(tree: &Tree) -> Report {
         path: RESTART,
         first: r"launchd::bootout\(",
         second: r#""-TERM""#,
-        view: View::Code,
+        view: View::Statements,
         message: "rust/slopdesk-devtools/src/ops/hostd.rs signals the recorded pid before it boots \
                   com.slopdesk.hostd out of launchd — the agent relaunches the installed binary into a race \
                   with the replay, and the loser exits 0, so `just host-restart` reports success over \

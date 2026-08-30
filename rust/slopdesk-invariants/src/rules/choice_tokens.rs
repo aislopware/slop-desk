@@ -100,7 +100,7 @@ fn swift_cases(tree: &Tree, name: &str) -> Option<BTreeSet<String>> {
     let opener = format!(r"(?s)\benum {name}\s*:\s*String\b.*?\{{(.*?)\n(?:    )?\}}");
     for (_, source) in tree.under("Sources") {
         let Some(body) = cached(&opener)
-            .captures(source.code())
+            .captures(source.statements())
             .and_then(|caps| caps.get(1))
         else {
             continue;
@@ -135,7 +135,7 @@ fn call_sites(tree: &Tree) -> Vec<CallSite> {
         .under("Sources")
         .flat_map(|(_, source)| {
             cached(r#"\.choice\("([a-z0-9.-]+)",\s*([A-Za-z_]\w*)\.(\w+)"#)
-                .captures_iter(source.code())
+                .captures_iter(source.statements())
                 .filter_map(|caps| {
                     Some(CallSite {
                         path: caps.get(1)?.as_str().to_owned(),
@@ -166,7 +166,7 @@ pub fn a_choice_enum_spells_exactly_the_tables_stops(tree: &Tree) -> Report {
         ));
         return report;
     };
-    let options = table_options(table.code());
+    let options = table_options(table.statements());
     report.fail_if(
         options.is_empty(),
         format!(
@@ -258,7 +258,7 @@ fn fallback_token(tree: &Tree, enum_name: &str, case: &str) -> Option<String> {
     let opener = format!(r"(?s)\benum {enum_name}\s*:\s*String\b.*?\{{(.*?)\n(?:    )?\}}");
     for (_, source) in tree.under("Sources") {
         let Some(body) = cached(&opener)
-            .captures(source.code())
+            .captures(source.statements())
             .and_then(|caps| caps.get(1))
         else {
             continue;
@@ -444,7 +444,7 @@ mod tests {
         let tree = crate::Tree::load(&root).expect("load the repository");
 
         let table = tree.get(super::TABLE).expect("the key table");
-        let options = super::table_options(table.code());
+        let options = super::table_options(table.statements());
         let literal = options
             .values()
             .filter(|stops| matches!(stops, super::Options::Tokens(_)))

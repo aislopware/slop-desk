@@ -109,11 +109,11 @@ pub fn the_settings_gui_stays_deleted(tree: &Tree) -> Report {
         },
         Claim::Subset {
             label: "settings-key-paths",
-            subject: Extract::code(
+            subject: Extract::statements(
                 SETTINGS_KEY,
                 r#"\.(?:choice|double|flag|int|list|text)\("([a-z0-9.-]+)""#,
             ),
-            universe: Extract::code(KEY_TABLE, r#"^\s*path: "([a-z0-9.-]+)",$"#),
+            universe: Extract::statements(KEY_TABLE, r#"^\s*path: "([a-z0-9.-]+)",$"#),
             message: "SettingsKey reads {orphans}, which the key table does not declare — an undeclared \
                       path answers with the accessor's fallback forever, and no config file can set it \
                       because the schema does not offer it",
@@ -149,8 +149,8 @@ pub fn the_settings_gui_stays_deleted(tree: &Tree) -> Report {
 pub fn the_defaults_suite_variable_is_spelled_once(tree: &Tree) -> Report {
     let claims = [Claim::SameValue {
         label: "defaults-suite-env-key",
-        swift: Extract::code(SETTINGS_KEY, r#"defaultsSuiteEnvKey = "([A-Z_]+)""#),
-        rust: Extract::code(GUI_CONTROL, r#"DEFAULTS_SUITE_ENV: &str = "([A-Z_]+)""#),
+        swift: Extract::statements(SETTINGS_KEY, r#"defaultsSuiteEnvKey = "([A-Z_]+)""#),
+        rust: Extract::statements(GUI_CONTROL, r#"DEFAULTS_SUITE_ENV: &str = "([A-Z_]+)""#),
     }];
     check_all(tree, &claims)
 }

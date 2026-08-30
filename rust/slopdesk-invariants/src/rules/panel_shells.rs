@@ -124,14 +124,14 @@ pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
         Claim::Matches {
             path: PHONE_SURFACES,
             pattern: r"CodePanelSurfacePlan",
-            view: View::Code,
+            view: View::Statements,
             message: "the phone's code panel stopped taking a CodePanelSurfacePlan — a panel surface \
                       deciding its own state is the second speller (docs/56, increment 51)",
         },
         Claim::Matches {
             path: MAC_SURFACES,
             pattern: r"CodePanelSurfacePlan",
-            view: View::Code,
+            view: View::Statements,
             message: "the Mac's code panel stopped taking a CodePanelSurfacePlan — a panel surface deciding \
                       its own state is the second speller (docs/56, increment 51)",
         },
@@ -173,7 +173,7 @@ pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
         Claim::Matches {
             path: SURFACE_RUNTIME,
             pattern: r"CodePanelPresentation\.workbench\(",
-            view: View::Code,
+            view: View::Statements,
             message: "the shared panel runtime folds the workbench phase somewhere else — the four states \
                       are one switch, one floor down, for both shells",
         },
@@ -401,14 +401,14 @@ pub fn one_set_of_shells_and_one_caps_heading(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorParts.swift",
             pattern: "SimulatorPresentation",
-            view: View::Code,
+            view: View::Statements,
             message: "MacSimulatorParts stopped asking SimulatorPresentation for its words — the renderer \
                       is not where a title lives",
         },
         Claim::Matches {
             path: "Sources/SlopDeskMacUI/Panel/Android/MacAndroidParts.swift",
             pattern: "AndroidPresentation",
-            view: View::Code,
+            view: View::Statements,
             message: "MacAndroidParts stopped asking AndroidPresentation for its words — the renderer is \
                       not where a title lives",
         },

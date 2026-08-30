@@ -101,21 +101,21 @@ pub fn wait_stream_scanned_once_off(tree: &Tree) -> Report {
         Claim::Matches {
             path: CONTROL,
             pattern: r"slopdesk_rowscan::waituntil::Scanner::new\(",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-hostserver/src/control.rs no longer opens the crate's scanner — the \
                       wait scan is one implementation",
         },
         Claim::Matches {
             path: CONTROL,
             pattern: r"slopdesk_rowscan::waituntil::WAIT_BUFFER_CAP",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-hostserver/src/control.rs picked its own accumulator cap — the cap is \
                       the crate's, or a pathological pattern grows the buffer on the read loop",
         },
         Claim::Matches {
             path: "rust/slopdesk-rowscan/Cargo.toml",
             pattern: r"^slopdesk-sanitize = ",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-rowscan dropped slopdesk-sanitize — the wait scan would need its own \
                       stripper",
         },

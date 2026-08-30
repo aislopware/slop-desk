@@ -46,14 +46,14 @@ pub fn batch_bodies(tree: &Tree) -> Report {
         Claim::Matches {
             path: RUST_SNIFFWIRE,
             pattern: GOLDEN,
-            view: View::Code,
+            view: View::Statements,
             message: "the sniff body has no golden literal left — a renamed key is invisible again to every \
                       superd already running (docs/51 §6.13)",
         },
         Claim::Matches {
             path: RUST_BLOCKWIRE,
             pattern: GOLDEN,
-            view: View::Code,
+            view: View::Statements,
             message: "the block body has no golden literal left — a renamed commandText fills the Commands \
                       panel with blank rows and fails nothing (docs/51 §6.14)",
         },
@@ -84,11 +84,11 @@ pub fn batch_bodies(tree: &Tree) -> Report {
 pub fn read_chunk(tree: &Tree) -> Report {
     let claims = [Claim::SameValue {
         label: "PTY read chunk",
-        swift: Extract::code(
+        swift: Extract::statements(
             "rust/slopdesk-hostpane/src/stream.rs",
             r"READ_CHUNK_BYTES: usize = (.*);$",
         ),
-        rust: Extract::code(
+        rust: Extract::statements(
             "rust/slopdesk-superd/src/pump.rs",
             r"READ_CHUNK_BYTES: usize = (.*);$",
         ),

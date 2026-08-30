@@ -800,10 +800,10 @@ pub fn agent_vocabularies(tree: &Tree) -> Report {
             continue;
         };
         let cases = crate::text::count_lines(
-            &crate::text::range(swift.code(), pair.swift_enum, r"^\}"),
+            &crate::text::range(swift.statements(), pair.swift_enum, r"^\}"),
             r"^    case ",
         );
-        let declared = crate::text::capture_first(rust.code(), r"pub const ALL: \[Self; ([0-9]+)\]");
+        let declared = crate::text::capture_first(rust.statements(), r"pub const ALL: \[Self; ([0-9]+)\]");
         // A zero on the Swift side is the vacuous case: the enum was renamed and the range read
         // nothing, which would otherwise compare against a Rust length nobody changed.
         report.fail_if(

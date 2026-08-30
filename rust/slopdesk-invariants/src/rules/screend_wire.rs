@@ -74,7 +74,7 @@ pub fn hello_and_status(tree: &Tree) -> Report {
     let Some(rust) = report.source(tree, RUST_SCREEN, "screend's banner is answered there") else {
         return report;
     };
-    match crate::text::capture_first(rust.code(), r#"HELLO_BANNER: &\[u8\] = b"(.*)";$"#) {
+    match crate::text::capture_first(rust.statements(), r#"HELLO_BANNER: &\[u8\] = b"(.*)";$"#) {
         None => {
             report.fail(format!(
                 "{RUST_SCREEN} no longer declares HELLO_BANNER — this gate reads nothing and would pass",
@@ -190,11 +190,11 @@ pub fn opaque_budget(tree: &Tree) -> Report {
     // paths matter.
     let claims = [Claim::SameValue {
         label: "the opaque payload budget hostd will REPLY with",
-        swift: Extract::code(
+        swift: Extract::statements(
             "rust/slopdesk-hostserver/src/metadata.rs",
             r"^pub const MAX_OPAQUE_PAYLOAD_BYTES: usize = (.*);$",
         ),
-        rust: Extract::code(RUST_PROBE_RUN, RUST_CAP),
+        rust: Extract::statements(RUST_PROBE_RUN, RUST_CAP),
     }];
     check_all(tree, &claims)
 }

@@ -689,56 +689,56 @@ pub fn spawn_request_flags_cross(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOST_STANDALONE,
             pattern: r"pub shell_integration: bool",
-            view: View::Code,
+            view: View::Statements,
             message: "the spawn request's shellIntegration flag is not spelled in hostd's vocabulary — the \
                       shim would silently never install",
         },
         Claim::Matches {
             path: HOST_STANDALONE,
             pattern: r"shell_integration: resolved\.shell_integration",
-            view: View::Code,
+            view: View::Statements,
             message: "hostd stopped filling the shellIntegration flag from the resolved spawn — it encodes \
                       as false, which is a valid request for a pane that wanted no shim",
         },
         Claim::Matches {
             path: HOSTD_SPAWN,
             pattern: r"shell_integration: request\.shell_integration",
-            view: View::Code,
+            view: View::Statements,
             message: "the encoder drops the shellIntegration flag — the request superd reads asks for no \
                       shim and nothing fails",
         },
         Claim::Matches {
             path: RUST_PROTOCOL,
             pattern: r#"rename = "shellIntegration""#,
-            view: View::Code,
+            view: View::Statements,
             message: "the spawn request's shellIntegration flag is not spelled on the wire — the shim would \
                       silently never install",
         },
         Claim::Matches {
             path: HOST_STANDALONE,
             pattern: r"pub blocks: bool",
-            view: View::Code,
+            view: View::Statements,
             message: "the spawn request's blocks tap is not spelled in hostd's vocabulary — a pane can only \
                       be tapped at spawn, so it would never be segmented",
         },
         Claim::Matches {
             path: HOST_STANDALONE,
             pattern: r"blocks: self\.blocks_enabled && resolved\.shell_integration",
-            view: View::Code,
+            view: View::Statements,
             message: "the blocks tap stopped following BOTH the server flag and the shim — a --cmd pane has \
                       no OSC-133 marks, so a tap on it reports nothing for the pane's whole life",
         },
         Claim::Matches {
             path: HOSTD_SPAWN,
             pattern: r"blocks: self\.recipe\.blocks\(request\.blocks\)",
-            view: View::Code,
+            view: View::Statements,
             message: "the encoder drops the blocks tap — a pane can only be tapped at spawn, so it would \
                       never be segmented",
         },
         Claim::Matches {
             path: RUST_PROTOCOL,
             pattern: r"pub blocks: Option<BlocksRequest>",
-            view: View::Code,
+            view: View::Statements,
             message: "the spawn request's blocks tap is not spelled on the wire — a pane can only be tapped \
                       at spawn, so it would never be segmented",
         },

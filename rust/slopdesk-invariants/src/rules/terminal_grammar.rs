@@ -76,7 +76,7 @@ pub fn one_key_vocabulary_whichever_grammar(tree: &Tree) -> Report {
         Claim::Matches {
             path: CONTROL,
             pattern: r"slopdesk_workspace::send_keys::key_token\(",
-            view: View::Code,
+            view: View::Statements,
             message: "rust/slopdesk-hostserver/src/control.rs answers a key name itself again — the \
                       vocabulary is send_keys.rs's",
         },

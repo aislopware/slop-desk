@@ -114,8 +114,10 @@ pub fn the_liveness_bytes_agree(tree: &Tree) -> Report {
         .map(|(label, rust, swift)| {
             Claim::SameValue {
                 label,
-                swift: Extract::raw(MODEL_FIELDS, swift).within(r"^public enum PaneLivenessState", r"^\}"),
-                rust: Extract::raw(WIRE_FIELDS, rust).within(r"^pub enum PaneLivenessState \{", r"^\}"),
+                swift: Extract::statements(MODEL_FIELDS, swift)
+                    .within(r"^public enum PaneLivenessState", r"^\}"),
+                rust: Extract::statements(WIRE_FIELDS, rust)
+                    .within(r"^pub enum PaneLivenessState \{", r"^\}"),
             }
         })
         .collect();
