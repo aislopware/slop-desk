@@ -89,10 +89,6 @@ const FLOOR: &[(&str, Floor)] = &[
         Floor::ShellDeDuplication,
     ),
     (
-        "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarFontScheme.swift",
-        Floor::WebKit,
-    ),
-    (
         "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarFontSchemeHandler.swift",
         Floor::WebKit,
     ),
@@ -133,14 +129,6 @@ const FLOOR: &[(&str, Floor)] = &[
         Floor::ShellDeDuplication,
     ),
     (
-        "Sources/SlopDeskClientCore/Panel/DeviceDropInstall.swift",
-        Floor::ShellDeDuplication,
-    ),
-    (
-        "Sources/SlopDeskClientCore/Panel/DeviceStageVeil.swift",
-        Floor::ShellDeDuplication,
-    ),
-    (
         "Sources/SlopDeskClientCore/Panel/PanelChromeActions.swift",
         Floor::ShellDeDuplication,
     ),
@@ -151,18 +139,6 @@ const FLOOR: &[(&str, Floor)] = &[
     (
         "Sources/SlopDeskClientCore/Support/ObservationFollow.swift",
         Floor::SwiftRuntime,
-    ),
-    (
-        "Sources/SlopDeskDevicePanels/Android/AndroidFrameSink.swift",
-        Floor::DevicePanelLane,
-    ),
-    (
-        "Sources/SlopDeskDevicePanels/Android/AndroidScreenLayout.swift",
-        Floor::DevicePanelLane,
-    ),
-    (
-        "Sources/SlopDeskDevicePanels/Android/AndroidStreamConnection.swift",
-        Floor::DevicePanelLane,
     ),
     (
         "Sources/SlopDeskDevicePanels/Shared/DevicePanelDelivery.swift",
@@ -177,23 +153,7 @@ const FLOOR: &[(&str, Floor)] = &[
         Floor::DevicePanelLane,
     ),
     (
-        "Sources/SlopDeskDevicePanels/Simulator/SimulatorChromeArt.swift",
-        Floor::DrawingArt,
-    ),
-    (
-        "Sources/SlopDeskDevicePanels/Simulator/SimulatorChromeBundle.swift",
-        Floor::DevicePanelLane,
-    ),
-    (
         "Sources/SlopDeskDevicePanels/Simulator/SimulatorFrameSink.swift",
-        Floor::DevicePanelLane,
-    ),
-    (
-        "Sources/SlopDeskDevicePanels/Simulator/SimulatorLogConnection.swift",
-        Floor::DevicePanelLane,
-    ),
-    (
-        "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenLayout.swift",
         Floor::DevicePanelLane,
     ),
     (
@@ -211,13 +171,11 @@ const FLOOR: &[(&str, Floor)] = &[
     ),
     ("Sources/SlopDeskProtocol/SlopDeskError.swift", Floor::Vocabulary),
     ("Sources/SlopDeskProtocol/WireMessage.swift", Floor::Vocabulary),
-    ("Sources/SlopDeskSlate/PaneDropChipArt.swift", Floor::DrawingArt),
     (
         "Sources/SlopDeskSlate/PaneDropPreviewArt.swift",
         Floor::DrawingArt,
     ),
     ("Sources/SlopDeskSlate/PaneGrabPillArt.swift", Floor::DrawingArt),
-    ("Sources/SlopDeskSlate/PaneStatusPillArt.swift", Floor::DrawingArt),
     ("Sources/SlopDeskSlate/SlatePlate.swift", Floor::DrawingArt),
     ("Sources/SlopDeskSlate/SlateVectorArt.swift", Floor::DrawingArt),
     ("Sources/SlopDeskSlate/SlateVectorDraw.swift", Floor::DrawingArt),
@@ -352,13 +310,21 @@ const FLOOR: &[(&str, Floor)] = &[
 ];
 
 /// A file's Swift declarations, as face names: `enum X`, `struct X`, `final class X` at the head of
-/// a line, with or without `public`.
+/// a line, behind any of the three access modifiers a sibling can still reach through.
+///
+/// `package` is not optional here, and reading only `public` was this rule's first bug: 184 of the
+/// tree's 657 face declarations are `package`, which is the DEFAULT spelling for a type shared
+/// inside one module family. Missing them booked pure forwarders — `SimulatorScreenLayout`, whose
+/// every body is one call into `package enum DevicePanelGeometry` — as undelegated floor.
 ///
 /// Nested types are deliberately missed — the leading-`^` anchor is what keeps this to the types a
 /// sibling can NAME without qualifying, which is how a face is actually reached.
 fn declared_types(code: &str, into: &mut BTreeSet<String>) {
     for line in code.lines() {
-        let rest = line.strip_prefix("public ").unwrap_or(line);
+        let rest = ["public ", "package ", "internal "]
+            .iter()
+            .find_map(|modifier| line.strip_prefix(modifier))
+            .unwrap_or(line);
         for keyword in ["enum ", "struct ", "final class "] {
             let Some(name) = rest.strip_prefix(keyword) else {
                 continue;
@@ -467,6 +433,8 @@ pub fn the_swift_floor_is_exactly_what_is_booked(tree: &Tree) -> Report {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crate::tests::Fixture;
 
     /// A tree with one face, one file that reaches it, one UI file — and EVERY booked path, since
@@ -566,6 +534,23 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("HeadlessTerminalSurface")),
             "a second headless client in Swift must be red"
+        );
+    }
+
+    /// The rule's own first bug: reading only `public` missed 184 of the tree's 657 faces, and
+    /// booked pure forwarders into a `package enum` as undelegated floor.
+    #[test]
+    fn a_package_face_is_a_face() {
+        let mut faces = BTreeSet::new();
+        super::declared_types(
+            "public enum A {}\npackage enum B {}\ninternal struct C {}\nfinal class D {}\npackage final \
+             class E {}\n",
+            &mut faces,
+        );
+        assert_eq!(
+            faces.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["A", "B", "C", "D", "E"],
+            "every access modifier a sibling can still reach through declares a face"
         );
     }
 

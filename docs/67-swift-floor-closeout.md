@@ -25,12 +25,13 @@ The method that is right builds the face list first and subtracts it:
 
 ```sh
 grep -rl 'slopdesk_' Sources/ --include='*.swift' \
-  | xargs grep -hoE '^(public )?(enum|struct|final class) [A-Z][A-Za-z0-9]+' \
-  | awk '{print $NF}' | sort -u > /tmp/faces.txt      # 470 types on 2026-08-30
+  | xargs grep -hoE '^(public |package |internal )?(enum|struct|final class) [A-Z][A-Za-z0-9]+' \
+  | awk '{print $NF}' | sort -u > /tmp/faces.txt      # 657 types on 2026-08-30
 # a file is portable only if it is non-UI, has no door, AND names no face
 ```
 
-Run that way the whole tree holds **1 600** undelegated non-UI code lines across **44 files**, and
+The three modifiers matter and `package` most of all — §5 records what dropping it cost. Run this
+way the whole tree holds **1 600** undelegated non-UI code lines across **44 files**, and
 the Store cluster holds **zero** — every file in it names a face, `WorkspaceStore.swift` at a
 density of one face reference per 3.8 code lines. Its decisions are `SupervisionFold`,
 `TabBadgeGating`, `TabBadgeResolver`, `NotificationPolicy`, `StoreRollup` and
@@ -111,24 +112,44 @@ door is inside the header's `MACOS-ONLY` region and the Swift file is `#if os(ma
 
 ## 5. The floor, as a list
 
-The other 82 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
+The other 70 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
 that fits none of them does not belong on the list, which is the question §7's rule forces someone
 to answer the next time one appears.
 
 | Class | Files | Why it is Swift |
 | --- | --- | --- |
-| `ShellDeDuplication` | 26 | A decision AppKit and UIKit would each otherwise write, hoisted so the two cannot disagree — `PanePointer`, `DeviceBezelGeometry`, `PanelChromeActions`, `HoverSelectionGate`, `DeviceStageVeil`, the three `*Copy` files, the rung enums the design floor resolves. What it decides is PRESENTATION; the value is that it is written once for both. |
+| `ShellDeDuplication` | 24 | A decision AppKit and UIKit would each otherwise write, hoisted so the two cannot disagree — `PanePointer`, `DeviceBezelGeometry`, `PanelChromeActions`, `HoverSelectionGate`, the `*Copy` files, the rung enums the design floor resolves. What it decides is PRESENTATION; the value is that it is written once for both. |
 | `Vocabulary` | 17 | The types the wire, the config or the ABI is typed in on this side — `WireMessage`, `MetadataVerb`, `VideoChannel`, `KeyChord`, the config enums — plus the module-doc files that carry no code at all. |
 | `SwiftRuntime` | 13 | Drives a Swift or Foundation primitive with no counterpart that can cross a C ABI: `withObservationTracking`, `Task`, `AsyncStream`, `DispatchQueue`, `NWConnection`, `JSONEncoder`, `ProcessInfo`, `async` re-entrancy, the first-responder generation, a virtual clock. §6 closes `docs/65` §5's triad into this class. |
-| `DrawingArt` | 9 | `SlateVectorArt`, `AndroidMarkPath`, the five `*Art` files — CoreGraphics path data. `docs/63` §6's floor by name. |
-| `DevicePanelLane` | 9 | The simulator and Android sockets, frame sinks and layouts. `docs/63` §6 defers these to `docs/47` / `docs/48` BY NAME, and this stage does not fold them in. |
 | `CallingConvention` | 6 | The NEAR side of the FFI boundary: `FFIDelivery`, `ArenaText`, `RustHandle`, `LentText`, `CodecBytes`, `DevicePanelDelivery`. A door's caller cannot itself be behind a door. |
-| `WebKit` | 2 | `CodeSidebarFontScheme` and its handler. `docs/63` §6's floor by name. |
+| `DrawingArt` | 6 | `SlateVectorArt`, `AndroidMarkPath`, the remaining `*Art` files — CoreGraphics path data. `docs/63` §6's floor by name. |
+| `DevicePanelLane` | 3 | `DeviceSectionReading`, `SimulatorWebSocketLane`, `SimulatorFrameSink`. `docs/63` §6 defers the lane to `docs/47` / `docs/48` BY NAME, and this stage does not fold it in. |
+| `WebKit` | 1 | `CodeSidebarFontSchemeHandler`. `docs/63` §6's floor by name. |
 
 `DevicePanelLane` is the only row that is a deferral rather than a floor. Everything above it is
 where it belongs.
 
-**82, not 44.** The shell pipeline in §1 answers 44 and the rule answers 82, and the rule is right:
+### 70, not 82 — the rule's own first bug
+
+This list was 82 when it landed, and twelve of those entries were wrong. `declared_types` read a
+face declaration as `^(public )?(enum|struct|final class) X`, and **184 of the tree's 657 face
+declarations are `package`** — which is the DEFAULT spelling for a type shared inside one module
+family, not an exception. A file whose every body forwards into a `package enum` therefore read as
+undelegated.
+
+`SimulatorScreenLayout` is the case that exposed it: five of its six functions are one call into
+`package enum DevicePanelGeometry`, which holds eleven doors. It was booked as a `DevicePanelLane`
+floor entry while being a pure forwarder. The same slip booked `AndroidScreenLayout`,
+`AndroidFrameSink`, `AndroidStreamConnection`, `SimulatorChromeArt`, `SimulatorChromeBundle`,
+`SimulatorLogConnection`, `CodeSidebarFontScheme`, `DeviceDropInstall`, `DeviceStageVeil`,
+`PaneDropChipArt` and `PaneStatusPillArt`.
+
+Note the direction of the error. A missed face makes a file look UNDELEGATED, so the failure mode
+was an inflated ledger somebody had to justify — never a portable file waved through. That is the
+side a census should fail on, and it is why the fix shrank the list rather than growing it. A
+break-test now pins all three modifiers.
+
+**70, not 44.** The shell pipeline in §1 answers 44 and the rule answers 70, and the rule is right:
 its candidate filter runs over `Source::code()`, which strips a comment LINE wherever it opens,
 where the pipeline's `grep` was matching raw text. A file whose only mention of a face is in a doc
 comment reads as delegated to `grep` and as undelegated to the rule. That gap is exactly how
