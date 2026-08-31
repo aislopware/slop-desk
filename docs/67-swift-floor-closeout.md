@@ -112,13 +112,18 @@ door is inside the header's `MACOS-ONLY` region and the Swift file is `#if os(ma
 
 ## 5. The floor, as a list
 
-The other 70 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
+The other 71 files stay, and this is what they are. Each class is a REASON, not a bucket — a file
 that fits none of them does not belong on the list, which is the question §7's rule forces someone
 to answer the next time one appears.
 
+The count was 70 the day this section landed, and the two subsections below narrate how it got
+there; their numbers are left at that day's rather than restated, because what they record is the
+METHOD's history and not today's ledger. One entry has been added since —
+`TerminalChromeAppearance`, in the `ShellDeDuplication` row.
+
 | Class | Files | Why it is Swift |
 | --- | --- | --- |
-| `ShellDeDuplication` | 24 | A decision AppKit and UIKit would each otherwise write, hoisted so the two cannot disagree — `PanePointer`, `DeviceBezelGeometry`, `PanelChromeActions`, `HoverSelectionGate`, the `*Copy` files, the rung enums the design floor resolves. What it decides is PRESENTATION; the value is that it is written once for both. Re-triaged in full 2026-08-30, all 24 bodies: the row also holds registration seams (`VideoWindowSeam`, `AppearanceApplier`), `@Observable` state the shells bind to, and pure vocabulary enums, which the label fits loosely — but nothing in it clears the bar `docs/62` item 4 set, because crossing any of them buys a C ABI call and a handle for a comparison. It is a floor, not a backlog. |
+| `ShellDeDuplication` | 25 | A decision AppKit and UIKit would each otherwise write, hoisted so the two cannot disagree — `PanePointer`, `DeviceBezelGeometry`, `PanelChromeActions`, `HoverSelectionGate`, the `*Copy` files, the rung enums the design floor resolves. What it decides is PRESENTATION; the value is that it is written once for both. Re-triaged in full 2026-08-30, all 24 bodies: the row also holds registration seams (`VideoWindowSeam`, `AppearanceApplier`), `@Observable` state the shells bind to, and pure vocabulary enums, which the label fits loosely — but nothing in it clears the bar `docs/62` item 4 set, because crossing any of them buys a C ABI call and a handle for a comparison. It is a floor, not a backlog. The 25th is `TerminalChromeAppearance`, added with the block chrome (`docs/68` §5.3): the block furniture is DRAWN in Rust, and this is the design record the two shells would otherwise each spell — it resolves Slate's on-glass tokens into the style struct `slopdesk_term_surface_set_chrome_style` takes. The deciding is what stays; the drawing already crossed. |
 | `Vocabulary` | 17 | The types the wire, the config or the ABI is typed in on this side — `WireMessage`, `MetadataVerb`, `VideoChannel`, `KeyChord`, the config enums — plus the module-doc files that carry no code at all. |
 | `SwiftRuntime` | 14 | Drives a Swift or Foundation primitive with no counterpart that can cross a C ABI: `withObservationTracking`, `Task`, `AsyncStream`, `DispatchQueue`, `NWConnection`, `JSONEncoder`, `ProcessInfo`, `async` re-entrancy, the first-responder generation, a virtual clock, `DeviceVeilWait`'s sleep-and-cancellation-check. §6 closes `docs/65` §5's triad into this class. |
 | `CallingConvention` | 8 | The NEAR side of the FFI boundary: `FFIDelivery`, `ArenaText`, `RustHandle`, `LentText`, `CodecBytes`, `DevicePanelDelivery`, plus the two seams that decide what does NOT need to cross — `DeviceSectionReading` walks a blob a door filled, and `SimulatorFrameSink` holds three payloads (`docs/55` §4b: Rust would copy an IDR in and out to be told which one it was). A door's caller cannot itself be behind a door. |

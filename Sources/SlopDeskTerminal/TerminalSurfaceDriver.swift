@@ -315,7 +315,24 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
             surface?.setPalette(words.palette)
             onNeedsPresent?()
         }
+        // The furniture's design rides the same generation as the cells' colours, because it is the
+        // same theme: `TerminalChromeAppearance` reads the glass palette the words above came from,
+        // and installing one without the other is how a divider ends up in the previous profile's
+        // edge tone.
+        surface?.setChromeStyle(TerminalChromeAppearance.current)
         applyOptionAsAlt()
+    }
+
+    /// Pushes where the pointer is, in surface points, or that it has left.
+    ///
+    /// A present is owed because hover is a DRAWN state now: the wash is in the renderer's own pass,
+    /// so a move that changed which block is under the pointer changes the next frame and nothing
+    /// else would ask for it. Owed only when it CHANGED, which is what the door answers — a pointer
+    /// gliding inside one block arrives once per sample and would otherwise buy a full render each
+    /// time for a picture that is already up.
+    func setHover(_ point: CGPoint?) {
+        guard surface?.setHover(point) == true else { return }
+        onNeedsPresent?()
     }
 
     /// Re-reads `macos-option-as-alt` and pushes it.

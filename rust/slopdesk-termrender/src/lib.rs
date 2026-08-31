@@ -26,6 +26,8 @@
 //! - [`quad`] — the instance structs the shaders read.
 //! - [`layout`] — where cells, decorations, the cursor and the scrollbar thumb are.
 //! - [`block`] — the command-block list, virtualised, with the alt screen as its degenerate case.
+//! - [`chrome`] — the furniture around one: the gutter, the divider, the collapse mark, the
+//!   scrollbar.
 //! - [`paint`] — the pass that turns a frame into instances, sixty times a second.
 //!
 //! ## Units
@@ -38,6 +40,7 @@
 
 pub mod atlas;
 pub mod block;
+pub mod chrome;
 pub mod glyph;
 pub mod layout;
 pub mod paint;
@@ -47,6 +50,7 @@ pub use atlas::{Atlas, AtlasFormat, AtlasRegion};
 pub use block::{
     BlockLayout, BlockSpan, Chrome, LayoutMode, PlacedBlock, RowRange, Viewport, lay_out, segment,
 };
+pub use chrome::{ChromeFrame, ChromeStyle};
 pub use glyph::{
     CachedGlyph, GlyphCache, GlyphKey, GlyphRasterizer, RasterGlyph, ShapedGlyph, Synthetic, TextRun,
     TextShaper,

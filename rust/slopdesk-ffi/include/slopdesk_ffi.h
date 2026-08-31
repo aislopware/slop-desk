@@ -3196,14 +3196,16 @@ size_t slopdesk_term_surface_take_clipboard_writes(SlopDeskTerminalSurface *hand
 
 /* ---- the block list: Warp-shaped chrome over the same grid ---------------------------------- *
  *
- * `rust/slopdesk-termrender`'s segmenter cuts the frame on OSC 133 `A` and places every block; these
- * doors hand the RECTS across so an AppKit/UIKit header can be drawn over them. Nothing here draws:
- * `paint.rs` still owns the glyphs, and the design language owns the header.
+ * `rust/slopdesk-termrender`'s segmenter cuts the frame on OSC 133 `A` and places every block, and
+ * `chrome.rs` DRAWS the furniture — gutter, divider, collapse mark, scrollbar — in the same pass as
+ * the glyphs. What crosses is the DESIGN, not the drawing: _set_chrome_style states the colours and
+ * thicknesses once, and the client never has to keep a layer in step with a scroll it does not own.
  *
- * The rects are in POINTS — the unit every other pointer door on this surface takes — already
- * offset by the insets and by the list's scroll, so a caller places a view at them knowing neither. A block whose `visible`
- * is false was laid out and culled — the caller keeps its view off-screen rather than recomputing
- * what the layout already decided. */
+ * The rects still cross, because a hit test, a context menu and a copy-block verb are all questions
+ * asked between frames. They are in POINTS — the unit every other pointer door on this surface
+ * takes — already offset by the insets and by the list's scroll, so a caller places a view at them
+ * knowing neither. A block whose `visible` is false was laid out and culled — the caller keeps its
+ * view off-screen rather than recomputing what the layout already decided. */
 
 typedef struct {
   double  x, y, width, height;                      /* the whole block, chrome included      */
@@ -3236,6 +3238,39 @@ SlopDeskTerminalBlockScroll slopdesk_term_surface_block_scroll(SlopDeskTerminalS
 
 /* The block under a point in surface POINTS, or -1 for none. */
 int64_t slopdesk_term_surface_block_at_point(SlopDeskTerminalSurface *handle, double x, double y);
+
+/* What the furniture is drawn with. Colours are 0xAARRGGBB — the one place on this surface where the
+ * high byte IS alpha, because a hover wash and a thumb are translucent by design where a cell's ink
+ * never is. Lengths are POINTS and are scaled inside, so a display change costs the client nothing.
+ * An all-zero struct is a complete design that draws nothing, which is what an uninstalled
+ * appearance looks like. */
+typedef struct {
+  uint32_t divider;                /* the hairline between one block and the next */
+  uint32_t gutter;                 /* the bar down a block's leading edge         */
+  uint32_t gutter_active;          /* the same bar on the block holding the cursor */
+  uint32_t hover;                  /* the wash over the block under the pointer   */
+  uint32_t label;                  /* the collapse mark and its folded-row count  */
+  uint32_t scrollbar;              /* the thumb                                   */
+  double   divider_thickness;
+  double   gutter_thickness;
+  double   scrollbar_thickness;
+  double   scrollbar_min_height;   /* the grabbable floor in a long scrollback    */
+  double   scrollbar_inset;        /* the gap to the trailing edge                */
+} SlopDeskTerminalChromeStyle;
+
+/* One door for the whole design, for _set_theme's reason: a divider colour paired with last frame's
+ * gutter thickness is a state the client never described. */
+void slopdesk_term_surface_set_chrome_style(SlopDeskTerminalSurface *handle,
+                                            SlopDeskTerminalChromeStyle style);
+
+/* Where the pointer is, in POINTS, so the block under it takes the hover wash. `inside` is how
+ * "nowhere" is spelled — (0, 0) is a real point inside the first block. A POSITION and not an index,
+ * because an index the client held would light the wrong block the moment output re-laid the list.
+ * Answers whether the next frame would DIFFER: a pointer gliding inside one block sends a move per
+ * sample and changes no pixel, and presenting on each would pay a full render for the picture
+ * already on screen. Present only on true. */
+bool slopdesk_term_surface_set_hover(SlopDeskTerminalSurface *handle, double x, double y,
+                                     bool inside);
 
 /* Folds one block. An index past the end, or an ORPHAN with no header to click, is ignored —
  * _toggle answers the state it left behind. */

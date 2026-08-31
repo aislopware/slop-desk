@@ -95,6 +95,12 @@
 //!   the opposite and worse — mistake CODE for a comment, and hand a gate a haystack with the thing
 //!   it was looking for cut out of it. That is the one direction its own header forbids, and what
 //!   its tree canary measures on every file that ships.
+//! * [`digest`] — the question does not arise, and that is the answer rather than a dodge: it is
+//!   the other non-gate here, and it reads no text at all. What it takes is BYTES and a path, and a
+//!   comment is bytes like any other — hashing one is the point. Its framing does carry an
+//!   obligation of the same shape, though, which is why it is one module and not four lines in two
+//!   gates: [`stamp`] and [`ffi`] both cache on this number, and a stamp whose framing drifted
+//!   between them would answer a different question in each while looking identical.
 //!
 //! The discriminator is the one that crate arrived at: a claim that must be SATISFIED must not read
 //! prose, and a BAN may, because a comment makes a ban fail loud rather than pass quiet.

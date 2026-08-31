@@ -373,39 +373,30 @@ pub struct Thumb {
     pub height: f64,
 }
 
-/// The thumb for a scrollback, or `None` when everything already fits.
+/// The thumb for a scrollable run of content, or `None` when everything already fits.
 ///
 /// This replaces `ghostty_surface_viewport_info` and the fork's `SCROLLBAR` action — the one piece
 /// of viewport state the surface API was answering that this crate now has to answer itself. It is
-/// arithmetic over three counts, which is why losing the surface costs nothing here.
+/// arithmetic over three lengths, which is why losing the surface costs nothing here.
+///
+/// DEVICE PIXELS, not rows, and that is the whole reason it is not a row count: what scrolls under
+/// a block layout is rows PLUS chrome, and a short session with no scrollback at all can still
+/// overflow its viewport by one header per command. A row-counting thumb would answer `None` for
+/// exactly that case — scrollable content, no thumb — so the unit has to be the one the overflow is
+/// measured in. The caller converts its scrollback rows on the way in, where the cell height is.
 ///
 /// `min_height` keeps the thumb grabbable in a million-line scrollback, where a proportional thumb
 /// would be a fraction of a pixel. The track it is squeezed out of comes off the travel, not off
 /// the thumb, so the thumb still reaches both ends.
 #[must_use]
-pub fn scrollbar(
-    total_rows: u64,
-    viewport_rows: u16,
-    top_row: u64,
-    track: f64,
-    min_height: f64,
-) -> Option<Thumb> {
-    let viewport = u64::from(viewport_rows);
-    if viewport == 0 || total_rows <= viewport || track <= 0.0 {
+pub fn scrollbar(content: f64, viewport: f64, offset: f64, track: f64, min_height: f64) -> Option<Thumb> {
+    // Written in the POSITIVE so a NaN in any length falls out here rather than propagating into a
+    // thumb rect — the same rule `grid_size` and the surface's pointer guards follow.
+    if !(viewport > 0.0 && content > viewport && track > 0.0) {
         return None;
     }
-
-    // `u64 as f64` loses precision past 2^53 rows, which is 10^15 lines of scrollback — not a case,
-    // and the failure mode there is a thumb a pixel off rather than anything unsafe.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "a scrollback never approaches the f64 mantissa; a lossy row count is not a case"
-    )]
-    let (total, visible, top) = (
-        total_rows as f64,
-        viewport as f64,
-        top_row.min(total_rows - viewport) as f64,
-    );
+    let (total, visible) = (content, viewport);
+    let top = f64::min(f64::max(offset, 0.0), content - viewport);
 
     let proportional = track * (visible / total);
     let height = f64::min(f64::max(proportional, f64::min(min_height, track)), track);
@@ -587,16 +578,25 @@ mod tests {
     }
 
     #[test]
-    fn a_scrollback_that_fits_has_no_thumb() {
-        assert_eq!(scrollbar(24, 24, 0, 100.0, 20.0), None);
-        assert_eq!(scrollbar(1000, 0, 0, 100.0, 20.0), None);
+    fn content_that_fits_has_no_thumb() {
+        assert_eq!(scrollbar(480.0, 480.0, 0.0, 100.0, 20.0), None);
+        assert_eq!(scrollbar(20_000.0, 0.0, 0.0, 100.0, 20.0), None);
+        assert_eq!(scrollbar(f64::NAN, 480.0, 0.0, 100.0, 20.0), None);
+    }
+
+    #[test]
+    fn chrome_alone_is_enough_to_earn_a_thumb() {
+        // No scrollback at all — one viewport of rows, pushed past its own height by the headers
+        // the block layout spends above each command. The row count would call this unscrollable.
+        let thumb = scrollbar(520.0, 480.0, 0.0, 100.0, 20.0).unwrap();
+        assert!(thumb.height < 100.0);
     }
 
     #[test]
     fn the_thumb_reaches_both_ends_and_never_leaves_the_track() {
         let track = 100.0;
-        let top = scrollbar(1000, 25, 0, track, 20.0).unwrap();
-        let bottom = scrollbar(1000, 25, 975, track, 20.0).unwrap();
+        let top = scrollbar(20_000.0, 500.0, 0.0, track, 20.0).unwrap();
+        let bottom = scrollbar(20_000.0, 500.0, 19_500.0, track, 20.0).unwrap();
 
         assert!(top.y.abs() < f64::EPSILON);
         assert!((bottom.y + bottom.height - track).abs() < 1e-9);
@@ -608,13 +608,13 @@ mod tests {
 
     #[test]
     fn a_scroll_past_the_end_clamps_rather_than_overshooting() {
-        let thumb = scrollbar(1000, 25, u64::MAX, 100.0, 20.0).unwrap();
+        let thumb = scrollbar(20_000.0, 500.0, f64::MAX, 100.0, 20.0).unwrap();
         assert!((thumb.y + thumb.height - 100.0).abs() < 1e-9);
     }
 
     #[test]
     fn a_track_shorter_than_the_floor_still_yields_a_thumb_inside_it() {
-        let thumb = scrollbar(100_000, 25, 0, 8.0, 20.0).unwrap();
+        let thumb = scrollbar(2_000_000.0, 500.0, 0.0, 8.0, 20.0).unwrap();
         assert!(thumb.height <= 8.0);
         assert!(thumb.height > 0.0);
     }

@@ -22,10 +22,11 @@
 //!
 //! ## What this pass does NOT draw
 //!
-//! Block headers, gutter marks, the scrollbar and the input box. Those are chrome — colours,
-//! typography and affordances that belong to the client's design system, and `docs/68` does not put
-//! a design language in the renderer. [`crate::block`] hands over their rects; the client fills
-//! them, into the same [`DrawList`] if it wants.
+//! The furniture around a block — gutter, divider, collapse mark, scrollbar. That is
+//! [`crate::chrome`]'s pass, running after this one into the same [`DrawList`], and the split is
+//! between the two KINDS of thing on the surface rather than between two owners: this pass draws
+//! what the PROGRAM emitted, and that one draws what the client decided. Its header argues why the
+//! decision still crosses from Swift while the drawing does not.
 
 use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_vterm::{CellFlags, ColumnSpan, Frame, FrameCell, FrameCursor, FrameRow, Rgb, UnderlineStyle};

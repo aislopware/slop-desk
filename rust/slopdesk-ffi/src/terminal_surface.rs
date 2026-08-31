@@ -58,8 +58,9 @@ use slopdesk_apple_text::{FontStack, Rasterizer, Shaper};
 use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_terminal::surface_action::{SelectionEdge, SurfaceAction};
 use slopdesk_termrender::{
-    BlockLayout, BlockSpan, CellGeometry, Chrome, DrawList, GlyphCache, Insets, LayoutMode, PaintStyle,
-    Painter, Rgba, SelectionColors, Viewport, grid_size, lay_out, segment,
+    BlockLayout, BlockSpan, CellGeometry, Chrome, ChromeFrame, ChromeStyle, DrawList, GlyphCache, Insets,
+    LayoutMode, PaintStyle, Painter, Rgba, SelectionColors, Thumb, Viewport, chrome, grid_size, lay_out,
+    scrollbar, segment,
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{
@@ -169,6 +170,24 @@ struct Surface {
     blink_visible: bool,
     /// How a selection recolours what it covers, as the theme set it.
     selection: SelectionColors,
+    /// The client's design for the block furniture, in the POINTS it stated it in.
+    ///
+    /// Held as the record that crossed rather than as a [`ChromeStyle`] because a `ChromeStyle` is
+    /// device pixels by definition, and the scale it would be converted at moves — dragging a
+    /// window between a Retina display and a 1× one rebuilds the font stack but must not oblige
+    /// the client to restate its design. Converting in [`Self::draw`] is what makes the scale
+    /// change free.
+    ///
+    /// [`SlopDeskTerminalChromeStyle::default`] draws nothing, which is the honest state before an
+    /// appearance is installed: a surface whose client has not said what a divider looks like
+    /// should show output and no furniture, not a guess.
+    chrome_style: SlopDeskTerminalChromeStyle,
+    /// Where the pointer is, in POINTS, when it is inside the surface at all.
+    ///
+    /// A POINT and not a block index: an index goes stale the moment output arrives and re-lays the
+    /// list out, so a client that reported one would light the wrong block for a frame every time a
+    /// command printed. The point stays true until the pointer actually moves.
+    hover: Option<(f64, f64)>,
     /// The clear colour, which is also the reason `quad.rs` may drop a background rect that
     /// matches.
     background: Rgba,
@@ -257,6 +276,8 @@ impl Surface {
                 foreground: None,
             },
             background: Rgba::opaque(15, 17, 21),
+            chrome_style: SlopDeskTerminalChromeStyle::default(),
+            hover: None,
             pty_replies: Vec::new(),
             clipboard_writes: Vec::new(),
         };
@@ -463,10 +484,70 @@ impl Surface {
             &mut self.rasterizer,
             &mut self.list,
         );
+        // The furniture goes on AFTER the text and reads the layout the text was placed against —
+        // the same `layout`, not `self.layout`, because assigning first would put a re-borrow of
+        // `self` between the two passes for no gain. `chrome::paint` writes to the list's two ENDS,
+        // so drawing second does not mean drawing over.
+        //
+        // The alternate screen gets no second pass at all, rather than `ChromeStyle::NONE`. The two
+        // draw the same picture — every one of NONE's lengths is zero — but they are not the same
+        // work, and skipping is what says the pass is inapplicable rather than merely invisible:
+        // the frame this branch would build hit-tests the pointer and asks the engine for its
+        // viewport, and both answers would be thrown away. The picture matters too.
+        // `LayoutMode::for_screen` hands a full-screen program ONE headerless block, so a style
+        // that survived here would run a gutter down `vim`'s left column and — the cursor being
+        // inside block zero by definition — accent it.
+        if !alternate {
+            let frame = ChromeFrame {
+                hovered: self
+                    .hover
+                    .and_then(|(x, y)| block_at(&layout, |rect| self.on_screen(rect), x, y)),
+                active: active_block(&layout, self.session.frame()),
+                viewport: Rect {
+                    x: insets.left,
+                    y: insets.top,
+                    width: viewport.width,
+                    height: viewport_height,
+                },
+                thumb: self.thumb(&layout, viewport_height, cell_height),
+            };
+            chrome::paint(
+                &layout,
+                &self.chrome_style.scaled(self.geometry.scale),
+                &frame,
+                &style,
+                &mut self.cache,
+                &mut self.shaper,
+                &mut self.rasterizer,
+                &mut self.list,
+            );
+        }
         self.layout = layout;
         self.renderer
             .draw(&self.list, &mut self.cache, self.background)
             .is_ok()
+    }
+
+    /// The scrollbar thumb for everything that scrolls under this surface, in device pixels.
+    ///
+    /// Two things scroll and one thumb reports both: the engine's scrollback, which moves in whole
+    /// rows, and the block list's own overflow, which is the chrome the layout spends above each
+    /// command. Adding them in pixels is what makes the thumb honest in the two cases a single
+    /// source would get wrong — a long scrollback with no chrome, and a short session whose headers
+    /// alone push it past the viewport.
+    ///
+    /// The rows ABOVE the viewport contribute plain rows because they were never laid out; only the
+    /// viewport's own slice has chrome, and [`BlockLayout::content_height`] already measured it.
+    fn thumb(&self, layout: &BlockLayout, viewport_height: f64, cell_height: f64) -> Option<Thumb> {
+        let info = self.session.viewport_info().ok()?;
+        let above = f64::from(info.total_rows.saturating_sub(info.viewport_rows)) * cell_height;
+        scrollbar(
+            above + layout.content_height,
+            viewport_height,
+            f64::from(info.viewport_top_row) * cell_height + self.scroll_y,
+            viewport_height,
+            self.chrome_style.scrollbar_min_height * self.geometry.scale,
+        )
     }
 
     /// Clamps [`Self::scroll_y`] into the range this content allows, honouring the bottom pin.
@@ -514,6 +595,31 @@ impl Surface {
     const fn frame(&self) -> &Frame {
         self.session.frame()
     }
+}
+
+/// Which block a POINT-space `(x, y)` lands in, given the placement each block was drawn at.
+///
+/// `place` rather than a `&Surface` because the hover resolve inside [`Surface::draw`] runs against
+/// the layout the frame is being built from, not the one the last frame left on the handle. One
+/// predicate for both is what stops a click and a hover disagreeing about which block they are in.
+fn block_at(layout: &BlockLayout, place: impl Fn(Rect) -> Rect, x: f64, y: f64) -> Option<usize> {
+    layout.blocks.iter().position(|block| {
+        let rect = place(block.frame);
+        x >= rect.min_x() && x < rect.max_x() && y >= rect.min_y() && y < rect.max_y()
+    })
+}
+
+/// The block holding the cursor — the command still producing output.
+///
+/// The cursor's row rather than "the last block": a program that redraws in place leaves the cursor
+/// where it is working, and the newest block is only the same answer while output is appending.
+/// A frame with no visible cursor has no running command to mark.
+fn active_block(layout: &BlockLayout, frame: &Frame) -> Option<usize> {
+    let row = frame.cursor?.y;
+    layout
+        .blocks
+        .iter()
+        .position(|block| row >= block.span.rows.start && row < block.span.rows.end)
 }
 
 /// A device-pixel measurement, as the whole number the engine's encoders divide by.
@@ -862,6 +968,21 @@ const fn rgb(packed: u32) -> Rgb {
         r: ((packed >> 16) & 0xFF) as u8,
         g: ((packed >> 8) & 0xFF) as u8,
         b: (packed & 0xFF) as u8,
+    }
+}
+
+/// A `0xAARRGGBB` word as a colour, high byte and all.
+///
+/// The counterpart to [`rgb`] and deliberately a second function rather than a flag on it: the two
+/// answer different questions. A terminal colour is a cell's ink and is opaque by definition, so
+/// reading its high byte would be reading a field the caller never filled; chrome is drawn OVER
+/// output, and a wash that could not be translucent would not be a wash.
+const fn argb(packed: u32) -> Rgba {
+    Rgba {
+        r: ((packed >> 16) & 0xFF) as u8,
+        g: ((packed >> 8) & 0xFF) as u8,
+        b: (packed & 0xFF) as u8,
+        a: ((packed >> 24) & 0xFF) as u8,
     }
 }
 
@@ -2032,6 +2153,132 @@ pub struct SlopDeskTerminalBlockScroll {
     pub following: bool,
 }
 
+/// The client's design for the block furniture: six colours and five lengths.
+///
+/// Colours are `0xAARRGGBB` — the one place on this surface where the high byte IS alpha. A cell's
+/// ink is opaque by definition, so [`rgb`] drops it; a hover wash and a scrollbar thumb are
+/// translucent BY DESIGN, and folding them into an opaque word plus a separate float would let a
+/// caller state a colour and a transparency that disagree.
+///
+/// Lengths are POINTS, like every other length crossing this boundary, and are scaled where the
+/// design is turned into pixels — once, in [`Surface::draw`].
+///
+/// [`Default`] is every field zero, which is a whole design that draws nothing: `Rgba::CLEAR` for
+/// each colour and a zero thickness for each length. That is what a surface shows before an
+/// appearance is installed, and it is also exactly [`ChromeStyle::NONE`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlopDeskTerminalChromeStyle {
+    /// The hairline between one block and the next.
+    pub divider: u32,
+    /// The bar down a block's leading edge, at rest.
+    pub gutter: u32,
+    /// The same bar for the block holding the cursor.
+    pub gutter_active: u32,
+    /// The wash over the block the pointer is inside.
+    pub hover: u32,
+    /// The collapse mark and its folded-row count.
+    pub label: u32,
+    /// The scrollbar thumb.
+    pub scrollbar: u32,
+    /// How thick the divider is, in points.
+    pub divider_thickness: f64,
+    /// How wide the gutter bar is, in points.
+    pub gutter_thickness: f64,
+    /// How wide the thumb is, in points.
+    pub scrollbar_thickness: f64,
+    /// How short the thumb may get, in points.
+    pub scrollbar_min_height: f64,
+    /// The gap between the thumb and the trailing edge, in points.
+    pub scrollbar_inset: f64,
+}
+
+impl SlopDeskTerminalChromeStyle {
+    /// This design in device pixels, which is the only unit the renderer has.
+    fn scaled(self, scale: f64) -> ChromeStyle {
+        ChromeStyle {
+            divider: argb(self.divider),
+            divider_thickness: self.divider_thickness * scale,
+            gutter: argb(self.gutter),
+            gutter_active: argb(self.gutter_active),
+            gutter_thickness: self.gutter_thickness * scale,
+            hover: argb(self.hover),
+            label: argb(self.label),
+            scrollbar: argb(self.scrollbar),
+            scrollbar_thickness: self.scrollbar_thickness * scale,
+            scrollbar_min_height: self.scrollbar_min_height * scale,
+            scrollbar_inset: self.scrollbar_inset * scale,
+        }
+    }
+}
+
+/// Installs the design the block furniture is drawn with. By value, because it is one decision.
+///
+/// One door and not eleven for [`slopdesk_term_surface_set_theme`]'s reason: a divider colour with
+/// last frame's gutter thickness is a state the client never described, and a door per field is a
+/// door per chance to leave the surface in one.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_term_surface_set_chrome_style(
+    handle: *mut SlopDeskTerminalSurface,
+    style: SlopDeskTerminalChromeStyle,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.chrome_style = style;
+}
+
+/// Where the pointer is, in POINTS, so the block under it can take the hover wash.
+///
+/// `inside` is how "nowhere" is spelled, rather than a sentinel coordinate: a surface the pointer
+/// has left is a different state from one it is hovering at the origin, and `(0, 0)` is a real
+/// point inside the first block.
+///
+/// A POSITION rather than a block index — see [`Surface::hover`] for why an index the client held
+/// would light the wrong block the moment output arrived.
+///
+/// Answers whether the next frame would DIFFER, which is the only reason the client asked. A
+/// pointer gliding inside one block delivers a move event per sample and changes no pixel, and a
+/// caller that presented on each of them would pay a full render — engine frame, layout, both paint
+/// passes, GPU — for a picture identical to the one already on screen. The test belongs here rather
+/// than in the client because it is a hit-test against the layout, and the layout is here; the
+/// answer is over the LAST draw's, which is exactly the picture the caller would be re-presenting.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_set_hover(
+    handle: *mut SlopDeskTerminalSurface,
+    x: f64,
+    y: f64,
+    inside: bool,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    let wanted = inside.then_some((x, y));
+    let hit = |point: Option<(f64, f64)>| {
+        point.and_then(|(x, y)| block_at(&surface.layout, |rect| surface.on_screen(rect), x, y))
+    };
+    let changed = hit(wanted) != hit(surface.hover);
+    surface.hover = wanted;
+    changed
+}
+
 /// Copies the last draw's block placements out, answering the count NEEDED.
 ///
 /// Empty before the first draw and on the alternate screen, where `Chrome::NONE` collapses the
@@ -2145,14 +2392,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_block_at_point(
     let Some(surface) = (unsafe { held(handle) }) else {
         return -1;
     };
-    surface
-        .layout
-        .blocks
-        .iter()
-        .position(|block| {
-            let rect = surface.on_screen(block.frame);
-            x >= rect.min_x() && x < rect.max_x() && y >= rect.min_y() && y < rect.max_y()
-        })
+    block_at(&surface.layout, |rect| surface.on_screen(rect), x, y)
         .and_then(|index| i64::try_from(index).ok())
         .unwrap_or(-1)
 }

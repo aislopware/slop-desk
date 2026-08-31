@@ -233,6 +233,23 @@ final class PhoneTerminalRendererView: UIView {
         // that dismissed it.
         tap.require(toFail: press)
         addGestureRecognizer(tap)
+
+        // A fourth, because "phone" is also iPad-with-a-trackpad and that one HAS a pointer. On a
+        // device with no indirect input the recogniser simply never fires, so this is not a
+        // platform check — it is the same block wash the Mac draws, reaching the only iOS input
+        // that can ask for it.
+        addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(handleHover)))
+    }
+
+    /// Feeds the pointer to the block chrome. `.ended`/`.cancelled` is the pointer LEAVING, which is
+    /// a different state from hovering at the origin — see the door.
+    @objc
+    private func handleHover(_ gesture: UIHoverGestureRecognizer) {
+        switch gesture.state {
+        case .began,
+             .changed: driver.setHover(gesture.location(in: self))
+        default: driver.setHover(nil)
+        }
     }
 
     @objc

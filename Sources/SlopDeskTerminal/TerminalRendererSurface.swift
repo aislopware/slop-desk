@@ -167,6 +167,27 @@ final class TerminalRendererSurface {
         slopdesk_term_surface_set_theme(handle, foreground, background, selection)
     }
 
+    /// Pushes the design the block furniture is drawn with.
+    ///
+    /// One call for the whole record, not one per field: the door refuses to hold a divider colour
+    /// beside last frame's gutter thickness, and this face is not the place to invent that state.
+    func setChromeStyle(_ style: SlopDeskTerminalChromeStyle) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_chrome_style(handle, style)
+    }
+
+    /// Pushes where the pointer is, in points, or that it has left the surface. Answers whether the
+    /// next frame would differ — a move inside one block changes no pixel and is worth no present.
+    ///
+    /// `false` for a surface with no handle, which is the honest answer and not a fallback: nothing
+    /// is going to draw either way.
+    func setHover(_ point: CGPoint?) -> Bool {
+        guard let handle else { return false }
+        return slopdesk_term_surface_set_hover(
+            handle, Double(point?.x ?? 0), Double(point?.y ?? 0), point != nil,
+        )
+    }
+
     /// Pushes the theme's ANSI colours, from index `0`. A prefix — see the door.
     func setPalette(_ entries: [UInt32]) {
         guard let handle, !entries.isEmpty else { return }

@@ -357,6 +357,10 @@ final class MacTerminalRendererView: NSView {
         requestFocusFollowsMouseIfNeeded()
         let point = convert(event.locationInWindow, from: nil)
         lastPointerPoint = point
+        // The block wash and the program's own hover are two different readers of one move, and both
+        // get it: a mouse-reporting TUI runs on the alternate screen, where there are no blocks to
+        // wash, so the two never light at once.
+        driver.setHover(point)
         _ = driver.sendMouse(action: 2, button: 255, mods: Self.mods(event.modifierFlags), at: point)
     }
 
@@ -377,6 +381,7 @@ final class MacTerminalRendererView: NSView {
         // than a departure — reporting "left the viewport" mid-drag would end the program's own
         // selection while the user is still making it.
         guard NSEvent.pressedMouseButtons == 0 else { return }
+        driver.setHover(nil)
         _ = driver.sendMouse(
             action: 2, button: 255, mods: Self.mods(event.modifierFlags), at: CGPoint(x: -1, y: -1),
         )

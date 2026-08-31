@@ -68,7 +68,15 @@ final class RedialDetachedPaneTests: XCTestCase {
         XCTAssertEqual(liveRight.connection?.status, .disconnected, "lazy-connect: nothing has dialed yet")
 
         store.redialDisconnectedPanes()
-        await expect("both channels to dial") { rec.count == 2 }
+        // The wait has to be for the CONNECT and not for the dial. `rec.count` rises when the driver
+        // is handed the channel; the status becomes `.connected` a continuation later, so waiting on
+        // the count alone leaves a window in which a loaded machine reports `.connecting` — which is
+        // the redial having worked, reported as the regression this test exists to catch.
+        await expect("both channels to connect") {
+            rec.count == 2
+                && liveLeft.connection?.status == .connected
+                && liveRight.connection?.status == .connected
+        }
 
         XCTAssertEqual(rec.count, 2, "both the tiled AND the detached pane's channels were dialed")
         XCTAssertEqual(liveLeft.connection?.status, .connected)

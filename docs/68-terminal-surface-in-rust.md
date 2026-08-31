@@ -260,10 +260,39 @@ grid and no chrome is drawn over a program that owns its rows.
 `rust/slopdesk-ffi/src/terminal_surface.rs` carries it across: `slopdesk_term_surface_blocks` hands
 back each block's screen rects, `_block_at_point` hit-tests one, `_set_block_collapsed` /
 `_toggle_block_collapsed` / `_expand_all_blocks` fold them, and `_block_scroll` /
-`_scroll_pixels` drive the list. Headers, gutter marks and the scrollbar are still not DRAWN by
-`paint.rs` — that is the design-language boundary its header states — but their rects now cross.
+`_scroll_points` drive the list.
 
-Two rules the block list settled, both in the surface rather than the layout:
+**The furniture is DRAWN in Rust.** `rust/slopdesk-termrender/src/chrome.rs` fills the gutter, the
+divider, the collapse mark and the scrollbar into the same `DrawList` as the glyphs, one pass after
+`paint.rs`. The earlier ruling — that the client fills the rects itself, in its own design language —
+was a boundary statement rather than a measurement, and the two ways to honour it both cost more than
+it saved: an `AppKit`/`UIKit` layer over the Metal layer lags the present by a frame during a scroll
+(the drift `on_screen` exists to kill) and puts one appearance in two platform views, while streaming
+instances back per frame is the marshalling `WorkspaceMarshalBenchTests` already measured and
+rejected. What separates is not who draws but who **decides**: `_set_chrome_style` carries
+`SlopDeskTerminalChromeStyle` — six `0xAARRGGBB` colours and five point lengths, built in
+`TerminalChromeAppearance` from the on-glass Slate tokens — and `_set_hover` carries where the
+pointer is. That is the same seam `PaintStyle` and `SelectionColors` already sit on, and it keeps ONE
+chrome for both platforms. An all-zero style is a complete design that draws nothing, which is the
+pre-install state.
+
+The alternate screen does not use it. `Surface::draw` skips the chrome pass entirely rather than
+handing it `ChromeStyle::NONE`, because the two are the same picture and not the same claim: the
+frame the branch would build hit-tests the pointer and asks the engine for its viewport, and both
+answers go in the bin. `LayoutMode::for_screen` gives a full-screen program ONE headerless block, so
+a style that survived the branch would draw a gutter down `vim`'s left column and accent it — the
+cursor is inside block zero by definition.
+
+`_set_hover` answers whether the next frame would DIFFER, and the client presents only on `true`. A
+pointer gliding inside one block delivers a move per sample and changes no pixel; presenting on each
+would buy a full render — engine frame, layout, both paint passes, GPU — for the picture already up.
+The test is a hit test against the last draw's layout, which is the picture that would be
+re-presented, so it belongs on this side of the door rather than in an index the client holds.
+
+The block rects still cross, because a hit test, a context menu and a copy-block verb are questions
+asked between frames.
+
+The rules the block list settled, all in the surface rather than the layout:
 
 - **Chrome overflow rides `scroll_y`, never the row count.** `grid_size` sizes the grid from the
   drawable alone, so headers and gaps make the list taller than the viewport. Shrinking the grid to
@@ -287,6 +316,14 @@ Two rules the block list settled, both in the surface rather than the layout:
   another. The macOS wheel converts too, in the other direction: `scrollingDeltaY` is only points
   when `hasPreciseScrollingDeltas`, and a notched wheel's LINES are multiplied by the cell height
   before they cross.
+
+- **The scrollbar measures PIXELS, because two things scroll.** `layout::scrollbar` takes lengths
+  rather than row counts: what moves under the viewport is the engine's scrollback *plus* the chrome
+  the layout spends above each command. A row-counting thumb answers `None` for the case a short
+  session hits every day — no scrollback at all, headers alone pushing the list past its own height —
+  so the unit has to be the one the overflow is measured in. `Surface::thumb` adds the rows above the
+  viewport (never laid out, so plain `rows × cell_height`) to `BlockLayout::content_height` (laid
+  out, chrome included) and asks once.
 
 The one thing a header still cannot show for a scrolled-back block is its **exit code and
 duration**. Those live in the command-block ring keyed by `index`/`prompt_ordinal`, which the host's

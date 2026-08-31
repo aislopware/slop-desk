@@ -341,7 +341,17 @@ let package = Package(
             // `SlopDeskArena` is SPELLED, not inherited: `TerminalRendererSurface.swift` reads the
             // block list through `ffiAnswerRecords`, and docs/55 §4's record delivery has ONE
             // implementation.
-            dependencies: ["SlopDeskWorkspaceCore", "SlopDeskClientCore", "SlopDeskArena", "CSlopDeskFFI"],
+            // `SlopDeskSlate` because the block furniture is DRAWN in Rust and DECIDED here:
+            // `TerminalChromeAppearance` is the design record that crosses, and it has to be spelled
+            // in the same on-glass tokens the chrome around the island already wears. Acyclic —
+            // Slate is the floor and depends on no view layer.
+            dependencies: [
+                "SlopDeskWorkspaceCore",
+                "SlopDeskClientCore",
+                "SlopDeskArena",
+                "SlopDeskSlate",
+                "CSlopDeskFFI",
+            ],
             linkerSettings: ffiCLibraries,
         ),
 
