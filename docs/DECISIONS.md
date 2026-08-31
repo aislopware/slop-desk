@@ -17831,3 +17831,51 @@ quote from `at + 2` finds the quote `'\''` ESCAPES, ending the literal a byte ea
 past the escapee now, the way the C arm has consumed backslash-and-escapee since it was written. The
 lesson is the round's own species one more scale down — a fixture set that agrees on an irrelevant
 detail tests less than its assertion count suggests.
+
+## The list two gates shared was spelled twice, and a ratchet said it was not (2026-08-31)
+
+`prepush::TESTED_INPUTS` declares what `swift test` consumes; the fast loop's `touched::PATHSPEC`
+declared it again. `slopdesk-invariants`' `the_green_tree_marker_means_one_thing` recorded that the
+port had ended that duplication — "prepush declares the list and both markers, and touched reaches
+all three through it" — and pinned two of the three. The list it checked only for EXISTING, so the
+second copy sat next to it for as long as both files did, and the two disagreed in both directions.
+
+`Package.resolved` was in the fast loop's copy and not in the declaration. That is the one that
+mattered: the suite compiles against the versions that file pins and reads it from the WORKING tree,
+so `tested_inputs_clean` answered "clean" while it was modified and a green went into the marker
+claiming the committed tree had passed with pins the run never used. `Apps` was the other way round —
+in the declaration, absent from the diff — in the harmless direction and with a real cost: no
+SwiftPM target compiles a byte of the xcodegen shells and no suite opens them at run time, so every
+push taken while an app shell was dirty re-ran ninety seconds the cache had already earned. There is
+now ONE list, holding `Package.resolved` and not `Apps`, and the rule pins the third thing it names:
+the fast loop may not declare a path list of its own.
+
+**The other half of the same claim: what the diff was not allowed to look at.** `touched` scoped its
+diff to Swift paths, and both it and `prepush` explained the FFI half of the key with "`rust/` is
+untracked". `rust/` is tracked — 1 367 files. The conclusion survives for the two reasons that are
+true (a tree hash is a COMMIT's tree, so uncommitted crate edits never move it, and the artifact is
+gitignored outright), but the sentence had been load-bearing for scoping `rust/` out of the change
+set entirely. So a dropd edit selected NOTHING while `just test-touched`'s own recipe rebuilt the
+binary `DropdE2ETests` spawns. Measured before and after on the real tree: a file under
+`rust/slopdesk-dropd` used to print `NONE` and now prints `SlopDeskFileTransferTests`, while this
+round's own edit — two crates under `rust/slopdesk-devtools` and `rust/slopdesk-invariants` — still
+prints `NONE`.
+
+The edge is DERIVED, not listed: `prepush` already scanned the fixtures for `rust/<crate>/target` to
+refuse a tree whose sidecars are unbuilt, and that scan now keeps which suite spelled it. One walk,
+two reductions. A crate no suite boots contributes nothing, which is what lets `rust/` be in the diff
+at all — attribution through the package graph would answer "unattributable" and escalate every gate
+edit to the full suite.
+
+**Bound, stated plainly.** A touched green never writes the pre-push marker, so the miss was a late
+signal, not a green the push had not earned. It is fixed anyway for the reason the FFI baseline
+exists: the inner loop's selection is a claim, and a claim that is only sometimes true is the species
+this series has been mining.
+
+**Rejected.** *Adding `rust` to the shared list* — that list is what makes the green-tree marker
+mean something, and requiring `rust/` clean would refuse the marker on every crate edit while the
+FFI half already witnesses the artifact. The diff's scope and the marker's definition of clean are
+two questions; only the first grew. *A listed crate → suite map* — the fixtures already spell the
+edge, and a hand-written list goes stale in the dangerous direction. *Escalating an unattributable
+`rust/` path to FULL* — this gate's own crate is edited more than any other and no Swift test can
+reach it.

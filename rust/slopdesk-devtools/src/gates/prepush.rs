@@ -7,12 +7,15 @@
 //! Invalidation is automatic: any new commit changes the tree hash.
 //!
 //! ## The key is a PAIR, and the second half is why
-//! The Swift suite links `SlopDeskFFI.xcframework`, and the git tree cannot see it change: `rust/`
-//! is untracked, so `HEAD^{tree}` is byte-identical before and after a Rust edit. On a clean tree
-//! that made the cache answer "already tested green" for a suite that had never run against the
-//! artifact `just ffi` had rebuilt a minute earlier — the linked port's stale-artifact failure
-//! mode, one level above the `--check` gate that exists for it. `sources.sha256` is the right
-//! witness and already exists.
+//! The Swift suite links `SlopDeskFFI.xcframework`, and the git tree cannot see it change. TWO
+//! independent reasons, and this note claimed a third that is not true: `rust/` is TRACKED, 1 367
+//! files of it, so a COMMITTED crate edit does move `HEAD^{tree}`. What does not move it is an
+//! UNCOMMITTED one — a tree hash is a commit's tree, and `just ffi` builds from the working tree —
+//! and the artifact itself is outside git entirely, `.gitignore` ignoring all of
+//! `ThirdParty/slopdesk-ffi/`, `sources.sha256` included. Either way the cache answered "already
+//! tested green" on a clean tree for a suite that had never run against the artifact `just ffi`
+//! rebuilt a minute earlier — the linked port's stale-artifact failure mode, one level above the
+//! `--check` gate that exists for it. `sources.sha256` is the right witness and already exists.
 //!
 //! It lives in its OWN marker rather than being concatenated onto the tree hash, because
 //! [`super::touched`] reads the tree marker as a git REF — a marker with a suffix stops being an
@@ -40,7 +43,7 @@
 //! skipped. The moment Swift boots a daemon again the derivation sees it, which is the property
 //! worth keeping — a hand-written list would have gone stale in the other, dangerous direction.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -59,9 +62,27 @@ pub const FFI_STAMP: &str = "ThirdParty/slopdesk-ffi/sources.sha256";
 
 /// The inputs `swift test` actually consumes — compiled and read-at-runtime alike.
 ///
-/// Both gates that write the markers use this exact list: a disagreement about what counts as clean
-/// is a disagreement about what the marker MEANS.
-pub const TESTED_INPUTS: &[&str] = &["Package.swift", "Sources", "Tests", "Apps", "golden", "scripts"];
+/// Both gates that write the markers use this exact list, and the fast loop SELECTS against it: a
+/// disagreement about what counts as clean is a disagreement about what the marker MEANS.
+///
+/// It was two lists that disagreed. [`super::touched`] spelled its own `PATHSPEC` while a ratchet
+/// in `slopdesk-invariants` recorded that the duplication had been removed in the port — it had
+/// been removed for the two MARKERS and not for this. They differed in both directions.
+/// `Package.resolved` was in the fast loop's copy and not here, and it is the one that mattered:
+/// `swift test` compiles against the versions that file pins, `swift test` reads it from the
+/// WORKING tree, and a green recorded while it was dirty promised the committed tree had passed
+/// with pins the run never used. `Apps` was here and not there, in the harmless direction and with
+/// a real cost — no `SwiftPM` target compiles a byte of it and no suite opens it at run time, so
+/// every push while an app shell was dirty re-ran ninety seconds the cache had already earned. The
+/// xcodegen shells are the two xcode gates' business, and those carry their own stamp.
+pub const TESTED_INPUTS: &[&str] = &[
+    "Package.swift",
+    "Package.resolved",
+    "Sources",
+    "Tests",
+    "golden",
+    "scripts",
+];
 
 /// The FFI source stamp, or an empty string on a tree that has never built it.
 #[must_use]
@@ -129,14 +150,44 @@ pub fn recorded(root: &Path, marker: &str) -> String {
 /// # Errors
 /// When `Tests/` cannot be walked.
 pub fn expected_daemons(root: &Path) -> Result<BTreeSet<String>, String> {
+    Ok(daemon_consumers(root)?.into_keys().collect())
+}
+
+/// The same scan, keeping WHICH suite spells each daemon.
+///
+/// [`super::touched`] needs the edge and this gate needs only the names, so the scan is written
+/// once and reduced twice: a second walk with the same regex would be two answers to one question,
+/// and the day one of them learned a new spelling the other would still be right about the old one.
+///
+/// The key is the crate, the values are test TARGET names — the directory under `Tests/`, which is
+/// what `swift test --filter` matches and what the package description calls the target.
+///
+/// A `.swift` directly in `Tests/` still contributes its CRATE and no target: `SwiftPM` compiles
+/// nothing outside a target directory, so such a file boots no daemon at test time and can name no
+/// suite, while this gate's own question — is the binary built — is answered by the name alone.
+/// There is no such file today; the entry exists so that the reduction below stays what it was.
+///
+/// # Errors
+/// When `Tests/` cannot be walked.
+pub fn daemon_consumers(root: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
     let pattern = Regex::new(r"rust/(slopdesk-[a-z]+)/target").map_err(|error| error.to_string())?;
-    let mut found = BTreeSet::new();
+    let mut found: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let tests = root.join("Tests");
     let mut swift = Vec::new();
-    collect_swift(&root.join("Tests"), &mut swift)?;
+    collect_swift(&tests, &mut swift)?;
     for file in swift {
         let text = fs::read_to_string(&file).unwrap_or_default();
+        let target = file
+            .parent()
+            .filter(|parent| *parent != tests.as_path())
+            .and_then(|_| file.strip_prefix(&tests).ok())
+            .and_then(|relative| relative.iter().next())
+            .and_then(|name| name.to_str());
         for capture in pattern.captures_iter(&text) {
-            found.insert(capture[1].to_owned());
+            let suites = found.entry(capture[1].to_owned()).or_default();
+            if let Some(name) = target {
+                suites.insert(name.to_owned());
+            }
         }
     }
     Ok(found)
@@ -214,6 +265,7 @@ fn collect_swift(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
 
     use super::{TESTED_INPUTS, expected_daemons, missing_daemons};
@@ -266,5 +318,44 @@ mod tests {
     fn the_tested_inputs_include_what_the_suite_only_reads() {
         assert!(TESTED_INPUTS.contains(&"scripts"));
         assert!(TESTED_INPUTS.contains(&"golden"));
+    }
+
+    /// The two entries the fast loop's second copy of this list disagreed about, in both
+    /// directions.
+    #[test]
+    fn the_tested_inputs_are_the_suites_inputs_and_only_those() {
+        assert!(
+            TESTED_INPUTS.contains(&"Package.resolved"),
+            "the suite compiles against the versions it pins, and reads it from the working tree"
+        );
+        assert!(
+            !TESTED_INPUTS.contains(&"Apps"),
+            "no SwiftPM target compiles the xcodegen shells — the two xcode gates stamp them"
+        );
+    }
+
+    /// The scan keeps WHICH suite spells each daemon, so the fast loop can select it.
+    #[test]
+    fn a_fixture_names_the_suite_that_boots_it() {
+        let root = fixture("consumers");
+        fs::create_dir_all(root.join("Tests/SlopDeskFileTransferTests")).unwrap();
+        fs::write(
+            root.join("Tests/SlopDeskFileTransferTests/DropdE2ETests.swift"),
+            "let dir = \"rust/slopdesk-dropd/target\"\n",
+        )
+        .unwrap();
+        // Directly under `Tests/`: a crate with no suite, because SwiftPM compiles no such file.
+        fs::write(root.join("Tests/Loose.swift"), "rust/slopdesk-superd/target\n").unwrap();
+        let found = super::daemon_consumers(&root).unwrap();
+        assert_eq!(
+            found
+                .get("slopdesk-dropd")
+                .map(|suites| suites.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["SlopDeskFileTransferTests".to_owned()])
+        );
+        assert!(
+            found.get("slopdesk-superd").is_some_and(BTreeSet::is_empty),
+            "the loose fixture must still count as a daemon this gate checks for: {found:?}"
+        );
     }
 }

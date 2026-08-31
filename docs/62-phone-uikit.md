@@ -958,11 +958,14 @@ governing constraint.
   that executes an assertion on the iOS triple"* — is **deliberately not in `check`**, because it boots
   a simulator (`justfile:421-431`). When it is run it is strict: `xcode.rs:373-390` asserts
   `declared_tests == executed_tests`, so a silently-skipped test is a gate failure.
-- **`test-touched` cannot see this campaign at all.** `gates/touched.rs:67-74` — `PATHSPEC =
-  ["Package.swift","Package.resolved","Sources","Tests","golden","scripts"]`. **`Apps/` is absent**, so
-  an edit confined to `Apps/ClientApp-iOS` — which is stage A in its entirety, and part of most later
+- **`test-touched` cannot see this campaign at all.** The diff is scoped to
+  `prepush::TESTED_INPUTS` — `["Package.swift","Package.resolved","Sources","Tests","golden","scripts"]`
+  — plus `rust/`, which selects only the suites that BOOT a daemon. **`Apps/` is in neither**, so an
+  edit confined to `Apps/ClientApp-iOS` — which is stage A in its entirety, and part of most later
   stages — selects no test target. `just quick` on such a commit runs the linters and the stamped
-  gates, and zero tests.
+  gates, and zero tests. (`Apps/` used to be in the pre-push gate's copy of that list and not in the
+  fast loop's; the two were merged, and the merged one does not carry it — no SwiftPM target compiles
+  a byte of `Apps/`, and the iOS bundle that does is `check-ios-tests`, which nothing runs for you.)
 - **There is no pixel recipe, no perf recipe, no bench recipe.** Not "they are opt-in" — `just --list`
   contains no `pixel*`, `verify*`, `perf*`, `bench*` or `snapshot*` target. The four `gui-*` recipes
   (`justfile:440-453`) drive `slopdesk-guigate` and are macOS-only.

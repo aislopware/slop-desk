@@ -52,6 +52,28 @@ pub enum Selection {
 }
 
 impl Selection {
+    /// This selection plus targets no path in the package description could have named.
+    ///
+    /// A suite that BOOTS a Rust daemon is reached by a change the graph cannot attribute, because
+    /// no target owns a crate. Widening is the only safe direction here: `Full` stays full, `None`
+    /// becomes exactly the extra suites, and a list grows. The set is sorted because `--filter`
+    /// takes the order this prints.
+    #[must_use]
+    pub fn widened(self, extra: BTreeSet<String>) -> Self {
+        if extra.is_empty() {
+            return self;
+        }
+        match self {
+            Self::Full => Self::Full,
+            Self::None => Self::Targets(extra.into_iter().collect()),
+            Self::Targets(names) => {
+                let mut all: BTreeSet<String> = names.into_iter().collect();
+                all.extend(extra);
+                Self::Targets(all.into_iter().collect())
+            },
+        }
+    }
+
     /// The one word or the space-joined list, as the gate prints and the `--filter` consumes.
     #[must_use]
     pub fn printed(&self) -> String {
@@ -279,7 +301,25 @@ pub fn attribute(graph: &Graph, changed: &[String]) -> Selection {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{Graph, Selection, attribute};
+
+    /// Widening may only ever ADD, and `Full` is already everything.
+    #[test]
+    fn widening_never_narrows_a_selection() {
+        let extra = BTreeSet::from(["Boots".to_owned()]);
+        assert_eq!(Selection::Full.widened(extra.clone()), Selection::Full);
+        assert_eq!(
+            Selection::None.widened(extra.clone()),
+            Selection::Targets(vec!["Boots".to_owned()])
+        );
+        assert_eq!(
+            Selection::Targets(vec!["A".to_owned()]).widened(extra),
+            Selection::Targets(vec!["A".to_owned(), "Boots".to_owned()])
+        );
+        assert_eq!(Selection::None.widened(BTreeSet::new()), Selection::None);
+    }
 
     const DESCRIBE: &str = r#"{
       "targets": [

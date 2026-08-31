@@ -12,10 +12,22 @@
 //! full green on a clean tree ends the penalty.
 //!
 //! The FFI artifact is the second baseline for the reason [`super::prepush`] carries it in its key:
-//! no pathspec can see it move (`rust/` is untracked, so the diff against the baseline TREE is
-//! empty however many crates changed) and the dependency closure cannot help either, since every
-//! Swift target that links the xcframework does so through the package graph rather than through a
-//! changed file. So the whole suite is the selection.
+//! no pathspec can see it move — the artifact is gitignored, all of `ThirdParty/slopdesk-ffi/` —
+//! and the dependency closure cannot help either, since every Swift target that links the
+//! xcframework does so through the package graph rather than through a changed file. So the whole
+//! suite is the selection.
+//!
+//! ## The other Rust the graph cannot see
+//! `rust/` IS tracked, and the diff reads it. What the `SwiftPM` graph cannot do is own a path in
+//! it: a crate belongs to no target, so attribution would answer "unattributable" and escalate
+//! every crate edit to the full suite — including this gate's own, which no Swift test can reach.
+//! The edge that does exist is a suite BOOTING a daemon, and it is derived from the fixtures rather
+//! than listed, by the scan [`super::prepush`] already runs to refuse an unbuilt tree. Today that
+//! is one edge: `DropdE2ETests` spells `rust/slopdesk-dropd/target`, so a dropd edit selects
+//! `SlopDeskFileTransferTests` and nothing else. Before this the diff never looked at `rust/` at
+//! all, and a dropd change selected NOTHING while the recipe rebuilt the very binary that suite
+//! spawns — bounded, because a touched green never writes the pre-push marker, so the miss cost a
+//! late signal rather than a green the push had not earned.
 //!
 //! ## A touched green is NOT a full green
 //! Only a genuinely full run on a clean tree writes the pre-push markers, so a partial pass can
@@ -60,18 +72,9 @@ fn modified(path: &Path) -> Option<std::time::SystemTime> {
     fs::metadata(path).and_then(|data| data.modified()).ok()
 }
 
-/// The paths the tests CONSUME, which is what the diff is scoped to.
-///
-/// Wider than what compiles: `scripts/` is read at run time by the gate-contract suites, `golden/`
-/// by the sniffer guard, and `Package.resolved` decides external dependency versions.
-const PATHSPEC: &[&str] = &[
-    "Package.swift",
-    "Package.resolved",
-    "Sources",
-    "Tests",
-    "golden",
-    "scripts",
-];
+/// The crate tree, diffed on its own because no target in the package description owns a path in
+/// it.
+const RUST_TREE: &str = "rust";
 
 /// What this change set selects, and the one line explaining an escalation.
 ///
@@ -96,9 +99,18 @@ pub fn selection(root: &Path, explicit: &[String]) -> Result<(Selection, Option<
         ));
     }
 
+    // The tested inputs and the crate tree are ONE diff: two `git diff` calls against the same base
+    // would answer about two moments, and an edit landing between them would be attributed by
+    // neither. What separates them afterwards is the path, not the question.
+    let mut scope: Vec<String> = prepush::TESTED_INPUTS
+        .iter()
+        .map(|path| (*path).to_owned())
+        .collect();
+    scope.push(RUST_TREE.to_owned());
+
     let mut changed: Vec<String> = Vec::new();
     let mut arguments: Vec<String> = vec!["diff".to_owned(), "--name-only".to_owned(), base, "--".to_owned()];
-    arguments.extend(PATHSPEC.iter().map(|path| (*path).to_owned()));
+    arguments.extend(scope.iter().cloned());
     changed.extend(lines(&proc::capture("git", &arguments, root)?));
 
     let mut untracked: Vec<String> = vec![
@@ -107,12 +119,41 @@ pub fn selection(root: &Path, explicit: &[String]) -> Result<(Selection, Option<
         "--exclude-standard".to_owned(),
         "--".to_owned(),
     ];
-    untracked.extend(PATHSPEC.iter().map(|path| (*path).to_owned()));
+    untracked.extend(scope);
     changed.extend(lines(&proc::capture("git", &untracked, root)?));
 
     changed.sort_unstable();
     changed.dedup();
-    Ok((swift_graph::attribute(&graph(root)?, &changed), None))
+
+    let (crates, swift): (Vec<String>, Vec<String>) =
+        changed.into_iter().partition(|path| path.starts_with("rust/"));
+    let booted = booted_suites(&prepush::daemon_consumers(root)?, &crates);
+    Ok((
+        swift_graph::attribute(&graph(root)?, &swift).widened(booted),
+        None,
+    ))
+}
+
+/// The test targets that boot a daemon whose crate is among `crates`.
+///
+/// A pure function of the derived edges and the change set, so the mapping is testable without a
+/// git tree: `rust/slopdesk-dropd/src/protocol.rs` names the crate in its SECOND component, and a
+/// crate nothing boots contributes nothing rather than escalating — the whole reason `rust/` can be
+/// in the diff at all. This gate's own crate is the everyday instance of that.
+fn booted_suites(
+    consumers: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    crates: &[String],
+) -> std::collections::BTreeSet<String> {
+    let mut picked = std::collections::BTreeSet::new();
+    for path in crates {
+        let Some(name) = path.split('/').nth(1) else {
+            continue;
+        };
+        if let Some(suites) = consumers.get(name) {
+            picked.extend(suites.iter().cloned());
+        }
+    }
+    picked
 }
 
 /// Non-empty lines, trimmed.
@@ -166,14 +207,40 @@ pub fn run(root: &Path, dry_run: bool, explicit: &[String]) -> Result<(), String
 
 #[cfg(test)]
 mod tests {
-    use super::{PATHSPEC, lines};
+    use std::collections::{BTreeMap, BTreeSet};
 
-    /// The diff must see every path the tests consume, not only what compiles.
+    use super::{booted_suites, lines, prepush};
+
+    /// The diff must see every path the tests consume, not only what compiles — and it must reach
+    /// that list rather than re-spell it, which is what this file did until the two disagreed.
     #[test]
-    fn the_pathspec_covers_what_is_only_read() {
-        assert!(PATHSPEC.contains(&"scripts"));
-        assert!(PATHSPEC.contains(&"golden"));
-        assert!(PATHSPEC.contains(&"Package.resolved"));
+    fn the_scope_is_the_pre_push_list() {
+        assert!(prepush::TESTED_INPUTS.contains(&"scripts"));
+        assert!(prepush::TESTED_INPUTS.contains(&"golden"));
+        assert!(prepush::TESTED_INPUTS.contains(&"Package.resolved"));
+    }
+
+    /// A crate a suite boots selects that suite; a crate nothing boots selects nothing, which is
+    /// the property that lets `rust/` be in the diff without escalating every gate edit to the
+    /// full run.
+    #[test]
+    fn only_a_booted_crate_selects_a_suite() {
+        let mut consumers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        consumers.insert(
+            "slopdesk-dropd".to_owned(),
+            BTreeSet::from(["SlopDeskFileTransferTests".to_owned()]),
+        );
+        assert_eq!(
+            booted_suites(&consumers, &["rust/slopdesk-dropd/src/protocol.rs".to_owned()]),
+            BTreeSet::from(["SlopDeskFileTransferTests".to_owned()])
+        );
+        assert!(
+            booted_suites(&consumers, &[
+                "rust/slopdesk-devtools/src/gates/touched.rs".to_owned(),
+                "rust".to_owned(),
+            ])
+            .is_empty()
+        );
     }
 
     #[test]

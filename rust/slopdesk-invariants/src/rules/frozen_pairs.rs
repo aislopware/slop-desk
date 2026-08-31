@@ -32,12 +32,17 @@ const MODEL_FIELDS: &str = "Sources/SlopDeskWorkspaceModel/State/WorkspaceFields
 /// already attributed a scripts edit to the suites that open `scripts/*.sh` off disk at run time.
 /// The list knew about the input in one place and not the other two.
 ///
-/// Ported to Rust the duplication is gone — `prepush` declares the list and both markers, and
-/// `touched` reaches all three through it — so the old comparison would now compare a constant with
-/// itself and pass forever. What this rule pins instead is the property that MAKES it a tautology:
-/// the fast loop may not grow its own `git status` pathspec or its own marker path. The day it
-/// does, the two spellings are back and this fails, which is the same failure the shell version
-/// caught.
+/// Ported to Rust the duplication was said to be gone — `prepush` declaring the list and both
+/// markers, `touched` reaching all three through it — so the old comparison would compare a
+/// constant with itself and pass forever. Two of the three were true. `touched` reached both
+/// MARKERS and spelled its own `PATHSPEC`, and this rule could not see it: the list was checked for
+/// existing, never for being the one in use. The two copies disagreed in both directions the whole
+/// time — `Package.resolved` in the fast loop and not in the declaration, `Apps` the other way
+/// round.
+///
+/// So what this pins is the property that MAKES the tautology: the fast loop may not grow its own
+/// `git status` pathspec, its own marker path, or its own list of paths. The day it does, the two
+/// spellings are back and this fails, which is the same failure the shell version caught.
 #[must_use]
 pub fn the_green_tree_marker_means_one_thing(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -70,6 +75,25 @@ pub fn the_green_tree_marker_means_one_thing(tree: &Tree) -> Report {
         format!(
             "{TOUCHED}: the fast loop names a marker path directly — it must reach both through {PRE_PUSH}, \
              whatever they are called this week"
+        ),
+    );
+    // The third thing this rule's own note claimed was already single, and was not. Both markers
+    // were pinned from the day of the port; the LIST was pinned only for its existence, so the fast
+    // loop went on carrying a `PATHSPEC` of its own — and the two disagreed in both directions,
+    // `Package.resolved` in one and `Apps` in the other, for as long as they coexisted. A rule that
+    // checks two of the three things it names is the shape it was written to catch.
+    report.fail_if(
+        !fast.text.contains("TESTED_INPUTS"),
+        format!(
+            "{TOUCHED}: the fast loop no longer reaches {PRE_PUSH}'s tested-inputs list — a second spelling \
+             of what the suite consumes is two answers to one question"
+        ),
+    );
+    report.fail_if(
+        fast.text.contains(": &[&str] = &["),
+        format!(
+            "{TOUCHED}: the fast loop declares a path list of its own — the scope of the diff is \
+             {PRE_PUSH}'s `TESTED_INPUTS`, widened only by trees the package graph cannot own"
         ),
     );
     report
@@ -138,7 +162,8 @@ mod tests {
         );
         fixture.write(
             super::TOUCHED,
-            "use super::prepush;\nfn go() { prepush::record_green(root); }\n",
+            "use super::prepush;\nfn go() { let scope = prepush::TESTED_INPUTS; \
+             prepush::record_green(root); }\n",
         );
     }
 
@@ -161,6 +186,27 @@ mod tests {
             super::TOUCHED,
             "fn go() { fs::write(root.join(\".build/pre-push-green-ffi-stamp\"), stamp); }\n",
         );
+        assert!(!super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
+    }
+
+    /// The list, which this rule watched only for EXISTENCE while the fast loop carried a second
+    /// copy that disagreed with it in both directions.
+    #[test]
+    fn a_second_spelling_of_the_tested_inputs_is_red() {
+        let fixture = Fixture::new("marker-pathspec");
+        writers(&fixture);
+        assert!(super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
+
+        // The shape that shipped: its own list, near enough to look right and not the same.
+        fixture.write(
+            super::TOUCHED,
+            "use super::prepush;\nconst PATHSPEC: &[&str] = &[\"Package.swift\", \"Sources\"];\nfn go() { \
+             let scope = prepush::TESTED_INPUTS; }\n",
+        );
+        assert!(!super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
+
+        // And the reach removed outright, which is the same divergence one step earlier.
+        fixture.write(super::TOUCHED, "fn go() { let scope = [\"Sources\"]; }\n");
         assert!(!super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
     }
 
