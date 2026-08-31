@@ -143,9 +143,19 @@ const ALWAYS_LIVE: [&str; 3] = ["docs/README.md", "docs/00-overview.md", "DESIGN
 /// The corpus comes off the tree rather than off git's index: the question is "does this repo
 /// declare the name", and a file added but not yet staged declares it just as much as a committed
 /// one.
+///
+/// ## ⚠️ IT RETURNS THE TREE'S HALF ALONE, AND THAT IS THE POINT
+/// This used to seed itself with [`DOCC_EXTERNAL`] before reading a single file, which put four
+/// names this repo by definition does NOT declare — that constant's own doc says so — into a set
+/// whose job is to answer "does this repo declare the name". The consequence was not a wrong answer
+/// on any link. It was that [`every_docc_link_resolves`]' blind guard could never fire: the guard
+/// asks whether a Swift identifier was read out of the tree, and four constants answered yes for
+/// it. Point the roots at a directory that has been renamed, or change the extension filter, and
+/// the rule would have gone on reporting clean over an empty corpus. The union belongs at the one
+/// call site that resolves links, AFTER the floor.
 #[must_use]
 pub fn known_identifiers(tree: &Tree) -> BTreeSet<String> {
-    let mut known: BTreeSet<String> = DOCC_EXTERNAL.iter().map(|name| (*name).to_owned()).collect();
+    let mut known: BTreeSet<String> = BTreeSet::new();
     for root in VOUCHING_ROOTS {
         for (path, source) in tree.under(root) {
             if path.extension().is_none_or(|extension| extension != "swift") {
@@ -207,14 +217,32 @@ pub fn cited_symbols(comment_text: &str) -> Vec<String> {
 /// `rust/slopdesk-sanitize`. 65 such links had accumulated when this check was written, across four
 /// ports and three deleted view layers. A Rust item is cited the way the rest of the tree cites one
 /// — `name` plus its crate path.
+///
+/// ## The floor is a COUNT, not an emptiness
+/// A `!known.is_empty()` guard is satisfied by one name, and this corpus is twenty-six thousand of
+/// them off four roots. Every way this rule goes blind takes most of that with it — a renamed
+/// `VOUCHING_ROOTS` entry, an extension filter that stops matching, a `code()` view that starts
+/// returning nothing — and every one of them leaves a set that is small rather than empty. So the
+/// floor is a number well under the live corpus and far above any of those outcomes, and
+/// [`DOCC_EXTERNAL`] is unioned in only AFTER it: those four are names the repo does not declare,
+/// and counting them toward "the tree was read" is what let the old guard answer for the tree.
 #[must_use]
 pub fn every_docc_link_resolves(tree: &Tree) -> Report {
+    /// Well under the twenty-six thousand names four live roots declare, and far above what any
+    /// root, filter or view going wrong would leave behind.
+    const CORPUS_FLOOR: usize = 5_000;
+
     let mut report = Report::new();
-    let known = known_identifiers(tree);
-    if known.is_empty() {
-        report.fail("no Swift identifier was read out of the tree — this rule is blind");
+    let mut known = known_identifiers(tree);
+    if known.len() < CORPUS_FLOOR {
+        report.fail(format!(
+            "only {} Swift identifiers were read out of {} — this rule is blind",
+            known.len(),
+            VOUCHING_ROOTS.join(", ")
+        ));
         return report;
     }
+    known.extend(DOCC_EXTERNAL.iter().map(|name| (*name).to_owned()));
 
     let mut dangling: Vec<String> = Vec::new();
     for root in SCANNED_ROOTS {
@@ -861,10 +889,25 @@ mod tests {
         assert!(cited_symbols("let banner = \"``NotALink``\"\n").is_empty());
     }
 
+    /// A file declaring enough names to clear [`super::every_docc_link_resolves`]' corpus floor.
+    ///
+    /// The floor is a count, so a two-file fixture cannot reach it by being correct — it reaches it
+    /// by being big, which is what a real tree is. The padding declares nothing a link in these
+    /// tests names and carries no comment, so it vouches for its own names and for nothing else.
+    fn vouching_corpus(fixture: &Fixture) {
+        let text = (0..6_000).fold(String::new(), |mut text, index| {
+            use std::fmt::Write as _;
+            let _ = writeln!(text, "let padding{index} = 1");
+            text
+        });
+        fixture.write("Sources/Padding/Corpus.swift", &text);
+    }
+
     /// The ported case: a name the tree stopped declaring.
     #[test]
     fn a_link_to_a_deleted_type_is_red() {
         let fixture = Fixture::new("docc-dangling");
+        vouching_corpus(&fixture);
         fixture.write("Sources/A/Live.swift", "enum LiveThing {}\n");
         fixture.write(
             "Sources/A/Doc.swift",
@@ -873,6 +916,7 @@ mod tests {
         assert!(!every_docc_link_resolves(&fixture.tree()).is_clean());
 
         let clean = Fixture::new("docc-clean");
+        vouching_corpus(&clean);
         clean.write("Sources/A/Live.swift", "enum LiveThing {}\n");
         clean.write("Sources/A/Doc.swift", "/// See ``LiveThing``.\nlet x = 1\n");
         assert!(every_docc_link_resolves(&clean.tree()).is_clean());
@@ -882,6 +926,7 @@ mod tests {
     #[test]
     fn a_comment_does_not_declare_a_name() {
         let fixture = Fixture::new("docc-comment-vouch");
+        vouching_corpus(&fixture);
         fixture.write(
             "Sources/A/Ghost.swift",
             "// GhostType used to live here\nlet x = 1\n",
@@ -894,9 +939,30 @@ mod tests {
     #[test]
     fn a_file_basename_vouches() {
         let fixture = Fixture::new("docc-basename");
+        vouching_corpus(&fixture);
         fixture.write("Sources/A/PaneVocabulary.swift", "let x = 1\n");
         fixture.write("Sources/A/Doc.swift", "/// See ``PaneVocabulary``.\nlet y = 2\n");
         assert!(every_docc_link_resolves(&fixture.tree()).is_clean());
+    }
+
+    /// A corpus that came back SMALL is a rule that has gone blind, and it says so.
+    ///
+    /// The old guard was `!known.is_empty()`, and it was seeded with four framework constants
+    /// before a file was read — so it answered "the tree was read" for a tree that had not
+    /// been. This is that seeding, undone: a fixture with one Swift file declares a handful of
+    /// names, which is under the floor, and the rule reds instead of vouching for the one link
+    /// it can see.
+    #[test]
+    fn a_corpus_under_the_floor_is_blind_rather_than_clean() {
+        let fixture = Fixture::new("docc-blind");
+        fixture.write("Sources/A/Doc.swift", "/// See ``SwiftUICore``.\nlet x = 1\n");
+        let report = every_docc_link_resolves(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report.violations()[0].contains("this rule is blind"),
+            "{:?}",
+            report.violations()
+        );
     }
 
     /// Both spellings the read-first table uses, and a token that resolves to nothing.

@@ -18157,3 +18157,45 @@ The registry column is one field with one meaning, so it is the corpus. *Numberi
 *Requiring a quoted heading (`§"The shape"`)* — the origin is a Rust string literal, so the quotes
 have to be escaped, and the crate's own `origin: "([^"]*)"` extraction truncates on the one entry
 that already does it. A bare `§the shape` reads the same and parses.
+
+## The guard that its own seed answered (2026-08-31)
+
+`slopdesk-invariants` has about twenty rules that guard themselves against reading nothing: collect
+the corpus, and if it came back empty, fail with "this rule is blind" rather than report clean over
+a set with no elements in it. The guards were written one at a time and never checked against each
+other. Running all 363 rules over a tree with NO FILES IN IT checks them all at once, and separates
+the two kinds of silence by construction — a ban is silent because there was nothing to forbid, a
+positive claim is silent because it asserted over an empty set.
+
+23 rules said nothing. 22 are bans and are honest: `Claim::NoneUnder`, `NoneOf`, `NoFileUnder`,
+`Absent`, or a hand-written scan for a spelling that must not appear. The twenty-third,
+`docc-links-resolve`, guarded itself with `!known.is_empty()` over a set `known_identifiers` had
+seeded with the four `DOCC_EXTERNAL` framework constants BEFORE reading a file — so the guard asked
+whether a Swift identifier came off the tree and four constants answered yes for it. That constant's
+own doc says those are names "this repo therefore never declares", which is the contradiction
+written down one screen above the function that counted them as declarations. The live corpus is
+26 137 names off four roots; the guard would have passed on 4.
+
+The floor is a count now — 5 000, well under the live corpus and far above what a renamed root, a
+broken extension filter or a `code()` view returning nothing would leave behind — and `DOCC_EXTERNAL`
+is unioned in AFTER it. Existing break-tests write two-file fixtures, so they seed a padding file
+that declares six thousand names: a count floor cannot be cleared by being correct, only by being
+big, which is what a real tree is.
+
+`rules::tests::every_rule_that_reads_a_set_reds_an_empty_tree` is what keeps this from recurring.
+The 22 bans are declared with the sentence saying why each is honestly silent, and the comparison is
+an EQUALITY, so the list cannot rot in either direction: a new rule that goes quiet is undeclared and
+reds, and an entry whose rule was renamed, deleted or given a floor stops matching and reds. Probed
+by putting the floor back to zero — which reproduces the old guard's semantics exactly — and the test
+names `docc-links-resolve`.
+
+**Rejected.** *A rule asserting every `roots:` entry names a live directory.* Two are stale today —
+`device_law`'s `Sources/SlopDeskHost` and `settings_catalog`'s `Sources/SlopDeskPhoneUI/Settings` —
+but both are already covered from the other side, by `deleted_host_swift`'s `Claim::Absent` on the
+first and `settings_is_a_file`'s `GUI_DIRECTORIES` ban on the second, and `GUI_DIRECTORIES` is seven
+roots that MUST NOT exist. So the rule would be green today and could only ever fire on a root no
+other rule mentions, which is a narrower claim than the sweep that found these. The two stale roots
+are left in place: each still names what its ban is about, and each scans a directory another rule
+guarantees is empty. *Routing the dangling sites into the `Report` instead of `eprintln!`* — five
+sites across two files do it that way deliberately; the list is the detail and the `fail` is the
+verdict.

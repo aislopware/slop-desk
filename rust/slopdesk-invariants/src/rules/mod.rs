@@ -1946,4 +1946,136 @@ mod tests {
         let violations = crate::run(&tree, None);
         assert!(violations.is_empty(), "{}", violations.join("\n"));
     }
+
+    /// Every rule that stays SILENT over a tree with no files in it, and why that is honest.
+    ///
+    /// Each one is a BAN — a `Claim::NoneUnder`, `NoneOf`, `NoFileUnder` or `Absent`, or a
+    /// hand-written scan for a spelling that must not appear. A tree with no files satisfies "no
+    /// file spells X" truthfully, so silence is the right answer and an entry here is a fact about
+    /// the rule's SHAPE, not an excuse for it.
+    ///
+    /// The reason is written down because the two kinds of silence look identical from outside. A
+    /// ban is silent because there was nothing to forbid; a positive claim is silent because it
+    /// collected a set, the set came back empty, and asserting over no elements asserts nothing.
+    /// The second is a rule that has stopped being one, and this list is what tells them apart.
+    const SILENT_ON_AN_EMPTY_TREE: [(&str, &str); 22] = [
+        (
+            "superd-private-paths",
+            "no Sources/ file spells superd's socket names",
+        ),
+        (
+            "deleted-screen-swift",
+            "no Swift file declares a screen engine, replay pass or journal",
+        ),
+        (
+            "nothing-heavy-in-the-package-walk",
+            "no directory is heavy enough for Xcode's walk",
+        ),
+        (
+            "one-home-per-operation",
+            "no fork/openpty or C entry point outside its one crate",
+        ),
+        (
+            "replay-buffer",
+            "Sources/SlopDeskTransport/ReplayBuffer.swift is absent",
+        ),
+        (
+            "one-probe-per-reading",
+            "no Swift file reaches for a probe syscall or the AX tree",
+        ),
+        (
+            "client-core-draws-nothing",
+            "no SlopDeskClientCore file spells ink",
+        ),
+        (
+            "receive-buffer",
+            "no second compaction buffer and no second narrowing helper",
+        ),
+        ("write-loop", "no raw write(fd) and no readExactly in Swift"),
+        (
+            "device-panel-floor",
+            "no platform gate and no Carbon import under the device panels",
+        ),
+        (
+            "no-second-path-opinion",
+            "no Swift file decides about a '..' component itself",
+        ),
+        (
+            "one-sidecar-encoder",
+            "no encoder sets outputFormatting without sortedKeys",
+        ),
+        ("one-debug-gate", "no file outside DebugTrace reads a debug gate"),
+        (
+            "static-mirror-deleted",
+            "no Swift file spells staticMirror as code",
+        ),
+        (
+            "small-rules-spelled-once",
+            "no file re-spells the ping, the NDJSON line or the mode map",
+        ),
+        (
+            "outbound-frame-merge",
+            "no hostd session file keeps an order of its own",
+        ),
+        (
+            "one-relation-one-table",
+            "no hostd server file keeps its own channel→pane map",
+        ),
+        (
+            "one-metadata-verb-one-performer",
+            "no file keeps its own in-flight count or optional verb",
+        ),
+        (
+            "subscriber-set-one-table",
+            "no hostd session file keeps a fanout cursor of its own",
+        ),
+        ("scripting-is-rust", "no .sh/.py/.awk file is in the tree"),
+        ("deleted-host-swift", "the host's ported Swift is absent"),
+        (
+            "deleted-video-swift",
+            "the video targets and host types are absent",
+        ),
+    ];
+
+    /// A rule that reads a SET must red when the set is empty, or it has quietly stopped running.
+    ///
+    /// The failure this catches has no other symptom. A rule collects a corpus, asserts something
+    /// about every member, and reports clean — and clean is exactly what it reports when the corpus
+    /// came back with nothing in it because a root was renamed, an extension filter stopped
+    /// matching, or the view it reads started returning blank. Nothing warns, nothing is dead, and
+    /// the gate stays green over an invariant nobody is checking any more.
+    ///
+    /// Running every rule against a tree with no files in it separates the two by construction, and
+    /// it found exactly one: `every_docc_link_resolves` guarded itself with `!known.is_empty()`
+    /// over a set it had seeded with four framework constants before reading a file, so the
+    /// guard was answered by its own seed and could not fire. Its floor is a count now.
+    ///
+    /// This is an EQUALITY, not a subset, so the list cannot rot in either direction: a new rule
+    /// that goes silent is undeclared and reds here, and an entry whose rule was renamed, deleted
+    /// or given a floor stops matching and reds here too.
+    #[test]
+    fn every_rule_that_reads_a_set_reds_an_empty_tree() {
+        let fixture = crate::tests::Fixture::new("every-rule-reds-an-empty-tree");
+        let tree = fixture.tree();
+        let silent: std::collections::BTreeSet<&str> = super::registry()
+            .iter()
+            .filter(|rule| (rule.check)(&tree).violations().is_empty())
+            .map(|rule| rule.name)
+            .collect();
+        let declared: std::collections::BTreeSet<&str> =
+            SILENT_ON_AN_EMPTY_TREE.iter().map(|(name, _)| *name).collect();
+        let undeclared: Vec<&&str> = silent.difference(&declared).collect();
+        let stale: Vec<&&str> = declared.difference(&silent).collect();
+        assert!(
+            undeclared.is_empty(),
+            "these rules said nothing about a tree with no files in it and are not declared bans: \
+             {undeclared:?} — either the rule reads a set and needs a vacuity floor, or it is a ban and \
+             belongs in SILENT_ON_AN_EMPTY_TREE with the sentence saying why"
+        );
+        assert!(
+            stale.is_empty(),
+            "these entries claim a rule is silent on an empty tree and it is not: {stale:?} — the rule grew \
+             a floor, was renamed or was deleted, so take the entry out"
+        );
+    }
 }
