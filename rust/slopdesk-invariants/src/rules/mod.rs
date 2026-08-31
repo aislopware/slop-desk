@@ -1,9 +1,20 @@
 //! One module per section of the gate this crate replaces, and the registry that names them all.
 //!
 //! A rule lands here by being added to [`registry`] — there is no macro, no inventory crate and no
-//! link-time registration, because the one property this list must have is that a reader can see
-//! the whole enforced set in one screen. A rule that is written but not registered is a rule that
-//! runs never, and the way to notice that is for the list to be short enough to read.
+//! link-time registration, because the one property this list must have is that a reader can open
+//! it and see the whole enforced set spelled out. A rule that is written but not registered is a
+//! rule that runs never: nothing is red, nothing is skipped, and the gate reports on a set with a
+//! hole in it. It is `pub` in a `pub mod`, so no compiler warning is coming either.
+//!
+//! This used to say the way to notice that was "for the list to be short enough to read". The list
+//! is past three hundred entries and some two thousand lines, so that stopped being a mechanism
+//! some hundreds of rules ago — it was a reading nobody was performing, standing in for a gate. The
+//! number is deliberately not written here, for the reason `census-is-complete` was added one round
+//! earlier: a length spelled into a living document is stated once and then wrong in silence.
+//! `gate_health`'s
+//! `every-rule-is-registered` compares this registry against every rule-shaped function in the
+//! directory and reds the ones nothing runs. The other direction is the compiler's: an entry naming
+//! a function that does not exist does not build.
 
 pub mod agent_fold;
 pub mod apple_floors;
@@ -1813,6 +1824,11 @@ pub fn registry() -> Vec<Rule> {
             name: "fixture-names-are-unique",
             origin: "CLAUDE.md — the ratchet",
             check: gate_health::every_fixture_name_is_spelled_once,
+        },
+        Rule {
+            name: "every-rule-is-registered",
+            origin: "rust/slopdesk-invariants/src/rules/mod.rs — the registry's own header",
+            check: gate_health::every_rule_written_is_registered,
         },
         Rule {
             name: "census-is-complete",

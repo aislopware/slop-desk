@@ -27,6 +27,8 @@ const HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
 const CRATE_SRC: &str = "rust/slopdesk-invariants/src/";
 /// The gate runners' own module list, and the census above it.
 const GATE_CENSUS: &str = "rust/slopdesk-devtools/src/gates/mod.rs";
+/// The one list that decides which rules run at all.
+const RULE_REGISTRY: &str = "rust/slopdesk-invariants/src/rules/mod.rs";
 
 /// A door with no Swift caller, and the reason it stays.
 ///
@@ -418,15 +420,176 @@ pub fn the_gate_census_names_every_gate(tree: &Tree) -> Report {
     report
 }
 
+/// Every rule written in this crate is in the registry that runs it.
+///
+/// `rules/mod.rs`'s own header states the hazard and then names the mechanism: "A rule that is
+/// written but not registered is a rule that runs never, and the way to notice that is for the list
+/// to be short enough to read." The hazard is exactly right — an unregistered rule is the quietest
+/// failure this crate has, because nothing is red, nothing is skipped, and the gate simply reports
+/// on a set with a hole in it. The MECHANISM is what expired: the registry had grown past three
+/// hundred entries and some two thousand lines when this rule landed, which is no longer a screen
+/// and no longer a reading anyone performs. A rule is `pub`, so nothing warns; it is in a `pub
+/// mod`, so dead-code analysis has nothing to say. The exact count is in `docs/DECISIONS.md`, which
+/// is dated and may hold one; a live doc that spells a number is the rot this rule's neighbour
+/// `census-is-complete` exists about.
+///
+/// Only this direction needs a rule. The other one — a registry entry naming a function that does
+/// not exist — is the COMPILER's, and it is a build error rather than a silent pass.
+///
+/// ## The truncation that has to be resisted
+///
+/// The obvious scan stops at the first `#[cfg(test)]`, the way
+/// [`every_exemption_names_a_path_the_tree_has`] does, so that a break-test fixture is not read as
+/// a rule. Written that way this misses TWENTY-FOUR live rules and reports them registered, because
+/// three modules — `crate_policy`, `rust_boundaries`, and this one — spell `#[cfg(test)]` inside a
+/// DOC COMMENT explaining that very truncation, and the cut lands above their own functions. An
+/// under-reaching gate is the failure mode two rounds of this audit were about, so there is no
+/// truncation here at all: the pattern is anchored at column ZERO, and a `pub fn` inside `mod
+/// tests` is indented by definition.
+#[must_use]
+pub fn every_rule_written_is_registered(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let Some(registry) = report.source(tree, RULE_REGISTRY, "there would be no registry to check") else {
+        return report;
+    };
+    let registered = text::capture_set(registry.statements(), r"check: (\w+::\w+)");
+    if registered.is_empty() {
+        report.fail(format!(
+            "{RULE_REGISTRY}: no `check:` entry parsed — this rule is blind"
+        ));
+        return report;
+    }
+
+    let mut written: BTreeSet<String> = BTreeSet::new();
+    for (path, source) in tree.under(GATE_RULES) {
+        let Some(module) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if module == "mod" || path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        for name in text::capture_set(source.statements(), r"^pub fn (\w+)\(tree: &Tree\) -> Report") {
+            written.insert(format!("{module}::{name}"));
+        }
+    }
+    if written.is_empty() {
+        report.fail(format!(
+            "no rule-shaped function parsed out of {GATE_RULES} — this rule is reading an empty set"
+        ));
+        return report;
+    }
+
+    let orphaned: Vec<&str> = written.difference(&registered).map(String::as_str).collect();
+    report.fail_if(
+        !orphaned.is_empty(),
+        format!(
+            "these rules are written and the registry does not run them: {} — a rule nobody registered is \
+             not a rule that fails, it is a rule that is never asked, which is the one failure this crate \
+             cannot report on itself",
+            orphaned.join(", ")
+        ),
+    );
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
 
     use super::{
         every_exemption_names_a_path_the_tree_has, every_ffi_door_is_opened_or_declared_deliberate,
-        every_fixture_name_is_spelled_once, the_gate_census_names_every_gate,
+        every_fixture_name_is_spelled_once, every_rule_written_is_registered,
+        the_gate_census_names_every_gate,
     };
     use crate::tests::Fixture;
+
+    /// A rule written and never registered runs never, and nothing else says so.
+    ///
+    /// The green half is the same tree with the entry added, so the test is about the REGISTRY
+    /// rather than about whether the fixture happens to parse.
+    #[test]
+    fn a_rule_the_registry_never_names_is_red() {
+        let registry = |entries: &str| {
+            format!("pub mod probe;\n\nfn registry() -> Vec<Rule> {{\n    vec![\n{entries}    ]\n}}\n")
+        };
+        let module = "pub fn a_registered_rule(tree: &Tree) -> Report {\n    Report::new()\n}\n\npub fn \
+                      an_orphaned_rule(tree: &Tree) -> Report {\n    Report::new()\n}\n";
+
+        let fixture = Fixture::new("rule-registry-orphan");
+        fixture.write("rust/slopdesk-invariants/src/rules/probe.rs", module);
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            &registry("        Rule { check: probe::a_registered_rule },\n"),
+        );
+        let report = every_rule_written_is_registered(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("probe::an_orphaned_rule")),
+            "the report has to name the rule nobody runs: {report:?}"
+        );
+
+        let green = Fixture::new("rule-registry-complete");
+        green.write("rust/slopdesk-invariants/src/rules/probe.rs", module);
+        green.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            &registry(
+                "        Rule { check: probe::a_registered_rule },\n\x20       Rule { check: \
+                 probe::an_orphaned_rule },\n",
+            ),
+        );
+        assert!(every_rule_written_is_registered(&green.tree()).is_clean());
+    }
+
+    /// A `#[cfg(test)]` in a DOC comment must not truncate the scan — that miss was 24 live rules.
+    ///
+    /// The green assertion is the one that matters: the rule IS registered, and a scan that stopped
+    /// at the doc mention above it would find nothing to complain about either. So the red half
+    /// carries a second, unregistered function BELOW the same doc comment, which only an
+    /// untruncated scan can reach.
+    #[test]
+    fn a_cfg_test_in_a_doc_comment_does_not_hide_the_rules_under_it() {
+        let fixture = Fixture::new("rule-registry-truncation");
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/probe.rs",
+            "pub fn a_registered_rule(tree: &Tree) -> Report {\n    Report::new()\n}\n\n/// Only the source \
+             BEFORE `#[cfg(test)]` is scanned by the sibling rule.\npub fn a_rule_below_the_doc(tree: \
+             &Tree) -> Report {\n    Report::new()\n}\n",
+        );
+        // The registry parses — otherwise the blind guard answers first and the truncation this
+        // test is about is never reached.
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            "pub mod probe;\n\nfn registry() -> Vec<Rule> {\n    vec![\n        Rule { check: \
+             probe::a_registered_rule },\n    ]\n}\n",
+        );
+        let report = every_rule_written_is_registered(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("probe::a_rule_below_the_doc")),
+            "a doc comment naming #[cfg(test)] must not cut the scan above the rules: {report:?}"
+        );
+    }
+
+    /// A registry that parses no entries is BLIND, not a registry running everything.
+    #[test]
+    fn a_registry_that_parses_nothing_is_red() {
+        let fixture = Fixture::new("rule-registry-blind");
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/probe.rs",
+            "pub fn r(tree: &Tree) -> Report {}\n",
+        );
+        fixture.write("rust/slopdesk-invariants/src/rules/mod.rs", "pub mod probe;\n");
+        let report = every_rule_written_is_registered(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|line| line.contains("blind")),
+            "no `check:` entry at all is a blind rule, not a green one: {report:?}"
+        );
+    }
 
     /// A `gates/mod.rs` whose census section and `pub mod` list agree, plus the two anchors.
     fn census(bullets: &str, modules: &str) -> String {

@@ -18079,3 +18079,40 @@ whose far side legitimately IS prose; forcing it through would have meant growin
 for every caller. *Anchoring the section on the first bullet instead of the heading* — the file opens
 with a SECOND bulleted list, the port note saying what each gate used to be as a shell script, and
 reading that one as the census reports a census that names nothing as complete.
+
+## The reading that was standing in for a gate (2026-08-31)
+
+`rules/mod.rs` opens by naming its own hazard and then naming the mechanism that was supposed to
+catch it: "A rule that is written but not registered is a rule that runs never, and the way to notice
+that is for the list to be short enough to read."
+
+The hazard is exactly right, and it is the quietest failure this crate has. An unregistered rule is
+not a red and not a skip; the gate simply reports on a set with a hole in it, and every number it
+prints is true. The function is `pub` in a `pub mod`, so no dead-code warning is coming.
+
+The MECHANISM is what expired. The registry is 361 entries over 1 928 lines. That is not a screen,
+and it has not been a reading anyone performs for some hundreds of rules — it was a human eye
+standing in for a gate, written down as though it were one. Measured before writing anything: 361
+registered, 361 rule-shaped functions in the directory, a clean bijection. So the hazard has never
+fired, which is exactly when a mechanism should be replaced rather than after.
+
+`every-rule-is-registered` compares them now. Only that direction needs a rule — the other one, a
+registry entry naming a function that does not exist, is a build error. Probed by deleting a live
+`Rule` block: it reds naming `gate_health::every_ffi_door_is_opened_or_declared_deliberate`.
+
+The scan does NOT stop at `#[cfg(test)]`, and that is the finding inside the finding. Truncating
+there is the obvious way to keep a break-test fixture from being read as a rule, and it is what the
+sibling `every_exemption_names_a_path_the_tree_has` does — but written that way this rule misses
+TWENTY-FOUR live rules and calls them registered, because three modules spell `#[cfg(test)]` inside a
+DOC COMMENT explaining that very truncation and the cut lands above their own functions. An
+under-reaching gate that reports clean is what the last several rounds have all been about. The
+pattern is anchored at column zero instead: a `pub fn` inside `mod tests` is indented by definition,
+so no truncation is needed at all.
+
+**Rejected.** *A macro or an inventory crate that registers rules automatically* — the registry is
+explicit so a reader can open one file and see the enforced set; automating it trades that for the
+property a gate can now assert anyway. *Keeping the "short enough to read" sentence alongside the
+rule* — a mechanism that is not running is worse than no mechanism, because it is why nobody wrote
+the real one. *Truncating the scan at `#[cfg(test)]` and exempting the three modules whose doc
+comments spell it* — an allowlist over a defect in the scanner, and it would grow one entry every
+time somebody explains the truncation in prose.
