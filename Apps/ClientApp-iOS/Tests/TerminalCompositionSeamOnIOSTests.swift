@@ -73,6 +73,39 @@ final class TerminalCompositionSeamOnIOSTests: XCTestCase {
         XCTAssertEqual(probe.composed.last?.text, "")
     }
 
+    /// A commit ENDS the composition, and the preedit goes down with it.
+    ///
+    /// UIKit usually unmarks around `insertText(_:)` itself — but not on every path, and a candidate
+    /// accepted by a hardware Return arrives with the run still marked. What would be left is a stale
+    /// underline sitting under text that is already on the line: the one artefact a user reads as the
+    /// terminal being broken, and the one no arithmetic test can see, because the document is right
+    /// either way.
+    func testACommitEndsTheCompositionSoNoStaleUnderlineIsLeft() {
+        let host = TerminalInputHostView(frame: .zero)
+        let probe = SeamProbe()
+        host.surface = probe
+
+        host.setMarkedText("にほんご", selectedRange: NSRange(location: 4, length: 0))
+        host.insertText("日本語")
+        XCTAssertEqual(probe.composed.last?.text, "", "the preedit was withdrawn from the pixels")
+        XCTAssertNil(host.markedTextRange, "and from this side of the seam")
+    }
+
+    /// A composition belongs to the responder that STARTED it, so it goes down with the keyboard.
+    ///
+    /// A resignation leaves no keystroke and no frame behind it, so nothing would repaint an abandoned
+    /// run away — it would sit underlined over a line the input method has already forgotten.
+    func testResigningTheKeyboardTakesTheCompositionWithIt() {
+        let host = TerminalInputHostView(frame: .zero)
+        let probe = SeamProbe()
+        host.surface = probe
+
+        host.setMarkedText("にほ", selectedRange: NSRange(location: 2, length: 0))
+        host.resignFirstResponder()
+        XCTAssertEqual(probe.composed.last?.text, "")
+        XCTAssertNil(host.markedTextRange)
+    }
+
     /// The caret is CONVERTED out of the view that owns it.
     ///
     /// The rect the seam answers is in the band's coordinates or the grid's, and UIKit reads
