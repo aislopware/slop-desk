@@ -36,7 +36,23 @@
 //! Miri", and for years nothing ran it: `just miri` existed, `just check` did not depend on it,
 //! `just test` did not, the prek hooks did not, the disabled CI did not — so the sentence in the
 //! document was the entire enforcement.
+//!
+//! ## Three ways a crate stayed out of the questions above
+//! Each was found by RUNNING the gate over a seeded tree rather than by reading it, and each is the
+//! same shape: the question was asked of a narrower set than the sentence that motivates it.
+//!
+//! * The reach questions were asked of the WORKSPACE ROOTS only. A crate that declares no
+//!   `[workspace]` and is not a member of `rust/Cargo.toml` is adopted by nothing — `cargo fmt
+//!   --all` from the root does not see it and no recipe enters it — and it was not in the set the
+//!   questions were asked of, so a seeded one came back green. [`adopted_by_nothing`] is that half.
+//! * `rust` ITSELF was never asked. `RUST_WORKSPACES` carries a bare `rust` in front of the derived
+//!   list, and that entry is what covers the root workspace's six members; nothing checked it was
+//!   still there, because the check iterated a list `rust` is not in.
+//! * The Miri arm asked whether the plan runs Miri, never over WHAT. Retargeting the recipe to
+//!   another crate left the gate green while the obligation it names — `rust/slopdesk-gfsimd`'s
+//!   `unsafe` — went unexercised. [`runs_miri_for`] asks the whole question.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -46,6 +62,17 @@ use crate::proc;
 ///
 /// Three, not one, because a crate present in one and missing from another has an unchecked half.
 const REACHING: [&str; 4] = ["fmt-rust", "lint-rust", "lint-rust-clippy", "test-rust"];
+
+/// The one workspace that has MEMBERS, and so the one directory a recipe can enter on their behalf.
+const ROOT_WORKSPACE: &str = "rust";
+
+/// The crate whose `unsafe` the Miri suite is the price of.
+///
+/// Spelled here rather than derived from `slopdesk-invariants`' `HAND_WRITTEN` list, because one
+/// string is not worth a dependency edge from the gate runners onto the tree rules — so the
+/// duplication is declared instead: `CLAUDE.md`'s bar for a third hand-written-`unsafe` crate is
+/// "a differential suite that runs under Miri", and THIS is the crate that cleared it.
+const MIRI_CRATE: &str = "slopdesk-gfsimd";
 
 /// What one recipe would run, with every command substitution performed.
 ///
@@ -124,6 +151,19 @@ pub fn run(root: &Path) -> Result<(), String> {
     let mut failures: Vec<String> = Vec::new();
     let workspaces = workspace_crates(root)?;
     let all = every_crate(root)?;
+    let members = root_members(root)?;
+
+    let orphans = adopted_by_nothing(&all, &workspaces, &members);
+    if !orphans.is_empty() {
+        for name in &orphans {
+            eprintln!("{name} (adopted by no workspace)");
+        }
+        failures.push(format!(
+            "a crate under rust/ declares no [workspace] and is not a member of {ROOT_WORKSPACE}/Cargo.toml \
+             — nothing adopts it, so no recipe can enter it and the reach questions below are never asked \
+             of it"
+        ));
+    }
 
     for recipe in REACHING {
         let plan = dry_run(root, recipe);
@@ -145,6 +185,17 @@ pub fn run(root: &Path) -> Result<(), String> {
                 "a crate is its own cargo workspace and a rust fmt/lint/test recipe never enters it"
                     .to_owned(),
             );
+        }
+        // The root workspace is not in the list above — it is not a crate under `rust/` — and it is
+        // the only entry that covers a MEMBER, since `--all`/`--workspace` reach one only from the
+        // directory that adopts it. Drop the bare `rust` from `RUST_WORKSPACES` and six crates go
+        // unformatted while every question above still answers yes.
+        if !members.is_empty() && !plan_enters_dir(&plan, ROOT_WORKSPACE) {
+            failures.push(format!(
+                "'just {recipe}' never enters {ROOT_WORKSPACE}/ — its {} members are reached through that \
+                 directory and nowhere else",
+                members.len()
+            ));
         }
     }
 
@@ -187,17 +238,19 @@ pub fn run(root: &Path) -> Result<(), String> {
              runs it"
                 .to_owned(),
         );
-    } else if !check_plan.contains("cargo +nightly miri test") {
-        failures.push(
-            "'just check' does not reach 'just miri' — the differential suite is what pays for \
-             rust/slopdesk-gfsimd's unsafe, and an obligation no recipe reaches is a sentence in a document \
+    } else if !runs_miri_for(&check_plan, MIRI_CRATE) {
+        failures.push(format!(
+            "'just check' does not reach a Miri run over rust/{MIRI_CRATE} — the differential suite is what \
+             pays for that crate's unsafe, and Miri over some OTHER crate answers a different question \
              (CLAUDE.md, docs/DECISIONS.md)"
-                .to_owned(),
-        );
+        ));
     }
 
     if failures.is_empty() {
-        println!("check-reach: every workspace crate is formatted, linted and tested by a just recipe");
+        println!(
+            "check-reach: every crate under rust/ is adopted by a workspace a recipe enters, formatted, \
+             linted and tested, and Miri runs over rust/{MIRI_CRATE}"
+        );
         Ok(())
     } else {
         Err(failures
@@ -208,31 +261,100 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
 }
 
-/// True when a dry-run plan would enter `crate_name`'s directory.
+/// True when `needle` occurs in `text` and is not merely the PREFIX of a longer name.
 ///
-/// The boundary matters: `rust/slopdesk-video` must not be satisfied by a plan that only names
-/// `rust/slopdesk-videoclient`.
-#[must_use]
-pub fn plan_enters(plan: &str, crate_name: &str) -> bool {
-    let needle = format!("rust/{crate_name}");
-    plan.match_indices(&needle).any(|(index, _)| {
-        let after = plan[index + needle.len()..].chars().next();
+/// The one boundary test all three questions below share: `rust/slopdesk-video` must not be
+/// satisfied by a plan that only names `rust/slopdesk-videoclient`. A `)` is deliberately not an
+/// ending — a plan that wrote `(cd rust/x && …)` would read as unreached, which fails loudly rather
+/// than accepting a shape nobody has checked.
+fn names_exactly(text: &str, needle: &str) -> bool {
+    text.match_indices(needle).any(|(index, _)| {
+        let after = text[index + needle.len()..].chars().next();
         matches!(after, None | Some(' ' | ';' | '\n'))
     })
+}
+
+/// True when a dry-run plan would enter `dir`, which is a path relative to the repo root.
+#[must_use]
+pub fn plan_enters_dir(plan: &str, dir: &str) -> bool {
+    names_exactly(plan, dir)
+}
+
+/// True when a dry-run plan would enter `crate_name`'s directory.
+#[must_use]
+pub fn plan_enters(plan: &str, crate_name: &str) -> bool {
+    plan_enters_dir(plan, &format!("rust/{crate_name}"))
 }
 
 /// True when a `cargo test` plan would run `crate_name`'s suite, in either of the two shapes the
 /// justfile writes.
 #[must_use]
 pub fn runs_tests_for(test_plan: &str, crate_name: &str) -> bool {
-    if test_plan.contains(&format!("cd rust/{crate_name} &&")) {
-        return true;
-    }
-    let needle = format!("cargo test -p {crate_name}");
-    test_plan.match_indices(&needle).any(|(index, _)| {
-        let after = test_plan[index + needle.len()..].chars().next();
-        matches!(after, None | Some(' ' | '\n'))
-    })
+    test_plan.contains(&format!("cd rust/{crate_name} &&"))
+        || names_exactly(test_plan, &format!("cargo test -p {crate_name}"))
+}
+
+/// True when a plan runs Miri over `crate_name` SPECIFICALLY.
+///
+/// Asked of the Miri lines rather than of the whole plan, which is the difference between the two
+/// questions: every `check` plan enters `rust/slopdesk-gfsimd` several times over — to format it,
+/// to clippy it, to test it — so a plan-wide search for the crate name would be answered by the
+/// wrong command, and a plan-wide search for `miri` by the wrong crate.
+#[must_use]
+pub fn runs_miri_for(plan: &str, crate_name: &str) -> bool {
+    plan.lines()
+        .filter(|line| line.contains("cargo +nightly miri test"))
+        .any(|line| {
+            line.contains(&format!("cd rust/{crate_name} &&"))
+                || names_exactly(line, &format!("miri test -p {crate_name}"))
+        })
+}
+
+/// The crates no workspace adopts, which no recipe can enter however it is written.
+///
+/// A pure function of the three sets so the classification is testable without a tree. A crate is
+/// adopted when it is its own workspace root — the reach loop then asks about it directly — or when
+/// `rust/Cargo.toml` lists it as a member, which is what makes entering `rust/` cover it. Neither
+/// is a matter of what the recipes say, so this is asked ONCE rather than per recipe.
+fn adopted_by_nothing<'a>(
+    all: &'a [String],
+    workspaces: &[String],
+    members: &BTreeSet<String>,
+) -> Vec<&'a String> {
+    all.iter()
+        .filter(|name| !workspaces.contains(*name) && !members.contains(*name))
+        .collect()
+}
+
+/// The member crates `rust/Cargo.toml` adopts.
+///
+/// # Errors
+/// When the manifest cannot be read or declares no `members` key — an empty answer would report
+/// every member as an orphan, which is loud about the wrong thing. See
+/// [`adopted_by_nothing`] for what the answer decides.
+fn root_members(root: &Path) -> Result<BTreeSet<String>, String> {
+    let manifest = root.join(ROOT_WORKSPACE).join("Cargo.toml");
+    let text = fs::read_to_string(&manifest).map_err(|error| format!("{}: {error}", manifest.display()))?;
+    let opened = text.find("members = [").map(|at| &text[at..]).ok_or_else(|| {
+        format!(
+            "{}: no `members = [` — this gate can no longer tell a member from an orphan",
+            manifest.display()
+        )
+    })?;
+    let closed = opened
+        .find(']')
+        .ok_or_else(|| format!("{}: the `members` array never closes", manifest.display()))?;
+    Ok(quoted(&opened[..closed]))
+}
+
+/// The double-quoted words of a TOML array fragment, in order.
+fn quoted(fragment: &str) -> BTreeSet<String> {
+    fragment
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Every crate under `rust/` that is its own cargo workspace.
@@ -298,9 +420,96 @@ fn any_rust_file_matching(dir: &Path, needles: &[&str]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::Path;
 
-    use super::{commands_only, expand_backticks, plan, plan_enters, runs_tests_for};
+    use super::{
+        adopted_by_nothing, commands_only, expand_backticks, plan, plan_enters, plan_enters_dir,
+        runs_miri_for, runs_tests_for,
+    };
+
+    /// One of each kind, so a classifier that answered by position rather than by set would show.
+    fn crates() -> (Vec<String>, Vec<String>, BTreeSet<String>) {
+        let all = ["slopdesk-cli", "slopdesk-wire", "slopdesk-zzprobe"].map(str::to_owned);
+        let workspaces = vec!["slopdesk-wire".to_owned()];
+        let members = BTreeSet::from(["slopdesk-cli".to_owned()]);
+        (all.to_vec(), workspaces, members)
+    }
+
+    /// A crate that is neither a workspace root nor a member is reached by nothing — the shape a
+    /// seeded `rust/slopdesk-zzprobe` proved the gate used to call green.
+    #[test]
+    fn a_crate_no_workspace_adopts_is_named() {
+        let (all, workspaces, members) = crates();
+        assert_eq!(adopted_by_nothing(&all, &workspaces, &members), vec![
+            &"slopdesk-zzprobe".to_owned()
+        ]);
+
+        // And the two adopted kinds are not: a member is covered from `rust/`, a root on its own.
+        let adopted = ["slopdesk-cli".to_owned(), "slopdesk-wire".to_owned()];
+        assert!(adopted_by_nothing(&adopted, &workspaces, &members).is_empty());
+    }
+
+    /// The membership the orphan question is decided by, and the loud failure when it cannot be
+    /// read — an empty answer would report all six members as orphans, naming the wrong defect.
+    #[test]
+    fn a_manifest_with_no_members_blinds_the_orphan_question() {
+        let root = std::env::temp_dir().join("slopdesk-reach-members");
+        let rust = root.join("rust");
+        std::fs::create_dir_all(&rust).expect("temp tree");
+
+        std::fs::write(
+            rust.join("Cargo.toml"),
+            "[workspace]\nmembers = [\n  \"slopdesk-hook\",\n  \"slopdesk-ctl\",\n]\nresolver = \"3\"\n",
+        )
+        .expect("manifest");
+        assert_eq!(
+            super::root_members(&root).expect("members"),
+            BTreeSet::from(["slopdesk-hook".to_owned(), "slopdesk-ctl".to_owned()])
+        );
+
+        std::fs::write(rust.join("Cargo.toml"), "[workspace]\nresolver = \"3\"\n").expect("manifest");
+        let blind = super::root_members(&root).expect_err("a missing members key must be loud");
+        assert!(blind.contains("member from an orphan"), "{blind}");
+    }
+
+    /// The root workspace's own entry, which covers every member and is in no list of crates.
+    #[test]
+    fn the_root_workspace_is_a_directory_a_plan_can_miss() {
+        let with_root = "for ws in rust rust/slopdesk-wire; do cd $ws; done";
+        assert!(plan_enters_dir(with_root, "rust"));
+
+        // The bare `rust` dropped from `RUST_WORKSPACES`: every crate question still answers yes,
+        // and the six members are formatted by nothing.
+        let without = "for ws in rust/slopdesk-wire rust/slopdesk-superd; do cd $ws; done";
+        assert!(!plan_enters_dir(without, "rust"));
+        assert!(plan_enters(without, "slopdesk-wire"));
+    }
+
+    /// Miri over the WRONG crate answers a different question, and the plan names the right one on
+    /// lines that have nothing to do with Miri.
+    #[test]
+    fn miri_must_name_the_crate_that_pays_for_it() {
+        let real = "cd rust/slopdesk-gfsimd && cargo +nightly fmt --all\ncd rust/slopdesk-gfsimd && cargo \
+                    +nightly miri test\n";
+        assert!(runs_miri_for(real, "slopdesk-gfsimd"));
+
+        // Retargeted: Miri still runs, the crate is still entered — by the formatter one line up.
+        let retargeted = "cd rust/slopdesk-gfsimd && cargo +nightly fmt --all\ncd rust/slopdesk-wire && \
+                          cargo +nightly miri test\n";
+        assert!(!runs_miri_for(retargeted, "slopdesk-gfsimd"));
+        assert!(runs_miri_for(retargeted, "slopdesk-wire"));
+
+        // The other shape, and not satisfied by a longer name.
+        assert!(runs_miri_for(
+            "cargo +nightly miri test -p slopdesk-gfsimd --quiet",
+            "slopdesk-gfsimd"
+        ));
+        assert!(!runs_miri_for(
+            "cargo +nightly miri test -p slopdesk-gfsimdx",
+            "slopdesk-gfsimd"
+        ));
+    }
 
     /// A commented recipe line answers none of the four questions, in all three of their spellings.
     #[test]

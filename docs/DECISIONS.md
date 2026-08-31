@@ -17879,3 +17879,44 @@ two questions; only the first grew. *A listed crate → suite map* — the fixtu
 edge, and a hand-written list goes stale in the dangerous direction. *Escalating an unattributable
 `rust/` path to FULL* — this gate's own crate is edited more than any other and no Swift test can
 reach it.
+
+## The reach gate asked its questions of a narrower set than the sentence it prints (2026-08-31)
+
+`just lint-reach` exists because `slopdesk-invariants` cannot answer it: what a `just` recipe would
+RUN is only knowable by expanding it. Its module header states the class plainly — "a crate that no
+`fmt`/`lint`/`test` recipe enters is not a warning, it is silence" — and then asked the question of
+`workspace_crates()`, the crates that declare `[workspace]` themselves. Three things fell outside
+that set, and each was settled by SEEDING the defect and running the real gate rather than by
+reading the code.
+
+**A crate nothing adopts.** `RUST_WORKSPACES` is `"rust "` plus every `[workspace]` crate. A crate
+that declares no `[workspace]` and is not listed in `rust/Cargo.toml`'s `members` is adopted by
+neither: `cargo fmt --all` from the root never sees it, no recipe enters its directory, and it was
+not in the list the reach questions were asked of. A seeded `rust/slopdesk-zzprobe` — four lines of
+manifest and a `pub fn` — came back `check-reach: every workspace crate is formatted, linted and
+tested by a just recipe`. It now fails naming the crate.
+
+**The root workspace itself.** The bare `rust` in front of that list is the entry that covers all six
+members, since `--all` and `--workspace` reach a member only from the directory that adopts it.
+Nothing checked it was still there, because the loop iterated crates under `rust/` and `rust` is not
+one. Deleting it left every per-crate question answering yes while six crates went unformatted; the
+gate now asks about the directory too, once per recipe.
+
+**Miri, over nothing in particular.** The arm read `check_plan.contains("cargo +nightly miri test")`.
+`CLAUDE.md` buys the third hand-written-`unsafe` crate with "a differential suite that runs under
+Miri", and that is a claim about `rust/slopdesk-gfsimd` specifically. Retargeting the recipe to
+`rust/slopdesk-wire` left the gate green. The question is now asked of the MIRI LINES — a plan-wide
+search for the crate name would be answered by the formatter, which enters that directory three
+lines earlier, and a plan-wide search for `miri` by the wrong crate.
+
+The printed success line was the tell and is now the summary: it said "every workspace crate", which
+was honest about a reach the header's sentence was not.
+
+**Rejected.** *Deriving the Miri crate from `slopdesk-invariants`' `HAND_WRITTEN` list* — one string
+is not worth a dependency edge from the gate RUNNERS onto the tree RULES; the duplication is declared
+in the constant's doc instead. *Making the orphan check a `slopdesk-invariants` rule* — it reads like
+a pure tree question, but the reason a member is fine is that the PLAN enters `rust/`, so it belongs
+where the plan is. *Accepting `)` as a name boundary* so a future `(cd rust/x && …)` would count —
+that shape would read as unreached and fail loudly, which is the direction this gate must round
+toward. *Treating an unparseable `members` key as "no members"* — that would report all six as
+orphans and name the wrong defect, so it is a loud error of its own.
