@@ -294,6 +294,17 @@ pixel-pushing to the host application."
    editor's cursor 48 pt away from the bar on screen, and a candidate window hangs off the reported
    one. Fixed by measuring both off the same `CTLine` (`compositionCaret`), on both platforms at
    once, because the band is one implementation.
+
+   **The GRID's half of the preedit is verified where it is DECIDED, not where it is blitted.**
+   `slopdesk_termrender::paint` holds six pins on it — the bed under the run, an underline across
+   every cell it takes, the composition REPLACING the terminal caret rather than joining it, drawing
+   through the dark half of the blink, and nothing at all when no cursor is on screen. Those are the
+   whole of what a composition looks like on the grid. What `setFramebufferOnly(true)` gives up is a
+   readback of the finished drawable, which would only re-check that Metal blits quads it already
+   blits for every glyph in the terminal. So there is no verification gap here to close: the two
+   places a preedit can be drawn are each pinned in the layer that decides them, and the one thing
+   genuinely out of reach is whether a real input method STARTS a composition — a keyboard-process
+   behaviour no off-screen rig on either platform can observe.
 9. scrollbar geometry, replacing `ghostty_surface_viewport_info` and the `SCROLLBAR` action
 10. padding, content scale, resize → cols·rows, which `rust/slopdesk-terminal/src/geometry.rs`
     already computes

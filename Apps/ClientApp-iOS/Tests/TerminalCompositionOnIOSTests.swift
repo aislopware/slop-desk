@@ -8,10 +8,12 @@ import XCTest
 /// `SlopDeskPhoneUI` is `#if os(iOS)` end to end, so a macOS `swift test` compiles it to an EMPTY
 /// module and a suite that lived there would assert nothing at all.
 ///
-/// What is pinned is the CLAMPING, and only that. The protocol boilerplate around it is UIKit calling
-/// UIKit and cannot be driven headlessly — but every position UIKit asks about is derived from these
-/// four answers, and a UTF-16 offset that walks off either end is met with a crash rather than a
-/// complaint, which makes this the half worth holding.
+/// What is pinned HERE is the CLAMPING, and only that: every position UIKit asks about is derived
+/// from these four answers, and a UTF-16 offset that walks off either end is met with a crash rather
+/// than a complaint. The conformance's other half — that a marked run actually crosses the renderer
+/// seam, and that the caret is converted out of whichever view owns it — is
+/// `TerminalCompositionSeamOnIOSTests`, which drives it through a probe rather than a live pane.
+/// This header used to claim that half "cannot be driven headlessly". It can.
 final class TerminalCompositionOnIOSTests: XCTestCase {
     private func composing(_ text: String, caret: Int) -> TerminalComposition {
         TerminalComposition(text: text, selection: NSRange(location: caret, length: 0))

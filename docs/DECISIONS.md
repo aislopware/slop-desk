@@ -18733,3 +18733,20 @@ at its end. Both platforms had it, because the band is one implementation. The f
 correction but a shared `compositionCaret`, measured off the SAME `CTLine` that gets drawn: the two
 numbers can no longer disagree about a kern. No arithmetic assertion could have found this — the two
 spellings were each self-consistent — which is the argument for the rig, not just for the fix.
+
+**"The conformance cannot be driven headlessly" was also wrong, and it was our own header saying
+it.** `TerminalInputHostView.surface` is an injectable seam, so a probe standing in for the renderer
+sees exactly what a live one would. `TerminalCompositionSeamOnIOSTests` drives it: the marked run
+reaches the pixels verbatim WITH its own caret, an empty run is how a withdrawal is spelled and both
+sides drop it, the caret is converted out of the view that owns it — a rect returned unconverted
+would place a candidate window a band's height off, right where it looks deliberate — and every one
+of the six text traits is off. The traits are the cheapest test in the file and the one guarding the
+most destructive default: a smart quote at a shell prompt is a string that never closes.
+
+**And the GRID's preedit needs no readback, because it is verified where it is DECIDED.**
+`slopdesk_termrender::paint` holds six pins on the composition — the bed, the underline across every
+cell it takes, the caret it REPLACES rather than joins, the blink it draws through, the nothing it
+draws with no cursor on screen. `setFramebufferOnly(true)` gives up a readback of the finished
+drawable, which would only re-check that Metal blits quads it blits for every glyph anyway. Verify
+the decision in the layer that makes it; a pixel rig is for the layers that decide in pixels, which
+is what the band does and the grid does not.
