@@ -41,25 +41,38 @@ pub(crate) struct FindState {
 }
 
 impl VtSession {
-    /// Run `needle` over the whole retained buffer and select the first hit from the viewport down.
+    /// Run a case-insensitive substring over the whole retained buffer, as the `search:` verb does.
     ///
-    /// The search is a plain case-insensitive substring, because that is what the `search:` verb
-    /// carries. Regex, whole-word and case-sensitive finds are the find bar's own — it computes
-    /// those match rows itself and drives this session through
-    /// [`scroll`](VtSession::scroll)/[`set_screen_selection`](VtSession::set_screen_selection)
-    /// instead.
+    /// The verb is a KEYBINDING — a user writes `search:TODO` and gets the plain find every
+    /// terminal has — so it carries a needle and nothing else. The find bar's four-mode search
+    /// is [`Self::search_with`], and both end here, in one engine.
     ///
-    /// An empty needle clears the hits and the highlight without closing anything: that is the
-    /// state a find bar is in between the user opening it and typing.
+    /// # Errors
+    /// The engine's own error.
+    pub fn search(&mut self, needle: &str) -> Result<usize> {
+        self.search_with(&SearchQuery::new(needle))
+    }
+
+    /// Run `query` over the whole retained buffer and select the first hit from the viewport down.
+    ///
+    /// ⚠️ **All four modes, and that is the point.** Case-sensitivity, whole-word and regex used to
+    /// be beyond this door, so the find bar ran its own second scan over a flat text mirror for
+    /// them and drove the viewport by row — which meant the `N of M` it printed and the cells the
+    /// surface lit were two different answers whenever any of the three was on. There is one scan
+    /// now. See `docs/ui-shell/current-state/terminal-features.md` gap 4.
+    ///
+    /// An empty needle — or a regex that does not compile — clears the hits and the highlight
+    /// without closing anything: that is the state a find bar is in between the user opening it and
+    /// typing something that matches.
     ///
     /// Answers how many hits there are, which is what the find bar prints as `3/17`.
     ///
     /// # Errors
     /// The engine's own error.
-    pub fn search(&mut self, needle: &str) -> Result<usize> {
+    pub fn search_with(&mut self, query: &SearchQuery<'_>) -> Result<usize> {
         self.find.needle.clear();
-        self.find.needle.push_str(needle);
-        self.find.matches = self.search_screen(&SearchQuery::new(needle))?;
+        self.find.needle.push_str(query.needle);
+        self.find.matches = self.search_screen(query)?;
         self.find.current = None;
         if self.find.matches.is_empty() {
             // The previous needle's highlight must go even when the new one finds nothing, or a
@@ -165,8 +178,9 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
+    use crate::search::SearchQuery;
     use crate::selection::CopyFormat;
-    use crate::session::VtSession;
+    use crate::session::{Scroll, VtSession};
 
     fn session() -> VtSession {
         VtSession::new(8, 3, 20, 40).unwrap()
@@ -196,6 +210,45 @@ mod tests {
         let (index, total) = vt.search_position().unwrap();
         assert_eq!(total, 3);
         assert!((1..=3).contains(&index));
+    }
+
+    /// The `N of M` a find bar prints is this number verbatim — no platform adds one to it — so a
+    /// zero-based answer would ship as "0 of 3" with every Swift suite still green, because the
+    /// bar's tests fake the door rather than run the engine.
+    #[test]
+    fn the_position_is_one_based_and_counts_up_from_the_first_hit() {
+        let mut vt = seeded();
+        // From the top of the buffer the search starts at hit ONE, which is what pins the base:
+        // with the viewport anywhere else the first current hit is not the first match.
+        vt.scroll(Scroll::Row(0));
+        assert_eq!(vt.search("hit").unwrap(), 3);
+        assert_eq!(vt.search_position(), Some((1, 3)));
+        assert!(vt.navigate_search(true).unwrap());
+        assert_eq!(vt.search_position(), Some((2, 3)));
+        assert!(vt.navigate_search(true).unwrap());
+        assert_eq!(vt.search_position(), Some((3, 3)));
+        assert!(vt.navigate_search(true).unwrap());
+        assert_eq!(
+            vt.search_position(),
+            Some((1, 3)),
+            "the wrap is back to one, not to zero"
+        );
+    }
+
+    /// The four-mode door and the `search:` verb are one engine, so the cursor they leave behind is
+    /// the same one — the count the bar prints and the cell the surface lit cannot disagree.
+    #[test]
+    fn the_four_mode_door_leaves_the_same_cursor_the_verb_does() {
+        let mut vt = seeded();
+        vt.scroll(Scroll::Row(0));
+        let query = SearchQuery::new("HIT").case_sensitive(false);
+        assert_eq!(vt.search_with(&query).unwrap(), 3);
+        assert_eq!(vt.search_position(), Some((1, 3)));
+        assert_eq!(
+            vt.selection_text(CopyFormat::Plain).unwrap().as_deref(),
+            Some("hit"),
+            "the door's first hit is selected, not merely counted"
+        );
     }
 
     /// The incremental-find rule: typing must not throw the viewport back to the buffer's start.

@@ -28,6 +28,9 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
 
     private var scrollbackCalls = 0
 
+    /// Every ``find(_:caseSensitive:wholeWord:isRegex:)`` in call order.
+    private(set) var finds: [FindCall] = []
+
     /// How many times ``scrollbackLines()`` was called — the assertion surface for the E5 perf fix
     /// (the cross-seam scrollback mirror must be gathered ONCE per overlay-open, not once per keystroke).
     var scrollbackLinesCallCount: Int {
@@ -74,6 +77,29 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
             TerminalScrollbackLine(text: text, firstRow: row, lastRow: row)
         }
     }
+
+    // The find seam. It RECORDS and answers nothing found, because the matching is
+    // `slopdesk-vterm`'s and has its own tests there — a recorder that searched would be a second
+    // engine rebuilt inside the test target, which `CLAUDE.md` bans by name.
+    func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int {
+        lock.lock()
+        finds.append(FindCall(query: query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex))
+        lock.unlock()
+        return 0
+    }
+
+    func findPosition() -> (current: Int, total: Int)? { nil }
+}
+
+// MARK: - FindCall
+
+/// One recorded ``TerminalSurfaceActions/find(_:caseSensitive:wholeWord:isRegex:)`` — the four-tuple
+/// a bar hands the ONE matcher, which is all a Swift-side test can assert about a search.
+struct FindCall: Equatable {
+    var query: String
+    var caseSensitive: Bool
+    var wholeWord: Bool
+    var isRegex: Bool
 }
 
 // MARK: - RecordingSelectionSurface (RecordingSurfaceActions + the TerminalSelectionControl seam)
@@ -116,6 +142,9 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
     /// How many times `clearSelection` ran (leave-visual + exit hygiene).
     private(set) var clearSelectionCount = 0
 
+    /// Every ``find(_:caseSensitive:wholeWord:isRegex:)`` in call order.
+    private(set) var finds: [FindCall] = []
+
     var actions: [String] {
         lock.lock()
         defer { lock.unlock() }
@@ -149,6 +178,16 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
             TerminalScrollbackLine(text: text, firstRow: row, lastRow: row)
         }
     }
+
+    /// Records and finds nothing, for the same reason ``RecordingSurfaceActions`` does.
+    func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int {
+        lock.lock()
+        finds.append(FindCall(query: query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex))
+        lock.unlock()
+        return 0
+    }
+
+    func findPosition() -> (current: Int, total: Int)? { nil }
 
     // TerminalSelectionControl.
     func viewportInfo() -> TerminalViewportInfo? { info }

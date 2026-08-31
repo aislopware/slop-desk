@@ -883,10 +883,22 @@ extension TerminalSurfaceDriver: @MainActor TerminalSurfaceActions {
         return ran
     }
 
-    /// ⚠️ A GESTURE read — it walks the whole retained scrollback. The find bar and the block
+    /// ⚠️ A GESTURE read — it walks the whole retained scrollback. Cross-tab search and the block
     /// extractor call it; the display link must not.
     func scrollbackLines() -> [TerminalScrollbackLine] {
         surface?.logicalLines() ?? []
+    }
+
+    func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int {
+        let count = surface?.find(query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex) ?? 0
+        // The search paints the highlight and may have scrolled to the first hit, and neither is on
+        // the display link's own path — the same reason `performBindingAction` asks for a present.
+        onNeedsPresent?()
+        return count
+    }
+
+    func findPosition() -> (current: Int, total: Int)? {
+        surface?.findPosition()
     }
 }
 

@@ -18578,3 +18578,38 @@ Vietnamese and Chinese at the prompt works today — an input method shows candi
 own bar and commits through `insertText`, which reaches the editor as text. Shipping the band without
 the underline is therefore a missing decoration, not a broken input path, and holding the whole mount
 back for it would have kept the parity break open for the far larger `UITextInput` conformance.
+
+## ⌘F counts and lights the same engine, and three doors died for it (2026-09-01)
+
+Gap 4 was the last one-implementation violation in the terminal surface, and it did not look like
+one from either side. The find bar printed `N of M` from `slopdesk-rowscan::find` — a scan over a
+flat text mirror, addressed by LINE INDEX — while the surface lit cells from `slopdesk-vterm`'s own
+matcher, addressed by grid CELL. Both were correct about their own buffer. Neither could be right
+about the other's, so the counter and the highlights were two answers to one question, and any wrap,
+any double-width glyph, any scroll made them disagree in a way no test on either side could see.
+
+**The fix was not to rewire the counter, it was to make the surface's matcher able to answer.** It
+was literal-only, and `SearchQuery` carried case-sensitivity and whole-word but nothing for regex —
+so `Aa`, `ab` and `.*` had no way in and the bar met them with its own scan. `Matcher` now compiles
+either a folded literal or a `regex::Regex` ONCE per query and is the per-line prefilter for the
+whole buffer; case-sensitivity becomes the pattern's own flag and whole-word post-filters what either
+mode found, so no mode is a special case of another. The `regex` crate is linear by construction,
+which is why it and not a backtracking engine: a ⌘F pattern is re-run over the entire retained buffer
+on every keystroke, and one pathological pattern must not be able to freeze the bar.
+
+**What the door made unnecessary was deleted, not left dormant.** `slopdesk_term_surface_find` takes
+all four modes and answers a COUNT; `_find_position` answers the cursor. That removed the reason for
+`slopdesk_ws_find_bar_row_driven`, `slopdesk_ws_find_reanchor` and `slopdesk_ws_find_step`, for
+`Arming::EndThenScroll`, and for the bar's mirror, match list and index — the machinery that existed
+only to work around a matcher that could not express three of its own modes. `Arming` is two arms
+now: run the search, or end it. The invariants ratchet KEEPS the row-driven pattern claim so the
+branch cannot come back, and W2a — which pinned the in-pane bar's carried guess — is gone with the
+scan it priced.
+
+⚠️ **Two matchers remain and the split is deliberate.** ⇧⌘F searches every open pane on every
+keystroke; asking each pane's live engine would cross the FFI seam per pane per character, so
+`WorkspaceStore.beginGlobalSearchSession()` mirrors each scrollback once and `ScrollbackMatcher`
+re-scans that snapshot in memory. One addresses cells in a live buffer, the other line indices in a
+snapshot — that is two questions, not one question answered twice, and the header of each says so.
+The collapse improved ⇧⌘F as a side effect: jumping to a hit now arms the surface's own four-mode
+search, so the amber per-glyph highlight survives `Aa` and `.*`, which was a documented ceiling.

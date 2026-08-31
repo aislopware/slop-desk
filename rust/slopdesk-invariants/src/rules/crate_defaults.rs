@@ -231,10 +231,13 @@ pub fn the_open_target_splits_once(tree: &Tree) -> Report {
 /// and the door is the only spelling that answers "there is nothing to step from" instead.
 #[must_use]
 pub fn a_ring_wraps_through_one_rule(tree: &Tree) -> Report {
-    /// The two files that used to step their own ring.
+    /// The two files that used to step their own ring. The find half's ring is GONE rather than
+    /// fixed — the terminal surface steps its own match cursor now — but the scan still lives in
+    /// `ScrollbackMatcher.swift`, so the pin follows it: a ring rebuilt around those matches would
+    /// be the same `% 0` on an empty result set.
     const RINGS: &[&str] = &[
         "Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSwitcher.swift",
-        "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift",
+        "Sources/SlopDeskWorkspaceCore/Terminal/ScrollbackMatcher.swift",
     ];
 
     let claims: Vec<Claim> = RINGS
@@ -417,7 +420,7 @@ mod tests {
         let fixture = Fixture::new("defaults-ring");
         for ring in [
             "Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSwitcher.swift",
-            "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift",
+            "Sources/SlopDeskWorkspaceCore/Terminal/ScrollbackMatcher.swift",
         ] {
             fixture.write(
                 ring,
@@ -428,7 +431,7 @@ mod tests {
 
         // One `% 0` away from a trap on an empty list.
         fixture.write(
-            "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift",
+            "Sources/SlopDeskWorkspaceCore/Terminal/ScrollbackMatcher.swift",
             "let next = (i + 1 + matches.count) % matches.count\n",
         );
         assert!(!super::a_ring_wraps_through_one_rule(&fixture.tree()).is_clean());

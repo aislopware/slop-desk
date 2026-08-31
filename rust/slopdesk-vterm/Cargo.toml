@@ -86,4 +86,11 @@ imprecise_flops = "allow"
 # ghostty `22d13172`, so no engine bump rides along with it.
 libghostty-vt = { git = "https://github.com/trancong12102/libghostty-rs", rev = "519649e" }
 
+# The find bar's regex mode. Linear-time by construction, which is the whole reason it is here
+# rather than a backtracking engine: a ⌘F pattern is re-run over the entire retained buffer on every
+# keystroke, and one pathological pattern must not be able to freeze the bar. The same crate
+# `slopdesk-rowscan`, `slopdesk-workspace` and `slopdesk-screend` already take, so this adds a
+# version to the lock file and nothing to the tree.
+regex = "1"
+
 [workspace]

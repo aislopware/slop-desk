@@ -1,6 +1,5 @@
-// TerminalFindBarModelTests pins the in-pane find bar's driver (``TerminalFindBarModel``):
-// the wrapper over the PURE ``TerminalSearchController`` (count / N-of-M / next-prev-wrap) + the libghostty-vt
-// `search:` / `navigate_search:` / `end_search` passthrough. The model is HEADLESS — its only renderer touch
+// TerminalFindBarModelTests pins the in-pane find bar's driver (``TerminalFindBarModel``): what it ASKS
+// the surface for, and what it publishes from the answer. The model is HEADLESS — its only renderer touch
 // is `surface as? TerminalSurfaceActions`, which a pure in-memory ``FakeSearchSurface`` satisfies (NO real
 // `TerminalSurfaceDriver` / VideoToolbox / Metal — the hang-safety rule; this mirrors the existing
 // `CapturingSurface`/`RecordingSurface` fakes in `TerminalViewModelTests`).
@@ -9,14 +8,18 @@
 // for `@Observable`, which is `Observation` — so both it and its suite belong below the UI targets, where the
 // phone's find bar and the Mac's read one implementation.
 //
-// The bind-action strings are still asserted as STRINGS on purpose, even though the model now builds them
+// ⚠️ THE FAKE DOES NOT MATCH ANYTHING, and that is the point of this suite after gap 4. It RECORDS the
+// query and the three toggles the bar handed it and ANSWERS a canned count, because the matching is
+// `slopdesk-vterm`'s and has its own tests there — a fake that searched would be the second engine this
+// change deleted, rebuilt inside the test target, which `CLAUDE.md` bans by name ("not a test fake"). What
+// is worth pinning here is the crossing: that every mode goes out through the four-mode door, that no mode
+// falls back to driving the viewport by row, and that the counter prints what came back rather than
+// something this side derived.
+//
+// The bind-action strings are still asserted as STRINGS on purpose, even though the model builds them
 // through ``TerminalSearchSurfaceAction``. They are libghostty-vt's wire vocabulary, not ours: a test that
 // asserted `.end` against `.end` would pass on the day the enum's `wire` spelling drifted from what the
 // surface parses.
-//
-// Every case FAILS on a tree without this model and asserts an observable state
-// transition (visibility / query / flags / `N of M` / the fired bind-action strings) against expected values,
-// never against the output's own derivation.
 
 import XCTest
 @testable import SlopDeskClientCore
@@ -24,25 +27,24 @@ import XCTest
 
 @MainActor
 final class TerminalFindBarModelTests: XCTestCase {
-    /// A pure in-memory terminal surface: returns a canned scrollback mirror for `searchScrollbackLines()` and
-    /// RECORDS the libghostty-vt bind-action strings (`search:…` / `navigate_search:…` / `end_search`) the find
-    /// bar fires, so the driver is pinned without a real renderer. Hang-safe (no SCStream/VT/Metal).
+    /// A pure in-memory terminal surface that RECORDS what the bar asked for and answers canned results.
+    /// Hang-safe (no SCStream/VT/Metal).
     private final class FakeSearchSurface: TerminalSurface, TerminalSurfaceActions, @unchecked Sendable {
-        var lines: [TerminalScrollbackLine]
+        /// One `find` as the bar spelled it — the assertion subject for every mode test.
+        struct Find: Equatable {
+            let query: String
+            let caseSensitive: Bool
+            let wholeWord: Bool
+            let isRegex: Bool
+        }
+
         private(set) var actions: [String] = []
+        private(set) var finds: [Find] = []
+        /// What the next ``find(_:caseSensitive:wholeWord:isRegex:)`` answers.
+        var hitCount = 0
+        /// What ``findPosition()`` answers.
+        var position: (current: Int, total: Int)?
         var onWrite: ((Data) -> Void)?
-
-        init(lines: [TerminalScrollbackLine]) {
-            self.lines = lines
-        }
-
-        /// The unwrapped shape: line N sits on screen row N, which is what a grid nothing wrapped in
-        /// reports. Tests about the WRAP mapping build their rows explicitly instead.
-        convenience init(lines: [String]) {
-            self.init(lines: lines.enumerated().map { index, text in
-                TerminalScrollbackLine(text: text, firstRow: index, lastRow: index)
-            })
-        }
 
         // TerminalSurface
         func feed(_: Data) {}
@@ -57,21 +59,36 @@ final class TerminalFindBarModelTests: XCTestCase {
             return true
         }
 
-        func scrollbackLines() -> [TerminalScrollbackLine] { lines }
+        func scrollbackLines() -> [TerminalScrollbackLine] { [] }
 
-        /// Drop the recorded actions so a test can assert on a fresh window of bind-actions (e.g. only those
-        /// fired by a subsequent `next()`/`previous()`), without the open/query priming noise.
-        func resetActions() { actions.removeAll() }
+        func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int {
+            finds.append(Find(
+                query: query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex,
+            ))
+            return hitCount
+        }
+
+        func findPosition() -> (current: Int, total: Int)? { position }
+
+        /// Drop the recorded traffic so a test can assert on a fresh window without the open/query priming
+        /// noise.
+        func reset() {
+            actions.removeAll()
+            finds.removeAll()
+        }
     }
 
     /// Build a find-bar model bound to a headless ``TerminalViewModel`` fed by a fake surface, run `body`, and
     /// keep the (weakly-held) vm + surface alive across it (the model holds the vm weakly; the vm holds the
     /// surface weakly).
     private func withBar(
-        lines: [String],
+        hits: Int = 3,
+        at position: (current: Int, total: Int)? = (1, 3),
         _ body: (_ bar: TerminalFindBarModel, _ surface: FakeSearchSurface) -> Void,
     ) {
-        let surface = FakeSearchSurface(lines: lines)
+        let surface = FakeSearchSurface()
+        surface.hitCount = hits
+        surface.position = position
         let vm = TerminalViewModel(surface: surface)
         let bar = TerminalFindBarModel()
         bar.attach(vm)
@@ -79,34 +96,37 @@ final class TerminalFindBarModelTests: XCTestCase {
         withExtendedLifetime((vm, surface)) {}
     }
 
-    /// `open()` shows the bar; typing live-counts every match over the snapshot mirror (`N of M`).
-    func testOpenShowsBarAndCountsMatches() {
-        withBar(lines: ["read the docs here", "no hits", "more docs and docs"]) { bar, _ in
+    /// `open()` shows the bar; typing runs the query on the surface and PUBLISHES what came back.
+    func testOpenShowsBarAndPublishesTheSurfacesCount() {
+        withBar { bar, surface in
             XCTAssertFalse(bar.visible)
             bar.open()
             XCTAssertTrue(bar.visible)
 
             bar.setQuery("docs")
-            XCTAssertEqual(bar.controller.matchCount, 3) // line0 ×1 + line2 ×2
-            XCTAssertEqual(bar.controller.positionLabel?.current, 1)
-            XCTAssertEqual(bar.controller.positionLabel?.total, 3)
+            XCTAssertEqual(surface.finds.last?.query, "docs")
+            XCTAssertEqual(bar.matchCount, 3, "the count is the surface's, not one computed here")
+            XCTAssertEqual(bar.positionLabel?.current, 1)
+            XCTAssertEqual(bar.positionLabel?.total, 3)
         }
     }
 
-    /// ↩/⌘G next + ⇧↩/⇧⌘G prev advance + wrap the selection AND fire the libghostty-vt nav bind-actions.
-    func testNextPreviousWrapAndFireSurfaceNav() {
-        withBar(lines: ["docs", "docs", "docs"]) { bar, surface in
+    /// ↩/⌘G next + ⇧↩/⇧⌘G prev fire the nav bind-actions and re-read the surface's cursor afterwards.
+    ///
+    /// The RE-READ is the assertion worth having: the bar holds no index of its own, so a step that
+    /// moved the surface's cursor and did not pull the new position would leave the counter frozen on
+    /// the previous hit.
+    func testNextPreviousFireSurfaceNavAndRereadThePosition() {
+        withBar { bar, surface in
             bar.open()
-            bar.setQuery("docs") // 3 matches; current = 1
-            XCTAssertTrue(surface.actions.contains("search:docs"))
+            bar.setQuery("docs")
 
+            surface.position = (2, 3)
             bar.next()
-            XCTAssertEqual(bar.controller.positionLabel?.current, 2)
-            bar.next()
-            bar.next() // wraps past the last → back to 1
-            XCTAssertEqual(bar.controller.positionLabel?.current, 1)
-            bar.previous() // wraps past the first → last (3)
-            XCTAssertEqual(bar.controller.positionLabel?.current, 3)
+            XCTAssertEqual(bar.positionLabel?.current, 2)
+            surface.position = (3, 3)
+            bar.previous()
+            XCTAssertEqual(bar.positionLabel?.current, 3)
 
             XCTAssertTrue(surface.actions.contains("navigate_search:next"))
             XCTAssertTrue(surface.actions.contains("navigate_search:previous"))
@@ -120,14 +140,14 @@ final class TerminalFindBarModelTests: XCTestCase {
     ///
     /// Revert-to-confirm-fail: the pre-fix `next()`/`previous()` IGNORED direction — `next()` always fired
     /// `navigate_search:next` and `previous()` always `navigate_search:previous` — so after a BACKWARD open the
-    /// first two assertions below (next ⇒ previous, prev ⇒ next) fail (and `open(backward:)` didn't even exist).
+    /// assertion below fails (and `open(backward:)` didn't even exist).
     func testBackwardSearchInvertsNextAndPrevDirection() {
-        withBar(lines: ["docs", "docs", "docs"]) { bar, surface in
+        withBar { bar, surface in
             bar.open(backward: true) // copy-mode `?` bias
             XCTAssertTrue(bar.searchBackward, "? opens the bar searching BACKWARD")
             bar.setQuery("docs")
 
-            surface.resetActions() // drop the open/query priming so we assert only the n/N nav window
+            surface.reset() // drop the open/query priming so we assert only the n/N nav window
             bar.next() // vi `n` under a backward search → step UP the buffer
             bar.previous() // vi `N` under a backward search → step DOWN the buffer
             XCTAssertEqual(
@@ -142,12 +162,12 @@ final class TerminalFindBarModelTests: XCTestCase {
     /// sense — `next()` (vi `n`) steps `navigate_search:next` and `previous()` (vi `N`) `navigate_search:previous`
     /// — so the direction fix never regresses the common forward path.
     func testForwardSearchKeepsNaturalNextPrevDirection() {
-        withBar(lines: ["docs", "docs", "docs"]) { bar, surface in
+        withBar { bar, surface in
             bar.open() // ⌘F / `/` — forward by default
             XCTAssertFalse(bar.searchBackward, "⌘F / `/` opens the bar searching FORWARD")
             bar.setQuery("docs")
 
-            surface.resetActions()
+            surface.reset()
             bar.next()
             bar.previous()
             XCTAssertEqual(surface.actions, ["navigate_search:next", "navigate_search:previous"])
@@ -156,147 +176,111 @@ final class TerminalFindBarModelTests: XCTestCase {
 
     /// Find-next-opens-find: ⌘G with the bar closed OPENS it.
     func testNextOpensBarWhenClosed() {
-        withBar(lines: ["docs"]) { bar, _ in
+        withBar { bar, _ in
             XCTAssertFalse(bar.visible)
             bar.next()
             XCTAssertTrue(bar.visible)
         }
     }
 
-    /// Esc/×: close clears the query + matches, hides the bar, and ENDS the surface search (drops the
+    /// Esc/×: close clears the query + the counter, hides the bar, and ENDS the surface search (drops the
     /// in-buffer highlights).
     func testCloseClearsQueryHidesBarAndEndsSurfaceSearch() {
-        withBar(lines: ["docs"]) { bar, surface in
+        withBar { bar, surface in
             bar.open()
             bar.setQuery("docs")
-            XCTAssertFalse(bar.controller.query.isEmpty)
+            XCTAssertFalse(bar.query.isEmpty)
 
             bar.close()
             XCTAssertFalse(bar.visible)
-            XCTAssertEqual(bar.controller.query, "")
-            XCTAssertNil(bar.controller.positionLabel)
+            XCTAssertEqual(bar.query, "")
+            XCTAssertNil(bar.positionLabel)
+            XCTAssertEqual(bar.matchCount, 0, "a closed bar reports nothing, not its last count")
             XCTAssertTrue(surface.actions.contains("end_search"))
         }
     }
 
-    /// `Aa`: the case toggle flips the flag, refreshes the mirror, and narrows the match set.
-    func testCaseToggleNarrowsMatches() {
-        withBar(lines: ["DOCS docs Docs"]) { bar, _ in
+    /// ⚠️ **GAP 4's REGRESSION GUARD, and the reason this suite exists in this shape.** Each of `Aa`, `ab`
+    /// and `.*` reaches the surface as a FLAG on the four-mode door — never as a mode this side answers by
+    /// scanning its own mirror and scrolling by row.
+    ///
+    /// Revert-to-confirm-fail: before the collapse, all three of these were "row-driven" — the bar computed
+    /// its own match list, fired `end_search` and stepped `scroll_to_row:<n>`, and the `N of M` it printed
+    /// came from a different scan than the cells the surface lit. Every assertion below fails on that model:
+    /// `finds` would be empty (there was no door), and `scroll_to_row:` would be present.
+    func testEveryModeCrossesAsAFlagAndNeverAsRowDrivenNav() {
+        let cases: [(
+            name: String,
+            flip: (TerminalFindBarModel) -> Void,
+            expect: (String) -> FakeSearchSurface.Find,
+        )] = [
+            ("Aa", { $0.toggleCaseSensitive() }, {
+                .init(query: $0, caseSensitive: true, wholeWord: false, isRegex: false)
+            }),
+            ("ab", { $0.toggleWholeWord() }, {
+                .init(query: $0, caseSensitive: false, wholeWord: true, isRegex: false)
+            }),
+            (".*", { $0.toggleRegex() }, {
+                .init(query: $0, caseSensitive: false, wholeWord: false, isRegex: true)
+            }),
+        ]
+        for mode in cases {
+            withBar { bar, surface in
+                bar.open()
+                mode.flip(bar)
+                surface.reset()
+                bar.setQuery("do.")
+
+                XCTAssertEqual(
+                    surface.finds.last, mode.expect("do."),
+                    "\(mode.name) must reach the surface as a flag on the query",
+                )
+                XCTAssertFalse(
+                    surface.actions.contains(where: { $0.hasPrefix("scroll_to_row:") }),
+                    "\(mode.name) must not drive the viewport by row — the surface owns the scroll",
+                )
+
+                surface.reset()
+                bar.next()
+                XCTAssertEqual(
+                    surface.actions, ["navigate_search:next"],
+                    "\(mode.name) steps the surface's own cursor like every other mode",
+                )
+            }
+        }
+    }
+
+    /// The plain literal mode is the same path with three flags clear, which is what makes the door one
+    /// route rather than a special case bolted beside the old one.
+    func testLiteralModeTakesTheSameDoorWithEveryFlagClear() {
+        withBar { bar, surface in
             bar.open()
             bar.setQuery("docs")
-            XCTAssertEqual(bar.controller.matchCount, 3) // case-insensitive default
-
-            bar.toggleCaseSensitive()
-            XCTAssertTrue(bar.controller.caseSensitive)
-            XCTAssertEqual(bar.controller.matchCount, 1) // only the exact "docs"
-        }
-    }
-
-    /// `.*`: the regex toggle flips the flag and switches literal → ICU pattern matching.
-    func testRegexToggleSwitchesToPatternMatching() {
-        withBar(lines: ["a1 b2 c3"]) { bar, _ in
-            bar.open()
-            bar.setQuery("[0-9]")
-            XCTAssertEqual(bar.controller.matchCount, 0, "literal mode finds no '[0-9]' substring")
-
-            bar.toggleRegex()
-            XCTAssertTrue(bar.controller.isRegex)
-            XCTAssertEqual(bar.controller.matchCount, 3, "regex mode matches the three digits")
-        }
-    }
-
-    /// Regex-mode honesty: in `.*` mode the bar must NOT arm libghostty-vt's LITERAL search
-    /// (`search:<pattern>` / `navigate_search:`) — that matcher has no regex engine, so it would paint a
-    /// misleading literal highlight beside the controller's correct regex count and leave the chevrons dead.
-    /// Instead each open / next / previous drives in-grid navigation from the controller's own match rows via
-    /// `scroll_to_row:<row>` (DISTINCT per match), and ends the literal search so no stale highlight lingers.
-    /// Revert-to-confirm-fail: the un-fixed `armSearch`/`next` always arm `search:` + `navigate_search:`, so
-    /// the "no literal action in regex mode" + "distinct scroll_to_row per match" assertions fail on it.
-    func testRegexModeDrivesScrollToRowNotLiteralSearch() {
-        // Three regex matches of `do.`, each on a DISTINCT row (rows 0, 2, 4 of the mirror).
-        withBar(lines: ["do1", "xxx", "do2", "yyy", "do3"]) { bar, surface in
-            bar.open()
-            bar.toggleRegex() // flip to regex BEFORE querying so no literal `search:` is ever armed for it
-            XCTAssertTrue(bar.controller.isRegex)
-
-            bar.setQuery("do.")
-            XCTAssertEqual(bar.controller.matchCount, 3, "regex `do.` matches do1/do2/do3")
-            // The literal needle is NEVER pushed to libghostty-vt in regex mode (would highlight 0 hits + lie).
-            XCTAssertFalse(
-                surface.actions.contains("search:do."),
-                "regex mode must not arm libghostty's literal search",
-            )
-            // Open arms end_search (clear stale highlight) + scrolls to the first match's row (0).
-            XCTAssertTrue(surface.actions.contains("scroll_to_row:0"), "open scrolls to the first regex match row")
-
-            // next / previous emit DISTINCT grid-nav intent per match — and NEVER the literal navigate_search.
-            surface.resetActions()
-            bar.next() // match 2 → row 2
-            bar.next() // match 3 → row 4
             XCTAssertEqual(
-                surface.actions,
-                ["scroll_to_row:2", "scroll_to_row:4"],
-                "regex next steps the viewport to each match's distinct row",
+                surface.finds.last,
+                .init(query: "docs", caseSensitive: false, wholeWord: false, isRegex: false),
             )
-            bar.previous() // back to match 2 → row 2
-            XCTAssertEqual(surface.actions.last, "scroll_to_row:2", "regex previous scrolls back to the prior row")
-            XCTAssertFalse(
-                surface.actions.contains(where: { $0.hasPrefix("navigate_search:") }),
-                "regex mode never fires libghostty's literal navigate_search (it would move nothing)",
-            )
-        }
-    }
-
-    /// `ab` whole-word: the toggle flips the controller flag and NARROWS the literal match set to standalone
-    /// words (`the` matches "the"/"the cat" but not "theory"). Because libghostty-vt's literal in-surface search
-    /// has no word-boundary filter, whole-word mode (like regex) must NOT arm `search:`/`navigate_search:` —
-    /// it ends the literal search and drives the viewport from its own match rows via `scroll_to_row` so the
-    /// chevrons step the SAME set the counter reports. Revert-to-confirm-fail: the un-fixed model had no
-    /// `toggleWholeWord()` and armed `search:the` for any literal query, so both assertions below fail on it.
-    func testWholeWordTogglesNarrowMatchesAndDriveRowNav() {
-        // Standalone "the" on rows 0 and 2; "theory" on row 1 holds "the" only as a substring.
-        withBar(lines: ["the", "theory", "the cat"]) { bar, surface in
-            bar.open()
-            bar.toggleWholeWord() // flip BEFORE querying so no literal `search:` is ever armed for it
-            XCTAssertTrue(bar.controller.wholeWord)
-
-            bar.setQuery("the")
-            XCTAssertEqual(bar.controller.matchCount, 2, "whole-word drops the 'the' buried in 'theory'")
-            XCTAssertFalse(
-                surface.actions.contains("search:the"),
-                "whole-word mode must not arm libghostty's literal (no-boundary) search",
-            )
-            XCTAssertTrue(
-                surface.actions.contains("scroll_to_row:0"),
-                "open scrolls to the first whole-word match row",
-            )
-
-            surface.resetActions()
-            bar.next() // second match → row 2
-            XCTAssertEqual(surface.actions, ["scroll_to_row:2"], "whole-word next steps the viewport by row")
-            XCTAssertFalse(
-                surface.actions.contains(where: { $0.hasPrefix("navigate_search:") }),
-                "whole-word mode never fires libghostty's literal navigate_search",
-            )
-        }
-    }
-
-    /// Companion guard: LITERAL mode is UNCHANGED by the regex fix — it still arms `search:` and steps
-    /// libghostty-vt's own `navigate_search:next`/`previous`, and never falls back to scroll_to_row.
-    func testLiteralModeStillArmsSearchAndNavigateSearch() {
-        withBar(lines: ["docs", "docs"]) { bar, surface in
-            bar.open()
-            bar.setQuery("docs")
-            XCTAssertTrue(surface.actions.contains("search:docs"))
-
-            surface.resetActions()
-            bar.next()
-            bar.previous()
-            XCTAssertEqual(surface.actions, ["navigate_search:next", "navigate_search:previous"])
             XCTAssertFalse(
                 surface.actions.contains(where: { $0.hasPrefix("scroll_to_row:") }),
-                "literal mode owns its scroll via navigate_search, not scroll_to_row",
+                "literal mode owns its scroll via the surface, not scroll_to_row",
             )
+        }
+    }
+
+    /// An empty field ENDS the search rather than running it: a stale highlight under a cleared query is
+    /// the thing `slopdesk_workspace::find_bar::Arming` exists to prevent, and it must not reach the door
+    /// as an empty needle either.
+    func testAnEmptyQueryEndsTheSearchWithoutAskingTheDoor() {
+        withBar { bar, surface in
+            bar.open()
+            bar.setQuery("docs")
+            surface.reset()
+
+            bar.setQuery("")
+            XCTAssertTrue(surface.finds.isEmpty, "an empty field never runs a search")
+            XCTAssertEqual(surface.actions, ["end_search"])
+            XCTAssertEqual(bar.matchCount, 0)
+            XCTAssertNil(bar.positionLabel)
         }
     }
 
@@ -308,7 +292,7 @@ final class TerminalFindBarModelTests: XCTestCase {
     /// Revert-to-confirm-fail: without `searchAllTabs()` / `onSearchAllTabs` on the model, neither the seeded
     /// escalation nor the auto-dismiss exists.
     func testSearchAllTabsEscalatesWithSeededQueryThenCloses() {
-        withBar(lines: ["read the docs", "more docs"]) { bar, _ in
+        withBar { bar, _ in
             var seeded: String?
             bar.onSearchAllTabs = { seeded = $0 }
             bar.open()
@@ -320,71 +304,6 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// Aa case-sensitive honesty: libghostty-vt's in-surface matcher is HARD-WIRED case-insensitive, so
-    /// case-SENSITIVE literal mode must NOT arm `search:` / `navigate_search:` (they would highlight + step
-    /// case-folded occurrences the case-sensitive counter says don't exist). Like regex / whole-word, it drives
-    /// the viewport from the controller's own match rows via `scroll_to_row` (end_search clears any stale
-    /// highlight). Revert-to-confirm-fail: the un-fixed `needsRowDrivenNav` omitted `caseSensitive`, so Aa mode
-    /// armed `search:foo` + `navigate_search:` — the assertions below fail on it.
-    func testCaseSensitiveModeDrivesScrollToRowNotLiteralSearch() {
-        // "foo" (case-sensitive) matches ONLY the exact-case "foo" on row 1; "Foo"/"FOO" are case-folded misses.
-        withBar(lines: ["Foo", "foo", "FOO"]) { bar, surface in
-            bar.open()
-            bar.toggleCaseSensitive() // flip BEFORE querying so no literal `search:` is ever armed for it
-            XCTAssertTrue(bar.controller.caseSensitive)
-
-            bar.setQuery("foo")
-            XCTAssertEqual(bar.controller.matchCount, 1, "case-sensitive 'foo' matches only the exact-case row")
-            XCTAssertFalse(
-                surface.actions.contains("search:foo"),
-                "case-sensitive mode must not arm libghostty's case-INSENSITIVE literal search",
-            )
-            XCTAssertTrue(
-                surface.actions.contains("scroll_to_row:1"),
-                "case-sensitive open scrolls to the sole matching row (1)",
-            )
-
-            surface.resetActions()
-            bar.next() // single match ⇒ re-scrolls to the same row, NEVER navigate_search
-            XCTAssertEqual(surface.actions, ["scroll_to_row:1"])
-            XCTAssertFalse(
-                surface.actions.contains(where: { $0.hasPrefix("navigate_search:") }),
-                "case-sensitive mode never fires libghostty's literal navigate_search",
-            )
-        }
-    }
-
-    /// Soft-wrap coordinate mapping: a row-driven `scroll_to_row` must target the SCREEN row, not the
-    /// logical (unwrapped) mirror index — every soft-wrapped continuation row ABOVE the match shifts the
-    /// screen row down. The mirror carries the engine's own row per line, so the bar reads it rather than
-    /// deriving it. Revert-to-confirm-fail: the un-fixed `scrollToCurrentMatchRow` emitted
-    /// `scroll_to_row:<Match.line>` (the logical index, 1), landing one row too high.
-    func testRowDrivenNavScrollsToTheLinesScreenRowAcrossWrap() {
-        // The first line wrapped over screen rows 0–1, so the second line STARTS at row 2, not 1 — which is
-        // what the engine reports and what the un-fixed logical index would have got wrong.
-        let surface = FakeSearchSurface(lines: [
-            TerminalScrollbackLine(text: "abcdefgh", firstRow: 0, lastRow: 1),
-            TerminalScrollbackLine(text: "do1", firstRow: 2, lastRow: 2),
-        ])
-        let vm = TerminalViewModel(surface: surface)
-        let bar = TerminalFindBarModel()
-        bar.attach(vm)
-        bar.open()
-        bar.toggleRegex()
-        bar.setQuery("do.")
-        XCTAssertEqual(bar.controller.matchCount, 1, "regex `do.` matches the row-1 'do1'")
-        XCTAssertEqual(bar.controller.current?.line, 1, "the match's LOGICAL mirror index is 1")
-        XCTAssertTrue(
-            surface.actions.contains("scroll_to_row:2"),
-            "logical line 1 sits on screen row 2 (the wrapped line above occupies two rows)",
-        )
-        XCTAssertFalse(
-            surface.actions.contains("scroll_to_row:1"),
-            "must NOT scroll to the un-mapped logical index (one screen row too high)",
-        )
-        withExtendedLifetime((vm, surface)) {}
-    }
-
     /// Find bar close returns keyboard focus: closing the bar (Esc / × / search-all-tabs) must ask the
     /// surface to re-claim the window's first responder — closing tears down the focused query field without a
     /// workspace-focus change, so nothing else reclaims it and typing would go nowhere until the pane is clicked.
@@ -393,7 +312,7 @@ final class TerminalFindBarModelTests: XCTestCase {
     func testCloseReclaimsKeyboardFocusOnEveryClosePath() {
         // Esc / × path: close() directly.
         do {
-            let surface = FakeSearchSurface(lines: ["docs"])
+            let surface = FakeSearchSurface()
             let vm = TerminalViewModel(surface: surface)
             var reclaimed = 0
             vm.onReclaimKeyboardFocus = { reclaimed += 1 }
@@ -407,7 +326,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
         // search-all-tabs path funnels through close() too.
         do {
-            let surface = FakeSearchSurface(lines: ["docs"])
+            let surface = FakeSearchSurface()
             let vm = TerminalViewModel(surface: surface)
             var reclaimed = 0
             vm.onReclaimKeyboardFocus = { reclaimed += 1 }

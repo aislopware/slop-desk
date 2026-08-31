@@ -50,8 +50,9 @@ package enum FindBarPresentation {
     /// the same distinction ``GlobalSearchPresentation/emptyStateLine(query:)`` draws for the
     /// cross-tab surface.
     ///
-    /// `position` is ``TerminalSearchController/positionLabel`` passed straight through, so the counter
-    /// can never disagree with the engine about which match is current.
+    /// `position` is the terminal surface's OWN cursor, read back through
+    /// ``TerminalViewModel/surfaceFindPosition()`` and passed straight through, so the counter cannot
+    /// disagree with the cells the surface lit — they are one engine's answer to one question.
     package static func counterText(position: (current: Int, total: Int)?, query: String) -> String? {
         let bytes = Array(query.utf8)
         let blob = bytes.withUnsafeBufferPointer { borrowed in

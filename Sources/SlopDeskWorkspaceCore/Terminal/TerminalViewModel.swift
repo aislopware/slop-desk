@@ -320,6 +320,27 @@ public final class TerminalViewModel {
         (surface as? TerminalSurfaceActions)?.performBindingAction(action) ?? false
     }
 
+    /// Runs the ⌘F bar's query — all four modes — on the surface and answers the hit count.
+    ///
+    /// The one search door that is not a binding-action string, because the grammar carries a needle
+    /// and this carries the three toggles beside it. `0` on a headless surface, which is the same
+    /// nothing every other passthrough here degrades to. See
+    /// ``TerminalSurfaceActions/find(_:caseSensitive:wholeWord:isRegex:)``.
+    public func findInSurface(
+        _ query: String,
+        caseSensitive: Bool,
+        wholeWord: Bool,
+        isRegex: Bool,
+    ) -> Int {
+        (surface as? TerminalSurfaceActions)?
+            .find(query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex) ?? 0
+    }
+
+    /// The surface's current hit as the one-based `(index, total)` the counter prints, or `nil`.
+    public func surfaceFindPosition() -> (current: Int, total: Int)? {
+        (surface as? TerminalSurfaceActions)?.findPosition()
+    }
+
     /// Find bar close → return keyboard focus to the surface: `installTerminalRenderer()` wires this when it
     /// builds the host, so the pane's renderer view re-claims the window's first responder. Needed because closing the find bar
     /// tears down the focused query `TextField` WITHOUT any workspace-focus change — the surface's own reclaim
@@ -891,7 +912,7 @@ public final class TerminalViewModel {
         case .char("f", control: false, _):
             copyModeState.pendingCount = nil
             beginHint(.open)
-        // Search (reuse the find bar / TerminalSearchController — no second search impl).
+        // Search (reuse the find bar, which drives the surface's own matcher — no second search impl).
         case .char("/", control: false, _):
             _ = copyModeState.consumeCount()
             onRequestFind?() // forward bias

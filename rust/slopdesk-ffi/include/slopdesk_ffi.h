@@ -3150,6 +3150,31 @@ size_t slopdesk_term_surface_logical_lines(SlopDeskTerminalSurface *handle, uint
 bool slopdesk_term_surface_binding_action(SlopDeskTerminalSurface *handle, const uint8_t *action,
                                           size_t action_len);
 
+/* Runs the find bar's query over the whole retained buffer; answers the hit count.
+ *
+ * ⚠️ This exists because the find bar has four modes and `search:` carries one. The keybinding verb
+ * is a needle and nothing else — a user writing `search:TODO` wants the plain find — so
+ * case-sensitivity, whole-word and regex had no way across, and the bar answered them with a SECOND
+ * scan of its own over a flat text mirror. Two scans of one buffer meant the `N of M` it printed and
+ * the cells the surface lit could disagree. Both routes end at one engine now.
+ *
+ * The count is the answer rather than a bool for the same reason: the bar needs it, and a binding
+ * action could only ever say whether something happened.
+ *
+ * An empty needle, or a regex that does not compile, answers 0 and clears the highlight — the two
+ * states a find field passes through on the way to a real query, which are not errors. */
+size_t slopdesk_term_surface_find(SlopDeskTerminalSurface *handle, const uint8_t *needle,
+                                  size_t needle_len, bool case_sensitive, bool whole_word,
+                                  bool regex);
+
+/* The current hit's position, as the `3 of 17` a find bar prints — one-based.
+ *
+ * false when nothing is current (no query, or a query with no hits), and neither output is written
+ * in that case, so a caller that ignores the answer keeps what it had rather than reading a zero as
+ * "hit 0 of 0". A PULL after the navigation verb, which answers only whether it moved. */
+bool slopdesk_term_surface_find_position(SlopDeskTerminalSurface *handle, size_t *current,
+                                         size_t *total);
+
 /* What the terminal owes the pty: the reply to CSI 6n, CSI c, CSI > q, OSC 10/11/4 ?, and the
  * in-band size report. Raw bytes, written back to the shell verbatim and in order.
  *
@@ -9823,29 +9848,17 @@ uint8_t slopdesk_ws_find_toggle_appearance(bool is_on, bool hovering);
 size_t slopdesk_ws_find_bar_wire(uint32_t kind, bool forward, uint32_t row, const uint8_t *needle,
                                  size_t needle_len, uint8_t *out, size_t cap);
 
-// True when libghostty's own search cannot express the bar's mode, so navigation must be driven
-// from the caller's own match rows. All three flags say the same thing about that matcher: it is a
-// literal, case-INSENSITIVE substring scan with no word-boundary filter.
-bool slopdesk_ws_find_bar_row_driven(bool regex, bool whole_word, bool case_sensitive);
+// What arming the search does. The mode flags used to cross here beside a `_row_driven` companion
+// that said whether the surface's matcher could express them; `slopdesk_term_surface_find` carries
+// all four modes now, so the empty field is the whole decision.
+#define SLOPDESK_WS_FIND_ARM_END     0
+#define SLOPDESK_WS_FIND_ARM_SEARCH  1
 
-// What arming the search does. The mode flags cross rather than the verdict above, so the two doors
-// cannot answer from different readings of the same state.
-#define SLOPDESK_WS_FIND_ARM_END              0
-#define SLOPDESK_WS_FIND_ARM_END_THEN_SCROLL  1
-#define SLOPDESK_WS_FIND_ARM_SEARCH           2
-
-uint8_t slopdesk_ws_find_bar_arming(bool query_empty, bool regex, bool whole_word,
-                                    bool case_sensitive);
+uint8_t slopdesk_ws_find_bar_arming(bool query_empty);
 
 // Which way vi's `n` / `N` steps: set `repeat_same_way` for `n`, clear it for `N`. vim's rule is
 // "`n` repeats in its ORIGINAL direction", so a `?`-opened search inverts both.
 bool slopdesk_ws_find_bar_nav_forward(bool repeat_same_way, bool search_backward);
-
-// Where the selection lands after a rescan / after one step, or `-1` for no selection — the signed
-// answer `slopdesk_list_quick_pick` already uses. The companion index is read ONLY when its `has_`
-// flag is set.
-intptr_t slopdesk_ws_find_reanchor(bool has_previous, size_t previous, size_t count);
-intptr_t slopdesk_ws_find_step(bool has_current, size_t current, bool forward, size_t count);
 
 // ---- The cross-tab search overlay ---------------------------------------------------
 

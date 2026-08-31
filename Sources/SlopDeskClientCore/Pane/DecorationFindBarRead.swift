@@ -28,7 +28,7 @@ import UIKit
 
 /// Everything the find bar draws, taken in one tracked pass.
 package struct DecorationFindBarReading {
-    /// The controller's query — written back to the field only when it actually differs.
+    /// The model's query — written back to the field only when it actually differs.
     package let query: String
     /// The `N of M` line, or `nil` when the three-way rule says draw nothing.
     package let label: String?
@@ -43,29 +43,28 @@ package enum DecorationFindBarRead {
     /// it makes — a keystroke's recount, a toggle, a ⌘G step, the re-open bump — lands in one of
     /// these.
     package static func reading(_ model: TerminalFindBarModel) -> DecorationFindBarReading {
-        let controller = model.controller
-        return DecorationFindBarReading(
-            query: controller.query,
+        DecorationFindBarReading(
+            query: model.query,
             label: FindBarPresentation.counterText(
-                position: controller.positionLabel, query: controller.query,
+                position: model.positionLabel, query: model.query,
             ),
             lit: lit(in: model),
             token: model.focusToken,
         )
     }
 
-    /// Whether `mode`'s chip is lit — the controller's own flag, never a mirror.
+    /// Whether `mode`'s chip is lit — the model's own flag, never a mirror.
     package static func isOn(_ mode: FindModePill, in model: TerminalFindBarModel) -> Bool {
         switch mode {
-        case .caseSensitive: model.controller.caseSensitive
-        case .wholeWord: model.controller.wholeWord
-        case .regex: model.controller.isRegex
+        case .caseSensitive: model.caseSensitive
+        case .wholeWord: model.wholeWord
+        case .regex: model.isRegex
         }
     }
 
-    /// Flip `mode` through the model, which refreshes the mirror and re-arms the highlight.
+    /// Flip `mode` through the model, which re-runs the query on the surface.
     ///
-    /// The pill's own lit state is redrawn by the tracked read, off the controller — a chip that
+    /// The pill's own lit state is redrawn by the tracked read, off the model — a chip that
     /// painted itself here would be a second source for a flag the model already owns.
     package static func toggle(_ mode: FindModePill, in model: TerminalFindBarModel) {
         switch mode {

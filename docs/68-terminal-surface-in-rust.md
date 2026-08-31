@@ -275,11 +275,26 @@ and none is needed.
 
 ### 5.2 Search
 
-vt exposes no search. The parity cost is smaller than that sounds, because the expensive half is
-already ours: `TerminalFindBarModel.swift` records that libghostty's in-surface search is "a LITERAL
-substring matcher with NO regex engine", so regex mode is driven entirely from
-`slopdesk_workspace::find_bar`'s match positions and never arms `search:`. What has to be written is
-the literal matcher over the grid — the case libghostty was covering.
+vt exposes no search, so the whole matcher is `rust/slopdesk-vterm/src/search.rs` — and ALL FOUR
+MODES are, which is the part that changed after the first cut. It was written as the literal matcher
+libghostty had been covering, on the reasoning that the expensive half was already ours: the find bar
+drove regex, case-sensitivity and whole-word from `slopdesk_workspace::find_bar`'s own match
+positions and never armed `search:` for them.
+
+That reasoning was wrong, and the shape it produced was gap 4. The bar counted in one engine
+(`slopdesk-rowscan::find`, over a flat text mirror addressed by LINE INDEX) while the surface lit
+cells from another (this one, over the grid, addressed by CELL) — so `N of M` and the highlights were
+two answers to one question, and the modes the surface could not express had to scroll the viewport
+by row instead of stepping a cursor. `Matcher` closes it: the query carries `regex` beside
+`case_sensitive` and `whole_word`, the pattern is compiled once per query and used as the per-line
+prefilter, and `slopdesk_term_surface_find` / `_find_position` carry all four modes in and the count
+back. The row-driven branch, its two doors and the bar's match list are DELETED rather than bypassed.
+
+⚠️ **A second matcher remains, and it is not this one's twin.** ⇧⌘F cross-tab search mirrors every
+open pane's scrollback once and re-scans that snapshot per keystroke (`ScrollbackMatcher.swift` over
+`slopdesk-rowscan::find`), because routing it through each pane's live engine would cross the FFI
+seam per pane per character. One addresses cells in a live buffer, the other line indices in a
+snapshot; neither can take the other's shape.
 
 ### 5.3 Blocks
 

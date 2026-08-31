@@ -11,7 +11,7 @@ const RUST_LINK: &str = "rust/slopdesk-terminal/src/link.rs";
 const SWIFT_BLOCKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlockModel.swift";
 const SWIFT_PROMPT: &str = "Sources/SlopDeskWorkspaceCore/Terminal/CommandPrompt.swift";
 const RUST_BLOCKS: &str = "rust/slopdesk-terminal/src/blocks.rs";
-const SWIFT_SEARCH: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
+const SWIFT_FIND_BAR: &str = "Sources/SlopDeskClientCore/Pane/TerminalFindBarModel.swift";
 const SWIFT_SEARCH_ACTION: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift";
 const SWIFT_METRICS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSurface.swift";
 const SWIFT_FIT: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalGridFit.swift";
@@ -388,6 +388,12 @@ pub fn command_blocks(tree: &Tree) -> Report {
 /// them out; two of those copies had already drifted from the third on which modes may arm the
 /// literal matcher.
 ///
+/// ⚠️ **That drift is not merely ratcheted now, it is UNREACHABLE**, and the last claim below is
+/// what keeps it that way. The partition itself is gone — `slopdesk_term_surface_find` carries all
+/// four search modes, so no surface has to decide which ones the engine can be trusted with — and
+/// the pattern still fails the build so that nobody reintroduces the branch the door made
+/// unnecessary. See `docs/ui-shell/current-state/terminal-features.md` gap 4.
+///
 /// `Tests` is deliberately NOT scanned: the suites assert the strings AS STRINGS on purpose,
 /// because a test comparing `.end` to `.end` would pass on the day the spelling drifted from what
 /// the surface parses.
@@ -398,19 +404,19 @@ pub fn search_surface(tree: &Tree) -> Report {
             path: SWIFT_SEARCH_ACTION,
             entries: &[
                 "slopdesk_ws_find_bar_wire",
-                "slopdesk_ws_find_bar_row_driven",
                 "slopdesk_ws_find_bar_arming",
                 "slopdesk_ws_find_bar_nav_forward",
             ],
             message: "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift no longer \
-                      calls {entry} — the engine's binding grammar and the modes it may be armed in are \
+                      calls {entry} — the engine's binding grammar and what a keystroke arms are \
                       rust/slopdesk-workspace's find_bar",
         },
         Claim::Doors {
-            path: SWIFT_SEARCH,
-            entries: &["slopdesk_ws_find_reanchor", "slopdesk_ws_find_step"],
-            message: "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift no longer calls \
-                      {entry} — where the selection lands after a rescan or a step is find_bar's",
+            path: SWIFT_FIND_BAR,
+            entries: &["findInSurface", "surfaceFindPosition"],
+            message: "Sources/SlopDeskClientCore/Pane/TerminalFindBarModel.swift no longer calls {entry} — \
+                      the bar's count, cursor and highlight are ONE engine's, and a bar that computed its \
+                      own count again is gap 4 reopening",
         },
         // `Sources` alone, and it belongs there — this is [`crate::claim::SWIFT_ROOTS`]'s third
         // category. Six suites spell these literals, and `FindBarPresentationTests` spells all five
@@ -430,8 +436,9 @@ pub fn search_surface(tree: &Tree) -> Report {
                       string rather than assembling it from a prefix",
         },
         // The three-flag verdict, matched on the shape it had at each of the two call sites it was
-        // written out at. Either one growing back is the drift that let the case-sensitive arm land on
-        // one search surface and not the other.
+        // written out at. Either one growing back means a surface has started deciding for itself
+        // which modes reach the engine — which is exactly what gap 4 was, and what the four-mode door
+        // removed the need for.
         Claim::NoneUnder {
             roots: SWIFT_ROOTS,
             extensions: SWIFT,
@@ -440,9 +447,9 @@ pub fn search_surface(tree: &Tree) -> Report {
             unless: &[],
             view: View::Statements,
             exempt: &[],
-            message: "the row-driven-nav partition is spelled again in {files} — both search surfaces read \
-                      `TerminalSearchSurfaceAction.needsRowDrivenNav`, so neither can decide alone which \
-                      modes the engine may be trusted with",
+            message: "the row-driven-nav partition is spelled again in {files} — it no longer exists: \
+                      `slopdesk_term_surface_find` carries all four modes, so no surface branches on which \
+                      ones the engine can be trusted with",
         },
     ];
     check_all(tree, &claims)
@@ -689,17 +696,17 @@ static let maxBookmarks = 32
         let fixture = Fixture::new("search-surface");
         let vocabulary = "\
 slopdesk_ws_find_bar_wire(kind, forward, row, text.baseAddress, text.count, out, cap)
-slopdesk_ws_find_bar_row_driven(isRegex, wholeWord, caseSensitive)
-slopdesk_ws_find_bar_arming(queryEmpty, isRegex, wholeWord, caseSensitive)
+slopdesk_ws_find_bar_arming(queryEmpty)
 slopdesk_ws_find_bar_nav_forward(repeatingSameWay, searchBackward)
 ";
-        let controller = "\
-slopdesk_ws_find_reanchor(previous != nil, previous ?? 0, matches.count)
-slopdesk_ws_find_step(current != nil, current ?? 0, forward, count)
+        let bar = "\
+matchCount = model?.findInSurface(query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: \
+                   isRegex)
+positionLabel = model?.surfaceFindPosition()
 ";
         fixture
             .write(super::SWIFT_SEARCH_ACTION, vocabulary)
-            .write(super::SWIFT_SEARCH, controller);
+            .write(super::SWIFT_FIND_BAR, bar);
         assert!(super::search_surface(&fixture.tree()).is_clean());
 
         // A door dropped: the vocabulary went back to building the strings itself.

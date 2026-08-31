@@ -172,42 +172,19 @@ pub unsafe extern "C" fn slopdesk_ws_find_bar_wire(
     unsafe { deliver(action.wire().as_bytes(), out, cap) }
 }
 
-/// Whether the bar's mode is one libghostty's own search cannot express: `true` ⇒ drive navigation
-/// from the caller's own match rows.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_find_bar_row_driven(
-    regex: bool,
-    whole_word: bool,
-    case_sensitive: bool,
-) -> bool {
-    find_bar::needs_row_driven_nav(regex, whole_word, case_sensitive)
-}
-
-/// What arming the search does: `0` end it, `1` end it then scroll to the current match, `2` arm
-/// libghostty's literal search with the needle.
+/// What arming the search does: `0` end it, `1` run the query on the surface.
 ///
-/// The three mode flags cross rather than the verdict [`slopdesk_ws_find_bar_row_driven`] would
-/// give, so the two doors cannot answer from different readings of the same state.
+/// ⚠️ **The mode flags no longer cross, and a companion door went with them.**
+/// `slopdesk_ws_find_bar_row_driven` answered "the surface's matcher cannot express this mode", and
+/// the bar then ran its own second scan; `slopdesk_term_surface_find` carries all four modes now,
+/// so the only thing left to decide is whether there is anything to search at all.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub const extern "C" fn slopdesk_ws_find_bar_arming(
-    query_empty: bool,
-    regex: bool,
-    whole_word: bool,
-    case_sensitive: bool,
-) -> u8 {
-    Arming::resolve(
-        query_empty,
-        find_bar::needs_row_driven_nav(regex, whole_word, case_sensitive),
-    )
-    .code()
+pub const extern "C" fn slopdesk_ws_find_bar_arming(query_empty: bool) -> u8 {
+    Arming::resolve(query_empty).code()
 }
 
 /// Which way vi's `n` / `N` steps: set `repeat_same_way` for `n`, clear it for `N`.
@@ -223,47 +200,6 @@ pub const extern "C" fn slopdesk_ws_find_bar_nav_forward(
     find_bar::nav_forward(repeat_same_way, search_backward)
 }
 
-/// Where the selection lands after the match list is rebuilt, or `-1` for no selection.
-///
-/// `previous` is read only when `has_previous` is set. The signed answer is
-/// [`slopdesk_list_quick_pick`](crate::list_nav::slopdesk_list_quick_pick)'s convention: an index
-/// or the one value no index can be.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_find_reanchor(has_previous: bool, previous: usize, count: usize) -> isize {
-    index_or_none(find_bar::reanchor(has_previous.then_some(previous), count))
-}
-
-/// Where the selection lands after one step, or `-1` when there is nothing to select.
-///
-/// `current` is read only when `has_current` is set; with no current match the landing is the FIRST
-/// match going forward and the LAST going back.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_find_step(
-    has_current: bool,
-    current: usize,
-    forward: bool,
-    count: usize,
-) -> isize {
-    index_or_none(find_bar::step(has_current.then_some(current), forward, count))
-}
-
-/// An index as itself, and the absence of one as `-1`.
-///
-/// An index too large to be signed also reads as absent: a match list that long cannot be reached
-/// by a scrollback this side holds, and a wrapped negative would name a slot rather than the
-/// nothing it means.
-fn index_or_none(index: Option<usize>) -> isize {
-    index.map_or(-1, |index| isize::try_from(index).unwrap_or(-1))
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
@@ -272,8 +208,7 @@ mod tests {
 
     use super::{
         slopdesk_ws_find_bar_arming, slopdesk_ws_find_bar_counter, slopdesk_ws_find_bar_nav_forward,
-        slopdesk_ws_find_bar_row_driven, slopdesk_ws_find_bar_rung, slopdesk_ws_find_bar_wire,
-        slopdesk_ws_find_bar_words, slopdesk_ws_find_reanchor, slopdesk_ws_find_step,
+        slopdesk_ws_find_bar_rung, slopdesk_ws_find_bar_wire, slopdesk_ws_find_bar_words,
         slopdesk_ws_find_toggle_appearance,
     };
     use crate::testing::{delivered, runs};
@@ -386,27 +321,16 @@ mod tests {
         }
     }
 
-    /// The three flags and the empty field decide together, and the two doors that read them must
-    /// agree on every one of the sixteen states.
+    /// The empty field is the whole of the arming decision now — the mode flags used to be in it
+    /// and are not, because every mode reaches the surface.
     #[test]
-    fn the_arming_and_the_row_driven_verdict_never_disagree() {
+    fn the_arming_crosses_as_the_rule_states_it() {
         for query_empty in [false, true] {
-            for regex in [false, true] {
-                for whole_word in [false, true] {
-                    for case_sensitive in [false, true] {
-                        let row_driven = slopdesk_ws_find_bar_row_driven(regex, whole_word, case_sensitive);
-                        assert_eq!(
-                            row_driven,
-                            find_bar::needs_row_driven_nav(regex, whole_word, case_sensitive),
-                        );
-                        assert_eq!(
-                            slopdesk_ws_find_bar_arming(query_empty, regex, whole_word, case_sensitive),
-                            Arming::resolve(query_empty, row_driven).code(),
-                            "{query_empty} {regex} {whole_word} {case_sensitive}",
-                        );
-                    }
-                }
-            }
+            assert_eq!(
+                slopdesk_ws_find_bar_arming(query_empty),
+                Arming::resolve(query_empty).code(),
+                "{query_empty}",
+            );
         }
     }
 
@@ -419,37 +343,6 @@ mod tests {
                     find_bar::nav_forward(repeat_same_way, search_backward),
                 );
             }
-        }
-    }
-
-    /// Both index doors answer `-1` for the absence of a selection — and never for a real slot,
-    /// which is what makes the sentinel readable.
-    #[test]
-    fn an_absent_selection_crosses_as_minus_one_and_an_index_as_itself() {
-        assert_eq!(slopdesk_ws_find_reanchor(true, 4, 12), 4);
-        assert_eq!(slopdesk_ws_find_reanchor(true, 40, 12), 11);
-        assert_eq!(slopdesk_ws_find_reanchor(false, 0, 12), 0);
-        assert_eq!(slopdesk_ws_find_reanchor(true, 4, 0), -1);
-        assert_eq!(slopdesk_ws_find_reanchor(false, 0, 0), -1);
-
-        assert_eq!(slopdesk_ws_find_step(true, 2, true, 3), 0, "wraps past the last");
-        assert_eq!(
-            slopdesk_ws_find_step(true, 0, false, 3),
-            2,
-            "wraps past the first"
-        );
-        assert_eq!(slopdesk_ws_find_step(false, 0, true, 3), 0);
-        assert_eq!(slopdesk_ws_find_step(false, 0, false, 3), 2);
-        assert_eq!(slopdesk_ws_find_step(true, 0, true, 0), -1);
-    }
-
-    /// The `has_*` flag is what says "nothing selected" — the companion number is never read, so a
-    /// caller that left it at whatever was in the register still gets the first-landing answer.
-    #[test]
-    fn the_companion_index_is_ignored_when_its_flag_is_clear() {
-        for junk in [0, 7, usize::MAX] {
-            assert_eq!(slopdesk_ws_find_reanchor(false, junk, 12), 0, "{junk}");
-            assert_eq!(slopdesk_ws_find_step(false, junk, true, 3), 0, "{junk}");
         }
     }
 

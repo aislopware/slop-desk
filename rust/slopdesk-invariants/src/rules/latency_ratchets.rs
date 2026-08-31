@@ -235,6 +235,11 @@ pub fn three_projections_read_once_per_pass(tree: &Tree) -> Report {
 /// per keystroke at the fixed guess against 1.83 ms at the carried one, per pane, and ⇧⌘F asks
 /// every open pane at once.
 ///
+/// ⚠️ This used to be pinned on BOTH find faces. The in-pane ⌘F bar is no longer one of them: it
+/// does not scan in Swift at all since gap 4 collapsed its matcher into the surface's, so there is
+/// no per-keystroke guess left there to carry. ⇧⌘F still scans a mirror of every open pane, which
+/// is the caller this rule now guards — and the only one.
+///
 /// Every rule reads CODE, never prose: each of these files documents the shape it no longer has, by
 /// name, so a gate that matched comments would fire on the explanation of its own bug.
 #[must_use]
@@ -243,8 +248,6 @@ pub fn the_index_doors_guess_they_do_not_probe(tree: &Tree) -> Report {
     const FRECENCY: &str = "Sources/SlopDeskWorkspaceCore/Folders/FolderFrecency.swift";
     /// The mirrored-paste strip's Swift face.
     const SYNCINPUT: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/SyncInputByteFilter.swift";
-    /// The per-pane find bar.
-    const FIND: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
     /// The all-panes find.
     const GLOBALFIND: &str = "Sources/SlopDeskWorkspaceCore/Terminal/GlobalSearchController.swift";
 
@@ -272,13 +275,7 @@ pub fn the_index_doors_guess_they_do_not_probe(tree: &Tree) -> Report {
             message: "W1c: the folder face no longer sizes its first buffer from the ceiling it holds — the \
                       index doors are back to being asked twice (docs/55 §4)",
         },
-        // W2 — the guess is CARRIED across keystrokes and across panes.
-        Claim::Matches {
-            path: FIND,
-            pattern: r"expecting: matches\.count",
-            message: "W2a: the find bar stopped carrying the previous keystroke's match count into the next \
-                      scan — every query matching more than the stack guess scans the scrollback twice",
-        },
+        // W2 — the guess is CARRIED across panes.
         Claim::Matches {
             path: GLOBALFIND,
             pattern: r"expecting: expected",
@@ -520,7 +517,7 @@ mod tests {
         assert!(!super::three_projections_read_once_per_pass(&fixture.tree()).is_clean());
     }
 
-    /// The seven `WorkspaceCore` files in their post-sweep shape.
+    /// The six `WorkspaceCore` files in their post-sweep shape.
     fn sweep(fixture: &Fixture) {
         fixture
             .write(
@@ -538,10 +535,6 @@ mod tests {
             .write(
                 "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplateEngine.swift",
                 "func launchBytes() { templates_keystrokes(cwd, command) }\n",
-            )
-            .write(
-                "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift",
-                "find(query, expecting: matches.count)\n",
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/Terminal/GlobalSearchController.swift",

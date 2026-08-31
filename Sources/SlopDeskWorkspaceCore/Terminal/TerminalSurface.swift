@@ -67,7 +67,7 @@ public extension TerminalSurface {
 /// `as? TerminalSurfaceActions` and degrades gracefully (a no-selection, no-search surface), exactly
 /// like ``FeedBackpressuring``. None of these are exercised in a test (the real surface needs a Metal
 /// device — the hang-safety rule); they are compiled + code-reviewed, and their PURE inputs
-/// (``TerminalSearchController`` over a text mirror) carry the unit tests.
+/// (``ScrollbackMatcher`` over a text mirror) carry the unit tests.
 public protocol TerminalSurfaceActions: AnyObject {
     /// Whether the surface currently holds a text selection (gates Copy in the context menu).
     func hasSelection() -> Bool
@@ -92,10 +92,31 @@ public protocol TerminalSurfaceActions: AnyObject {
     func performBindingAction(_ action: String) -> Bool
 
     /// A line-oriented mirror of the whole retained scrollback (oldest retained row → newest), for
-    /// ``TerminalSearchController`` and cross-tab search. Soft-wrapped rows are COLLAPSED, so one
-    /// entry is one LOGICAL line, no trailing newline — and each entry CARRIES the screen rows it
-    /// occupies, so a hit maps to somewhere to scroll without any arithmetic on this side.
+    /// cross-tab search. Soft-wrapped rows are COLLAPSED, so one entry is one LOGICAL line, no
+    /// trailing newline — and each entry CARRIES the screen rows it occupies, so a hit maps to
+    /// somewhere to scroll without any arithmetic on this side.
     func scrollbackLines() -> [TerminalScrollbackLine]
+
+    /// Runs the ⌘F bar's query over the whole retained buffer and answers the hit count.
+    ///
+    /// ⚠️ **All four modes, which is why this is a door and not a `search:` action string.** The
+    /// binding grammar carries a needle and nothing else — a user writing `search:TODO` wants the
+    /// plain find — so case-sensitivity, whole-word and regex had no way across, and the bar met
+    /// them with a SECOND scan of its own over ``scrollbackLines()``. Two scans of one buffer is
+    /// how the `N of M` it printed and the cells the surface lit came to disagree. Both routes end
+    /// at `VtSession::search_with` now. See
+    /// `docs/ui-shell/current-state/terminal-features.md` gap 4.
+    ///
+    /// An empty query — or a regex that does not compile — answers `0` and clears the highlight,
+    /// which are the two states a find field passes through and not errors.
+    func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int
+
+    /// The current hit as the `3 of 17` the bar prints — one-based — or `nil` when nothing is
+    /// current, which is no query or a query with no hits.
+    ///
+    /// A PULL after the navigation action rather than a value it returns: `navigate_search:` is a
+    /// binding action like any other and can only say whether it moved.
+    func findPosition() -> (current: Int, total: Int)?
 }
 
 /// One logical scrollback line: its text, and the SCREEN rows it occupies.

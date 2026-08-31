@@ -31,9 +31,11 @@ final class GlobalSearchStoreTests: XCTestCase {
     // MARK: - Fix #1: click-to-line
 
     /// Two hits in the SAME pane land DISTINCTLY via direct `scroll_to_row:<line>`: the 1st hit scrolls to
-    /// row 0 and the 3rd to row 2. The amber highlight is armed by the leading `search:` action (literal +
-    /// case-insensitive mode). The direct scroll is used instead of an ordinal `navigate_search:next` walk
-    /// because that ordinal walk is viewport-relative and wrong in case-sensitive mode (see GlobalSearchController).
+    /// row 0 and the 3rd to row 2. The amber highlight is armed through the four-mode FIND DOOR rather
+    /// than through a `search:<needle>` binding string — the door carries the overlay's own mode, which the
+    /// binding could not, so a case-sensitive or regex ⇧⌘F used to land with no highlight at all (gap 4).
+    /// The direct scroll is used instead of an ordinal `navigate_search:next` walk because that ordinal
+    /// walk is viewport-relative and wrong in case-sensitive mode (see GlobalSearchController).
     func testJumpAdvancesToClickedHitsOrdinalWithinPane() throws {
         let store = makeStore()
         let session = try activeSession(store)
@@ -48,13 +50,17 @@ final class GlobalSearchStoreTests: XCTestCase {
         recorder.resetActions()
         store.jumpToGlobalSearchResult(hits[0])
         let firstActions = recorder.actions
+        let firstFind = recorder.finds.last
 
         recorder.resetActions()
         store.jumpToGlobalSearchResult(hits[2])
         let thirdActions = recorder.actions
 
-        XCTAssertEqual(firstActions, ["search:doc", "scroll_to_row:0"])
-        XCTAssertEqual(thirdActions, ["search:doc", "scroll_to_row:2"])
+        let armed = FindCall(query: "doc", caseSensitive: false, wholeWord: false, isRegex: false)
+        XCTAssertEqual(firstFind, armed, "the highlight is armed through the door, in the overlay's mode")
+        XCTAssertEqual(recorder.finds.last, armed)
+        XCTAssertEqual(firstActions, ["scroll_to_row:0"])
+        XCTAssertEqual(thirdActions, ["scroll_to_row:2"])
         XCTAssertNotEqual(
             firstActions, thirdActions,
             "two hits in one pane must produce different scroll targets (row 0 vs row 2)",
@@ -72,8 +78,13 @@ final class GlobalSearchStoreTests: XCTestCase {
         // Clear the armed query (the overlay was cleared) and jump — no actions should fire.
         store.runGlobalSearch(query: "", caseSensitive: false, isRegex: false)
         recorder.resetActions()
+        let findsBefore = recorder.finds.count
         store.jumpToGlobalSearchResult(hit)
         XCTAssertEqual(recorder.actions, [], "an empty armed query arms no surface action")
+        XCTAssertEqual(
+            recorder.finds.count, findsBefore,
+            "an empty armed query does not reach the find door either — it would clear the pane's own ⌘F highlight",
+        )
     }
 
     // MARK: - Fix #2: snapshot once per overlay-open, not per keystroke

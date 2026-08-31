@@ -31,7 +31,7 @@ use libghostty_vt::screen::GridRef;
 use libghostty_vt::selection::{Adjustment, FormatOptions, Selection};
 use libghostty_vt::terminal::{Point, PointCoordinate};
 
-use crate::search::{CellPos, LineScan, SearchQuery, search_line};
+use crate::search::{CellPos, LineScan, Matcher, SearchQuery, search_line};
 use crate::session::{Result, VtError, VtSession};
 
 /// One logical line of the buffer: its text, and the screen rows it occupies.
@@ -266,23 +266,20 @@ impl VtSession {
     /// # Errors
     /// The engine's own error.
     pub fn search_screen(&self, query: &SearchQuery<'_>) -> Result<Vec<ScreenMatch>> {
-        if query.needle.is_empty() {
+        // Compiled once for the whole buffer — the needle's fold or the pattern's automaton is a
+        // per-QUERY cost, and this loop runs per line. `None` is an empty needle or a pattern that
+        // does not compile, both of which find nothing.
+        let Some(matcher) = Matcher::new(query) else {
             return Ok(Vec::new());
-        }
-        let folded = query.needle.to_lowercase();
+        };
         let mut hits = Vec::new();
         let mut scan = LineScan::new();
         for line in self.logical_lines()? {
-            let candidate = if query.case_sensitive {
-                line.text.contains(query.needle)
-            } else {
-                line.text.to_lowercase().contains(&folded)
-            };
-            if !candidate {
+            if !matcher.might_match(&line.text) {
                 continue;
             }
             self.scan_line(line.first_row, line.last_row, &mut scan)?;
-            hits.extend(search_line(&mut scan, query).into_iter().map(|hit| {
+            hits.extend(search_line(&mut scan, &matcher).into_iter().map(|hit| {
                 ScreenMatch {
                     start_col: hit.start.col,
                     start_row: line.first_row.saturating_add(u32::from(hit.start.row)),

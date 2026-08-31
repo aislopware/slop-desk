@@ -722,6 +722,30 @@ final class TerminalRendererSurface {
         }
     }
 
+    /// Runs the find bar's query over the whole retained buffer; answers the hit count.
+    ///
+    /// The one door the `search:` binding action cannot be: it carries the other three mode flags,
+    /// and it answers a COUNT where a binding action can only answer whether it ran. See
+    /// ``TerminalSurfaceActions/find(_:caseSensitive:wholeWord:isRegex:)``.
+    func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int {
+        guard let handle else { return 0 }
+        return Array(query.utf8).withUnsafeBufferPointer { bytes in
+            slopdesk_term_surface_find(
+                handle, bytes.baseAddress, bytes.count,
+                caseSensitive, wholeWord, isRegex,
+            )
+        }
+    }
+
+    /// The current hit as the one-based `(current, total)` a find bar prints, or `nil` for none.
+    func findPosition() -> (current: Int, total: Int)? {
+        guard let handle else { return nil }
+        var index = 0
+        var total = 0
+        guard slopdesk_term_surface_find_position(handle, &index, &total) else { return nil }
+        return (index, total)
+    }
+
     /// A Swift `Int` as the door's `u32` row, floored at zero and capped at the widest row there is.
     ///
     /// Clamping rather than refusing: every caller of these doors has already asked the engine for the

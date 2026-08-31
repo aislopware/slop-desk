@@ -65,8 +65,8 @@ use slopdesk_termrender::{
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{
     Autoscroll, CellFlags, ClickLadder, ClipboardWrite, CopyFormat, CursorShape, Frame, KeyAction, KeyPress,
-    Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SelectionAdjust, SurfacePoint,
-    VtSession, key_from_macos_keycode, text_cells,
+    Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SearchQuery, SelectionAdjust,
+    SurfacePoint, VtSession, key_from_macos_keycode, text_cells,
 };
 
 use crate::{borrow, deliver, lent, push_text, records_of, saturating_u32, spill};
@@ -1998,6 +1998,95 @@ pub unsafe extern "C" fn slopdesk_term_surface_logical_lines(
     }
     // SAFETY: the caller's obligation; `deliver` writes at most `cap`.
     unsafe { deliver(&blob, out, cap) }
+}
+
+// MARK: - The find bar
+
+/// Runs the find bar's query over the whole retained buffer and answers how many hits there are.
+///
+/// ⚠️ **This door exists because the find bar has four modes and `search:` carries one.** The
+/// keybinding verb is a needle and nothing else — a user writing `search:TODO` wants the plain find
+/// — so case-sensitivity, whole-word and regex had no way across, and the bar answered them with a
+/// SECOND scan of its own over a flat text mirror. Two scans of one buffer meant the `N of M` it
+/// printed and the cells the surface lit could disagree. Both routes now end at
+/// `VtSession::search_with`; this one just carries the other three flags. See
+/// `docs/ui-shell/current-state/terminal-features.md` gap 4.
+///
+/// The count is the answer rather than a `bool` for the same reason: the bar needs it, and
+/// [`slopdesk_term_surface_binding_action`] could only ever say whether something happened.
+///
+/// An empty needle, or a regex that does not compile, answers `0` and clears the highlight — the
+/// two states a find field passes through on the way to a real query, which are not errors.
+///
+/// # Safety
+/// [`held`]'s, plus `(needle, needle_len)` describing `needle_len` live bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_find(
+    handle: *mut SlopDeskTerminalSurface,
+    needle: *const c_uchar,
+    needle_len: usize,
+    case_sensitive: bool,
+    whole_word: bool,
+    regex: bool,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    // SAFETY: the caller's obligation; `lent` answers "" for anything not valid UTF-8, which is an
+    // empty needle and so finds nothing.
+    let needle = unsafe { lent(needle, needle_len) };
+    let query = SearchQuery::new(needle)
+        .case_sensitive(case_sensitive)
+        .whole_word(whole_word)
+        .regex(regex);
+    surface.session.search_with(&query).unwrap_or(0)
+}
+
+/// The current hit's position, as the `3 of 17` a find bar prints.
+///
+/// Answers `false` when nothing is current — no query, or a query with no hits — and writes neither
+/// output in that case, so a caller that ignores the answer keeps whatever it had rather than
+/// reading a zero as "hit 0 of 0".
+///
+/// A PULL rather than a return from the navigation verb, which is docs/55 §4's rule for this seam:
+/// `navigate_search:` is a keybinding action like any other and answers only whether it moved. The
+/// position is read after it, by the one caller that draws a counter.
+///
+/// # Safety
+/// [`held`]'s, plus `current` and `total` each being writable for one `usize`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_find_position(
+    handle: *mut SlopDeskTerminalSurface,
+    current: *mut usize,
+    total: *mut usize,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    let Some((at, of)) = surface.session.search_position() else {
+        return false;
+    };
+    if current.is_null() || total.is_null() {
+        return false;
+    }
+    // SAFETY: the caller's obligation; both pointers are non-null and writable for one `usize`.
+    unsafe {
+        current.write(at);
+        total.write(of);
+    }
+    true
 }
 
 // MARK: - Binding actions

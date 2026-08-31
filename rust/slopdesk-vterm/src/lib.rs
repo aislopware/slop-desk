@@ -66,6 +66,6 @@ pub use frame::{
 pub use input::{KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt};
 pub use keycode::key_from_macos_keycode;
 pub use screen::{LogicalLineText, ScreenMatch, SelectionAdjust, ViewportInfo};
-pub use search::{Match, SearchQuery, search_rows};
+pub use search::{Match, Matcher, SearchQuery, search_rows};
 pub use selection::{Autoscroll, ClickLadder, CopyFormat, Granularity, SurfacePoint};
 pub use session::{Result, Scroll, VtError, VtSession};

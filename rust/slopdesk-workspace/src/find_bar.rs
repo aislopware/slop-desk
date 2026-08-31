@@ -23,11 +23,18 @@
 //! ## The half that is not words
 //!
 //! The bar also DRIVES the live surface, and that half was spelled in Swift: the binding actions
-//! the surface answers to, the three-flag test for whether the surface's own search can express the
-//! bar's mode, the branch that decides what a keystroke arms, vi's `n`/`N` against the direction
-//! the bar opened in, and where the selection lands after a step or a rescan. None of it needs a
-//! view, and every one of those is a rule the phone's bar and the Mac's must not answer
-//! differently.
+//! the surface answers to, the branch that decides what a keystroke arms, and vi's `n`/`N` against
+//! the direction the bar opened in. None of it needs a view, and every one is a rule the phone's
+//! bar and the Mac's must not answer differently.
+//!
+//! ⚠️ **Three rules that used to live here are GONE rather than moved, and that is gap 4's fix.**
+//! A three-flag test said whether the surface's matcher could express the bar's mode; a `reanchor`
+//! said where the selection lands after a rescan; a `step` walked the match ring. All three existed
+//! because the bar held its OWN match list, scanned from a flat text mirror, while the surface lit
+//! cells from a different scan of the same buffer. `slopdesk_term_surface_find` carries all four
+//! modes now, so the surface owns the hits, the cursor and the wrap, and the bar reads its `3 of
+//! 17` back rather than computing one. See `docs/ui-shell/current-state/terminal-features.md` gap
+//! 4.
 //!
 //! The actions themselves are NOT spelled here: [`slopdesk_terminal::surface_action`] owns that
 //! grammar, and [`Action::wire`] delegates to it. A second speller is a typo nothing raises on.
@@ -232,54 +239,36 @@ impl<'a> Action<'a> {
     }
 }
 
-/// Whether the bar's current mode CANNOT be expressed faithfully by libghostty's own search, so the
-/// bar must drive navigation from its OWN match rows.
-///
-/// All three flags say the same thing about that matcher: it is a literal, case-INSENSITIVE
-/// substring scan with no word-boundary filter. Regex has no engine behind it; whole-word has no
-/// filter; and case-sensitive is the one that reads like it should work and does not — arming
-/// `search:` there would highlight, and `navigate_search:` would step, case-folded hits the
-/// case-sensitive counter says do not exist. Counter, highlight and chevrons would then disagree
-/// permanently.
-#[must_use]
-pub const fn needs_row_driven_nav(regex: bool, whole_word: bool, case_sensitive: bool) -> bool {
-    regex || whole_word || case_sensitive
-}
-
 /// What a keystroke, a toggle or an open does to the live surface.
+///
+/// ⚠️ **There used to be a third arm and a rule to pick it.** `needs_row_driven_nav(regex,
+/// whole_word, case_sensitive)` answered "the surface's matcher cannot express this mode", and the
+/// bar then computed its own match rows and scrolled to them — a second search engine over a flat
+/// text mirror, whose count could disagree with the cells the surface lit. All four modes cross now
+/// (`slopdesk_term_surface_find`), so the mode no longer decides anything and only the empty field
+/// does. See `docs/ui-shell/current-state/terminal-features.md` gap 4.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Arming {
     /// End the in-surface search and stop: an empty field has nothing to highlight, and a stale
     /// highlight under a cleared query is the bug this arm exists to prevent.
     End,
-    /// End it, then scroll to the current match's row — the row-driven modes' whole navigation. The
-    /// `end` is not decoration: it clears the highlight a previous literal arming painted.
-    EndThenScroll,
-    /// Arm libghostty's literal search with the needle; it owns the highlight and the scroll.
+    /// Run the query on the surface; it owns the hits, the count, the highlight and the scroll.
     Search,
 }
 
 impl Arming {
-    /// The empty field outranks the mode — nothing to search is nothing to search either way.
+    /// Nothing to search is nothing to search — the one thing that still decides this.
     #[must_use]
-    pub const fn resolve(query_empty: bool, row_driven: bool) -> Self {
-        if query_empty {
-            return Self::End;
-        }
-        if row_driven {
-            Self::EndThenScroll
-        } else {
-            Self::Search
-        }
+    pub const fn resolve(query_empty: bool) -> Self {
+        if query_empty { Self::End } else { Self::Search }
     }
 
-    /// The discriminant a face maps back to its own three arms.
+    /// The discriminant a face maps back to its own arms.
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {
             Self::End => 0,
-            Self::EndThenScroll => 1,
-            Self::Search => 2,
+            Self::Search => 1,
         }
     }
 }
@@ -294,49 +283,10 @@ pub const fn nav_forward(repeat_same_way: bool, search_backward: bool) -> bool {
     repeat_same_way != search_backward
 }
 
-/// Where the selection lands after the match list is rebuilt.
-///
-/// Keep the user near where they were: the same ORDINAL when it is still in range, the last match
-/// when the list shrank under it, the first when they had not chosen one, and nothing at all when
-/// the query now matches nothing. Typing into a find bar narrows, so the clamp is the common arm,
-/// not the exceptional one.
-#[must_use]
-pub const fn reanchor(previous: Option<usize>, count: usize) -> Option<usize> {
-    if count == 0 {
-        return None;
-    }
-    let Some(prev) = previous else {
-        return Some(0);
-    };
-    Some(if prev < count { prev } else { count - 1 })
-}
-
-/// Where the selection lands after one step `forward` (down the buffer) or back.
-///
-/// The wrap is [`crate::list_nav::wrapped_index`], the same ring step the ⌃⇥ pane switcher and the
-/// picker's filter pills take. With NOTHING selected there is no index to step FROM, so the landing
-/// is named outright — forward into an unvisited list lands on the FIRST match, backward on the
-/// LAST, which is where wrapping off either end goes. A ring rule cannot express "start here", and
-/// asking it to would mean picking an origin the user never sat on.
-#[must_use]
-pub const fn step(current: Option<usize>, forward: bool, count: usize) -> Option<usize> {
-    if count == 0 {
-        return None;
-    }
-    let Some(cur) = current else {
-        return Some(if forward { 0 } else { count - 1 });
-    };
-    match crate::list_nav::wrapped_index(cur, if forward { 1 } else { -1 }, count) {
-        Some(landed) => Some(landed),
-        None => Some(cur),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, Arming, POINTER, Rung, TOUCH, TogglePillAppearance, counter_text, nav_forward,
-        needs_row_driven_nav, reanchor, rung, step,
+        Action, Arming, POINTER, Rung, TOUCH, TogglePillAppearance, counter_text, nav_forward, rung,
     };
 
     /// The three-way rule, and the branch worth having: a blank field reports nothing.
@@ -447,34 +397,14 @@ mod tests {
         );
     }
 
-    /// Each of the three flags alone is enough — the case-sensitive one being the arm that reads
-    /// like it should not need to be there.
+    /// An empty field ends the search; anything else runs it. The mode has stopped being part of
+    /// this decision, which is the whole of gap 4's fix — a stale highlight under a cleared query
+    /// is now the only thing this rule exists to prevent.
     #[test]
-    fn any_one_of_the_three_flags_takes_the_bar_off_the_literal_path() {
-        assert!(!needs_row_driven_nav(false, false, false));
-        assert!(needs_row_driven_nav(true, false, false));
-        assert!(needs_row_driven_nav(false, true, false));
-        assert!(needs_row_driven_nav(false, false, true));
-        assert!(needs_row_driven_nav(true, true, true));
-    }
-
-    /// An empty field ends the search whatever the mode — a stale highlight under a cleared query
-    /// is the thing this arm exists to prevent.
-    #[test]
-    fn an_empty_query_ends_the_search_in_every_mode() {
-        for row_driven in [false, true] {
-            assert_eq!(Arming::resolve(true, row_driven), Arming::End);
-        }
-        assert_eq!(Arming::resolve(false, true), Arming::EndThenScroll);
-        assert_eq!(Arming::resolve(false, false), Arming::Search);
-        assert_eq!(
-            [
-                Arming::End.code(),
-                Arming::EndThenScroll.code(),
-                Arming::Search.code()
-            ],
-            [0, 1, 2]
-        );
+    fn only_an_empty_query_ends_the_search() {
+        assert_eq!(Arming::resolve(true), Arming::End);
+        assert_eq!(Arming::resolve(false), Arming::Search);
+        assert_eq!([Arming::End.code(), Arming::Search.code()], [0, 1]);
     }
 
     /// vim's rule, both ways round: a `?`-opened search inverts `n` and `N`, a `/`-opened one does
@@ -485,44 +415,5 @@ mod tests {
         assert!(!nav_forward(false, false), "/ then N walks UP");
         assert!(!nav_forward(true, true), "? then n walks UP");
         assert!(nav_forward(false, true), "? then N walks DOWN");
-    }
-
-    #[test]
-    fn a_rescan_keeps_the_ordinal_it_can_and_clamps_the_one_it_cannot() {
-        assert_eq!(reanchor(Some(4), 12), Some(4), "still in range — held");
-        assert_eq!(reanchor(Some(11), 12), Some(11), "the last slot is in range");
-        assert_eq!(reanchor(Some(40), 12), Some(11), "the list shrank under it");
-        assert_eq!(reanchor(None, 12), Some(0), "nothing chosen yet — the first");
-        assert_eq!(reanchor(Some(4), 0), None, "nothing matches — nothing selected");
-        assert_eq!(reanchor(None, 0), None);
-    }
-
-    #[test]
-    fn a_step_wraps_at_both_ends_and_names_its_own_first_landing() {
-        assert_eq!(step(Some(0), true, 3), Some(1));
-        assert_eq!(step(Some(2), true, 3), Some(0), "past the last → the first");
-        assert_eq!(step(Some(0), false, 3), Some(2), "past the first → the last");
-        assert_eq!(
-            step(None, true, 3),
-            Some(0),
-            "⏎ into an unvisited list → the first"
-        );
-        assert_eq!(step(None, false, 3), Some(2), "⇧⏎ into one → the last");
-        assert_eq!(step(Some(0), true, 0), None);
-        assert_eq!(step(None, true, 0), None);
-        assert_eq!(
-            step(Some(9), true, 3),
-            Some(9),
-            "an index off the ring is held, never wrapped to a slot the user never sat on"
-        );
-    }
-
-    /// A one-match list is where the row-driven modes re-issue an IDENTICAL `scroll_to_row`, which
-    /// the find bar's own header calls expected rather than a stall. Pinned so the ring cannot
-    /// start answering `None` there.
-    #[test]
-    fn a_single_match_steps_to_itself_in_both_directions() {
-        assert_eq!(step(Some(0), true, 1), Some(0));
-        assert_eq!(step(Some(0), false, 1), Some(0));
     }
 }

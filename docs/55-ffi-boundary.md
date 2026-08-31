@@ -951,8 +951,8 @@ guess meant that any query matching more than 128 rows paid for two full scans o
 
 The fix is not a bigger constant. It is that the caller usually knows: typing NARROWS, so the
 previous keystroke's match count is an exact upper bound after the first character
-(`TerminalSearchController.recompute()` carries it; `GlobalSearchController.run` carries the widest
-count across panes). A guess derived from the last answer beats any guess derived from a hunch.
+(`GlobalSearchController.run` carries the widest count across panes; the in-pane ⌘F bar no longer
+asks this door at all — its matcher is the surface's since gap 4, see `docs/68` §5.2). A guess derived from the last answer beats any guess derived from a hunch.
 
 So the rule §4 states — "guess generously, retry is the backstop" — needs a rider: **price the
 retry by what the door does, not by what it returns.** A door that re-derives should either be given

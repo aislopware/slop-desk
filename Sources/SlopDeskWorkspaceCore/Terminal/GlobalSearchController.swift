@@ -16,7 +16,7 @@ public struct GlobalSearchSource: Equatable, Sendable {
     public let tabID: TabID
     /// The header shown above this source's hits — the owning tab/pane title (`find.png` group header).
     public let groupTitle: String
-    /// One entry per scrollback line (no trailing newline) — the exact shape ``TerminalSearchController`` eats.
+    /// One entry per scrollback line (no trailing newline) — the exact shape ``ScrollbackMatcher`` eats.
     public let lines: [String]
 
     public init(paneID: PaneID, sessionID: SessionID, tabID: TabID, groupTitle: String, lines: [String]) {
@@ -30,7 +30,7 @@ public struct GlobalSearchSource: Equatable, Sendable {
 
 /// One found occurrence within a source, carried with everything a result row needs to render and to jump:
 /// the source identity, the in-buffer location (`line`/`column`/`length`, UTF-16 code units, matching
-/// ``TerminalSearchController/Match``), a ready-to-render `excerpt` (the full matched line), and the
+/// ``ScrollbackMatcher/Match``), a ready-to-render `excerpt` (the full matched line), and the
 /// `highlight` UTF-16 column range within that excerpt to tint amber (mirrors `find.png` / `global-search.png`).
 public struct GlobalSearchHit: Equatable, Sendable {
     public let paneID: PaneID
@@ -143,14 +143,14 @@ public struct GlobalSearchCollapseState: Equatable, Sendable {
     }
 }
 
-/// The PURE engine behind ⇧⌘F Global Search: it runs the proven ``TerminalSearchController/computeMatches``
+/// The PURE engine behind ⇧⌘F Global Search: it runs ``ScrollbackMatcher/computeMatches``
 /// over every live terminal pane's scrollback mirror and assembles the grouped, summarised results the
 /// global-search surface renders. NO view, NO store, NO engine — the surface-collection glue (snapshotting
 /// each pane's scrollback, the jump) lives in `WorkspaceStore`; THIS is the single, fully unit-testable core,
 /// reusing the SAME match math as the in-pane find bar so the two never drift.
 ///
 /// Behaviour:
-/// - Reuses ``TerminalSearchController/computeMatches(lines:query:caseSensitive:isRegex:)`` per source —
+/// - Reuses ``ScrollbackMatcher/computeMatches(lines:query:caseSensitive:isRegex:)`` per source —
 ///   no second matcher to keep in sync.
 /// - Drops sources with zero hits; `tabCount` is therefore the number of surviving `groups`.
 /// - Preserves source order (the store feeds sources in session → tab → pane order).
@@ -177,7 +177,7 @@ public enum GlobalSearchController {
         var expected = 0
 
         for source in sources {
-            let matches = TerminalSearchController.computeMatches(
+            let matches = ScrollbackMatcher.computeMatches(
                 lines: source.lines,
                 query: query,
                 caseSensitive: caseSensitive,
@@ -223,52 +223,37 @@ public enum GlobalSearchController {
         return GlobalSearchResults(groups: groups, totalMatches: totalMatches, tabCount: groups.count)
     }
 
-    /// The ORDERED terminal-surface action sequence (click-to-line) that lands the in-pane viewport on the
-    /// CLICKED `hit` — correct in EVERY mode (literal case-insensitive, literal case-sensitive, and regex).
+    /// The click-to-line action that lands the in-pane viewport on the CLICKED `hit`.
     ///
-    /// LANDING is mode-INDEPENDENT and viewport-INDEPENDENT: ALWAYS scroll the viewport straight to the clicked
-    /// hit's row via `scroll_to_row:<screenRow>`. `hit.line` indexes the LOGICAL (unwrapped)
-    /// `searchScrollbackLines()` mirror that `computeMatches` scanned, whereas `scroll_to_row:<usize>` addresses
-    /// SCREEN rows (soft-wrap continuations count) — so the row is READ OFF the same mirror
-    /// (``TerminalScrollbackLine/firstRow``, which the engine reported) before scrolling, landing the clicked
-    /// row regardless of case-sensitivity, regex, wrapped output, or where the viewport currently sits. A
-    /// caller that passes no `lines` (or a stale index) gets `hit.line` unmapped — the pre-wrap-fix behaviour,
-    /// which is the honest floor when there is no mirror to ask. An ordinal `navigate_search:next` walk is avoided: it is
-    /// viewport-relative, so a mid-buffer viewport mis-lands, and it is WRONG in case-SENSITIVE mode — this
-    /// engine counts hits case-sensitively, but the surface's own `search:` (`VtSession::search`) is
-    /// case-INSENSITIVE, so a case-sensitive ordinal does not map to its larger case-insensitive match cursor.
+    /// LANDING is mode-INDEPENDENT and viewport-INDEPENDENT: ALWAYS scroll the viewport straight to the
+    /// clicked hit's row. `hit.line` indexes the LOGICAL (unwrapped) `searchScrollbackLines()` mirror
+    /// that ``ScrollbackMatcher/computeMatches(lines:query:caseSensitive:isRegex:wholeWord:expecting:)``
+    /// scanned, whereas `scroll_to_row:<usize>` addresses SCREEN rows (soft-wrap continuations count) —
+    /// so the row is READ OFF the same mirror (``TerminalScrollbackLine/firstRow``, which the engine
+    /// reported) before scrolling, landing the clicked row regardless of case-sensitivity, regex,
+    /// wrapped output, or where the viewport currently sits. A caller that passes no `lines` (or a stale
+    /// index) gets `hit.line` unmapped — the pre-wrap-fix behaviour, which is the honest floor when
+    /// there is no mirror to ask. An ordinal `navigate_search:next` walk is avoided: it is
+    /// viewport-relative, so a mid-buffer viewport mis-lands.
     ///
-    /// The literal `search:<query>` matcher is armed ONLY as an amber-highlight aid in the one mode where it is
-    /// FAITHFUL — literal + case-INSENSITIVE (`VtSession::search` compares needles case-insensitively).
-    /// In literal case-SENSITIVE mode arming it would tint extra case-folded spans, and in REGEX mode it would
-    /// tint the pattern TEXT (usually 0 hits once it holds metacharacters); in BOTH we instead `end_search` to
-    /// clear any stale highlight and just scroll — matching the find bar's documented literal-highlight ceiling
-    /// (the amber per-glyph highlight is the one thing those two modes cannot have; the landing is still exact).
+    /// ⚠️ **THE HIGHLIGHT IS NO LONGER PART OF THIS DECISION, and it used to be the hard part.** The
+    /// surface's matcher took a needle alone, so arming it was faithful in exactly one mode — literal
+    /// and case-INSENSITIVE — and the other two cleared the highlight instead and scrolled bare. That
+    /// ceiling is gone: ``TerminalViewModel/findInSurface(_:caseSensitive:wholeWord:isRegex:)`` carries
+    /// every mode, so ``WorkspaceStore/jumpToGlobalSearchResult(_:)`` arms the real query first and this
+    /// answers only where to land. The amber per-glyph highlight now survives `Aa` and `.*`.
     ///
-    /// Validate-then-drop: an empty `query` yields `[]` (nothing to arm, nothing to scroll).
-    public static func navigationActions(
+    /// Validate-then-drop: an empty `query` yields `nil` (nothing to scroll to).
+    public static func scrollAction(
         for hit: GlobalSearchHit,
         query: String,
-        caseSensitive: Bool = false,
-        isRegex: Bool = false,
         lines: [TerminalScrollbackLine] = [],
-    ) -> [String] {
-        guard !query.isEmpty else { return [] }
-        // The LOGICAL (unwrapped) hit line's SCREEN row, read off the same mirror `computeMatches` scanned —
-        // the engine's own number, not an estimate from the grid width. No mirror / stale index ⇒ the
+    ) -> String? {
+        guard !query.isEmpty else { return nil }
+        // The LOGICAL (unwrapped) hit line's SCREEN row, read off the same mirror the scan used — the
+        // engine's own number, not an estimate from the grid width. No mirror / stale index ⇒ the
         // unmapped row, i.e. the pre-wrap-fix behaviour.
         let row = lines.row(forLine: hit.line) ?? hit.line
-        // Literal + case-insensitive is the ONLY mode where the surface's own literal matcher highlights the SAME
-        // spans this engine found — arm it for the amber highlight, THEN scroll_to_row to land on the exact
-        // clicked row (the arm itself only scrolls to the nearest match, so the scroll must follow it). In
-        // case-sensitive literal OR regex mode arming it would highlight wrong/zero spans, so the stale
-        // highlight is cleared instead and the viewport scrolls on its own.
-        //
-        // WHICH modes those are is `TerminalSearchSurfaceAction.needsRowDrivenNav` — the SAME verdict the
-        // in-pane ⌘F bar reads. This branch and the bar's used to be two spellings of one rule, and they had
-        // already drifted once: the case-sensitive arm landed here before it landed there.
-        let rowDriven = TerminalSearchSurfaceAction.needsRowDrivenNav(isRegex: isRegex, caseSensitive: caseSensitive)
-        let lead: TerminalSearchSurfaceAction = rowDriven ? .end : .search(needle: query)
-        return [lead, .scrollToRow(row)].compactMap(\.wire)
+        return TerminalSearchSurfaceAction.scrollToRow(row).wire
     }
 }

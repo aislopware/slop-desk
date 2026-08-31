@@ -1850,8 +1850,8 @@ public final class WorkspaceStore {
 
     /// Opens the ⌘F find bar over the active pane (the keyboard / menu / right-click "Find…" entry). Routes
     /// to the active terminal's ``TerminalViewModel/onRequestFind`` (set by ``TerminalLeafView``); a no-op
-    /// for a non-terminal active pane or an empty shell. The find bar's PURE engine is
-    /// ``TerminalSearchController`` (unit-tested).
+    /// for a non-terminal active pane or an empty shell. The find bar owns no engine: the match set, the
+    /// cursor and the highlights are all the terminal surface's (`slopdesk-vterm`, unit-tested there).
     public func requestFindInActivePane() {
         guard let active = tree.activeSession?.activeTab?.activePane,
               let live = registry[active] as? LivePaneSession else { return }
@@ -3252,23 +3252,31 @@ public extension WorkspaceStore {
         guard tree.contains(hit.paneID) else { return }
         jumpToPaneTree(hit.paneID) // selects hit.sessionID + hit.tabID + focuses hit.paneID (+ breadcrumb)
         guard let model = (registry[hit.paneID] as? TerminalModelProviding)?.terminalModel else { return }
-        // Click-to-line: ALWAYS scroll straight to the clicked hit's mirror row so the landing is
-        // correct in every mode and independent of the current viewport. The literal `search:` matcher is armed
-        // for the amber highlight ONLY in literal + case-INSENSITIVE mode (the one mode it matches faithfully);
-        // case-sensitive literal and regex modes clear any stale highlight and just scroll — matching the find
-        // bar's literal-highlight ceiling. Pass the tracked case-sensitivity AND regex flags so the controller
-        // branches correctly. The pure controller computes the ordered actions; an empty query yields none.
-        let actions = GlobalSearchController.navigationActions(
+        // Arm the REAL query on the surface, in whatever mode the overlay was searching. It paints the
+        // amber highlight and counts the hits; the tracked flags go with it, which is what closed the
+        // old ceiling — the surface used to take a needle alone, so only literal + case-INSENSITIVE
+        // could be armed faithfully and the other two modes landed with no highlight at all. Global
+        // search has no `ab` pill, so whole-word is off by construction.
+        // Nothing armed ⇒ nothing to arm: a cleared overlay must not reach into the pane and drop the
+        // highlight its OWN ⌘F bar put there, which an empty needle through this door would do.
+        guard !globalSearchQuery.isEmpty else { return }
+        _ = model.findInSurface(
+            globalSearchQuery,
+            caseSensitive: globalSearchCaseSensitive,
+            wholeWord: false,
+            isRegex: globalSearchRegex,
+        )
+        // Then land on the CLICKED hit rather than on the nearest one the arm happened to select: the
+        // arm scrolls to the first hit below the viewport, which is a different row whenever the user
+        // clicked further down the list.
+        if let scroll = GlobalSearchController.scrollAction(
             for: hit,
             query: globalSearchQuery,
-            caseSensitive: globalSearchCaseSensitive,
-            isRegex: globalSearchRegex,
             // The mirror the row is read OFF: it collapses soft-wrapped rows, so a heavily-wrapped pane
             // would otherwise land rows too high — and each entry carries the screen row the engine put it on.
             lines: model.searchScrollbackLines(),
-        )
-        for action in actions {
-            model.performSearchSurfaceAction(action)
+        ) {
+            model.performSearchSurfaceAction(scroll)
         }
     }
 

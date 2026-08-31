@@ -14,7 +14,7 @@ use crate::tree::Tree;
 
 const SWIFT_QUOTING: &str = "Sources/SlopDeskWorkspaceModel/Domain/ShellQuoting.swift";
 const SWIFT_SYNC_INPUT: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/SyncInputByteFilter.swift";
-const SWIFT_FIND: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
+const SWIFT_FIND: &str = "Sources/SlopDeskWorkspaceCore/Terminal/ScrollbackMatcher.swift";
 
 /// One VT grammar for plain text, read two ways
 ///
@@ -215,12 +215,19 @@ pub fn one_grammar_for_where_an_escape_ends(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// ⌘F is the second untrusted pattern, and it runs on the same engine
+/// Find is the second untrusted pattern, and it runs on the same engine
 ///
 /// Find-in-terminal took a pattern the user retypes on every keystroke and ran it, backtracking,
 /// over the whole scrollback. Same hazard as Hint Mode, reached far more often. The scan is
 /// `slopdesk-rowscan::find` now, and the columns it answers in are UTF-16 units because that is
 /// what the highlighting surface indexes — the door does not convert, so neither may this face.
+///
+/// ⚠️ The face is `ScrollbackMatcher.swift`, and the caller is ⇧⌘F rather than ⌘F. The in-pane bar
+/// stopped scanning in Swift when gap 4 collapsed its matcher into the terminal surface's own; what
+/// remains here is CROSS-TAB search, which mirrors every open pane once and re-scans that mirror
+/// per keystroke rather than crossing the FFI seam per pane per character. The untrusted-pattern
+/// hazard is identical, so the rule follows the scan to its new file rather than retiring with the
+/// old one.
 #[must_use]
 pub fn the_find_bar_asks_the_same_engine(tree: &Tree) -> Report {
     let claims = [
@@ -228,14 +235,14 @@ pub fn the_find_bar_asks_the_same_engine(tree: &Tree) -> Report {
             path: SWIFT_FIND,
             pattern: "NSRegularExpression|NSString|NSRange|NSNotFound|CharacterSet",
             view: View::Code,
-            message: "TerminalSearchController.swift scans for matches in Swift again — \
-                      slopdesk-rowscan::find owns the scan",
+            message: "ScrollbackMatcher.swift scans for matches in Swift again — slopdesk-rowscan::find \
+                      owns the scan",
         },
         Claim::Names {
             path: SWIFT_FIND,
             needle: "slopdesk_find_matches",
-            message: "TerminalSearchController.swift no longer asks slopdesk_find_matches — the find scan \
-                      is one implementation",
+            message: "ScrollbackMatcher.swift no longer asks slopdesk_find_matches — the find scan is one \
+                      implementation",
         },
         Claim::Names {
             path: "rust/slopdesk-rowscan/src/find.rs",

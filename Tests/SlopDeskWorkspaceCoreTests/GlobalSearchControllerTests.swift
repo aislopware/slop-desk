@@ -3,7 +3,7 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The pure ⇧⌘F Global Search engine: runs ``TerminalSearchController/computeMatches`` over every
+/// The pure ⇧⌘F Global Search engine: runs ``ScrollbackMatcher/computeMatches(lines:query:caseSensitive:isRegex:wholeWord:expecting:)`` over every
 /// terminal pane's scrollback mirror, drops zero-hit sources, groups by source, builds full-line excerpts with
 /// UTF-16 highlight ranges, and counts what survived. All against in-memory sources — no view, no store, no
 /// libghostty-vt. The `N results — M tabs` LINE those counts become is `slopdesk_workspace::global_search`'s and
@@ -78,7 +78,7 @@ final class GlobalSearchControllerTests: XCTestCase {
         XCTAssertEqual(sliced, "doc")
     }
 
-    // MARK: Case + regex honored (parity with TerminalSearchController flags)
+    // MARK: Case + regex honored (parity with the ScrollbackMatcher flags)
 
     func testCaseSensitiveAndRegexHonored() {
         // Case-insensitive (default) matches both "doc" and "DOC"; case-sensitive narrows to the exact "DOC".
@@ -147,13 +147,19 @@ final class GlobalSearchControllerTests: XCTestCase {
 
     // MARK: Click-to-line navigation
 
-    /// The DEFINITIVE click-to-line invariant: two DIFFERENT hits on DIFFERENT lines in the SAME pane must
-    /// `scroll_to_row` to those two DISTINCT lines in ALL THREE modes (literal case-insensitive, literal
-    /// case-SENSITIVE, regex). Landing is mode-independent and viewport-independent — it never depends on an
-    /// ordinal that case-sensitivity / regex / viewport can desync. The OLD literal path emitted
-    /// `search:` + (ordinal+1)×`navigate_search:next` (no `scroll_to_row` at all in literal mode), so each of
-    /// these `scroll_to_row` assertions fails on the un-fixed ordinal walk.
-    func testNavigationActionsScrollToDistinctRowsInEveryMode() throws {
+    /// The DEFINITIVE click-to-line invariant: two DIFFERENT hits on DIFFERENT lines in the SAME pane
+    /// scroll to two DISTINCT rows in ALL THREE modes (literal case-insensitive, literal case-SENSITIVE,
+    /// regex). Landing is mode-independent and viewport-independent — it never depends on an ordinal that
+    /// case-sensitivity / regex / viewport can desync. The OLD literal path emitted `search:` +
+    /// (ordinal+1)×`navigate_search:next` (no `scroll_to_row` at all in literal mode), so each of these
+    /// assertions fails on the un-fixed ordinal walk.
+    ///
+    /// ⚠️ **The mode arguments are gone, and their absence is the assertion.** This used to answer a LIST
+    /// whose first element armed (or refused to arm) the surface's literal matcher, because that matcher
+    /// could not express case-sensitivity or regex and the overlay had to decide which modes were safe to
+    /// paint. It can express all four now, so the highlight is armed by ``WorkspaceStore`` through the
+    /// find door and this decides one thing: which row to bring into view.
+    func testScrollActionTargetsDistinctRowsInEveryMode() throws {
         // One pane, hits on three distinct lines under each mode's query.
         func hitsFor(query: String, caseSensitive: Bool, isRegex: Bool, lines: [String]) throws -> [GlobalSearchHit] {
             let results = GlobalSearchController.run(
@@ -167,67 +173,51 @@ final class GlobalSearchControllerTests: XCTestCase {
             return hits
         }
 
-        // --- Mode 1: literal, case-INSENSITIVE. Arms the faithful literal highlight, THEN scrolls to the row.
-        let insensitive = try hitsFor(
-            query: "doc", caseSensitive: false, isRegex: false,
-            lines: ["alpha DOC", "beta doc", "gamma Doc"],
-        )
-        let insFirst = GlobalSearchController.navigationActions(for: insensitive[0], query: "doc", caseSensitive: false)
-        let insThird = GlobalSearchController.navigationActions(for: insensitive[2], query: "doc", caseSensitive: false)
-        XCTAssertEqual(insFirst, ["search:doc", "scroll_to_row:\(insensitive[0].line)"])
-        XCTAssertEqual(insThird, ["search:doc", "scroll_to_row:\(insensitive[2].line)"])
-        XCTAssertNotEqual(insensitive[0].line, insensitive[2].line)
-        XCTAssertNotEqual(insFirst, insThird, "distinct rows must scroll to distinct targets")
+        struct Mode {
+            let name: String
+            let query: String
+            let caseSensitive: Bool
+            let isRegex: Bool
+            let lines: [String]
+        }
 
-        // --- Mode 2: literal, case-SENSITIVE. Must NOT arm the (case-insensitive) literal matcher — clearing
-        // any stale highlight and scrolling straight to the row. This is the revert-to-confirm-fail case: the
-        // old code routed case-sensitive through the ordinal `navigate_search:next` walk, which both emits no
-        // `scroll_to_row` AND mis-lands (case-sensitive ordinal ≠ libghostty-vt's case-insensitive cursor).
-        let sensitive = try hitsFor(
-            query: "DOC", caseSensitive: true, isRegex: false,
-            lines: ["alpha DOC", "beta DOC", "gamma DOC"],
-        )
-        let senFirst = GlobalSearchController.navigationActions(for: sensitive[0], query: "DOC", caseSensitive: true)
-        let senThird = GlobalSearchController.navigationActions(for: sensitive[2], query: "DOC", caseSensitive: true)
-        XCTAssertEqual(senFirst, ["end_search", "scroll_to_row:\(sensitive[0].line)"])
-        XCTAssertEqual(senThird, ["end_search", "scroll_to_row:\(sensitive[2].line)"])
-        XCTAssertNotEqual(sensitive[0].line, sensitive[2].line)
-        XCTAssertNotEqual(senFirst, senThird, "distinct case-sensitive rows must scroll to distinct targets")
-        XCTAssertFalse(
-            senFirst.contains { $0.hasPrefix("search:") },
-            "case-sensitive jump must not arm libghostty's case-insensitive literal matcher",
-        )
-        XCTAssertFalse(senThird.contains("navigate_search:next"), "case-sensitive jump must not step the cursor")
-
-        // --- Mode 3: regex. Must NOT arm the literal matcher (no regex engine) — end + scroll straight to row.
-        let regex = try hitsFor(
-            query: #"\d+"#, caseSensitive: false, isRegex: true,
-            lines: ["alpha 12", "beta 34", "gamma 56"],
-        )
-        let rxFirst = GlobalSearchController.navigationActions(for: regex[0], query: #"\d+"#, isRegex: true)
-        let rxThird = GlobalSearchController.navigationActions(for: regex[2], query: #"\d+"#, isRegex: true)
-        XCTAssertEqual(rxFirst, ["end_search", "scroll_to_row:\(regex[0].line)"])
-        XCTAssertEqual(rxThird, ["end_search", "scroll_to_row:\(regex[2].line)"])
-        XCTAssertNotEqual(regex[0].line, regex[2].line)
-        XCTAssertNotEqual(rxFirst, rxThird, "distinct regex rows must scroll to distinct targets")
-        XCTAssertFalse(
-            rxThird.contains { $0.hasPrefix("search:") },
-            "regex jump must not arm libghostty's literal search",
-        )
-        XCTAssertFalse(rxThird.contains("navigate_search:next"), "regex jump must not step the dead literal cursor")
-        XCTAssertFalse(rxThird.contains("navigate_search:previous"))
+        let modes = [
+            Mode(
+                name: "literal case-insensitive", query: "doc", caseSensitive: false, isRegex: false,
+                lines: ["alpha DOC", "beta doc", "gamma Doc"],
+            ),
+            Mode(
+                name: "literal case-sensitive", query: "DOC", caseSensitive: true, isRegex: false,
+                lines: ["alpha DOC", "beta DOC", "gamma DOC"],
+            ),
+            Mode(
+                name: "regex", query: #"\d+"#, caseSensitive: false, isRegex: true,
+                lines: ["alpha 12", "beta 34", "gamma 56"],
+            ),
+        ]
+        for mode in modes {
+            let hits = try hitsFor(
+                query: mode.query, caseSensitive: mode.caseSensitive, isRegex: mode.isRegex, lines: mode.lines,
+            )
+            let first = GlobalSearchController.scrollAction(for: hits[0], query: mode.query)
+            let third = GlobalSearchController.scrollAction(for: hits[2], query: mode.query)
+            XCTAssertEqual(first, "scroll_to_row:\(hits[0].line)", mode.name)
+            XCTAssertEqual(third, "scroll_to_row:\(hits[2].line)", mode.name)
+            XCTAssertNotEqual(hits[0].line, hits[2].line, mode.name)
+            XCTAssertNotEqual(first, third, "\(mode.name): distinct rows must scroll to distinct targets")
+        }
     }
 
     /// Soft-wrap coordinate mapping: the click-to-line `scroll_to_row` must target the PHYSICAL grid
     /// row, not the logical (unwrapped) mirror index. A wrapped line above the hit shifts its physical
-    /// row down. Revert-to-confirm-fail: the un-fixed `navigationActions` emitted
-    /// `scroll_to_row:<hit.line>` (the logical index), one row too high per wrap continuation above it.
+    /// row down. Revert-to-confirm-fail: the un-fixed navigation emitted `scroll_to_row:<hit.line>` (the
+    /// logical index), one row too high per wrap continuation above it.
     ///
     /// ⚠️ The rows are the ENGINE's, read off the mirror — `firstRow`/`lastRow` per logical line. The
     /// client used to recompute them from the text and a column count, which was a second wrap
     /// implementation that could not see a double-width glyph; `ScrollbackWrapMapper` and the
     /// `columns:` argument went with it (docs/68).
-    func testNavigationActionsMapLogicalLineToPhysicalRowAcrossWrap() throws {
+    func testScrollActionMapsLogicalLineToPhysicalRowAcrossWrap() throws {
         // Logical line 0 ("abcdefgh") occupies two physical rows, so line 1 starts on row 2.
         let mirror = [
             TerminalScrollbackLine(text: "abcdefgh", firstRow: 0, lastRow: 1),
@@ -239,28 +229,22 @@ final class GlobalSearchControllerTests: XCTestCase {
         let hit = try XCTUnwrap(results.groups.first?.hits.first)
         XCTAssertEqual(hit.line, 1, "the match's LOGICAL mirror index is 1")
 
-        let mapped = GlobalSearchController.navigationActions(
-            for: hit, query: "doc", caseSensitive: false, isRegex: false, lines: mirror,
-        )
-        XCTAssertEqual(mapped, ["search:doc", "scroll_to_row:2"])
+        XCTAssertEqual(GlobalSearchController.scrollAction(for: hit, query: "doc", lines: mirror), "scroll_to_row:2")
 
         // Without the mirror (default), the mapping degrades to the identity — the pre-fix logical row.
-        let unmapped = GlobalSearchController.navigationActions(for: hit, query: "doc")
-        XCTAssertEqual(unmapped, ["search:doc", "scroll_to_row:1"])
+        XCTAssertEqual(GlobalSearchController.scrollAction(for: hit, query: "doc"), "scroll_to_row:1")
     }
 
-    /// An empty query arms nothing and scrolls nowhere (validate-then-drop) in every mode.
-    func testNavigationActionsEmptyQueryYieldsNothing() throws {
+    /// An empty query scrolls nowhere (validate-then-drop).
+    func testScrollActionEmptyQueryYieldsNothing() throws {
         let results = GlobalSearchController.run(
-            sources: [source("pane", ["a doc"])],
+            sources: [source("only", ["a doc"])],
             query: "doc",
             caseSensitive: false,
             isRegex: false,
         )
         let hit = try XCTUnwrap(results.groups.first?.hits.first)
-        XCTAssertEqual(GlobalSearchController.navigationActions(for: hit, query: ""), [])
-        XCTAssertEqual(GlobalSearchController.navigationActions(for: hit, query: "", caseSensitive: true), [])
-        XCTAssertEqual(GlobalSearchController.navigationActions(for: hit, query: "", isRegex: true), [])
+        XCTAssertNil(GlobalSearchController.scrollAction(for: hit, query: ""))
     }
 
     // MARK: Per-group collapse state (the disclosure-control reducer the ⇧⌘F surface owns)

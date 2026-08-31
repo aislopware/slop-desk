@@ -1283,6 +1283,7 @@ name = "slopdesk-vterm"
 version = "0.1.0"
 dependencies = [
  "libghostty-vt",
+ "regex",
 ]
 
 [[package]]
