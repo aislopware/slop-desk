@@ -55,7 +55,7 @@ path = "src/lib.rs"
 # documented as explicitly NOT policy, so a caret range would let a routine `cargo update` raise the
 # toolchain floor of a repository that builds three slices in CI.
 [dependencies]
-objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
 objc2-audio-toolbox = { version = "=0.3.2", default-features = false, features = [
   "std",
   "objc2-core-audio-types",

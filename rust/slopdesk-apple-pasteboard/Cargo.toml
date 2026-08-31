@@ -70,7 +70,7 @@ path = "src/lib.rs"
 [target.'cfg(target_os = "macos")'.dependencies]
 # `Retained` is `objc2`'s, and every AppKit constructor answers one, so the shim's own crate is a
 # direct edge rather than a re-export ridden in on. Same exact pin as `slopdesk-apple-sck`'s.
-objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "std",
   "NSPasteboard",
@@ -91,7 +91,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
 # The iOS spelling of the same area. `UIPasteboard` is the board; `UIImage` is what makes an image
 # clip decodable and re-encodable, the role `NSBitmapImageRep` plays on the other half.
 [target.'cfg(target_os = "ios")'.dependencies]
-objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
 objc2-ui-kit = { version = "=0.3.2", default-features = false, features = [
   "std",
   "UIPasteboard",

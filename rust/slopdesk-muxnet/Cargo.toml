@@ -47,7 +47,7 @@ repository = "https://github.com/aislopware/slop-desk"
 [workspace]
 
 [dependencies]
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 slopdesk-wire = { path = "../slopdesk-wire" }
 
 # A daemon's profile: this crate sits on the per-chunk receive path at both ends.

@@ -52,7 +52,7 @@ path = "src/lib.rs"
 [target.'cfg(target_os = "macos")'.dependencies]
 # `MainThreadMarker` only. It is the whole thread argument this crate makes: an `Option`, so an
 # off-main caller is REFUSED rather than trapped.
-objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "std",
   # The class itself, and `run`.

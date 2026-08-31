@@ -50,7 +50,7 @@ repository = "https://github.com/aislopware/slop-desk"
 [workspace]
 
 [dependencies]
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 slopdesk-muxnet = { path = "../slopdesk-muxnet" }
 slopdesk-muxsession = { path = "../slopdesk-muxsession" }
 
