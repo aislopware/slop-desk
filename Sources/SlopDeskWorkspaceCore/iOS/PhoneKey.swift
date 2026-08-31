@@ -129,6 +129,48 @@ public enum PhoneKey {
         case imeProxy
     }
 
+    /// Which key the PROMPT EDITOR sees, when one is armed.
+    ///
+    /// The NAMING half of `docs/68` §10, and the only thing this side decides: a USB HID usage is a
+    /// physical position and means nothing to a rule, so it is turned into the vocabulary
+    /// ``PromptKeyAction/of(_:shift:control:option:command:bufferEmpty:)`` reads and the verb comes
+    /// back from Rust.
+    ///
+    /// A key with no usage of its own — the accessory row synthesises some, and a soft commit has
+    /// none at all — falls through to its character, which is what a letter is anyway. The letter is
+    /// lowercased ASCII or `0`, and `0` is TEXT: a `ế` names no verb, which is the whole reason the
+    /// Vietnamese path never meets this table.
+    public static func promptKey(_ press: Press) -> PromptKey {
+        // The USB HID keyboard page's own numbers rather than `UIKeyboardHIDUsage`, which is UIKit's
+        // and would fence this rule to the one platform. A usage is a standard, not a framework: the
+        // macOS test runner drives the same table the phone does.
+        switch press.hidUsage {
+        case 79: .right
+        case 80: .left
+        case 81: .down
+        case 82: .up
+        case 74: .home
+        case 77: .end
+        case 75: .pageUp
+        case 78: .pageDown
+        case 42: .backspace
+        case 76: .forwardDelete
+        case 43: .tab
+        // 40 is Return, 88 the keypad's Enter. A keypad that submitted nothing would be a key that
+        // works everywhere else in the OS and not here.
+        case 40,
+             88: .return
+        case 41: .escape
+        default: .character(asciiLetter(press.charactersIgnoringModifiers))
+        }
+    }
+
+    /// The lowercase ASCII byte a press's own characters name, or `0` for anything else.
+    private static func asciiLetter(_ characters: String) -> UInt8 {
+        guard let scalar = characters.lowercased().unicodeScalars.first, scalar.isASCII else { return 0 }
+        return UInt8(scalar.value)
+    }
+
     /// Which path this press takes.
     public static func route(_ press: Press) -> Route {
         routesToKeyEncoding(press) ? .keyEncoding : .imeProxy

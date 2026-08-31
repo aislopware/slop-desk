@@ -65,6 +65,186 @@ public enum PromptMotion: Sendable, Equatable {
     }
 }
 
+/// A key named without a hardware position — characters plus the handful of keys a character cannot
+/// express.
+///
+/// ⚠️ NOT A KEYCODE, and the difference is the platform this exists for. UIKit hands a press over as
+/// characters and a HID usage, never an AppKit-style position, and `docs/68` §10 splits key NAMING
+/// from the decision: the view names the key, Rust decides the verb.
+public enum PromptKey: Sendable, Equatable {
+    /// A letter or digit. The associated value is the LOWERCASE ASCII byte, `0` for anything else —
+    /// a Vietnamese letter is text, and text names no verb.
+    case character(UInt8)
+    /// ←
+    case left
+    /// →
+    case right
+    /// ↑
+    case up
+    /// ↓
+    case down
+    /// Home
+    case home
+    /// End
+    case end
+    /// Page Up
+    case pageUp
+    /// Page Down
+    case pageDown
+    /// ⌫
+    case backspace
+    /// ⌦, the forward delete
+    case forwardDelete
+    /// ⇥
+    case tab
+    /// ↩
+    case `return`
+    /// ⎋
+    case escape
+
+    /// The `SLOPDESK_PROMPT_KEY_*` value the door reads, and the letter beside it.
+    var wire: (key: UInt8, letter: UInt8) {
+        switch self {
+        case let .character(letter): (UInt8(SLOPDESK_PROMPT_KEY_CHAR), letter)
+        case .left: (UInt8(SLOPDESK_PROMPT_KEY_LEFT), 0)
+        case .right: (UInt8(SLOPDESK_PROMPT_KEY_RIGHT), 0)
+        case .up: (UInt8(SLOPDESK_PROMPT_KEY_UP), 0)
+        case .down: (UInt8(SLOPDESK_PROMPT_KEY_DOWN), 0)
+        case .home: (UInt8(SLOPDESK_PROMPT_KEY_HOME), 0)
+        case .end: (UInt8(SLOPDESK_PROMPT_KEY_END), 0)
+        case .pageUp: (UInt8(SLOPDESK_PROMPT_KEY_PAGE_UP), 0)
+        case .pageDown: (UInt8(SLOPDESK_PROMPT_KEY_PAGE_DOWN), 0)
+        case .backspace: (UInt8(SLOPDESK_PROMPT_KEY_BACKSPACE), 0)
+        case .forwardDelete: (UInt8(SLOPDESK_PROMPT_KEY_DELETE), 0)
+        case .tab: (UInt8(SLOPDESK_PROMPT_KEY_TAB), 0)
+        case .return: (UInt8(SLOPDESK_PROMPT_KEY_RETURN), 0)
+        case .escape: (UInt8(SLOPDESK_PROMPT_KEY_ESCAPE), 0)
+        }
+    }
+}
+
+/// What one press does at an armed prompt.
+///
+/// ``none`` is the common answer and the important one: the press is TEXT, and the caller inserts
+/// its characters. That is what keeps a Telex composition out of a chord table it has no business
+/// in.
+public enum PromptKeyAction: Sendable, Equatable {
+    /// The press is text.
+    case none
+    /// Move the caret, or extend the selection to where it would have gone.
+    case move(PromptMotion, extend: Bool)
+    /// Delete at a granularity.
+    case delete(PromptMotion)
+    /// Scroll the VIEWPORT. Negative reveals older output.
+    case scrollPages(Int)
+    /// Walk to an older command, if the caret is on the document's first line.
+    case historyPrevious
+    /// Walk to a newer one, if the caret is on the last.
+    case historyNext
+    /// Run it, accept a candidate, or take the search's hit.
+    case submit
+    /// A second line of the same command.
+    case insertNewline
+    /// Complete, or step to the next candidate.
+    case completeForward
+    /// Step to the previous candidate.
+    case completeBackward
+    /// Dismiss what is up, innermost first. Never clears the text.
+    case cancel
+    /// Select the whole document.
+    case selectAll
+    /// Paste the system clipboard.
+    case paste
+    /// Copy the selection.
+    case copy
+    /// Cut the selection.
+    case cut
+    /// Take back one edit.
+    case undo
+    /// Put one back.
+    case redo
+    /// Open a reverse search, or step it.
+    case search
+    /// The press is the SHELL's: send its control byte, leave the editor's text alone.
+    case forward
+    /// The shell's AND it abandons the line: send the byte, then clear the editor.
+    case forwardAndClear
+
+    /// The verb one press names, decided in Rust.
+    ///
+    /// ⚠️ THE MAC NEVER ASKS. AppKit's standard key-binding table already names every editing chord
+    /// and `doCommand(by:)` delivers it as a SELECTOR, so `MacTerminalRendererView` maps selectors
+    /// and inherits every layout and every user's `DefaultKeyBinding.dict` for free. UIKit has no
+    /// counterpart, so without this door the phone's editing semantics would be a hand-kept Swift
+    /// table — the second implementation the whole prompt was built in Rust to avoid.
+    public static func of(
+        _ key: PromptKey,
+        shift: Bool = false,
+        control: Bool = false,
+        option: Bool = false,
+        command: Bool = false,
+        bufferEmpty: Bool,
+    ) -> Self {
+        var mods: UInt8 = 0
+        if shift { mods |= UInt8(SLOPDESK_PROMPT_MOD_SHIFT) }
+        if control { mods |= UInt8(SLOPDESK_PROMPT_MOD_CONTROL) }
+        if option { mods |= UInt8(SLOPDESK_PROMPT_MOD_OPTION) }
+        if command { mods |= UInt8(SLOPDESK_PROMPT_MOD_COMMAND) }
+        let wire = key.wire
+        return of(slopdesk_prompt_key_action(wire.key, wire.letter, mods, bufferEmpty))
+    }
+
+    /// The case one answered record names. An unknown `kind` reads as ``none``, which is TEXT — the
+    /// safe direction, since a build that gained a verb this one has not heard of should type the
+    /// letter rather than do something arbitrary with it.
+    private static func of(_ raw: SlopDeskPromptKeyAction) -> Self {
+        let motion = PromptMotion.of(raw.motion)
+        switch UInt32(raw.kind) {
+        case SLOPDESK_PROMPT_ACTION_MOVE: return .move(motion, extend: raw.extend)
+        case SLOPDESK_PROMPT_ACTION_DELETE: return .delete(motion)
+        case SLOPDESK_PROMPT_ACTION_SCROLL_PAGES: return .scrollPages(Int(raw.pages))
+        case SLOPDESK_PROMPT_ACTION_HISTORY_PREVIOUS: return .historyPrevious
+        case SLOPDESK_PROMPT_ACTION_HISTORY_NEXT: return .historyNext
+        case SLOPDESK_PROMPT_ACTION_SUBMIT: return .submit
+        case SLOPDESK_PROMPT_ACTION_INSERT_NEWLINE: return .insertNewline
+        case SLOPDESK_PROMPT_ACTION_COMPLETE_FORWARD: return .completeForward
+        case SLOPDESK_PROMPT_ACTION_COMPLETE_BACKWARD: return .completeBackward
+        case SLOPDESK_PROMPT_ACTION_CANCEL: return .cancel
+        case SLOPDESK_PROMPT_ACTION_SELECT_ALL: return .selectAll
+        case SLOPDESK_PROMPT_ACTION_PASTE: return .paste
+        case SLOPDESK_PROMPT_ACTION_COPY: return .copy
+        case SLOPDESK_PROMPT_ACTION_CUT: return .cut
+        case SLOPDESK_PROMPT_ACTION_UNDO: return .undo
+        case SLOPDESK_PROMPT_ACTION_REDO: return .redo
+        case SLOPDESK_PROMPT_ACTION_SEARCH: return .search
+        case SLOPDESK_PROMPT_ACTION_FORWARD: return .forward
+        case SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR: return .forwardAndClear
+        default: return .none
+        }
+    }
+}
+
+extension PromptMotion {
+    /// The case one `SLOPDESK_PROMPT_MOTION_*` value names — the inverse of ``index``.
+    ///
+    /// Unknown reads as one grapheme backward, which is the smallest thing a motion can be: a record
+    /// from a newer build moves one character rather than the whole document.
+    static func of(_ raw: UInt8) -> Self {
+        switch UInt32(raw) {
+        case SLOPDESK_PROMPT_MOTION_GRAPHEME_FORWARD: .grapheme(.forward)
+        case SLOPDESK_PROMPT_MOTION_WORD_BACKWARD: .word(.backward)
+        case SLOPDESK_PROMPT_MOTION_WORD_FORWARD: .word(.forward)
+        case SLOPDESK_PROMPT_MOTION_LINE_START: .lineEdge(.backward)
+        case SLOPDESK_PROMPT_MOTION_LINE_END: .lineEdge(.forward)
+        case SLOPDESK_PROMPT_MOTION_LINE_UP: .line(.backward)
+        case SLOPDESK_PROMPT_MOTION_LINE_DOWN: .line(.forward)
+        case SLOPDESK_PROMPT_MOTION_DOC_START: .documentEdge(.backward)
+        case SLOPDESK_PROMPT_MOTION_DOC_END: .documentEdge(.forward)
+        default: .grapheme(.backward)
+        }
+    }
+}
+
 /// What the renderer should colour a run of bytes as.
 ///
 /// About ROLE rather than syntax class: `main.rs` and `--verbose` are both bare words to the shell,

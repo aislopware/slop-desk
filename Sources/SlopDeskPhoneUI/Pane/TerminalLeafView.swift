@@ -88,7 +88,7 @@ final class TerminalLeafView: UIView {
     /// against the pane edges / split divider. EVEN on all four sides since the command ladder was
     /// removed and the gutter carries nothing. The inset shrinks the surface, so the host PTY grid loses
     /// ~1 col/row each side and reflows through the existing size → resize-scrim → `TIOCSWINSZ` path.
-    private let surfaceArea = UIView()
+    private let surfaceArea = SurfaceAreaView()
 
     /// THE LETTERBOX STAGE: the renderer and its four decorations, at the grid's NATURAL size, scaled and
     /// centred inside ``surfaceArea``. See the header's point 3 for why the decorations live in here.
@@ -98,9 +98,30 @@ final class TerminalLeafView: UIView {
     /// ``TerminalStageView``, so no Auto Layout constraint ever crosses the scale.
     private let stage = TerminalStageView()
 
+    /// WHAT IS LEFT FOR THE GRID: the surface area minus the command prompt's band. Every piece of
+    /// bottom-edge chrome is pinned to this rather than to ``surfaceArea``, and ``place()`` letterboxes
+    /// into it, so raising the band moves the stage, the hint bar and the readout caption together
+    /// instead of leaving three things overlapping a fourth.
+    ///
+    /// A guide and not a view because nothing draws here: it exists to give ``gridAreaBottom`` one
+    /// anchor to re-point when the band appears and disappears.
+    private let gridArea = UILayoutGuide()
+    /// ``gridArea``'s bottom edge, held so the band can take it: `surfaceArea.bottom` while there is no
+    /// band, the band's own top edge once there is one.
+    private var gridAreaBottom: NSLayoutConstraint?
+
     /// The pixels: the production renderer's own view, or the headless placeholder. Held as `UIView`
     /// because that is all this file may know about it.
     private var surfaceView: UIView?
+
+    /// The command prompt's band along the pane's bottom edge — `docs/68` §5.4, and
+    /// ``TerminalSurfaceHosting/promptView`` for why it is a sibling of the pixels and not a subview.
+    ///
+    /// ⚠️ A SIBLING OF THE STAGE, NOT A CHILD OF IT, which is the one place this mount differs from the
+    /// Mac's. Over there the band and the grid are two rects of one area; here the grid is LETTERBOXED,
+    /// so the band must be outside the thing that gets scaled — inside it the caret would grow and
+    /// shrink with the pane's fit factor, and its cell metrics would stop being points.
+    private var promptBand: UIView?
     /// The renderer behind ``surfaceView``, when there is one. `nil` for the placeholder and for a pane
     /// with no model yet.
     private var surfaceHost: TerminalSurfaceHosting?
@@ -182,6 +203,7 @@ final class TerminalLeafView: UIView {
         )
 
         surfaceArea.translatesAutoresizingMaskIntoConstraints = false
+        surfaceArea.onLayout = { [weak self] in self?.areaDidLayOut() }
         addSubview(surfaceArea)
         // The stage is placed by hand and must not be reached by the constraint engine — see its own
         // declaration. It is added FIRST so every piece of chrome below sits above it.
@@ -200,13 +222,20 @@ final class TerminalLeafView: UIView {
         surfaceArea.addSubview(readoutCaption)
         surfaceArea.addSubview(chipColumn)
         surfaceArea.addSubview(hintSlot)
+        surfaceArea.addLayoutGuide(gridArea)
         readoutCaption.isHidden = true
 
+        let gridBottom = gridArea.bottomAnchor.constraint(equalTo: surfaceArea.bottomAnchor)
+        gridAreaBottom = gridBottom
         NSLayoutConstraint.activate([
             surfaceArea.topAnchor.constraint(equalTo: layoutMarginsGuide.topAnchor),
             surfaceArea.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
             surfaceArea.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
             surfaceArea.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor),
+            gridArea.topAnchor.constraint(equalTo: surfaceArea.topAnchor),
+            gridArea.leadingAnchor.constraint(equalTo: surfaceArea.leadingAnchor),
+            gridArea.trailingAnchor.constraint(equalTo: surfaceArea.trailingAnchor),
+            gridBottom,
             chipColumn.topAnchor.constraint(
                 equalTo: surfaceArea.topAnchor, constant: Slate.Metric.space2,
             ),
@@ -214,14 +243,14 @@ final class TerminalLeafView: UIView {
                 equalTo: chipColumn.trailingAnchor, constant: Slate.Metric.space2,
             ),
             hintSlot.centerXAnchor.constraint(equalTo: surfaceArea.centerXAnchor),
-            surfaceArea.bottomAnchor.constraint(
+            gridArea.bottomAnchor.constraint(
                 equalTo: hintSlot.bottomAnchor, constant: Slate.Metric.space2,
             ),
             // The caption sits UNDER the hint slot in z-order and on the same edge: the two are never up
             // together in practice (a vi session in a letterboxed pane is the only overlap, and the bar
             // is the louder of the two), and the caption is hit-transparent either way.
             readoutCaption.centerXAnchor.constraint(equalTo: surfaceArea.centerXAnchor),
-            surfaceArea.bottomAnchor.constraint(
+            gridArea.bottomAnchor.constraint(
                 equalTo: readoutCaption.bottomAnchor, constant: Slate.Metric.space2,
             ),
         ])
@@ -234,8 +263,12 @@ final class TerminalLeafView: UIView {
     /// It READS the model and sets frames, and writes nothing back (docs/62 hazard 7): the grid and the
     /// readout are pulled from ``followTerminalState()``'s tracked arm, and only the placement arithmetic
     /// runs here.
-    override func layoutSubviews() {
-        super.layoutSubviews()
+    /// ⚠️ THE PLACEMENT DOES NOT HAPPEN HERE, and it used to. ``SurfaceAreaView`` forwards its own pass
+    /// instead, for the reason that type states: this leaf's `layoutSubviews` runs BEFORE its children's
+    /// frames are resolved, and once the prompt band is up the letterbox's container is a guide the
+    /// band's height decides — so placing from here would letterbox into last pass's rect every time the
+    /// editor grew a row.
+    private func areaDidLayOut() {
         place()
         // The hint bar is MEASURED rather than constrained: it picks a column rung from the width it is
         // offered, which is the UIKit stand-in for the `ProposedViewSize` its SwiftUI twin was handed.
@@ -286,6 +319,7 @@ final class TerminalLeafView: UIView {
         surfaceHost = nil
         surfaceView?.removeFromSuperview()
         surfaceView = nil
+        dropPromptBand()
         for decoration in decorations { retire(decoration) }
         decorations = []
         hintBar = nil
@@ -387,6 +421,7 @@ final class TerminalLeafView: UIView {
         surfaceView?.removeFromSuperview()
         surfaceView = nil
         surfaceHost = nil
+        dropPromptBand()
         for decoration in decorations { retire(decoration) }
         decorations = []
         hintBar = nil
@@ -403,6 +438,11 @@ final class TerminalLeafView: UIView {
         }
         surfaceView = pixels
         stage.addSubview(pixels)
+        // ⚠️ AFTER the host exists, and ``applyInputHost()`` above cannot be the one to do it: it runs
+        // before the factory — a live session with no model yet still needs its responder — so the value
+        // it read was the `nil` this method had just cleared two lines up.
+        inputHost?.surface = surfaceHost
+        mountPromptBand()
 
         // The four decorations, in the Mac half's z-order and in the stage's own space — see the header's
         // point 3. Cell metrics answer with origin 0,0 at the surface's top-left, which is the stage's
@@ -416,7 +456,11 @@ final class TerminalLeafView: UIView {
             decorations.append(decoration)
             stage.addSubview(decoration)
         }
-        setNeedsLayout()
+        // ⚠️ ``surfaceArea`` AND NOT `self`, and the distinction is new with ``SurfaceAreaView``: the
+        // placement runs in the AREA's layout pass now, and marking only this view schedules a pass
+        // that need never descend — the leaf's own frame has not moved, so a swapped session would
+        // keep the previous one's letterbox until something else resized the pane.
+        surfaceArea.setNeedsLayout()
     }
 
     /// The pane's key responder, mounted for as long as there is a session to type into.
@@ -439,7 +483,43 @@ final class TerminalLeafView: UIView {
             inputHost = made
             return made
         }()
+        host.surface = surfaceHost
         host.attach(to: live, store: life.store, focusCoordinator: life.store.focusCoordinator)
+    }
+
+    /// Pins the prompt band along the bottom of ``surfaceArea`` and hands ``gridArea`` its top edge, so
+    /// the letterbox and every piece of bottom chrome start measuring from above it.
+    ///
+    /// Three edges and NO height: the band answers an `intrinsicContentSize` for what the editor is
+    /// holding — one row, a wrapped command, a completion list — and invalidates it as that changes.
+    /// Above the stage in z-order and below the chrome, which is the Mac's order too.
+    private func mountPromptBand() {
+        guard let band = surfaceHost?.promptView else { return }
+        promptBand = band
+        band.translatesAutoresizingMaskIntoConstraints = false
+        surfaceArea.insertSubview(band, aboveSubview: stage)
+        gridAreaBottom?.isActive = false
+        let taken = gridArea.bottomAnchor.constraint(equalTo: band.topAnchor)
+        gridAreaBottom = taken
+        NSLayoutConstraint.activate([
+            band.leadingAnchor.constraint(equalTo: surfaceArea.leadingAnchor),
+            band.trailingAnchor.constraint(equalTo: surfaceArea.trailingAnchor),
+            band.bottomAnchor.constraint(equalTo: surfaceArea.bottomAnchor),
+            taken,
+        ])
+    }
+
+    /// Drops the band and gives ``gridArea`` its own bottom edge back. Removing the view alone would
+    /// leave the guide pinned to a dead anchor, and Auto Layout resolves that by dropping the whole
+    /// constraint — the grid would keep the band's height as dead space with nothing standing in it.
+    private func dropPromptBand() {
+        guard let band = promptBand else { return }
+        promptBand = nil
+        gridAreaBottom?.isActive = false
+        band.removeFromSuperview()
+        let restored = gridArea.bottomAnchor.constraint(equalTo: surfaceArea.bottomAnchor)
+        gridAreaBottom = restored
+        restored.isActive = true
     }
 
     // MARK: - The letterbox (docs/45 §8.3)
@@ -455,14 +535,17 @@ final class TerminalLeafView: UIView {
     /// `bounds` + `center`, never `frame`: under a non-identity transform a view's `frame` is undefined,
     /// so assigning it would place the stage at a rect nothing can predict.
     private func place() {
-        let container = surfaceArea.bounds.size
+        // ``gridArea`` and not ``surfaceArea``: the band owns the rows along the bottom, and a letterbox
+        // computed over the whole area would scale the grid to fit a container the band is standing in.
+        let area = gridArea.layoutFrame
+        let container = area.size
         guard container.width > 0, container.height > 0 else { return }
         guard let placement = TerminalLetterbox.placement(
             grid: grid, cellSize: cellSize(), in: container,
         ) else {
             stage.transform = .identity
             stage.bounds = CGRect(origin: .zero, size: container)
-            stage.center = CGPoint(x: container.width / 2, y: container.height / 2)
+            stage.center = CGPoint(x: area.midX, y: area.midY)
             readoutCaption.isHidden = true
             return
         }
@@ -473,7 +556,13 @@ final class TerminalLeafView: UIView {
         stage.transform = .identity
         stage.bounds = CGRect(origin: .zero, size: placement.natural)
         stage.transform = CGAffineTransform(scaleX: placement.fit.scale, y: placement.fit.scale)
-        stage.center = CGPoint(x: placement.fit.contentRect.midX, y: placement.fit.contentRect.midY)
+        // The placement is in the CONTAINER's space and `center` is in ``surfaceArea``'s, so the area's
+        // own origin is added back. It is `.zero` today — the guide takes the area's top and leading
+        // edges verbatim — and it is written out because the band is free to take a different edge later.
+        stage.center = CGPoint(
+            x: area.origin.x + placement.fit.contentRect.midX,
+            y: area.origin.y + placement.fit.contentRect.midY,
+        )
         // Only when there IS a bar: on an exact fit the caption would sit on top of the terminal's last
         // row, which is the one place it explains nothing.
         readoutCaption.isHidden = !(placement.fit.isLetterboxed && readout != nil)
@@ -713,6 +802,28 @@ private struct LeafReading {
     var findVisible = false
     var navigatorVisible = false
     var keys = TerminalLeafTaskKeys(dial: nil, autotype: nil)
+}
+
+// MARK: - The surface area
+
+/// The padded interior, with its own layout pass forwarded to the leaf.
+///
+/// ⚠️ THE ONE THING IT ADDS IS TIMING, and the timing is the whole point. The leaf letterboxes the
+/// stage by hand into a layout GUIDE whose bottom edge the prompt band owns, and a guide's frame is
+/// resolved with this view's subviews — after the leaf's own `layoutSubviews` has already run and
+/// before this one's. Placing from the leaf therefore read the PREVIOUS pass's rect, which was
+/// invisible while the area only ever changed with the pane (the two passes ran back to back), and
+/// became a visible half-row of overlap the moment the band could grow a row under a still-scaled
+/// grid. Forwarding from here places into the rect the engine just solved.
+@MainActor
+private final class SurfaceAreaView: UIView {
+    /// Called after every resolved layout, with `bounds` and every guide in this view final.
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
 }
 
 // MARK: - The stage
@@ -998,6 +1109,11 @@ final class TerminalInputHostView: UIView, UIKeyInput {
 
     private var accessoryBar: TerminalAccessoryBar?
 
+    /// The pane's surface, for the two things a prompt edit needs the SURFACE to carry out: redrawing
+    /// the band it owns, and scrolling the viewport for the keys that were never the line's. Weak and
+    /// set by the leaf, which owns both this responder and the host.
+    weak var surface: (any TerminalSurfaceHosting)?
+
     // MARK: Mounting
 
     override init(frame: CGRect) {
@@ -1193,6 +1309,11 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         }
         guard PhoneKey.routesToKeyEncoding(press) else { return false }
         if swallowsAsWorkspaceChord(press) { return true }
+        // The app's own command-line editor, when it owns the line — the same rung the Mac gives it,
+        // below the binding table and above everything that talks to a shell. ABOVE
+        // `takesPromptUndo(_:)` because the editor shadows it: that branch emits readline's undo BYTE
+        // to a shell holding the line, and while the app holds it instead no byte is going anywhere.
+        if editsPrompt(press) { return true }
         // UNDO AT PROMPT, below the binding table and above the encoder — the same rung the Mac gives it,
         // where the app-level monitor has already had the chord and `libghostty-vt` has not yet seen it. Not
         // through the repeater: an undo that fired twenty times a second on a held ⌘Z would roll the line
@@ -1202,6 +1323,162 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         guard encodedBytes(press) != nil else { return false }
         repeater.keyDown(PhoneKey.Held(press))
         return true
+    }
+
+    /// The app's own command-line editor, when it owns the line. `true` means the press was spent.
+    ///
+    /// ⚠️ THE CHORDS ARE RUST'S, NOT THIS FILE'S, and that is the whole difference from the Mac. Over
+    /// there `interpretKeyEvents` runs the press through AppKit's standard key-binding table and
+    /// `doCommand(by:)` hands back a SELECTOR, so `⌥←`, `⌃A` and `⇧⌘→` arrive already named and every
+    /// user's `DefaultKeyBinding.dict` is inherited for free. UIKit has no such table, so the naming
+    /// happens in ``PhoneKey/promptKey(_:)`` — HID usage to a vocabulary — and the DECISION comes back
+    /// from `slopdesk_prompt_key_action`. A Swift table here would be a second editor.
+    private func editsPrompt(_ press: PhoneKey.Press) -> Bool {
+        guard let model = live?.terminalModel, model.commandPromptArmed else { return false }
+        let prompt = model.commandPrompt
+        let action = PromptKeyAction.of(
+            PhoneKey.promptKey(press),
+            shift: press.shift, control: press.control, option: press.option, command: press.command,
+            bufferEmpty: prompt.text.isEmpty,
+        )
+        switch action {
+        case .none:
+            // A press the editor does not name is TEXT, and text belongs to the proxy — which is what
+            // reaches `insertText(_:)`, where the editor takes it. Reporting it unhandled here is what
+            // lets a Vietnamese composition run: `Tieengs` is seven presses that commit one `Tiếng`.
+            return false
+        case .forward:
+            return false
+        case .forwardAndClear:
+            // ⌃C abandons the line at the SHELL. The editor is emptied and the press falls through to
+            // the encoder, which writes the byte — the same two halves the Mac does in one branch.
+            prompt.clear()
+            promptDidChange()
+            return false
+        default:
+            apply(action, to: prompt)
+            promptDidChange()
+            return true
+        }
+    }
+
+    /// One decided verb, applied to the editor.
+    private func apply(_ action: PromptKeyAction, to prompt: CommandPrompt) {
+        switch action {
+        case let .move(motion, extend):
+            if extend { prompt.extend(motion) } else { prompt.move(motion) }
+        case let .delete(motion):
+            // A running ⌃R edits its QUERY, not the document: the searched line is never put into the
+            // buffer while the search runs, so there is nothing there for a ⌫ to take back.
+            if prompt.isSearching, motion == .grapheme(.backward) {
+                prompt.searchBackspace()
+            } else {
+                prompt.delete(motion)
+            }
+        case let .scrollPages(pages):
+            // Never the editor's. PageUp at a prompt reads what already scrolled past, in this app as
+            // in every other terminal.
+            surface?.scrollPages(pages)
+        case .historyPrevious: walkHistory(prompt, back: true)
+        case .historyNext: walkHistory(prompt, back: false)
+        case .submit: submit(prompt)
+        case .insertNewline: prompt.insertNewline()
+        case .completeForward: complete(prompt, forward: true)
+        case .completeBackward: complete(prompt, forward: false)
+        case .cancel: cancel(prompt)
+        case .selectAll: prompt.selectAll()
+        case .paste: paste(into: prompt)
+        // Through ``ClientPasteboard`` and never `UIPasteboard` — the board is
+        // `slopdesk-apple-pasteboard`'s and this is the one door, which `just lint-invariants` ratchets
+        // (`client-pasteboard-and-open`). Both verbs answer `nil` when the selection is empty, and an
+        // empty copy leaves the board alone rather than clearing what somebody put there.
+        case .copy:
+            if let text = prompt.copy() { ClientPasteboard.write(text) }
+        case .cut:
+            if let text = prompt.cut() { ClientPasteboard.write(text) }
+        case .undo: _ = prompt.undo()
+        case .redo: _ = prompt.redo()
+        case .search: _ = prompt.isSearching ? prompt.searchAgain() : { prompt.beginSearch()
+                return true
+            }()
+        case .none,
+             .forward,
+             .forwardAndClear: break
+        }
+    }
+
+    /// ↑ / ↓ where they mean HISTORY rather than a line.
+    ///
+    /// The rule every shell with a multi-line editor converged on: ↑ walks back only from the FIRST
+    /// line and ↓ walks forward only from the LAST, so inside a `for … done` the arrows navigate the
+    /// thing being edited and at either edge they leave it. Counted here rather than asked of a door
+    /// because both halves are already on this side — the text and the caret's byte offset.
+    private func walkHistory(_ prompt: CommandPrompt, back: Bool) {
+        let text = prompt.text
+        let caret = text.utf8.index(text.utf8.startIndex, offsetBy: min(prompt.cursor, text.utf8.count))
+        if back {
+            guard !text.utf8[..<caret].contains(0x0A) else {
+                prompt.move(.line(.backward))
+                return
+            }
+            _ = prompt.historyPrevious()
+            return
+        }
+        guard !text.utf8[caret...].contains(0x0A) else {
+            prompt.move(.line(.forward))
+            return
+        }
+        _ = prompt.historyNext()
+    }
+
+    /// Return: run what the editor holds, take the search's hit, or accept a candidate.
+    ///
+    /// A live candidate list claims the key first — that is what every completion UI does, and the
+    /// alternative is running a command the user was still choosing the last word of.
+    private func submit(_ prompt: CommandPrompt) {
+        if !prompt.candidates.isEmpty {
+            prompt.acceptCompletion()
+            return
+        }
+        if prompt.isSearching {
+            _ = prompt.acceptSearch()
+            return
+        }
+        _ = live?.terminalModel?.submitCommandPrompt()
+    }
+
+    /// Tab: ask for candidates, then step through them. The first Tab COMPLETES — with one candidate
+    /// it is applied outright, which is the behaviour a shell has and the reason Tab is worth pressing.
+    private func complete(_ prompt: CommandPrompt, forward: Bool) {
+        guard prompt.candidates.isEmpty else {
+            if forward { prompt.selectNextCandidate() } else { prompt.selectPreviousCandidate() }
+            return
+        }
+        guard forward, prompt.complete() == 1 else { return }
+        prompt.acceptCompletion()
+    }
+
+    /// Escape: undo the most recent thing that is up, innermost first. Never clears the TEXT — a key
+    /// that can throw away a half-typed command by being pressed one time too many is the wrong key
+    /// for the job, and ⌃C is the one that abandons a line.
+    private func cancel(_ prompt: CommandPrompt) {
+        if prompt.isSearching {
+            prompt.cancelSearch()
+            return
+        }
+        prompt.dismissCompletion()
+    }
+
+    private func paste(into prompt: CommandPrompt) {
+        // ⚠️ A CONTENT read, and on iOS that is the one the user just asked for — a ⌘V or the paste
+        // item — which is exactly where ``ClientPasteboard`` says to spend it.
+        guard let text = ClientPasteboard.text(), !text.isEmpty else { return }
+        prompt.paste(text)
+    }
+
+    /// The band redraws and re-measures. The surface owns the view; this side only says WHEN.
+    private func promptDidChange() {
+        surface?.promptDidChange()
     }
 
     /// ⌘Z at an editable shell prompt, which is the ONE ⌘ combination that is terminal input rather than
@@ -1329,6 +1606,20 @@ final class TerminalInputHostView: UIView, UIKeyInput {
             }
             return
         }
+        // The app's own editor, when it owns the line. ABOVE the ⌃ fold because an armed ⌃ is a control
+        // BYTE for a shell and the shell is not editing; the accessory row's ⌃ reaches the editor as a
+        // press through `handle(_:)` instead, where `editsPrompt(_:)` reads it as a chord.
+        //
+        // ⚠️ THIS IS THE WHOLE VIETNAMESE PATH. An input method shows its candidates in the keyboard's
+        // own bar and commits the settled string here — `Tieengs` arrives as one `Tiếng` — which is why
+        // the chord table never sees a composition and why the prompt types Telex correctly with no
+        // `UITextInput` conformance at all. What that conformance would add is the INLINE preedit, and
+        // `docs/68` §5.1 still names it.
+        if let model = live.terminalModel, model.commandPromptArmed {
+            model.commandPrompt.insert(text)
+            surface?.promptDidChange()
+            return
+        }
         // An ARMED ⌃ folds the commit's first scalar to its control byte, which must go RAW because a PTY
         // never echoes one; the rest is ordinary text on the recorded path so the input bar can dedupe the
         // echo.
@@ -1344,7 +1635,12 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// Backspace from the software keyboard. DEL, not BS — that is what a terminal's line editor reads as
     /// "erase the character behind the cursor".
     func deleteBackward() {
-        send(PhoneKey.Press(hidUsage: PhoneKeyUsage.backspace))
+        let press = PhoneKey.Press(hidUsage: PhoneKeyUsage.backspace)
+        // Through the same rung a hardware ⌫ takes, so the editor cannot answer one and not the other.
+        // Not through `handle(_:)`, which would start the repeater: UIKit already repeats a held
+        // software backspace by delivering this call again.
+        if editsPrompt(press) { return }
+        send(press)
     }
 
     // MARK: The accessory row

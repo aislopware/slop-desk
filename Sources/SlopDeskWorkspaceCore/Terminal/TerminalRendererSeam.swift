@@ -27,6 +27,7 @@
 // take every keystroke. That is the hit-claim docs/56 stage D spent five increments removing on the
 // Mac, and it would have been rebuilt verbatim on the phone.
 #if canImport(AppKit) || canImport(UIKit)
+import Foundation
 
 /// Injects the production terminal renderer when the app target provides one.
 ///
@@ -94,9 +95,24 @@ public protocol TerminalSurfaceHosting: AnyObject {
     ///
     /// The band sizes ITSELF: it answers an `intrinsicContentSize` for what the editor currently
     /// holds and asks for a re-layout when that changes, so a host pins its three edges and gives it
-    /// no height. `nil` where there is no prompt to draw — a headless build, and the phone until
-    /// `UITextInput` lands.
+    /// no height. `nil` where there is no prompt to draw — a headless build, or a host with no model
+    /// yet.
     var promptView: PlatformView? { get }
+
+    /// The band's content changed under an edit this host did not make — redraw and re-measure it.
+    ///
+    /// ⚠️ ONLY iOS CALLS IT, and the asymmetry is the responder's rather than the seam's. On macOS the
+    /// renderer view IS the pane's first responder, so it edits the prompt itself and refreshes its
+    /// own band through a private closure. On iOS the responder is `TerminalInputHostView`, a sibling
+    /// of the pixels, and it can no more reach into a ``PlatformView`` the seam handed back than any
+    /// other caller — so the redraw crosses here.
+    func promptDidChange()
+
+    /// Scroll the VIEWPORT by whole pages. Negative reveals OLDER output.
+    ///
+    /// Here for ``promptDidChange()``'s reason exactly: PageUp at an armed prompt reads the scrollback,
+    /// which the editor does not own, and on iOS the key arrives at a view that is not the surface.
+    func scrollPages(_ pages: Int)
 
     /// Re-push the pane's WORKSPACE focus. Drives the keyboard responder and the renderer's cursor
     /// (solid vs hollow — `slopdesk_termrender::layout::cursor` forces `Hollow` when unfocused,
@@ -110,10 +126,16 @@ public protocol TerminalSurfaceHosting: AnyObject {
 }
 
 public extension TerminalSurfaceHosting {
-    /// No band. The default because most hosts genuinely have none — a headless stub, the build-status
-    /// placeholder, and the phone until its `UITextInput` conformance lands (`docs/68` §5.1) — and a
-    /// default is what keeps each of those from carrying a `nil` it would have to explain.
+    /// No band. The default because some hosts genuinely have none — a headless stub and the
+    /// build-status placeholder — and a default is what keeps each of those from carrying a `nil` it
+    /// would have to explain.
     var promptView: PlatformView? { nil }
+
+    /// Nothing to redraw, which is true of every host that answered `nil` above.
+    func promptDidChange() {}
+
+    /// Nothing to scroll. A host with no surface has no viewport either.
+    func scrollPages(_: Int) {}
 }
 
 /// The MODAL POINTER SHIELD — whether a modal overlay card (command palette / Open Quickly /

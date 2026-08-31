@@ -42,6 +42,9 @@ final class PhoneTerminalRendererView: UIView {
     /// different things.
     private var editMenu: UIEditMenuInteraction?
 
+    /// The band under the grid, built on first ask of ``promptView``.
+    private var band: PhoneTerminalPromptView?
+
     /// The detected link the OPEN menu was offered on, resolved at the release point and stashed
     /// because a `UIAction` closure fires long after that point is gone. The Mac's `pendingMenuLink`,
     /// and one slot suffices for its reason: a menu is modal per view.
@@ -75,6 +78,11 @@ final class PhoneTerminalRendererView: UIView {
         driver.onPickFileToPaste = { [weak self] deliver in
             self?.pickFileToPaste(deliver)
         }
+        // ⚠️ THE ARMING EDGE, which no keystroke announces. `TerminalInputHostView` refreshes the band
+        // after edits IT made; this fires for the ones the ENGINE makes — the shell printing a prompt,
+        // a fullscreen program taking the screen, a session re-attaching with a draft already in the
+        // buffer. Without it the band appears only at the first keypress and stays up under `htop`.
+        driver.onPromptEdited = { [weak self] in self?.band?.refresh() }
         driver.bind(to: model)
         driver.setFocus(isFocused, blinkVisible: true)
         installGestures()
@@ -134,88 +142,25 @@ final class PhoneTerminalRendererView: UIView {
 
     // MARK: - Focus
 
-    /// The surface takes the keyboard itself. On the phone the pane's first responder used to be a
-    /// zero-sized sibling, which is what left ⌘C/⌘X/⌘V landing on a view that owned no surface;
-    /// this view IS the surface, so the four chords reach it through the ordinary responder chain.
-    override var canBecomeFirstResponder: Bool { true }
-
-    override func becomeFirstResponder() -> Bool {
-        driver.setFocus(true, blinkVisible: true)
-        return super.becomeFirstResponder()
-    }
-
-    override func resignFirstResponder() -> Bool {
-        driver.setFocus(false, blinkVisible: true)
-        return super.resignFirstResponder()
-    }
-
-    // MARK: - Hardware keyboard
-
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard handle(presses, action: 0) else {
-            super.pressesBegan(presses, with: event)
-            return
-        }
-    }
-
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard handle(presses, action: 1) else {
-            super.pressesEnded(presses, with: event)
-            return
-        }
-    }
-
-    /// Encodes every press in the set, answering whether any produced bytes.
+    /// ⚠️ THE SURFACE IS NOT A RESPONDER, and the pane deliberately has exactly one.
     ///
-    /// The keycode is always ``TerminalRendererSurface/noKey``: a `UIKey` carries CHARACTERS, not a
-    /// hardware position, and inventing an AppKit keyCode for it would be a mapping table this side
-    /// has no authority to write. The door documents the asymmetry.
-    private func handle(_ presses: Set<UIPress>, action: UInt8) -> Bool {
-        var handled = false
-        for press in presses {
-            guard let key = press.key else { continue }
-            if model?.takesModalKeys == true {
-                // ⚠️ THE PRESS ONLY. ``TerminalViewModel/handleCopyModeKey(_:)`` takes no phase — it
-                // performs the motion — and this method is the ONE place both halves of a keystroke
-                // arrive, so routing it unconditionally made every copy-mode `j` on the phone scroll
-                // TWO lines. The Mac never had it because its copy-mode branch is in `keyDown` alone.
-                // The release is still swallowed rather than forwarded: copy mode is modal, and a
-                // release reaching the shell from inside it is the same leak the Mac's `pressedKeys`
-                // exists to prevent.
-                if action == 0 {
-                    model?.handleCopyModeKey(TerminalViewModel.makeCopyModeKey(PhoneKey.Press(key)))
-                }
-                handled = true
-                continue
-            }
-            handled = driver.sendKey(
-                keyCode: TerminalRendererSurface.noKey,
-                action: action,
-                mods: Self.mods(key.modifierFlags),
-                consumedMods: 0,
-                text: key.characters,
-                composing: false,
-            ) || handled
-        }
-        return handled
-    }
-
-    /// The engine's `mods` word for a UIKit flag set.
+    /// It used to claim first responder here, which made two of them: ``TerminalInputHostView`` is
+    /// the pane's key path — a `UIKeyInput` holding the repeater, the accessory row, the ⌃⇥ walk and
+    /// the four editing chords, registered with ``PaneFocusCoordinator`` and named by the phone
+    /// parity ratchet — and it is a SIBLING of these pixels, not an ancestor, so whichever of the two
+    /// won the race the loser's `pressesBegan` was never called at all. The coordinator claims on the
+    /// next runloop hop (UIKit takes a synchronous claim back), so the claim made here from
+    /// ``setPaneFocused(_:)`` won first and was overridden a hop later — a keyboard that flickered
+    /// down and up on every pane focus, because this view conforms to no text-input protocol and
+    /// UIKit raises the software keyboard only for one that does.
     ///
-    /// ⚠️ Every bit is `slopdesk_term_mods`'s. UIKit reports no SIDE for a modifier — there is no
-    /// `NX_DEVICER*` equivalent — so all four side flags are `false`, which is the honest answer
-    /// rather than a guess: `macos-option-as-alt = right` is a Mac setting and the phone has no
-    /// Option key to distinguish.
-    static func mods(_ flags: UIKeyModifierFlags) -> UInt16 {
-        slopdesk_term_mods(
-            flags.contains(.shift),
-            flags.contains(.alternate),
-            flags.contains(.control),
-            flags.contains(.command),
-            flags.contains(.alphaShift),
-            flags.contains(.numericPad),
-            false, false, false, false,
-        )
+    /// What that claim was FOR is answered elsewhere and was already answered before it landed: the
+    /// four ⌘ chords reach the surface as `UIKeyCommand`s on the input host, which hands each one to
+    /// `onRequestMenuItem` — this view's own long-press menu route, selection and paste-protection
+    /// included. So the collapse gives nothing up. What remains here is the DRIVER's focus, which is
+    /// the caret's blink and the engine's own notion, pushed by the leaf.
+    func setFocus(_ isFocused: Bool) {
+        driver.setFocus(isFocused, blinkVisible: true)
     }
 
     // MARK: - Gestures
@@ -263,8 +208,10 @@ final class PhoneTerminalRendererView: UIView {
 
     @objc
     private func handleTap(_ gesture: UITapGestureRecognizer) {
+        // The REQUEST only. Which view holds first responder is ``PaneFocusCoordinator``'s, driven
+        // off the store's active pane, and claiming it from a gesture is the second mover the leaf's
+        // own `setFocused(_:)` comment forbids.
         model?.onRequestFocus?()
-        becomeFirstResponder()
         let point = gesture.location(in: self)
         // A mouse-reporting TUI gets the tap as a click; otherwise it is just focus, and the tap
         // deliberately does NOT move a cursor — a terminal has no click-to-position.
@@ -492,11 +439,44 @@ extension PhoneTerminalRendererView: @MainActor TerminalMenuItemRunning {
 extension PhoneTerminalRendererView: @MainActor TerminalSurfaceHosting {
     var surfaceView: PlatformView { self }
 
+    /// The DRIVER's focus and nothing else — see ``setFocus(_:)``. The responder is
+    /// ``PaneFocusCoordinator``'s, and this view is not a candidate for it.
     func setPaneFocused(_ isFocused: Bool) {
-        driver.setFocus(isFocused, blinkVisible: true)
-        if isFocused, !isFirstResponder {
-            becomeFirstResponder()
-        }
+        setFocus(isFocused)
+    }
+
+    /// The band, built on first ask and kept for the life of the surface.
+    ///
+    /// ⚠️ THE COMPOSITION IS ALWAYS `nil` HERE, and that is the phone's one remaining gap rather
+    /// than an oversight. `TerminalInputHostView` conforms to `UIKeyInput`, not `UITextInput`, so
+    /// iOS has no MARKED text to draw: an input method shows its candidates in the keyboard's own bar
+    /// and commits the settled string through `insertText`, which reaches the editor as text and is
+    /// why Vietnamese and Chinese both type correctly at this prompt today. What is missing is the
+    /// INLINE preedit — the underlined run under the caret the Mac draws — and it arrives with the
+    /// `UITextInput` conformance this file's leaf has wanted since `docs/68` §5.1.
+    var promptView: PlatformView? {
+        guard let model else { return nil }
+        if let band { return band }
+        let made = PhoneTerminalPromptView(
+            prompt: model.commandPrompt,
+            armed: { [weak self] in self?.model?.commandPromptArmed ?? false },
+            composition: { nil },
+        )
+        band = made
+        return made
+    }
+
+    /// The responder edited the prompt — see the seam.
+    func promptDidChange() {
+        band?.refresh()
+    }
+
+    func scrollPages(_ pages: Int) {
+        // Saturating rather than trapping: the seam speaks `Int` because every caller does, the driver
+        // speaks `Int32` because the engine does, and a page count that overflows `Int32` is a scroll
+        // past the end of a scrollback no machine holds — clamping it lands where the trap would have
+        // gone anyway, without taking the app down to get there.
+        driver.scroll(.pages(Int32(clamping: pages)))
     }
 
     /// ⚠️ The ORDER is the whole point — see this file's header.

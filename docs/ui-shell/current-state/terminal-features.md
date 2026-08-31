@@ -179,7 +179,7 @@ genuinely absent or unwired.
 | **Scroll-past-last / first** | removed 2026-07-30 — confirmed clean | `grep -rIn -i scrollpast Sources rust/slopdesk-*/src` still returns nothing. |
 | **Smooth scroll** | removed 2026-07-30 — confirmed clean | `grep -rIn -i smoothScroll Sources rust/slopdesk-*/src` still returns nothing. |
 | **Backspace-deletes-selection** | removed — its successor is wired, though still counting zero | `BackspaceSelectionPolicy` confirmed still absent. The stated successor (⌘X via `CutSelectionPolicy`) now has the actuator the previous audit found missing; what it does not yet have is a provable `selectionEndsAtCursor`, so see the Cut row for exactly how far it gets. |
-| **Editor-like command prompt** (Warp-class) | done on the Mac; the phone still uses the shell's readline | MOUNTED 2026-09-01. `rust/slopdesk-terminal/src/prompt/` (buffer, undo with coalescing, shell lexer, history with ⌃R, fzf completion) → 47 doors in `rust/slopdesk-ffi/src/prompt.rs` → `Sources/SlopDeskWorkspaceCore/Terminal/CommandPrompt.swift` → drawn by `Sources/SlopDeskTerminal/MacTerminalPromptView.swift`, a BAND along the pane bottom reached through the new `TerminalSurfaceHosting.promptView`. It takes no keyboard focus: `MacTerminalRendererView` stays the pane's one responder and routes from `keyDown` via `editsPrompt(_:)`, above the input method and below copy mode, so the focus region and the whole IME stack are untouched. Every editing chord arrives as an AppKit SELECTOR through `interpretKeyEvents`, which is what supplies ⌥←, ⌃A and ⇧⌘→ without a chord table. Four control keys are carved out in Rust (`prompt::keys`): ⌃C, ⌃D on an empty line, ⌃Z, ⌃L. Enter runs only a SYNTACTICALLY CLOSED document — an unclosed quote adds a line and the band names what is open. Gated by `controls.command-prompt` (default on), the one setting that hands the line back to the shell. Three chords the binding table does not name are read on the Swift side: ⌃R, and ⌘Z / ⇧⌘Z / ⌘Y for the editor's own history. Three verbs it SHADOWS while armed — paste (into the editor, at the driver's one funnel, ahead of the protection sheet), copy/cut (the editor's only when the grid has no selection), and PageUp/PageDown/document-edge scrolling, which stay the VIEWPORT's so mounting an editor cannot take scrollback away. `InputBarModel.compose` was deleted in the same change: one line editor, not two. ⚠️ First PIXEL-VERIFIED 2026-09-01 (five off-screen renders — plain line, selection, candidates, ⌃R, continuation), which found one defect no test could: the ⌃R row printed the query and stopped, because only a `search_has_hit` BOOL crossed the FFI. `slopdesk_prompt_search_hit` now carries the matched entry and the row reads `` `query': hit`` like bash's; `MacTerminalPromptView.searchRow(query:hit:)` is pure so `testTheSearchRowShowsTheHitItWouldAccept` pins it. |
+| **Editor-like command prompt** (Warp-class) | done on both, with one implementation | MOUNTED 2026-09-01 on macOS and iOS. `rust/slopdesk-terminal/src/prompt/` (buffer, undo with coalescing, shell lexer, history with ⌃R, fzf completion) → 47 doors in `rust/slopdesk-ffi/src/prompt.rs` → `Sources/SlopDeskWorkspaceCore/Terminal/CommandPrompt.swift` → drawn by `Sources/SlopDeskTerminal/TerminalPromptBand.swift`, a BAND along the pane bottom reached through the new `TerminalSurfaceHosting.promptView`. It takes no keyboard focus: `MacTerminalRendererView` stays the pane's one responder and routes from `keyDown` via `editsPrompt(_:)`, above the input method and below copy mode, so the focus region and the whole IME stack are untouched. Every editing chord arrives as an AppKit SELECTOR through `interpretKeyEvents`, which is what supplies ⌥←, ⌃A and ⇧⌘→ without a chord table. Four control keys are carved out in Rust (`prompt::keys`): ⌃C, ⌃D on an empty line, ⌃Z, ⌃L. Enter runs only a SYNTACTICALLY CLOSED document — an unclosed quote adds a line and the band names what is open. Gated by `controls.command-prompt` (default on), the one setting that hands the line back to the shell. Three chords the binding table does not name are read on the Swift side: ⌃R, and ⌘Z / ⇧⌘Z / ⌘Y for the editor's own history. Three verbs it SHADOWS while armed — paste (into the editor, at the driver's one funnel, ahead of the protection sheet), copy/cut (the editor's only when the grid has no selection), and PageUp/PageDown/document-edge scrolling, which stay the VIEWPORT's so mounting an editor cannot take scrollback away. `InputBarModel.compose` was deleted in the same change: one line editor, not two. ⚠️ First PIXEL-VERIFIED 2026-09-01 (five off-screen renders — plain line, selection, candidates, ⌃R, continuation), which found one defect no test could: the ⌃R row printed the query and stopped, because only a `search_has_hit` BOOL crossed the FFI. `slopdesk_prompt_search_hit` now carries the matched entry and the row reads `` `query': hit`` like bash's; `TerminalPromptBand.searchRow(query:hit:)` is pure so `testTheSearchRowShowsTheHitItWouldAccept` pins it. ⚠️ The PHONE landed the same day and is not a port: `TerminalPromptBand` is the whole band on both platforms — Core Text, `CGContext` and `SlateNativeColor`, no AppKit and no UIKit — with a ~100-line view shell each side. The phone gets its chords from `slopdesk_prompt_key_action`, because UIKit has no key-binding table and a Swift one would be the decision leaving Rust; the view only NAMES the key, off the USB HID keyboard page (`PhoneKey.promptKey(_:)`). Mounting it also collapsed the pane onto ONE first responder — see wiring gap 9. Open on the phone: the inline preedit underline, which is `UITextInput`'s and not the editor's — CJK and Telex already commit through `insertText` and type correctly. |
 | **Undo at prompt** | done on BOTH — the Mac gap is closed | `PromptEditPolicy` wraps `slopdesk_term_prompt_edit_byte`. `MacTerminalRendererView.keyDown` asks `takesPromptEdit(event)` right after `editsPrompt(_:)` and, when the policy answers a byte, sends it and returns; the phone's call site in `TerminalLeafView.swift` is unchanged. Both read the prompt zone from the SAME derivation — `TerminalViewModel.isAtEditablePrompt` (connected AND OSC-133 idle AND not the alternate screen) — rather than spelling three ANDs out twice, which is what the second call site made worth extracting. ⚠️ THE ORDER IS NOW LOAD-BEARING: while the app's editor is armed `editsPrompt` shadows this row entirely and ⌘Z / ⇧⌘Z / ⌘Y drive the editor's OWN history instead, ungated by `controls.undo-at-prompt` — that setting is about emitting a readline byte, and there is no shell holding the line to emit it to. This row therefore describes what happens when the editor is NOT armed. Redo stays unanswered on the BYTE path on both platforms: readline binds `C-_` to undo and exposes no inverse, so there is no portable keystroke to send. |
 | **Hyperlinks (OSC 8)** | done — closed 2026-08-31 | ⚠️ This row read "gap — real regression, zero hits" until 2026-08-31 and was STALE from the moment the engine landed: `CellFlags::HYPERLINK` (`frame.rs`), `VtSession::hyperlink_at` (`screen.rs`) and `slopdesk_term_surface_hyperlink_at` all arrived with `744e80ab` and the doc was not re-run. What was genuinely missing was the UI: the door had zero callers. It now has one — `TerminalSurfaceDriver.link(at:cwd:slop:)` asks the AUTHORED question first and falls back to `TerminalLinkDetector`, and both the Mac's context menu / ⌘-hover and the phone's long press go through it, so the ranking is decided once. The span a menu names is recovered by walking the run outwards while the URI stays the same (the flag is per cell, the URI is shared). "Auto-Detect Link Schemes" deliberately does NOT gate the authored path — see `docs/68` §5.5. |
 | **Plain-text link/path detection, ⌘-click, ⌘-hold highlight** | done — one filename correction | `TerminalLinkDetector.swift`/`TerminalLinkHitTest.swift` confirmed live at their stated paths; `LinkActionPolicy.swift` confirmed at `Sources/SlopDeskWorkspaceCore/Workspace/Domain/LinkActionPolicy.swift`. `MacLinkHighlightOverlay.swift` confirmed; phone overlay is `Sources/SlopDeskPhoneUI/Pane/LinkHighlightOverlayView.swift` (not `LinkHighlightOverlay.swift`). The old `link-url = false` line is gone with the config text — vestigial anyway, since `libghostty-vt` has no "own regex matcher" to disable (that was the FULL ghostty fork's feature). ⚠️ `SettingsKey.linkDetectionEnabled` now gates the DETECTOR alone: an `OSC 8` span the program authored is read either way and underlined through `LinkUnderlineGeometry.strokes(authored:detected:metrics:)`, which drops a detected guess that overlaps a declared one. |
@@ -251,11 +251,15 @@ LAYOUT rather than capability:
 - Modal-key interception is `keyDown` on the Mac and `pressesBegan` on the phone, but both build the
   same abstract key and feed the same `TerminalViewModel.takeModalKey` (`:752`).
 
-⚠️ A NEW parity break opened on 2026-09-01 and is not a layout difference: the **editor-like command
-prompt** is macOS-only. `PhoneTerminalRendererView` conforms to no text-input protocol, so
-`TerminalSurfaceHosting.promptView` is `nil` there and iOS still types into the shell's own
-`readline` — which is why the Undo-at-prompt row above still describes the byte path as the phone's
-only one. Closing it is the `UITextInput` work `docs/68` §5.1 and §5.4 both name.
+A parity break opened and CLOSED on 2026-09-01: the **editor-like command prompt** landed on macOS
+in the morning and on iOS the same day, and the phone is not a port of the Mac. `TerminalPromptBand`
+is the band on both — Core Text, `CGContext` and `SlateNativeColor`, no AppKit and no UIKit — with a
+~100-line view shell each side, so there is one wrapping rule, one caret and one accessory
+precedence. The two remaining differences are both real and both named: the phone reads its chords
+through `slopdesk_prompt_key_action` where the Mac gets them as AppKit selectors (UIKit has no
+binding table, and the decision stays in Rust either way), and the phone draws no INLINE preedit,
+because `UIKeyInput` has no marked text. That last one is `UITextInput`'s gap and not the editor's —
+CJK and Telex commit through `insertText` and type correctly at the prompt today. `docs/68` §5.4.
 
 Two macOS-only behaviours are genuinely platform-shaped rather than gaps: `NSCursor`-based
 mouse-hide/pointer-shape actuation needs a hardware pointer the phone doesn't have (pointer-shape
@@ -325,21 +329,29 @@ and §10, which this pass FOUND rather than inherited.
 8. **Autocomplete is entirely absent** — never built, not removed. The spec placeholder
    `docs/ui-shell/spec/terminal-features__autocomplete.md` still describes a feature with no code.
 
-9. **CLOSED 2026-09-01 — every copy-mode motion ran TWICE on the phone**, found while auditing the
-   release path above. `PhoneTerminalRendererView.handle(_:action:)` is the single funnel for both
-   `pressesBegan` and `pressesEnded`, and it routed the modal branch to
-   `TerminalViewModel.handleCopyModeKey(_:)` without looking at `action` — but that method takes no
-   phase, it PERFORMS the motion, so `j` scrolled two lines and `q` left and re-entered. The Mac was
-   never affected: its copy-mode branch lives in `keyDown` and nothing calls it from `keyUp`. ⚠️ The
-   generalisation: **a shared press/release funnel and a phase-free handler are a defect by
-   construction** — one of the two has to carry the phase, and here the funnel now does.
+9. **CLOSED 2026-09-01 — the phone pane had TWO first responders, and the newer one was unreachable.**
+   ⚠️ This item previously read "every copy-mode motion ran TWICE on the phone", diagnosed from
+   `PhoneTerminalRendererView.handle(_:action:)` routing both `pressesBegan` and `pressesEnded` into a
+   phase-free `handleCopyModeKey(_:)`. **That reading was wrong and the entry is corrected rather than
+   extended**: the funnel it describes was never called in production, so nothing ran twice.
 
-   One edge is KNOWN AND LEFT: the phone's modal gate still reads the CURRENT `takesModalKeys` rather
-   than what was true at the press, which is the same fault the Mac's `pressedKeys` comment names. A
-   keystroke straddling the boundary — `q`'s release arriving after `q`'s press left copy mode — still
-   leaks a phantom release. It is pre-existing, reachable only under kitty `report_events` at a mode
-   transition, and not cheaply fixable: `UIKey` carries characters rather than a hardware position, so
-   there is no keycode to key a `pressedKeys` set on (see `handle(_:action:)`'s `noKey` comment).
+   What was actually there: `PhoneTerminalRendererView` (added `cf06ae4d`) claimed first responder
+   synchronously from `setPaneFocused(_:)`, while `TerminalInputHostView` — the pane's ratcheted
+   `UIKeyInput` responder since `3955de12`, holding the repeater, the accessory row, the ⌃⇥ walk and
+   the coordinator registration — claimed it one runloop hop later, because
+   `PaneFocusCoordinator.scheduleBecome` defers `becomeFocus()` to `DispatchQueue.main.async` (UIKit
+   takes a synchronous claim made inside a touch or a layout straight back). The two are SIBLINGS
+   inside `surfaceArea`, not one inside the other, so the loser's `pressesBegan` was not called at all
+   — and the loser was always the renderer. The visible symptom was not a double motion but a software
+   keyboard that flickered down and up on every pane focus: the renderer conforms to no text-input
+   protocol, and UIKit raises the keyboard only for one that does.
+
+   The fix is a collapse, not a patch: the renderer stopped being a responder (~90 lines deleted) and
+   the pane has exactly one. Nothing was given up — the four ⌘ chords already reached the surface as
+   `UIKeyCommand`s on the input host, which hands each to `onRequestMenuItem`. ⚠️ The generalisation:
+   **two responders in one pane is not a race you tune, it is a second implementation** — and a
+   sibling pair makes it silent, because the loser's handlers simply never run rather than running
+   late. The `pressedKeys` edge the old entry closed with was an edge of a path that did not exist.
 
 10. **A scrolled-back block header cannot show its exit code or duration**, and the reason is a
     shell-integration gap rather than a rendering one — which is why it is listed rather than fixed.

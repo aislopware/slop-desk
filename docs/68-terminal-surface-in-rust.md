@@ -389,7 +389,8 @@ what goes inside the box; the affordance is which box it is.
 view per §10: a motion crosses as a case, never as a key.
 
 **MOUNTED on macOS, 2026-09-01.** The box is a band along the pane's bottom edge
-(`Sources/SlopDeskTerminal/MacTerminalPromptView.swift`), reached through a new
+(`Sources/SlopDeskTerminal/TerminalPromptBand.swift`, drawn into by a small `NSView` shell), reached
+through a new
 `TerminalSurfaceHosting.promptView` so the leaf mounts it without naming the renderer. The band is a
 SIBLING of the grid, not a subview: `surfaceView` is layer-hosting and AppKit does not promise a
 subview of one of those a layer of its own — so the grid gives up the rows the band takes, which is
@@ -426,9 +427,45 @@ cannot take scrollback away.
 one. `docs/DECISIONS.md` records why the band beat the inline reading `prompt/mod.rs`'s header used
 to describe.
 
-Not done: the phone. `PhoneTerminalRendererView` conforms to no text-input protocol, so
-`promptView` is `nil` there and the shell's own `readline` is still the editor on iOS — the same
-`UITextInput` gap §5.1 already names.
+**MOUNTED on iOS, 2026-09-01**, in the same shape and with one implementation, not two. Three things
+had to move for that.
+
+*The band became platform-neutral.* `Sources/SlopDeskTerminal/TerminalPromptBand.swift` is now the
+whole band — wrapping, the UTF-8→UTF-16 conversion, the selection, the caret, the accessory rows'
+precedence, the syntax ink — and imports neither AppKit nor UIKit. It can: `CTFont` is toll-free
+bridged to both `NSFont` and `UIFont`, the Core Text attribute keys take `CTFont`/`CGColor`, and
+`SlateNativeColor` was already a platform typealias. What is left on each side is a ~100-line view
+shell that answers `intrinsicContentSize` and hands a `CGContext` in. The alternative — a phone clone
+of a 495-line Mac view — is the cross-language mirror in one language, and the arithmetic tests
+(`TerminalPromptBandTests`) unfenced with the extraction rather than staying macOS-only.
+
+*The pane collapsed onto ONE responder.* `PhoneTerminalRendererView` used to claim first responder
+too, a sibling of `TerminalInputHostView` rather than an ancestor, so the loser's `pressesBegan` was
+never called at all and the software keyboard flickered on every pane focus. It is not a responder
+any more. `TerminalInputHostView` — the `UIKeyInput` that already held the repeater, the accessory
+row and the ⌃⇥ walk — carries the prompt rung too, in the same position the Mac's `keyDown` puts it:
+below the workspace chords, above anything that talks to a shell. `terminal-features.md` gap 9 has
+the whole finding.
+
+*The chords crossed as a door.* ⚠️ `slopdesk_prompt_key_action` TAKES A KEY, and that is not this
+section's rule being broken — the rule is about the MUTATING doors, and a motion still crosses as
+`SLOPDESK_PROMPT_MOTION_*`. Deciding WHICH verb a press names is the other half of §10's split, and
+it is Rust's: `slopdesk_terminal::prompt::keys::edit_action` owns the table, and the phone view does
+only the naming §10 assigns it — `PhoneKey.promptKey(_:)`, the USB HID keyboard page, no framework
+type. The Mac never calls the door, because AppKit's binding table answers the same question in
+selectors and a second Swift table would be the mirror again.
+
+Two seam members came with it, both for the same reason — on iOS the responder is not the surface,
+so what the editor does not own has to cross back. `promptDidChange()` redraws and re-measures the
+band after an edit the host did not make; `scrollPages(_:)` sends PageUp to the viewport. Both
+default to no-ops, which is true of every host that answers `nil` for `promptView`.
+
+Still open on the phone: the INLINE preedit. `UIKeyInput` has no marked text, so the band draws no
+composition underline (`composition: { nil }`) — but typing Vietnamese and Chinese at the prompt
+works today, because an input method shows its candidates in the keyboard's own bar and commits the
+settled string through `insertText`, which reaches the editor as text. What is missing is the
+underline and the space-bar-drag caret, which is the `UITextInput` gap §5.1 names and not a gap in
+the editor.
 
 ### 5.5 OSC 8 hyperlinks
 

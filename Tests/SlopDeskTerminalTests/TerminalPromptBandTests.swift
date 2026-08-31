@@ -1,10 +1,12 @@
-#if os(macOS)
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskTerminal
 
-/// The band's pure text arithmetic — the half of `MacTerminalPromptView` that decides WHERE, and the
+/// The band's pure text arithmetic — the half of `TerminalPromptBand` that decides WHERE, and the
 /// only half a headless test can reach.
+///
+/// Unfenced, and that is the point of the extraction: this arithmetic is the same on both platforms
+/// now, so a test that only ran on macOS would leave the phone's band pinned by nothing.
 ///
 /// The conversion under test is the seam the whole prompt is drawn through: the editor reports every
 /// position in UTF-8 bytes and Core Text takes UTF-16 units, and the two agree on ASCII only. A test
@@ -15,7 +17,7 @@ final class TerminalPromptBandTests: XCTestCase {
     func testAsciiOffsetsAreTheSameInBothUnits() {
         let text = "git commit"
         for byte in 0...text.utf8.count {
-            XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: byte), byte)
+            XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: byte), byte)
         }
     }
 
@@ -26,10 +28,10 @@ final class TerminalPromptBandTests: XCTestCase {
         let text = "Tiếng"
         XCTAssertEqual(text.utf8.count, 7)
         XCTAssertEqual(text.utf16.count, 5)
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: 0), 0)
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: 2), 2, "T, i, then the ế starts")
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: 5), 3, "past the three-byte ế")
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: 7), 5, "the end")
+        XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: 0), 0)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: 2), 2, "T, i, then the ế starts")
+        XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: 5), 3, "past the three-byte ế")
+        XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: 7), 5, "the end")
     }
 
     /// A byte INSIDE a scalar rounds down to that scalar's start rather than trapping.
@@ -37,40 +39,40 @@ final class TerminalPromptBandTests: XCTestCase {
     /// The editor never reports one — its caret is on grapheme boundaries — but a span from a build
     /// whose lexer disagrees could, and `draw(_:)` has nowhere to put a trap.
     func testAByteInsideAScalarRoundsDown() {
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset("Tiếng", utf8: 3), 2)
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset("Tiếng", utf8: 4), 2)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset("Tiếng", utf8: 3), 2)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset("Tiếng", utf8: 4), 2)
     }
 
     /// A caret past the end is what a stale span or a shorter re-lex produces, and it must clamp
     /// rather than trap: the whole band is drawn inside one `draw(_:)` that cannot throw.
     func testAnOutOfRangeByteClampsToTheEnd() {
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset("xin chào", utf8: 999), 8)
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset("", utf8: 4), 0)
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset("", utf8: 0), 0)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset("xin chào", utf8: 999), 8)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset("", utf8: 4), 0)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset("", utf8: 0), 0)
     }
 
     /// An emoji is one grapheme, four bytes and a SURROGATE PAIR — two UTF-16 units — which is the
     /// case that catches an implementation counting scalars instead.
     func testASurrogatePairCountsAsTwoUnits() {
         let text = "a🙂b"
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: 1), 1)
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: 5), 3, "past the surrogate pair")
-        XCTAssertEqual(MacTerminalPromptView.utf16Offset(text, utf8: 6), 4)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: 1), 1)
+        XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: 5), 3, "past the surrogate pair")
+        XCTAssertEqual(TerminalPromptBand.utf16Offset(text, utf8: 6), 4)
     }
 
     /// An unlexed document paints plainly rather than vanishing — a span list that claims nothing
     /// still covers the line end to end.
     func testRunsCoverALineNoSpanClaims() {
-        let runs = MacTerminalPromptView.runs([], over: 0..<6, in: "ls -la")
+        let runs = TerminalPromptBand.runs([], over: 0..<6, in: "ls -la")
         XCTAssertEqual(runs.map(\.0), ["ls -la"])
         XCTAssertEqual(runs.map(\.1), [.argument])
     }
 
     /// What Enter is waiting for, in the words the accessory row prints.
     func testTheOpenLabelNamesTheThingToClose() {
-        XCTAssertNil(MacTerminalPromptView.openLabel(.nothing))
-        XCTAssertEqual(MacTerminalPromptView.openLabel(.singleQuote), "unclosed '")
-        XCTAssertEqual(MacTerminalPromptView.openLabel(.substitution), "unclosed $(")
+        XCTAssertNil(TerminalPromptBand.openLabel(.nothing))
+        XCTAssertEqual(TerminalPromptBand.openLabel(.singleQuote), "unclosed '")
+        XCTAssertEqual(TerminalPromptBand.openLabel(.substitution), "unclosed $(")
     }
 
     /// The regression for what the first pixel render of the band found: the ⌃R row printed the
@@ -78,16 +80,15 @@ final class TerminalPromptBandTests: XCTestCase {
     /// until accept, which is what makes this row the only place a hit can appear.
     func testTheSearchRowShowsTheHitItWouldAccept() {
         XCTAssertEqual(
-            MacTerminalPromptView.searchRow(query: "clip", hit: "cargo clippy --all-targets"),
+            TerminalPromptBand.searchRow(query: "clip", hit: "cargo clippy --all-targets"),
             "(reverse-i-search)`clip': cargo clippy --all-targets",
         )
         XCTAssertEqual(
-            MacTerminalPromptView.searchRow(query: "zzz", hit: nil),
+            TerminalPromptBand.searchRow(query: "zzz", hit: nil),
             "(reverse-i-search)`zzz'  (no match)",
         )
         // A recorded EMPTY command is still a hit, and reads as one rather than as no match — which
         // is why the caller keys on `searchHasHit` rather than on the string being empty.
-        XCTAssertEqual(MacTerminalPromptView.searchRow(query: "", hit: ""), "(reverse-i-search)`': ")
+        XCTAssertEqual(TerminalPromptBand.searchRow(query: "", hit: ""), "(reverse-i-search)`': ")
     }
 }
-#endif

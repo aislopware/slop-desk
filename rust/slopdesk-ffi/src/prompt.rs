@@ -25,11 +25,14 @@
 //! [`crate::input_box`]'s render slot.
 //!
 //! ## What stays outside
-//! Composition (`NSTextInputClient` / `UITextInput`), key mapping and the candidate list's
-//! appearance. `docs/68` §10 keeps those in the view: a motion crosses as
-//! `SLOPDESK_PROMPT_MOTION_*`, never as a key. The completion SOURCES also stay outside — reading a
-//! directory or an environment is I/O, and [`slopdesk_terminal::prompt::complete`] does none; the
-//! caller seeds what it found and this door ranks it.
+//! Composition (`NSTextInputClient` / `UITextInput`), key NAMING and the candidate list's
+//! appearance. `docs/68` §10 keeps those in the view, and the rule that follows from it is about
+//! the MUTATING doors: a motion crosses as `SLOPDESK_PROMPT_MOTION_*`, never as a key — nothing
+//! here moves a caret because a key was pressed. Deciding WHICH verb a press names is the other
+//! half of that split and it is Rust's, which is what [`slopdesk_prompt_key_action`] answers for
+//! the one platform whose framework does not answer it. The completion SOURCES also stay outside —
+//! reading a directory or an environment is I/O, and [`slopdesk_terminal::prompt::complete`] does
+//! none; the caller seeds what it found and this door ranks it.
 
 use core::ffi::c_uchar;
 
@@ -38,7 +41,7 @@ use slopdesk_terminal::prompt::complete::{
     Candidate, CandidateKind, CandidateProvider, CommandProvider, CommandSpec, PathEntry, PathProvider,
     VariableProvider,
 };
-use slopdesk_terminal::prompt::keys::{ControlAction, control_action};
+use slopdesk_terminal::prompt::keys::{ControlAction, EditAction, Key, Mods, control_action, edit_action};
 use slopdesk_terminal::prompt::syntax::{TokenKind, Unterminated};
 use slopdesk_terminal::prompt::{CommandEditor, Submission};
 
@@ -151,6 +154,232 @@ pub const extern "C" fn slopdesk_prompt_control_action(letter: u8, buffer_empty:
         ControlAction::Editor => SLOPDESK_PROMPT_CONTROL_EDITOR,
         ControlAction::Forward => SLOPDESK_PROMPT_CONTROL_FORWARD,
         ControlAction::ForwardAndClear => SLOPDESK_PROMPT_CONTROL_FORWARD_AND_CLEAR,
+    }
+}
+
+/// The press is TEXT — nothing here names it, so the caller inserts its characters.
+pub const SLOPDESK_PROMPT_ACTION_NONE: u8 = 0;
+/// Move the caret, or extend the selection. Read `motion` and `extend`.
+pub const SLOPDESK_PROMPT_ACTION_MOVE: u8 = 1;
+/// Delete at `motion`'s granularity.
+pub const SLOPDESK_PROMPT_ACTION_DELETE: u8 = 2;
+/// Scroll the VIEWPORT by `pages`. Negative reveals older output.
+pub const SLOPDESK_PROMPT_ACTION_SCROLL_PAGES: u8 = 3;
+/// Walk to an older command, if the caret is on the document's first line.
+pub const SLOPDESK_PROMPT_ACTION_HISTORY_PREVIOUS: u8 = 4;
+/// Walk to a newer one, if the caret is on the last.
+pub const SLOPDESK_PROMPT_ACTION_HISTORY_NEXT: u8 = 5;
+/// Run it, accept a candidate, or take the search's hit.
+pub const SLOPDESK_PROMPT_ACTION_SUBMIT: u8 = 6;
+/// A second line of the same command.
+pub const SLOPDESK_PROMPT_ACTION_INSERT_NEWLINE: u8 = 7;
+/// Complete, or step to the next candidate.
+pub const SLOPDESK_PROMPT_ACTION_COMPLETE_FORWARD: u8 = 8;
+/// Step to the previous candidate.
+pub const SLOPDESK_PROMPT_ACTION_COMPLETE_BACKWARD: u8 = 9;
+/// Dismiss what is up, innermost first. Never clears the text.
+pub const SLOPDESK_PROMPT_ACTION_CANCEL: u8 = 10;
+/// Select the whole document.
+pub const SLOPDESK_PROMPT_ACTION_SELECT_ALL: u8 = 11;
+/// Paste the system clipboard.
+pub const SLOPDESK_PROMPT_ACTION_PASTE: u8 = 12;
+/// Copy the selection.
+pub const SLOPDESK_PROMPT_ACTION_COPY: u8 = 13;
+/// Cut the selection.
+pub const SLOPDESK_PROMPT_ACTION_CUT: u8 = 14;
+/// Take back one edit.
+pub const SLOPDESK_PROMPT_ACTION_UNDO: u8 = 15;
+/// Put one back.
+pub const SLOPDESK_PROMPT_ACTION_REDO: u8 = 16;
+/// Open a reverse search, or step it to the next older hit.
+pub const SLOPDESK_PROMPT_ACTION_SEARCH: u8 = 17;
+/// The press is the SHELL's: send its control byte, leave the editor's text alone.
+pub const SLOPDESK_PROMPT_ACTION_FORWARD: u8 = 18;
+/// The shell's AND it abandons the line: send the byte, then clear the editor.
+pub const SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR: u8 = 19;
+
+/// The press names a character rather than a named key — read `letter`.
+pub const SLOPDESK_PROMPT_KEY_CHAR: u8 = 0;
+/// ←
+pub const SLOPDESK_PROMPT_KEY_LEFT: u8 = 1;
+/// →
+pub const SLOPDESK_PROMPT_KEY_RIGHT: u8 = 2;
+/// ↑
+pub const SLOPDESK_PROMPT_KEY_UP: u8 = 3;
+/// ↓
+pub const SLOPDESK_PROMPT_KEY_DOWN: u8 = 4;
+/// Home
+pub const SLOPDESK_PROMPT_KEY_HOME: u8 = 5;
+/// End
+pub const SLOPDESK_PROMPT_KEY_END: u8 = 6;
+/// Page Up
+pub const SLOPDESK_PROMPT_KEY_PAGE_UP: u8 = 7;
+/// Page Down
+pub const SLOPDESK_PROMPT_KEY_PAGE_DOWN: u8 = 8;
+/// ⌫
+pub const SLOPDESK_PROMPT_KEY_BACKSPACE: u8 = 9;
+/// ⌦, the forward delete
+pub const SLOPDESK_PROMPT_KEY_DELETE: u8 = 10;
+/// ⇥
+pub const SLOPDESK_PROMPT_KEY_TAB: u8 = 11;
+/// ↩
+pub const SLOPDESK_PROMPT_KEY_RETURN: u8 = 12;
+/// ⎋
+pub const SLOPDESK_PROMPT_KEY_ESCAPE: u8 = 13;
+
+/// ⇧ was held.
+pub const SLOPDESK_PROMPT_MOD_SHIFT: u8 = 1;
+/// ⌃ was held.
+pub const SLOPDESK_PROMPT_MOD_CONTROL: u8 = 2;
+/// ⌥ was held.
+pub const SLOPDESK_PROMPT_MOD_OPTION: u8 = 4;
+/// ⌘ was held.
+pub const SLOPDESK_PROMPT_MOD_COMMAND: u8 = 8;
+
+/// The verb one press names at an armed prompt.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlopDeskPromptKeyAction {
+    /// One of the `SLOPDESK_PROMPT_ACTION_*` values.
+    pub kind: u8,
+    /// One of the `SLOPDESK_PROMPT_MOTION_*` values. Meaningless unless `kind` is
+    /// [`SLOPDESK_PROMPT_ACTION_MOVE`] or [`SLOPDESK_PROMPT_ACTION_DELETE`].
+    pub motion: u8,
+    /// Whether the selection's anchor stays put. Meaningless unless `kind` is
+    /// [`SLOPDESK_PROMPT_ACTION_MOVE`].
+    pub extend: bool,
+    /// How many pages, signed. Meaningless unless `kind` is
+    /// [`SLOPDESK_PROMPT_ACTION_SCROLL_PAGES`].
+    pub pages: i32,
+}
+
+/// What one press does while the editor is armed.
+///
+/// ⚠️ THIS DOOR TAKES A KEY, AND THAT IS NOT THE RULE BEING BROKEN. The module header's "a motion
+/// crosses as `SLOPDESK_PROMPT_MOTION_*`, never as a key" is about the MUTATING doors, and it still
+/// holds: nothing here moves anything. `docs/68` §10 splits key NAMING from the decision — the view
+/// turns a `UIKey` into one of the `SLOPDESK_PROMPT_KEY_*` values, which is a normalisation no
+/// platform-independent side could do, and the decision comes back.
+///
+/// The Mac never calls it. `AppKit`'s standard key-binding table already names `⌥←`, `⌃A` and `⇧⌘→`
+/// and `doCommand(by:)` delivers each as a selector, so `MacTerminalRendererView` maps SELECTORS
+/// and inherits every layout and every user's `DefaultKeyBinding.dict` for free. `UIKit` has no
+/// counterpart at all — no `doCommand(by:)`, and `UITextInput` supplies none of it — so without
+/// this the phone's editing semantics would be a hand-kept Swift table, which is the second
+/// implementation the whole prompt was built in Rust to avoid.
+///
+/// `letter` is read only when `key` is [`SLOPDESK_PROMPT_KEY_CHAR`], and must be the LOWERCASE
+/// ASCII letter; `0` for anything non-ASCII, which is text and names no verb.
+///
+/// A free function for [`slopdesk_prompt_control_action`]'s reason: it asks nothing of the editor
+/// except whether its buffer is empty, which the caller already holds out of
+/// [`SlopDeskPromptState`].
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub extern "C" fn slopdesk_prompt_key_action(
+    key: u8,
+    letter: u8,
+    mods: u8,
+    buffer_empty: bool,
+) -> SlopDeskPromptKeyAction {
+    let named = match key {
+        SLOPDESK_PROMPT_KEY_LEFT => Key::Left,
+        SLOPDESK_PROMPT_KEY_RIGHT => Key::Right,
+        SLOPDESK_PROMPT_KEY_UP => Key::Up,
+        SLOPDESK_PROMPT_KEY_DOWN => Key::Down,
+        SLOPDESK_PROMPT_KEY_HOME => Key::Home,
+        SLOPDESK_PROMPT_KEY_END => Key::End,
+        SLOPDESK_PROMPT_KEY_PAGE_UP => Key::PageUp,
+        SLOPDESK_PROMPT_KEY_PAGE_DOWN => Key::PageDown,
+        SLOPDESK_PROMPT_KEY_BACKSPACE => Key::Backspace,
+        SLOPDESK_PROMPT_KEY_DELETE => Key::Delete,
+        SLOPDESK_PROMPT_KEY_TAB => Key::Tab,
+        SLOPDESK_PROMPT_KEY_RETURN => Key::Return,
+        SLOPDESK_PROMPT_KEY_ESCAPE => Key::Escape,
+        // Every other value, `SLOPDESK_PROMPT_KEY_CHAR` and any byte a future caller invents alike.
+        // A key nobody named is a letter nobody typed, which is text, which names no verb.
+        _ => Key::Char(letter),
+    };
+    let mods = Mods {
+        shift: mods & SLOPDESK_PROMPT_MOD_SHIFT != 0,
+        control: mods & SLOPDESK_PROMPT_MOD_CONTROL != 0,
+        option: mods & SLOPDESK_PROMPT_MOD_OPTION != 0,
+        command: mods & SLOPDESK_PROMPT_MOD_COMMAND != 0,
+    };
+    let Some(action) = edit_action(named, mods, buffer_empty) else {
+        return SlopDeskPromptKeyAction::default();
+    };
+    let plain = |kind| {
+        SlopDeskPromptKeyAction {
+            kind,
+            ..SlopDeskPromptKeyAction::default()
+        }
+    };
+    match action {
+        EditAction::Move { motion, extend } => {
+            SlopDeskPromptKeyAction {
+                kind: SLOPDESK_PROMPT_ACTION_MOVE,
+                motion: motion_code(motion),
+                extend,
+                pages: 0,
+            }
+        },
+        EditAction::Delete(motion) => {
+            SlopDeskPromptKeyAction {
+                kind: SLOPDESK_PROMPT_ACTION_DELETE,
+                motion: motion_code(motion),
+                extend: false,
+                pages: 0,
+            }
+        },
+        EditAction::ScrollPages(pages) => {
+            SlopDeskPromptKeyAction {
+                kind: SLOPDESK_PROMPT_ACTION_SCROLL_PAGES,
+                motion: 0,
+                extend: false,
+                pages,
+            }
+        },
+        EditAction::HistoryPrevious => plain(SLOPDESK_PROMPT_ACTION_HISTORY_PREVIOUS),
+        EditAction::HistoryNext => plain(SLOPDESK_PROMPT_ACTION_HISTORY_NEXT),
+        EditAction::Submit => plain(SLOPDESK_PROMPT_ACTION_SUBMIT),
+        EditAction::InsertNewline => plain(SLOPDESK_PROMPT_ACTION_INSERT_NEWLINE),
+        EditAction::CompleteForward => plain(SLOPDESK_PROMPT_ACTION_COMPLETE_FORWARD),
+        EditAction::CompleteBackward => plain(SLOPDESK_PROMPT_ACTION_COMPLETE_BACKWARD),
+        EditAction::Cancel => plain(SLOPDESK_PROMPT_ACTION_CANCEL),
+        EditAction::SelectAll => plain(SLOPDESK_PROMPT_ACTION_SELECT_ALL),
+        EditAction::Paste => plain(SLOPDESK_PROMPT_ACTION_PASTE),
+        EditAction::Copy => plain(SLOPDESK_PROMPT_ACTION_COPY),
+        EditAction::Cut => plain(SLOPDESK_PROMPT_ACTION_CUT),
+        EditAction::Undo => plain(SLOPDESK_PROMPT_ACTION_UNDO),
+        EditAction::Redo => plain(SLOPDESK_PROMPT_ACTION_REDO),
+        EditAction::Search => plain(SLOPDESK_PROMPT_ACTION_SEARCH),
+        EditAction::Control(ControlAction::Forward) => plain(SLOPDESK_PROMPT_ACTION_FORWARD),
+        EditAction::Control(ControlAction::ForwardAndClear) => {
+            plain(SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR)
+        },
+        // `ControlAction::Editor` never reaches here: `edit_action` resolves it into a motion or
+        // into `None`, which is what makes "the editor's" mean something on this side of the door.
+        EditAction::Control(ControlAction::Editor) => SlopDeskPromptKeyAction::default(),
+    }
+}
+
+/// The `SLOPDESK_PROMPT_MOTION_*` value for one motion — the inverse of [`motion_of`].
+const fn motion_code(motion: Motion) -> u8 {
+    match motion {
+        Motion::Grapheme(Direction::Backward) => SLOPDESK_PROMPT_MOTION_GRAPHEME_BACKWARD,
+        Motion::Grapheme(Direction::Forward) => SLOPDESK_PROMPT_MOTION_GRAPHEME_FORWARD,
+        Motion::Word(Direction::Backward) => SLOPDESK_PROMPT_MOTION_WORD_BACKWARD,
+        Motion::Word(Direction::Forward) => SLOPDESK_PROMPT_MOTION_WORD_FORWARD,
+        Motion::LineEdge(Direction::Backward) => SLOPDESK_PROMPT_MOTION_LINE_START,
+        Motion::LineEdge(Direction::Forward) => SLOPDESK_PROMPT_MOTION_LINE_END,
+        Motion::Line(Direction::Backward) => SLOPDESK_PROMPT_MOTION_LINE_UP,
+        Motion::Line(Direction::Forward) => SLOPDESK_PROMPT_MOTION_LINE_DOWN,
+        Motion::DocEdge(Direction::Backward) => SLOPDESK_PROMPT_MOTION_DOC_START,
+        Motion::DocEdge(Direction::Forward) => SLOPDESK_PROMPT_MOTION_DOC_END,
     }
 }
 

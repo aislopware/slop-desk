@@ -18531,3 +18531,50 @@ disagree under a composition or a paste.
 building. That was a per-command instrument on the pane's TRAILING edge — a rail of ticks with a hover
 peek — and `DESIGN.md:527-529` bans exactly that. A bottom band holding the line being typed is a
 different object in a different place answering a different question.
+
+## The phone's chords cross as a DOOR, and the band is one implementation (2026-09-01)
+
+The band mounted on macOS the same day and the phone had to follow, because a prompt on one platform
+is the parity break `docs/62` exists to close. Three decisions were forced, and none of them is "port
+the Mac view".
+
+**The band is platform-neutral, not duplicated.** `TerminalPromptBand` is the whole of it — wrapping,
+UTF-8→UTF-16, selection, caret, accessory precedence, syntax ink — importing neither AppKit nor
+UIKit, with a ~100-line view shell on each side that answers `intrinsicContentSize` and hands over a
+`CGContext`. That is possible because `CTFont` is toll-free bridged to `NSFont` and `UIFont` both,
+the Core Text attribute keys take `CTFont`/`CGColor`, and `SlateNativeColor` was already a typealias.
+The alternative was a phone clone of a 495-line view: the cross-language mirror the
+one-implementation rule forbids, in one language, where it is harder to see. The band's arithmetic
+tests came unfenced with the extraction — a suite that only ran on macOS would have left the phone's
+band pinned by nothing.
+
+**`slopdesk_prompt_key_action` takes a KEY, and `docs/68` §10 is not bent by it.** §10's rule is
+about the MUTATING doors — a motion crosses as `SLOPDESK_PROMPT_MOTION_*`, never as a key, and it
+still does. Deciding WHICH verb a press names is the other half of the same split, and that half is
+Rust's. The Mac never needs the door because AppKit's standard key-binding table answers the question
+in selectors; UIKit has no counterpart at all, and `UITextInput` supplies none of it. So the phone
+either asks Rust or keeps a Swift chord table — and a Swift chord table is a second editor's worth of
+decisions in the language the rule keeps them out of. `slopdesk_terminal::prompt::keys::edit_action`
+owns the table and is tested headlessly; `PhoneKey.promptKey(_:)` does only the NAMING §10 assigns to
+the view, off the USB HID keyboard page rather than `UIKeyboardHIDUsage`, so the macOS test runner
+drives the same table the phone does.
+
+**The pane collapsed onto one first responder, and that was a defect and not a preference.**
+`PhoneTerminalRendererView` had claimed first responder synchronously from `setPaneFocused(_:)` since
+`cf06ae4d`, while `TerminalInputHostView` — the pane's ratcheted `UIKeyInput`, holding the repeater,
+the accessory row and the ⌃⇥ walk since `3955de12` — claims one runloop hop later, because
+`PaneFocusCoordinator` defers `becomeFocus()` (UIKit takes a synchronous claim back). The two are
+SIBLINGS, so the loser's `pressesBegan` was never called at all rather than called late: the renderer
+had been unreachable for keys in production, and the keyboard flickered down and up on every pane
+focus because it conforms to no text-input protocol. The renderer stopped being a responder; nothing
+was given up, since the four ⌘ chords already arrive as `UIKeyCommand`s on the input host and route
+back through `onRequestMenuItem`. ⚠️ The generalisation is the same one the 2026-08-10 focus bugs
+produced, one level down: **two responders in one pane is a second implementation of focus**, and a
+sibling pair hides it completely.
+
+What is left open on the phone is the INLINE preedit, and it is `UITextInput`'s rather than the
+editor's: `UIKeyInput` has no marked text, so the band draws no composition underline. Typing
+Vietnamese and Chinese at the prompt works today — an input method shows candidates in the keyboard's
+own bar and commits through `insertText`, which reaches the editor as text. Shipping the band without
+the underline is therefore a missing decoration, not a broken input path, and holding the whole mount
+back for it would have kept the parity break open for the far larger `UITextInput` conformance.

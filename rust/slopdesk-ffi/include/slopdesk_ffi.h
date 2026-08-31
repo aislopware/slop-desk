@@ -3790,6 +3790,65 @@ typedef struct SlopDeskPrompt SlopDeskPrompt;
 /* letter is the LOWERCASE ASCII letter; anything else answers _EDITOR. */
 uint8_t slopdesk_prompt_control_action(uint8_t letter, bool buffer_empty);
 
+/* A key named without a hardware code — UIKit gives characters plus a handful of named keys, never
+ * a position. _CHAR means "read the letter argument instead". */
+#define SLOPDESK_PROMPT_KEY_CHAR 0u
+#define SLOPDESK_PROMPT_KEY_LEFT 1u
+#define SLOPDESK_PROMPT_KEY_RIGHT 2u
+#define SLOPDESK_PROMPT_KEY_UP 3u
+#define SLOPDESK_PROMPT_KEY_DOWN 4u
+#define SLOPDESK_PROMPT_KEY_HOME 5u
+#define SLOPDESK_PROMPT_KEY_END 6u
+#define SLOPDESK_PROMPT_KEY_PAGE_UP 7u
+#define SLOPDESK_PROMPT_KEY_PAGE_DOWN 8u
+#define SLOPDESK_PROMPT_KEY_BACKSPACE 9u
+#define SLOPDESK_PROMPT_KEY_DELETE 10u
+#define SLOPDESK_PROMPT_KEY_TAB 11u
+#define SLOPDESK_PROMPT_KEY_RETURN 12u
+#define SLOPDESK_PROMPT_KEY_ESCAPE 13u
+
+/* Which modifiers the press carried. */
+#define SLOPDESK_PROMPT_MOD_SHIFT 1u
+#define SLOPDESK_PROMPT_MOD_CONTROL 2u
+#define SLOPDESK_PROMPT_MOD_OPTION 4u
+#define SLOPDESK_PROMPT_MOD_COMMAND 8u
+
+/* What one press does at an armed prompt. _NONE is the common answer: the press is TEXT and the
+ * caller inserts its characters. */
+#define SLOPDESK_PROMPT_ACTION_NONE 0u
+#define SLOPDESK_PROMPT_ACTION_MOVE 1u
+#define SLOPDESK_PROMPT_ACTION_DELETE 2u
+#define SLOPDESK_PROMPT_ACTION_SCROLL_PAGES 3u
+#define SLOPDESK_PROMPT_ACTION_HISTORY_PREVIOUS 4u
+#define SLOPDESK_PROMPT_ACTION_HISTORY_NEXT 5u
+#define SLOPDESK_PROMPT_ACTION_SUBMIT 6u
+#define SLOPDESK_PROMPT_ACTION_INSERT_NEWLINE 7u
+#define SLOPDESK_PROMPT_ACTION_COMPLETE_FORWARD 8u
+#define SLOPDESK_PROMPT_ACTION_COMPLETE_BACKWARD 9u
+#define SLOPDESK_PROMPT_ACTION_CANCEL 10u
+#define SLOPDESK_PROMPT_ACTION_SELECT_ALL 11u
+#define SLOPDESK_PROMPT_ACTION_PASTE 12u
+#define SLOPDESK_PROMPT_ACTION_COPY 13u
+#define SLOPDESK_PROMPT_ACTION_CUT 14u
+#define SLOPDESK_PROMPT_ACTION_UNDO 15u
+#define SLOPDESK_PROMPT_ACTION_REDO 16u
+#define SLOPDESK_PROMPT_ACTION_SEARCH 17u
+#define SLOPDESK_PROMPT_ACTION_FORWARD 18u
+#define SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR 19u
+
+typedef struct {
+  uint8_t kind;                 /* SLOPDESK_PROMPT_ACTION_*  */
+  uint8_t motion;               /* SLOPDESK_PROMPT_MOTION_*, for _MOVE and _DELETE */
+  bool    extend;               /* for _MOVE: the anchor stays put */
+  int32_t pages;                /* for _SCROLL_PAGES; negative reveals older output */
+} SlopDeskPromptKeyAction;
+
+/* The Mac never calls this: AppKit's key-binding table names every editing chord and delivers it as
+ * a selector, so that view maps SELECTORS. UIKit has no counterpart, so the phone names its keys
+ * here rather than keeping a Swift table of decisions Rust already owns. */
+SlopDeskPromptKeyAction slopdesk_prompt_key_action(
+    uint8_t key, uint8_t letter, uint8_t mods, bool buffer_empty);
+
 /* Everything a view binds, in ONE record — so a keystroke cannot interleave between two reads and
  * pair a cursor from before it with a selection from after. Offsets are BYTES into _text. */
 typedef struct {
