@@ -223,6 +223,12 @@ func handleEncoded(_ sb: CMSampleBuffer) {
 
 ## 4. Phase 0 spike tasks
 
+> **HISTORICAL — the phase these belonged to is retired** (see the banner at the top of this file, and
+> [07](07-roadmap.md), which is SUPERSEDED). The boxes below are the ORIGINAL pre-build plan, kept for
+> the reasoning they carry; they are not a task list and an open one does not mean the work is undone —
+> this pipeline shipped. What actually runs is `rust/slopdesk-video` and `rust/slopdesk-apple-sck`, and
+> what was decided (and measured) is in [DECISIONS.md](DECISIONS.md).
+
 - [ ] Capture one window → dump actual fps, confirm idle-frame skipping works.
 - [ ] Encode HEVC low-latency → **measure encode latency** on the target machine.
 - [ ] Verify parameter sets + NALUs can be extracted, then reassembled and decoded (host-internal loop).

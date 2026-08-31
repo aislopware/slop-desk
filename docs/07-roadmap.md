@@ -4,6 +4,14 @@
 
 Principle: **validate risks first, polish later.** Phase 0 targets the two highest-risk areas (per-window input injection + encode/decode latency); don't invest in transport/UI before it passes.
 
+> **On the boxes below.** They are the ORIGINAL plan, and they are UNCHECKED because nobody ticked them
+> as the work landed — not because the work is outstanding. Reading them as a task list is the one
+> mistake this file invites, which is what the STATUS line above exists to head off: the phase order it
+> describes is not the order things were built in, so a box here answers "was this planned", never "is
+> this done". For what shipped, read [00-overview.md](00-overview.md) and [DECISIONS.md](DECISIONS.md);
+> for what was scoped OUT, DECISIONS is the only place that says so. One box below is such a scope-out
+> and is struck rather than left open — see Phase 4.
+
 ---
 
 ## Phase 0 — Validation spike (mandatory first)
@@ -74,7 +82,9 @@ View 1 host window on 1 Mac client over LAN.
 - [ ] Metal rendering (vs AVSampleBufferDisplayLayer) if lower latency is needed.
 - [ ] Adaptive FEC for Wi-Fi.
 - [x] Audio (per-APP scope — SCKit captures at app level, not per-window; shipped 2026-07-17, see DECISIONS).
-- [ ] Device pairing (PIN/QR).
+- ~~Device pairing (PIN/QR).~~ **CANCELLED** — there is no app-layer auth in this product; security is
+  the WireGuard mesh (`CLAUDE.md`, DECISIONS). Struck rather than left open, because an unchecked box
+  for a feature a live rule BARS reads as a backlog item and would send the next reader to build it.
 - [ ] Developer-ID signing + notarization + auto-update ([06](06-permissions-distribution.md)).
 
 ---

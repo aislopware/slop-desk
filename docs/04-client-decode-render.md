@@ -187,6 +187,12 @@ Capability check: `VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)`.
 
 ## 6. Tasks for Phase 1 & 3
 
+> **HISTORICAL — the phases these belonged to are retired** (see the banner at the top of this file, and
+> [07](07-roadmap.md), which is SUPERSEDED). The boxes below are the ORIGINAL pre-build plan, kept for
+> the reasoning they carry; they are not a task list and an open one does not mean the work is undone.
+> Both renderers shipped — `Sources/SlopDeskVideoClient` holds `MetalVideoRenderer` behind the
+> `VideoRenderer` seam — and the iOS half runs on the phone ([62-phone-uikit.md](62-phone-uikit.md)).
+
 - [ ] (P1, macOS) Decode + render frames received from the host → pixels on screen.
 - [ ] Rendering behind a `VideoRenderer` protocol (Metal + AVSampleBuffer impls).
 - [ ] (P3, iOS) Build `SlopDeskVideoClient` + rendering for iOS, test on a real device (Simulator has no HW decode).

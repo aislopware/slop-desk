@@ -131,6 +131,12 @@ AXUIElementSetAttributeValue(fieldEl, kAXFocusedAttribute as CFString, kCFBoolea
 
 ## 7. Tasks for the Phase 0 spike (RISK VALIDATION)
 
+> **HISTORICAL — the phase these belonged to is retired** (see the banner at the top of this file, and
+> [07](07-roadmap.md), which is SUPERSEDED). The boxes below are the ORIGINAL pre-build plan, kept for
+> the risk reasoning they carry; they are not a task list and an open one does not mean the work is
+> undone. The risks they were written to validate were validated — window resolution, activation and
+> injection ship in `rust/slopdesk-apple-ax`, `rust/slopdesk-apple-sck` and `rust/slopdesk-videohostd`.
+
 - [ ] Get `pid` + `windowID` + `frame` from `SCWindow`.
 - [ ] `AXRaise` the correct specific window of a multi-window app (test the matching heuristic).
 - [ ] `CGEventPostToPid` click at mapped coordinates → verify it lands at the right spot in the window.

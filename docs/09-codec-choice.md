@@ -111,6 +111,12 @@ Rule of thumb: **HEVC gives equivalent text sharpness at ~60–70% of the H.264 
 **ProRes:** opt-in wired-high-quality, gated on host + bandwidth.
 
 ### Tasks for Phase 0
+
+> **HISTORICAL — the phase these belonged to is retired** (see the banner at the top of this file, and
+> [07](07-roadmap.md), which is SUPERSEDED). The boxes below are the ORIGINAL pre-build plan, kept for
+> the reasoning they carry; they are not a task list and an open one does not mean the probe was never
+> run. The codec question is SETTLED — HEVC, and the operating point it runs at is ratcheted in
+> `rust/slopdesk-invariants` rather than described here.
 - [ ] Probe `EnableLowLatencyRateControl` with HEVC on the target machine (`VTCopySupportedPropertyDictionaryForEncoder` / try creating a session) — confirm it works.
 - [ ] Try HEVC 8-bit vs **10-bit** on colored text → evaluate real-world fringing.
 - [ ] Measure encode latency H.264 vs HEVC on the same machine (confirm difference is small).

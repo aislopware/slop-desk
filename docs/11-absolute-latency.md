@@ -498,6 +498,19 @@ Consolidates the adversarial-verification verdicts. **Golden rule: any `refuted`
 
 ### 3. Phase-0 spike — empirical validation checklist
 
+> **HISTORICAL, and NARROWER than it reads.** This checklist was written before the scope ruling in the
+> banner at the top of this file, which DROPPED the 120 Hz / ProMotion / motion-to-photon pursuit as
+> over-engineering for the coding profile. So a large part of what is open below is open because it was
+> CANCELLED, not because it is pending — the 120 Hz items are the clearest cases: C1/C2, and the
+> ProMotion half of DP6.
+>
+> These boxes are deliberately NOT ticked. Unlike the plan checklists in [02](02-host-capture-encode.md)
+> ‥ [09](09-codec-choice.md), each one here claims a MEASUREMENT was taken and recorded, and ticking one
+> without its number would fabricate exactly the evidence this section exists to demand. The
+> measurements that WERE taken live where a number can go stale under a gate rather than in prose: the
+> operating point is ratcheted in `rust/slopdesk-invariants`, and the rulings are dated in
+> [DECISIONS.md](DECISIONS.md).
+
 Close every `refuted`/`uncertain` item by measurement on the target hardware (host: Apple Silicon Mac, macOS 26; client: macOS + 120 Hz ProMotion iPhone/iPad). Use `clock_gettime_nsec_np(CLOCK_UPTIME_RAW)` + `mach_timebase_info` (M1 = 125/3 — **confirm on M2/M3/M4**).
 
 **A. Capture (ScreenCaptureKit)**

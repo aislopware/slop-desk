@@ -142,6 +142,13 @@ The video path **ships FEC + ABR + congestion control**, **FEC first** with a **
 
 ## 6. Phase 1 tasks
 
+> **HISTORICAL — the phase these belonged to is retired** (see the banner at the top of this file, and
+> [07](07-roadmap.md), which is SUPERSEDED). The boxes below are the ORIGINAL pre-build plan, kept for
+> the reasoning they carry; they are not a task list and an open one does not mean the work is undone.
+> The packetizer, the reassembler and the recovery path shipped — they are `rust/slopdesk-video`'s
+> `packetizer.rs`, `reassembler.rs`, `fec.rs` and `recovery*.rs`, and the wire they speak is pinned by
+> [20-wire-protocol.md](20-wire-protocol.md).
+
 - [ ] `NWListener`/`NWBrowser` Mac↔Mac discovery, show the host list.
 - [ ] Packetizer + reassembler per the §4 format, with unit tests for packet loss/reordering.
 - [ ] Send a keyframe (multiple fragments) + delta frames end-to-end.

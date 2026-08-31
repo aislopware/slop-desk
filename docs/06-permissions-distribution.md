@@ -66,6 +66,12 @@ if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
 
 ## 7. Build checklist
 
+> **HISTORICAL — this is the ORIGINAL pre-build plan** (see the banner at the top of this file). It is
+> not a task list and an open box does not mean the step is undone: signing, the hardened runtime and
+> notarization are all AUTOMATED now, in `rust/slopdesk-devtools/src/release/pack.rs`
+> ([49-release-pipeline.md](49-release-pipeline.md)) — which is also why hand-ticking these would be the
+> rot one door down, since the recipe is the truth and it can change without this file.
+
 - [ ] `Info.plist`: the 3 keys above.
 - [ ] Disable App Sandbox (host).
 - [ ] Enable Hardened Runtime.
