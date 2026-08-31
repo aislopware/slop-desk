@@ -44,8 +44,13 @@ final class TerminalViewModelPumpEpochTests: XCTestCase {
 
         // The fresh session's first output arrives on a LATER wake, taken under the bumped epoch: it
         // consumes the RIS wipe and paints — proving the wipe was preserved for it, not eaten by the dead batch.
+        // A CONDITION wait, not a yield settle: the negative assertions above are the only ones a fixed
+        // number of yields can express, because "nothing painted" has no arrival to wait for. This one
+        // waits for an ARRIVAL, and how many yields the pump needs to get scheduled is a property of the
+        // machine's load, not of the epoch tagging under test — 50 of them is enough on an idle box and
+        // not enough beside a parallel `check`, which is how this read as a regression it was not.
         driver.deliverOutput(Data("FRESH".utf8))
-        await megaYield()
+        await waitUntil { surface.writes.contains(Data("FRESH".utf8)) }
         XCTAssertEqual(surface.writes.first, Self.ris, "the fresh session's first paint is preceded by the RIS wipe")
         XCTAssertTrue(surface.writes.contains(Data("FRESH".utf8)), "the fresh bytes paint")
 

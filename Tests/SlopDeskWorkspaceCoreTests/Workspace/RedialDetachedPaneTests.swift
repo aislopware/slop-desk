@@ -37,7 +37,24 @@ final class RedialDetachedPaneTests: XCTestCase {
         return (store, left, right)
     }
 
-    private func megaYield() async { for _ in 0..<50 { await Task.yield() } }
+    /// Waits for an ARRIVAL rather than settling a fixed number of yields. How many yields the dial
+    /// tasks need to get scheduled is a property of the machine's load, not of the redial under test,
+    /// so a yield count reads as a regression beside a parallel build when it is only contention.
+    /// Same shape as `EvictedSubscriberRedialTests`' — a deadline, and a named failure when it passes.
+    private func expect(
+        _ what: String,
+        timeout: Duration = .seconds(3),
+        _ condition: @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        XCTFail("timed out waiting for \(what)", file: file, line: line)
+    }
 
     func testRedialReachesDetachedPane() async throws {
         let rec = PaneDriverRecorder()
@@ -51,7 +68,7 @@ final class RedialDetachedPaneTests: XCTestCase {
         XCTAssertEqual(liveRight.connection?.status, .disconnected, "lazy-connect: nothing has dialed yet")
 
         store.redialDisconnectedPanes()
-        await megaYield()
+        await expect("both channels to dial") { rec.count == 2 }
 
         XCTAssertEqual(rec.count, 2, "both the tiled AND the detached pane's channels were dialed")
         XCTAssertEqual(liveLeft.connection?.status, .connected)
