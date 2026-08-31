@@ -45,9 +45,11 @@ use crate::quad::{DrawList, GlyphInstance, RectInstance, RectStyle, Rgba, px};
 /// Device pixels for the lengths, like everything else in this crate — the client scales its point
 /// values once, at the boundary, where every other point→pixel conversion already happens.
 ///
-/// [`ChromeStyle::NONE`] is what the alternate screen gets, and it is a value rather than a branch
-/// for [`crate::block::Chrome::NONE`]'s reason: a full-screen program owns every cell, and the way
-/// to draw nothing over it is to be handed nothing to draw with.
+/// [`ChromeStyle::NONE`] is the pre-install state and this module's contract in one value: handed
+/// nothing, [`paint`] draws nothing, which is what lets a surface render before a client has chosen
+/// a design. It is NOT how the alternate screen is served — that skips the pass outright, because
+/// the frame the call would need hit-tests a pointer and asks the engine for a viewport, and both
+/// answers would be discarded. See `Surface::draw` in `slopdesk-ffi` and `docs/68` §5.3.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ChromeStyle {
     /// The hairline between one block and the next.
