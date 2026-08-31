@@ -1,3 +1,5 @@
+import SlopDeskVideoProtocol // TerminalPreferences — the colours the FILE states
+
 /// The seam by which the headless ``PreferencesStore`` (in `SlopDeskWorkspaceCore`) reads the GUI's
 /// terminal-cell palette without depending on either UI shell (`SlopDeskMacUI` / `SlopDeskPhoneUI`),
 /// which `WorkspaceCore` must not import. Mirrors the ``TerminalRendererFactory/shared`` /
@@ -12,77 +14,78 @@
 @preconcurrency
 @MainActor
 public enum AppearanceApplier {
-    /// Registered by the app target at launch: returns the app's terminal-cell palette — the terminal
-    /// config's `background`/`foreground` (6-hex, no `#`) plus the 16-entry ANSI `palette` and
-    /// `selection-background`. ``PreferencesStore`` consults this when rebuilding the terminal config so
+    /// Registered by the app target at launch: returns the app's terminal-cell palette — the
+    /// background and foreground, the 16-entry ANSI ladder and the selection fill, all as packed
+    /// `0x00RRGGBB` words. ``PreferencesStore`` consults this when re-resolving the terminal settings so
     /// the terminal CELLS adopt the same flat palette as the chrome (a flat, gradient-free design).
     /// `nil` (headless / pre-launch) ⇒ the terminal keeps the ``TerminalPreferences`` colours, unchanged.
     public static var resolveTerminalColors: (() -> ResolvedTerminalTheme?)?
 }
 
-/// The active theme's TERMINAL-cell colours, resolved by the GUI layer for ``PreferencesStore`` to thread into
-/// ``TerminalConfigBuilder``. `background`/`foreground` are 6-hex (no `#`); the optional `palette`
-/// (exactly 16 entries when present) and `selectionBackground` ride the builder overrides — `nil` for
-/// either ⇒ the builder emits no `palette`/`selection-background` line.
+/// The active theme's TERMINAL-cell colours, resolved by the GUI layer for ``PreferencesStore`` to
+/// hand to `slopdesk_term_surface_set_theme`.
 ///
-/// PURE client chrome: it carries colour strings only, never reaches the wire / `EnvConfig` / sidecar.
+/// Packed `0x00RRGGBB` words, which is the form the theme publishes and the form the door takes. A
+/// 6-hex STRING half used to ride alongside — the same four numbers spelled for the terminal config
+/// text — and it died with the text: nothing parses it, so nothing needed the second spelling.
+///
+/// PURE client chrome: it carries colours only, never reaches the wire / `EnvConfig` / sidecar.
 public struct ResolvedTerminalTheme: Sendable, Equatable {
-    /// The terminal config's `background` (6-hex, no `#`).
-    public var background: String
-    /// The terminal config's `foreground` (6-hex, no `#`).
-    public var foreground: String
-    /// The 16-entry ANSI palette (6-hex each); `nil` ⇒ no `palette` lines emitted.
-    public var palette: [String]?
-    /// The `selection-background` colour (bare 6-hex RGB); `nil` ⇒ no `selection-background` line.
-    /// Builder always pairs with `selection-foreground = cell-foreground` (keep original glyph colours).
-    public var selectionBackground: String?
-    /// The SAME four colours as the packed words the renderer's doors take.
+    /// The cell background — also the surface's clear colour.
+    public var background: UInt32
+    /// The cell foreground.
+    public var foreground: UInt32
+    /// The ANSI colours, from index `0`. A PREFIX: the theme states sixteen and says nothing about
+    /// the 6×6×6 cube or the greyscale ramp, which stay at the engine's own.
+    public var palette: [UInt32]
+    /// The selection fill.
     ///
-    /// ⚠️ **Not a second source and not a duplicate to keep in sync** — the theme publishes 24-bit RGB
-    /// literals and the strings above are `hex6` of these very numbers, so this is the form that was
-    /// there first. Both halves are carried because their two consumers speak different grammars: the
-    /// config string (which nothing shipping parses any more — see ``TerminalConfigBroadcaster``) and
-    /// `slopdesk_term_surface_set_theme`, which takes `0x00RRGGBB` words. The hex half dies with the
-    /// string; the words are what the cells are actually painted from.
-    public var words: Words
+    /// Required, and not optional as the dead hex twin was: the door takes three colours and a caller
+    /// with none would have to INVENT one. A theme that states a background and a foreground has
+    /// stated enough to derive this; one that cannot state it is not a theme this seam can carry.
+    public var selection: UInt32
 
-    /// The packed `0x00RRGGBB` form of the four colours, as the FFI doors take them.
-    public struct Words: Sendable, Equatable {
-        /// The cell background — also the surface's clear colour.
-        public var background: UInt32
-        /// The cell foreground.
-        public var foreground: UInt32
-        /// The ANSI colours, from index `0`. A PREFIX: the theme states sixteen and says nothing
-        /// about the 6×6×6 cube or the greyscale ramp, which stay at the engine's own.
-        public var palette: [UInt32]
-        /// The selection fill.
-        ///
-        /// Required, where the hex ``ResolvedTerminalTheme/selectionBackground`` is optional, and the
-        /// difference is real rather than an oversight: the config string can simply omit the line,
-        /// whereas the door takes three colours and a caller with none would have to INVENT one. A
-        /// theme that states a background and a foreground has stated enough to derive this; one that
-        /// cannot state it is not a theme this seam can carry.
-        public var selection: UInt32
-
-        public init(background: UInt32, foreground: UInt32, palette: [UInt32], selection: UInt32) {
-            self.background = background
-            self.foreground = foreground
-            self.palette = palette
-            self.selection = selection
-        }
-    }
-
-    public init(
-        background: String,
-        foreground: String,
-        palette: [String]? = nil,
-        selectionBackground: String? = nil,
-        words: Words,
-    ) {
+    public init(background: UInt32, foreground: UInt32, palette: [UInt32], selection: UInt32) {
         self.background = background
         self.foreground = foreground
         self.palette = palette
-        self.selectionBackground = selectionBackground
-        self.words = words
+        self.selection = selection
+    }
+
+    /// The colours the CONFIG FILE states, for the reading where no app palette was handed in —
+    /// headless, pre-launch, the golden and `ImageRenderer` paths. `nil` when the file's text is not
+    /// a colour, which is the same answer as "the row was left alone".
+    ///
+    /// The palette is EMPTY, not invented: `terminal.background` and `terminal.foreground` are the
+    /// only two colours the file states, and an empty prefix leaves all sixteen ANSI slots at the
+    /// engine's own — which is what a user who set two colours asked for.
+    ///
+    /// The selection is DERIVED, and the seam's own contract is what licenses that: a theme that
+    /// states a background and a foreground has stated enough. The per-channel MIDPOINT of the two is
+    /// integer arithmetic, so it is exact and reproducible, and it lands between the fill and the
+    /// glyph by construction — legible against both without either being named twice.
+    public init?(preferences: TerminalPreferences) {
+        guard let background = preferences.backgroundWord, let foreground = preferences.foregroundWord
+        else { return nil }
+        self.init(
+            background: background,
+            foreground: foreground,
+            palette: [],
+            selection: Self.midpoint(background, foreground),
+        )
+    }
+
+    /// The per-channel midpoint of two `0x00RRGGBB` words.
+    ///
+    /// ⚠️ THE PARENTHESES AROUND THE HALVING ARE LOAD-BEARING. Swift binds `<<` TIGHTER than `/`
+    /// (`BitwiseShiftPrecedence` outranks `MultiplicationPrecedence`), which is the opposite of C and
+    /// Rust — so `sum / 2 << shift` reads as `sum / (2 << shift)` and divides the red channel by
+    /// 131 072. The result still compiles, still type-checks, and comes out near-black.
+    private static func midpoint(_ a: UInt32, _ b: UInt32) -> UInt32 {
+        func channel(_ shift: UInt32) -> UInt32 {
+            let sum = ((a >> shift) & 0xFF) + ((b >> shift) & 0xFF)
+            return (sum / 2) << shift
+        }
+        return channel(16) | channel(8) | channel(0)
     }
 }

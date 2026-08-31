@@ -2829,90 +2829,18 @@ size_t slopdesk_keybind_canonical_chord(const uint8_t *key, size_t key_len, bool
 size_t slopdesk_keybind_glyph(const uint8_t *key, size_t key_len, bool command, bool shift,
                               bool option, bool control, uint8_t *out, size_t cap);
 
-/* The libghostty config text one set of terminal preferences spells. Two dozen strings and a dozen
- * switches, so rather than two dozen (ptr, len) pairs they cross as ONE record of named
- * (offset, length) runs into a single blob the caller interns — the keybind shape above, widened.
- * The two LISTS, the user's keybind lines and the theme's sixteen palette entries, cross as arrays
- * of runs rather than one delimited blob, because a delimiter is a thing a value could contain and
- * a count is not. Enum-valued preferences cross as the raw value the near side PERSISTS
- * (`primary-only`, `macos-like`, `block_hollow`); which libghostty key that actuates is decided on
- * the far side, and a raw value this build does not know takes the branch that emits nothing.
- * Ask twice: a null `out` reports the length, then lend that much. */
-
-typedef struct {
-  uint32_t offset;
-  uint32_t length;
-} SlopDeskConfigRun;
-
-typedef struct {
-  SlopDeskConfigRun family;             /* empty skips the chain, fallbacks included */
-  SlopDeskConfigRun fallback;           /* comma-separated, each a repeated font-family line */
-  SlopDeskConfigRun weight;
-  SlopDeskConfigRun family_bold;        /* honoured only when auto_match_weight_style is off */
-  SlopDeskConfigRun family_italic;
-  SlopDeskConfigRun family_bold_italic;
-  SlopDeskConfigRun ligatures;          /* off / calt / dlig */
-  SlopDeskConfigRun bold;               /* auto / off / primary-only / synthetic */
-  SlopDeskConfigRun italic;
-  SlopDeskConfigRun blending;           /* default / macos-like */
-  double size;
-  double cell_height_percent;           /* meaningful only when has_cell_height */
-  bool   auto_match_weight_style;
-  bool   ligatures_alphabet;
-  bool   has_cell_height;               /* a FLAG: 0% is a real answer, it is what "tight" asks */
-} SlopDeskTerminalFont;
-
-typedef struct {
-  SlopDeskConfigRun theme;
-  SlopDeskConfigRun background;
-  SlopDeskConfigRun foreground;
-  SlopDeskConfigRun background_override;  /* replaces the pref colour when non-empty */
-  SlopDeskConfigRun foreground_override;
-  SlopDeskConfigRun selection_background;
-} SlopDeskTerminalColors;
-
-typedef struct {
-  SlopDeskConfigRun style;   /* block / block_hollow / bar / underline */
-  SlopDeskConfigRun blink;   /* on / off; anything else defers to DEC mode 12 with no line */
-  SlopDeskConfigRun color;
-  SlopDeskConfigRun text_color;
-  double opacity;
-} SlopDeskTerminalCursor;
-
-typedef struct {
-  SlopDeskConfigRun clipboard_read;      /* allow / deny / ask */
-  SlopDeskConfigRun clipboard_write;
-  SlopDeskConfigRun mouse_shift_capture; /* false / true / always / never */
-  SlopDeskConfigRun right_click_action;
-  SlopDeskConfigRun macos_option_as_alt; /* false / true / left / right */
-  double scroll_multiplier;              /* drives both axes, keeping libghostty's 1:3 ratio */
-  bool copy_on_select;
-  bool trim_trailing;
-  bool clear_on_typing;
-  bool clear_on_copy;
-  bool paste_protection;
-  bool bracketed_safe;
-  bool hide_mouse_while_typing;
-  bool click_to_move;
-  bool allow_mouse_capture;
-  bool shift_arrow_select;               /* off UNBINDS; the fork binds these by default */
-} SlopDeskTerminalControls;
-
-typedef struct {
-  SlopDeskTerminalFont     font;
-  SlopDeskTerminalColors   colors;
-  SlopDeskTerminalCursor   cursor;
-  SlopDeskTerminalControls controls;     /* meaningful only when has_controls */
-  int64_t scrollback_lines;
-  bool    has_controls;                  /* absent ≠ every switch off: absent emits no line */
-} SlopDeskTerminalConfig;
-
+/* What a fresh install's terminal carries, and the text a settings number is written with.
+ *
+ * The config-TEXT door that used to sit here is gone: it spelled a whole libghostty
+ * `key = value` file for the deleted fork's `ghostty_config_load_string`, and the renderer that
+ * replaced the fork takes the `slopdesk_term_surface_set_*` family below instead. Every run in that
+ * record was a value already crossing through a typed door.
+ *
+ * Field indices for the two that remain — text: 0 family, 1 weight, 2 background, 3 foreground;
+ * number: 0 point size, 1 cursor opacity, 2 scrollback lines. Ask twice for the text: a null `out`
+ * reports the length, then lend that much. */
 size_t slopdesk_terminal_factory_text(uint8_t field, uint8_t *out, size_t cap);
 double slopdesk_terminal_factory_number(uint8_t field);
-size_t slopdesk_terminal_config_string(SlopDeskTerminalConfig config, const uint8_t *text,
-                                       size_t text_len, const SlopDeskConfigRun *keybinds,
-                                       size_t keybind_count, const SlopDeskConfigRun *palette,
-                                       size_t palette_count, uint8_t *out, size_t out_cap);
 
 /* ---- the terminal surface: the engine, its fonts, its arithmetic and its GPU ------------ *
  *
@@ -3006,6 +2934,65 @@ void slopdesk_term_surface_scroll(SlopDeskTerminalSurface *handle, uint8_t mode,
 
 /* Whether the Option key is Alt: 0 off, 1 both, 2 left, 3 right (`macos-option-as-alt`). */
 void slopdesk_term_surface_set_option_as_alt(SlopDeskTerminalSurface *handle, uint8_t value);
+
+/* Caps the scrollback at `lines` ROWS; zero or negative keeps none.
+ *
+ * Rows and not bytes, which is the whole reason this door replaced a config string: the engine's own
+ * limit is a row count, so a user asking for 10 000 lines now gets 10 000 rather than whatever a
+ * 256-byte-per-line estimate happened to buy them. */
+void slopdesk_term_surface_set_scrollback(SlopDeskTerminalSurface *handle, int64_t lines);
+
+/* The caret shape until a program asks for another: 0 block, 1 bar, 2 underline, 3 hollow block.
+ * Anything else restores the engine's default.
+ *
+ * ⚠️ A DEFAULT, deliberately — DECSCUSR from a running program still wins, so a user who prefers a
+ * bar keeps it in the shell and still sees vim's block in insert mode. Writing the LIVE shape would
+ * erase what the program asked for, with nothing able to tell the two apart afterwards. */
+void slopdesk_term_surface_set_cursor_style(SlopDeskTerminalSurface *handle, uint8_t style);
+
+/* Whether the caret blinks until a program says otherwise: 1 on, 2 off, anything else the engine's
+ * default. Three states rather than a bool because a user who has not chosen leaves it to DEC mode
+ * 12, and a bool would have to invent an answer for them. */
+void slopdesk_term_surface_set_cursor_blink(SlopDeskTerminalSurface *handle, uint8_t mode);
+
+/* The caret colour until a program overrides it, packed 0x00RRGGBB. `present` false follows the
+ * foreground, which is the engine's own default. A DEFAULT for the reason _set_cursor_style is:
+ * OSC 12 still wins, which is what lets a program signal a mode by recolouring the caret. */
+void slopdesk_term_surface_set_cursor_color(SlopDeskTerminalSurface *handle, uint32_t rgb,
+                                            bool present);
+
+/* How solid the caret is drawn, 0.0–1.0; zero hides it.
+ *
+ * The one cursor setting that never reaches the engine, because no escape sequence can express it —
+ * OSC 12 carries a colour and DECSCUSR a shape, neither an alpha. The paint owns the caret rect, so
+ * the paint owns this number. Out-of-range and NaN clamp where it is applied. */
+void slopdesk_term_surface_set_cursor_opacity(SlopDeskTerminalSurface *handle, double opacity);
+
+/* The colour the glyph under a filled caret takes, packed 0x00RRGGBB. `present` false keeps the
+ * cell's own background, which is the reading that is always legible.
+ *
+ * A renderer setting for _set_cursor_opacity's reason: no escape names this colour, so unlike the
+ * shape, the blink and the caret's own colour there is no engine default for a program to override
+ * and nothing is lost by deciding it here. */
+void slopdesk_term_surface_set_cursor_text_color(SlopDeskTerminalSurface *handle, uint32_t rgb,
+                                                 bool present);
+
+/* Whether a copy drops the blanks a terminal padded each short line with. */
+void slopdesk_term_surface_set_trim_trailing(SlopDeskTerminalSurface *handle, bool trim);
+
+/* Forgets any pointer button the encoder was tracking.
+ *
+ * What a surface calls when the pointer leaves mid-drag: without it the encoder still believes a
+ * button is down and keeps reporting drag motion the user is no longer making. */
+void slopdesk_term_surface_reset_pointer(SlopDeskTerminalSurface *handle);
+
+/* Whether the selection stops exactly where the cursor stands.
+ *
+ * The question a CUT has to answer before it sends a single DEL: cutting from a terminal is not an
+ * edit the terminal can perform, so the delete half is BACKSPACES, and those only remove the
+ * selected text when the cursor sits immediately past it. Asked of the surface because the surface
+ * is the only thing holding both the selection and the cursor. */
+bool slopdesk_term_surface_selection_ends_at_cursor(SlopDeskTerminalSurface *handle);
 
 /* The `mods` word the key and mouse doors take, built from what the platform says is held.
  *
@@ -3298,6 +3285,46 @@ size_t slopdesk_term_surface_block_text(SlopDeskTerminalSurface *handle, size_t 
  * there is nothing there. An AUTHORED link wins over a DETECTED one — the program said so. */
 size_t slopdesk_term_surface_hyperlink_at(SlopDeskTerminalSurface *handle, uint16_t column,
                                           uint16_t row, uint8_t *out, size_t cap);
+
+/* One run of cells a program declared as an OSC 8 hyperlink. */
+typedef struct SlopDeskTerminalLinkSpan {
+  uint16_t row;   /* viewport row, from the top */
+  uint16_t start; /* first linked column */
+  uint16_t end;   /* one past the last linked column */
+} SlopDeskTerminalLinkSpan;
+
+/* Every authored hyperlink run in the viewport, answering the count NEEDED.
+ *
+ * A LIST door rather than the per-cell _hyperlink_at because the hover underline draws every link at
+ * once: asking cell by cell would be rows × cols crossings for a picture that changes every frame.
+ * This walks the frame's HYPERLINK flags once. Two different links that touch with no character
+ * between them arrive as ONE span, which is the same underline either way. */
+size_t slopdesk_term_surface_hyperlink_spans(SlopDeskTerminalSurface *handle,
+                                             SlopDeskTerminalLinkSpan *out, size_t cap);
+
+/* What an input method is composing over the cursor, or nothing at all for len 0.
+ *
+ * The composition NEVER reaches the engine: an input method may replace the whole run on the next
+ * keystroke — Telex turns `Tieengs` into `Tiếng` by rewriting what it already showed — and text fed
+ * to the engine is on the grid for good. The surface DRAWS it over the cells the cursor stands on
+ * instead, and the grid never changes; the commit arrives through the ordinary key door.
+ *
+ * cursor_bytes is the composition's own caret as a UTF-8 offset into text. A BYTE offset because
+ * measuring CELLS is this side's job — an offset that is not a character boundary, or is past the
+ * end, reads as a caret after everything composed so far.
+ *
+ * Answers whether the next frame would DIFFER, _set_hover's convention: an input method re-reports
+ * an unchanged composition on every arrow key. Present only on true. */
+bool slopdesk_term_surface_set_marked_text(SlopDeskTerminalSurface *handle, const uint8_t *text,
+                                           size_t len, size_t cursor_bytes);
+
+/* The caret's CELL in POINTS — x, y, width, height, in that order — for an input method's candidate
+ * window. false, and out untouched, when no cursor is on screen; the caller then lets the platform
+ * place the window itself.
+ *
+ * The cell's rect rather than the caret's drawn shape: a bar cursor's two-pixel sliver would hang
+ * the candidate list under the character rather than under the insertion point. */
+bool slopdesk_term_surface_caret_rect(SlopDeskTerminalSurface *handle, double *out);
 
 /* One binding action WITH an argument, spelled by the grammar's only speller.
  *
@@ -11980,11 +12007,11 @@ size_t  slopdesk_terminal_clipboard_silent_read(uint8_t access, const uint8_t *t
 uint16_t slopdesk_terminal_clipboard_gates(bool shell_controlled, uint8_t read, uint8_t write);
 size_t  slopdesk_terminal_right_click_tokens(uint8_t *out, size_t cap);          // 5 runs
 uint8_t slopdesk_terminal_right_click_from_token(const uint8_t *token, size_t len);
-size_t  slopdesk_terminal_mouse_shift_tokens(uint8_t *out, size_t cap);          // 8 runs: the pair
+size_t  slopdesk_terminal_mouse_shift_tokens(uint8_t *out, size_t cap);          // 4 runs
 // The code in the low byte, "does it extend a selection" in bit 8: a stored token is resolved
 // exactly when a shift-drag has to be routed, so both are read at the same moment.
 uint16_t slopdesk_terminal_mouse_shift_from_token(const uint8_t *token, size_t len);
-size_t  slopdesk_terminal_option_as_alt_tokens(uint8_t *out, size_t cap);        // 8 runs: the pair
+size_t  slopdesk_terminal_option_as_alt_tokens(uint8_t *out, size_t cap);        // 4 runs
 uint8_t slopdesk_terminal_option_as_alt_from_token(const uint8_t *token, size_t len);
 // The POLICY itself does not cross: it is consumed by the detector, which is already Rust's.
 size_t  slopdesk_terminal_scheme_detection_tokens(uint8_t *out, size_t cap);     // 2 runs

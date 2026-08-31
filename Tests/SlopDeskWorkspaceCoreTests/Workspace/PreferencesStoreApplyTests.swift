@@ -137,8 +137,8 @@ final class PreferencesStoreApplyTests: XCTestCase {
                 .setting("terminal.font-size", 16.0),
         )
         XCTAssertGreaterThan(TerminalConfigBroadcaster.shared.generation, before, "init publishes once")
-        XCTAssertTrue(TerminalConfigBroadcaster.shared.configString.contains("font-family = Menlo"))
-        XCTAssertTrue(TerminalConfigBroadcaster.shared.configString.contains("font-size = 16"))
+        XCTAssertEqual(TerminalConfigBroadcaster.shared.fontFamily, "Menlo")
+        XCTAssertEqual(TerminalConfigBroadcaster.shared.fontSize, 16)
     }
 
     /// ⌘± moves the LIVE size without touching the file — the one ephemeral thing the store holds.
@@ -148,25 +148,55 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertEqual(store.effectiveFontSize, 14)
         store.increaseFontSize()
         XCTAssertEqual(store.effectiveFontSize, 15)
-        XCTAssertTrue(TerminalConfigBroadcaster.shared.configString.contains("font-size = 15"))
+        XCTAssertEqual(TerminalConfigBroadcaster.shared.fontSize, 15)
         store.resetFontSize()
         XCTAssertEqual(store.effectiveFontSize, 14, "⌘0 returns to the size the config file states")
         XCTAssertEqual(store.fontSizeDelta, 0)
     }
 
-    /// `applyTerminal()` resolves the fire-time Controls bundle and passes it to the builder, so the
-    /// published config carries the control passthrough block — and `refreshTerminalControls()`
-    /// re-publishes it live. Asserts the KEY's PRESENCE, which is absent when the builder passes
-    /// `controls: nil` — revert-to-confirm-fail.
-    func testTerminalBroadcastCarriesTheControlPassthrough() {
-        let store = makeStore()
+    /// `applyTerminal()` publishes every value it had to RESOLVE, and `refreshTerminalControls()`
+    /// re-publishes them live. The plain toggles are NOT here on purpose — a toggle resolves to
+    /// itself, so it is read at the point of use through `SettingsKey` rather than carried.
+    ///
+    /// Asserts a non-factory reading arrives, which is what a dropped read would lose —
+    /// revert-to-confirm-fail.
+    func testTerminalBroadcastCarriesEveryResolvedValue() {
+        let store = makeStore(
+            AppConfig.compiledDefaults
+                .setting("terminal.scrollback-limit", 4321)
+                .setting("terminal.cursor-style", "bar")
+                .setting("terminal.cursor-color", "FF0000")
+                .setting("terminal.cursor-opacity", 0.5),
+        )
         let afterInit = TerminalConfigBroadcaster.shared.generation
         store.refreshTerminalControls()
         XCTAssertGreaterThan(TerminalConfigBroadcaster.shared.generation, afterInit, "refresh re-publishes")
-        let config = TerminalConfigBroadcaster.shared.configString
-        XCTAssertTrue(config.contains("copy-on-select = "), "the Copy-on-Select control line is emitted via the store")
-        XCTAssertTrue(config.contains("mouse-reporting = "), "the Allow-Mouse-Capture control line is emitted")
-        XCTAssertTrue(config.contains("keybind = shift+left="), "the ⇧+arrow select keybind is emitted")
+        XCTAssertEqual(TerminalConfigBroadcaster.shared.scrollbackLines, 4321)
+        XCTAssertEqual(TerminalConfigBroadcaster.shared.cursorStyle, 1, "bar is the door's 1")
+        XCTAssertEqual(TerminalConfigBroadcaster.shared.cursorColor, 0xFF0000)
+        XCTAssertEqual(TerminalConfigBroadcaster.shared.cursorOpacity, 0.5)
+    }
+
+    /// With NO app palette installed — headless, pre-launch, the golden and `ImageRenderer` paths —
+    /// the two colours the config file states are what the cells wear. The seam's doc has promised
+    /// this all along; nothing was reading the file for it, so `nil` went to the door and the surface
+    /// kept the ENGINE's defaults, ignoring both the theme and the file.
+    ///
+    /// The palette stays EMPTY (the file names no ANSI ladder) and the selection is the per-channel
+    /// midpoint — which is also the assertion that catches the precedence trap in `midpoint`, where
+    /// Swift's `<<` outranks `/` and a missing pair of parentheses divides red by 131 072.
+    func testWithNoAppPaletteTheFilesOwnTwoColoursReachTheBroadcaster() {
+        AppearanceApplier.resolveTerminalColors = nil
+        _ = makeStore(
+            AppConfig.compiledDefaults
+                .setting("terminal.background", "202030")
+                .setting("terminal.foreground", "E0E0F0"),
+        )
+        let theme = TerminalConfigBroadcaster.shared.themeWords
+        XCTAssertEqual(theme?.background, 0x0020_2030)
+        XCTAssertEqual(theme?.foreground, 0x00E0_E0F0)
+        XCTAssertEqual(theme?.palette, [], "the file names no ANSI ladder, so all sixteen stay engine-side")
+        XCTAssertEqual(theme?.selection, 0x0080_8090, "the per-channel midpoint, every channel halved")
     }
 
     // MARK: Keybinding overrides → the registry

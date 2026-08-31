@@ -38,6 +38,10 @@ final class TerminalViewModelHintTests: XCTestCase {
 
         // TerminalViewportSnapshotting (the overlay-geometry seam beginHint reads).
         func viewportTextRows() -> [String] { rows }
+
+        /// Nothing here is an `OSC 8` link: these rows are canned TEXT, and an authored span is a
+        /// thing a program DECLARED. Empty is the honest answer, not a stub.
+        func authoredLinkSpans() -> [TerminalLinkSpan] { [] }
         func cellMetrics() -> TerminalCellMetrics? { metrics }
     }
 

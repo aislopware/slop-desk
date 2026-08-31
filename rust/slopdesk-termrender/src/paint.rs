@@ -29,7 +29,9 @@
 //! decision still crosses from Swift while the drawing does not.
 
 use slopdesk_terminal::geometry::{CellMetrics, Rect};
-use slopdesk_vterm::{CellFlags, ColumnSpan, Frame, FrameCell, FrameCursor, FrameRow, Rgb, UnderlineStyle};
+use slopdesk_vterm::{
+    CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameCursor, FrameRow, Rgb, UnderlineStyle,
+};
 
 use crate::atlas::AtlasFormat;
 use crate::block::BlockLayout;
@@ -68,6 +70,50 @@ pub struct PaintStyle {
     /// apart on screen, and a cursor blinking out of phase with the text under it looks broken in a
     /// way nobody can name.
     pub blink_visible: bool,
+    /// How opaque the cursor is drawn, `0.0`–`1.0`.
+    ///
+    /// A RENDERER setting rather than an engine one, and it has to be: the terminal protocol has no
+    /// way to say it. `OSC 12` sets a cursor COLOUR, and every escape that touches the caret picks
+    /// a shape or a blink — none of them carries an alpha, so there is nothing for a program to
+    /// override and no default for the engine to hold. The paint owns the cursor rect, so the paint
+    /// is where the number belongs.
+    ///
+    /// Clamped where it is applied rather than on the way in, so a caller cannot construct a style
+    /// that paints an out-of-range cursor.
+    pub cursor_opacity: f64,
+    /// The colour the glyph under a filled cursor takes, or `None` to keep the cell's background.
+    ///
+    /// A renderer setting for [`cursor_opacity`](Self::cursor_opacity)'s reason — no escape names
+    /// this colour, so there is nothing for a program to override. `None` is the default and it is
+    /// the one that is always readable: taking the cell's own background guarantees the glyph
+    /// contrasts with the caret drawn in that cell's foreground. A theme that names a colour is
+    /// asserting it knows better, which is a claim only a theme can make.
+    pub cursor_text: Option<Rgba>,
+}
+
+/// Text an input method is still composing, drawn at the cursor and not yet in the grid.
+///
+/// ## Why it is drawn HERE rather than echoed into the engine
+///
+/// A composition is not terminal output. Nothing has been sent to the pty, the shell has not seen a
+/// byte, and an input method may replace the whole run on the next keystroke — feeding it to the
+/// engine would put text on the grid that the program never emitted and that no `\b` can take back.
+/// So it is painted over the cells the cursor is standing on, and it disappears without the grid
+/// ever having changed.
+///
+/// This is `docs/68` §5.1 item 8, and Telex is why it is on the critical path: typing `Tieengs` to
+/// get `Tiếng` is SEVEN keystrokes of composition, so a surface that draws nothing until the commit
+/// shows the user nothing at all for the whole word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Preedit<'t> {
+    /// The composing text, exactly as the input method last reported it.
+    pub text: &'t str,
+    /// How many CELLS it takes, measured by the engine's own segmenter — see
+    /// [`slopdesk_vterm::text_cells`]. Carried rather than re-derived because the measurement is
+    /// taken once where the input method reports, never on the sixty-times-a-second path.
+    pub cells: u16,
+    /// How many cells into `text` the composition's own caret sits.
+    pub cursor_cells: u16,
 }
 
 /// The reusable scratch a paint pass needs.
@@ -132,6 +178,7 @@ impl Painter {
         frame: &Frame,
         layout: &BlockLayout,
         style: &PaintStyle,
+        preedit: Option<Preedit<'_>>,
         cache: &mut GlyphCache,
         shaper: &mut impl TextShaper,
         rasterizer: &mut impl GlyphRasterizer,
@@ -164,7 +211,108 @@ impl Painter {
             }
         }
 
-        paint_cursor(frame, layout, style, out);
+        // A composition REPLACES the caret rather than sitting beside it: the input method owns the
+        // insertion point while it is composing, and two carets on one cell — the terminal's and
+        // the composition's — is the picture that makes a Telex user unsure which one their
+        // next keystroke goes to.
+        match preedit.filter(|preedit| preedit.cells > 0) {
+            Some(preedit) => {
+                self.preedit_pass(preedit, frame, layout, style, cache, shaper, rasterizer, out);
+            },
+            None => paint_cursor(frame, layout, style, out),
+        }
+    }
+
+    /// Draws one composition over the cells the cursor stands on.
+    ///
+    /// Everything it emits is one span wide: a bed so the shell's own echo cannot read through, the
+    /// underline every platform draws under uncommitted text, the composition's caret, and the text
+    /// itself. Nothing here consults a row, because the composing text is not in one.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the same six owners `paint` itself takes, plus the composition — every one used once"
+    )]
+    fn preedit_pass(
+        &mut self,
+        preedit: Preedit<'_>,
+        frame: &Frame,
+        layout: &BlockLayout,
+        style: &PaintStyle,
+        cache: &mut GlyphCache,
+        shaper: &mut impl TextShaper,
+        rasterizer: &mut impl GlyphRasterizer,
+        out: &mut DrawList,
+    ) {
+        // No cursor means no insertion point, and a composition drawn at a guessed one would be
+        // worse than a composition not drawn: it would claim the next keystroke lands somewhere it
+        // does not.
+        let Some((cursor, geometry, top)) = cursor_placement(frame, layout, style) else {
+            return;
+        };
+        let cols = ColumnSpan {
+            start: cursor.x,
+            end: cursor.x.saturating_add(preedit.cells),
+        };
+        let bounds = geometry.span(top, cols);
+
+        // The bed is opaque and in the BACKGROUND buffer, so the glyphs of the composition draw
+        // over it and the grid's own cells under it do not. Drawn even on the default
+        // background, unlike `background_pass`'s coalescing: the cells beneath may carry
+        // any colour at all, and this is the one rect whose job is to hide them.
+        out.push_background(rect_instance(
+            bounds,
+            frame.colors.background.into(),
+            RectStyle::Solid,
+        ));
+
+        let underline = geometry.underline(top, cols, UnderlineStyle::Single);
+        for line in [underline.first, underline.second].into_iter().flatten() {
+            out.push_overlay(rect_instance(
+                line,
+                frame.colors.foreground.into(),
+                underline.style,
+            ));
+        }
+
+        // A BAR, whatever shape the terminal's own cursor has: this caret sits between two
+        // composing characters rather than on one, and a block drawn there would cover the
+        // character the user is about to change. `focused: true` because a composition only
+        // exists while the surface holds the keyboard — there is no unfocused state for it
+        // to be hollow in.
+        let caret = geometry.cursor(
+            top,
+            FrameCursor {
+                x: cursor.x.saturating_add(preedit.cursor_cells),
+                shape: CursorShape::Bar,
+                blinking: false,
+                at_wide_tail: false,
+                ..cursor
+            },
+            true,
+        );
+        out.push_overlay(rect_instance(
+            caret.rect,
+            cursor_color(cursor, style),
+            caret.style,
+        ));
+
+        self.shape_and_emit(
+            preedit.text,
+            cols,
+            top,
+            geometry.baseline(top),
+            &geometry,
+            style,
+            TextKey {
+                color: frame.colors.foreground.into(),
+                bold: false,
+                italic: false,
+            },
+            cache,
+            shaper,
+            rasterizer,
+            out,
+        );
     }
 
     #[expect(
@@ -343,19 +491,12 @@ impl Painter {
                 end = end.saturating_add(1);
             }
 
-            self.shape_and_emit(
-                row,
-                ColumnSpan { start, end },
-                top,
-                baseline,
-                geometry,
-                style,
-                key,
-                cache,
-                shaper,
-                rasterizer,
-                out,
-            );
+            let cols = ColumnSpan { start, end };
+            if let Some(text) = run_text(row, cols) {
+                self.shape_and_emit(
+                    text, cols, top, baseline, geometry, style, key, cache, shaper, rasterizer, out,
+                );
+            }
             col = end;
         }
     }
@@ -366,7 +507,7 @@ impl Painter {
     )]
     fn shape_and_emit(
         &mut self,
-        row: &FrameRow,
+        text: &str,
         cols: ColumnSpan,
         top: f64,
         baseline: f64,
@@ -378,9 +519,6 @@ impl Painter {
         rasterizer: &mut impl GlyphRasterizer,
         out: &mut DrawList,
     ) {
-        let Some(text) = run_text(row, cols) else {
-            return;
-        };
         let origin_x = geometry.span(top, cols).x;
 
         self.shaped.clear();
@@ -430,23 +568,68 @@ impl Painter {
 /// BACKGROUND buffer so the glyph the text pass recoloured draws over it; everything else is an
 /// overlay.
 fn paint_cursor(frame: &Frame, layout: &BlockLayout, style: &PaintStyle, out: &mut DrawList) {
-    let Some(cursor) = frame.cursor else {
+    let Some((cursor, geometry, top)) = cursor_placement(frame, layout, style) else {
         return;
     };
     if !cursor_visible(cursor, style) {
         return;
     }
-    let Some(block) = layout
-        .block_at_row(cursor.y)
-        .filter(|block| block.visible.contains(cursor.y))
-    else {
-        return;
-    };
-    let cell_height = style.geometry.metrics.cell_height;
-    let Some(content_y) = block.row_y(cursor.y, cell_height) else {
-        return;
-    };
+    let placed = geometry.cursor(top, cursor, style.focused);
+    let instance = rect_instance(placed.rect, cursor_color(cursor, style), placed.style);
+    if placed.inverts_glyph {
+        out.push_background(instance);
+    } else {
+        out.push_overlay(instance);
+    }
+}
 
+/// The cursor's colour with [`PaintStyle::cursor_opacity`] folded into its alpha.
+///
+/// The engine decides the HUE — a theme's default or whatever `OSC 12` last set — and the renderer
+/// decides how solid it is, so the two meet exactly here and nowhere else.
+///
+/// `f64::max` then `f64::min` rather than `clamp`, because a NaN opacity has to land somewhere
+/// honest: `max` puts NaN at `0.0` and `min` leaves it, so a caller that computed its way to NaN
+/// gets an invisible cursor rather than an alpha byte cast from garbage. `clamp` RETURNS NaN, which
+/// is exactly the value the cast below has no answer for.
+#[expect(
+    clippy::manual_clamp,
+    reason = "the NaN behaviour is the reason for the pair — `clamp` propagates it, this does not"
+)]
+fn cursor_color(cursor: FrameCursor, style: &PaintStyle) -> Rgba {
+    let opacity = f64::min(f64::max(style.cursor_opacity, 0.0), 1.0);
+    let alpha = opacity * 255.0;
+    Rgba {
+        r: cursor.color.r,
+        g: cursor.color.g,
+        b: cursor.color.b,
+        // `as` after the bound above is exact for `0.0..=255.0`, and saturating rather than wrapping
+        // for anything that somehow got through — including the NaN the `max` already sent to zero.
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the value is bounded to 0.0..=255.0 two lines up, where `as` is exact"
+        )]
+        a: alpha.round() as u8,
+    }
+}
+
+/// Where the insertion point is this frame: the cursor, its block's geometry, and the row's top.
+///
+/// Shared by the caret and the composition so the two can never land on different cells. The blink
+/// clock is deliberately NOT consulted here — a composition is drawn through the dark half of the
+/// cycle, and folding the test in would have made that a special case rather than the caller's
+/// rule.
+fn cursor_placement(
+    frame: &Frame,
+    layout: &BlockLayout,
+    style: &PaintStyle,
+) -> Option<(FrameCursor, CellGeometry, f64)> {
+    let cursor = frame.cursor?;
+    let block = layout
+        .block_at_row(cursor.y)
+        .filter(|block| block.visible.contains(cursor.y))?;
+    let content_y = block.row_y(cursor.y, style.geometry.metrics.cell_height)?;
     let geometry = CellGeometry {
         metrics: CellMetrics {
             origin_x: style.geometry.metrics.origin_x + block.body.x,
@@ -454,13 +637,7 @@ fn paint_cursor(frame: &Frame, layout: &BlockLayout, style: &PaintStyle, out: &m
         },
         ..style.geometry
     };
-    let placed = geometry.cursor(style.content_origin_y + content_y, cursor, style.focused);
-    let instance = rect_instance(placed.rect, cursor.color.into(), placed.style);
-    if placed.inverts_glyph {
-        out.push_background(instance);
-    } else {
-        out.push_overlay(instance);
-    }
+    Some((cursor, geometry, style.content_origin_y + content_y))
 }
 
 /// Whether the cursor draws this frame.
@@ -494,10 +671,12 @@ fn text_key(
     // Under a filled block cursor the glyph takes the cell's BACKGROUND, which is what makes the
     // character under the caret readable against the caret.
     let color = if inverting_cursor_col == Some(col) {
-        Rgba::from(if cell.bg == frame.colors.background {
-            frame.colors.background
-        } else {
-            cell.bg
+        style.cursor_text.unwrap_or_else(|| {
+            Rgba::from(if cell.bg == frame.colors.background {
+                frame.colors.background
+            } else {
+                cell.bg
+            })
         })
     } else if selected(col) {
         style.selection.foreground.unwrap_or_else(|| cell.fg.into())
@@ -571,6 +750,7 @@ mod tests {
     #![expect(
         clippy::indexing_slicing,
         clippy::unwrap_used,
+        clippy::expect_used,
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
@@ -580,7 +760,7 @@ mod tests {
         UnderlineStyle,
     };
 
-    use super::{PaintStyle, Painter, SelectionColors};
+    use super::{PaintStyle, Painter, Preedit, SelectionColors};
     use crate::atlas::AtlasFormat;
     use crate::block::{Chrome, LayoutMode, Viewport, lay_out, segment};
     use crate::glyph::{GlyphKey, GlyphRasterizer, RasterGlyph, ShapedGlyph, TextRun, TextShaper};
@@ -660,6 +840,8 @@ mod tests {
             },
             focused: true,
             blink_visible: true,
+            cursor_opacity: 1.0,
+            cursor_text: None,
         }
     }
 
@@ -695,6 +877,10 @@ mod tests {
     }
 
     fn paint(frame: &Frame, style: &PaintStyle) -> (DrawList, OneToOne) {
+        paint_with(frame, style, None)
+    }
+
+    fn paint_with(frame: &Frame, style: &PaintStyle, preedit: Option<Preedit<'_>>) -> (DrawList, OneToOne) {
         let spans = segment(frame, LayoutMode::Grid);
         let layout = lay_out(&spans, &[], Chrome::NONE, 20.0, Viewport {
             scroll_y: 0.0,
@@ -708,6 +894,7 @@ mod tests {
             frame,
             &layout,
             style,
+            preedit,
             &mut cache,
             &mut shaper,
             &mut Square,
@@ -846,6 +1033,8 @@ mod tests {
         let (lit, _) = paint(&frame, &style());
         let (dark, _) = paint(&frame, &PaintStyle {
             blink_visible: false,
+            cursor_opacity: 1.0,
+            cursor_text: None,
             ..style()
         });
 
@@ -877,6 +1066,56 @@ mod tests {
     }
 
     #[test]
+    fn cursor_opacity_reaches_the_caret_alpha_and_nothing_else() {
+        let mut frame = frame_of("abcd", |_| {});
+        frame.cursor = Some(FrameCursor {
+            x: 2,
+            y: 0,
+            shape: CursorShape::Bar,
+            color: Rgb::WHITE,
+            blinking: false,
+            at_wide_tail: false,
+            password_input: false,
+        });
+
+        for (opacity, alpha) in [(1.0, 255_u8), (0.5, 128), (2.0, 255), (-1.0, 255)] {
+            let (list, _) = paint(&frame, &PaintStyle {
+                cursor_opacity: opacity,
+                cursor_text: None,
+                ..style()
+            });
+            // `-1.0` clamps to `0.0`, whose caret is dropped before it reaches the list — so the
+            // only out-of-range case with a rect to inspect is the high one. The low one is
+            // asserted below, where its DISAPPEARANCE is the observable fact.
+            let Some(caret) = list.overlays.first() else {
+                assert!(
+                    opacity < 0.0,
+                    "only a transparent caret is dropped, not opacity {opacity}"
+                );
+                continue;
+            };
+            assert_eq!(list.overlays.len(), 1, "the bar caret at opacity {opacity}");
+            assert_eq!(caret.color.a, alpha, "opacity {opacity} out of range clamps");
+            assert_eq!(
+                (caret.color.r, caret.color.g, caret.color.b),
+                (0xFF, 0xFF, 0xFF),
+                "the HUE stays the engine's — opacity only touches the alpha"
+            );
+        }
+
+        let (invisible, _) = paint(&frame, &PaintStyle {
+            cursor_opacity: 0.0,
+            cursor_text: None,
+            ..style()
+        });
+        assert!(
+            invisible.overlays.is_empty(),
+            "a fully transparent caret is dropped rather than encoded, which is what makes opacity zero a \
+             real way to turn the cursor off"
+        );
+    }
+
+    #[test]
     fn a_bar_cursor_goes_over_the_glyph_and_leaves_the_run_alone() {
         let mut frame = frame_of("abcd", |_| {});
         frame.cursor = Some(FrameCursor {
@@ -892,6 +1131,55 @@ mod tests {
 
         assert_eq!(list.overlays.len(), 1);
         assert_eq!(shaper.runs, vec!["abcd".to_owned()]);
+    }
+
+    #[test]
+    fn cursor_text_recolours_only_the_glyph_the_caret_covers() {
+        let mut frame = frame_of("abcd", |_| {});
+        frame.cursor = Some(FrameCursor {
+            x: 2,
+            y: 0,
+            shape: CursorShape::Block,
+            color: Rgb::WHITE,
+            blinking: false,
+            at_wide_tail: false,
+            password_input: false,
+        });
+        let magenta = Rgba {
+            r: 0xFF,
+            g: 0x00,
+            b: 0xFF,
+            a: 0xFF,
+        };
+
+        let (default, _) = paint(&frame, &style());
+        let (themed, _) = paint(&frame, &PaintStyle {
+            cursor_text: Some(magenta),
+            ..style()
+        });
+
+        assert!(
+            !default.glyphs.iter().any(|glyph| glyph.color == magenta),
+            "no colour arrives unasked — `None` keeps the cell's own background"
+        );
+        assert_eq!(
+            themed
+                .glyphs
+                .iter()
+                .filter(|glyph| glyph.color == magenta)
+                .count(),
+            1,
+            "exactly the one glyph under the caret, never the three beside it"
+        );
+        assert_eq!(
+            default.glyphs.len(),
+            themed.glyphs.len(),
+            "a recolour is not a reflow: the same glyphs are drawn either way"
+        );
+        assert_eq!(
+            default.overlays, themed.overlays,
+            "the caret rect itself is untouched — this setting is about the text under it"
+        );
     }
 
     #[test]
@@ -930,6 +1218,8 @@ mod tests {
         });
         let (dark, _) = paint(&frame, &PaintStyle {
             blink_visible: false,
+            cursor_opacity: 1.0,
+            cursor_text: None,
             ..style()
         });
         assert_eq!(dark.overlays.len(), 1, "hiding it would leave no caret at all");
@@ -949,6 +1239,8 @@ mod tests {
         });
         let (dark, _) = paint(&frame, &PaintStyle {
             blink_visible: false,
+            cursor_opacity: 1.0,
+            cursor_text: None,
             ..style()
         });
         assert!(dark.overlays.is_empty());
@@ -988,6 +1280,7 @@ mod tests {
             &frame,
             &layout,
             &style(),
+            None,
             &mut cache,
             &mut shaper,
             &mut Square,
@@ -1012,6 +1305,162 @@ mod tests {
             ..style()
         });
         assert!((f64::from(list.glyphs[0].y) - (7.0 - 50.0)).abs() < 1e-6);
+    }
+
+    /// A frame with the caret parked on column one, for the composition tests.
+    fn frame_with_cursor(text: &str) -> Frame {
+        let mut frame = frame_of(text, |_| {});
+        frame.cursor = Some(FrameCursor {
+            x: 1,
+            y: 0,
+            shape: CursorShape::Block,
+            color: Rgb::WHITE,
+            blinking: false,
+            at_wide_tail: false,
+            password_input: false,
+        });
+        frame
+    }
+
+    #[test]
+    fn a_composition_draws_its_text_over_the_cells_at_the_cursor() {
+        let frame = frame_with_cursor("abcd");
+        let (list, shaper) = paint_with(
+            &frame,
+            &style(),
+            Some(Preedit {
+                text: "ế",
+                cells: 1,
+                cursor_cells: 1,
+            }),
+        );
+
+        assert!(
+            shaper.runs.contains(&"ế".to_owned()),
+            "the composing text is shaped: {:?}",
+            shaper.runs
+        );
+        let bed = list
+            .backgrounds
+            .iter()
+            .find(|rect| (f64::from(rect.x) - 10.0).abs() < 1e-6)
+            .expect("a bed under the composition, at the cursor's column");
+        assert!((f64::from(bed.width) - 10.0).abs() < 1e-6, "one cell wide");
+    }
+
+    #[test]
+    fn a_composition_replaces_the_terminal_caret_rather_than_joining_it() {
+        let frame = frame_with_cursor("abcd");
+        let (bare, _) = paint(&frame, &style());
+        let (composing, _) = paint_with(
+            &frame,
+            &style(),
+            Some(Preedit {
+                text: "ế",
+                cells: 1,
+                cursor_cells: 1,
+            }),
+        );
+
+        // The block caret is a BACKGROUND rect; the composition's bar is an overlay. Two carets on
+        // one cell is the picture this asserts against.
+        assert_eq!(
+            bare.overlays.len(),
+            0,
+            "the terminal's own block caret draws no overlay"
+        );
+        assert_eq!(
+            composing.overlays.len(),
+            2,
+            "the composition's underline and its bar caret, and nothing else"
+        );
+    }
+
+    #[test]
+    fn a_wide_composition_beds_and_underlines_every_cell_it_takes() {
+        let frame = frame_with_cursor("abcd");
+        let (list, _) = paint_with(
+            &frame,
+            &style(),
+            Some(Preedit {
+                text: "漢字",
+                cells: 4,
+                cursor_cells: 4,
+            }),
+        );
+
+        let bed = list
+            .backgrounds
+            .iter()
+            .find(|rect| (f64::from(rect.x) - 10.0).abs() < 1e-6)
+            .expect("a bed at the cursor's column");
+        assert!(
+            (f64::from(bed.width) - 40.0).abs() < 1e-6,
+            "two double-width clusters is four cells"
+        );
+        let underline = list
+            .overlays
+            .iter()
+            .find(|rect| (f64::from(rect.width) - 40.0).abs() < 1e-6)
+            .expect("an underline across the whole composition");
+        assert_eq!(underline.style, RectStyle::Solid);
+    }
+
+    #[test]
+    fn an_empty_composition_leaves_the_terminals_own_caret_standing() {
+        let frame = frame_with_cursor("abcd");
+        let (list, _) = paint_with(
+            &frame,
+            &style(),
+            Some(Preedit {
+                text: "",
+                cells: 0,
+                cursor_cells: 0,
+            }),
+        );
+        assert_eq!(list.backgrounds.len(), 1, "the block caret, and no bed");
+        assert!(list.overlays.is_empty());
+    }
+
+    #[test]
+    fn a_composition_draws_through_the_dark_half_of_the_blink() {
+        let frame = frame_with_cursor("abcd");
+        let (list, shaper) = paint_with(
+            &frame,
+            &PaintStyle {
+                blink_visible: false,
+                cursor_opacity: 1.0,
+                cursor_text: None,
+                ..style()
+            },
+            Some(Preedit {
+                text: "ế",
+                cells: 1,
+                cursor_cells: 1,
+            }),
+        );
+        assert!(
+            shaper.runs.contains(&"ế".to_owned()),
+            "a composition that blinked out would hide what the user is typing"
+        );
+        assert_eq!(list.overlays.len(), 2);
+    }
+
+    #[test]
+    fn a_composition_with_no_cursor_to_stand_on_draws_nothing() {
+        let frame = frame_of("abcd", |_| {});
+        let (list, shaper) = paint_with(
+            &frame,
+            &style(),
+            Some(Preedit {
+                text: "ế",
+                cells: 1,
+                cursor_cells: 1,
+            }),
+        );
+        assert!(!shaper.runs.contains(&"ế".to_owned()));
+        assert!(list.backgrounds.is_empty());
+        assert!(list.overlays.is_empty());
     }
 
     #[test]

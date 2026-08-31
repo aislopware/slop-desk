@@ -43,17 +43,19 @@ package enum LinkUnderlineGeometry {
 
     /// Whether the underline is live at all.
     ///
-    /// THREE independent gates and each one is a different question. `highlightActive` is the pane
-    /// model's ⌘-hold mirror — false forever on iOS, which has no ⌘ modifier and answers links by
-    /// tap-on-label instead, so the overlay is inert there without a platform gate. `detectionEnabled`
-    /// is the user's `SettingsKey.linkDetectionEnabled`, which used to be read inside a view body —
-    /// a setting consulted where nothing can call it. `isAlternateScreen` is the TUI gate: a
-    /// full-screen application owns its own cells, and underlining what looks like a path inside vim's
-    /// status line is a wrong decoration, which this family never draws.
-    package static func isArmed(
-        highlightActive: Bool, detectionEnabled: Bool, isAlternateScreen: Bool,
-    ) -> Bool {
-        highlightActive && detectionEnabled && !isAlternateScreen
+    /// TWO gates and each one is a different question. `highlightActive` is the pane model's ⌘-hold
+    /// mirror — false forever on iOS, which has no ⌘ modifier and answers links by tap-on-label
+    /// instead, so the overlay is inert there without a platform gate. `isAlternateScreen` is the TUI
+    /// gate: a full-screen application owns its own cells, and underlining what looks like a path
+    /// inside vim's status line is a wrong decoration, which this family never draws.
+    ///
+    /// ⚠️ `SettingsKey.linkDetectionEnabled` is NOT one of them, and it used to be. That setting
+    /// governs GUESSING — reading the cells and inferring a link from their text — and an `OSC 8`
+    /// link did not guess: the program declared it. Gating both on one flag meant a user who turned
+    /// detection off also lost the links their own tools had authored, which is not what the setting
+    /// says. It now gates ``strokes(links:metrics:)``'s input and nothing else.
+    package static func isArmed(highlightActive: Bool, isAlternateScreen: Bool) -> Bool {
+        highlightActive && !isAlternateScreen
     }
 
     /// The stroke under one already-clamped cell span.
@@ -78,6 +80,33 @@ package enum LinkUnderlineGeometry {
             metrics.clampedRect(row: link.row, colStart: link.colStart, colEnd: link.colEnd)
                 .map(stroke(under:))
         }
+    }
+
+    /// Every underline for the AUTHORED spans plus whatever the detector found beside them.
+    ///
+    /// Detected spans that touch an authored one are dropped rather than drawn over it. The program
+    /// said what it meant, so where the two disagree there is nothing to reconcile — and the visible
+    /// failure of drawing both is not a double underline but a `1pt` hairline at two different
+    /// column boundaries, which reads as one link ending in the middle of itself.
+    ///
+    /// `detected` arrives already filtered by `SettingsKey.linkDetectionEnabled`; `authored` never
+    /// is. See ``isArmed(highlightActive:isAlternateScreen:)`` for why those are different questions.
+    package static func strokes(
+        authored: [TerminalLinkSpan],
+        detected: [DetectedLink],
+        metrics: TerminalCellMetrics,
+    ) -> [TerminalStroke] {
+        guard metrics.cellWidth > 0, metrics.cellHeight > 0 else { return [] }
+        let unclaimed = detected.filter { link in
+            !authored.contains { span in
+                span.row == link.row && span.colStart < link.colEnd && link.colStart < span.colEnd
+            }
+        }
+        let authoredStrokes = authored.compactMap { span in
+            metrics.clampedRect(row: span.row, colStart: span.colStart, colEnd: span.colEnd)
+                .map(stroke(under:))
+        }
+        return authoredStrokes + strokes(links: unclaimed, metrics: metrics)
     }
 }
 

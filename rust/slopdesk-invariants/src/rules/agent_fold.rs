@@ -302,9 +302,15 @@ pub fn one_vocabulary_of_secret_shapes(tree: &Tree) -> Report {
 /// What a fresh install carries is spelled once
 ///
 /// The product defaults sat in a Swift `init`'s default arguments AND in the config crate's own
-/// test fixture, six values apiece with nothing connecting the two lists. A fixture that restates
-/// the other language's constants is the cross-language mirror `CLAUDE.md` bans, and the two
-/// colours were already the same literal in both files.
+/// test fixture, with nothing connecting the two lists. A fixture that restates the other
+/// language's constants is the cross-language mirror `CLAUDE.md` bans, and the two colours were
+/// already the same literal in both files.
+///
+/// The `factory()` CONSTRUCTOR the rule used to demand went with the config-text emitter (docs/68 —
+/// there is no aggregate to build any more), so what is checked is the constants themselves: the
+/// Swift side asks the door, names none of the values, and the crate carries one `FACTORY_` line
+/// per default. The floor is the count that survives a row deletion honestly — six today, and a
+/// seventh only when a seventh default exists.
 #[must_use]
 pub fn what_a_fresh_install_carries(tree: &Tree) -> Report {
     let claims = [
@@ -320,16 +326,10 @@ pub fn what_a_fresh_install_carries(tree: &Tree) -> Report {
             needle: "slopdesk_terminal_factory_text",
             message: "TerminalPreferences.swift stopped asking the door — the defaults are read, not retyped",
         },
-        Claim::Names {
-            path: "rust/slopdesk-terminal/src/config.rs",
-            needle: "pub const fn factory",
-            message: "rust/slopdesk-terminal/src/config.rs lost its factory — the fixture and the app read \
-                      one answer",
-        },
         Claim::AtLeast {
             path: "rust/slopdesk-terminal/src/config.rs",
             pattern: "FACTORY_",
-            minimum: 7,
+            minimum: 6,
             message: "rust/slopdesk-terminal/src/config.rs carries only {found} FACTORY_ lines — each \
                       default is named once",
         },
@@ -511,18 +511,14 @@ mod tests {
                 .write(super::SWIFT_TERMPREFS, "slopdesk_terminal_factory_text\n")
                 .write(
                     "rust/slopdesk-terminal/src/config.rs",
-                    "pub const fn \
-                     factory\nFACTORY_A\nFACTORY_B\nFACTORY_C\nFACTORY_D\nFACTORY_E\nFACTORY_F\nFACTORY_G\n",
+                    "FACTORY_A\nFACTORY_B\nFACTORY_C\nFACTORY_D\nFACTORY_E\nFACTORY_F\n",
                 );
         };
         seed(&fixture);
         assert!(super::what_a_fresh_install_carries(&fixture.tree()).is_clean());
 
         // A default dropped on the Rust side.
-        fixture.write(
-            "rust/slopdesk-terminal/src/config.rs",
-            "pub const fn factory\nFACTORY_A\nFACTORY_B\n",
-        );
+        fixture.write("rust/slopdesk-terminal/src/config.rs", "FACTORY_A\nFACTORY_B\n");
         assert!(!super::what_a_fresh_install_carries(&fixture.tree()).is_clean());
 
         // Or retyped on the Swift side.

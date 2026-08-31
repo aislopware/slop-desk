@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Defaults
 import Foundation
 import SlopDeskVideoProtocol
@@ -509,15 +510,33 @@ public enum SettingsKey {
     }
 
     /// The OSC-52 clipboard-WRITE access gate (`controls.clipboard-write`), default
-    /// ``ClipboardAccess/allow``.
-    public static var clipboardWrite: ClipboardAccess {
-        AppConfig.current.choice("controls.clipboard-write", ClipboardAccess.allow)
-    }
+    /// ``ClipboardAccess/allow``, with the ``clipboardShellControlledEnabled`` master switch already
+    /// folded in.
+    public static var clipboardWrite: ClipboardAccess { clipboardGates.write }
 
-    /// The OSC-52 clipboard-READ access gate (`controls.clipboard-read`), default
-    /// ``ClipboardAccess/ask``.
-    public static var clipboardRead: ClipboardAccess {
-        AppConfig.current.choice("controls.clipboard-read", ClipboardAccess.ask)
+    /// The clipboard-READ access gate (`controls.clipboard-read`), default ``ClipboardAccess/ask``,
+    /// with the master switch already folded in.
+    public static var clipboardRead: ClipboardAccess { clipboardGates.read }
+
+    /// Both directions in ONE crossing, resolved by `slopdesk_terminal::controls`.
+    ///
+    /// ⚠️ THE MASTER SWITCH IS FOLDED IN HERE AND NOWHERE ELSE, which is what makes it enforceable.
+    /// It used to be folded by the fire-time control bundle — a value only the deleted config builder
+    /// read — while the live OSC-52 path asked for `controls.clipboard-write` on its own and never
+    /// saw the switch at all. Answering the RESOLVED gate from the accessor every caller already uses
+    /// means a caller cannot forget it, and the precedence (master switch ahead of the per-direction
+    /// choice) stays stated once, in Rust.
+    ///
+    /// Both directions together rather than one door each: a master switch honoured in one direction
+    /// and not the other is precisely the failure this is guarding against.
+    private static var clipboardGates: (read: ClipboardAccess, write: ClipboardAccess) {
+        let packed = slopdesk_terminal_clipboard_gates(
+            AppConfig.current.flag("controls.clipboard-shell-controlled"),
+            UInt8(AppConfig.current.choice("controls.clipboard-read", ClipboardAccess.ask).index),
+            UInt8(AppConfig.current.choice("controls.clipboard-write", ClipboardAccess.allow).index),
+        )
+        let all = ClipboardAccess.allCases
+        return (read: all[Int(packed & 0xFF)], write: all[Int(packed >> 8)])
     }
 
     /// Whether a remote `OSC 0` / `OSC 2` may set the tab or window title

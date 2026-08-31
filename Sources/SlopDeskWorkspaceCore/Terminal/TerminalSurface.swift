@@ -246,6 +246,35 @@ public protocol TerminalViewportSnapshotting: AnyObject {
     /// The live cell geometry, or `nil` when there is no live surface (headless / placeholder) — in
     /// which case the overlays do not render.
     func cellMetrics() -> TerminalCellMetrics?
+
+    /// Every run of cells the PROGRAM declared as an `OSC 8` hyperlink, in the same row space as
+    /// ``viewportTextRows()``.
+    ///
+    /// Apart from ``viewportTextRows()`` because the two answer different questions and only one of
+    /// them is a guess. A detector reads the text and infers a link; this is the program SAYING so,
+    /// which is why the underline for it is not gated on `SettingsKey.linkDetectionEnabled` — that
+    /// setting governs guessing, and nothing here guessed.
+    func authoredLinkSpans() -> [TerminalLinkSpan]
+}
+
+/// One run of cells a program declared as an `OSC 8` hyperlink.
+///
+/// Columns only, and no URI: this is what the UNDERLINE needs, and the underline is drawn for every
+/// span at once. The URI is asked for one cell at a time, when a click has to resolve to a target —
+/// see ``TerminalSurfaceActions``' hyperlink door.
+public struct TerminalLinkSpan: Sendable, Equatable {
+    /// The viewport row, zero at the top.
+    public var row: Int
+    /// The first column the link covers.
+    public var colStart: Int
+    /// One past the last column it covers.
+    public var colEnd: Int
+
+    public init(row: Int, colStart: Int, colEnd: Int) {
+        self.row = row
+        self.colStart = colStart
+        self.colEnd = colEnd
+    }
 }
 
 // MARK: - TerminalSelectionControl (the keyboard copy-mode capability seam)

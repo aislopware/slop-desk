@@ -1,5 +1,4 @@
-//! The multi-state CONTROL knobs: what each stored token means, and which `ghostty` config token it
-//! becomes.
+//! The multi-state CONTROL knobs: what each stored token means.
 //!
 //! Seven settings in the Controls pane are not switches — each is a small closed vocabulary that
 //! survives a round trip through the preference store as a STRING. Three separable rules hang off
@@ -9,15 +8,16 @@
 //!    edit made it, a newer build's vocabulary is wider than this one's. Every parse here is
 //!    validate-then-REPAIR to the documented default — never a trap, never an [`Option`] the caller
 //!    can unwrap into one.
-//! 2. **The wire token.** Two of the seven persist under slopdesk's own semantic spelling and are
-//!    EMITTED under `ghostty`'s, and one of those mappings is INVERTED — see
-//!    [`MouseShiftCapture::config_value`], which is the single most misreadable line in the pane.
-//! 3. **The projection.** A four-state value read by a two-state control has to project, and the
+//! 2. **The projection.** A four-state value read by a two-state control has to project, and the
 //!    projection is a rule ([`MouseShiftCapture::extends_selection`]), not a `== .enabled` check.
 //!
-//! [`crate::config::Controls`] takes every one of these fields PRE-RESOLVED, which is exactly what
-//! made the mapping the portable half: the builder already speaks `ghostty`'s config tokens, so
-//! what crossed from Swift was the enum→token step and nothing else.
+//! ## The `ghostty` config spelling is gone
+//!
+//! Two of the seven used to carry a SECOND token beside the stored one — the word the deleted
+//! fork's config text spelled the same setting with, one of them inverted against this enum's own
+//! axis. Nothing emits that text any more (see [`crate::config`]), so the transcription had no
+//! reader and the inversion was a trap kept for its own sake. What a setting means is now stated
+//! once, in the token a user actually types.
 //!
 //! What is NOT here: the bundle that reads them. Its every field comes from a typed key in the
 //! preference store, and a property wrapper whose point is that the platform observes the read does
@@ -193,38 +193,6 @@ impl MouseShiftCapture {
         }
     }
 
-    /// The `ghostty` config format's `mouse-shift-capture` token.
-    ///
-    /// **The mapping is INVERTED, on purpose.** This enum's axis is "⇧ SELECTS TEXT even when the
-    /// app captures the mouse"; `ghostty`'s is the opposite — whether ⇧ is CAPTURED INTO the
-    /// mouse protocol and sent to the program. From the vendored `Config.zig`: `false` = ⇧ is
-    /// not sent and extends the selection (`ghostty`'s own default, overridable by the program
-    /// through `XTSHIFTESCAPE`); `true` = ⇧ is sent to the program (overridable); `never` =
-    /// `false` and the program CANNOT override; `always` = `true` and the program cannot
-    /// override.
-    ///
-    /// So "⇧ selects" maps to the DON'T-capture tokens and "⇧ to the program" maps to the capture
-    /// ones, and the two hard states swap words as well as sense:
-    ///
-    /// | this enum | means | `ghostty` |
-    /// | --- | --- | --- |
-    /// | [`Self::Enabled`] | ⇧ extends the selection, soft | `false` |
-    /// | [`Self::Disabled`] | ⇧ goes to the program, soft | `true` |
-    /// | [`Self::Always`] | ⇧ always selects, hard | `never` |
-    /// | [`Self::Never`] | ⇧ never selects, hard | `always` |
-    ///
-    /// [`Self::Enabled`] landing on `ghostty`'s own default is what makes a factory terminal
-    /// HONOUR the upstream behaviour rather than pin it.
-    #[must_use]
-    pub const fn config_value(self) -> &'static str {
-        match self {
-            Self::Disabled => "true",
-            Self::Enabled => "false",
-            Self::Always => "never",
-            Self::Never => "always",
-        }
-    }
-
     /// Whether ⇧ EXTENDS THE SELECTION — the ON reading of the two-state "Allow Shift with Mouse
     /// Click" switch the settings pane actually draws.
     ///
@@ -273,19 +241,6 @@ impl OptionAsAlt {
         match self {
             Self::Off => "off",
             Self::Both => "both",
-            Self::Left => "left",
-            Self::Right => "right",
-        }
-    }
-
-    /// The `ghostty` `macos-option-as-alt` token. Only the two ENDS are respelled — `off` →
-    /// `false` and `both` → `true` — while the two sided values are already `ghostty`'s own
-    /// words.
-    #[must_use]
-    pub const fn config_value(self) -> &'static str {
-        match self {
-            Self::Off => "false",
-            Self::Both => "true",
             Self::Left => "left",
             Self::Right => "right",
         }
@@ -503,21 +458,6 @@ mod tests {
         assert_eq!(ClipboardAccess::Ask.silent_read("secret"), None);
     }
 
-    /// The mapping the module doc calls the most misreadable line in the pane.
-    #[test]
-    fn the_shift_capture_mapping_is_inverted_end_to_end() {
-        assert_eq!(MouseShiftCapture::Enabled.config_value(), "false");
-        assert_eq!(MouseShiftCapture::Disabled.config_value(), "true");
-        assert_eq!(MouseShiftCapture::Always.config_value(), "never");
-        assert_eq!(MouseShiftCapture::Never.config_value(), "always");
-        // The two hard states swap words as well as sense: neither emits its own spelling.
-        for state in [MouseShiftCapture::Always, MouseShiftCapture::Never] {
-            assert_ne!(state.config_value(), state.token(), "{state:?}");
-        }
-        // The default honours `ghostty`'s own default rather than pinning against it.
-        assert_eq!(MouseShiftCapture::default().config_value(), "false");
-    }
-
     /// A stored `always` must read ON, which a bare `== enabled` check would get wrong.
     #[test]
     fn the_four_way_value_projects_onto_the_two_way_switch() {
@@ -527,16 +467,7 @@ mod tests {
         assert!(!MouseShiftCapture::Disabled.extends_selection());
     }
 
-    #[test]
-    fn option_as_alt_respells_only_its_two_ends() {
-        assert_eq!(OptionAsAlt::Off.config_value(), "false");
-        assert_eq!(OptionAsAlt::Both.config_value(), "true");
-        for sided in [OptionAsAlt::Left, OptionAsAlt::Right] {
-            assert_eq!(sided.config_value(), sided.token(), "{sided:?}");
-        }
-    }
-
-    /// The one vocabulary that needs no second spelling.
+    /// Every gate persists under a word a user can read back.
     #[test]
     fn the_clipboard_gate_persists_under_libghosttys_own_words() {
         for gate in ClipboardAccess::ALL {

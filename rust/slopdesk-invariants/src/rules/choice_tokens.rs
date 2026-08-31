@@ -451,8 +451,12 @@ mod tests {
             .count();
         assert!(literal >= 10, "only {literal} choice paths read as literal stops");
 
+        // A LIVENESS floor for the scanner, not a contract about how many choice rows exist: it
+        // catches a parser that stopped matching, which would otherwise pass this test by finding
+        // nothing. It moves down when rows are legitimately deleted — four went with the terminal
+        // config text on 2026-09-01 (`ligatures`, `bold`, `italic`, `blending`).
         let sites = super::call_sites(&tree);
-        assert!(sites.len() >= 20, "only {} choice call sites found", sites.len());
+        assert!(sites.len() >= 18, "only {} choice call sites found", sites.len());
 
         // The path the drift was found in, spelled the way it is on disk.
         let Some(super::Options::Tokens(stops)) = options.get("shell.close-confirm-window") else {

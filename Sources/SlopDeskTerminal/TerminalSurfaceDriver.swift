@@ -312,7 +312,10 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
                 background: words.background,
                 selection: words.selection,
             )
-            surface?.setPalette(words.palette)
+            // An EMPTY palette is a statement, not a gap: it means the source of these colours named
+            // no ANSI ladder — the config file states two colours and no more — so all sixteen slots
+            // stay at the engine's own rather than being cleared to nothing.
+            if !words.palette.isEmpty { surface?.setPalette(words.palette) }
             onNeedsPresent?()
         }
         // The furniture's design rides the same generation as the cells' colours, because it is the
@@ -321,6 +324,17 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         // edge tone.
         surface?.setChromeStyle(TerminalChromeAppearance.current)
         applyOptionAsAlt()
+        surface?.setScrollback(lines: broadcaster.scrollbackLines)
+        surface?.setCursorStyle(broadcaster.cursorStyle)
+        surface?.setCursorBlink(broadcaster.cursorBlink)
+        surface?.setCursorColor(broadcaster.cursorColor)
+        surface?.setCursorTextColor(broadcaster.cursorTextColor)
+        surface?.setCursorOpacity(broadcaster.cursorOpacity)
+        // Read HERE rather than carried on the broadcaster, which is the line every control knob
+        // falls on: the store publishes what it had to RESOLVE, and a plain toggle resolves to
+        // itself. `copy-on-select` and its neighbours are read the same way, where they are used.
+        surface?.setTrimTrailing(SettingsKey.trimTrailingSpacesOnCopyEnabled)
+        onNeedsPresent?()
     }
 
     /// Pushes where the pointer is, in surface points, or that it has left.
@@ -334,6 +348,18 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         guard surface?.setHover(point) == true else { return }
         onNeedsPresent?()
     }
+
+    /// Pushes what an input method is composing, presenting only when the picture would change.
+    ///
+    /// The composition never reaches the engine — see the door. Passing `""` clears it, which is
+    /// what an input method committing or cancelling reports.
+    func setMarkedText(_ text: String, cursorBytes: Int) {
+        guard surface?.setMarkedText(text, cursorBytes: cursorBytes) == true else { return }
+        onNeedsPresent?()
+    }
+
+    /// The caret's cell in view points, for an input method's candidate window.
+    func caretRect() -> CGRect? { surface?.caretRect() }
 
     /// Re-reads `macos-option-as-alt` and pushes it.
     func applyOptionAsAlt() {
@@ -401,6 +427,71 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
 
     /// The OSC 8 URI a cell carries, or `nil`. An AUTHORED link, which wins over a detected one.
     func hyperlink(column: Int, row: Int) -> String? { surface?.hyperlink(column: column, row: row) }
+
+    /// The link under a point in view POINTS — the AUTHORED one first, the detected one after.
+    ///
+    /// ## Why the authored one wins
+    ///
+    /// A cell can carry both: a program may wrap `OSC 8` around text that also LOOKS like a path,
+    /// and `gcc` emitting `file:///…#L12` over the words `src/main.c:12` is the ordinary case rather
+    /// than a contrived one. The program said what it meant; a detector guessing a different span
+    /// over the top of it opens something else (`docs/68` §5.5).
+    ///
+    /// **Link detection's setting does not gate the authored path**, deliberately. "Auto-Detect Link
+    /// Schemes" is a rule about GUESSING — how eagerly to read a URL out of ordinary text — and a
+    /// program that emitted `OSC 8` did not guess. Turning detection off silences the heuristic, not
+    /// the terminal's own hyperlink protocol.
+    ///
+    /// `slop` is how far off a target a touch may land, in points; a pointer passes zero.
+    func link(at point: CGPoint, cwd: String?, slop: CGFloat = 0) -> DetectedLink? {
+        guard let metrics = cellMetrics() else { return nil }
+        if let authored = authoredLink(at: point, metrics: metrics) { return authored }
+        guard SettingsKey.linkDetectionEnabled else { return nil }
+        let links = TerminalLinkDetector.detect(
+            rows: viewportTextRows(), cwd: cwd, schemes: SettingsKey.linkSchemePolicy,
+        )
+        return TerminalLinkHitTest.link(
+            in: links, metrics: metrics, pointX: point.x, pointY: point.y, slop: slop,
+        )
+    }
+
+    /// The `OSC 8` span under a point, widened to the whole run that shares its URI.
+    ///
+    /// The engine flags the link per CELL and shares one URI across the run — a URL per character
+    /// per frame is what the flag exists to avoid — so the extent is recovered by walking outwards
+    /// while the answer stays the same. That walk costs one door call per cell and runs ONLY when
+    /// the pointer is already over a link, which is the rare case; a pointer over ordinary text pays
+    /// the single flag read and stops.
+    ///
+    /// The span matters because a menu names what it will open and an underline has to end
+    /// somewhere. A one-cell answer would title the menu after a character.
+    private func authoredLink(at point: CGPoint, metrics: TerminalCellMetrics) -> DetectedLink? {
+        guard let cell = TerminalLinkHitTest.cell(metrics: metrics, pointX: point.x, pointY: point.y),
+              let uri = hyperlink(column: cell.column, row: cell.row)
+        else {
+            return nil
+        }
+        var start = cell.column
+        while start > 0, hyperlink(column: start - 1, row: cell.row) == uri {
+            start -= 1
+        }
+        var end = cell.column + 1
+        while hyperlink(column: end, row: cell.row) == uri {
+            end += 1
+        }
+        // `file://` is the one authored scheme that names something on disk, so it is the one that
+        // resolves — everything else is a URL and has no filesystem answer to give. Derived from
+        // `URL` rather than by trimming the scheme, so a percent-escaped path arrives decoded.
+        let file = URL(string: uri).flatMap { $0.isFileURL ? $0.path : nil }
+        return DetectedLink(
+            row: cell.row,
+            colStart: start,
+            colEnd: end,
+            kind: file == nil ? .url : .fileURL,
+            raw: uri,
+            resolvedAbsolute: file,
+        )
+    }
 
     // MARK: - Input
 
@@ -579,12 +670,14 @@ extension TerminalSurfaceDriver {
             let selection = selectionText(.plain) ?? ""
             guard copySelection() else { return false }
             guard cut == .copyAndDelete else { return true }
-            // `selectionEndsAtCursor` is the policy's own documented seam and is passed `false` on
-            // both platforms: nothing today can PROVE the selection ends where the cursor is, and an
-            // unprovable geometry deletes nothing rather than the wrong characters. The count is
-            // therefore 0 and the cut degrades to a copy — which is the safe half of the rule, not a
-            // missing call.
-            let deletes = CutSelectionPolicy.deleteCount(selection: selection, selectionEndsAtCursor: false)
+            // The geometry the policy asks about, answered by the one thing that holds both the
+            // selection and the cursor. It reads the last DRAWN frame, so a cut fired between a
+            // programmatic selection and the next present sees the older geometry and refuses —
+            // which deletes nothing and degrades to a copy, the safe direction of the two.
+            let deletes = CutSelectionPolicy.deleteCount(
+                selection: selection,
+                selectionEndsAtCursor: surface?.selectionEndsAtCursor() ?? false,
+            )
             if deletes > 0 {
                 onWrite?(Data(repeating: 0x7F, count: deletes))
             }
@@ -759,6 +852,10 @@ extension TerminalSurfaceDriver: @MainActor TerminalViewportSnapshotting {
 
     func cellMetrics() -> TerminalCellMetrics? {
         surface?.cellMetrics()
+    }
+
+    func authoredLinkSpans() -> [TerminalLinkSpan] {
+        surface?.hyperlinkSpans() ?? []
     }
 }
 

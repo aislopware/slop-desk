@@ -188,6 +188,33 @@ final class TerminalRendererSurface {
         )
     }
 
+    /// Pushes what an input method is composing over the cursor, or clears it with an empty string.
+    ///
+    /// `cursorBytes` is the composition's own caret as a UTF-8 offset into `text`; the door measures
+    /// the cells, because measuring them is the engine's segmentation and not this side's. Answers
+    /// whether the next frame would differ — an input method re-reports an unchanged composition on
+    /// every arrow key, and presenting on each would be a full render for the same picture.
+    func setMarkedText(_ text: String, cursorBytes: Int) -> Bool {
+        guard let handle else { return false }
+        return Array(text.utf8).withUnsafeBufferPointer { bytes in
+            slopdesk_term_surface_set_marked_text(handle, bytes.baseAddress, bytes.count, cursorBytes)
+        }
+    }
+
+    /// The caret's cell in view POINTS, or `nil` when no cursor is on screen.
+    ///
+    /// The one caller is an input method asking where to hang its candidate list, which is why it is
+    /// the CELL's rect rather than the caret's drawn shape — see the door.
+    func caretRect() -> CGRect? {
+        guard let handle else { return nil }
+        var box = [Double](repeating: 0, count: 4)
+        let placed = box.withUnsafeMutableBufferPointer { out in
+            slopdesk_term_surface_caret_rect(handle, out.baseAddress)
+        }
+        guard placed else { return nil }
+        return CGRect(x: box[0], y: box[1], width: box[2], height: box[3])
+    }
+
     /// Pushes the theme's ANSI colours, from index `0`. A prefix — see the door.
     func setPalette(_ entries: [UInt32]) {
         guard let handle, !entries.isEmpty else { return }
@@ -243,6 +270,60 @@ final class TerminalRendererSurface {
     func setOptionAsAlt(_ value: UInt8) {
         guard let handle else { return }
         slopdesk_term_surface_set_option_as_alt(handle, value)
+    }
+
+    // MARK: - Settings
+
+    /// Caps the scrollback at a number of ROWS. Zero or negative keeps none.
+    func setScrollback(lines: Int) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_scrollback(handle, Int64(clamping: lines))
+    }
+
+    /// The caret's shape until a program asks for another one.
+    ///
+    /// A DEFAULT, which is the whole reason a user is allowed to set it: `DECSCUSR` from a running
+    /// program still wins, so a bar in the shell coexists with vim's block in insert mode.
+    func setCursorStyle(_ style: UInt8) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_cursor_style(handle, style)
+    }
+
+    /// Whether the caret blinks until a program says otherwise: `1` on, `2` off, anything else the
+    /// engine's own default.
+    func setCursorBlink(_ mode: UInt8) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_cursor_blink(handle, mode)
+    }
+
+    /// The caret's colour until `OSC 12` overrides it. `nil` follows the foreground.
+    func setCursorColor(_ rgb: UInt32?) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_cursor_color(handle, rgb ?? 0, rgb != nil)
+    }
+
+    /// How solid the caret is drawn, `0`–`1`. Zero hides it.
+    func setCursorOpacity(_ opacity: Double) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_cursor_opacity(handle, opacity)
+    }
+
+    /// The colour the glyph under a filled caret takes. `nil` keeps the cell's own background.
+    func setCursorTextColor(_ rgb: UInt32?) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_cursor_text_color(handle, rgb ?? 0, rgb != nil)
+    }
+
+    /// Whether a copy drops the blanks a terminal padded each short line with.
+    func setTrimTrailing(_ trim: Bool) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_trim_trailing(handle, trim)
+    }
+
+    /// Forgets any pointer button the encoder was tracking, for a pointer that left mid-drag.
+    func resetPointer() {
+        guard let handle else { return }
+        slopdesk_term_surface_reset_pointer(handle)
     }
 
     // MARK: - Input
@@ -359,6 +440,16 @@ final class TerminalRendererSurface {
     func selection(_ verb: SelectionVerb) -> Bool {
         guard let handle else { return false }
         return slopdesk_term_surface_selection_verb(handle, verb.rawValue)
+    }
+
+    /// Whether the selection stops exactly where the cursor stands.
+    ///
+    /// What a CUT asks before it sends a single `DEL`: cutting from a terminal is not an edit the
+    /// terminal can perform, so the delete half is backspaces, and those only remove the selected
+    /// text when the cursor sits immediately past it.
+    func selectionEndsAtCursor() -> Bool {
+        guard let handle else { return false }
+        return slopdesk_term_surface_selection_ends_at_cursor(handle)
     }
 
     /// How a copied selection is spelled.
@@ -790,6 +881,21 @@ final class TerminalRendererSurface {
         }
         // swiftlint:disable:next optional_data_string_conversion
         return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
+    }
+
+    /// Every authored link on screen, for the overlay that underlines them.
+    ///
+    /// A LIST rather than ``hyperlink(column:row:)`` per cell, because an overlay draws them all at
+    /// once: asking cell by cell would cost `rows × cols` crossings every frame to answer a question
+    /// one walk of the frame already knows.
+    func hyperlinkSpans() -> [TerminalLinkSpan] {
+        guard let handle else { return [] }
+        let records = ffiAnswerRecords(SlopDeskTerminalLinkSpan.self) { out, cap in
+            slopdesk_term_surface_hyperlink_spans(handle, out, cap)
+        }
+        return records.map { record in
+            TerminalLinkSpan(row: Int(record.row), colStart: Int(record.start), colEnd: Int(record.end))
+        }
     }
 
     // MARK: - What the far side pushed

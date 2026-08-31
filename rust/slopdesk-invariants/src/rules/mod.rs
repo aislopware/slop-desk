@@ -602,11 +602,6 @@ pub fn registry() -> Vec<Rule> {
             check: terminal_config::one_keybind_grammar_no_callback,
         },
         Rule {
-            name: "terminal-config-emitter",
-            origin: "check-supervisor.sh (deleted)",
-            check: terminal_config::one_terminal_config_emitter_swift,
-        },
-        Rule {
             name: "named-key-table",
             origin: "check-supervisor.sh (deleted)",
             check: terminal_config::one_named_key_table_what,

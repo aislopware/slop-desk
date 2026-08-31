@@ -46,15 +46,14 @@ final class SlateGlassStatusInkTests: XCTestCase {
         XCTAssertEqual(Slate.Native.Terminal.err, SlateNativeColor(slateHex: proRed))
     }
 
-    /// …and they are the very entries the terminal's cells are configured with, not a parallel pair
-    /// that merely happens to match today.
-    func testTheInksMatchTheAnsiPaletteSentToLibghostty() throws {
-        let palette = SlateTheme.app.ansiPalette
+    /// …and they are the very entries the terminal's cells are painted with, not a parallel pair
+    /// that merely happens to match today. The 24-bit literals themselves, which is what crosses to
+    /// the renderer — the 6-hex spelling this used to read died with the terminal config text.
+    func testTheInksMatchTheAnsiPaletteSentToLibghostty() {
+        let palette = SlateTheme.app.ansi
         XCTAssertEqual(palette.count, 16)
-        let red = try XCTUnwrap(UInt32(palette[1], radix: 16))
-        let green = try XCTUnwrap(UInt32(palette[2], radix: 16))
-        XCTAssertEqual(Slate.Native.Terminal.err, SlateNativeColor(slateHex: red))
-        XCTAssertEqual(Slate.Native.Terminal.ok, SlateNativeColor(slateHex: green))
+        XCTAssertEqual(Slate.Native.Terminal.err, SlateNativeColor(slateHex: palette[1]))
+        XCTAssertEqual(Slate.Native.Terminal.ok, SlateNativeColor(slateHex: palette[2]))
     }
 
     /// The status pair must NOT be the system one — the regression this file exists for.

@@ -489,10 +489,15 @@ impl VtSession {
 
     /// The selected text, or `None` when nothing is selected.
     ///
-    /// `unwrap` is on: a line the terminal soft-wrapped at column 80 is ONE line as far as the
-    /// program that printed it is concerned, and pasting it back with a newline in the middle is
-    /// how a copied command runs as two broken ones. `trim` is on for the same class of reason
-    /// — the blanks a terminal pads a short line with are not text anybody selected.
+    /// `unwrap` is always on: a line the terminal soft-wrapped at column 80 is ONE line as far as
+    /// the program that printed it is concerned, and pasting it back with a newline in the middle
+    /// is how a copied command runs as two broken ones. There is no reading under which the
+    /// wrap point is text, so it is not a setting.
+    ///
+    /// `trim` is [`VtSession::set_trim_selection`], and it IS a setting, because the two readings
+    /// are both defensible: the blanks a terminal padded a short line with are usually not text
+    /// anybody selected, but someone copying a column out of `ls -l` may want the padding that
+    /// keeps the column square.
     ///
     /// # Errors
     /// The engine's own error, or [`VtError::Engine`] with `OutOfSpace` if the selection grew
@@ -507,7 +512,7 @@ impl VtSession {
         let options = FormatOptions::new()
             .with_emit_format(format.into())
             .with_unwrap(true)
-            .with_trim(true);
+            .with_trim(self.trim_selection);
 
         let required = match self.terminal.format_selection_buf(options, &mut small) {
             Ok(None) => return Ok(None),
@@ -520,7 +525,7 @@ impl VtSession {
         let options = FormatOptions::new()
             .with_emit_format(format.into())
             .with_unwrap(true)
-            .with_trim(true);
+            .with_trim(self.trim_selection);
         Ok(self
             .terminal
             .format_selection_buf(options, &mut large)?

@@ -330,18 +330,10 @@ final class PhoneTerminalRendererView: UIView {
     ///
     /// ``TerminalTouchSelection/linkHitSlop`` rather than the Mac's exact reading: a fingertip is a
     /// contact patch whose reported centre is a guess, and the phone gets ONE shot at the question with
-    /// no hover to correct it. The detection and the hit-test are the same pair the Mac runs.
+    /// no hover to correct it. The door is ``TerminalSurfaceDriver/link(at:cwd:slop:)``, the same one
+    /// the Mac runs, so an `OSC 8` hyperlink outranks a detected path here too.
     private func detectedLink(at point: CGPoint) -> DetectedLink? {
-        guard SettingsKey.linkDetectionEnabled, let metrics = driver.cellMetrics() else { return nil }
-        let links = TerminalLinkDetector.detect(
-            rows: driver.viewportTextRows(),
-            cwd: model?.linkCwd,
-            schemes: SettingsKey.linkSchemePolicy,
-        )
-        return TerminalLinkHitTest.link(
-            in: links, metrics: metrics, pointX: point.x, pointY: point.y,
-            slop: CGFloat(TerminalTouchSelection.linkHitSlop),
-        )
+        driver.link(at: point, cwd: model?.linkCwd, slop: CGFloat(TerminalTouchSelection.linkHitSlop))
     }
 
     /// The menu, built from the PURE ``TerminalContextMenu``: same items, same order, same enablement,

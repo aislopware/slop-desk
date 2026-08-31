@@ -61,7 +61,7 @@ pub mod session;
 pub use events::{ClipboardTarget, ClipboardWrite};
 pub use frame::{
     CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameColors, FrameCursor, FrameDirty, FrameRow,
-    Rgb, RowSemantic, TextSpan, UnderlineStyle,
+    Rgb, RowSemantic, TextSpan, UnderlineStyle, text_cells,
 };
 pub use input::{KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt};
 pub use keycode::key_from_macos_keycode;

@@ -16,7 +16,6 @@ const SWIFT_LOADER: &str = "Sources/SlopDeskVideoProtocol/Settings/KeybindConfig
 /// `slopdesk config`, which prints a verdict about that same file.
 const RUST_CLI_CONFIG: &str = "rust/slopdesk-cli/src/shell/config.rs";
 const SWIFT_ENVBRIDGE: &str = "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift";
-const SWIFT_TERMCONF: &str = "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift";
 /// Where the swipe-nav operating point is parsed, and every question about it answered.
 const SWIPE_NAV_CONFIG: &str = "rust/slopdesk-video/src/swipe_nav_config.rs";
 
@@ -134,7 +133,7 @@ pub fn a_number_is_spelled_once(tree: &Tree) -> Report {
                       config text spell a number by it",
         },
         Claim::NoneOf {
-            paths: &[SWIFT_TERMCONF, SWIFT_LOADER, SWIFT_ENVBRIDGE],
+            paths: &[SWIFT_LOADER, SWIFT_ENVBRIDGE],
             pattern: "repeating: 0, count: needed",
             view: View::Code,
             message: "{files} measures a text door by hand again — lentText asks and fills so the two \
@@ -293,7 +292,6 @@ mod tests {
         fixture
             .write(super::SWIFT_ENVBRIDGE, "slopdesk_settings_env_number_text\n")
             .write("rust/slopdesk-terminal/src/config.rs", "fn number_text\n")
-            .write(super::SWIFT_TERMCONF, "kept so the ban has a haystack\n")
             .write(super::SWIFT_LOADER, "kept so the ban has a haystack\n");
     }
 
@@ -309,7 +307,7 @@ mod tests {
         // The measure-then-fill dance, re-typed at a call site.
         numbers(&fixture);
         fixture.append(
-            super::SWIFT_TERMCONF,
+            super::SWIFT_LOADER,
             "var out = [UInt8](repeating: 0, count: needed)\n",
         );
         assert!(!super::a_number_is_spelled_once(&fixture.tree()).is_clean());

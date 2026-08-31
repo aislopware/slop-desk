@@ -288,10 +288,6 @@ const FLOOR: &[(&str, Floor)] = &[
         Floor::SwiftRuntime,
     ),
     (
-        "Sources/SlopDeskWorkspaceCore/Workspace/Store/AppearanceApplier.swift",
-        Floor::ShellDeDuplication,
-    ),
-    (
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/OnLaunchBehavior.swift",
         Floor::Vocabulary,
     ),

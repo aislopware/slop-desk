@@ -422,6 +422,8 @@ mod tests {
             },
             focused: true,
             blink_visible: true,
+            cursor_opacity: 1.0,
+            cursor_text: None,
         }
     }
 

@@ -232,9 +232,35 @@ pixel-pushing to the host application."
 5. cursor: block / bar / underline, blink, hollow when unfocused
 6. underline variants and underline colour
 7. selection highlight
-8. **marked-text (preedit) drawing in the grid.** `NSTextInputClient`/`UITextInput` come free with
-   AppKit/UIKit — that is the argument that decided the framework — but drawing marked text in a
-   terminal grid is renderer work, and Telex is the reason it is on the critical path
+8. **marked-text (preedit) drawing in the grid — BUILT.** `NSTextInputClient` comes free with
+   AppKit — that is the argument that decided the framework — but drawing marked text in a terminal
+   grid is renderer work, and Telex is the reason it was on the critical path. `paint.rs`'s
+   `Preedit` draws the composition over the cells the cursor stands on: an opaque bed so the shell's
+   own echo cannot read through, the underline every platform puts under uncommitted text, and a BAR
+   caret at the offset the input method reported — replacing the terminal's own caret rather than
+   joining it, and drawn through the dark half of the blink. It is measured in cells by
+   `slopdesk_vterm::text_cells`, which is the ENGINE's segmenter: a base plus its combining tone
+   marks is one cluster in one cell, and a second width table would place the caret three cells too
+   far right on exactly the sequences a Telex preedit is made of.
+
+   **The composition never reaches the engine.** An input method may replace the whole run on the
+   next keystroke, and text fed to the engine is on the grid for good. So it crosses as
+   `slopdesk_term_surface_set_marked_text` and is drawn, never fed; the commit arrives through the
+   ordinary key door. `slopdesk_term_surface_caret_rect` answers where the candidate window hangs,
+   in points, off the LAYOUT — with blocks a row's y is not `row × cellHeight`, and a cursor
+   scrolled back under a stack of headers is where the two disagree.
+
+   ⚠️ **`macos-option-as-alt` and the input method are exclusive, and the setting decides.** A press
+   handed to `interpretKeyEvents` under that setting comes back as the layout's composed character
+   with the Option already spent — the meta prefix the setting exists to produce, gone. So an Option
+   the user has given to Alt skips the input context entirely; with the setting off, a
+   US-International dead key still composes.
+
+   **UIKit is NOT done.** `PhoneTerminalRendererView` conforms to no text-input protocol at all — it
+   reads a hardware keyboard through `pressesBegan` — so the phone has no composition and no
+   software keyboard in the terminal. That is a pre-existing shape, not a regression of this work,
+   and closing it is a `UITextInput` conformance rather than more renderer work: the preedit pass
+   above is already shared.
 9. scrollbar geometry, replacing `ghostty_surface_viewport_info` and the `SCROLLBAR` action
 10. padding, content scale, resize → cols·rows, which `rust/slopdesk-terminal/src/geometry.rs`
     already computes
@@ -373,6 +399,45 @@ frame's flag FIRST, so a pointer crossing ordinary text never reaches the engine
 This is the AUTHORED link, and it is a different question from the DETECTED one
 `rust/slopdesk-terminal/src/link.rs` answers by scanning plain text for URLs. A cell can have both.
 The authored URI wins, because the program said what it meant.
+
+**One door ranks them**, `TerminalSurfaceDriver.link(at:cwd:slop:)`, and both platforms call it —
+the Mac's context menu and ⌘-hover, the phone's long press. It asks the authored question first and
+falls back to the detector, so the ranking is decided once rather than at each call site. The
+engine flags the link per CELL and shares one URI across the run, so the SPAN a menu names is
+recovered by walking outwards while the answer stays the same; that walk runs only when the pointer
+is already over a link.
+
+**Link detection's setting does not gate the authored path.** "Auto-Detect Link Schemes" is a rule
+about GUESSING — how eagerly to read a URL out of ordinary text — and a program that emitted `OSC 8`
+did not guess. Turning detection off silences the heuristic, not the terminal's own protocol.
+
+### 5.6 Settings: typed doors, and the rows that had none
+
+`ghostty_config_load_string` took a whole `key = value` TEXT and the fork re-parsed itself from it.
+There is no such door on `libghostty-vt`, so every setting the renderer honours is its own call, and
+`TerminalSurfaceDriver.applySettings()` — armed on `TerminalConfigBroadcaster.generation` — is the
+whole live-reload path. A setting that grows a door and is not added there is a setting the user can
+only change by reopening the pane.
+
+The emitter is DELETED rather than left standing: `rust/slopdesk-terminal/src/config.rs` went 883 →
+~115 lines, its FFI face 507 → ~90, and `TerminalConfigBuilder.swift`, the `TerminalControls` bundle
+and the two `slopdesk-invariants` rules keyed on the emitter went with it. What survives is what had
+a second reader all along — the `FACTORY_*` constants the settings table publishes as each row's
+default, and `number_text`, which spells a number the way a user types one.
+
+**Two of the doors set a DEFAULT, and that distinction is the whole design.** `set_cursor_style`,
+`_blink` and `_color` move the ENGINE's default, so a `DECSCUSR` or `OSC 12` from a running program
+still wins — which is what makes a user's cursor preference safe to push at all. `_cursor_opacity`
+and `_cursor_text_color` are the opposite case: no escape sequence expresses either, so there is no
+default for a program to override and the RENDERER owns them outright. A door that cannot say which
+of the two it is has not been thought about yet.
+
+**A row with no door was deleted, not left to resolve silently.** Twelve went — `font-weight`, the
+four explicit face families, `auto-match-weight-style`, `ligatures`, `ligatures-alphabet`, `bold`,
+`italic`, `blending`, `theme`. They worked under the fork, which parsed the text, so this is a
+regression being codified rather than a feature that never landed; each returns with its actuation,
+in the same change. `docs/DECISIONS.md` §"The rows that survived their reader" argues it and names
+the two rows that were WIRED instead.
 
 ## 6. Measured
 

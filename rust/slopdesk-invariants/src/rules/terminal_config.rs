@@ -47,53 +47,6 @@ pub fn one_keybind_grammar_no_callback(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// One terminal config emitter, and Swift keeps only the enums it persists
-///
-/// The terminal engine's config text is a stable ORDER of `key = value` lines, and the order is
-/// load-bearing: `background` after `theme` is what makes the explicit colour win, the palette
-/// after `foreground` is what makes the theme's sixteen entries win over both, and `font-feature`
-/// rides EVERY build because a font that ships ligatures turns them on itself. A second emitter
-/// would not fail a test — it would quietly hand the engine a different terminal. So the tokens,
-/// the validation and the number formatting stay in `rust/slopdesk-terminal`'s `config`, and this
-/// side crosses the RAW VALUES it persists.
-#[must_use]
-pub fn one_terminal_config_emitter_swift(tree: &Tree) -> Report {
-    let claims = [
-        Claim::Names {
-            path: "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift",
-            needle: "slopdesk_terminal_config_string",
-            message: "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift no longer builds \
-                      through slopdesk_terminal_config_string — that emitter is rust/slopdesk-terminal's \
-                      config",
-        },
-        Claim::NoneOf {
-            paths: &[
-                "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift",
-                "Sources/SlopDeskVideoProtocol/Settings/TerminalFontSettings.swift",
-            ],
-            pattern: r"font-family = |font-feature = |scrollback-limit = |selection-foreground|window-padding-balance",
-            view: View::Code,
-            message: "{files} spells a terminal config line in Swift — config.rs decides which key a \
-                      preference actuates",
-        },
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift"],
-            pattern: r"func isValidHex|func formatSize|func fallbackFamilies|bytesPerScrollbackLine|clampCellHeightPercent",
-            view: View::Code,
-            message: "{files} re-derives a config rule the crate owns — hex validity, number spelling and \
-                      the clamp are config.rs's",
-        },
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskVideoProtocol/Settings/TerminalFontSettings.swift"],
-            pattern: r"baseFeatures|syntheticTokens|disablesFace|var thickens",
-            view: View::Code,
-            message: "{files} maps a font preference to a terminal config token in Swift — the enum crosses \
-                      as its RAW value",
-        },
-    ];
-    check_all(tree, &claims)
-}
-
 /// One named-key table: what a chord may be SPELLED, and what it is STORED as
 ///
 /// The grammar decides which spellings a `keybind` line may use; the near side decides which one
@@ -323,40 +276,6 @@ mod tests {
             "func literalBytes\n",
         );
         assert!(!super::one_keybind_grammar_no_callback(&fixture.tree()).is_clean());
-    }
-
-    fn write_one_terminal_config_emitter_swift(fixture: &Fixture) {
-        fixture
-            .write(
-                "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift",
-                "slopdesk_terminal_config_string\nkept so the ban has a haystack\n",
-            )
-            .write(
-                "Sources/SlopDeskVideoProtocol/Settings/TerminalFontSettings.swift",
-                "kept so the ban has a haystack\n",
-            );
-    }
-
-    #[test]
-    fn one_terminal_config_emitter_swift_holds_its_faces_to_their_doors() {
-        let fixture = Fixture::new("one-terminal-config-emitter-swift");
-        write_one_terminal_config_emitter_swift(&fixture);
-        assert!(super::one_terminal_config_emitter_swift(&fixture.tree()).is_clean());
-
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write(
-            "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift",
-            "",
-        );
-        assert!(!super::one_terminal_config_emitter_swift(&fixture.tree()).is_clean());
-
-        // And the law it was banned from respelling, respelled.
-        write_one_terminal_config_emitter_swift(&fixture);
-        fixture.append(
-            "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift",
-            "font-family = \n",
-        );
-        assert!(!super::one_terminal_config_emitter_swift(&fixture.tree()).is_clean());
     }
 
     fn write_one_named_key_table_what(fixture: &Fixture) {

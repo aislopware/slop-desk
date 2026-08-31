@@ -59,14 +59,14 @@ use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_terminal::surface_action::{SelectionEdge, SurfaceAction};
 use slopdesk_termrender::{
     BlockLayout, BlockSpan, CellGeometry, Chrome, ChromeFrame, ChromeStyle, DrawList, GlyphCache, Insets,
-    LayoutMode, PaintStyle, Painter, Rgba, SelectionColors, Thumb, Viewport, chrome, grid_size, lay_out,
-    scrollbar, segment,
+    LayoutMode, PaintStyle, Painter, Preedit, Rgba, SelectionColors, Thumb, Viewport, chrome, grid_size,
+    lay_out, scrollbar, segment,
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{
-    Autoscroll, CellFlags, ClickLadder, ClipboardWrite, CopyFormat, Frame, KeyAction, KeyPress, Mods,
-    MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SelectionAdjust, SurfacePoint, VtSession,
-    key_from_macos_keycode,
+    Autoscroll, CellFlags, ClickLadder, ClipboardWrite, CopyFormat, CursorShape, Frame, KeyAction, KeyPress,
+    Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SelectionAdjust, SurfacePoint,
+    VtSession, key_from_macos_keycode, text_cells,
 };
 
 use crate::{borrow, deliver, lent, push_text, records_of, saturating_u32, spill};
@@ -168,6 +168,16 @@ struct Surface {
     focused: bool,
     /// The renderer's blink clock. The view owns the timer; this is where its phase lands.
     blink_visible: bool,
+    /// How solid the caret is drawn, `0.0`–`1.0`.
+    ///
+    /// Lives HERE and not on the session because no terminal escape can express it — see
+    /// [`PaintStyle::cursor_opacity`]. It is the one cursor setting the engine has no opinion
+    /// about, which is exactly why it is the one held on the surface.
+    cursor_opacity: f64,
+    /// The glyph colour under a filled caret, or [`None`] to keep the cell's own background.
+    ///
+    /// Here for [`Self::cursor_opacity`]'s reason: the engine has no default to override.
+    cursor_text: Option<Rgba>,
     /// How a selection recolours what it covers, as the theme set it.
     selection: SelectionColors,
     /// The client's design for the block furniture, in the POINTS it stated it in.
@@ -200,6 +210,24 @@ struct Surface {
     pty_replies: Vec<u8>,
     /// The encoded clipboard frame, held for the same reason and cleared under the same rule.
     clipboard_writes: Vec<u8>,
+    /// What an input method is composing over the cursor, or `None` when nothing is.
+    composing: Option<Composition>,
+}
+
+/// One composition, measured where it arrived.
+///
+/// Measured HERE rather than in the paint pass because [`slopdesk_vterm::text_cells`] collects the
+/// text's scalars to walk it with the engine's own segmenter, and a composition changes on a
+/// keystroke while a frame is drawn sixty times a second. Storing the answer is what keeps that
+/// allocation off the render path.
+#[derive(Debug, Clone, Default)]
+struct Composition {
+    /// The composing text, exactly as the platform's input method last reported it.
+    text: String,
+    /// How many grid cells [`Self::text`] takes.
+    cells: u16,
+    /// How many cells into it the composition's own caret sits, clamped to [`Self::cells`].
+    cursor_cells: u16,
 }
 
 /// The drawable, measured.
@@ -268,6 +296,8 @@ impl Surface {
             layout: BlockLayout::default(),
             focused: false,
             blink_visible: true,
+            cursor_opacity: 1.0,
+            cursor_text: None,
             // A slate the theme immediately overwrites. Not black, because a surface that flashed
             // pure black between `new` and the first `set_theme` would read as a broken pane rather
             // than an empty one.
@@ -280,6 +310,7 @@ impl Surface {
             hover: None,
             pty_replies: Vec::new(),
             clipboard_writes: Vec::new(),
+            composing: None,
         };
         surface.apply_geometry();
         Some(surface)
@@ -470,6 +501,8 @@ impl Surface {
             selection: self.selection,
             focused: self.focused,
             blink_visible: self.blink_visible,
+            cursor_opacity: self.cursor_opacity,
+            cursor_text: self.cursor_text,
         };
 
         // The paint pass and the draw are separated by nothing but this line, and that is the
@@ -479,6 +512,7 @@ impl Surface {
             self.session.frame(),
             &layout,
             &style,
+            self.composing.as_ref().map(Composition::run),
             &mut self.cache,
             &mut self.shaper,
             &mut self.rasterizer,
@@ -594,6 +628,48 @@ impl Surface {
     /// The engine's current frame, for the readback doors.
     const fn frame(&self) -> &Frame {
         self.session.frame()
+    }
+
+    /// The caret's rect in POINTS, as the last draw placed it — `None` when nothing is on screen.
+    ///
+    /// The rect the CELL occupies rather than the shape the cursor is drawn as, because the one
+    /// caller is an input method asking where to hang its candidate window, and a bar cursor's
+    /// two-pixel sliver would put the candidate list under the character rather than under the
+    /// insertion point. Answered off `self.layout` — the placement the last frame actually used —
+    /// so a scrolled-back cursor answers where it is, not where its row would be at scroll zero.
+    fn caret_rect(&self) -> Option<Rect> {
+        let cursor = self.session.frame().cursor?;
+        let block = self
+            .layout
+            .block_at_row(cursor.y)
+            .filter(|block| block.visible.contains(cursor.y))?;
+        let cell_height = self.font.cell_height();
+        let content_y = block.row_y(cursor.y, cell_height)?;
+        // The trailing half of a wide character belongs to the pair's leading edge — the same
+        // correction `CellGeometry::cursor` makes, for the same reason.
+        let col = if cursor.at_wide_tail {
+            cursor.x.saturating_sub(1)
+        } else {
+            cursor.x
+        };
+        let cell_width = self.font.cell_width();
+        Some(self.on_screen(Rect {
+            x: block.body.x + f64::from(col) * cell_width,
+            y: content_y,
+            width: cell_width,
+            height: cell_height,
+        }))
+    }
+}
+
+impl Composition {
+    /// The measured composition as the paint pass reads it.
+    fn run(&self) -> Preedit<'_> {
+        Preedit {
+            text: &self.text,
+            cells: self.cells,
+            cursor_cells: self.cursor_cells,
+        }
     }
 }
 
@@ -1184,7 +1260,241 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_option_as_alt(
     });
 }
 
+/// Caps the scrollback at `lines` rows. Zero or negative keeps none at all.
+///
+/// LINES rather than bytes, and that is the point of the door: the engine's own limit is a row
+/// count, so a client that states one gets exactly what it asked for. The path this replaced spent
+/// a 256-byte-per-line ESTIMATE to reach ghostty's byte-only `scrollback-limit`, which meant a user
+/// asking for 10 000 lines got somewhere between 5 000 and 40 000 depending on how wide their
+/// output happened to be.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_scrollback(
+    handle: *mut SlopDeskTerminalSurface,
+    lines: i64,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    // `try_from` fails only for a negative, which is the same request as zero: keep nothing.
+    let rows = usize::try_from(lines).unwrap_or(0);
+    let _ = surface.session.set_scrollback_rows(Some(rows));
+}
+
+/// The shape the caret wears until a program asks for another: `0` block, `1` bar, `2` underline,
+/// `3` hollow block. Anything else restores the engine's own default.
+///
+/// A DEFAULT, so `DECSCUSR` from a running program still wins — see
+/// [`VtSession::set_default_cursor_shape`] for why that distinction is the whole design.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_style(
+    handle: *mut SlopDeskTerminalSurface,
+    style: u8,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    let _ = surface.session.set_default_cursor_shape(match style {
+        0 => Some(CursorShape::Block),
+        1 => Some(CursorShape::Bar),
+        2 => Some(CursorShape::Underline),
+        3 => Some(CursorShape::Hollow),
+        _ => None,
+    });
+}
+
+/// Whether the caret blinks until a program says otherwise: `1` on, `2` off, anything else the
+/// engine's default.
+///
+/// Three states rather than a `bool` because the setting genuinely has three: a user who has not
+/// chosen leaves the decision to DEC mode 12, and a `bool` would have to invent an answer for them.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_blink(
+    handle: *mut SlopDeskTerminalSurface,
+    mode: u8,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    let _ = surface.session.set_default_cursor_blink(match mode {
+        1 => Some(true),
+        2 => Some(false),
+        _ => None,
+    });
+}
+
+/// The caret's colour until a program overrides it, packed `0x00RRGGBB`. `present` false follows
+/// the foreground, which is the engine's own default.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_color(
+    handle: *mut SlopDeskTerminalSurface,
+    rgb: u32,
+    present: bool,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    // The three shifts cannot overflow a `u8` after the mask, so the truncation is exact.
+    let colour = present.then_some(Rgb {
+        r: ((rgb >> 16) & 0xFF) as u8,
+        g: ((rgb >> 8) & 0xFF) as u8,
+        b: (rgb & 0xFF) as u8,
+    });
+    let _ = surface.session.set_default_cursor_color(colour);
+}
+
+/// How solid the caret is drawn, `0.0`–`1.0`. Zero hides it entirely.
+///
+/// The one cursor setting that never reaches the engine, because no escape sequence can express it
+/// — see [`PaintStyle::cursor_opacity`]. Out-of-range and NaN are clamped where the caret is
+/// painted, so no value can produce a cursor nobody asked for.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_term_surface_set_cursor_opacity(
+    handle: *mut SlopDeskTerminalSurface,
+    opacity: f64,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.cursor_opacity = opacity;
+}
+
+/// The colour the glyph under a filled caret takes, packed `0x00RRGGBB`. `present` false keeps the
+/// cell's own background, which is the reading that is always legible.
+///
+/// A renderer setting for [`slopdesk_term_surface_set_cursor_opacity`]'s reason: no escape sequence
+/// names this colour, so unlike the shape, the blink and the caret's own colour there is no engine
+/// default for a program to override.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_text_color(
+    handle: *mut SlopDeskTerminalSurface,
+    rgb: u32,
+    present: bool,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    // The three shifts cannot overflow a `u8` after the mask, so the truncation is exact.
+    surface.cursor_text = present.then_some(Rgba {
+        r: ((rgb >> 16) & 0xFF) as u8,
+        g: ((rgb >> 8) & 0xFF) as u8,
+        b: (rgb & 0xFF) as u8,
+        a: 0xFF,
+    });
+}
+
+/// Whether a copy drops the blanks a terminal padded each short line with.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_term_surface_set_trim_trailing(
+    handle: *mut SlopDeskTerminalSurface,
+    trim: bool,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.session.set_trim_selection(trim);
+}
+
+/// Forgets any pointer button the encoder was tracking.
+///
+/// What a surface calls when the pointer leaves mid-drag: without it the encoder still believes a
+/// button is down and keeps reporting drag motion the user is no longer making.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_reset_pointer(handle: *mut SlopDeskTerminalSurface) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.session.reset_pointer();
+}
+
 // MARK: - Selection
+
+/// Whether the selection stops exactly where the cursor stands, which is the only arrangement in
+/// which a cut's backspaces delete the selected text rather than somebody else's.
+///
+/// Asked of the SURFACE rather than computed by the caller because the surface is the only thing
+/// that holds both halves — see [`Frame::selection_ends_at_cursor`]. A client that guessed would be
+/// guessing about where a shell put its cursor.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_selection_ends_at_cursor(
+    handle: *mut SlopDeskTerminalSurface,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    surface.session.frame().selection_ends_at_cursor()
+}
 
 /// One pointer press against the selection, answering whether the selection changed.
 ///
@@ -2646,6 +2956,156 @@ pub unsafe extern "C" fn slopdesk_term_surface_hyperlink_at(
         .unwrap_or_default();
     // SAFETY: `out` is null or writable for `cap` bytes, and `uri` was built inside this call.
     unsafe { deliver(uri.as_bytes(), out, cap) }
+}
+
+/// One run of cells a program declared as an `OSC 8` hyperlink.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlopDeskTerminalLinkSpan {
+    /// The viewport row the run sits on, counted from the top.
+    pub row: u16,
+    /// First linked column.
+    pub start: u16,
+    /// One past the last linked column.
+    pub end: u16,
+}
+
+/// Every authored hyperlink run in the viewport, answering §4's count.
+///
+/// What the hover underline needs, and the reason it is a LIST door rather than the per-cell
+/// [`slopdesk_term_surface_hyperlink_at`]: an overlay draws every link at once, so asking cell by
+/// cell would be `rows × cols` calls across the boundary for a picture that changes on every frame.
+/// This walks the frame's `CellFlags::HYPERLINK` once and allocates nothing per link.
+///
+/// Two different links that touch with no character between them arrive as one span — see
+/// [`Frame::hyperlink_spans`] for why that is the right answer for something drawing an underline.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `out` being null or writable for `cap` records.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_hyperlink_spans(
+    handle: *mut SlopDeskTerminalSurface,
+    out: *mut SlopDeskTerminalLinkSpan,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let spans: Vec<SlopDeskTerminalLinkSpan> = surface
+        .frame()
+        .hyperlink_spans()
+        .into_iter()
+        .map(|(row, span)| {
+            SlopDeskTerminalLinkSpan {
+                row,
+                start: span.start,
+                end: span.end,
+            }
+        })
+        .collect();
+    // SAFETY: `out` is null or writable for `cap` records, and `spans` was built inside this call.
+    unsafe { spill(&spans, out, cap) }
+}
+
+/// The text an input method is composing over the cursor, or nothing at all when `len` is zero.
+///
+/// ## Why the composition never reaches the engine
+///
+/// Because nothing has been typed yet. An input method may replace the whole run on the next
+/// keystroke — Telex turns `Tieengs` into `Tiếng` by rewriting what it already showed — and text
+/// fed to the engine is on the grid for good. So the surface DRAWS the composition over the cells
+/// the cursor stands on and the grid never changes; when the input method commits, the ordinary key
+/// path sends the finished text and this door is cleared.
+///
+/// `cursor_bytes` is where the composition's own caret sits, as a UTF-8 offset into `text`. A BYTE
+/// offset rather than a cell count because measuring cells is this side's job — `docs/68` §10's
+/// rule that a number a door needs is the door's to derive, not the view's. An offset that is not a
+/// character boundary, or is past the end, reads as a caret at the end: an input method that
+/// reported one is reporting a composition it has finished moving through.
+///
+/// Answers whether the next frame would DIFFER, [`slopdesk_term_surface_set_hover`]'s convention:
+/// an input method re-reports an unchanged composition on every arrow key, and a caller that
+/// presented on each would pay a full render for an identical picture.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `(text, len)` describing `len` live bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_set_marked_text(
+    handle: *mut SlopDeskTerminalSurface,
+    text: *const c_uchar,
+    len: usize,
+    cursor_bytes: usize,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    // SAFETY: the caller's obligation, restated above.
+    let composing = unsafe { lent(text, len) };
+    let wanted = if composing.is_empty() {
+        None
+    } else {
+        let cells = text_cells(composing);
+        // `get` refuses a non-boundary rather than panicking, and the whole string is the honest
+        // fallback: the caret sits after everything the input method has composed.
+        let head = composing.get(..cursor_bytes).unwrap_or(composing);
+        Some(Composition {
+            cursor_cells: text_cells(head).min(cells),
+            text: composing.to_owned(),
+            cells,
+        })
+    };
+    let changed = match (&wanted, &surface.composing) {
+        (None, None) => false,
+        (Some(next), Some(held)) => next.text != held.text || next.cursor_cells != held.cursor_cells,
+        _ => true,
+    };
+    surface.composing = wanted;
+    changed
+}
+
+/// The caret's cell in POINTS, so an input method can hang its candidate window under it.
+///
+/// `false` — and `out` untouched — when there is no cursor on screen: a collapsed block, a frame
+/// before the first draw, or a program that hid it. The caller then places its candidate window
+/// wherever the platform's default is, which is the honest outcome for "the insertion point is not
+/// visible" and better than a rect pointing at the origin.
+///
+/// The four values are written in order: `x`, `y`, `width`, `height`, in the same top-left POINT
+/// space every other pointer door on this surface takes.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `out` being null or writable for four `f64`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_caret_rect(
+    handle: *mut SlopDeskTerminalSurface,
+    out: *mut f64,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    let Some(rect) = surface.caret_rect() else {
+        return false;
+    };
+    // SAFETY: `out` is null or writable for four `f64`, and the values were built in this call.
+    unsafe { spill(&[rect.x, rect.y, rect.width, rect.height], out, 4) == 4 }
 }
 
 /// Where the block list's scroll belongs, given how tall it turned out and whether it is pinned.

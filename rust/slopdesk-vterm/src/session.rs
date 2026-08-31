@@ -37,12 +37,12 @@ use libghostty_vt::error::Error as EngineError;
 use libghostty_vt::render::{CellIterator, Dirty, RenderState, RowIterator};
 use libghostty_vt::screen::{CellContentTag, CellWide};
 use libghostty_vt::style::{Style, StyleColor};
-use libghostty_vt::terminal::{ClipboardLocation, Mode, ScrollViewport, Terminal};
+use libghostty_vt::terminal::{ClipboardLocation, CursorStyle, Mode, ScrollViewport, Terminal};
 
 use crate::events::{self, ClipboardTarget, ClipboardWrite, EventSink};
 use crate::frame::{
-    CellFlags, ColumnSpan, Frame, FrameCell, FrameColors, FrameCursor, FrameDirty, Rgb, TextSpan,
-    UnderlineStyle,
+    CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameColors, FrameCursor, FrameDirty, Rgb,
+    TextSpan, UnderlineStyle,
 };
 use crate::input::{KeyPress, Keyboard, MouseMove, OptionAsAlt, Pointer, SurfaceGeometry};
 
@@ -182,6 +182,12 @@ pub struct VtSession {
     /// notifications, progress. The session's half of the shared cell described in
     /// [`crate::events`]; the engine's handlers hold the other. Drained through `take_*` below.
     events: EventSink,
+    /// Whether a copy drops the blanks a terminal padded a short line with.
+    ///
+    /// A session-long PREFERENCE rather than a per-copy argument, because that is the shape it
+    /// arrives in — the user sets it once and every copy after obeys. `pub(crate)` for
+    /// [`crate::selection`], which is where the copy reads it.
+    pub(crate) trim_selection: bool,
 }
 
 /// The two buffers one cell's text passes through on its way into a row arena.
@@ -241,6 +247,7 @@ impl VtSession {
             refill: true,
             scratch: CellScratch::default(),
             events,
+            trim_selection: true,
         })
     }
 
@@ -562,6 +569,58 @@ impl VtSession {
         Ok(())
     }
 
+    /// Sets whether a copy drops the blanks a terminal padded a short line with.
+    ///
+    /// No engine call and no refill: nothing on screen changes, the next
+    /// [`VtSession::selection_text`] simply formats differently.
+    pub const fn set_trim_selection(&mut self, trim: bool) {
+        self.trim_selection = trim;
+    }
+
+    /// Sets the shape the cursor wears until a program asks for another one.
+    ///
+    /// The engine's DEFAULT, not its current shape, and the distinction is the whole reason this
+    /// door is safe to call from a settings apply: `DECSCUSR` from a running program still wins,
+    /// so a user who prefers a bar keeps it in the shell and still sees vim's block in insert mode.
+    /// Writing the live shape instead would erase what the program asked for with no way to tell
+    /// the two apart, since the frame's shape is always concrete.
+    ///
+    /// `None` restores the engine's own default.
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn set_default_cursor_shape(&mut self, shape: Option<CursorShape>) -> Result<()> {
+        self.terminal
+            .set_default_cursor_style(shape.map(cursor_style_out))?;
+        self.refill = true;
+        Ok(())
+    }
+
+    /// Sets whether the cursor blinks until a program says otherwise. `None` restores the default.
+    ///
+    /// A DEFAULT for the same reason as [`VtSession::set_default_cursor_shape`].
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn set_default_cursor_blink(&mut self, blinking: Option<bool>) -> Result<()> {
+        self.terminal.set_default_cursor_blink(blinking)?;
+        self.refill = true;
+        Ok(())
+    }
+
+    /// Sets the cursor's colour until a program overrides it. `None` restores the default.
+    ///
+    /// A DEFAULT for the same reason as [`VtSession::set_default_cursor_shape`] — `OSC 12` still
+    /// wins, which is what lets a program signal a mode by recolouring the caret.
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn set_default_cursor_color(&mut self, colour: Option<Rgb>) -> Result<()> {
+        self.terminal.set_default_cursor_color(colour.map(rgb_out))?;
+        self.refill = true;
+        Ok(())
+    }
+
     /// Sets the default colours a cell falls back to.
     ///
     /// # Errors
@@ -647,7 +706,7 @@ impl VtSession {
                     y: viewport.y,
                     shape: snapshot
                         .cursor_visual_style()
-                        .map_or_else(|_| crate::frame::CursorShape::Block, Into::into),
+                        .map_or_else(|_| CursorShape::Block, Into::into),
                     color: snapshot
                         .cursor_color()
                         .ok()
@@ -838,6 +897,20 @@ const fn rgb_out(color: Rgb) -> libghostty_vt::style::RgbColor {
         r: color.r,
         g: color.g,
         b: color.b,
+    }
+}
+
+/// A shape as the engine spells it.
+///
+/// [`CursorShape::Hollow`] maps to `BlockHollow`, which is the engine's own name for the same
+/// outline. The frame direction never produces `Hollow` from the engine — an unfocused surface is
+/// the renderer's business, not the terminal's — so this is the only direction that names it.
+const fn cursor_style_out(shape: CursorShape) -> CursorStyle {
+    match shape {
+        CursorShape::Block => CursorStyle::Block,
+        CursorShape::Bar => CursorStyle::Bar,
+        CursorShape::Underline => CursorStyle::Underline,
+        CursorShape::Hollow => CursorStyle::BlockHollow,
     }
 }
 

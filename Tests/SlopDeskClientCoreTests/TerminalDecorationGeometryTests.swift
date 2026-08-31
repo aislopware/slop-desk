@@ -27,33 +27,45 @@ final class LinkUnderlineGeometryTests: XCTestCase {
         )
     }
 
-    /// THE ARM PREDICATE. Three independent gates, each answering a different question, and each one
-    /// alone is enough to keep the underline off: the ⌘-hold mirror (false forever on a phone), the
-    /// user's link-detection setting, and the alt-screen TUI gate.
-    func testTheUnderlineArmsOnlyUnderHeldCommandWithDetectionOnOutsideATUI() {
+    /// THE ARM PREDICATE. Two independent gates, each answering a different question, and either one
+    /// alone is enough to keep the underline off: the ⌘-hold mirror (false forever on a phone) and the
+    /// alt-screen TUI gate.
+    ///
+    /// ⚠️ `SettingsKey.linkDetectionEnabled` USED TO BE A THIRD, and taking it out is the fix rather
+    /// than a loosening. That setting governs GUESSING — reading the cells and inferring a link from
+    /// their text — and an `OSC 8` link did not guess: the program declared it. Gating both on one
+    /// flag meant a user who turned detection off also lost the links their own tools authored. It
+    /// now gates the DETECTOR's input and nothing else.
+    func testTheUnderlineArmsOnlyUnderHeldCommandOutsideATUI() {
         XCTAssertTrue(
-            LinkUnderlineGeometry.isArmed(
-                highlightActive: true, detectionEnabled: true, isAlternateScreen: false,
-            ),
+            LinkUnderlineGeometry.isArmed(highlightActive: true, isAlternateScreen: false),
         )
         XCTAssertFalse(
-            LinkUnderlineGeometry.isArmed(
-                highlightActive: false, detectionEnabled: true, isAlternateScreen: false,
-            ),
+            LinkUnderlineGeometry.isArmed(highlightActive: false, isAlternateScreen: false),
             "⌘ is not held — and on iOS it never is, which is why this overlay needs no platform gate",
         )
         XCTAssertFalse(
-            LinkUnderlineGeometry.isArmed(
-                highlightActive: true, detectionEnabled: false, isAlternateScreen: false,
-            ),
-            "the user turned link detection off",
-        )
-        XCTAssertFalse(
-            LinkUnderlineGeometry.isArmed(
-                highlightActive: true, detectionEnabled: true, isAlternateScreen: true,
-            ),
+            LinkUnderlineGeometry.isArmed(highlightActive: true, isAlternateScreen: true),
             "a full-screen application owns its own cells — underlining vim's status line is a wrong mark",
         )
+    }
+
+    /// An AUTHORED span wins the cells it covers: a detected link that overlaps one is dropped rather
+    /// than drawn over it, so the two never double-stroke the same run.
+    func testAnAuthoredSpanClaimsItsCellsFromTheDetector() {
+        let authored = [TerminalLinkSpan(row: 1, colStart: 2, colEnd: 6)]
+        let overlapping = LinkUnderlineGeometry.strokes(
+            authored: authored, detected: [link(row: 1, from: 4, to: 9)], metrics: metrics,
+        )
+        XCTAssertEqual(overlapping.count, 1, "the detected guess overlapped a declared link and lost")
+        let disjoint = LinkUnderlineGeometry.strokes(
+            authored: authored, detected: [link(row: 1, from: 8, to: 12)], metrics: metrics,
+        )
+        XCTAssertEqual(disjoint.count, 2, "a guess that touches no declared cell still draws")
+        let otherRow = LinkUnderlineGeometry.strokes(
+            authored: authored, detected: [link(row: 2, from: 2, to: 6)], metrics: metrics,
+        )
+        XCTAssertEqual(otherRow.count, 2, "the same columns on another row are not the same cells")
     }
 
     /// THE PATH: the stroke is a horizontal hairline one point ABOVE the cell's bottom edge, spanning

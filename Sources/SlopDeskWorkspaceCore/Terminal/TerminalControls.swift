@@ -1,17 +1,17 @@
-// TerminalControls — the near-side FACE of `slopdesk_terminal::controls`, plus the fire-time bundle
-// the terminal config builder consumes.
+// TerminalControls — the near-side FACE of `slopdesk_terminal::controls`.
 //
-// Each of the eight vocabularies below is the same shape: a small closed set, a stored spelling per
+// Each of the seven vocabularies below is the same shape: a small closed set, a stored spelling per
 // case, and a repair for a token this build does not know. So each crosses TWICE — one delivery of
 // the whole table in declaration order, read once per process, and one door that repairs an
-// arbitrary stored token to a code. A door per case would be forty crossings for eight enumerations
-// whose members are known at compile time on both sides.
+// arbitrary stored token to a code. A door per case would be thirty-odd crossings for seven
+// enumerations whose members are known at compile time on both sides.
 //
-// ⚠️ THREE OF THEM CARRY A SECOND SPELLING — the value written into the terminal's own config, which
-// is inverted or renamed for reasons the rule module documents — and those tables deliver the PAIR.
-// That is the whole reason the config value crosses at all: `disabled → "true"` is exactly the
-// transcription nobody would reproduce correctly twice, and it was already spelled once here and
-// once in a Zig-facing comment.
+// ⚠️ THE FIRE-TIME BUNDLE THAT USED TO CLOSE THIS FILE IS GONE. `TerminalControls` was a sixteen-field
+// value read out of `[controls]` in one crossing so the terminal config BUILDER could emit it; with
+// the builder deleted (docs/68) nothing asked for the bundle, and each of its rows is already read at
+// the point of use through `SettingsKey`. Two of the tables shrank with it — they used to interleave a
+// second spelling per case, the word the fork's config text wrote the same setting with, one of them
+// inverted against this enum's own axis. Nothing parses that text, so nothing needs the transcription.
 //
 // The enums keep `RawRepresentable` by hand rather than `: String`, because a `: String` enum's raw
 // values ARE the literals — writing them here would put the stored vocabulary back in a second
@@ -27,9 +27,8 @@ import SlopDeskWorkspaceModel
 
 /// One vocabulary's stored spellings, in the far side's own `ALL` order.
 ///
-/// Three of the tables carry a `configValue` beside each token; the other five do not, and asking
-/// one of those for a config value is a programming error rather than a missing string, so the
-/// accessor is only offered on the two enums that have one.
+/// One run per case, every table. Two of them used to interleave a SECOND spelling — the deleted
+/// fork's config-text word for the same setting — and dropping it halved both.
 private enum ControlTokens {
     static let clipboard: [String] = runs(3) { out, cap in
         Int(slopdesk_terminal_clipboard_tokens(out, cap))
@@ -39,13 +38,11 @@ private enum ControlTokens {
         Int(slopdesk_terminal_right_click_tokens(out, cap))
     }
 
-    /// Token then config value, per case.
-    static let mouseShift: [String] = runs(8) { out, cap in
+    static let mouseShift: [String] = runs(4) { out, cap in
         Int(slopdesk_terminal_mouse_shift_tokens(out, cap))
     }
 
-    /// Token then config value, per case.
-    static let optionAsAlt: [String] = runs(8) { out, cap in
+    static let optionAsAlt: [String] = runs(4) { out, cap in
         Int(slopdesk_terminal_option_as_alt_tokens(out, cap))
     }
 
@@ -212,15 +209,15 @@ public enum RightClickAction: Sendable, CaseIterable, RawRepresentable, Codable 
 /// - ``always``: ⇧ is always consumed for selection.
 /// - ``never``: ⇧ is never consumed for selection (always forwarded to the program).
 ///
-/// The tokens are slopdesk's own semantic ones; the libghostty token (`false` / `true` / `always` /
-/// `never`) rides beside each as ``configValue`` so persistence stays readable.
+/// The tokens are slopdesk's own semantic ones, and they are the only ones: the inverted libghostty
+/// spelling that used to ride beside each died with the config text nothing parsed.
 public enum MouseShiftCapture: Sendable, CaseIterable, RawRepresentable, Codable {
     case disabled
     case enabled
     case always
     case never
 
-    public var rawValue: String { ControlTokens.mouseShift[index * 2] }
+    public var rawValue: String { ControlTokens.mouseShift[index] }
 
     /// Validate-then-repair to ``enabled`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
@@ -237,16 +234,6 @@ public enum MouseShiftCapture: Sendable, CaseIterable, RawRepresentable, Codable
         var container = encoder.singleValueContainer()
         try container.encode(rawValue)
     }
-
-    /// The libghostty `mouse-shift-capture` token this case maps to. Consumed by the config builder.
-    ///
-    /// **The mapping is INVERTED on purpose**: this enum's axis ("⇧ *selects text* even when the app captures
-    /// the mouse") is the opposite of libghostty's `mouse-shift-capture` axis (whether ⇧ is *captured into the
-    /// mouse protocol and sent to the program*). Per the deleted fork's vendored ghostty `Config.zig`: `false` = ⇧ NOT sent,
-    /// EXTENDS THE SELECTION (libghostty default, program may override via `XTSHIFTESCAPE`); `true` = ⇧ sent to
-    /// the program (overridable); `never` = `false` but program CANNOT override; `always` = `true` but program
-    /// CANNOT override.
-    public var configValue: String { ControlTokens.mouseShift[index * 2 + 1] }
 
     /// Whether ⇧ EXTENDS THE SELECTION — the ON state of the binary "Allow Shift with Mouse Click" toggle.
     /// The stored value is a four-way enum but the reading is a binary axis, so ``enabled`` / ``always``
@@ -281,15 +268,14 @@ public enum MouseShiftCapture: Sendable, CaseIterable, RawRepresentable, Codable
 /// - ``both``: BOTH Option keys send Alt/Meta (Esc-prefixed) sequences — libghostty `true`.
 /// - ``left`` / ``right``: only the named Option key sends Alt/Meta; the other still composes.
 ///
-/// The tokens are slopdesk's own (`both` persists as `both`, not `true`); the libghostty token rides
-/// beside each as ``configValue``.
+/// The tokens are slopdesk's own (`both` persists as `both`, not `true`).
 public enum OptionAsAlt: Sendable, CaseIterable, RawRepresentable, Codable {
     case off
     case both
     case left
     case right
 
-    public var rawValue: String { ControlTokens.optionAsAlt[index * 2] }
+    public var rawValue: String { ControlTokens.optionAsAlt[index] }
 
     /// Validate-then-repair to ``off`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
@@ -306,11 +292,6 @@ public enum OptionAsAlt: Sendable, CaseIterable, RawRepresentable, Codable {
         var container = encoder.singleValueContainer()
         try container.encode(rawValue)
     }
-
-    /// The libghostty `macos-option-as-alt` token this case maps to (values `false` / `true` / `left` /
-    /// `right` — see the deleted fork's vendored ghostty `input/config.zig` `OptionAsAlt`). ``both`` → `true`,
-    /// ``off`` → `false`.
-    public var configValue: String { ControlTokens.optionAsAlt[index * 2 + 1] }
 
     /// The byte `slopdesk_term_surface_set_option_as_alt` takes: `0` off, `1` both, `2` left,
     /// `3` right.
@@ -451,138 +432,5 @@ public enum AutoDetectLinkSchemes: Sendable, CaseIterable, RawRepresentable, Cod
         case .all: 0
         case .custom: 1
         }
-    }
-}
-
-// MARK: - TerminalControls (the fire-time control bundle the config builder consumes)
-
-/// The pure, headless bundle of terminal CONTROL values the terminal config builder turns into
-/// `copy-on-select` / `clipboard-*` / `mouse-*` config lines (+ the ⇧+arrow `adjust_selection` keybinds).
-/// Controls sibling of ``TerminalPreferences`` (render prefs) — the two are independent inputs to
-/// `TerminalConfigBuilder.string(...)`, NOT nested: the builder emits render lines from
-/// ``TerminalPreferences`` and control lines from this struct.
-///
-/// Every field derives from a `[controls]` row in the config file, so this bundle never reaches the
-/// `EnvConfig` overlay or the `video-prefs.json` sidecar — golden-safe by construction.
-/// ``from(config:)`` is the single read site (`PreferencesStore.applyTerminal` rebuilds it on every
-/// apply / `refreshTerminalControls()`), so the init defaults mirror the rows' own defaults and a
-/// default-constructed value is a faithful "factory" terminal.
-public struct TerminalControls: Codable, Sendable, Equatable {
-    /// The `copy-on-select` config line — copy the selection to the pasteboard as soon as it is made
-    /// (default OFF). The builder emits `clipboard` when on, `false` when off.
-    public var copyOnSelect: Bool
-    /// The `clipboard-trim-trailing-spaces` config line — strip trailing whitespace from each copied line
-    /// (default ON).
-    public var trimTrailing: Bool
-    /// The `selection-clear-on-typing` config line — clear the selection when the user types (default ON).
-    public var clearOnTyping: Bool
-    /// The `selection-clear-on-copy` config line — clear the selection after an explicit copy (default OFF).
-    public var clearOnCopy: Bool
-    /// The `clipboard-paste-protection` config line — warn before pasting unsafe text (default ON).
-    public var pasteProtection: Bool
-    /// The `clipboard-paste-bracketed-safe` config line — treat bracketed paste as safe (skips the warning
-    /// when the program advertised `?2004h`) (default ON).
-    public var bracketedSafe: Bool
-    /// The `clipboard-read` config line (default ``ClipboardAccess/ask``) — used to be the OSC-52
-    /// clipboard-READ access gate; that subject is gone (see ``ClipboardAccess``'s ⚠️), so it now governs
-    /// only the metadata clipboard-read channel.
-    public var clipboardRead: ClipboardAccess
-    /// The `clipboard-write` config line — the OSC-52 clipboard-WRITE access gate (default ``ClipboardAccess/allow``).
-    public var clipboardWrite: ClipboardAccess
-    /// The `mouse-hide-while-typing` config line — hide the pointer while typing (default ON).
-    public var hideMouseWhileTyping: Bool
-    /// The `mouse-shift-capture` config line — whether ⇧ bypasses a program's mouse capture for a native
-    /// selection (default ``MouseShiftCapture/enabled``).
-    public var allowShiftClick: MouseShiftCapture
-    /// The `cursor-click-to-move` config line — click in the prompt to move the shell cursor (default ON).
-    public var clickToMove: Bool
-    /// The `mouse-reporting` config line — allow programs (vim, tmux, htop) to capture mouse events (default ON).
-    public var allowMouseCapture: Bool
-    /// The `mouse.rightClickAction` settings key — what a bare right-click does in the viewport (default
-    /// ``RightClickAction/contextMenu``). The config builder emits its `rawValue` as `right-click-action`;
-    /// the deleted fork's libghostty owned the dispatch end-to-end from that key (see the ⚠️ on
-    /// ``RightClickAction`` for where that stands now).
-    public var rightClickAction: RightClickAction
-    /// "Shift+Arrow Select" — ⇧+arrows drive native selection (emits four `adjust_selection` keybinds)
-    /// instead of forwarding the arrow escapes to the program (default ON).
-    public var shiftArrowSelect: Bool
-    /// The `mouse-scroll-multiplier` config line — multiply the scroll-wheel delta (default `1.0`).
-    public var scrollMultiplier: Double
-    /// "Option as Alt" — whether the macOS Option key sends Alt/Meta (Esc-prefixed) sequences
-    /// (default ``OptionAsAlt/off``, libghostty `macos-option-as-alt`). The config builder emits its
-    /// ``OptionAsAlt/configValue`` as `macos-option-as-alt`; the client's libghostty-vt surface owns the
-    /// key→byte encoding, so this is a real, reachable knob.
-    public var optionAsAlt: OptionAsAlt
-
-    public init(
-        copyOnSelect: Bool = false,
-        trimTrailing: Bool = true,
-        clearOnTyping: Bool = true,
-        clearOnCopy: Bool = false,
-        pasteProtection: Bool = true,
-        bracketedSafe: Bool = true,
-        clipboardRead: ClipboardAccess = .ask,
-        clipboardWrite: ClipboardAccess = .allow,
-        hideMouseWhileTyping: Bool = true,
-        allowShiftClick: MouseShiftCapture = .enabled,
-        clickToMove: Bool = true,
-        allowMouseCapture: Bool = true,
-        rightClickAction: RightClickAction = .contextMenu,
-        shiftArrowSelect: Bool = true,
-        scrollMultiplier: Double = 1.0,
-        optionAsAlt: OptionAsAlt = .off,
-    ) {
-        self.copyOnSelect = copyOnSelect
-        self.trimTrailing = trimTrailing
-        self.clearOnTyping = clearOnTyping
-        self.clearOnCopy = clearOnCopy
-        self.pasteProtection = pasteProtection
-        self.bracketedSafe = bracketedSafe
-        self.clipboardRead = clipboardRead
-        self.clipboardWrite = clipboardWrite
-        self.hideMouseWhileTyping = hideMouseWhileTyping
-        self.allowShiftClick = allowShiftClick
-        self.clickToMove = clickToMove
-        self.allowMouseCapture = allowMouseCapture
-        self.rightClickAction = rightClickAction
-        self.shiftArrowSelect = shiftArrowSelect
-        self.scrollMultiplier = scrollMultiplier
-        self.optionAsAlt = optionAsAlt
-    }
-
-    /// Read the live control bundle out of the config file's `[controls]` table.
-    ///
-    /// Every field is a declared row, so no default is spelled twice: an absent key already carries
-    /// the row's compiled default out of ``AppConfig``, and a value the row refuses was dropped with
-    /// a diagnostic at resolve time. The `choice` fallbacks below are unreachable — the enums repair
-    /// an unknown token themselves — and exist only because the accessor insists on one.
-    public static func from(config: AppConfig) -> Self {
-        // The "Clipboard — Shell Controlled" master switch (default ON) gates the WHOLE OSC-52 path
-        // ahead of the per-direction Ask/Allow/Deny gate. Both directions resolve in ONE crossing:
-        // a master switch honoured in one direction and not the other is the failure that rules out.
-        let gates = slopdesk_terminal_clipboard_gates(
-            config.flag("controls.clipboard-shell-controlled"),
-            UInt8(config.choice("controls.clipboard-read", ClipboardAccess.ask).index),
-            UInt8(config.choice("controls.clipboard-write", ClipboardAccess.allow).index),
-        )
-        let all = ClipboardAccess.allCases
-        return Self(
-            copyOnSelect: config.flag("controls.copy-on-select"),
-            trimTrailing: config.flag("controls.trim-trailing-spaces"),
-            clearOnTyping: config.flag("controls.clear-selection-on-typing"),
-            clearOnCopy: config.flag("controls.clear-selection-on-copy"),
-            pasteProtection: config.flag("controls.paste-protection"),
-            bracketedSafe: config.flag("controls.paste-bracketed-safe"),
-            clipboardRead: all[Int(gates & 0xFF)],
-            clipboardWrite: all[Int(gates >> 8)],
-            hideMouseWhileTyping: config.flag("controls.mouse-hide-while-typing"),
-            allowShiftClick: config.choice("controls.shift-click", MouseShiftCapture.enabled),
-            clickToMove: config.flag("controls.click-to-move"),
-            allowMouseCapture: config.flag("controls.allow-mouse-capture"),
-            rightClickAction: config.choice("controls.right-click-action", RightClickAction.contextMenu),
-            shiftArrowSelect: config.flag("controls.shift-arrow-select"),
-            scrollMultiplier: config.double("controls.scroll-multiplier"),
-            optionAsAlt: config.choice("controls.option-as-alt", OptionAsAlt.off),
-        )
     }
 }

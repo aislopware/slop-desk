@@ -59,6 +59,25 @@ final class MacTerminalRendererView: NSView {
     /// acts on the span under the CLICK rather than under wherever the pointer has since moved.
     private var pendingMenuLink: DetectedLink?
 
+    /// What the input method is composing, or `nil` when it is not.
+    ///
+    /// Held here rather than asked of the surface because `NSTextInputClient` asks for it back —
+    /// ``markedRange()`` and ``attributedSubstring(forProposedRange:actualRange:)`` are questions
+    /// about the string AppKit last handed over, in the UTF-16 offsets AppKit speaks. The surface
+    /// holds the same text measured in CELLS, which is a different question and cannot answer this.
+    private var markedText: String?
+
+    /// Where the composition's own caret sits inside ``markedText``, as AppKit reported it.
+    private var markedSelection = NSRange(location: 0, length: 0)
+
+    /// Text an input method committed during the press being handled, or `nil` outside one.
+    ///
+    /// ⚠️ `nil` and `[]` mean different things. `insertText` also arrives from a menu equivalent and
+    /// from `⌘V` on some layouts, long after any `keyDown` — the accumulator being `nil` is what says
+    /// "no press is being composed", so that text is sent straight through instead of being stashed
+    /// for a press that will never read it.
+    private var committed: [String]?
+
     /// Whether this pane holds the workspace focus, as the last push said.
     ///
     /// Mirrored here rather than asked of the model because the model has no such property to ask —
@@ -187,6 +206,11 @@ final class MacTerminalRendererView: NSView {
     }
 
     override func resignFirstResponder() -> Bool {
+        // A composition belongs to the responder that started it. Left standing it would draw over a
+        // pane the user has moved away from, and the input context would deliver its commit to
+        // whatever took the keyboard next.
+        inputContext?.discardMarkedText()
+        clearMarkedText()
         pushFocus(false)
         return super.resignFirstResponder()
     }
@@ -217,7 +241,88 @@ final class MacTerminalRendererView: NSView {
             return
         }
         if takesPromptEdit(event) { return }
-        send(event, action: event.isARepeat ? 2 : 0)
+        let action: UInt8 = event.isARepeat ? 2 : 0
+        guard belongsToInputMethod(event) else {
+            send(event, action: action, composing: false)
+            return
+        }
+        compose(event, action: action)
+    }
+
+    /// One press, offered to the input method first.
+    ///
+    /// ⚠️ THE ORDER IS THE WHOLE OF IME SUPPORT, and it is `interpretKeyEvents` that establishes it:
+    /// AppKit hands the press to the input context, which answers by calling BACK into this view —
+    /// ``insertText(_:replacementRange:)`` for a commit, ``setMarkedText(_:selectedRange:replacementRange:)``
+    /// for a composition still in flight, ``doCommand(by:)`` for anything it recognises as an editing
+    /// verb. Only a press that produced none of those is encoded as a keystroke.
+    ///
+    /// Telex is the case this exists for, and `docs/68` §5.1 item 8 is why it is on the critical
+    /// path: `Tieengs` is seven presses that compose one `Tiếng`, and a view that encoded each press
+    /// itself sends all seven to the shell.
+    ///
+    /// A press the composition CONSUMED — ⎋ cancelling a half-typed syllable — reaches
+    /// ``send(_:action:composing:)`` flagged composing, which the engine reports and encodes to
+    /// nothing. Dropping it here instead would be the same picture with the key event never seen.
+    private func compose(_ event: NSEvent, action: UInt8) {
+        let wasComposing = markedText != nil
+        committed = []
+        interpretKeyEvents([event])
+        let commits = committed ?? []
+        committed = nil
+        guard commits.isEmpty else {
+            // The input method finished. Each commit is TEXT: the keyCode that produced it is the
+            // last of a sequence and encodes nothing on its own, so the engine is handed the text
+            // with the modifiers the layout already spent marked consumed.
+            let mods = Self.mods(event.modifierFlags)
+            for text in commits {
+                _ = driver.sendKey(
+                    keyCode: event.keyCode, action: action, mods: mods,
+                    consumedMods: Self.consumedMods(event), text: text, composing: false,
+                )
+            }
+            return
+        }
+        send(event, action: action, composing: wasComposing || markedText != nil)
+    }
+
+    /// Whether this press belongs to the input method at all.
+    ///
+    /// Everything does EXCEPT an Option the user has given to Alt. `macos-option-as-alt` is a promise
+    /// that ⌥→ reaches the program as `ESC [1;3C` rather than composing anything, and a press handed
+    /// to `interpretKeyEvents` under that setting comes back as the layout's composed character with
+    /// the Option already spent — the meta prefix the setting exists to produce, gone.
+    ///
+    /// The test is on the SETTING, not on the modifier, which is what keeps a US-International dead
+    /// key composing: with `macos-option-as-alt` off, ⌥e then e is still `é`.
+    private func belongsToInputMethod(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.option) else { return true }
+        let raw = event.modifierFlags.rawValue
+        switch SettingsKey.optionAsAlt {
+        case .off: return true
+        case .both: return false
+        case .left: return raw & UInt(NX_DEVICELALTKEYMASK) == 0
+        case .right: return raw & UInt(NX_DEVICERALTKEYMASK) == 0
+        }
+    }
+
+    /// Which modifiers macOS SPENT producing this press's text.
+    ///
+    /// Only Option can be spent in a way the engine must not re-encode: a layout that turns ⌥e into
+    /// a dead key has used the Option on the character, and reporting it unconsumed would ALSO
+    /// prefix the result with `ESC`. AppKit answers by difference — `characters` is the layout's
+    /// output WITH the modifiers applied and `charactersIgnoringModifiers` without, so a press where
+    /// the two differ is one where the modifier reached the layout.
+    ///
+    /// Zero for every other press, including ⇧: an engine that saw Shift consumed would stop
+    /// reporting it, and the kitty protocol reports it.
+    private static func consumedMods(_ event: NSEvent) -> UInt16 {
+        guard event.modifierFlags.contains(.option),
+              event.characters != event.charactersIgnoringModifiers
+        else {
+            return 0
+        }
+        return slopdesk_term_mods(false, true, false, false, false, false, false, false, false, false)
     }
 
     /// ⌘Z at an editable shell prompt, which is the ONE ⌘ combination that is terminal input rather
@@ -242,20 +347,21 @@ final class MacTerminalRendererView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
-        send(event, action: 1)
+        send(event, action: 1, composing: false)
     }
 
     /// Encodes one press through the engine and sends what it produced.
-    private func send(_ event: NSEvent, action: UInt8) {
+    ///
+    /// `composing` is the engine's own flag for "an input method is mid-composition": the press is
+    /// REPORTED — the kitty protocol says so — and encodes to no bytes.
+    private func send(_ event: NSEvent, action: UInt8, composing: Bool) {
         _ = driver.sendKey(
             keyCode: event.keyCode,
             action: action,
             mods: Self.mods(event.modifierFlags),
-            // Nothing is consumed on this path: `consumedMods` describes modifiers an IME already
-            // used to produce the text, and an IME commit arrives through `insertText`, not here.
-            consumedMods: 0,
+            consumedMods: Self.consumedMods(event),
             text: event.characters ?? "",
-            composing: false,
+            composing: composing,
         )
     }
 
@@ -300,6 +406,18 @@ final class MacTerminalRendererView: NSView {
             ),
         )
     }
+
+    /// Every editing verb AppKit recognises, refused.
+    ///
+    /// ⌃A is `moveToBeginningOfLine:` to AppKit and `\u{01}` to a shell, and there is no third
+    /// reading: this view has no document for the verb to act on. Refusing without calling `super`
+    /// is also what stops the system beep — `NSResponder`'s default is `noResponder`, which beeps —
+    /// and leaves ``compose(_:action:)``'s accumulator empty so the press is encoded as a keystroke.
+    ///
+    /// ⚠️ IN THE CLASS BODY, NOT THE `NSTextInputClient` EXTENSION IT BELONGS TO BY SUBJECT.
+    /// `NSResponder` declares this too, so the implementation OVERRIDES rather than merely conforms —
+    /// and Swift does not allow `override` in an extension. Split by that language rule alone.
+    override func doCommand(by _: Selector) {}
 
     // MARK: - Pointer
 
@@ -617,19 +735,13 @@ final class MacTerminalRendererView: NSView {
         return parent
     }
 
-    /// The detected link under a point in view coordinates, or `nil` when the point is over none.
+    /// The link under a point in view coordinates, or `nil` when the point is over none.
     ///
-    /// The hit-test is ``TerminalLinkHitTest``'s and the detection is ``TerminalLinkDetector``'s — the
-    /// same pair the ⌘-hover overlay and the phone's long-press run, over the same viewport rows.
-    /// `slop: 0` because a pointer lands where it is aimed; the phone passes its touch slop instead.
+    /// ``TerminalSurfaceDriver/link(at:cwd:slop:)``'s — the same door the phone's long-press runs, so
+    /// an `OSC 8` hyperlink and a detected path are ranked the same way on both. `slop: 0` because a
+    /// pointer lands where it is aimed; the phone passes its touch slop instead.
     private func detectedLink(at point: CGPoint) -> DetectedLink? {
-        guard SettingsKey.linkDetectionEnabled, let metrics = driver.cellMetrics() else { return nil }
-        let links = TerminalLinkDetector.detect(
-            rows: driver.viewportTextRows(),
-            cwd: model?.linkCwd,
-            schemes: SettingsKey.linkSchemePolicy,
-        )
-        return TerminalLinkHitTest.link(in: links, metrics: metrics, pointX: point.x, pointY: point.y)
+        driver.link(at: point, cwd: model?.linkCwd)
     }
 
     /// Runs a standard menu item: the surface's own through the driver, the WORKSPACE's through the
@@ -689,6 +801,123 @@ final class MacTerminalRendererView: NSView {
         }
         panel.beginSheetModal(for: window) { response in
             deliver(response == .OK ? panel.url.flatMap { try? Data(contentsOf: $0) } : nil)
+        }
+    }
+}
+
+// MARK: - NSTextInputClient
+
+/// The composition half of the keyboard, which is the only reason this view is a text client.
+///
+/// It is deliberately NOT a text VIEW: there is no document here to navigate, no attributed storage
+/// to substring, and no character index a point resolves to — the grid answers all three and the
+/// engine owns the grid. So the questions that would need a document are answered with the honest
+/// empty value, and the four that a composition genuinely needs are answered for real: what is
+/// marked, where it is, where to hang the candidate window, and what was committed.
+///
+/// `docs/68` §10's rule holds throughout — every number here is AppKit's or a door's, and none is
+/// invented on this side. The caret's cell comes from `slopdesk_term_surface_caret_rect`, the cell
+/// width of a composition is measured behind `slopdesk_term_surface_set_marked_text`, and this file
+/// converts UTF-16 offsets to UTF-8 ones because that is what AppKit speaks and what C takes.
+extension MacTerminalRendererView: @MainActor NSTextInputClient {
+    /// The input method committed. During a press this is stashed for ``compose(_:action:)``;
+    /// outside one — a menu equivalent, a character-palette insertion — it goes straight through.
+    func insertText(_ string: Any, replacementRange _: NSRange) {
+        let text = Self.plainText(string)
+        clearMarkedText()
+        guard !text.isEmpty else { return }
+        if committed != nil {
+            committed?.append(text)
+            return
+        }
+        _ = driver.sendKey(
+            keyCode: 0, action: 0, mods: 0, consumedMods: 0, text: text, composing: false,
+        )
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange _: NSRange) {
+        let text = Self.plainText(string)
+        guard !text.isEmpty else {
+            clearMarkedText()
+            return
+        }
+        markedText = text
+        markedSelection = selectedRange
+        // AppKit counts in UTF-16 and the door takes UTF-8. `String.Index(utf16Offset:in:)` lands on
+        // `endIndex` for an offset past the end, which is the same "caret after everything" the door
+        // falls back to — so an out-of-range report is handled once, here, rather than twice.
+        let caret = String.Index(utf16Offset: selectedRange.location, in: text)
+        driver.setMarkedText(text, cursorBytes: text[..<caret].utf8.count)
+    }
+
+    func unmarkText() {
+        clearMarkedText()
+    }
+
+    func hasMarkedText() -> Bool { markedText != nil }
+
+    /// The marked range in AppKit's UTF-16 offsets, or `NSNotFound` for no composition.
+    ///
+    /// From zero, because a terminal's composition is not inside a document: there is nothing before
+    /// it for an offset to be relative to.
+    func markedRange() -> NSRange {
+        guard let markedText else { return NSRange(location: NSNotFound, length: 0) }
+        return NSRange(location: 0, length: markedText.utf16.count)
+    }
+
+    /// The composition's own selection, which is the only selection a text client here has.
+    ///
+    /// Deliberately NOT the terminal's text selection: that one is a reading of the SCREEN, it lives
+    /// in grid coordinates, and handing it over as a document range would invite an input method to
+    /// replace it.
+    func selectedRange() -> NSRange {
+        markedText == nil ? NSRange(location: NSNotFound, length: 0) : markedSelection
+    }
+
+    /// Where the candidate window hangs: the caret's cell, converted to screen coordinates.
+    ///
+    /// The rect is asked of the surface rather than derived from the grid here, because with blocks
+    /// a row's y is the LAYOUT's answer and not `row × cellHeight` — a scrolled-back cursor under a
+    /// stack of headers is exactly where the two disagree. An empty rect at the pointer is the
+    /// honest fallback for a cursor that is not on screen; AppKit places the window itself.
+    func firstRect(forCharacterRange _: NSRange, actualRange _: NSRangePointer?) -> NSRect {
+        guard let cell = driver.caretRect(), let window else { return .zero }
+        return window.convertToScreen(convert(cell, to: nil))
+    }
+
+    /// No document, so no substring. An input method that asks gets nothing rather than a guess at
+    /// what the grid says — reconstructing a row here would hand back text the engine has since
+    /// scrolled away.
+    func attributedSubstring(forProposedRange _: NSRange, actualRange _: NSRangePointer?) -> NSAttributedString? {
+        nil
+    }
+
+    /// None. The composition is drawn by the renderer in the terminal's own colours, so an attribute
+    /// accepted here would be one AppKit expects to see honoured and nothing would honour it.
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+
+    /// No document means no index. `NSNotFound` is the documented "not in my text" answer, and it is
+    /// the true one: a point over this view is over a CELL, which the pointer doors already resolve.
+    func characterIndex(for _: NSPoint) -> Int { NSNotFound }
+
+    /// Drops the composition on both sides, so the mirror and the surface can never disagree.
+    private func clearMarkedText() {
+        guard markedText != nil else { return }
+        markedText = nil
+        markedSelection = NSRange(location: 0, length: 0)
+        driver.setMarkedText("", cursorBytes: 0)
+    }
+
+    /// The plain text inside whatever `NSTextInputClient` handed over.
+    ///
+    /// AppKit passes either an `NSString` or an `NSAttributedString` and does not say which; the
+    /// attributes it carries are the input method's own underline styling, which the renderer draws
+    /// itself. Anything else is a client contract violation and reads as nothing.
+    private static func plainText(_ string: Any) -> String {
+        switch string {
+        case let text as String: text
+        case let text as NSAttributedString: text.string
+        default: ""
         }
     }
 }

@@ -18421,3 +18421,41 @@ actually written them. *Registering `on_enquiry` and `on_xtversion`* — the eng
 correctly by itself, and overriding them would mean this crate inventing a terminal name rather than
 reporting the one it is. *A push door for either survivor* — it would be the first callback across
 the boundary and would cost §4's promise for a latency the synchronous drain already has.
+
+## The rows that survived their reader (2026-09-01)
+
+The terminal's settings used to be applied by handing `libghostty` a `key = value` TEXT. That builder
+is gone (docs/68 — the renderer that replaced the fork takes typed doors), and deleting it stranded
+two things at once: a sixteen-field control BUNDLE nothing read any more, and fourteen `[terminal]`
+rows whose only consumer had been a line in that text.
+
+The bundle was easy — every row it carried is read at the point of use through `SettingsKey`, so it
+was a second reading of the same file and nothing else. **The rows were the decision.** A row with no
+consumer is not inert: a user writes `terminal.ligatures = calt`, the resolver accepts it, the
+diagnostic stays silent and nothing changes on screen. That is worse than the key not existing, and
+the tempting reading — "an unwired door in a ported crate is usually a door, not dead code" — is the
+wrong lens here, because nothing in this pass was going to wire them and one of them (ligatures)
+cannot be wired without a shaper decision that has not been taken.
+
+So the uniform rule: **a row with no consumer left is deleted in this pass, and comes back in the same
+change as its feature.** Twelve went — `font-weight`, `font-family-fallback` / `-bold` / `-italic` /
+`-bold-italic`, `auto-match-weight-style`, `ligatures`, `ligatures-alphabet`, `bold`, `italic`,
+`blending`, `theme` — with the three font-appearance enums that existed only to spell them. Note the
+honest history: these WORKED under the fork, which parsed the text. They are a regression being
+codified, not a feature that never landed. `font-family-fallback` and a terminal `line-height` are
+worth their own passes; `ligatures` needs the shaper decision first.
+
+Two rows were NOT deleted, and the difference is the whole rule working. `terminal.background` and
+`terminal.foreground` also had no reader — the app's one flat profile pins the cell colours through
+`AppearanceApplier`, and the file's colours reached nothing. But that hook is `nil` on the headless,
+golden and `ImageRenderer` paths, and its own doc already promised those readings fall back to the
+file. The promise had simply stopped being kept. Giving the fallback a consumer is one line at the
+store, and it makes the rows true rather than removing the only colours the file can state. Their
+selection colour is DERIVED as the per-channel midpoint of the two, which the seam's own contract
+licenses: a theme that states a background and a foreground has stated enough.
+
+The same sweep found the one real bug. `controls.clipboard-shell-controlled`, the master switch over
+the whole OSC-52 path, was folded into the per-direction gate by the dead bundle — while the LIVE
+write path asked `SettingsKey.clipboardWrite` on its own and never saw the switch. Turning the master
+switch off did nothing. It is now folded inside the accessor every caller already uses, both
+directions in one crossing, so a caller cannot forget it.

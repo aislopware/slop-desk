@@ -27,6 +27,36 @@
 
 use core::ops::Range;
 
+use libghostty_vt::unicode::grapheme_width;
+
+/// How many grid cells `text` would take if the engine placed it.
+///
+/// The engine's OWN segmenter and width table answer it, which is the whole reason this is here
+/// rather than a `unicode-width` dependency: text an input method is still composing has to measure
+/// the same as the text that replaces it when the composition commits, and two width tables would
+/// disagree on exactly the sequences a preedit is made of — a base plus its combining tone mark.
+///
+/// Saturating rather than wrapping, because the caller is placing a caret: a preedit wider than
+/// 65 535 cells is not a number anyone can act on, and a wrapped one would place it on the left.
+#[must_use]
+pub fn text_cells(text: &str) -> u16 {
+    // Collected because `grapheme_width` reads a `char` slice — it walks a cluster and answers how
+    // many scalars it consumed, which a `Chars` iterator cannot be rewound over. A preedit is at
+    // most a phrase, so this is one small allocation per composition change, not per frame: the
+    // measurement is taken where the input method reports, never on the paint path.
+    let chars: Vec<char> = text.chars().collect();
+    let mut cells = 0_u16;
+    let mut at = 0_usize;
+    while let Some(rest) = chars.get(at..).filter(|rest| !rest.is_empty()) {
+        let (consumed, width) = grapheme_width(rest);
+        cells = cells.saturating_add(u16::from(width));
+        // A cluster that consumes nothing would spin here forever. One scalar is the honest floor:
+        // every `char` is at least its own cluster.
+        at = at.saturating_add(consumed.max(1));
+    }
+    cells
+}
+
 /// A 24-bit colour, already resolved.
 ///
 /// Palette lookup, the bold-brightening rule and `inverse` are the engine's job — by the time a
@@ -461,6 +491,82 @@ impl Frame {
         Self::default()
     }
 
+    /// Whether the selection stops exactly where the cursor stands.
+    ///
+    /// This is the question a CUT has to answer before it sends a single `DEL`. Cutting from a
+    /// terminal is not an edit the terminal can perform — there is no buffer to splice, only a
+    /// program on the far side reading keystrokes — so the delete half is BACKSPACES, and a
+    /// backspace only removes the selected text when the cursor is sitting immediately past it.
+    /// Anywhere else, those backspaces would eat somebody else's characters, which is why the
+    /// count degrades to zero and the cut becomes a copy.
+    ///
+    /// Answered from the FRAME rather than the engine, and that is the point: the frame already
+    /// carries both halves — each row's selected span and the cursor's cell — so the answer costs
+    /// a walk of the rows and no engine call at all. The last row that carries a span holds the
+    /// selection's end, because a selection is contiguous.
+    #[must_use]
+    pub fn selection_ends_at_cursor(&self) -> bool {
+        let Some(cursor) = self.cursor else {
+            return false;
+        };
+        let Some((row, span)) = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(row, line)| line.selection.map(|span| (row, span)))
+            .next_back()
+        else {
+            return false;
+        };
+        // `end` is one past the last selected column, which is exactly where a cursor standing
+        // after the selection sits — so the two compare directly, with no off-by-one to argue
+        // about. `u16::try_from` cannot fail for a viewport, and a frame taller than 65 535 rows
+        // is not one anybody is cutting from.
+        u16::try_from(row).is_ok_and(|row| row == cursor.y) && span.end == cursor.x
+    }
+
+    /// Every run of cells the program marked as an `OSC 8` hyperlink, row by row.
+    ///
+    /// What the hover underline needs, and the reason it reads the FRAME rather than asking the
+    /// engine cell by cell: [`CellFlags::HYPERLINK`] is already on every cell, so a whole viewport
+    /// costs one walk and zero engine calls, where `hyperlink_at` per cell would be `rows × cols`
+    /// C calls each allocating a URI nobody is going to read.
+    ///
+    /// Two DIFFERENT links that abut with no character between them merge into one run. That is
+    /// deliberate rather than a limitation worth the flag byte it would cost to fix: the caller is
+    /// drawing an underline, and one stroke across both is the same picture as two touching ones.
+    /// A caller that needs the URI asks `hyperlink_at` for the one cell under the pointer.
+    #[must_use]
+    pub fn hyperlink_spans(&self) -> Vec<(u16, ColumnSpan)> {
+        let mut spans = Vec::new();
+        for (row, line) in self.rows.iter().enumerate() {
+            let Ok(row) = u16::try_from(row) else {
+                continue;
+            };
+            let mut open: Option<u16> = None;
+            for (column, cell) in line.cells.iter().enumerate() {
+                let Ok(column) = u16::try_from(column) else {
+                    continue;
+                };
+                match (cell.flags.contains(CellFlags::HYPERLINK), open) {
+                    (true, None) => open = Some(column),
+                    (false, Some(start)) => {
+                        spans.push((row, ColumnSpan { start, end: column }));
+                        open = None;
+                    },
+                    _ => {},
+                }
+            }
+            if let Some(start) = open {
+                spans.push((row, ColumnSpan {
+                    start,
+                    end: self.cols,
+                }));
+            }
+        }
+        spans
+    }
+
     /// Viewport height in cells.
     #[must_use]
     pub fn row_count(&self) -> u16 {
@@ -514,8 +620,114 @@ mod tests {
     )]
 
     use super::{
-        CellFlags, ColumnSpan, Frame, FrameCell, FrameRow, Rgb, RowSemantic, TextSpan, UnderlineStyle,
+        CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameCursor, FrameRow, Rgb, RowSemantic,
+        TextSpan, UnderlineStyle, text_cells,
     };
+
+    /// A frame of `rows` blank rows, `cols` wide, with no cursor and nothing selected.
+    fn blank_frame(cols: u16, rows: u16) -> Frame {
+        let mut frame = Frame::new();
+        frame.cols = cols;
+        frame.rows = (0..rows)
+            .map(|_| {
+                let mut row = FrameRow::default();
+                row.begin_fill();
+                for _ in 0..cols {
+                    row.push_cell("", FrameCell::default());
+                }
+                row
+            })
+            .collect();
+        frame
+    }
+
+    /// A cursor at `(x, y)`. Everything but the position is irrelevant to what these tests ask.
+    fn cursor_at(x: u16, y: u16) -> FrameCursor {
+        FrameCursor {
+            x,
+            y,
+            shape: CursorShape::Block,
+            color: Rgb::WHITE,
+            blinking: false,
+            at_wide_tail: false,
+            password_input: false,
+        }
+    }
+
+    #[test]
+    fn a_cut_is_armed_only_when_the_cursor_sits_just_past_the_selection() {
+        let mut frame = blank_frame(10, 3);
+        frame.rows[1].selection = Some(ColumnSpan { start: 2, end: 5 });
+
+        frame.cursor = Some(cursor_at(5, 1));
+        assert!(
+            frame.selection_ends_at_cursor(),
+            "column 5 is one past the last selected cell, which is where a backspace bites"
+        );
+
+        frame.cursor = Some(cursor_at(4, 1));
+        assert!(
+            !frame.selection_ends_at_cursor(),
+            "inside the selection is not past it"
+        );
+        frame.cursor = Some(cursor_at(5, 2));
+        assert!(
+            !frame.selection_ends_at_cursor(),
+            "the right column on the wrong row"
+        );
+        frame.cursor = None;
+        assert!(
+            !frame.selection_ends_at_cursor(),
+            "no cursor, nothing to delete from"
+        );
+    }
+
+    #[test]
+    fn a_multi_row_selection_is_measured_from_its_last_row() {
+        let mut frame = blank_frame(10, 3);
+        frame.rows[0].selection = Some(ColumnSpan { start: 7, end: 10 });
+        frame.rows[1].selection = Some(ColumnSpan { start: 0, end: 4 });
+
+        frame.cursor = Some(cursor_at(4, 1));
+        assert!(frame.selection_ends_at_cursor());
+        frame.cursor = Some(cursor_at(10, 0));
+        assert!(
+            !frame.selection_ends_at_cursor(),
+            "the FIRST row's end is where the selection began, not where it stopped"
+        );
+    }
+
+    #[test]
+    fn hyperlink_spans_close_at_the_first_unlinked_cell() {
+        let mut frame = blank_frame(8, 2);
+        for column in [1_usize, 2, 3, 6] {
+            frame.rows[0].cells[column].flags = CellFlags::HYPERLINK;
+        }
+        assert_eq!(
+            frame.hyperlink_spans(),
+            vec![
+                (0, ColumnSpan { start: 1, end: 4 }),
+                (0, ColumnSpan { start: 6, end: 7 })
+            ],
+            "two runs, because column 4 broke the first one"
+        );
+    }
+
+    #[test]
+    fn a_hyperlink_running_to_the_edge_closes_at_the_last_column() {
+        let mut frame = blank_frame(4, 1);
+        for cell in &mut frame.rows[0].cells {
+            cell.flags = CellFlags::HYPERLINK;
+        }
+        assert_eq!(frame.hyperlink_spans(), vec![(0, ColumnSpan {
+            start: 0,
+            end: 4
+        })]);
+        assert!(
+            blank_frame(4, 1).hyperlink_spans().is_empty(),
+            "a viewport with no links reports none"
+        );
+    }
 
     #[test]
     fn a_packed_colour_is_little_endian_bgr() {
@@ -647,5 +859,26 @@ mod tests {
         assert_eq!(cell.flags, CellFlags::NONE);
         assert!(cell.text.is_empty());
         assert_eq!(RowSemantic::default(), RowSemantic::Output);
+    }
+
+    #[test]
+    fn ascii_measures_one_cell_a_character() {
+        assert_eq!(text_cells("hello"), 5);
+        assert_eq!(text_cells(""), 0);
+    }
+
+    #[test]
+    fn an_east_asian_character_measures_two() {
+        assert_eq!(text_cells("漢字"), 4);
+        assert_eq!(text_cells("a漢"), 3);
+    }
+
+    #[test]
+    fn a_base_and_its_combining_marks_measure_one_cell_together() {
+        // The Telex case, and the reason this is the ENGINE's segmenter rather than a width table:
+        // `e` + combining circumflex + combining acute is one cluster in one cell, and a per-scalar
+        // count would place a composition's caret three cells too far right.
+        assert_eq!(text_cells("e\u{0302}\u{0301}"), 1);
+        assert_eq!(text_cells("ế"), 1, "the same syllable, precomposed");
     }
 }

@@ -56,5 +56,5 @@ pub use glyph::{
     TextShaper,
 };
 pub use layout::{CellGeometry, FontMetrics, Insets, Thumb, Underline, grid_size, scrollbar};
-pub use paint::{PaintStyle, Painter, SelectionColors};
+pub use paint::{PaintStyle, Painter, Preedit, SelectionColors};
 pub use quad::{DrawList, GlyphInstance, RectInstance, RectStyle, Rgba};

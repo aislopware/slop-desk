@@ -21,10 +21,9 @@ import SlopDeskVideoProtocol
 ///   2. **Video / agent flags → the `video-prefs.json` SIDECAR (no live apply).** The host daemon
 ///      reads them at `static let` init and cannot live-reload, so a change reaches it at the next
 ///      launch. Applies on reconnect.
-///   3. **Terminal keys → the live terminal reload.** Rebuilds the terminal config string
-///      (``TerminalConfigBuilder``) and bumps ``TerminalConfigBroadcaster``; the keys that have found a
-///      typed door (font family/size — see ``TerminalConfigBroadcaster``) reach the live renderer
-///      through those, not through the string.
+///   3. **Terminal keys → the live terminal reload.** Re-resolves what the file states and bumps
+///      ``TerminalConfigBroadcaster``; every renderer re-applies through its typed doors. The config
+///      TEXT this used to build is gone — it had no parser on the other end (docs/68).
 ///   4. **The `[keybind]` table → the registry overrides.** Publishes them to
 ///      ``WorkspaceBindingRegistry/activeOverrides`` so a chord resolves with the user override —
 ///      the registry stays the single binding TABLE; this only supplies overrides.
@@ -129,38 +128,36 @@ public final class PreferencesStore {
 
     // MARK: Apply paths
 
-    /// Rebuild the terminal config string from the resolved terminal keys and the fire-time
-    /// Controls bundle, and bump the broadcaster so the live renderer re-applies it (font family/size
-    /// through their typed doors — see ``TerminalConfigBroadcaster``).
+    /// Resolve the terminal keys and bump the broadcaster so every live renderer re-applies them
+    /// through its typed doors — see ``TerminalConfigBroadcaster``.
     private func applyTerminal() {
         // The app's one terminal profile pins the CELL bg/fg (flat design) — `resolveTerminalColors`
         // reads `SlateTheme.app` (GUI only; `nil` headless ⇒ the config's own colours stand).
         let themeColors = AppearanceApplier.resolveTerminalColors?()
         var prefs = TerminalPreferences(config)
         prefs.fontSize = PreferenceRules.effectiveFontSize(configured: prefs.fontSize, delta: fontSizeDelta)
-        let config = TerminalConfigBuilder.string(
-            for: prefs,
-            backgroundOverride: themeColors?.background,
-            foregroundOverride: themeColors?.foreground,
-            // The active theme's ANSI palette + selection colour reach the terminal cells. Both are
-            // optional and validate-then-drop in the builder, so a `nil` themeColors (headless / no
-            // GUI hook) or a theme with no palette is byte-identical.
-            paletteOverride: themeColors?.palette,
-            selectionBackgroundOverride: themeColors?.selectionBackground,
-            controls: Self.controlsConfig(from: TerminalControls.from(config: config)),
-        )
         // `prefs` already carries the EFFECTIVE size — the ⌘± delta was folded in above — so the
-        // renderer measures its grid from the same number the config string encodes.
+        // renderer measures its grid from the same number that was published.
         TerminalConfigBroadcaster.shared.publish(
-            config,
             fontFamily: prefs.fontFamily,
             fontSize: prefs.fontSize,
-            themeWords: themeColors?.words,
+            // The FALLBACK is the point, and it is what keeps `terminal.background` /
+            // `terminal.foreground` honest: with the hook installed (every GUI build) the one flat
+            // profile wins, and without it the file's own two colours are what the cells wear. A
+            // `nil` here would leave the surface at the ENGINE's defaults, so a headless render would
+            // ignore both the theme and the file.
+            themeWords: themeColors ?? ResolvedTerminalTheme(preferences: prefs),
+            scrollbackLines: prefs.scrollbackLines,
+            cursorStyle: prefs.cursorStyle.surfaceCode,
+            cursorBlink: prefs.cursorBlink.surfaceCode,
+            cursorColor: prefs.cursorColorWord,
+            cursorTextColor: prefs.cursorTextColorWord,
+            cursorOpacity: prefs.cursorOpacity,
         )
     }
 
-    /// Rebuild + publish the terminal config from the current reading. The seam a surface calls
-    /// when it needs the terminal string re-derived without a reload.
+    /// Re-resolve + publish the terminal settings from the current reading. The seam a surface calls
+    /// when it needs them re-derived without a reload.
     public func refreshTerminalControls() {
         applyTerminal()
     }
@@ -198,31 +195,6 @@ public final class PreferencesStore {
         ) else { return }
         fontSizeDelta = moved
         applyTerminal()
-    }
-
-    /// Map the fire-time ``TerminalControls`` bundle to the leaf ``TerminalControlsConfig`` the
-    /// (VideoProtocol) ``TerminalConfigBuilder`` consumes: boolean knobs pass straight through,
-    /// multi-state enums resolve to their libghostty token. The mapping lives HERE (not the leaf) so
-    /// the builder never imports WorkspaceCore — the one-way module graph is preserved.
-    private static func controlsConfig(from controls: TerminalControls) -> TerminalControlsConfig {
-        TerminalControlsConfig(
-            copyOnSelect: controls.copyOnSelect,
-            trimTrailing: controls.trimTrailing,
-            clearOnTyping: controls.clearOnTyping,
-            clearOnCopy: controls.clearOnCopy,
-            pasteProtection: controls.pasteProtection,
-            bracketedSafe: controls.bracketedSafe,
-            clipboardReadToken: controls.clipboardRead.rawValue,
-            clipboardWriteToken: controls.clipboardWrite.rawValue,
-            hideMouseWhileTyping: controls.hideMouseWhileTyping,
-            mouseShiftCaptureToken: controls.allowShiftClick.configValue,
-            clickToMove: controls.clickToMove,
-            allowMouseCapture: controls.allowMouseCapture,
-            rightClickActionToken: controls.rightClickAction.rawValue,
-            shiftArrowSelect: controls.shiftArrowSelect,
-            scrollMultiplier: controls.scrollMultiplier,
-            macosOptionAsAltToken: controls.optionAsAlt.configValue,
-        )
     }
 
     /// Fold the video + agent keys and the `[env]` table into the process-wide ``EnvConfig`` overlay
@@ -313,31 +285,28 @@ public final class PreferencesStore {
 
 // MARK: - TerminalConfigBroadcaster (the live terminal-reload seam)
 
-/// The process-wide bridge carrying the current terminal config from ``PreferencesStore`` to the live
-/// renderer. It used to carry a config STRING to the deleted fork's `GhosttyTerminalView`, which
-/// re-applied it via `ghostty_config_load_string` and re-measured + resized the PTY grid — see
-/// ``configString`` below for what replaced that path.
+/// The process-wide bridge carrying the current terminal settings from ``PreferencesStore`` to the
+/// live renderer.
+///
+/// It used to carry a config STRING to the deleted fork's `GhosttyTerminalView`, which re-applied it
+/// via `ghostty_config_load_string` and re-measured + resized the PTY grid. That string outlived its
+/// only parser and is gone: the renderer takes typed doors, so what crosses here is the VALUES those
+/// doors take. `docs/68` argues the boundary; the practical difference is that a `scrollback-limit`
+/// of 10 000 now means ten thousand ROWS rather than whatever a 256-byte-per-line estimate bought.
+///
+/// Everything here is a setting ``PreferencesStore`` had to RESOLVE — the ⌘± delta folded into the
+/// size, the theme's palette, a colour parsed out of its hex. A setting the driver can read straight
+/// off `SettingsKey` does not travel this way; it is read where it is applied.
 ///
 /// A tiny `@Observable` holder (not the model) so the gated renderer can `@Observe` it without importing
 /// the whole store; the HEADLESS build keeps a no-op consumer. The `generation` bumps on each publish so
-/// an idempotent re-publish of the SAME string still triggers a reload (e.g. a ⌘± that lands back where
+/// an idempotent re-publish of the SAME values still triggers a reload (e.g. a ⌘± that lands back where
 /// it started).
 @preconcurrency
 @MainActor
 @Observable
 public final class TerminalConfigBroadcaster {
     public static let shared = TerminalConfigBroadcaster()
-
-    /// The current terminal config string (built by ``TerminalConfigBuilder``, in the Ghostty-style
-    /// `key = value` grammar `rust/slopdesk-terminal/src/config.rs` now parses). Empty until the first
-    /// publish.
-    ///
-    /// ⚠️ NOTHING SHIPPING READS THIS ANY MORE. It existed for the fork's `ghostty_config_load_string`,
-    /// and the renderer that replaced it takes its settings through typed doors instead — the string
-    /// has no parser on the other end. It is published, and its `generation` still bumps, because the
-    /// keys it encodes have not all found their door yet; the ones that have are below. Deleting it is
-    /// a follow-up with its own audit, not a line to drop in passing.
-    public private(set) var configString = ""
 
     /// The monospace family the terminal draws with, as the renderer's `slopdesk_term_surface_new`
     /// takes it. Empty until the first publish, which the renderer reads as "the engine's default".
@@ -358,19 +327,54 @@ public final class TerminalConfigBroadcaster {
 
     /// The cell colours as the renderer's doors take them, or `nil` where no GUI filled the seam
     /// (headless, pre-launch) and the engine's own defaults stand.
-    public private(set) var themeWords: ResolvedTerminalTheme.Words?
+    public private(set) var themeWords: ResolvedTerminalTheme?
+
+    /// How many ROWS of scrollback to retain.
+    public private(set) var scrollbackLines = 0
+
+    /// The caret's shape, blink and colour as their doors take them — see
+    /// ``TerminalPreferences/CursorStyle/surfaceCode``.
+    ///
+    /// All three set the engine's DEFAULT, which is what makes them safe to publish: a program's
+    /// `DECSCUSR` or `OSC 12` still wins, so a user who prefers a bar keeps it in the shell and still
+    /// sees vim's block in insert mode.
+    public private(set) var cursorStyle: UInt8 = 0
+    /// See ``cursorStyle``. `0` defers to DEC mode 12.
+    public private(set) var cursorBlink: UInt8 = 0
+    /// See ``cursorStyle``. `nil` follows the foreground.
+    public private(set) var cursorColor: UInt32?
+
+    /// The glyph colour under a filled caret; `nil` keeps the cell's own background.
+    ///
+    /// Apart from ``cursorColor`` because it is not an engine default at all: no escape sequence
+    /// names this colour, so there is nothing for a program to override and the renderer decides it
+    /// outright.
+    public private(set) var cursorTextColor: UInt32?
+
+    /// How opaque the caret is drawn, `0`–`1`. Zero is a real way to turn it off.
+    public private(set) var cursorOpacity: Double = 1
 
     /// Publish the resolved terminal settings (bumps ``generation`` even if nothing moved).
     public func publish(
-        _ config: String,
         fontFamily: String = "",
         fontSize: Double = 0,
-        themeWords: ResolvedTerminalTheme.Words? = nil,
+        themeWords: ResolvedTerminalTheme? = nil,
+        scrollbackLines: Int = 0,
+        cursorStyle: UInt8 = 0,
+        cursorBlink: UInt8 = 0,
+        cursorColor: UInt32? = nil,
+        cursorTextColor: UInt32? = nil,
+        cursorOpacity: Double = 1,
     ) {
-        configString = config
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.themeWords = themeWords
+        self.scrollbackLines = scrollbackLines
+        self.cursorStyle = cursorStyle
+        self.cursorBlink = cursorBlink
+        self.cursorColor = cursorColor
+        self.cursorTextColor = cursorTextColor
+        self.cursorOpacity = cursorOpacity
         generation &+= 1
     }
 }

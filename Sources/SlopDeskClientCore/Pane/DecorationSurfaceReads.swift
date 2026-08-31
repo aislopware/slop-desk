@@ -49,7 +49,6 @@ package enum DecorationLinkUnderline {
     package static func track(_ model: TerminalViewModel) {
         if LinkUnderlineGeometry.isArmed(
             highlightActive: model.linkHighlightActive,
-            detectionEnabled: SettingsKey.linkDetectionEnabled,
             isAlternateScreen: model.alternateScreenActive,
         ) {
             _ = model.bytesReceived
@@ -68,18 +67,24 @@ package enum DecorationLinkUnderline {
     package static func strokes(for model: TerminalViewModel, cwd: String?) -> [TerminalStroke] {
         guard LinkUnderlineGeometry.isArmed(
             highlightActive: model.linkHighlightActive,
-            detectionEnabled: SettingsKey.linkDetectionEnabled,
             isAlternateScreen: model.isAlternateScreen,
         ),
             let snapshot = model.surface as? TerminalViewportSnapshotting,
             let metrics = snapshot.cellMetrics()
         else { return [] }
-        return LinkUnderlineGeometry.strokes(
-            links: TerminalLinkDetector.detect(
+        // The detector runs only when the user asked for guesses; the authored spans are read
+        // either way. `detect` is the expensive half — a regex sweep of every visible row — so
+        // skipping it when the setting is off is also what makes the authored path free.
+        let detected = SettingsKey.linkDetectionEnabled
+            ? TerminalLinkDetector.detect(
                 rows: snapshot.viewportTextRows(),
                 cwd: cwd,
                 schemes: SettingsKey.linkSchemePolicy,
-            ),
+            )
+            : []
+        return LinkUnderlineGeometry.strokes(
+            authored: snapshot.authoredLinkSpans(),
+            detected: detected,
             metrics: metrics,
         )
     }

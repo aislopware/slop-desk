@@ -176,14 +176,11 @@ pub unsafe extern "C" fn slopdesk_terminal_right_click_from_token(token: *const 
     code_of!(RightClickAction, RightClickAction::from_token(&token))
 }
 
-/// The shift-capture table: four cases, each as its stored token THEN its config value.
+/// The shift-capture table: four cases, one stored token each.
 ///
 /// ```text
-/// 8 × [u32 length][UTF-8 bytes]
+/// 4 × [u32 length][UTF-8 bytes]
 /// ```
-///
-/// The pair is the point. The config spelling is INVERTED against the setting's own — `Disabled`
-/// writes `"true"` — and that transcription is the one nobody reproduces correctly twice.
 ///
 /// # Safety
 /// `(out, cap)` must be writable for `cap` bytes.
@@ -194,7 +191,7 @@ pub unsafe extern "C" fn slopdesk_terminal_right_click_from_token(token: *const 
 )]
 pub unsafe extern "C" fn slopdesk_terminal_mouse_shift_tokens(out: *mut c_uchar, cap: usize) -> usize {
     let mut blob = Vec::new();
-    table!(blob, MouseShiftCapture, token, config_value);
+    table!(blob, MouseShiftCapture, token);
     // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
     unsafe { deliver(&blob, out, cap) }
 }
@@ -218,10 +215,10 @@ pub unsafe extern "C" fn slopdesk_terminal_mouse_shift_from_token(token: *const 
     u16::from(code_of!(MouseShiftCapture, case)) | (u16::from(case.extends_selection()) << 8)
 }
 
-/// The option-as-alt table: four cases, each as its stored token THEN its config value.
+/// The option-as-alt table: four cases, one stored token each.
 ///
 /// ```text
-/// 8 × [u32 length][UTF-8 bytes]
+/// 4 × [u32 length][UTF-8 bytes]
 /// ```
 ///
 /// # Safety
@@ -233,7 +230,7 @@ pub unsafe extern "C" fn slopdesk_terminal_mouse_shift_from_token(token: *const 
 )]
 pub unsafe extern "C" fn slopdesk_terminal_option_as_alt_tokens(out: *mut c_uchar, cap: usize) -> usize {
     let mut blob = Vec::new();
-    table!(blob, OptionAsAlt, token, config_value);
+    table!(blob, OptionAsAlt, token);
     // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
     unsafe { deliver(&blob, out, cap) }
 }
@@ -417,41 +414,28 @@ mod tests {
         }
     }
 
-    /// The transcription the paired tables exist for: the config spelling is not the token.
+    /// The two four-case tables answer their own `ALL` order and nothing beside it.
     #[test]
-    fn the_paired_tables_carry_both_spellings_including_the_inverted_one() {
+    fn the_four_case_tables_carry_one_spelling_each() {
         let shift = table(
             |out, cap| {
                 // SAFETY: `out` is a live local for the call.
                 unsafe { slopdesk_terminal_mouse_shift_tokens(out, cap) }
             },
-            MouseShiftCapture::ALL.len() * 2,
+            MouseShiftCapture::ALL.len(),
         );
         for (index, case) in MouseShiftCapture::ALL.into_iter().enumerate() {
-            assert_eq!(shift.get(index * 2).map(String::as_str), Some(case.token()));
-            assert_eq!(
-                shift.get(index * 2 + 1).map(String::as_str),
-                Some(case.config_value())
-            );
+            assert_eq!(shift.get(index).map(String::as_str), Some(case.token()));
         }
-        assert_eq!(
-            shift.get(1).map(String::as_str),
-            Some("true"),
-            "Disabled writes true, which is the inversion the pair exists for",
-        );
         let option = table(
             |out, cap| {
                 // SAFETY: `out` is a live local for the call.
                 unsafe { slopdesk_terminal_option_as_alt_tokens(out, cap) }
             },
-            OptionAsAlt::ALL.len() * 2,
+            OptionAsAlt::ALL.len(),
         );
         for (index, case) in OptionAsAlt::ALL.into_iter().enumerate() {
-            assert_eq!(option.get(index * 2).map(String::as_str), Some(case.token()));
-            assert_eq!(
-                option.get(index * 2 + 1).map(String::as_str),
-                Some(case.config_value())
-            );
+            assert_eq!(option.get(index).map(String::as_str), Some(case.token()));
         }
     }
 

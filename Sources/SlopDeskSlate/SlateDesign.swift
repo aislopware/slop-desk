@@ -128,22 +128,10 @@ package struct SlateTheme: Equatable, Sendable {
     /// See ``terminalOkHex`` — the red slot.
     package var terminalErrHex: UInt32 { ansi.indices.contains(Self.ansiRed) ? ansi[Self.ansiRed] : glass.ink }
 
-    /// The 16 ANSI colours as the profile publishes them (24-bit RGB); ``ansiPalette`` is the same
-    /// set in libghostty's 6-hex config form.
+    /// The 16 ANSI colours as the profile publishes them (24-bit RGB). They reach the cells through
+    /// ``ResolvedTerminalTheme``, verbatim — a second, 6-hex spelling of these very numbers used to
+    /// ride beside them for the terminal config text and died with it.
     package let ansi: [UInt32]
-
-    // The libghostty config values (6-hex, no `#`) — applied via ``TerminalConfigBuilder``.
-    package let terminalBackgroundHex: String
-    package let terminalForegroundHex: String
-    /// The 16 ANSI terminal colours (indices 0–15). Reaches the cells via `palette = N=<hex>`.
-    package let ansiPalette: [String]
-    /// Selection highlight background, opaque RGB; paired with `selection-foreground =
-    /// cell-foreground` so glyph colours stay under the fill (not an invert). `nil` ⇒ no line.
-    package let selectionBackgroundHex: String?
-    /// Cursor block colour; `nil` ⇒ follow the foreground.
-    package let cursorHex: String?
-    /// Glyph-under-cursor colour; `nil` ⇒ follow the background.
-    package let cursorTextHex: String?
 
     /// The published GLASS palette a profile ships — the terminal's own five (face/ink/comment/
     /// selection-edge/accent), verbatim from the theme's spec.
@@ -155,8 +143,7 @@ package struct SlateTheme: Equatable, Sendable {
         package let accent: UInt32
     }
 
-    /// Build the profile from 24-bit RGB values (single source for both the ``SlateNativeColor`` and
-    /// hex forms).
+    /// Build the profile from 24-bit RGB values.
     /// The ISLAND tone is not a parameter: it IS `glass.face` (law 1), so the profile cannot
     /// accidentally ship an island in a tone its terminal does not wear.
     private static func profile(
@@ -164,19 +151,7 @@ package struct SlateTheme: Equatable, Sendable {
         ansi: [UInt32],
         ground: UInt32,
     ) -> Self {
-        Self(
-            glass: glass,
-            groundHexValue: ground,
-            ansi: ansi,
-            terminalBackgroundHex: hex6(glass.face),
-            terminalForegroundHex: hex6(glass.ink),
-            ansiPalette: ansi.map { hex6($0) },
-            // Solid edge-tone fill (opaque — libghostty Color is RGB-only). Glyph colours stay via
-            // selection-foreground=cell-foreground, so this is a highlight, not an invert.
-            selectionBackgroundHex: hex6(glass.edge),
-            cursorHex: hex6(glass.ink),
-            cursorTextHex: nil,
-        )
+        Self(glass: glass, groundHexValue: ground, ansi: ansi)
     }
 
     /// The ANSI slots the on-glass status inks are read from — the terminal convention (1 = red,
@@ -192,16 +167,6 @@ package struct SlateTheme: Equatable, Sendable {
             (((a >> shift) & 0xFF) + ((b >> shift) & 0xFF)) / 2
         }
         return (channel(16) << 16) | (channel(8) << 8) | channel(0)
-    }
-
-    /// 6-hex uppercase string (no `#`) for a 24-bit RGB literal — the libghostty config value format.
-    /// Manual (no `String(format:)`) to stay allocation-cheap and trap-free.
-    private static func hex6(_ v: UInt32) -> String {
-        func pair(_ x: UInt32) -> String {
-            let s = String(x & 0xFF, radix: 16, uppercase: true)
-            return (x & 0xFF) < 0x10 ? "0" + s : s
-        }
-        return pair(v >> 16) + pair(v >> 8) + pair(v)
     }
 
     // MARK: - THE profile (user-directed 2026-08-08: exactly ONE)

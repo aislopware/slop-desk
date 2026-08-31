@@ -444,42 +444,12 @@
           "type": "string",
           "default": "SF Mono"
         },
-        "font-family-fallback": {
-          "description": "Comma-separated families tried when the primary lacks a glyph.",
-          "type": "string",
-          "default": ""
-        },
-        "font-family-bold": {
-          "description": "Explicit bold face. Only read when `auto-match-weight-style` is off.",
-          "type": "string",
-          "default": ""
-        },
-        "font-family-italic": {
-          "description": "Explicit italic face. Only read when `auto-match-weight-style` is off.",
-          "type": "string",
-          "default": ""
-        },
-        "font-family-bold-italic": {
-          "description": "Explicit bold-italic face. Only read when `auto-match-weight-style` is off.",
-          "type": "string",
-          "default": ""
-        },
-        "auto-match-weight-style": {
-          "description": "Pick the family's own bold / italic faces automatically.",
-          "type": "boolean",
-          "default": true
-        },
         "font-size": {
           "description": "Point size of the primary face.",
           "type": "number",
           "minimum": 4,
           "maximum": 96,
           "default": 13
-        },
-        "font-weight": {
-          "description": "Weight token applied to the primary face, e.g. regular or bold.",
-          "type": "string",
-          "default": "regular"
         },
         "line-height": {
           "description": "Cell height: a named stop, or a raw multiplier like 1.15.",
@@ -488,40 +458,6 @@
             { "type": "number", "minimum": 0.5, "maximum": 3 }
           ],
           "default": "default"
-        },
-        "ligatures": {
-          "description": "Which ligature features are enabled for the primary face.",
-          "type": "string",
-          "enum": ["off", "calt", "dlig"],
-          "default": "off"
-        },
-        "ligatures-alphabet": {
-          "description": "Extend ligation to alphabetic sequences.",
-          "type": "boolean",
-          "default": false
-        },
-        "bold": {
-          "description": "How bold text is drawn when the family has no real bold face.",
-          "type": "string",
-          "enum": ["auto", "off", "primary-only", "synthetic"],
-          "default": "auto"
-        },
-        "italic": {
-          "description": "How italic text is drawn when the family has no real italic face.",
-          "type": "string",
-          "enum": ["auto", "off", "primary-only", "synthetic"],
-          "default": "auto"
-        },
-        "blending": {
-          "description": "Glyph anti-aliasing blend mode used when text is drawn.",
-          "type": "string",
-          "enum": ["default", "macos-like"],
-          "default": "default"
-        },
-        "theme": {
-          "description": "A libghostty theme name. Empty means the explicit colours below are the theme.",
-          "type": "string",
-          "default": ""
         },
         "background": {
           "description": "Terminal background, six hex digits.",

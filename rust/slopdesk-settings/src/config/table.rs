@@ -625,31 +625,6 @@ pub const KEYS: &[Key] = &[
         doc: "The primary monospace family.",
     },
     Key {
-        path: "terminal.font-family-fallback",
-        kind: Kind::Text { default: "" },
-        doc: "Comma-separated families tried when the primary lacks a glyph.",
-    },
-    Key {
-        path: "terminal.font-family-bold",
-        kind: Kind::Text { default: "" },
-        doc: "Explicit bold face. Only read when `auto-match-weight-style` is off.",
-    },
-    Key {
-        path: "terminal.font-family-italic",
-        kind: Kind::Text { default: "" },
-        doc: "Explicit italic face. Only read when `auto-match-weight-style` is off.",
-    },
-    Key {
-        path: "terminal.font-family-bold-italic",
-        kind: Kind::Text { default: "" },
-        doc: "Explicit bold-italic face. Only read when `auto-match-weight-style` is off.",
-    },
-    Key {
-        path: "terminal.auto-match-weight-style",
-        kind: Kind::Flag { default: Some(true) },
-        doc: "Pick the family's own bold / italic faces automatically.",
-    },
-    Key {
         path: "terminal.font-size",
         kind: Kind::Float {
             default: Some(slopdesk_terminal::config::FACTORY_FONT_SIZE),
@@ -657,13 +632,6 @@ pub const KEYS: &[Key] = &[
             max: 96.0,
         },
         doc: "Point size of the primary face.",
-    },
-    Key {
-        path: "terminal.font-weight",
-        kind: Kind::Text {
-            default: slopdesk_terminal::config::FACTORY_FONT_WEIGHT,
-        },
-        doc: "Weight token applied to the primary face, e.g. regular or bold.",
     },
     Key {
         path: "terminal.line-height",
@@ -674,48 +642,6 @@ pub const KEYS: &[Key] = &[
             max: 3.0,
         },
         doc: "Cell height: a named stop, or a raw multiplier like 1.15.",
-    },
-    Key {
-        path: "terminal.ligatures",
-        kind: Kind::Choice {
-            default: Some("off"),
-            options: &["off", "calt", "dlig"],
-        },
-        doc: "Which ligature features are enabled for the primary face.",
-    },
-    Key {
-        path: "terminal.ligatures-alphabet",
-        kind: Kind::Flag { default: Some(false) },
-        doc: "Extend ligation to alphabetic sequences.",
-    },
-    Key {
-        path: "terminal.bold",
-        kind: Kind::Choice {
-            default: Some("auto"),
-            options: &["auto", "off", "primary-only", "synthetic"],
-        },
-        doc: "How bold text is drawn when the family has no real bold face.",
-    },
-    Key {
-        path: "terminal.italic",
-        kind: Kind::Choice {
-            default: Some("auto"),
-            options: &["auto", "off", "primary-only", "synthetic"],
-        },
-        doc: "How italic text is drawn when the family has no real italic face.",
-    },
-    Key {
-        path: "terminal.blending",
-        kind: Kind::Choice {
-            default: Some("default"),
-            options: &["default", "macos-like"],
-        },
-        doc: "Glyph anti-aliasing blend mode used when text is drawn.",
-    },
-    Key {
-        path: "terminal.theme",
-        kind: Kind::Text { default: "" },
-        doc: "A libghostty theme name. Empty means the explicit colours below are the theme.",
     },
     Key {
         path: "terminal.background",

@@ -4,17 +4,15 @@ import Foundation
 /// What a FRESH INSTALL carries, read from `slopdesk-terminal`'s `config`.
 ///
 /// A default IS a rule — it decides what the terminal looks like for everyone who never opens
-/// Settings — and these six used to be spelled in this file's `init` defaults AND again in the
+/// Settings — and these used to be spelled in this file's `init` defaults AND again in the
 /// crate's own test fixture, with nothing connecting the two lists.
 public enum TerminalFactoryDefaults {
     /// The primary monospace family.
     public static let fontFamily = text(0)
-    /// The weight token (`font-style`).
-    public static let fontWeight = text(1)
     /// The surface background, 6-hex without a leading `#`.
-    public static let background = text(2)
+    public static let background = text(1)
     /// The text colour, same form.
-    public static let foreground = text(3)
+    public static let foreground = text(2)
     /// The point size.
     public static let fontSize = slopdesk_terminal_factory_number(0)
     /// The cursor opacity.
@@ -42,25 +40,23 @@ public enum TerminalFactoryDefaults {
 /// would be the same setting spelled twice. The additive-tolerant `decodeIfPresent` init went with
 /// it — a config file simply omits what it does not override, and the row's own default answers.
 ///
-/// Pure value type — no SwiftUI import, so it is headlessly testable and the libghostty
-/// config-string builder (``TerminalConfigBuilder/string(for:keybinds:backgroundOverride:foregroundOverride:paletteOverride:selectionBackgroundOverride:controls:)``)
-/// can be unit-tested without a surface. Every
-/// field has a real default (these are render prefs, not env overrides), so a default-constructed
-/// value is a sensible terminal.
+/// Pure value type — no view framework, so it is headlessly testable without a surface. Every field
+/// has a real default (these are render prefs, not env overrides), so a default-constructed value is
+/// a sensible terminal.
 public struct TerminalPreferences: Sendable, Equatable {
     /// Monospace font family (libghostty `font-family`).
     public var fontFamily: String
     /// Font point size (libghostty `font-size`).
     public var fontSize: Double
-    /// Font weight token (libghostty `font-style`, e.g. "regular" / "bold").
-    public var fontWeight: String
-    /// Theme name / palette (libghostty `theme`). Default EMPTY ⇒ no `theme` line: named themes are
-    /// not bundled, so the explicit `background`/`foreground`/palette lines are the whole theme.
-    public var theme: String
-    /// Terminal background colour (libghostty `background`, 6-hex). Defaults to the Dracula
-    /// `face` so the terminal surface matches the glass even before the resolved overrides land.
+    /// Terminal background colour (`terminal.background`, 6-hex). Defaults to the profile's own
+    /// `face`, so the terminal surface matches the glass even before the resolved theme lands.
+    ///
+    /// ⚠️ THE APP PALETTE WINS WHERE IT IS INSTALLED, which is every GUI build — one flat appearance
+    /// is a design law, not a preference. These two answer where no palette was handed in at all
+    /// (headless, pre-launch, the golden and `ImageRenderer` paths), which is the ONLY reading under
+    /// which a file-stated colour is not contradicting the island it is drawn on.
     public var background: String
-    /// Terminal foreground / text colour (libghostty `foreground`, 6-hex). Dracula's primary ink.
+    /// Terminal foreground / text colour (`terminal.foreground`, 6-hex). See ``background``.
     public var foreground: String
 
     /// Cursor style (libghostty `cursor-style`). Four silhouettes; `block_hollow` is a native
@@ -78,13 +74,26 @@ public struct TerminalPreferences: Sendable, Equatable {
         case blockHollow = "block_hollow"
         case bar
         case underline
+
+        /// The byte `slopdesk_term_surface_set_cursor_style` takes.
+        ///
+        /// Spelled beside the cases so the four numbers are written once. They are the DOOR's
+        /// order, not this enum's declaration order, and nothing enforces the two agree — which is
+        /// exactly why a call site is never allowed to spell one.
+        public var surfaceCode: UInt8 {
+            switch self {
+            case .block: 0
+            case .bar: 1
+            case .underline: 2
+            case .blockHollow: 3
+            }
+        }
     }
 
-    /// Whether the cursor blinks (libghostty `cursor-style-blink`). A TRI-STATE "Cursor blink style"
-    /// setting: ``default`` defers to DEC mode 12 (the
-    /// default), ``on`` / ``off`` force it. libghostty's `cursor-style-blink` is an optional bool (`?bool` —
-    /// null = defer to DEC mode 12), so ``default`` SKIPS the config line and only ``on`` / ``off`` emit
-    /// `true` / `false` (see ``TerminalConfigBuilder``).
+    /// Whether the cursor blinks (`terminal.cursor-blink`). A TRI-STATE setting: ``default`` defers to
+    /// DEC mode 12 (the program decides), ``on`` / ``off`` force it. The door takes all three as
+    /// ``surfaceCode``, and it sets the engine's DEFAULT — so a running program's own DEC-12 flip
+    /// still wins, which is what makes the setting safe to push.
     public enum CursorBlink: String, Codable, Sendable, CaseIterable {
         /// Defer to DEC mode 12 (the program decides) — emits NO `cursor-style-blink` line (the default).
         case `default`
@@ -92,6 +101,17 @@ public struct TerminalPreferences: Sendable, Equatable {
         case on
         /// Force blinking off (`cursor-style-blink = false`).
         case off
+
+        /// The byte `slopdesk_term_surface_set_cursor_blink` takes: `1` on, `2` off, `0` the
+        /// engine's own default. Three states rather than a bool for the reason above — a user who
+        /// has not chosen leaves it to DEC mode 12, and a bool would have to invent their answer.
+        public var surfaceCode: UInt8 {
+            switch self {
+            case .default: 0
+            case .on: 1
+            case .off: 2
+            }
+        }
     }
 
     /// Terminal cursor style.
@@ -115,38 +135,6 @@ public struct TerminalPreferences: Sendable, Equatable {
     /// Cursor body opacity (libghostty `cursor-opacity`, `0.0`…`1.0`), default `1.0` (fully opaque).
     public var cursorOpacity: Double
 
-    // FONT-PARITY render prefs (Appearance → Font). Like the cursor render fields these are
-    // pure-chrome prefs with real defaults — applied live via `TerminalConfigBuilder` → libghostty — NEVER
-    // env overrides / `video-prefs.json` / golden corpus. Every default value below is the one that emits NO
-    // new libghostty line, so a default-constructed value stays byte-identical to the builder output before
-    // these fields existed (the regression guard). The enums + their token mapping live in ``TerminalFontSettings``.
-    /// Comma-separated fallback font families; used when the primary font lacks a glyph (CJK, Nerd-Font
-    /// icons). ghostty has NO `font-family-fallback` key — each entry is emitted as a REPEATED `font-family`
-    /// line after the primary (`font-family` is a `RepeatableString`; see ``TerminalConfigBuilder``). Empty
-    /// (the default) ⇒ only the primary `font-family` line.
-    public var fontFamilyFallback: String
-    /// Explicit bold face family (libghostty `font-family-bold`). Emitted ONLY when ``autoMatchWeightStyle``
-    /// is OFF and non-empty (the UI surfaces the four manual face pickers only when auto-match is off).
-    public var fontFamilyBold: String
-    /// Explicit italic face family (libghostty `font-family-italic`). Same gate as ``fontFamilyBold``.
-    public var fontFamilyItalic: String
-    /// Explicit bold-italic face family (libghostty `font-family-bold-italic`). Same gate as ``fontFamilyBold``.
-    public var fontFamilyBoldItalic: String
-    /// "Auto-match weight & style" (default ON): pick the real bold/italic/bold-italic faces of the
-    /// chosen family automatically. When OFF, the explicit `fontFamilyBold/Italic/BoldItalic` fields apply.
-    public var autoMatchWeightStyle: Bool
-    /// Ligature mode (`font-ligatures`), default ``FontLigatures/off`` (no `font-feature` line).
-    public var fontLigatures: FontLigatures
-    /// Extend ligation to alphabetic sequences (`font-ligatures-alphabet`), default `false`. When `true`
-    /// AND ligatures are on, the builder appends `liga` to the `font-feature` list.
-    public var fontLigaturesAlphabet: Bool
-    /// Bold face mode (`font-bold`), default ``FontStyleMode/auto`` (no line).
-    public var fontBold: FontStyleMode
-    /// Italic face mode (`font-italic`), default ``FontStyleMode/auto`` (no line).
-    public var fontItalic: FontStyleMode
-    /// Glyph anti-aliasing blend mode (`font-blending`), default ``FontBlending/default``.
-    /// ``FontBlending/macosLike`` maps to `font-thicken = true`.
-    public var fontBlending: FontBlending
     /// Cell-height mode (`line-height`), default ``LineHeightMode/default`` (no `adjust-cell-height`
     /// line — the theme/font decides).
     public var lineHeight: LineHeightMode
@@ -154,8 +142,6 @@ public struct TerminalPreferences: Sendable, Equatable {
     public init(
         fontFamily: String = TerminalFactoryDefaults.fontFamily,
         fontSize: Double = TerminalFactoryDefaults.fontSize,
-        fontWeight: String = TerminalFactoryDefaults.fontWeight,
-        theme: String = "",
         background: String = TerminalFactoryDefaults.background,
         foreground: String = TerminalFactoryDefaults.foreground,
         cursorStyle: CursorStyle = .block,
@@ -164,22 +150,10 @@ public struct TerminalPreferences: Sendable, Equatable {
         cursorColor: String = "",
         cursorTextColor: String = "",
         cursorOpacity: Double = TerminalFactoryDefaults.cursorOpacity,
-        fontFamilyFallback: String = "",
-        fontFamilyBold: String = "",
-        fontFamilyItalic: String = "",
-        fontFamilyBoldItalic: String = "",
-        autoMatchWeightStyle: Bool = true,
-        fontLigatures: FontLigatures = .off,
-        fontLigaturesAlphabet: Bool = false,
-        fontBold: FontStyleMode = .auto,
-        fontItalic: FontStyleMode = .auto,
-        fontBlending: FontBlending = .default,
         lineHeight: LineHeightMode = .default,
     ) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
-        self.fontWeight = fontWeight
-        self.theme = theme
         self.background = background
         self.foreground = foreground
         self.cursorStyle = cursorStyle
@@ -188,16 +162,6 @@ public struct TerminalPreferences: Sendable, Equatable {
         self.cursorColor = cursorColor
         self.cursorTextColor = cursorTextColor
         self.cursorOpacity = cursorOpacity
-        self.fontFamilyFallback = fontFamilyFallback
-        self.fontFamilyBold = fontFamilyBold
-        self.fontFamilyItalic = fontFamilyItalic
-        self.fontFamilyBoldItalic = fontFamilyBoldItalic
-        self.autoMatchWeightStyle = autoMatchWeightStyle
-        self.fontLigatures = fontLigatures
-        self.fontLigaturesAlphabet = fontLigaturesAlphabet
-        self.fontBold = fontBold
-        self.fontItalic = fontItalic
-        self.fontBlending = fontBlending
         self.lineHeight = lineHeight
     }
 
@@ -216,8 +180,6 @@ public struct TerminalPreferences: Sendable, Equatable {
         self.init(
             fontFamily: config.text("terminal.font-family"),
             fontSize: config.double("terminal.font-size"),
-            fontWeight: config.text("terminal.font-weight"),
-            theme: config.text("terminal.theme"),
             background: config.text("terminal.background"),
             foreground: config.text("terminal.foreground"),
             cursorStyle: config.choice("terminal.cursor-style", CursorStyle.block),
@@ -226,16 +188,6 @@ public struct TerminalPreferences: Sendable, Equatable {
             cursorColor: config.text("terminal.cursor-color"),
             cursorTextColor: config.text("terminal.cursor-text-color"),
             cursorOpacity: config.double("terminal.cursor-opacity"),
-            fontFamilyFallback: config.text("terminal.font-family-fallback"),
-            fontFamilyBold: config.text("terminal.font-family-bold"),
-            fontFamilyItalic: config.text("terminal.font-family-italic"),
-            fontFamilyBoldItalic: config.text("terminal.font-family-bold-italic"),
-            autoMatchWeightStyle: config.flag("terminal.auto-match-weight-style"),
-            fontLigatures: config.choice("terminal.ligatures", FontLigatures.off),
-            fontLigaturesAlphabet: config.flag("terminal.ligatures-alphabet"),
-            fontBold: config.choice("terminal.bold", FontStyleMode.auto),
-            fontItalic: config.choice("terminal.italic", FontStyleMode.auto),
-            fontBlending: config.choice("terminal.blending", FontBlending.default),
             lineHeight: Self.lineHeight(config),
         )
     }
@@ -252,5 +204,29 @@ public struct TerminalPreferences: Sendable, Equatable {
         case "loose": return .loose
         default: return .default
         }
+    }
+
+    /// The cell background as the door takes it, or `nil` when the file's text is not a colour.
+    public var backgroundWord: UInt32? { Self.word(background) }
+
+    /// The cell foreground as the door takes it, or `nil` when the file's text is not a colour.
+    public var foregroundWord: UInt32? { Self.word(foreground) }
+
+    /// The caret's colour as the door takes it, or `nil` to follow the foreground.
+    public var cursorColorWord: UInt32? { Self.word(cursorColor) }
+
+    /// The glyph-under-caret colour as the door takes it, or `nil` to keep the cell's background.
+    public var cursorTextColorWord: UInt32? { Self.word(cursorTextColor) }
+
+    /// A bare 6-hex colour as the `0x00RRGGBB` word every renderer door takes.
+    ///
+    /// `nil` for anything that is not exactly six hex digits, which folds the "unset honoured" rule
+    /// and malformed input into one answer: both mean *this preference states no colour*, and the
+    /// door's own `present: false` branch is the only place either can land. The strings arrive from
+    /// a config row that does not validate colours, so refusing here is what keeps a typo from
+    /// painting a caret some colour nobody chose.
+    private static func word(_ hex: String) -> UInt32? {
+        guard hex.count == 6 else { return nil }
+        return UInt32(hex, radix: 16)
     }
 }
