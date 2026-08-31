@@ -44,7 +44,6 @@ pub fn one_vt_grammar_for_plain_text(tree: &Tree) -> Report {
         claims.push(Claim::Matches {
             path: render,
             pattern: r"slopdesk_sanitize::plaintext::strip\(",
-            view: View::Statements,
             message: "a render stopped asking slopdesk_sanitize::plaintext — the VT grammar is \
                       plaintext.rs's, and a second machine over the same bytes is how the strip and the \
                       holdback drifted before",

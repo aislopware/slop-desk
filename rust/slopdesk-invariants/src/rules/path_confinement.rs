@@ -140,7 +140,6 @@ pub fn the_confinement_rule_is_lexical_and_singular(tree: &Tree) -> Report {
         Claim::Matches {
             path: PROBE_HOME,
             pattern: r"fn (confine|is_confinable_absolute)\(",
-            view: View::Statements,
             message: "the one home no longer declares the rule — the ban beside this would then be a ban \
                       over nothing",
         },
@@ -168,7 +167,6 @@ pub fn the_confinement_door_is_reachable(tree: &Tree) -> Report {
         Claim::Matches {
             path: METADATA_REDUCER,
             pattern: r"use slopdesk_probe::path_confine",
-            view: View::Statements,
             message: "rust/slopdesk-hostserver/src/metadata.rs no longer imports the confinement rule — \
                       every metadata verb that names a path goes through it, and three Swift \
                       implementations of this predicate once compiled and passed while disagreeing with \
@@ -180,7 +178,6 @@ pub fn the_confinement_door_is_reachable(tree: &Tree) -> Report {
         Claim::Matches {
             path: METADATA_REDUCER,
             pattern: r"path_confine::(confine|is_confinable_absolute)\(",
-            view: View::Statements,
             message: "rust/slopdesk-hostserver/src/metadata.rs imports the confinement rule and never asks \
                       it — a live import over an inlined `starts_with` is what the three deleted Swift \
                       implementations each looked like from inside their own file",
@@ -218,14 +215,12 @@ pub fn an_unknown_mux_type_is_refused(tree: &Tree) -> Report {
         Claim::Matches {
             path: MUX_ENVELOPE_RUST,
             pattern: r"_ => None",
-            view: View::Statements,
             message: "MuxFrameType::from_byte stopped refusing an unknown type — a byte outside the list \
                       that decodes to SOMETHING is a peer choosing which arm this host runs (docs/20 §4)",
         },
         Claim::Matches {
             path: MUX_ENVELOPE_RUST,
             pattern: r"MuxFrameType::from_byte\(type_byte\)",
-            view: View::Statements,
             message: "the mux decoder stopped asking from_byte for the type — a match on the raw byte at \
                       the decode site is the refused-arm question answered a second time, in the one place \
                       that can act on the answer (docs/20 §4)",

@@ -99,7 +99,6 @@ pub fn one_device_panel_predicate(tree: &Tree) -> Report {
     claims.push(Claim::Matches {
         path: ROW_FILTER,
         pattern: r"slopdesk_ws_binding_row_matches\(",
-        view: View::Statements,
         message: "DeviceRowFilter no longer calls slopdesk_ws_binding_row_matches — the predicate is \
                   rust/slopdesk-workspace/src/binding_search.rs and is not to be re-spelled in Swift",
     });
@@ -150,14 +149,12 @@ pub fn the_instrument_voice_is_minted_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: SLATE_DESIGN,
             pattern: r"^ *if let struck = mintedInstruments\[rung\] \{ return struck \}$",
-            view: View::Statements,
             message: "instrumentNative stopped reading mintedInstruments — it is 7.1 µs a call cold and 30 \
                       ns out of the table",
         },
         Claim::Matches {
             path: SLATE_DESIGN,
             pattern: r"^ *@MainActor private static var mintedInstruments: \[InstrumentRung: SlateNativeFont\] = \[:\]$",
-            view: View::Statements,
             message: "mintedInstruments lost its @MainActor (or its type) — the only alternatives are a \
                       lock or no memo at all",
         },
@@ -165,7 +162,6 @@ pub fn the_instrument_voice_is_minted_once(tree: &Tree) -> Report {
             path: SLATE_DESIGN,
             pattern: r"fontDescriptor\.withFamily\(mono\)",
             count: 1,
-            view: View::Statements,
             message: "the instrument face is built in {found} places, not 1 — mintInstrument is the only \
                       one allowed, and 0 means this extraction has gone stale",
         },
@@ -197,7 +193,6 @@ pub fn the_android_level_filter_is_androidds(tree: &Tree) -> Report {
         Claim::Matches {
             path: ANDROID_LOG_LEVEL,
             pattern: r"slopdesk_android_log_level_letter",
-            view: View::Statements,
             message: "AndroidLogLevel no longer reads androidd's level array — the menu is a second list \
                       again (docs/48)",
         },

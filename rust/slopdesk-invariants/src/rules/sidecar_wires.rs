@@ -560,7 +560,6 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_EVENT: u8 = 1;",
-            view: View::Statements,
             message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 1 for an event — an unknown \
                       tag is SKIPPED at both ends, so nothing errors and the panel just stays empty \
                       (docs/54)",
@@ -568,7 +567,6 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_KEEP_ALIVE: u8 = 2;",
-            view: View::Statements,
             message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 2 for a keep-alive — an \
                       unknown tag is SKIPPED at both ends, so nothing errors and the feed just stops \
                       (docs/54)",
@@ -576,28 +574,24 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_SUBSCRIBE: u8 = 3;",
-            view: View::Statements,
             message: "rust/slopdesk-inspectord/src/wire.rs no longer spells the client's subscribe tag as 3 \
                       (docs/54)",
         },
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_EVENT => Ok\(ClientFrame::Event",
-            view: View::Statements,
             message: "wire.rs's decode_client no longer reads tag 1 as an event — the client end must \
                       decode exactly the two host → client tags and refuse its own (docs/54)",
         },
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"TAG_KEEP_ALIVE => Ok\(ClientFrame::KeepAlive\)",
-            view: View::Statements,
             message: "wire.rs's decode_client no longer reads tag 2 as a keep-alive — the client end must \
                       decode exactly the two host → client tags and refuse its own (docs/54)",
         },
         Claim::Matches {
             path: INSPECTOR_WIRE,
             pattern: r"MAX_FRAME_PAYLOAD: usize = 16 \* 1024 \* 1024;",
-            view: View::Statements,
             message: "the inspector's frame cap is not the 16 MiB ceiling the other four paths use — a \
                       LOWER cap refuses a large replay frame the daemon just built, a HIGHER one has the \
                       client throw frameTooLarge, which is the one unrecoverable decode error (docs/54)",
@@ -664,7 +658,6 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: parser,
                 pattern: text::intern(format!("slopdesk_{daemon}::server::ANNOUNCE_PREFIX")),
-                view: View::Statements,
                 message: text::intern(format!(
                     "{parser} no longer learns {daemon}'s announce marker from the crate that prints it — \
                      hostd would wait out its timeout, kill a healthy service and respawn it on every \
@@ -674,7 +667,6 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: parser,
                 pattern: text::intern(format!("slopdesk_{daemon}::server::ANNOUNCE_VERSION_PREFIX")),
-                view: View::Statements,
                 message: text::intern(format!(
                     "{parser} no longer reads {daemon}'s version marker off the crate that prints it — a \
                      parse that stopped matching reads None, which the audit reports as 'unknown' rather \
@@ -684,7 +676,6 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: server,
                 pattern: r"ANNOUNCE_VERSION_PREFIX\}\{\}",
-                view: View::Statements,
                 message: text::intern(format!(
                     "rust/slopdesk-{daemon}/src/server.rs no longer announces a version after the marker — \
                      hostd would report `unknown` and go on running last week's daemon behind this week's \
@@ -694,7 +685,6 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
             Claim::Matches {
                 path: server,
                 pattern: r#"env!\("CARGO_PKG_VERSION"\)"#,
-                view: View::Statements,
                 message: text::intern(format!(
                     "rust/slopdesk-{daemon}/src/server.rs no longer announces its OWN compile-time version \
                      — a daemon reporting the version it read off disk compares equal to it forever, which \
@@ -745,14 +735,12 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: SIDECARS,
             pattern: r"pub fn policy\(tool: &str\) -> RestartPolicy",
-            view: View::Statements,
             message: "rust/slopdesk-sidecars no longer holds the policy table — it has two callers in two \
                       languages, which is the exact shape a Swift copy skews quietly in (docs/49)",
         },
         Claim::Matches {
             path: SIDECARS_MANIFEST,
             pattern: r"pub fn plan\(",
-            view: View::Statements,
             message: "rust/slopdesk-sidecars/src/manifest.rs no longer holds the manifest diff (docs/49)",
         },
         Claim::NoneUnder {
@@ -770,21 +758,18 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOSTD_AUDIT,
             pattern: r"use slopdesk_sidecars::",
-            view: View::Statements,
             message: "rust/slopdesk-hostd/src/audit.rs no longer asks rust/slopdesk-sidecars for its \
                       verdict — it would be a second table, in the one binary that acts on it (docs/49)",
         },
         Claim::Matches {
             path: SIDECAR_CLI,
             pattern: r"slopdesk_sidecars::manifest::plan|manifest::plan\b|use slopdesk_sidecars",
-            view: View::Statements,
             message: "`slopdesk sidecars` no longer asks rust/slopdesk-sidecars for the upgrade plan — it \
                       would be a second diff of the same two manifests (docs/49)",
         },
         Claim::Matches {
             path: HOMEBREW_FORMULA,
             pattern: r#"sidecars", "--record""#,
-            view: View::Statements,
             message: "the formula no longer records the manifest — every upgrade would read as a first \
                       install, which is a table that never says anything (docs/49)",
         },

@@ -233,7 +233,6 @@ pub fn the_solvers_live_in_rust(tree: &Tree) -> Report {
         report.absorb(check_all(tree, &[Claim::Matches {
             path,
             pattern: r"import CSlopDeskFFI",
-            view: View::Statements,
             message: crate::text::intern(format!(
                 "{path} no longer calls the Rust crate — the port was undone (docs/55 §6)"
             )),

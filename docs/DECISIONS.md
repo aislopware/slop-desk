@@ -18006,3 +18006,40 @@ the shared canary shape is for. *Patching only the two shapes the tree hits toda
 dialect facts were equally wrong and equally silent; a scanner that is right by coincidence fails the
 day someone writes an ordinary line. *Keeping the old scanner's line-bounded literals as a resync
 net* — that accident is precisely what hid the interpolation hole for as long as it existed.
+
+## The view a satisfier may not pick (2026-08-31)
+
+`slopdesk-invariants` splits every claim two ways. A BAN may read what a file SAYS — its subject is
+often prose, and a comment naming the banned thing makes it fail LOUD. A claim that must be
+SATISFIED may not, because the comment that answers one is almost always the tombstone the deletion
+left behind: the sentence "there is no `slopdesk_inspector_decoder_buffered`" kept a rule demanding
+that door green for as long as the door was gone.
+
+That split was closed once already, in two passes. The four name-taking positive arms — `Doors`,
+`Mentions`, `MentionsUnder`, `Names` — were flipped to `statements()`, then the pattern-taking ones
+were swept behind them, and `Extract`, `Corpus` and `ByteMap` dropped their `view` field outright
+because each only ever feeds a satisfier.
+
+What was left after that sweep was a sweep and a sentence. `Claim::Matches`, `Exactly`, `Within`,
+`Before`, `Resolved` and `PerFileCounts` still CARRIED a `View`, all 194 of their sites happened to
+say `Statements`, and the only thing keeping the 195th honest was a `⚠️` on `View::Raw` saying so.
+That is the exact shape this crate exists to refuse — a claim held by review rather than by a gate —
+pointed at the crate. Measured before touching anything: 194 sites, every one already `Statements`,
+zero exceptions. So the six arms have no `view` field at all now, and the flip moved no verdict; it
+moved the guarantee out of a review and into the type, where the next site cannot disagree.
+
+`Claim::AtMost` keeps its view, and the asymmetry is polarity rather than an oversight. It is a
+CEILING: a comment matching its pattern pushes the count UP and over the maximum, which is a red
+nobody mistakes for a pass — the same direction that makes a view safe on `Lacks` and `NoneOf`.
+`Exactly` and `PerFileCounts` count too and are still in the flip, because a count with a FLOOR in
+it can be pushed up TO the required number and satisfied by prose.
+
+**Rejected.** *A rule that reads this crate's own sources and bans `View::Raw` next to a positive
+arm* — it was the first shape considered, and it is strictly worse: it re-states in a regex what the
+type can state outright, it fails at test time rather than at compile time, and it is one more
+text-scanning gate whose reach can drift from its claim. Deleting the field is the same move
+`Extract`/`Corpus`/`ByteMap` already made, finished. *Flipping `AtMost` for symmetry* — symmetry is
+not the property; the direction a wrong reading fails in is, and `AtMost`'s is loud. *Growing the
+field back for an ordered claim whose ANCHOR is legitimately prose* — a `MARK:` or a section
+heading — that is the split `ByteMap` and `Corpus` already make: locate the range on the raw text,
+read the FACTS out of `statements()`. All eleven `Within`/`Before` sites anchor in code today.

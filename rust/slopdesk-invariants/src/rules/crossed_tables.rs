@@ -49,7 +49,6 @@ pub fn an_undecodable_stream_ends(tree: &Tree) -> Report {
         Claim::Matches {
             path: ANDROID_PROTOCOL,
             pattern: r"slopdesk_android_stream_decodable_codec\(",
-            view: View::Statements,
             message: "AndroidStreamProtocol stopped asking which codecs decode — that set is Rust's",
         },
     ])
@@ -75,7 +74,6 @@ pub fn the_multi_loss_threshold_is_one_answer(tree: &Tree) -> Report {
         Claim::Matches {
             path: FEC_POLICY,
             pattern: r"slopdesk_adaptive_fec_multi_loss_active\(",
-            view: View::Statements,
             message: "the FEC policy stopped asking the door whether multi-loss is active",
         },
     ])
@@ -233,14 +231,12 @@ pub fn the_shipped_tables_are_the_crates(tree: &Tree) -> Report {
         Claim::Matches {
             path: MODEL_TEMPLATE,
             pattern: r"SessionTemplateCrossing\.builtInTemplatesFromTheCrate\(\)",
-            view: View::Statements,
             message: "SessionTemplate.swift stopped seeding from the crate — the shipped table is \
                       templates.rs's",
         },
         Claim::Matches {
             path: MODEL_PRESET,
             pattern: r"SessionTemplateCrossing\.builtInLaunchPresetsFromTheCrate\(\)",
-            view: View::Statements,
             message: "LaunchPreset.swift stopped seeding from the crate — the shipped table is \
                       templates.rs's",
         },

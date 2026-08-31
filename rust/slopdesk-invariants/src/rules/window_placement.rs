@@ -67,7 +67,6 @@ pub fn the_drag_cadence_is_ratcheted_across_the_port(tree: &Tree) -> Report {
         Claim::Matches {
             path: GEOMETRY_RUST,
             pattern: r"const DRAG_POLL_HZ: f64 = [0-9]",
-            view: View::Statements,
             message: "rust/slopdesk-videohostd/src/windowgeometry.rs no longer declares DRAG_POLL_HZ — the \
                       drag poll cadence is a named constant so that every reader reaches the same one \
                       (docs/61 §1 row 13)",
@@ -75,7 +74,6 @@ pub fn the_drag_cadence_is_ratcheted_across_the_port(tree: &Tree) -> Report {
         Claim::Matches {
             path: GEOMETRY_RUST,
             pattern: r"const UNION_POLL_DIVIDER: u32 = [0-9]",
-            view: View::Statements,
             message: "rust/slopdesk-videohostd/src/windowgeometry.rs no longer declares UNION_POLL_DIVIDER \
                       — the DIALOG-EXPAND region is sampled every Nth poll, and N is only meaningful beside \
                       the cadence it divides (docs/61 §1 row 13)",

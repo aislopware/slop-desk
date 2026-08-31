@@ -48,15 +48,22 @@ use crate::report::Report;
 use crate::text;
 use crate::tree::Tree;
 
-/// Which view of a file a claim reads.
+/// Which view of a file a BAN reads.
+///
+/// Only a ban has one to pick. A claim that must be SATISFIED reads
+/// [`crate::tree::Source::statements`] and is given no field to say otherwise, because there is no
+/// honest reason for a satisfier to read prose: a comment answering one is the tombstone the
+/// deletion left behind, and that is a quiet pass rather than a loud failure. Every positive claim
+/// already read `statements()` when the field came off — 194 sites, all agreeing — so this changed
+/// no verdict. What it changed is that the next site cannot disagree.
+///
+/// A future ordered or bracketing claim whose ANCHOR is legitimately prose — a `MARK:`, a section
+/// heading — is the split [`Corpus`] already makes rather than a reason to grow the field back:
+/// locate the range on the raw text, read the FACTS out of `statements()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
     /// The file verbatim. For a BAN whose subject is what the file SAYS — a doc citation, a
     /// heading, a prose anchor.
-    ///
-    /// ⚠️ NOT for a claim that must be SATISFIED. A positive claim on this view is answered by a
-    /// comment, and the comment that answers it is the tombstone the deletion left behind. Every
-    /// positive claim in this crate reads [`Self::Statements`]; see the block on [`Claim::Doors`].
     Raw,
     /// The file with whole-line comments stripped. For a BAN, because the prose above a ban names
     /// the thing it forbids and a raw read would fire on the explanation.
@@ -65,8 +72,7 @@ pub enum View {
     /// that must spell the banned thing.
     CodeBeforeTests,
     /// Every comment blanked by a tokenizer, string literals intact. For a TOKEN ban, where the
-    /// banned spelling can appear at the end of a line of real code — and for EVERY positive
-    /// claim, which is the only view that cannot be answered by prose.
+    /// banned spelling can appear at the end of a line of real code.
     Statements,
 }
 
@@ -389,8 +395,26 @@ pub enum Claim {
     /// no longer have one: [`Extract`], [`Corpus`] and [`ByteMap`] all dropped the field, because
     /// each of them only ever feeds a claim that must be SATISFIED — a set the far side has to
     /// match, a value that has to be pinned — and there is no honest reason for one to read prose.
-    /// The per-claim `view` STAYS, because a ban's subject is legitimately what a file says.
-    /// [`ByteMap`] could not simply flip — its MARKER is allowed to be prose,
+    ///
+    /// ## The half that sweeping left behind: the field itself
+    ///
+    /// The sweep above set 194 sites and stopped, so what held after it was a sweep and a sentence
+    /// — the very shape this crate exists to refuse, turned on the crate. Nothing stopped the next
+    /// `Claim::Matches` from typing [`View::Raw`], and nothing would have said so. The six positive
+    /// arms have no `view` field at all now: [`Claim::Matches`], [`Claim::Exactly`],
+    /// [`Claim::Within`], [`Claim::Before`], [`Claim::Resolved`] and [`Claim::PerFileCounts`] read
+    /// `statements()` the way [`Claim::AtLeast`], [`Claim::Doors`] and [`Claim::Names`] always did.
+    /// Measured before the field came off — all 194 already said `Statements`, so the flip moved no
+    /// verdict; it moved the guarantee from a review into the type.
+    ///
+    /// [`Claim::AtMost`] KEEPS its view, and the asymmetry is the polarity rather than an
+    /// oversight: it is a CEILING, so a comment can only push a count UP and over it, which is
+    /// a false alarm. [`Claim::Exactly`] and [`Claim::PerFileCounts`] read counts too and are
+    /// still in the flip, because a count with a FLOOR in it can be pushed up TO the number and
+    /// satisfied by prose.
+    ///
+    /// The per-claim `view` STAYS on the bans, because a ban's subject is legitimately what a file
+    /// says. [`ByteMap`] could not simply flip — its MARKER is allowed to be prose,
     /// and for `PaneKind` it has to be, since `session.rs` holds two byte-identical `as_byte`
     /// signatures — so it locates its range on the raw text and reads the ROWS out of
     /// `statements()` ([`text::range_across`]). That split is the general answer: an anchor is
@@ -486,8 +510,6 @@ pub enum Claim {
         pattern: &'static str,
         /// How many there must be.
         count: usize,
-        /// Which view to read.
-        view: View,
         /// The sentence, with `{found}` where the count goes.
         message: &'static str,
     },
@@ -499,6 +521,10 @@ pub enum Claim {
     /// and re-projects every cell; `mirroredTopology` memoizes it against
     /// `workspaceMirrorRevision`, and its miss path is the two reads that are allowed. A third
     /// puts the projection back on some caller's path with green tests and no compile error.
+    ///
+    /// The one counting claim that KEEPS a [`View`], because a ceiling fails in the safe direction:
+    /// a comment matching the pattern pushes the count UP and OVER, which is a red nobody can
+    /// mistake for a pass. [`Claim::Exactly`] has a floor inside it and does not keep one.
     AtMost {
         /// Repo-relative path.
         path: &'static str,
@@ -526,8 +552,6 @@ pub enum Claim {
         path: &'static str,
         /// The pattern.
         pattern: &'static str,
-        /// Which view to read.
-        view: View,
         /// What a non-match means.
         message: &'static str,
     },
@@ -706,8 +730,6 @@ pub enum Claim {
         halves: &'static [&'static str],
         /// The pattern each half must match, with `{needle}` where the rung's name goes.
         template: &'static str,
-        /// Which view of each half to read.
-        view: View,
         /// The sentence, with `{half}` and `{needle}` where the file and the rung go.
         message: &'static str,
     },
@@ -732,8 +754,6 @@ pub enum Claim {
         extensions: &'static [&'static str],
         /// Each pattern and the number of LINES that must match it.
         expect: &'static [(&'static str, usize)],
-        /// Which view to read.
-        view: View,
         /// Paths that may differ, each because somebody decided so.
         exempt: &'static [&'static str],
         /// The sentence, with `{files}` where the offenders and their readings go.
@@ -757,8 +777,6 @@ pub enum Claim {
         end: &'static str,
         /// What must appear inside it.
         pattern: &'static str,
-        /// Which view to read.
-        view: View,
         /// What an absence means.
         message: &'static str,
     },
@@ -805,8 +823,6 @@ pub enum Claim {
         first: &'static str,
         /// The pattern whose first match must come second.
         second: &'static str,
-        /// Which view to read.
-        view: View,
         /// What the wrong order means.
         message: &'static str,
     },
@@ -1185,11 +1201,10 @@ impl Claim {
                 path,
                 pattern,
                 count,
-                view,
                 message,
             } => {
                 if let Some(source) = report.source(tree, path, message) {
-                    let found = text::count_lines(&view.of(source), pattern);
+                    let found = text::count_lines(source.statements(), pattern);
                     report.fail_if(found != *count, fill(message, "found", &found.to_string()));
                 }
             },
@@ -1217,12 +1232,13 @@ impl Claim {
             Self::Matches {
                 path,
                 pattern,
-                view,
                 message,
             } => {
                 if let Some(source) = report.source(tree, path, message) {
-                    let haystack = view.of(source);
-                    report.fail_if(!text::matches(&haystack, pattern), (*message).to_owned());
+                    report.fail_if(
+                        !text::matches(source.statements(), pattern),
+                        (*message).to_owned(),
+                    );
                 }
             },
             Self::Lacks {
@@ -1473,7 +1489,6 @@ impl Claim {
                 needles,
                 halves,
                 template,
-                view,
                 message,
             } => {
                 let Some(rungs) = needles.set(tree, report) else {
@@ -1500,11 +1515,11 @@ impl Claim {
                     let Some(source) = tree.get(half) else {
                         continue;
                     };
-                    let haystack = view.of(source);
+                    let haystack = source.statements();
                     for rung in &rungs {
                         let pattern = fill(template, "needle", rung);
                         report.fail_if(
-                            !text::matches(&haystack, &pattern),
+                            !text::matches(haystack, &pattern),
                             fill(&fill(message, "half", half), "needle", rung),
                         );
                     }
@@ -1514,7 +1529,6 @@ impl Claim {
                 roots,
                 extensions,
                 expect,
-                view,
                 exempt,
                 message,
             } => {
@@ -1532,10 +1546,10 @@ impl Claim {
                         if excused || !matching_extension {
                             continue;
                         }
-                        let haystack = view.of(source);
+                        let haystack = source.statements();
                         let readings: Vec<String> = expect
                             .iter()
-                            .map(|(pattern, _)| text::count_lines(&haystack, pattern).to_string())
+                            .map(|(pattern, _)| text::count_lines(haystack, pattern).to_string())
                             .collect();
                         let agrees = expect
                             .iter()
@@ -1556,11 +1570,10 @@ impl Claim {
                 start,
                 end,
                 pattern,
-                view,
                 message,
             } => {
                 if let Some(source) = report.source(tree, path, message) {
-                    let block = text::range(&view.of(source), start, end);
+                    let block = text::range(source.statements(), start, end);
                     report.fail_if(!text::matches(&block, pattern), message.to_owned());
                 }
             },
@@ -1568,11 +1581,10 @@ impl Claim {
                 path,
                 first,
                 second,
-                view,
                 message,
             } => {
                 if let Some(source) = report.source(tree, path, message) {
-                    let haystack = view.of(source);
+                    let haystack = source.statements();
                     // Line numbers rather than byte offsets, which is what the shell compared and
                     // what a diagnostic can be read against.
                     let line_of = |pattern: &str| {
@@ -2470,14 +2482,12 @@ mod tests {
         let matches = [Claim::Matches {
             path: "Sources/A/Face.swift",
             pattern: r"memo\.read\(\)",
-            view: View::Statements,
             message: "the face stopped reading the memo",
         }];
         let exactly = [Claim::Exactly {
             path: "Sources/A/Face.swift",
             pattern: r"memo\.read\(\)",
             count: 2,
-            view: View::Statements,
             message: "the face reads the memo {found} times",
         }];
         let at_least = [Claim::AtLeast {
@@ -2490,7 +2500,6 @@ mod tests {
             path: "Sources/A/Face.swift",
             first: r"memo\.read\(\)",
             second: r"let y",
-            view: View::Statements,
             message: "the read is no longer above the write",
         }];
         for (label, claims) in [

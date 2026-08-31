@@ -57,7 +57,6 @@ pub fn a_master_crosses_owned(tree: &Tree) -> Report {
             Claim::Matches {
                 path: REGISTRY,
                 pattern: entry,
-                view: View::Statements,
                 message: "superd's registry no longer hands its caller an owned master duplicate — see \
                           docs/51 §2.3",
             }
@@ -73,7 +72,6 @@ pub fn a_master_crosses_owned(tree: &Tree) -> Report {
     claims.push(Claim::Matches {
         path: FRAME,
         pattern: r"descriptor: Option<BorrowedFd<'_>>",
-        view: View::Statements,
         message: "the frame takes a descriptor it cannot prove is still open — BorrowedFd is the proof",
     });
     check_all(tree, &claims)
@@ -127,7 +125,6 @@ pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
             Claim::Matches {
                 path: LIFECYCLE,
                 pattern: piece,
-                view: View::Statements,
                 message: "rust/slopdesk-hostserver/src/service.rs no longer holds one of its two lifecycles \
                           — the five faces share one of each",
             }
@@ -230,7 +227,6 @@ pub fn one_re_armable_deadline(tree: &Tree) -> Report {
         claims.push(Claim::Matches {
             path: caller,
             pattern: latch,
-            view: View::Statements,
             message: "a caller stopped arming a DeadlineLatch — the timer is shared, the state is not",
         });
     }
@@ -348,7 +344,6 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
         claims.push(Claim::Matches {
             path: end,
             pattern: direction,
-            view: View::Statements,
             message: "a clipboard end stopped reaching the board through ClientPasteboard — the two ends \
                       agree by sharing the fold, not by luck",
         });

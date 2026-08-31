@@ -46,14 +46,12 @@ pub fn batch_bodies(tree: &Tree) -> Report {
         Claim::Matches {
             path: RUST_SNIFFWIRE,
             pattern: GOLDEN,
-            view: View::Statements,
             message: "the sniff body has no golden literal left — a renamed key is invisible again to every \
                       superd already running (docs/51 §6.13)",
         },
         Claim::Matches {
             path: RUST_BLOCKWIRE,
             pattern: GOLDEN,
-            view: View::Statements,
             message: "the block body has no golden literal left — a renamed commandText fills the Commands \
                       panel with blank rows and fails nothing (docs/51 §6.14)",
         },

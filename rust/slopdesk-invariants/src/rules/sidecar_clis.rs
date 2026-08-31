@@ -108,7 +108,6 @@ pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: CTL_SERVE,
             pattern: r#"request\.method == "subscribe""#,
-            view: View::Statements,
             message: "rust/slopdesk-hostserver/src/ctlserve.rs no longer intercepts the streaming verb — \
                       `subscribe` is handled BEFORE the request match, so the verb-set comparison cannot \
                       see it and it is asserted here or nowhere (docs/50)",
@@ -116,7 +115,6 @@ pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: CTL_COMMANDS,
             pattern: r#""subscribe""#,
-            view: View::Statements,
             message: "rust/slopdesk-ctl no longer sends the streaming verb — `subscribe` leaves \
                       Control::stream rather than ctl.call, so the verb-set comparison cannot see it and it \
                       is asserted here or nowhere (docs/50)",
@@ -179,7 +177,6 @@ pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOSTD_SERVICES,
             pattern: r"slopdesk_codeseed::",
-            view: View::Statements,
             message: "rust/slopdesk-hostd/src/services.rs no longer asks rust/slopdesk-codeseed for the \
                       workbench profile — a fork back would compile, pass, and turn every renamed \
                       subcommand into an UNAVAILABLE panel that logs nothing (docs/DECISIONS.md, stage 22)",
@@ -187,7 +184,6 @@ pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: CODESEED_MAIN,
             pattern: r#"^        "[a-z-]+" =>"#,
-            view: View::Statements,
             message: "rust/slopdesk-codeseed's binary lost its subcommand switch — it still ships, and a \
                       user still types it (docs/DECISIONS.md, stage 22)",
         },
@@ -255,7 +251,6 @@ pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOSTD_SERVICES,
             pattern: r"slopdesk_hook::install::",
-            view: View::Statements,
             message: "rust/slopdesk-hostd/src/services.rs no longer asks rust/slopdesk-hook to install the \
                       relay — a fork back would compile, and a renamed subcommand would read as 'not \
                       installed', showing a green offer to install something that fails (docs/DECISIONS.md, \
@@ -264,7 +259,6 @@ pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: AGENTHOOKS_MAIN,
             pattern: r#"^        "[a-z]+" =>"#,
-            view: View::Statements,
             message: "rust/slopdesk-agenthooks lost its subcommand switch — it still ships, and a user \
                       still types it (docs/DECISIONS.md, stage 23)",
         },
@@ -273,7 +267,6 @@ pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
             start: HOOK_PATH.0,
             end: HOOK_PATH.1,
             pattern: r#"join\("hooks"\)"#,
-            view: View::Statements,
             message: "install::hook_path no longer joins the hooks directory — the merge sentinel and the \
                       installed basename must be one constant (docs/DECISIONS.md, stage 23)",
         },
@@ -282,7 +275,6 @@ pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
             start: HOOK_PATH.0,
             end: HOOK_PATH.1,
             pattern: r"\.join\(HOOK_MARKER\)",
-            view: View::Statements,
             message: "install::hook_path no longer builds the installed name from HOOK_MARKER — the day the \
                       literal is written back in is the day an uninstall silently stops matching what an \
                       install wrote (docs/DECISIONS.md, stage 23)",
@@ -366,7 +358,6 @@ pub fn the_probe_subcommands_are_one_alphabet(tree: &Tree) -> Report {
         Claim::Matches {
             path: PROBE_MAIN,
             pattern: r#"^        "[a-z-]+" =>"#,
-            view: View::Statements,
             message: "rust/slopdesk-probe's binary lost its subcommand switch — it still ships, and a user \
                       still types it (docs/DECISIONS.md, stage 24)",
         },
@@ -448,7 +439,6 @@ pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: GIT_STATUS,
             pattern: r"pub fn of_path",
-            view: View::Statements,
             message: "rust/slopdesk-git no longer answers of_path — the status engine moved without its \
                       ratchet (docs/DECISIONS.md)",
         },
@@ -463,7 +453,6 @@ pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: GIT_PORCELAIN,
             pattern: r"pub const fn nibble\(character: char\) -> u8",
-            view: View::Statements,
             message: "rust/slopdesk-git::porcelain no longer holds the nibble table — the client mirrors \
                       its inverse to name a change category, so it is a wire contract and it has one master \
                       (docs/DECISIONS.md)",
@@ -471,7 +460,6 @@ pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: GIT_PORCELAIN,
             pattern: r"pub const fn pack\(x: char, y: char\) -> u8",
-            view: View::Statements,
             message: "rust/slopdesk-git::porcelain no longer packs the porcelain pair into one byte — \
                       golden/golden_vectors.json freezes that byte (docs/DECISIONS.md)",
         },
@@ -523,14 +511,12 @@ pub fn the_pointer_tables_are_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: POINTER_SHAPE,
             pattern: r"slopdesk_pointer_",
-            view: View::Statements,
             message: "PointerShapeMapping stopped asking the door — a pointer table decided in Swift is a \
                       second table, and every way it breaks is silent (docs/56, increment 50)",
         },
         Claim::Matches {
             path: POINTER_VISIBILITY,
             pattern: r"slopdesk_pointer_",
-            view: View::Statements,
             message: "MouseVisibilityMapping stopped asking the door — a pointer hidden with no gesture \
                       that brings it back fails nothing and crashes nothing (docs/56, increment 50)",
         },
@@ -549,7 +535,6 @@ pub fn the_pointer_tables_are_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: POINTER_SHAPE,
             pattern: r"case arrow = 0",
-            view: View::Statements,
             message: "PointerShapeToken stopped pinning its raw values — its discriminants ARE the wire, \
                       and a case reordered under implicit numbering is a cursor swapped for another cursor \
                       (docs/56, increment 50)",
@@ -557,7 +542,6 @@ pub fn the_pointer_tables_are_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: POINTER_DOOR,
             pattern: r"the_supported_shapes_cross_as_the_discriminants_swift_is_pinned_to",
-            view: View::Statements,
             message: "the door's discriminant test is gone — Swift's enum and Rust's can now renumber apart \
                       (docs/56, increment 50)",
         },

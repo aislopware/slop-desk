@@ -266,7 +266,6 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
             Claim::Matches {
                 path: owner,
                 pattern: quoted,
-                view: View::Statements,
                 message: says,
             },
             Claim::NoneUnder {

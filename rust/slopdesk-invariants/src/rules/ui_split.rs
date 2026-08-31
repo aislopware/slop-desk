@@ -158,7 +158,6 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
                 (r"^#if os\(iOS\)$", 1),
                 (r"^#endif$", 1),
             ],
-            view: View::Statements,
             exempt: &[],
             message: "{files} carries more than the one whole-file '#if os(iOS)' — the readings are \
                       total/opens/ends, and every other arm is always-true scaffolding (docs/56 §3)",
@@ -339,7 +338,6 @@ pub fn the_video_surface_stays_split(tree: &Tree) -> Report {
         Claim::Matches {
             path: actuator,
             pattern: r"^[[:space:]]*#if.*os\(macOS\)",
-            view: View::Statements,
             // The sentence names the path itself, since a table cannot carry a placeholder the claim
             // does not fill.
             message: "a named video actuator no longer carries the platform arm this carve-out exists for — \

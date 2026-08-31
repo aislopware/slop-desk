@@ -129,7 +129,6 @@ pub fn the_phone_dispatches_chords_at_the_root(tree: &Tree) -> Report {
         Claim::Matches {
             path: PHONE_MAIN,
             pattern: r"PhoneAppDelegate\.main\(\)",
-            view: View::Statements,
             message: "the phone's root key rung is not the app's delegate — AppMain must hand the process \
                       to PhoneAppDelegate.main(), or every workspace chord dies outside a terminal pane \
                       (docs/62 stage A)",
@@ -137,7 +136,6 @@ pub fn the_phone_dispatches_chords_at_the_root(tree: &Tree) -> Report {
         Claim::Matches {
             path: PHONE_APP,
             pattern: r"override public func pressesBegan",
-            view: View::Statements,
             message: "the phone's root key rung takes no key — PhoneAppDelegate must override pressesBegan, \
                       which is the chain's tail and the only place every first responder walks past \
                       (docs/62 stage A)",
@@ -145,7 +143,6 @@ pub fn the_phone_dispatches_chords_at_the_root(tree: &Tree) -> Report {
         Claim::Matches {
             path: PHONE_APP,
             pattern: r"PhoneRootKeyPolicy\.rung",
-            view: View::Statements,
             message: "the phone's root key rung re-spells its own precedence — it must ask \
                       PhoneRootKeyPolicy.rung, which is the shared decision (docs/56 §3)",
         },
@@ -181,7 +178,6 @@ pub fn the_phones_terminal_takes_editing_chords(tree: &Tree) -> Report {
         Claim::Matches {
             path: INPUT_HOST,
             pattern: "override var keyCommands",
-            view: View::Statements,
             message: "the phone's terminal has no editing chords — TerminalInputHost must declare \
                       keyCommands for ⌘C/⌘X/⌘V/⌘A, which no other rung can carry (the table leaves C/X/V/A \
                       to the terminal)",
@@ -189,7 +185,6 @@ pub fn the_phones_terminal_takes_editing_chords(tree: &Tree) -> Report {
         Claim::Matches {
             path: RENDERER,
             pattern: r"onRequestMenuItem = \{",
-            view: View::Statements,
             message: "the phone's editing chords are handed to nobody — the renderer must bind \
                       TerminalViewModel.onRequestMenuItem when it attaches, or ⌘C/⌘X/⌘V/⌘A are swallowed \
                       and dropped",
@@ -197,7 +192,6 @@ pub fn the_phones_terminal_takes_editing_chords(tree: &Tree) -> Report {
         Claim::Matches {
             path: INPUT_HOST,
             pattern: r"guard live\?\.terminalModel\?\.onRequestMenuItem != nil",
-            view: View::Statements,
             message: "TerminalInputHost registers its editing chords unconditionally — a UIKeyCommand \
                       swallows its chord, so it must be offered only while its sink is bound",
         },
@@ -228,7 +222,6 @@ pub fn one_config_file_produces_one_behaviour(tree: &Tree) -> Report {
         Claim::Matches {
             path: INPUT_HOST,
             pattern: r"WorkspaceBindingRegistry\.textBinding",
-            view: View::Statements,
             message: "a `text:`/`csi:`/`esc:` binding is Mac-only again — the phone's pane responder must \
                       consult WorkspaceBindingRegistry.textBinding, or one shared config file produces two \
                       behaviours",
@@ -236,7 +229,6 @@ pub fn one_config_file_produces_one_behaviour(tree: &Tree) -> Report {
         Claim::Matches {
             path: INTERCEPTOR,
             pattern: r"WorkspaceBindingRegistry\.isUnbound",
-            view: View::Statements,
             message: "the shared key interceptor ignores unbind: — makeKeyInterceptor must drop an unbound \
                       chord's action, or the same config file unbinds a chord on one shell only",
         },
@@ -263,7 +255,6 @@ pub fn the_code_panel_settles_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: CODE_SIDEBAR,
             pattern: r"case let \.ready\(settledRoot, _\) = phase",
-            view: View::Statements,
             message: "the code panel re-ensures a settled project — CodeSidebarModel.poll must return early \
                       on a root it has already settled, or the phone's cover flashes its spinner on every \
                       re-open",
@@ -273,7 +264,6 @@ pub fn the_code_panel_settles_once(tree: &Tree) -> Report {
             start: r"func requestReload\(\) \{",
             end: r"^    \}",
             pattern: r"phase = \.starting",
-            view: View::Statements,
             message: "the code panel's reload cannot unsettle — requestReload() must clear the settled \
                       phase, or the reload button restarts a loop that returns on its first line",
         },
@@ -331,7 +321,6 @@ pub fn the_panel_opens_on_a_named_surface(tree: &Tree) -> Report {
         Claim::Matches {
             path: PHONE_TAB_GROUP,
             pattern: r"PanelTabs\.all",
-            view: View::Statements,
             message: "the phone cannot open the panel on a named surface — the panel bar's tab group must \
                       mint its plates from PanelTabs.all, which is the Mac rail's capability on a device \
                       with no rail",
@@ -446,7 +435,6 @@ pub fn one_clear_key_per_filter_field(tree: &Tree) -> Report {
         report.absorb(check_all(tree, &[Claim::Matches {
             path: console,
             pattern: r"PhoneDevicePanelChrome\.clearKey",
-            view: View::Statements,
             message: "a device console has no way to clear its filter — its own device list clears in a \
                       tap, and the two sit one scroll apart",
         }]));
@@ -484,7 +472,6 @@ pub fn a_mirrored_device_takes_typed_text(tree: &Tree) -> Report {
             Claim::Matches {
                 path: mirror,
                 pattern: r"DeviceSoftKeyboard\.shared\.register",
-                view: View::Statements,
                 message: "a mirror cannot take typed text — it must register with DeviceSoftKeyboard, or a \
                           phone with no keys cannot type into the device at all",
             },
@@ -502,7 +489,6 @@ pub fn a_mirrored_device_takes_typed_text(tree: &Tree) -> Report {
         report.absorb(check_all(tree, &[Claim::Matches {
             path: stage,
             pattern: r"DeviceSoftKeyboard\.shared\.toggle",
-            view: View::Statements,
             message: "a device stage has no way to raise the keyboard — the soft-keyboard host is \
                       unreachable without the stage's plate",
         }]));
@@ -539,7 +525,6 @@ pub fn the_paste_plate_asks_a_silent_question(tree: &Tree) -> Report {
             start: GATE.0,
             end: GATE.1,
             pattern: r"localClipboardHasText\(\)",
-            view: View::Statements,
             message: "the phone's paste plate does not ask the silent probe — canPasteCurrent must gate on \
                       WorkspaceStore.localClipboardHasText(), which discloses nothing and so raises no iOS \
                       paste alert (docs/56 increment 78)",
@@ -610,7 +595,6 @@ pub fn the_swipe_peel_chip_has_two_drivers(tree: &Tree) -> Report {
             report.absorb(check_all(tree, &[Claim::Matches {
                 path: renderer,
                 pattern,
-                view: View::Statements,
                 message,
             }]));
         }
@@ -695,7 +679,6 @@ pub fn an_ipad_trackpad_is_a_pointer(tree: &Tree) -> Report {
             Claim::Matches {
                 path: PHONE_VIDEO,
                 pattern,
-                view: View::Statements,
                 message,
             }
         })
@@ -769,7 +752,6 @@ pub fn the_pane_move_drop_is_one_rule(tree: &Tree) -> Report {
         Claim::Matches {
             path: FACE,
             pattern: "slopdesk_pane_drop_metric",
-            view: View::Statements,
             message: "PaneDropGeometry stopped reading the metrics through their door (docs/56 increment 82)",
         },
     ]);
@@ -862,7 +844,6 @@ pub fn the_link_island_is_one_reading(tree: &Tree) -> Report {
         Claim::Matches {
             path: PRESENTER,
             pattern: "maxReconnectAttempts",
-            view: View::Statements,
             message: "ConnectionPresenter stopped handing the door the supervisor's ceiling — \
                       ReconnectManager owns that number, and a Rust const beside it is the \"of 20 while \
                       the campaign runs to 30\" bug with a new place to hide (docs/56 increment 83)",
@@ -882,7 +863,6 @@ pub fn the_link_island_is_one_reading(tree: &Tree) -> Report {
             Claim::Matches {
                 path: island,
                 pattern: r"ConnectionReading\.",
-                view: View::Statements,
                 message: "a link island stopped reading through ConnectionReading — a shell that formats \
                           its own ping or status word is the two-frameworks bug in one of them only \
                           (docs/56 increment 83)",

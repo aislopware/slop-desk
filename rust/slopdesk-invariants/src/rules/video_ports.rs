@@ -67,7 +67,6 @@ pub fn the_video_path_lends_what_it_holds(tree: &Tree) -> Report {
         Claim::Matches {
             path: CLIENT_SESSION,
             pattern: r"handleControl\(datagram:",
-            view: View::Statements,
             message: "the client session no longer lends the control DATAGRAM — it is re-encoding a message \
                       it parsed",
         },
@@ -81,7 +80,6 @@ pub fn the_video_path_lends_what_it_holds(tree: &Tree) -> Report {
         Claim::Matches {
             path: SESSION_LOGIC,
             pattern: r"if +isKnown\(shapeID\) *\{ *return false *\}",
-            view: View::Statements,
             message: "the session logic lost the cached-shape guard — 6 allocations per cursor packet to \
                       answer no",
         },
@@ -95,7 +93,6 @@ pub fn the_video_path_lends_what_it_holds(tree: &Tree) -> Report {
         Claim::Matches {
             path: VIDEO_FEC,
             pattern: r"blobs\.lazy\.map",
-            view: View::Statements,
             message: "FECScheme lost the lazy [Data] overload — every send-path caller pays a second array \
                       per frame",
         },
@@ -157,7 +154,6 @@ pub fn the_scroll_phases_are_one_table(tree: &Tree) -> Report {
         Claim::Matches {
             path: SCROLL_REPROJECT,
             pattern: r"use crate::client_gestures::\{",
-            view: View::Statements,
             message: "the reprojector stopped reading the phase table — a bare 3 and a bare 4 mean \
                       different fields",
         },
@@ -235,7 +231,6 @@ pub fn a_quantiser_knob_clamps_rather_than_rejects(tree: &Tree) -> Report {
         Claim::Matches {
             path: ENCODER_CONFIG,
             pattern: r"qp_knob\(",
-            view: View::Statements,
             message: "the encoder resolves its quantiser knobs some other way — the parse and the clamp are \
                       qp_knob's",
         },
@@ -268,14 +263,12 @@ pub fn a_quantiser_knob_clamps_rather_than_rejects(tree: &Tree) -> Report {
         Claim::Matches {
             path: CAPTURE_GATES,
             pattern: r"qp_knob\(",
-            view: View::Statements,
             message: "the capture operating point stopped resolving SLOPDESK_AQP_MAX through qp_knob — the \
                       fifth knob of the same shape",
         },
         Claim::Matches {
             path: SESSION_LOGIC,
             pattern: r"handleControl\(datagram: message\.encode\(\)\)",
-            view: View::Statements,
             message: "the message-shaped handleControl stopped delegating — a test-only face that decides",
         },
     ])
@@ -314,14 +307,12 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
         Claim::Matches {
             path: PREFERENCES,
             pattern: r"slopdesk_qp_config_default\(",
-            view: View::Statements,
             message: "the settings sheet no longer asks slopdesk_qp_config_default — its defaults are the \
                       encoder's",
         },
         Claim::Matches {
             path: PREFERENCES,
             pattern: r"slopdesk_adaptive_fec_constant\(",
-            view: View::Statements,
             message: "the settings sheet no longer asks slopdesk_adaptive_fec_constant — its defaults are \
                       the encoder's",
         },

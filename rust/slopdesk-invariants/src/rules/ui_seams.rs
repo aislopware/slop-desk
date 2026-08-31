@@ -306,7 +306,6 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
         Claim::Matches {
             path: GHOSTTY_SEAM,
             pattern: r"TerminalRendererFactory\.shared *=",
-            view: View::Statements,
             message: "GhosttyRendererSeam.install() no longer sets TerminalRendererFactory.shared — an \
                       unregistered seam ships the BUILD-STATUS placeholder where the terminal should be, \
                       and no compiler in `just check` opens this file (docs/56 stage F, P4)",
@@ -357,14 +356,12 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
         Claim::Matches {
             path: MAC_APP_MAIN,
             pattern: r"GhosttyRendererSeam\.install\(\)",
-            view: View::Statements,
             message: "the Mac app does not call GhosttyRendererSeam.install() — the renderer build shows \
                       the BUILD-STATUS placeholder and every test still passes (docs/56 stage F, P4)",
         },
         Claim::Matches {
             path: PHONE_APP_MAIN,
             pattern: r"GhosttyRendererSeam\.install\(\)",
-            view: View::Statements,
             message: "the iOS app does not call GhosttyRendererSeam.install() — the renderer build shows \
                       the BUILD-STATUS placeholder and every test still passes (docs/56 stage F, P4)",
         },

@@ -82,7 +82,6 @@ pub fn the_git_line_stays_measured(tree: &Tree) -> Report {
         Claim::Matches {
             path: HEADER,
             pattern: r"private var ladder: GitLineLadder\?",
-            view: View::Statements,
             message: "the sidebar header no longer holds its measured ladder — the git line would \
                       re-typeset five to nine candidate strings on every AppKit layout pass (59–65 µs) to \
                       pick the one it already picked",
@@ -90,7 +89,6 @@ pub fn the_git_line_stays_measured(tree: &Tree) -> Report {
         Claim::Matches {
             path: PHONE_GIT_LINE,
             pattern: r"private var ladder: GitLineLadder\?",
-            view: View::Statements,
             message: "the phone's git line no longer holds its measured ladder — UIKit asks a redrawing \
                       view for intrinsicContentSize and draw(_:) at least as often as AppKit does",
         },
@@ -103,7 +101,6 @@ pub fn the_git_line_stays_measured(tree: &Tree) -> Report {
             path: HEADER,
             pattern: r"GitLineLadder\(",
             count: 1,
-            view: View::Statements,
             message: "the sidebar header builds its ladder {found} times — it is built once, in the summary \
                       didSet, which is also the only invalidation a memo of a summary can have",
         },
@@ -111,7 +108,6 @@ pub fn the_git_line_stays_measured(tree: &Tree) -> Report {
             path: PHONE_GIT_LINE,
             pattern: r"GitLineLadder\(",
             count: 1,
-            view: View::Statements,
             message: "the phone's git line builds its ladder {found} times — it is built once, in the \
                       summary didSet, which is also the only invalidation a memo of a summary can have",
         },
@@ -121,7 +117,6 @@ pub fn the_git_line_stays_measured(tree: &Tree) -> Report {
         Claim::Matches {
             path: LADDER,
             pattern: r"let width: CGFloat",
-            view: View::Statements,
             message: "the ladder stopped storing each rung's width — picking the widest fitting rung then \
                       re-typesets every candidate, which is the 59–65 µs the memo exists to delete",
         },
@@ -178,7 +173,6 @@ pub fn open_quickly_builds_its_corpus_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: OPEN_QUICKLY,
             pattern: r"private var selectableRows: \[OpenQuicklyItem\]",
-            view: View::Statements,
             message: "Open Quickly no longer holds selectableRows — see the ban above for why the held list \
                       is the correct one and not merely the fast one",
         },
@@ -203,14 +197,12 @@ pub fn the_canvas_remembers_unthemed_leaves(tree: &Tree) -> Report {
         Claim::Matches {
             path: CANVAS,
             pattern: r"handleIsUnthemed",
-            view: View::Statements,
             message: "the canvas asks the tree for each leaf's kind again — that is a DFS per leaf per drag \
                       frame for an answer fixed for the life of the pane id",
         },
         Claim::Matches {
             path: CANVAS,
             pattern: r"handleIsUnthemed\[id\] = nil",
-            view: View::Statements,
             message: "the canvas keeps unthemed answers for panes it has removed — the cache must be pruned \
                       in the same loop that tears the handle down",
         },
@@ -248,7 +240,6 @@ pub fn the_gui_leaf_remembers_its_kind(tree: &Tree) -> Report {
     let mut claims = vec![Claim::Matches {
         path: GUI_LEAF_CORE,
         pattern: r"cachedPaneKind",
-        view: View::Statements,
         message: "the GUI leaf walks the split tree inside a drag-update again — cache the KIND (fixed per \
                   pane id), never the liveness",
     }];
@@ -297,7 +288,6 @@ pub fn the_terminal_reach_is_a_set(tree: &Tree) -> Report {
     check_all(tree, &[Claim::Matches {
         path: DISPATCH,
         pattern: r"private static let terminalReach: Set<KeyChord>",
-        view: View::Statements,
         message: "the key dispatcher rebuilds its code-panel chord list per key event — it is a static Set",
     }])
 }
@@ -319,7 +309,6 @@ pub fn the_plate_guards_its_glyph_name(tree: &Tree) -> Report {
     check_all(tree, &[Claim::Matches {
         path: PLATE,
         pattern: r"guard symbolName != oldValue else \{ return \}",
-        view: View::Statements,
         message: "the plate button re-renders its SF Symbol on every assignment — symbolName carries the \
                   same equality guard as active and enabled, for a caller that assigns it ~2 Hz forever",
     }])
@@ -391,14 +380,12 @@ pub fn the_divider_hides_before_it_cuts(tree: &Tree) -> Report {
         Claim::Matches {
             path: DIVIDER,
             pattern: r"guard handle != oldValue else \{ return \}",
-            view: View::Statements,
             message: "the divider re-runs handleUpdated for every seam in the tab on every solve — only the \
                       dragged one changed; SplitDividerHandle is Equatable, so guard on the value",
         },
         Claim::Matches {
             path: DIVIDER,
             pattern: r"percents\?\.leading != oldValue\?\.leading",
-            view: View::Statements,
             message: "the divider re-cuts three instrument runs per drag frame to print the same two \
                       numbers — the tuple has no synthesized ==, so the guard is field-by-field or it is \
                       not there",
@@ -406,7 +393,6 @@ pub fn the_divider_hides_before_it_cuts(tree: &Tree) -> Report {
         Claim::Matches {
             path: DIVIDER,
             pattern: r"guard shown else \{ return \}",
-            view: View::Statements,
             message: "the divider sets the readout's text before deciding whether it is on screen — three \
                       uncached CoreText font builds per hidden seam per frame",
         },
@@ -414,7 +400,6 @@ pub fn the_divider_hides_before_it_cuts(tree: &Tree) -> Report {
             path: DIVIDER,
             first: r"readout\.isHidden = !shown",
             second: r"readout\.percents = percents",
-            view: View::Statements,
             message: "the divider cuts the readout's text before hiding it — the hidden seams pay the fonts",
         },
     ])

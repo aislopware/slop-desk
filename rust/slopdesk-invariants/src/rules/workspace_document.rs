@@ -98,21 +98,18 @@ pub fn topology_and_reaping(tree: &Tree) -> Report {
         Claim::Matches {
             path: SWIFT_TOPOLOGY,
             pattern: r"slopdesk_ws_topology_ring_cap\(0\)",
-            view: View::Statements,
             message: "WorkspaceTopology.swift stopped asking slopdesk_ws_topology_ring_cap(0) — a reaping \
                       threshold spelled twice reaps two different rings (docs/45 §5.3)",
         },
         Claim::Matches {
             path: SWIFT_TOPOLOGY,
             pattern: r"slopdesk_ws_topology_ring_cap\(1\)",
-            view: View::Statements,
             message: "WorkspaceTopology.swift stopped asking slopdesk_ws_topology_ring_cap(1) — a reaping \
                       threshold spelled twice reaps two different rings (docs/45 §5.3)",
         },
         Claim::Matches {
             path: SWIFT_TOPOLOGY,
             pattern: r"slopdesk_ws_reserved_root_fields\(",
-            view: View::Statements,
             message: "WorkspaceTopology.swift stopped asking slopdesk_ws_reserved_root_fields — a reserved \
                       set one number off deletes the field it was meant to leave alone (docs/45 §5.3)",
         },
@@ -126,21 +123,18 @@ pub fn topology_and_reaping(tree: &Tree) -> Report {
         Claim::Matches {
             path: SWIFT_TOPOLOGY,
             pattern: r"slopdesk_ws_key_is_topology\(",
-            view: View::Statements,
             message: "WorkspaceTopology.swift decides isTopology itself — ask slopdesk_ws_key_is_topology \
                       (docs/45 §5.3)",
         },
         Claim::Matches {
             path: SWIFT_LIVENESS,
             pattern: r"slopdesk_ws_pane_fields\((0|half)",
-            view: View::Statements,
             message: "PaneLiveness.swift stopped asking slopdesk_ws_pane_fields for the first half — a pane \
                       field on the wrong side of the reaping line deletes a persisted title (docs/45 §5.3)",
         },
         Claim::Matches {
             path: SWIFT_LIVENESS,
             pattern: r"slopdesk_ws_pane_fields\((1|half)",
-            view: View::Statements,
             message: "PaneLiveness.swift stopped asking slopdesk_ws_pane_fields for the second half — a \
                       pane field on the wrong side of the reaping line deletes a persisted title (docs/45 \
                       §5.3)",
@@ -467,7 +461,6 @@ pub fn one_run_one_ladder(tree: &Tree) -> Report {
         Claim::Matches {
             path: CHANNEL_CLIENT,
             pattern: r"private let run = ChannelRun\(\)",
-            view: View::Statements,
             message: "WorkspaceChannelClient.swift no longer holds a ChannelRun — the ladder it answers is \
                       what keeps a superseded run from reporting the live one dead (docs/45 §5.1)",
         },

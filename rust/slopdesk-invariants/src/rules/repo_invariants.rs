@@ -28,7 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, check_all};
 use crate::report::Report;
 use crate::text;
 use crate::tree::{Source, Tree};
@@ -1499,7 +1499,6 @@ pub fn the_replay_boots_the_agent_out_first(tree: &Tree) -> Report {
         path: RESTART,
         first: r"launchd::bootout\(",
         second: r#""-TERM""#,
-        view: View::Statements,
         message: "rust/slopdesk-devtools/src/ops/hostd.rs signals the recorded pid before it boots \
                   com.slopdesk.hostd out of launchd — the agent relaunches the installed binary into a race \
                   with the replay, and the loser exits 0, so `just host-restart` reports success over \

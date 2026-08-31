@@ -119,7 +119,6 @@ pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOST_HOOKS,
             pattern: r"slopdesk_hookevent::parse\(",
-            view: View::Statements,
             message: "rust/slopdesk-hostd/src/hooks.rs no longer reads a hook body through \
                       rust/slopdesk-hookevent — the reading and the meaning are one crate, and a router \
                       that re-derived either is where a payload case gains a field nothing folds",
@@ -179,7 +178,6 @@ pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
         Claim::Matches {
             path: HOST_FOLDS,
             pattern: r"PaneDetector::new\(",
-            view: View::Statements,
             message: "rust/slopdesk-hostsession/src/shared.rs no longer constructs the ONE detector a pane \
                       gets — the fold that used to be constructed per emitter is the arithmetic this rule \
                       counts (docs/50)",

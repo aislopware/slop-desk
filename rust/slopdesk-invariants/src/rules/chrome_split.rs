@@ -367,7 +367,6 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
         Claim::Matches {
             path,
             pattern,
-            view: View::Statements,
             message,
         }
     }));

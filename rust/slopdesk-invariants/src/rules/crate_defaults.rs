@@ -90,7 +90,6 @@ pub fn the_seeded_names_are_the_crates(tree: &Tree) -> Report {
         claims.push(Claim::Matches {
             path: TREE_WORKSPACE,
             pattern: face,
-            view: View::Statements,
             message: "TreeWorkspaceDefaults lost one of its three faces — the seeded names would go back to \
                       being literals",
         });
@@ -181,7 +180,6 @@ pub fn a_rail_relabelling_crosses_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: RAIL,
             pattern: r"slopdesk_ws_rail_disambiguated_labels\(",
-            view: View::Statements,
             message: "the rail builder stopped calling slopdesk_ws_rail_disambiguated_labels — the \
                       relabelling is quadratic again",
         },
@@ -207,7 +205,6 @@ pub fn the_open_target_splits_once(tree: &Tree) -> Report {
             Claim::Matches {
                 path: opener,
                 pattern: r"link_action::line_col_suffix\(|[^:]\bline_col_suffix\(",
-                view: View::Statements,
                 message: "the host splits a line:col suffix itself again — that rule is link_action.rs's, \
                           and the path the host stats and the path the extension opens can disagree by a \
                           colon",

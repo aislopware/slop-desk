@@ -198,14 +198,12 @@ pub fn one_notification_card_two_corners(tree: &Tree) -> Report {
         Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
             pattern: r"override func hitTest\(",
-            view: View::Statements,
             message: "the phone's overlay layer stopped overriding hitTest — a full-bleed layer that takes \
                       every touch takes every keystroke away from the terminal underneath it",
         },
         Claim::Matches {
             path: "Sources/SlopDeskPhoneUI/Shell/PhoneOverlayLayerView.swift",
             pattern: r"=== self \? nil",
-            view: View::Statements,
             message: "the phone's overlay layer answers its own hit test with itself — a touch between \
                       cards belongs to the columns beneath, and returning self claims the whole screen",
         },

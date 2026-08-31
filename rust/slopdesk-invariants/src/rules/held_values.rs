@@ -120,7 +120,6 @@ pub fn the_audio_row_is_rusts(tree: &Tree) -> Report {
         claims.push(Claim::Matches {
             path: face,
             pattern: door,
-            view: View::Statements,
             message: "an audio face stopped asking its door — the audio row's calls are \
                       slopdesk-apple-audio's and slopdesk-audio-out's",
         });
@@ -180,14 +179,12 @@ pub fn a_length_prefix_is_parsed_once(tree: &Tree) -> Report {
         Claim::Matches {
             path: SCREEN_TRANSPORT,
             pattern: r"reply_body_length\(prefix\)",
-            view: View::Statements,
             message: "the screen client stopped asking screenwire for the reply length — that prefix is \
                       untrusted and screenwire owns its layout",
         },
         Claim::Matches {
             path: SUPERVISOR_FRAME,
             pattern: r"slopdesk_superwire::body_length\(header\)",
-            view: View::Statements,
             message: "the supervisor frame stopped asking superwire for the body length — that prefix is \
                       untrusted and superwire owns its layout",
         },
@@ -287,7 +284,6 @@ pub fn the_document_has_one_emission_order(tree: &Tree) -> Report {
             start: r"static func persisting\(",
             end: r"^    \}$",
             pattern: r"in state\.entries where isPersisted",
-            view: View::Statements,
             message: "persisting() no longer walks state.entries directly — the filter reads neither the \
                       object id nor the value",
         },

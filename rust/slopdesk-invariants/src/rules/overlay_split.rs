@@ -190,7 +190,6 @@ pub fn the_keystroke_table_and_peek_rules_are_rusts(tree: &Tree) -> Report {
         Claim::Matches {
             path: "rust/slopdesk-workspace/Cargo.toml",
             pattern: "^unicode-segmentation",
-            view: View::Statements,
             message: "slopdesk-workspace dropped unicode-segmentation — chars() would type a decomposed é \
                       as a bare e",
         },
@@ -392,14 +391,12 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
         Claim::Matches {
             path: MAC_CLOSE,
             pattern: r"CloseConfirmationCopy\.request\(",
-            view: View::Statements,
             message: "MacCloseConfirmation.swift stopped reading its park through \
                       CloseConfirmationCopy.request — two dialogs, and the drift would be silent",
         },
         Claim::Matches {
             path: PHONE_CLOSE,
             pattern: r"CloseConfirmationCopy\.request\(",
-            view: View::Statements,
             message: "PhoneCloseConfirmation.swift stopped reading its park through \
                       CloseConfirmationCopy.request — a parked close the phone cannot answer is a swipe \
                       that silently does nothing",
@@ -410,14 +407,12 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
         Claim::Matches {
             path: PHONE_CLOSE,
             pattern: r"confirmPendingClose\(\)",
-            view: View::Statements,
             message: "PhoneCloseConfirmation.swift no longer confirms the park — the alert would ask a \
                       question whose Close button closes nothing",
         },
         Claim::Matches {
             path: PHONE_CLOSE,
             pattern: r"cancelPendingClose\(\)",
-            view: View::Statements,
             message: "PhoneCloseConfirmation.swift no longer cancels the park — a dismissed alert would \
                       leave the store parked and every later close silent",
         },
