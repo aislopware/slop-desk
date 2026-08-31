@@ -43,6 +43,27 @@ public func ffiAnswerBytes(
     return Array(out[0..<needed])
 }
 
+/// The same convention for a door that answers `#[repr(C)]` RECORDS rather than bytes.
+///
+/// Its own buffer rather than ``ffiAnswerBytes``' — a record array has to be aligned for its
+/// element, and reinterpreting a byte buffer would be an unaligned load on every field.
+///
+/// Asks first with `(nil, 0)`, because a record count is cheap to answer and a wrong first guess
+/// costs a whole delivery rather than a few bytes. A door that answers a count it then declines to
+/// fill delivers nothing, the same way an over-long byte answer does: a short array is a wrong
+/// answer, and the empty one is at least an honest report of the disagreement.
+public func ffiAnswerRecords<Record>(
+    _: Record.Type,
+    _ door: (UnsafeMutablePointer<Record>?, Int) -> Int,
+) -> [Record] {
+    let needed = door(nil, 0)
+    guard needed > 0 else { return [] }
+    return [Record](unsafeUninitializedCapacity: needed) { buffer, initialised in
+        let written = door(buffer.baseAddress, needed)
+        initialised = written == needed ? needed : 0
+    }
+}
+
 /// The same, decoded as UTF-8 — what every door whose answer is one path or one word wants.
 public func ffiAnswerText(
     capacity: Int = 4096,

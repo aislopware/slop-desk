@@ -133,6 +133,12 @@ impl CellFlags {
     pub const WIDE_HEAD: Self = Self(1 << 8);
     /// The cell falls inside the active selection.
     pub const SELECTED: Self = Self(1 << 9);
+    /// The cell carries an OSC 8 hyperlink.
+    ///
+    /// The FLAG only — the URI is not in the frame, because it is one string shared by a whole run
+    /// of cells and copying it per cell per frame would allocate a URL for every character of a
+    /// link. `Session::hyperlink_at` reads it for the one cell somebody actually pointed at.
+    pub const HYPERLINK: Self = Self(1 << 10);
 
     /// Whether every bit of `other` is set.
     #[must_use]

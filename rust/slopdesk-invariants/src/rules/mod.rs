@@ -237,6 +237,11 @@ pub fn registry() -> Vec<Rule> {
             check: terminal_surface::input_surface,
         },
         Rule {
+            name: "command-prompt",
+            origin: "docs/68 §5.4",
+            check: terminal_surface::command_prompt,
+        },
+        Rule {
             name: "grid-geometry",
             origin: "docs/55 §4b",
             check: terminal_surface::grid_geometry,

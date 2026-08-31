@@ -37,10 +37,6 @@ final class PhoneTerminalRendererView: UIView {
     private var isRectangularDrag = false
     private var lastPointerPoint: CGPoint = .zero
 
-    /// Where a pan started, so scroll can be reported in whole ROWS rather than in the pixels UIKit
-    /// hands over — a terminal scrolls by lines, and rounding per-callback would lose the remainder.
-    private var panRowRemainder: CGFloat = 0
-
     /// The system edit menu, which renders the SAME ``TerminalContextMenu`` table the Mac's `NSMenu`
     /// renders, with the same order and the same enablement — so the two menus cannot come to offer
     /// different things.
@@ -252,22 +248,22 @@ final class PhoneTerminalRendererView: UIView {
 
     @objc
     private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard let metrics = driver.cellMetrics(), metrics.cellHeight > 0 else { return }
         switch gesture.state {
         case .began:
-            panRowRemainder = 0
-        case .changed:
-            // Whole rows, remainder carried: a terminal scrolls by lines, and rounding each
-            // callback independently would drop a fraction of a row per frame and drift.
-            let travelled = gesture.translation(in: self).y + panRowRemainder
-            let rows = (travelled / metrics.cellHeight).rounded(.towardZero)
-            panRowRemainder = travelled - rows * metrics.cellHeight
             gesture.setTranslation(.zero, in: self)
-            guard rows != 0 else { return }
-            // Dragging DOWN reveals older output, which is the opposite sign to the door's.
-            driver.scroll(.rows(Int32(rows)))
+        case .changed:
+            // POINTS, not rows: the block list's chrome is spent before the scrollback, and a
+            // finger dragging through a header should move by what it travelled rather than
+            // quantise to the cell. The remainder the old row arithmetic carried is gone with it —
+            // there is nothing left to round.
+            //
+            // Dragging DOWN reveals older output, which is the direction this door reads positive.
+            let travelled = gesture.translation(in: self).y
+            gesture.setTranslation(.zero, in: self)
+            guard travelled != 0 else { return }
+            driver.scrollPoints(travelled)
         default:
-            panRowRemainder = 0
+            break
         }
     }
 

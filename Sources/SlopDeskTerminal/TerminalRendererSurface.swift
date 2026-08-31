@@ -35,6 +35,7 @@ import CoreGraphics
 import CSlopDeskFFI
 import Foundation
 import QuartzCore
+import SlopDeskArena
 import SlopDeskWorkspaceCore
 
 /// A live terminal: one Rust handle, and the calls that reach it.
@@ -621,6 +622,153 @@ final class TerminalRendererSurface {
     /// A Swift `Int` as the door's `u32` column. ``row(_:)``'s argument, one axis over.
     private static func column(_ value: Int) -> UInt32 {
         UInt32(clamping: value)
+    }
+
+    // MARK: - The block list
+
+    /// Where one command block was placed by the last ``draw()``.
+    ///
+    /// Rects are already in the view's own coordinates: the insets and the list's scroll are folded
+    /// in on the Rust side, so a header view is placed at ``header`` without knowing either. A block
+    /// with no ``header`` is an ORPHAN — output the segmenter saw before any prompt mark, which is
+    /// every pane's first screenful and every pane attached mid-command.
+    struct Block: Sendable, Equatable {
+        /// The whole block, chrome included.
+        let frame: CGRect
+        /// Where the header goes, or `nil` for an orphan.
+        let header: CGRect?
+        /// The rows themselves.
+        let body: CGRect
+        /// Whether the user folded it.
+        let collapsed: Bool
+        /// Whether it survived viewport culling — a culled block keeps its view off-screen rather
+        /// than making the caller re-derive what the layout already decided.
+        let visible: Bool
+        /// The frame rows it spans, and how many of them the prompt occupies.
+        let rows: Range<Int>
+        /// How many of ``rows`` are the prompt.
+        let promptRows: Int
+    }
+
+    /// Where the block list sits, for a scrollbar.
+    ///
+    /// ``contentHeight`` exceeds ``viewportHeight`` by exactly the chrome the headers and gaps
+    /// added: the GRID is sized from the drawable alone, so a prompt appearing never resizes the
+    /// pty. ``following`` is the bottom pin.
+    struct BlockScroll: Sendable, Equatable {
+        let offset: Double
+        let contentHeight: Double
+        let viewportHeight: Double
+        let following: Bool
+    }
+
+    /// Every block the last ``draw()`` placed. The index into this array is the index every other
+    /// block call below takes.
+    func blocks() -> [Block] {
+        guard let handle else { return [] }
+        let records = ffiAnswerRecords(SlopDeskTerminalBlock.self) { out, cap in
+            slopdesk_term_surface_blocks(handle, out, cap)
+        }
+        return records.map { record in
+            Block(
+                frame: CGRect(x: record.x, y: record.y, width: record.width, height: record.height),
+                header: record.has_header
+                    ? CGRect(
+                        x: record.header_x,
+                        y: record.header_y,
+                        width: record.header_width,
+                        height: record.header_height,
+                    )
+                    : nil,
+                body: CGRect(
+                    x: record.body_x,
+                    y: record.body_y,
+                    width: record.body_width,
+                    height: record.body_height,
+                ),
+                collapsed: record.collapsed,
+                visible: record.visible,
+                rows: Int(record.first_row)..<Int(record.end_row),
+                promptRows: Int(record.prompt_rows),
+            )
+        }
+    }
+
+    /// Where the list sits.
+    func blockScroll() -> BlockScroll? {
+        guard let handle else { return nil }
+        let record = slopdesk_term_surface_block_scroll(handle)
+        return BlockScroll(
+            offset: record.scroll_y,
+            contentHeight: record.content_height,
+            viewportHeight: record.viewport_height,
+            following: record.following,
+        )
+    }
+
+    /// The block under a point, or `nil`.
+    func block(at point: CGPoint) -> Int? {
+        guard let handle else { return nil }
+        let found = slopdesk_term_surface_block_at_point(handle, point.x, point.y)
+        return found < 0 ? nil : Int(found)
+    }
+
+    /// Folds one block. An index past the end, or an orphan with no header to click, is ignored.
+    func setBlock(_ index: Int, collapsed: Bool) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_block_collapsed(handle, index, collapsed)
+    }
+
+    /// Folds or unfolds one block, answering the state it left behind.
+    @discardableResult
+    func toggleBlock(_ index: Int) -> Bool {
+        guard let handle else { return false }
+        return slopdesk_term_surface_toggle_block_collapsed(handle, index)
+    }
+
+    /// Unfolds every block.
+    func expandAllBlocks() {
+        guard let handle else { return }
+        slopdesk_term_surface_expand_all_blocks(handle)
+    }
+
+    /// The wheel and the trackpad, in POINTS, spending the block chrome before the scrollback.
+    ///
+    /// A positive delta reveals OLDER output — the same direction ``ScrollRequest/rows(_:)`` spells
+    /// negative, because that request counts engine rows and this one counts the gesture. Apart from
+    /// it for that reason: a gesture is continuous and the chrome is measured in pixels, so
+    /// quantising to rows here would make a flick skip the headers it is scrolling past.
+    func scrollPoints(_ delta: Double) {
+        guard let handle else { return }
+        slopdesk_term_surface_scroll_points(handle, delta)
+    }
+
+    /// One block's prompt rows as RENDERED, soft wraps rejoined — what a header prints.
+    ///
+    /// Not the bare command: OSC 133 `B` does not cross the engine's per-row API, so a shell that
+    /// decorates its prompt sends that decoration too. A header wanting the exit code and duration
+    /// reads the command-block ring instead.
+    func blockText(_ index: Int) -> String {
+        guard let handle else { return "" }
+        let bytes = answer { out, cap in
+            slopdesk_term_surface_block_text(handle, index, out, cap)
+        }
+        // swiftlint:disable:next optional_data_string_conversion
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    /// The OSC 8 URI a cell carries, or `nil` when it carries no AUTHORED link.
+    ///
+    /// Distinct from ``TerminalLinkDetector``'s scan, which finds links in the TEXT. When both name
+    /// the same cell the authored one wins: the program said what it meant, and a detector guessing
+    /// a different span over the top of it would open the wrong thing.
+    func hyperlink(column: Int, row: Int) -> String? {
+        guard let handle else { return nil }
+        let bytes = answer { out, cap in
+            slopdesk_term_surface_hyperlink_at(handle, UInt16(clamping: column), UInt16(clamping: row), out, cap)
+        }
+        // swiftlint:disable:next optional_data_string_conversion
+        return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
     }
 
     // MARK: - What the far side pushed

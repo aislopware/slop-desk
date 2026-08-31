@@ -9,6 +9,7 @@ use crate::tree::Tree;
 const SWIFT_LINKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalLinkDetector.swift";
 const RUST_LINK: &str = "rust/slopdesk-terminal/src/link.rs";
 const SWIFT_BLOCKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlockModel.swift";
+const SWIFT_PROMPT: &str = "Sources/SlopDeskWorkspaceCore/Terminal/CommandPrompt.swift";
 const RUST_BLOCKS: &str = "rust/slopdesk-terminal/src/blocks.rs";
 const SWIFT_SEARCH: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
 const SWIFT_SEARCH_ACTION: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift";
@@ -60,6 +61,63 @@ pub fn input_surface(tree: &Tree) -> Report {
             exempt: &[],
             message: "a Swift hold-and-confirm echo ring is back in {files} — one implementation, and it is \
                       Rust's",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
+/// The editor-like command prompt: one handle, and every rule behind it.
+///
+/// `rust/slopdesk-terminal`'s `prompt` module owns the text buffer, the undo stack, the shell
+/// lexer, the history and the fzf ranking. They cross as ONE handle for the reason the module's own
+/// header gives: typing has to abandon a history walk, dismiss the completion list AND coalesce
+/// into the undo step together, and four handles would put that wiring on the far side in two
+/// languages.
+///
+/// The three claims below are the three shapes the boundary can rot into: the face stops calling
+/// the door, a Swift shell lexer grows back to paint the same colours the submit rule is derived
+/// from, or a Swift undo stack grows back beside the Rust one.
+#[must_use]
+pub fn command_prompt(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Doors {
+            path: SWIFT_PROMPT,
+            entries: &[
+                "slopdesk_prompt_new",
+                "slopdesk_prompt_free",
+                "slopdesk_prompt_state",
+                "slopdesk_prompt_text",
+                "slopdesk_prompt_spans",
+                "slopdesk_prompt_insert",
+                "slopdesk_prompt_delete",
+                "slopdesk_prompt_undo",
+                "slopdesk_prompt_complete",
+                "slopdesk_prompt_submit",
+            ],
+            message: "Sources/SlopDeskWorkspaceCore/Terminal/CommandPrompt.swift no longer calls {entry} — \
+                      the prompt's editor is rust/slopdesk-terminal's",
+        },
+        Claim::NoneUnder {
+            roots: SWIFT_ROOTS,
+            extensions: SWIFT,
+            pattern: r"(struct|enum|final class) (ShellLexer|PromptLexer|CommandLexer)\b|func lexShell\(",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift shell lexer is back in {files} — the colours and the submit rule come from \
+                      ONE scan, and it is rust/slopdesk-terminal/src/prompt/syntax.rs",
+        },
+        Claim::NoneUnder {
+            roots: SWIFT_ROOTS,
+            extensions: SWIFT,
+            pattern: r"(struct|enum|final class) (PromptUndoStack|CommandUndoStack|PromptHistoryRing)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift undo stack or history ring is back in {files} — both cross as the command \
+                      editor's interior",
         },
     ];
     check_all(tree, &claims)

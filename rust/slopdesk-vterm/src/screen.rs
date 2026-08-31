@@ -427,6 +427,39 @@ impl VtSession {
         Ok(found)
     }
 
+    /// The OSC 8 hyperlink URI at one VIEWPORT cell, or `None` when that cell carries no link.
+    ///
+    /// Viewport rather than screen coordinates because the only caller is a pointer, and a pointer
+    /// names the cell it is over. The URI is read here rather than carried in the frame for the
+    /// reason [`CellFlags::HYPERLINK`](crate::CellFlags::HYPERLINK) states: one URI is shared by a
+    /// whole run of cells, so putting it on every cell would allocate a URL per character.
+    ///
+    /// Two attempts at the buffer, never a loop, for [`Self::span_text`]'s reason: the engine
+    /// answers `OutOfSpace { required }` with the exact size, and nothing can touch this terminal
+    /// between the attempts.
+    ///
+    /// # Errors
+    /// The engine's own error, other than the out-of-space it retries.
+    pub fn hyperlink_at(&self, x: u16, y: u32) -> Result<Option<String>> {
+        let grid = self
+            .terminal
+            .grid_ref(Point::Viewport(PointCoordinate { x, y }))?;
+        let mut buffer = [0_u8; 256];
+        let length = match grid.hyperlink_uri(&mut buffer) {
+            Ok(length) => length,
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                let mut grown = vec![0_u8; required];
+                let length = grid.hyperlink_uri(&mut grown)?;
+                return Ok(Some(decode(grown.get(..length).unwrap_or_default())));
+            },
+            Err(other) => return Err(other.into()),
+        };
+        if length == 0 {
+            return Ok(None);
+        }
+        Ok(Some(decode(buffer.get(..length).unwrap_or_default())))
+    }
+
     /// Whether a screen row starts a shell prompt.
     ///
     /// Continuation rows do NOT count: a two-line prompt is one place to jump to, and counting both

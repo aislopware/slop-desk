@@ -3194,6 +3194,76 @@ size_t slopdesk_term_surface_take_pty_replies(SlopDeskTerminalSurface *handle, u
 size_t slopdesk_term_surface_take_clipboard_writes(SlopDeskTerminalSurface *handle, uint8_t *out,
                                                    size_t cap);
 
+/* ---- the block list: Warp-shaped chrome over the same grid ---------------------------------- *
+ *
+ * `rust/slopdesk-termrender`'s segmenter cuts the frame on OSC 133 `A` and places every block; these
+ * doors hand the RECTS across so an AppKit/UIKit header can be drawn over them. Nothing here draws:
+ * `paint.rs` still owns the glyphs, and the design language owns the header.
+ *
+ * The rects are in POINTS — the unit every other pointer door on this surface takes — already
+ * offset by the insets and by the list's scroll, so a caller places a view at them knowing neither. A block whose `visible`
+ * is false was laid out and culled — the caller keeps its view off-screen rather than recomputing
+ * what the layout already decided. */
+
+typedef struct {
+  double  x, y, width, height;                      /* the whole block, chrome included      */
+  double  header_x, header_y, header_width, header_height;
+  double  body_x, body_y, body_width, body_height;  /* the rows, without the header          */
+  bool    has_header;                               /* false for an ORPHAN — output with no prompt */
+  bool    collapsed;
+  bool    visible;                                  /* survived viewport culling             */
+  uint16_t first_row;                               /* the frame rows this block spans       */
+  uint16_t end_row;
+  uint16_t prompt_rows;                             /* how many of them the prompt occupies  */
+} SlopDeskTerminalBlock;
+
+/* Where the block list sits, for a scrollbar. `content_height` exceeds `viewport_height` by exactly
+ * the chrome the headers and gaps added: the GRID is sized from the drawable alone, so a prompt
+ * appearing never resizes the PTY. */
+typedef struct {
+  double scroll_y;
+  double content_height;
+  double viewport_height;
+  bool   following;        /* pinned to the bottom as output arrives */
+} SlopDeskTerminalBlockScroll;
+
+/* Every block the last draw placed, §4's record count. Positional: the index a caller reads here is
+ * the index every other block door takes. */
+size_t slopdesk_term_surface_blocks(SlopDeskTerminalSurface *handle, SlopDeskTerminalBlock *out,
+                                    size_t cap);
+
+SlopDeskTerminalBlockScroll slopdesk_term_surface_block_scroll(SlopDeskTerminalSurface *handle);
+
+/* The block under a point in surface POINTS, or -1 for none. */
+int64_t slopdesk_term_surface_block_at_point(SlopDeskTerminalSurface *handle, double x, double y);
+
+/* Folds one block. An index past the end, or an ORPHAN with no header to click, is ignored —
+ * _toggle answers the state it left behind. */
+void slopdesk_term_surface_set_block_collapsed(SlopDeskTerminalSurface *handle, size_t index,
+                                               bool collapsed);
+bool slopdesk_term_surface_toggle_block_collapsed(SlopDeskTerminalSurface *handle, size_t index);
+void slopdesk_term_surface_expand_all_blocks(SlopDeskTerminalSurface *handle);
+
+/* The wheel and the trackpad, in POINTS, spending the block chrome before the scrollback. A
+ * positive delta reveals OLDER output — the same direction slopdesk_term_surface_scroll spells
+ * negative, because that door counts engine rows and this one counts the gesture. What the chrome
+ * cannot absorb spills into the engine as whole rows. */
+void slopdesk_term_surface_scroll_points(SlopDeskTerminalSurface *handle, double delta);
+
+/* One block's prompt rows as RENDERED, soft wraps rejoined — what a header prints. Not the bare
+ * command: OSC 133 `B` does not cross the engine's per-row API, so a shell that decorates its
+ * prompt sends that decoration too. A header wanting the exit code and duration reads the
+ * command-block ring instead. */
+size_t slopdesk_term_surface_block_text(SlopDeskTerminalSurface *handle, size_t index, uint8_t *out,
+                                        size_t cap);
+
+/* The OSC 8 URI on one cell, or 0 bytes when that cell carries no authored link. The FLAG is in the
+ * frame and the URI is not, because one URI is shared by a whole run of cells: this reads it for
+ * the one cell a pointer is over, and answers 0 without touching the engine when the frame says
+ * there is nothing there. An AUTHORED link wins over a DETECTED one — the program said so. */
+size_t slopdesk_term_surface_hyperlink_at(SlopDeskTerminalSurface *handle, uint16_t column,
+                                          uint16_t row, uint8_t *out, size_t cap);
+
 /* One binding action WITH an argument, spelled by the grammar's only speller.
  *
  * ⚠️ This door exists so that no String naming an action is ever built in Swift. The executor at
@@ -3581,6 +3651,196 @@ size_t slopdesk_input_box_ingest(SlopDeskInputBox *handle, const uint8_t *bytes,
 size_t slopdesk_input_box_take_rendered(SlopDeskInputBox *handle, uint8_t *out, size_t cap);
 void   slopdesk_input_box_record_compose_sent(SlopDeskInputBox *handle, const uint8_t *bytes,
                                               size_t len);
+
+/* ---------------------------------------------------------------------------- *
+ * The editor-like command prompt — `rust/slopdesk-terminal`'s `prompt` module.
+ *
+ * ONE handle rather than a family, because the rules are coupled: typing has to abandon a history
+ * walk, dismiss the completion list AND coalesce into the undo step together, and four handles
+ * would put that wiring on this side in two languages. The buffer's motions, the undo stack, the
+ * shell lexer that decides both the colours and whether Enter runs, the history, the reverse
+ * search and the fzf ranking are all behind it.
+ *
+ * Derived answers (_spans, _candidates) are rebuilt per call rather than parked: they are pure
+ * functions of the state, so an (out, cap) retry is byte-identical, and a cache would need
+ * invalidating on thirty mutating doors.
+ *
+ * What stays outside: composition, key mapping, how the candidate list LOOKS, and where completion
+ * candidates come from — the caller seeds paths, variables and commands.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskPrompt SlopDeskPrompt;
+
+/* Caret motions, for _move / _extend / _delete. Every motion is also a deletion granularity. */
+#define SLOPDESK_PROMPT_MOTION_GRAPHEME_BACKWARD 0u
+#define SLOPDESK_PROMPT_MOTION_GRAPHEME_FORWARD 1u
+#define SLOPDESK_PROMPT_MOTION_WORD_BACKWARD 2u
+#define SLOPDESK_PROMPT_MOTION_WORD_FORWARD 3u
+#define SLOPDESK_PROMPT_MOTION_LINE_START 4u
+#define SLOPDESK_PROMPT_MOTION_LINE_END 5u
+#define SLOPDESK_PROMPT_MOTION_LINE_UP 6u
+#define SLOPDESK_PROMPT_MOTION_LINE_DOWN 7u
+#define SLOPDESK_PROMPT_MOTION_DOC_START 8u
+#define SLOPDESK_PROMPT_MOTION_DOC_END 9u
+
+/* What to paint a run as. About ROLE rather than syntax class: `main.rs` and `--verbose` are both
+ * bare words to the shell, and painting them differently is the point of a rich prompt. */
+#define SLOPDESK_PROMPT_TOKEN_COMMAND_NAME 0u
+#define SLOPDESK_PROMPT_TOKEN_ARGUMENT 1u
+#define SLOPDESK_PROMPT_TOKEN_FLAG 2u
+#define SLOPDESK_PROMPT_TOKEN_PATH 3u
+#define SLOPDESK_PROMPT_TOKEN_QUOTED 4u
+#define SLOPDESK_PROMPT_TOKEN_VARIABLE 5u
+#define SLOPDESK_PROMPT_TOKEN_OPERATOR 6u
+#define SLOPDESK_PROMPT_TOKEN_REDIRECTION 7u
+#define SLOPDESK_PROMPT_TOKEN_COMMENT 8u
+
+/* The one construct the document left open, INNERMOST first — inside `$(echo '` the thing that
+ * needs closing is the quote. NOTHING is what makes Enter run rather than continue. */
+#define SLOPDESK_PROMPT_OPEN_NOTHING 0u
+#define SLOPDESK_PROMPT_OPEN_SINGLE_QUOTE 1u
+#define SLOPDESK_PROMPT_OPEN_DOUBLE_QUOTE 2u
+#define SLOPDESK_PROMPT_OPEN_BACKSLASH 3u
+#define SLOPDESK_PROMPT_OPEN_SUBSTITUTION 4u
+#define SLOPDESK_PROMPT_OPEN_BACKTICK 5u
+#define SLOPDESK_PROMPT_OPEN_VARIABLE 6u
+#define SLOPDESK_PROMPT_OPEN_GROUP 7u
+
+/* What a completion candidate is. */
+#define SLOPDESK_PROMPT_CANDIDATE_SUBCOMMAND 0u
+#define SLOPDESK_PROMPT_CANDIDATE_FLAG 1u
+#define SLOPDESK_PROMPT_CANDIDATE_DIRECTORY 2u
+#define SLOPDESK_PROMPT_CANDIDATE_PATH 3u
+#define SLOPDESK_PROMPT_CANDIDATE_VARIABLE 4u
+#define SLOPDESK_PROMPT_CANDIDATE_HISTORY 5u
+
+/* What _submit did. */
+#define SLOPDESK_PROMPT_SUBMISSION_RUN 0u
+#define SLOPDESK_PROMPT_SUBMISSION_CONTINUED 1u
+
+/* Everything a view binds, in ONE record — so a keystroke cannot interleave between two reads and
+ * pair a cursor from before it with a selection from after. Offsets are BYTES into _text. */
+typedef struct {
+  size_t   text_len;
+  size_t   cursor;
+  size_t   selection_anchor;
+  size_t   selection_head;
+  bool     has_selection;
+  uint32_t unterminated;        /* SLOPDESK_PROMPT_OPEN_*    */
+  bool     would_run;           /* Enter runs rather than continues */
+  bool     walking_history;
+  bool     searching;
+  bool     search_has_hit;
+  bool     can_undo;
+  bool     can_redo;
+  size_t   span_count;
+  size_t   candidate_count;
+  size_t   selected_candidate;
+  size_t   history_count;
+} SlopDeskPromptState;
+
+/* One coloured run, as a byte range into _text. */
+typedef struct {
+  uint32_t start;
+  uint32_t end;
+  uint32_t kind;                /* SLOPDESK_PROMPT_TOKEN_*   */
+} SlopDeskPromptSpan;
+
+/* One thing that could go at the caret. `text` is what the list SHOWS and what `positions` indexes;
+ * `insert` is what accepting it puts in, which differs whenever a path needs quoting. The three
+ * spans index _candidate_arena; `positions` indexes _candidate_positions, which is the matched
+ * character offsets of every candidate concatenated. */
+typedef struct {
+  SlopDeskByteSpan text;
+  SlopDeskByteSpan insert;
+  SlopDeskByteSpan detail;
+  bool             has_detail;
+  uint32_t         kind;        /* SLOPDESK_PROMPT_CANDIDATE_* */
+  uint32_t         replace_start;
+  uint32_t         replace_end;
+  SlopDeskByteSpan positions;
+} SlopDeskPromptCandidate;
+
+SlopDeskPrompt *slopdesk_prompt_new(void);
+void   slopdesk_prompt_free(SlopDeskPrompt *handle);
+SlopDeskPromptState slopdesk_prompt_state(SlopDeskPrompt *handle);
+size_t slopdesk_prompt_text(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
+size_t slopdesk_prompt_spans(SlopDeskPrompt *handle, SlopDeskPromptSpan *out, size_t cap);
+
+/* Editing. _insert is one typed run; _paste is a whole clipboard, whose newlines CONTINUE the
+ * document rather than submitting it. */
+void   slopdesk_prompt_insert(SlopDeskPrompt *handle, const uint8_t *bytes, size_t len);
+void   slopdesk_prompt_insert_newline(SlopDeskPrompt *handle);
+void   slopdesk_prompt_paste(SlopDeskPrompt *handle, const uint8_t *bytes, size_t len);
+void   slopdesk_prompt_delete(SlopDeskPrompt *handle, uint8_t motion);
+void   slopdesk_prompt_replace_range(SlopDeskPrompt *handle, size_t start, size_t end,
+                                     const uint8_t *bytes, size_t len);
+void   slopdesk_prompt_clear(SlopDeskPrompt *handle);
+
+/* The caret and the selection. _move collapses a selection, _extend grows one. */
+void   slopdesk_prompt_move(SlopDeskPrompt *handle, uint8_t motion);
+void   slopdesk_prompt_extend(SlopDeskPrompt *handle, uint8_t motion);
+void   slopdesk_prompt_set_cursor(SlopDeskPrompt *handle, size_t offset);
+void   slopdesk_prompt_set_selection(SlopDeskPrompt *handle, size_t anchor, size_t head);
+void   slopdesk_prompt_select_all(SlopDeskPrompt *handle);
+
+/* Copy and cut PARK the text and answer its byte length; _take_clipboard reads it under §4. Two
+ * doors because the near side puts it on NSPasteboard, and a length of 0 means there was no
+ * selection to take. */
+size_t slopdesk_prompt_copy(SlopDeskPrompt *handle);
+size_t slopdesk_prompt_cut(SlopDeskPrompt *handle);
+size_t slopdesk_prompt_take_clipboard(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
+
+bool   slopdesk_prompt_undo(SlopDeskPrompt *handle);
+bool   slopdesk_prompt_redo(SlopDeskPrompt *handle);
+
+/* The history walk. _record is what a session restore replays, oldest first; an empty or
+ * whitespace-only command is not recorded. */
+bool   slopdesk_prompt_history_previous(SlopDeskPrompt *handle);
+bool   slopdesk_prompt_history_next(SlopDeskPrompt *handle);
+void   slopdesk_prompt_history_record(SlopDeskPrompt *handle, const uint8_t *bytes, size_t len);
+size_t slopdesk_prompt_history_entry(SlopDeskPrompt *handle, size_t index, uint8_t *out, size_t cap);
+
+/* Reverse search (⌃R). _again steps to the next older hit; _accept takes the hit into the document
+ * and closes the search; _cancel restores what was there before it opened. */
+void   slopdesk_prompt_search_begin(SlopDeskPrompt *handle);
+void   slopdesk_prompt_search_type(SlopDeskPrompt *handle, const uint8_t *bytes, size_t len);
+void   slopdesk_prompt_search_backspace(SlopDeskPrompt *handle);
+bool   slopdesk_prompt_search_again(SlopDeskPrompt *handle);
+bool   slopdesk_prompt_search_accept(SlopDeskPrompt *handle);
+void   slopdesk_prompt_search_cancel(SlopDeskPrompt *handle);
+size_t slopdesk_prompt_search_query(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
+
+/* What completion may offer. The crate does no I/O and reads no PATH: the caller seeds the
+ * directory it listed, the environment it holds, and the command specs it knows, each as spans into
+ * one arena — §4c's convention on the way IN. Seeding replaces what was seeded before. */
+void   slopdesk_prompt_set_paths(SlopDeskPrompt *handle, const uint8_t *base, size_t base_len,
+                                 const SlopDeskByteSpan *names, const bool *directories,
+                                 size_t count, const uint8_t *arena, size_t arena_len);
+void   slopdesk_prompt_set_variables(SlopDeskPrompt *handle, const SlopDeskByteSpan *names,
+                                     size_t count, const uint8_t *arena, size_t arena_len);
+void   slopdesk_prompt_add_command(SlopDeskPrompt *handle, const uint8_t *name, size_t name_len,
+                                   const SlopDeskByteSpan *subcommands, size_t subcommand_count,
+                                   const SlopDeskByteSpan *flags, size_t flag_count,
+                                   const uint8_t *arena, size_t arena_len);
+
+/* Ranks the word under the caret, answering how many candidates there are (at most `limit`). The
+ * three readers below are one answer in three deliveries and must be read together. */
+size_t slopdesk_prompt_complete(SlopDeskPrompt *handle, size_t limit);
+size_t slopdesk_prompt_candidates(SlopDeskPrompt *handle, SlopDeskPromptCandidate *out, size_t cap);
+size_t slopdesk_prompt_candidate_arena(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
+size_t slopdesk_prompt_candidate_positions(SlopDeskPrompt *handle, uint32_t *out, size_t cap);
+
+void   slopdesk_prompt_select_next_candidate(SlopDeskPrompt *handle);
+void   slopdesk_prompt_select_previous_candidate(SlopDeskPrompt *handle);
+bool   slopdesk_prompt_accept_completion(SlopDeskPrompt *handle);
+void   slopdesk_prompt_dismiss_completion(SlopDeskPrompt *handle);
+
+/* Enter. Answers SLOPDESK_PROMPT_SUBMISSION_RUN when the document is closed — it is then emptied,
+ * recorded in the history, and readable once through _take_submitted — or _CONTINUED when an open
+ * quote, backslash or substitution means the line kept going, which _state's `unterminated` names. */
+uint8_t slopdesk_prompt_submit(SlopDeskPrompt *handle);
+size_t  slopdesk_prompt_take_submitted(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
 
 /* ---------------------------------------------------------------------------- *
  * Paths, `path:line:col` diagnostics and URLs, found in the rows of the terminal grid — the one

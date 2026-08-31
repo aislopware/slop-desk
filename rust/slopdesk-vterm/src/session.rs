@@ -741,6 +741,9 @@ fn fill_cell(
     if selection.is_some_and(|span| span.contains(x)) {
         flags = flags.union(CellFlags::SELECTED);
     }
+    if raw.has_hyperlink()? {
+        flags = flags.union(CellFlags::HYPERLINK);
+    }
 
     let mut fg = resolve(style.fg_color, style.bold, colors).unwrap_or(colors.foreground);
     // A cell-level background beats the style's: the engine stores one directly on the cell for
@@ -978,6 +981,31 @@ mod tests {
         session.feed(b"\x1b]133;A\x07$ ");
         session.render().unwrap();
         assert_eq!(session.frame().row(0).unwrap().semantic, RowSemantic::Prompt);
+    }
+
+    #[test]
+    fn an_osc_8_hyperlink_flags_its_cells_and_answers_its_uri() {
+        let mut session = session();
+        session.feed(b"\x1b]8;;https://example.com/a\x1b\\link\x1b]8;;\x1b\\ plain");
+        session.render().unwrap();
+        let row = session.frame().row(0).unwrap();
+        assert!(
+            row.cells[0].flags.contains(CellFlags::HYPERLINK),
+            "the run between the two OSC 8s is linked"
+        );
+        assert!(
+            !row.cells[5].flags.contains(CellFlags::HYPERLINK),
+            "the empty closing URI ends the run"
+        );
+        assert_eq!(
+            session.hyperlink_at(0, 0).unwrap().as_deref(),
+            Some("https://example.com/a")
+        );
+        assert_eq!(
+            session.hyperlink_at(5, 0).unwrap(),
+            None,
+            "a cell outside the run has no URI to read"
+        );
     }
 
     #[test]

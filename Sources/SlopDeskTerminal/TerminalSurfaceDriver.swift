@@ -331,6 +331,60 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         onNeedsPresent?()
     }
 
+    /// The same, for a continuous gesture measured in POINTS.
+    ///
+    /// A positive delta reveals OLDER output. Apart from ``scroll(_:)`` because the block list's
+    /// chrome is measured in pixels and is spent BEFORE the scrollback: quantising a flick to rows
+    /// first would skip past the headers it is scrolling through. What the chrome cannot absorb
+    /// spills into the engine as whole rows, so the far end of the gesture is the same scroll the
+    /// row door performs.
+    func scrollPoints(_ delta: Double) {
+        surface?.scrollPoints(delta)
+        // BOTH ends have to be at the bottom. A flick the block list absorbed on its own leaves the
+        // engine's viewport untouched — still at the last row — while the reader is looking at
+        // older output, and asking only the engine would hide the jump-to-bottom affordance exactly
+        // when it is wanted.
+        let engineAtBottom = surface?.modes().isViewportAtBottom ?? true
+        let chromeAtBottom = surface?.blockScroll()?.following ?? true
+        model?.noteViewportScroll(atBottom: engineAtBottom && chromeAtBottom)
+        onNeedsPresent?()
+    }
+
+    /// Every block the last draw placed, for the chrome that decorates them.
+    func blocks() -> [TerminalRendererSurface.Block] { surface?.blocks() ?? [] }
+
+    /// Where the block list sits, for a scrollbar.
+    func blockScroll() -> TerminalRendererSurface.BlockScroll? { surface?.blockScroll() }
+
+    /// The block under a point, or `nil`.
+    func block(at point: CGPoint) -> Int? { surface?.block(at: point) }
+
+    /// Folds or unfolds one block, answering the state it left behind.
+    @discardableResult
+    func toggleBlock(_ index: Int) -> Bool {
+        let collapsed = surface?.toggleBlock(index) ?? false
+        onNeedsPresent?()
+        return collapsed
+    }
+
+    /// Folds one block to a stated state.
+    func setBlock(_ index: Int, collapsed: Bool) {
+        surface?.setBlock(index, collapsed: collapsed)
+        onNeedsPresent?()
+    }
+
+    /// Unfolds every block.
+    func expandAllBlocks() {
+        surface?.expandAllBlocks()
+        onNeedsPresent?()
+    }
+
+    /// One block's prompt rows as rendered — what a header prints.
+    func blockText(_ index: Int) -> String { surface?.blockText(index) ?? "" }
+
+    /// The OSC 8 URI a cell carries, or `nil`. An AUTHORED link, which wins over a detected one.
+    func hyperlink(column: Int, row: Int) -> String? { surface?.hyperlink(column: column, row: row) }
+
     // MARK: - Input
 
     /// Encodes one key press and sends what it produced. Answers whether anything was sent, which

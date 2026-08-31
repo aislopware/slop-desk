@@ -338,7 +338,10 @@ let package = Package(
             // `ClipboardConfirmRequests` (the phone's mailbox, since UIKit cannot present from a
             // drain), and `KeyChordNormalizer` (the named keys a binding can bind). Acyclic —
             // nothing depends on this target; the two app targets link it.
-            dependencies: ["SlopDeskWorkspaceCore", "SlopDeskClientCore", "CSlopDeskFFI"],
+            // `SlopDeskArena` is SPELLED, not inherited: `TerminalRendererSurface.swift` reads the
+            // block list through `ffiAnswerRecords`, and docs/55 §4's record delivery has ONE
+            // implementation.
+            dependencies: ["SlopDeskWorkspaceCore", "SlopDeskClientCore", "SlopDeskArena", "CSlopDeskFFI"],
             linkerSettings: ffiCLibraries,
         ),
 

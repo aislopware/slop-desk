@@ -187,6 +187,7 @@ pub mod peek_reply;
 pub mod phone_key;
 pub mod preference;
 pub mod present_queue;
+pub mod prompt;
 pub mod prompt_flash;
 pub mod rail_list;
 pub mod rail_structure;

@@ -55,7 +55,7 @@ use core::time::Duration;
 
 use slopdesk_apple_metal::Renderer;
 use slopdesk_apple_text::{FontStack, Rasterizer, Shaper};
-use slopdesk_terminal::geometry::CellMetrics;
+use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_terminal::surface_action::{SelectionEdge, SurfaceAction};
 use slopdesk_termrender::{
     BlockLayout, BlockSpan, CellGeometry, Chrome, DrawList, GlyphCache, Insets, LayoutMode, PaintStyle,
@@ -63,12 +63,12 @@ use slopdesk_termrender::{
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{
-    Autoscroll, ClickLadder, ClipboardWrite, CopyFormat, Frame, KeyAction, KeyPress, Mods, MouseAction,
-    MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SelectionAdjust, SurfacePoint, VtSession,
+    Autoscroll, CellFlags, ClickLadder, ClipboardWrite, CopyFormat, Frame, KeyAction, KeyPress, Mods,
+    MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SelectionAdjust, SurfacePoint, VtSession,
     key_from_macos_keycode,
 };
 
-use crate::{borrow, deliver, lent, push_text, records_of, saturating_u32};
+use crate::{borrow, deliver, lent, push_text, records_of, saturating_u32, spill};
 
 /// The gutter, header and gap a command block is drawn with, in POINTS.
 ///
@@ -139,10 +139,29 @@ struct Surface {
     geometry: PixelGeometry,
     /// How far the block list has scrolled, in device pixels. Zero on the alternate screen, which
     /// has no scrollback to reach.
+    ///
+    /// This is the CHROME's scroll and nothing else. `grid_size` sizes the grid from the drawable
+    /// alone, so headers and gaps push the block list taller than the viewport by roughly one
+    /// header per command on screen; that overflow lives here rather than in the row count. The
+    /// alternative — shrinking the grid to make room — would make the PTY's height depend on how
+    /// many prompts happen to be visible, which is a `SIGWINCH` per command.
     scroll_y: f64,
+    /// Whether the block list stays pinned to its bottom as content grows.
+    ///
+    /// True is the live-terminal default: new output has to stay on screen without the user
+    /// chasing it. An upward scroll drops the pin, and reaching the bottom again — or any
+    /// [`Scroll::Bottom`] — takes it back.
+    follow_bottom: bool,
     /// Which blocks the user folded, indexed the way [`lay_out`] reads it — positionally, so a
     /// short slice means "not collapsed" for the rest.
     collapsed: Vec<bool>,
+    /// Where the last [`Self::draw`] put every block.
+    ///
+    /// Kept because the chrome doors have to answer BETWEEN frames: `paint.rs` refuses to draw
+    /// headers, gutter marks and the scrollbar — they carry the client's design language — and
+    /// hands over their rects instead, so a hit test and a header's frame are questions asked long
+    /// after the draw that computed them.
+    layout: BlockLayout,
     /// Whether the surface holds the keyboard. Drives the hollow cursor and nothing else — an
     /// unfocused split sibling still repaints.
     focused: bool,
@@ -225,7 +244,9 @@ impl Surface {
             renderer,
             geometry,
             scroll_y: 0.0,
+            follow_bottom: true,
             collapsed: Vec::new(),
+            layout: BlockLayout::default(),
             focused: false,
             blink_visible: true,
             // A slate the theme immediately overwrites. Not black, because a surface that flashed
@@ -391,11 +412,27 @@ impl Surface {
         let cell_height = self.font.cell_height();
 
         let spans: Vec<BlockSpan> = segment(self.session.frame(), mode);
-        let layout: BlockLayout = lay_out(&spans, &self.collapsed, chrome, cell_height, Viewport {
+        let viewport_height = self.geometry.height - insets.top - insets.bottom;
+        let viewport = Viewport {
             scroll_y: self.scroll_y,
-            height: self.geometry.height - insets.top - insets.bottom,
+            height: viewport_height,
             width: self.geometry.width - insets.left - insets.right,
-        });
+        };
+        let mut layout: BlockLayout = lay_out(&spans, &self.collapsed, chrome, cell_height, viewport);
+
+        // The list's height is only knowable once it is laid out, and the scroll it is clamped
+        // against is an input to that layout — so the pin costs a second pass. Laying out twice
+        // rather than measuring the height a second way is what keeps ONE height formula: a
+        // `measure` helper beside `lay_out` would be a rule that could drift from the rects it
+        // predicts. The pass is O(blocks) over at most a screenful, and only runs when the clamp
+        // actually moved something.
+        let settled = self.settle_scroll(layout.content_height, viewport_height);
+        if settled {
+            layout = lay_out(&spans, &self.collapsed, chrome, cell_height, Viewport {
+                scroll_y: self.scroll_y,
+                ..viewport
+            });
+        }
 
         let style = PaintStyle {
             geometry: CellGeometry {
@@ -426,9 +463,51 @@ impl Surface {
             &mut self.rasterizer,
             &mut self.list,
         );
+        self.layout = layout;
         self.renderer
             .draw(&self.list, &mut self.cache, self.background)
             .is_ok()
+    }
+
+    /// Clamps [`Self::scroll_y`] into the range this content allows, honouring the bottom pin.
+    ///
+    /// Answers whether it moved, which is the only reason a caller would lay out again.
+    fn settle_scroll(&mut self, content_height: f64, viewport_height: f64) -> bool {
+        let wanted = settled_scroll(self.scroll_y, content_height, viewport_height, self.follow_bottom);
+        // An exact comparison IS the question — "is this a different number than the one the layout
+        // was built with" — not a measurement whose last bits are noise. A tolerance here would
+        // re-lay-out for a scroll nobody made, or skip one the user did.
+        #[expect(
+            clippy::float_cmp,
+            reason = "identity, not proximity: did the clamp move the offset at all"
+        )]
+        let moved = wanted != self.scroll_y;
+        self.scroll_y = wanted;
+        moved
+    }
+
+    /// The on-screen rect of one content-space rect, as the paint pass places it.
+    ///
+    /// The doors answer SCREEN rects rather than content ones because the client is filling chrome
+    /// into the same drawable, and handing it the untranslated rect would put
+    /// `insets.top - scroll_y` in two languages — the second copy free to drift by a frame.
+    fn on_screen(&self, rect: Rect) -> Rect {
+        let insets = self.insets();
+        // Divided back to POINTS, because that is the unit every other pointer door on this
+        // surface takes and answers — `_mouse`, `_select_press`, `_link_hit`. The layout works in
+        // device pixels because the atlas does; the boundary does not, and a caller holding a
+        // `CGRect` in one unit and a click in another is the drift this divide removes.
+        let scale = if self.geometry.scale > 0.0 {
+            self.geometry.scale
+        } else {
+            1.0
+        };
+        Rect {
+            x: (rect.x + insets.left) / scale,
+            y: (rect.y + insets.top - self.scroll_y) / scale,
+            width: rect.width / scale,
+            height: rect.height / scale,
+        }
     }
 
     /// The engine's current frame, for the readback doors.
@@ -1889,6 +1968,556 @@ fn encode_clipboard_writes(writes: &[ClipboardWrite]) -> Vec<u8> {
         push_text(&mut blob, &write.text);
     }
     blob
+}
+
+/// Where one block sits on screen, and what a header drawn over it would be heading.
+///
+/// Every rect is in DEVICE pixels, already carrying the insets and the block scroll — the same
+/// transform the paint pass applied to the rows below it, computed once on this side. `paint.rs`'s
+/// "What this pass does NOT draw" is the contract this record completes: the renderer places the
+/// chrome, the client fills it in its own design language.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlopDeskTerminalBlock {
+    /// Left edge of the whole block.
+    pub x: f64,
+    /// Top edge of the whole block, header included.
+    pub y: f64,
+    /// Width of the whole block.
+    pub width: f64,
+    /// Height of the whole block, header included.
+    pub height: f64,
+    /// Left edge of the header. Meaningless without `has_header`.
+    pub header_x: f64,
+    /// Top edge of the header.
+    pub header_y: f64,
+    /// Width of the header.
+    pub header_width: f64,
+    /// Height of the header.
+    pub header_height: f64,
+    /// Left edge of the rows, which is the block's left edge plus the gutter.
+    pub body_x: f64,
+    /// Top edge of the rows.
+    pub body_y: f64,
+    /// Width of the rows.
+    pub body_width: f64,
+    /// Height of the rows a collapse left standing.
+    pub body_height: f64,
+    /// Whether the header rect means anything. False for an ORPHAN — output whose command has
+    /// scrolled off the viewport, which has no command to head.
+    pub has_header: bool,
+    /// Whether the user folded this block down to its prompt.
+    pub collapsed: bool,
+    /// Whether the viewport touches this block at all, and so whether its rows were resolved.
+    pub visible: bool,
+    /// First frame row the block covers.
+    pub first_row: u16,
+    /// One past the last frame row it covers.
+    pub end_row: u16,
+    /// How many of those rows are the prompt itself — what a collapse keeps.
+    pub prompt_rows: u16,
+}
+
+/// What a scrollbar over the block list measures against.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlopDeskTerminalBlockScroll {
+    /// How far the list has scrolled, in device pixels.
+    pub scroll_y: f64,
+    /// How tall the whole list is, chrome included.
+    pub content_height: f64,
+    /// How much of it fits.
+    pub viewport_height: f64,
+    /// Whether the list is pinned to its bottom, so new output stays on screen.
+    pub following: bool,
+}
+
+/// Copies the last draw's block placements out, answering the count NEEDED.
+///
+/// Empty before the first draw and on the alternate screen, where `Chrome::NONE` collapses the
+/// whole viewport into one headerless block: a fullscreen TUI owns every row it was given, and
+/// drawing chrome over it would be drawing over the program.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `out` being null or writable for `cap` records.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_blocks(
+    handle: *mut SlopDeskTerminalSurface,
+    out: *mut SlopDeskTerminalBlock,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let records: Vec<SlopDeskTerminalBlock> = surface
+        .layout
+        .blocks
+        .iter()
+        .map(|block| {
+            let frame = surface.on_screen(block.frame);
+            let header = block.header.map(|rect| surface.on_screen(rect));
+            let body = surface.on_screen(block.body);
+            SlopDeskTerminalBlock {
+                x: frame.x,
+                y: frame.y,
+                width: frame.width,
+                height: frame.height,
+                header_x: header.map_or(0.0, |rect| rect.x),
+                header_y: header.map_or(0.0, |rect| rect.y),
+                header_width: header.map_or(0.0, |rect| rect.width),
+                header_height: header.map_or(0.0, |rect| rect.height),
+                body_x: body.x,
+                body_y: body.y,
+                body_width: body.width,
+                body_height: body.height,
+                has_header: header.is_some(),
+                collapsed: block.collapsed,
+                visible: block.is_visible(),
+                first_row: block.span.rows.start,
+                end_row: block.span.rows.end,
+                prompt_rows: block.span.prompt_rows,
+            }
+        })
+        .collect();
+    // SAFETY: `out` is null or writable for `cap` records, and `records` was built inside this
+    // call.
+    unsafe { spill(&records, out, cap) }
+}
+
+/// Reads the block list's scroll position, for a scrollbar and for a follow indicator.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_block_scroll(
+    handle: *mut SlopDeskTerminalSurface,
+) -> SlopDeskTerminalBlockScroll {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return SlopDeskTerminalBlockScroll::default();
+    };
+    let insets = surface.insets();
+    // Points, for `on_screen`'s reason: a scrollbar sized in device pixels beside a rect in points
+    // would draw at half height on every Retina display.
+    let scale = if surface.geometry.scale > 0.0 {
+        surface.geometry.scale
+    } else {
+        1.0
+    };
+    SlopDeskTerminalBlockScroll {
+        scroll_y: surface.scroll_y / scale,
+        content_height: surface.layout.content_height / scale,
+        viewport_height: (surface.geometry.height - insets.top - insets.bottom) / scale,
+        following: surface.follow_bottom,
+    }
+}
+
+/// Which block a point lands in, or `-1` for none. In POINTS, like every other pointer door.
+///
+/// The whole block, not just its header: the same hit answers a click on a header, a right-click
+/// anywhere in a block's output, and a drag that starts inside one.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_block_at_point(
+    handle: *mut SlopDeskTerminalSurface,
+    x: f64,
+    y: f64,
+) -> i64 {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return -1;
+    };
+    surface
+        .layout
+        .blocks
+        .iter()
+        .position(|block| {
+            let rect = surface.on_screen(block.frame);
+            x >= rect.min_x() && x < rect.max_x() && y >= rect.min_y() && y < rect.max_y()
+        })
+        .and_then(|index| i64::try_from(index).ok())
+        .unwrap_or(-1)
+}
+
+/// Folds a block down to its prompt, or unfolds it. Answers what the block's state now is.
+///
+/// An index past the list still records the flag, because the collapse vector is read positionally
+/// and a block that has not been laid out yet is one the next frame will place. Refusing here would
+/// lose a collapse the user asked for during a resize.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_block_collapsed(
+    handle: *mut SlopDeskTerminalSurface,
+    index: usize,
+    collapsed: bool,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    if index >= surface.collapsed.len() {
+        surface.collapsed.resize(index.saturating_add(1), false);
+    }
+    if let Some(slot) = surface.collapsed.get_mut(index) {
+        *slot = collapsed;
+    }
+}
+
+/// Flips one block's fold and answers its new state. `false` for a block the layout cannot fold —
+/// an orphan, which would have nothing left.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_toggle_block_collapsed(
+    handle: *mut SlopDeskTerminalSurface,
+    index: usize,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    // An orphan refuses the fold in `lay_out` anyway; refusing HERE too is what keeps the flag and
+    // the drawing from disagreeing about a block the user clicked.
+    if surface
+        .layout
+        .blocks
+        .get(index)
+        .is_some_and(|block| block.span.is_orphan())
+    {
+        return false;
+    }
+    let wanted = !surface.collapsed.get(index).copied().unwrap_or(false);
+    if index >= surface.collapsed.len() {
+        surface.collapsed.resize(index.saturating_add(1), false);
+    }
+    if let Some(slot) = surface.collapsed.get_mut(index) {
+        *slot = wanted;
+    }
+    wanted
+}
+
+/// Drops every fold — the "expand all" verb, and what a reset owes the block list.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_expand_all_blocks(handle: *mut SlopDeskTerminalSurface) {
+    // SAFETY: the caller's obligation, restated above.
+    if let Some(surface) = unsafe { held(handle) } {
+        surface.collapsed.clear();
+    }
+}
+
+/// The wheel and the trackpad: scrolls by POINTS, spending the block chrome first.
+///
+/// A separate verb from [`slopdesk_term_surface_scroll`]'s lines and pages because the granularity
+/// is genuinely different, and the spill rule only makes sense at this one. The chrome makes the
+/// list taller than the viewport, so the first pixels of an upward scroll uncover a header rather
+/// than a row; only once the list is at its top does the rest reach the engine's scrollback, in
+/// whole rows. Going the other way, arriving at the bottom takes the follow pin back.
+///
+/// Positive `delta` scrolls toward older output, matching a natural-direction wheel.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_scroll_points(
+    handle: *mut SlopDeskTerminalSurface,
+    delta: f64,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    if !delta.is_finite() || delta == 0.0 {
+        return;
+    }
+    let insets = surface.insets();
+    let viewport_height = surface.geometry.height - insets.top - insets.bottom;
+    let limit = f64::max(surface.layout.content_height - viewport_height, 0.0);
+    // Into the layout's unit, which is the atlas's: the gesture arrives in points because every
+    // other pointer door takes points.
+    let delta = delta
+        * if surface.geometry.scale > 0.0 {
+            surface.geometry.scale
+        } else {
+            1.0
+        };
+    // Up is toward the top of the list, which is `scroll_y` DECREASING — so a positive delta,
+    // which means "show me older output", spends the offset downward first.
+    let wanted = surface.scroll_y - delta;
+    let clamped = f64::min(f64::max(wanted, 0.0), limit);
+    let spill_px = wanted - clamped;
+    surface.scroll_y = clamped;
+    surface.follow_bottom = clamped >= limit;
+
+    // What the chrome could not absorb becomes engine rows. Whole rows only: the engine's viewport
+    // has no sub-row position, and rounding here rather than accumulating a remainder is what keeps
+    // one flick from drifting the two scrolls apart.
+    let cell_height = surface.font.cell_height();
+    let rows = spill_rows(spill_px, cell_height);
+    if rows != 0 {
+        surface.session.scroll(Scroll::Delta(rows));
+    }
+}
+
+/// The text of one block's prompt rows, which is what a header prints.
+///
+/// The rows AS RENDERED, so a shell that decorates its prompt sends that decoration too: OSC 133
+/// `A` marks where a prompt begins and `B` where the command does, but only the first crosses the
+/// engine's per-row API, so this side cannot cut the two apart. A header wanting the bare command —
+/// with its exit code and duration — reads the command-block ring instead; this door is what a
+/// header can always answer, including for a block the ring never saw.
+///
+/// Answers §4's byte count, so a caller with a small buffer retries.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `(out, cap)` being writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_block_text(
+    handle: *mut SlopDeskTerminalSurface,
+    index: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let Some(block) = surface.layout.blocks.get(index) else {
+        return 0;
+    };
+    let frame = surface.frame();
+    let start = block.span.rows.start;
+    let end = start.saturating_add(block.span.prompt_rows);
+    let mut text = String::new();
+    let mut joined = false;
+    for row in start..end {
+        let Some(line) = frame.row(row) else { continue };
+        // A wrapped prompt is ONE logical line the engine happened to break, so it rejoins without
+        // a separator — the same rule the selection's logical lines are read by.
+        if joined {
+            text.push('\n');
+        }
+        text.push_str(line.text.trim_end());
+        joined = !line.wrapped;
+    }
+    // SAFETY: `out` is null or writable for `cap` bytes, and `text` was built inside this call.
+    unsafe { deliver(text.as_bytes(), out, cap) }
+}
+
+/// One whole-number scroll count as the `i32` the engine takes, or `None` when it will not fit.
+///
+/// A flick large enough to overflow is one asking for the end of the scrollback, and the engine
+/// clamps there anyway — but converting through a saturating cast would turn a NaN into a real
+/// scroll, so the refusal is explicit.
+/// The OSC 8 hyperlink URI at one viewport cell, or nothing when that cell carries no link.
+///
+/// Answers §4's byte count, so a caller with a small buffer retries; `0` means no link, which is
+/// the common answer and costs no allocation on either side.
+///
+/// The frame's own `CellFlags::HYPERLINK` is the fast path, and it is checked FIRST: a pointer
+/// moving across ordinary text asks this door once per cell, and every one of those answers without
+/// touching the engine. The URI itself is not in the frame because one link's URI is shared by
+/// every cell of its run, and carrying it per cell would allocate a URL per character per frame.
+///
+/// This is the AUTHORED link — what a program declared with OSC 8 — and it is a different question
+/// from the detected one `slopdesk-terminal`'s `link` scanner answers over plain text. A cell can
+/// have both; the authored URI wins, because the program said what it meant.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `(out, cap)` being writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_hyperlink_at(
+    handle: *mut SlopDeskTerminalSurface,
+    column: u16,
+    row: u16,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    // The frame answers first, and for a pointer over ordinary text it is the whole answer.
+    let linked = surface
+        .frame()
+        .row(row)
+        .and_then(|line| line.cells.get(usize::from(column)))
+        .is_some_and(|cell| cell.flags.contains(CellFlags::HYPERLINK));
+    if !linked {
+        return 0;
+    }
+    // An engine error here is a cell that cannot be resolved — a coordinate off the viewport, or a
+    // terminal mid-resize — and "no link" is the honest answer to both.
+    let uri = surface
+        .session
+        .hyperlink_at(column, u32::from(row))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    // SAFETY: `out` is null or writable for `cap` bytes, and `uri` was built inside this call.
+    unsafe { deliver(uri.as_bytes(), out, cap) }
+}
+
+/// Where the block list's scroll belongs, given how tall it turned out and whether it is pinned.
+///
+/// A free function rather than a method because it is the whole rule — the clamp AND the pin — and
+/// the surface it would sit on cannot be built without a Metal device, which is the one thing the
+/// tests in this file may not take.
+fn settled_scroll(current: f64, content_height: f64, viewport_height: f64, follow: bool) -> f64 {
+    let limit = f64::max(content_height - viewport_height, 0.0);
+    if follow {
+        return limit;
+    }
+    f64::min(f64::max(current, 0.0), limit)
+}
+
+/// One whole-number scroll count as the `i32` the engine takes, or `None` when it will not fit.
+/// The engine rows a flick's leftover pixels buy, SIGNED the way the engine reads them.
+///
+/// `spill` carries the sign the chrome could not spend, and [`Scroll::Delta`] reads negative as
+/// "into the scrollback" — the same direction a positive wheel delta asked for. The two halves of
+/// one flick therefore share a sign, and no negation belongs here: negating would make a single
+/// continuous gesture reverse the moment the block list ran out of offset to give.
+///
+/// Whole rows only, truncated rather than rounded: the engine's viewport has no sub-row position,
+/// and half a row of overshoot per callback is what drifts the two scrolls apart.
+fn spill_rows(spill: f64, cell_height: f64) -> i32 {
+    if spill == 0.0 || cell_height <= 0.0 {
+        return 0;
+    }
+    num_to_i32((spill / cell_height).trunc()).unwrap_or(0)
+}
+
+fn num_to_i32(value: f64) -> Option<i32> {
+    if !value.is_finite() {
+        return None;
+    }
+    let fenced = value.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX));
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "fenced into i32::MIN..=i32::MAX by the clamp above, and already whole"
+    )]
+    Some(fenced as i32)
+}
+
+#[cfg(test)]
+mod block_scroll_tests {
+    use super::{num_to_i32, settled_scroll, spill_rows};
+
+    /// The float comparison this file's neighbours use — `slopdesk-termrender`'s block tests assert
+    /// the same way, because these are exact arithmetic on whole pixels and an epsilon is the
+    /// clippy-shaped spelling of `==`, not a tolerance anyone needs.
+    fn is(had: f64, want: f64) {
+        assert!((had - want).abs() < f64::EPSILON, "had {had}, wanted {want}");
+    }
+
+    #[test]
+    fn a_flick_past_the_top_keeps_going_older_in_the_engine() {
+        // The bug this pins: the block list absorbs "older" by DECREASING its offset, so what
+        // spills out the top is negative — and `Scroll::Delta` spells older negative too. A
+        // negation anywhere in that chain makes one flick reverse at the seam.
+        assert_eq!(spill_rows(-42.0, 14.0), -3);
+        // And the far end: overshooting the bottom spills toward the newest row.
+        assert_eq!(spill_rows(42.0, 14.0), 3);
+        // Less than a row buys nothing, and a degenerate cell height cannot divide.
+        assert_eq!(spill_rows(-13.0, 14.0), 0);
+        assert_eq!(spill_rows(-42.0, 0.0), 0);
+        assert_eq!(spill_rows(0.0, 14.0), 0);
+        // Not finite, not a row count.
+        assert_eq!(spill_rows(f64::NAN, 14.0), 0);
+    }
+
+    #[test]
+    fn a_list_that_fits_has_nowhere_to_scroll() {
+        is(settled_scroll(0.0, 400.0, 900.0, false), 0.0);
+        // Following a list shorter than its viewport still means the top.
+        is(settled_scroll(0.0, 400.0, 900.0, true), 0.0);
+    }
+
+    #[test]
+    fn the_chrome_overflow_is_exactly_what_can_be_scrolled() {
+        // Nine hundred pixels of drawable holding a thousand of blocks: the hundred the headers and
+        // gaps added is the whole scroll range, and the grid keeps every row it was sized for.
+        is(settled_scroll(0.0, 1000.0, 900.0, true), 100.0);
+        is(settled_scroll(40.0, 1000.0, 900.0, false), 40.0);
+    }
+
+    #[test]
+    fn an_offset_past_the_end_is_clamped_rather_than_kept() {
+        // What a collapse does: the list shrinks under a scroll that was valid a frame ago.
+        is(settled_scroll(500.0, 1000.0, 900.0, false), 100.0);
+        is(settled_scroll(-20.0, 1000.0, 900.0, false), 0.0);
+    }
+
+    #[test]
+    fn the_pin_moves_the_offset_as_the_list_grows() {
+        let after_one_command = settled_scroll(100.0, 1000.0, 900.0, true);
+        // New output stays on screen without the user chasing it.
+        is(settled_scroll(after_one_command, 1200.0, 900.0, true), 300.0);
+    }
+
+    #[test]
+    fn a_scroll_count_is_whole_and_fenced() {
+        assert_eq!(num_to_i32(3.9), Some(3));
+        assert_eq!(num_to_i32(-3.9), Some(-3));
+        assert_eq!(num_to_i32(f64::INFINITY), None);
+        assert_eq!(num_to_i32(f64::NAN), None);
+        assert_eq!(
+            num_to_i32(1e30),
+            Some(i32::MAX),
+            "a flick past the scrollback asks for its end, which is what the clamp gives"
+        );
+    }
 }
 
 #[cfg(test)]

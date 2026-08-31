@@ -504,13 +504,24 @@ final class MacTerminalRendererView: NSView {
         guard !driver.sendMouse(action: 2, button: 4, mods: Self.mods(event.modifierFlags), at: point) else {
             return
         }
-        // `mouse-scroll-multiplier` scales the DELTA, before rounding: scaling the rows instead would
-        // quantise every wheel notch to at least one row and turn a 0.4 multiplier into no change at
-        // all. Multiplied here rather than in the driver because it is a WHEEL number — the phone
-        // scrolls with a finger and has no notch to scale.
-        let rows = Int32((event.scrollingDeltaY * SettingsKey.scrollMultiplierValue).rounded())
-        guard rows != 0 else { return }
-        driver.scroll(.rows(rows))
+        // POINTS, not rows: the block list's chrome is spent before the scrollback, and rounding to
+        // rows first would flick past a header instead of through it. `mouse-scroll-multiplier`
+        // scales the DELTA rather than the rows, so a 0.4 multiplier stays a 0.4 multiplier instead
+        // of quantising every notch up to a whole row. Multiplied here rather than in the driver
+        // because it is a WHEEL number — the phone scrolls with a finger and has no notch to scale.
+        //
+        // Only a PRECISE delta is already points. A notched wheel reports LINES, and handing those
+        // to a points door would move a whole notch by three points — near-invisible. A line is a
+        // row, so the cell height is the conversion, and `cellMetrics` answers it in points.
+        //
+        // Un-negated, unlike `.rows(_:)`: a positive `scrollingDeltaY` is the content moving DOWN,
+        // which reveals what is above it — older output — and that is the direction this door reads
+        // positive. `scrollPoints` spills whatever the chrome cannot absorb into the engine with the
+        // sign already carried through, so one flick keeps one direction across the seam.
+        let lineHeight = event.hasPreciseScrollingDeltas ? 1 : Double(driver.cellMetrics()?.cellHeight ?? 0)
+        let travelled = Double(event.scrollingDeltaY) * lineHeight * SettingsKey.scrollMultiplierValue
+        guard travelled != 0 else { return }
+        driver.scrollPoints(travelled)
     }
 
     /// The I-beam over the terminal, which is what says the text can be selected.

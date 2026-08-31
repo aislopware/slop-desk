@@ -252,22 +252,79 @@ duration, output length — while captured output stays on the host until someth
 a request registry, a 64-entry ring and a coalescing rule. Today that model drives only
 `MacCommandNavigator` / `PhoneCommandNavigator`: a list you jump through.
 
-What is missing is exactly one layer — rendering — plus:
+Both halves are now built. `rust/slopdesk-termrender/src/block.rs` segments the frame on OSC 133
+`A` and places every block with variable height, collapse state and viewport virtualisation; the
+**alt-screen escape hatch** is `LayoutMode::Grid` plus `Chrome::NONE`, so vim and htop get the flat
+grid and no chrome is drawn over a program that owns its rows.
 
-- a virtualised block list with variable heights and collapse state
-- an **alt-screen escape hatch**: vim and htop need the flat grid, so the renderer alternates block
-  layout (main screen, OSC 133 boundaries) with plain grid layout (alt screen).
-  `rust/slopdesk-terminal/src/tracker.rs` already discriminates the two, byte-at-a-time, across chunk
-  boundaries
+`rust/slopdesk-ffi/src/terminal_surface.rs` carries it across: `slopdesk_term_surface_blocks` hands
+back each block's screen rects, `_block_at_point` hit-tests one, `_set_block_collapsed` /
+`_toggle_block_collapsed` / `_expand_all_blocks` fold them, and `_block_scroll` /
+`_scroll_pixels` drive the list. Headers, gutter marks and the scrollbar are still not DRAWN by
+`paint.rs` — that is the design-language boundary its header states — but their rects now cross.
+
+Two rules the block list settled, both in the surface rather than the layout:
+
+- **Chrome overflow rides `scroll_y`, never the row count.** `grid_size` sizes the grid from the
+  drawable alone, so headers and gaps make the list taller than the viewport. Shrinking the grid to
+  make room would make the PTY's height depend on how many prompts happen to be visible — a
+  `SIGWINCH` per command.
+- **The list is pinned to its bottom by default.** An upward scroll drops the pin; reaching the
+  bottom takes it back. Once the list is at its top, further scrolling spills into the engine's
+  scrollback in whole rows, because `segment` only ever sees the viewport frame.
+- **One flick, one sign.** The block list absorbs "older" by DECREASING `scroll_y`, so what spills
+  out the top is a NEGATIVE pixel count — and `Scroll::Delta` spells older negative too. `spill_rows`
+  therefore does not negate: a negation would make a single continuous gesture reverse direction the
+  moment the chrome ran out of offset to give. Nothing negates anywhere along the chain, because both
+  platforms already hand up a POSITIVE number for "reveal older" (`NSEvent.scrollingDeltaY`, a
+  downward `UIPanGestureRecognizer` translation) and `..._scroll_points` reads positive the same way
+  — the one inversion lives in `wanted = scroll_y - delta`, and `spill_rows`' test pins the rest.
+
+- **Points at the boundary, device pixels inside.** `Surface.geometry` is device pixels because the
+  atlas is, but every pointer door speaks POINTS — `_mouse`, `_select_press`, `_link_hit`, and now
+  the block rects, `_block_scroll` and `_scroll_points`. The scale divide lives in `on_screen` and
+  the multiply in `_scroll_points`, so no caller ever holds a `CGRect` in one unit and a click in
+  another. The macOS wheel converts too, in the other direction: `scrollingDeltaY` is only points
+  when `hasPreciseScrollingDeltas`, and a notched wheel's LINES are multiplied by the cell height
+  before they cross.
+
+The one thing a header still cannot show for a scrolled-back block is its **exit code and
+duration**. Those live in the command-block ring keyed by `index`/`prompt_ordinal`, which the host's
+segmenter assigns; the client's engine exposes only a per-row OSC 133 `A` flag, so nothing ties a
+`PlacedBlock` back to a ring entry. `slopdesk_term_surface_block_text` answers what a header can
+always know — the prompt rows as rendered. Closing the gap means carrying the ordinal in the mark
+itself (`OSC 133;A` with an id the engine surfaces per row), which is a shell-integration change,
+not a rendering one.
 
 ### 5.4 The editor-like prompt
 
-Also an upgrade rather than greenfield. `rust/slopdesk-terminal/src/inputbox.rs` already models two
-affordances — `ShellCommand` at a prompt (whole line on Enter, OSC 133 block boundary) and
-`TuiCompose` under a fullscreen TUI (write on submit, dedup the PTY's echo via `InputDedupRing`). The
-Warp-class prompt is `ShellCommand` grown up: multi-line editing, syntax highlighting, history and
-completion, over a state machine that already knows when it is at a prompt and which echoed bytes to
-swallow.
+Built, and it is `rust/slopdesk-terminal/src/prompt/` (4 571 lines): a `TextBuffer` with
+grapheme/word/line motions and a goal column, a coalescing `UndoStack`, a shell lexer that decides
+both the colours and whether Enter runs, a `CommandHistory` with a walk and a reverse search, and
+fzf-ranked completion over caller-seeded sources. It crosses through
+`rust/slopdesk-ffi/src/prompt.rs` as ONE handle — the editor's own header says why: typing has to
+abandon a history walk, dismiss the completion list and coalesce into the undo step together, and
+four handles would put that wiring on the far side in two languages.
+
+`inputbox.rs` stays where it was, doing the other job: which box to OFFER (`ShellCommand` at a
+prompt versus `TuiCompose` under a fullscreen TUI) and which echoed bytes to swallow. The prompt is
+what goes inside the box; the affordance is which box it is.
+
+`Sources/SlopDeskWorkspaceCore/Terminal/CommandPrompt.swift` is the near side. Composition
+(`NSTextInputClient` / `UITextInput`), key mapping and the candidate list's appearance stay in the
+view per §10: a motion crosses as a case, never as a key.
+
+### 5.5 OSC 8 hyperlinks
+
+The engine carries them and we now read them. `CellFlags::HYPERLINK` marks every cell of a link's
+run — the flag only, because one URI is shared by the whole run and carrying it per cell would
+allocate a URL per character per frame. `VtSession::hyperlink_at` reads the URI for the one cell
+somebody pointed at, and `slopdesk_term_surface_hyperlink_at` is its door; the door checks the
+frame's flag FIRST, so a pointer crossing ordinary text never reaches the engine.
+
+This is the AUTHORED link, and it is a different question from the DETECTED one
+`rust/slopdesk-terminal/src/link.rs` answers by scanning plain text for URLs. A cell can have both.
+The authored URI wins, because the program said what it meant.
 
 ## 6. Measured
 
