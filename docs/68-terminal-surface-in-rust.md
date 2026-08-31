@@ -118,6 +118,17 @@ reading.
 
 Verified against `Uzaaft/libghostty-rs` @ `a0b5a46`, MIT, pinning ghostty `22d13172`.
 
+We now build on a fork of it, `trancong12102/libghostty-rs` @ `519649e`, and only for soundness.
+Upstream's `ClipboardContent` handed over a `&str` built with `from_utf8_unchecked` over an OSC 52
+payload, and `ClipboardWrite::contents` sliced a null pointer for the "clear the clipboard" shape —
+both reachable by any program on the pty, both tracked by upstream's own issue #75, and both
+reproduced by the two `cfg(miri)` tests their PR #76 added, which FAIL at `f4c72b9`. The fork is
+`f4c72b9` plus one commit that flips them to pass: a null-guarding `String::to_bytes`,
+`ClipboardContent::data` typed `&[u8]`, and a validated `mime`. `slopdesk_vterm::events::preferred_text`
+is where those bytes become a `String` or are declined. The commit is upstreamable as it stands and
+the pin goes home when #75 closes; the bindings are still generated against ghostty `22d13172`, so
+no engine bump rode along.
+
 | | |
 | --- | --- |
 | **Dissolves** | `ghostty_app_new/tick/free`, `ghostty_init`, the `surface_new/free` lifecycle, `write_callback`/`resize_callback` and the whole `ghosttyOnMainActor` thread-hop, the `External.zig` backend (a fork-only patch upstream closed unmerged), the 2 347-line consolidated patch, `build-libghostty.sh`, the xcframework recipe, the `.toolchain/` download, the `xcrun` SDK shim, and upstream bug #13021 (iOS Metal-teardown UAF) — a renderer bug we stop having |
@@ -403,7 +414,9 @@ The table above came from a scratch crate against `libghostty-vt` alone. It is r
 than left on disk, because the same five shapes are what the after-numbers must be taken over, and a
 number nobody can re-run is not a baseline. `Cargo.toml` is one dependency —
 `libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "a0b5a46" }` — built
-`--release`.
+`--release`. That is the rev the numbers were TAKEN at and it stays written that way; the tree's
+live pin is the fork named in §4, which changes two clipboard signatures and nothing the harness
+touches.
 
 ```rust
 use std::time::Instant;
@@ -522,6 +535,13 @@ cadence on a quiet box against the 60 Hz ceiling directly, not to resurrect the 
   than a tag. Betting the client's primary surface on it is a larger exposure than a like-for-like
   swap would be. The mitigation is that vt is the half upstream built for embedders, and that we pin
   the commit ourselves (§3, V2) so churn arrives when we choose it.
+- **The bindings' `unsafe` is not audited by us, and "audited" is per-commit.** `slopdesk-vterm` is
+  `forbid(unsafe_code)` and every `unsafe` under it is the bindings'. The clipboard path proved that
+  is a claim about one revision rather than a property: two UB sites, both reachable from any
+  program on the pty, both found by upstream's own Miri run. The mitigation is the pin — we choose
+  the revision, so a fix is a rev bump we can make ourselves, which is what §4's fork is. The
+  residual risk is the sites nobody has run Miri over yet; the OSC 9/777 notification title and body
+  reach the same `to_str`, and we do not register those handlers.
 - **Concurrency changes owner.** `terminal.rs:511` — "the caller must serialize it with writes,
   rendering, searches". libghostty ran its own IO and renderer threads; afterwards that is ours.
   `superd` still owns `read` on every PTY master, so the discipline is unchanged in kind.

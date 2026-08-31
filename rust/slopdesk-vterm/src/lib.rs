@@ -30,7 +30,13 @@
 //! ## What is guaranteed
 //!
 //! - **No `unsafe`.** `#![forbid(unsafe_code)]`. Every `unsafe` this crate depends on is inside
-//!   `libghostty-vt`, behind the bindings' own audited wrappers.
+//!   `libghostty-vt`, behind the bindings' own wrappers — and "audited" is a claim about a
+//!   particular commit, not a property of the crate. It was false for the clipboard path at
+//!   `Uzaaft/libghostty-rs@a0b5a46`: `ClipboardContent` built a `&str` with `from_utf8_unchecked`
+//!   over an OSC 52 payload, which is base64-decoded bytes any program in the pty picks, and
+//!   `ClipboardWrite::contents` sliced a null pointer for the "clear the clipboard" shape.
+//!   Upstream's own issue #75 and its two `cfg(miri)` reproducers are the evidence. We build on the
+//!   pinned fork that fixes both, and [`events::preferred_text`] takes the bytes and decides.
 //! - **The engine never escapes.** Every handle is `!Send` and `!Sync` and upstream locks nothing.
 //!   [`VtSession`] owns all of them together, so a caller cannot hold one alone, and the only thing
 //!   that leaves is a [`Frame`], which is plain data.

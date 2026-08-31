@@ -74,6 +74,16 @@ imprecise_flops = "allow"
 # stay in step with the `ghostty` record in `ThirdParty/tools/tools.lock`: the bindings are
 # generated against one ghostty commit, and the source tree `GHOSTTY_SOURCE_DIR` points at is what
 # actually compiles. `just lint-invariants` holds the second half of that pair.
-libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "a0b5a46" }
+#
+# A FORK, and only for soundness. `Uzaaft/libghostty-rs` builds a `&str` with `from_utf8_unchecked`
+# over an OSC 52 payload — base64-decoded bytes any program in the pty picks — and slices a null
+# pointer for the "clear the clipboard" shape. Upstream's own issue #75 tracks both and its PR #76
+# added two `cfg(miri)` reproducers that FAIL; this rev is `f4c72b9` (their HEAD, reproducers and
+# all) plus the one commit that flips them to pass: `String::to_bytes` guards the null,
+# `ClipboardContent::data` is `&[u8]`, and `crate::events::preferred_text` decides whether those
+# bytes are text. Nothing else diverges, so this goes home the moment #75 closes — the fork's branch
+# is the upstreamable commit, not a maintained divergence. The bindings are still generated against
+# ghostty `22d13172`, so no engine bump rides along with it.
+libghostty-vt = { git = "https://github.com/trancong12102/libghostty-rs", rev = "519649e" }
 
 [workspace]

@@ -213,21 +213,38 @@ impl EventSink {
 /// The text a clipboard write means, out of the MIME representations it carries.
 ///
 /// `text/plain` where the program offered one, and otherwise the first representation, which is the
-/// rule the deleted fork's `write_clipboard_cb` used and the one upstream's own apprt uses. A write
-/// carrying only an image mime therefore lands as whatever bytes that mime holds rather than as
-/// nothing: the caller is going to hand it to a pasteboard that will decline it, and a decline the
-/// user can see beats a silent drop.
-pub(crate) fn preferred_text<'a>(mut contents: impl Iterator<Item = (&'a str, &'a str)>) -> Option<String> {
+/// rule the deleted fork's `write_clipboard_cb` used and the one upstream's own apprt uses. So the
+/// MIME is what CHOOSES, and a write carrying only an image mime is still asked the question rather
+/// than skipped — the program said it wanted this on a clipboard, and a mime we did not expect is
+/// not by itself a reason to disbelieve it.
+///
+/// Then BYTES in, text out, and that conversion is the second half of the answer. An OSC 52 payload
+/// is base64-decoded arbitrary data chosen by whatever is running in the pty —
+/// `printf '\e]52;c;//4=\a'` decodes to `FF FE` — so the chosen representation is CHECKED, and one
+/// that is not text lands as nothing. Which is where this parts company with the deleted fork,
+/// deliberately: that one passed an image mime's bytes through on the reasoning that a pasteboard
+/// declining them is a decline the user can see, and a silent drop is worse. The reasoning was
+/// sound and the option is gone — what is downstream of here is spelled `String` the whole way, the
+/// queue, the encoded frame and the pasteboard's own door, so "pass it through" means a `String`
+/// whose bytes are not UTF-8. The upstream bindings used to manufacture exactly that with
+/// `from_utf8_unchecked`, which is the unsoundness our pinned fork fixes by handing over `&[u8]`
+/// and leaving the question here. A drop is the honest end of it.
+pub(crate) fn preferred_text<'a>(mut contents: impl Iterator<Item = (&'a str, &'a [u8])>) -> Option<String> {
     let first = contents.next()?;
     if first.0 == "text/plain" {
-        return Some(first.1.to_owned());
+        return as_text(first.1);
     }
     for (mime, data) in contents {
         if mime == "text/plain" {
-            return Some(data.to_owned());
+            return as_text(data);
         }
     }
-    Some(first.1.to_owned())
+    as_text(first.1)
+}
+
+/// One representation's bytes as text, or nothing if they are not text.
+fn as_text(data: &[u8]) -> Option<String> {
+    core::str::from_utf8(data).ok().map(ToOwned::to_owned)
 }
 
 #[cfg(test)]
@@ -324,17 +341,39 @@ mod tests {
     #[test]
     fn the_preferred_representation_is_text_plain_wherever_it_sits() {
         assert_eq!(
-            preferred_text([("image/png", "bytes"), ("text/plain", "hello")].into_iter()).as_deref(),
+            preferred_text([("image/png", &b"bytes"[..]), ("text/plain", b"hello")].into_iter()).as_deref(),
             Some("hello")
         );
         assert_eq!(
-            preferred_text([("text/plain", "hello")].into_iter()).as_deref(),
+            preferred_text([("text/plain", &b"hello"[..])].into_iter()).as_deref(),
             Some("hello")
         );
         assert_eq!(
-            preferred_text([("image/png", "bytes")].into_iter()).as_deref(),
+            preferred_text([("image/png", &b"bytes"[..])].into_iter()).as_deref(),
             Some("bytes")
         );
         assert_eq!(preferred_text(std::iter::empty()), None);
+    }
+
+    /// The bytes a hostile program picks are not text, and saying so is the whole reason this
+    /// function takes bytes: `printf '\e]52;c;//4=\a'` decodes to `FF FE`, which the pinned fork
+    /// hands over as bytes precisely so nobody builds a `str` out of it.
+    #[test]
+    fn a_representation_that_is_not_text_is_declined_rather_than_carried() {
+        assert_eq!(
+            preferred_text([("text/plain", &[0xFF, 0xFE][..])].into_iter()),
+            None
+        );
+        assert_eq!(
+            preferred_text([("image/png", &[0x89, 0x50, 0x4E][..])].into_iter()),
+            None
+        );
+        // The mime rule still runs FIRST: a text/plain that is text wins over a leading
+        // representation that is not, rather than the invalid one deciding the answer is nothing.
+        assert_eq!(
+            preferred_text([("image/png", &[0xFF, 0xFE][..]), ("text/plain", b"hello")].into_iter())
+                .as_deref(),
+            Some("hello")
+        );
     }
 }

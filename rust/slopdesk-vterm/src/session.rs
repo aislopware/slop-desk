@@ -276,6 +276,11 @@ impl VtSession {
         // `slopdesk_terminal::surface::clipboard_write`'s decision, made where the user's
         // `clipboard-write` setting lives. A read request (`?`) never arrives — upstream documents
         // that it ignores those, which `docs/DECISIONS.md` records the consequence of.
+        //
+        // Decoded means BYTES, not text, and the engine promises nothing more: the payload is
+        // whatever a program in the pty base64-encoded. [`events::preferred_text`] is where that
+        // becomes a `String` or is declined — see the crate header for the fork this pins to get
+        // the bytes handed over instead of a `str` nobody could have validated.
         let sink = events.clone();
         terminal.on_clipboard_write(move |_terminal, write| {
             let target = match write.location() {
