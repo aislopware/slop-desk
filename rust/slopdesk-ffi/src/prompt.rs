@@ -38,6 +38,7 @@ use slopdesk_terminal::prompt::complete::{
     Candidate, CandidateKind, CandidateProvider, CommandProvider, CommandSpec, PathEntry, PathProvider,
     VariableProvider,
 };
+use slopdesk_terminal::prompt::keys::{ControlAction, control_action};
 use slopdesk_terminal::prompt::syntax::{TokenKind, Unterminated};
 use slopdesk_terminal::prompt::{CommandEditor, Submission};
 
@@ -120,6 +121,38 @@ pub const SLOPDESK_PROMPT_SUBMISSION_RUN: u8 = 0;
 /// Something was still open, so the key inserted a newline instead. The submitted slot is empty and
 /// [`SlopDeskPromptState::unterminated`] names what needs closing.
 pub const SLOPDESK_PROMPT_SUBMISSION_CONTINUED: u8 = 1;
+
+/// The control press is the editor's; no byte reaches the shell.
+pub const SLOPDESK_PROMPT_CONTROL_EDITOR: u8 = 0;
+/// The control press is the shell's: send the byte, leave the editor's text alone.
+pub const SLOPDESK_PROMPT_CONTROL_FORWARD: u8 = 1;
+/// The control press is the shell's AND it abandons the line: send the byte, then clear the editor.
+pub const SLOPDESK_PROMPT_CONTROL_FORWARD_AND_CLEAR: u8 = 2;
+
+/// What a `⌃`-modified letter does while the editor is armed.
+///
+/// The rule is [`slopdesk_terminal::prompt::keys::control_action`], and its header is why four keys
+/// are carved out at all: `⌃C`, `⌃D` on an empty line, `⌃Z` and `⌃L` were never `readline`'s
+/// either, and an editor that swallowed them would leave the terminal in a state with no way out.
+///
+/// `letter` is the LOWERCASE ASCII letter; a caller that passes `b'C'` gets
+/// [`SLOPDESK_PROMPT_CONTROL_EDITOR`], which is the safe answer but not the one it meant.
+///
+/// A free function rather than a method on the handle: it asks nothing of the editor except whether
+/// its buffer is empty, which the caller already has out of [`SlopDeskPromptState`], and a door
+/// that took the handle would invite the view to call it while holding no prompt at all.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const extern "C" fn slopdesk_prompt_control_action(letter: u8, buffer_empty: bool) -> u8 {
+    match control_action(letter, buffer_empty) {
+        ControlAction::Editor => SLOPDESK_PROMPT_CONTROL_EDITOR,
+        ControlAction::Forward => SLOPDESK_PROMPT_CONTROL_FORWARD,
+        ControlAction::ForwardAndClear => SLOPDESK_PROMPT_CONTROL_FORWARD_AND_CLEAR,
+    }
+}
 
 /// Everything the prompt view reads between edits, in one record.
 ///

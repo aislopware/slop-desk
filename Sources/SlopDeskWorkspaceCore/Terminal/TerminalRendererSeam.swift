@@ -84,6 +84,20 @@ public protocol TerminalSurfaceHosting: AnyObject {
     /// drawable behind it, in its own layout pass.
     var surfaceView: PlatformView { get }
 
+    /// The command prompt's band, to pin along the pane's BOTTOM edge with ``surfaceView`` filling
+    /// what is left above it — `docs/68` §5.4.
+    ///
+    /// ⚠️ A SIBLING, NOT A SUBVIEW, and that is forced rather than chosen: ``surfaceView`` owns its
+    /// `layer` slot outright (it is layer-HOSTING, not layer-backed), and AppKit does not promise a
+    /// subview of one of those a layer of its own. So the grid gets smaller when the band appears —
+    /// which is also the honest answer, since those rows genuinely are not the shell's any more.
+    ///
+    /// The band sizes ITSELF: it answers an `intrinsicContentSize` for what the editor currently
+    /// holds and asks for a re-layout when that changes, so a host pins its three edges and gives it
+    /// no height. `nil` where there is no prompt to draw — a headless build, and the phone until
+    /// `UITextInput` lands.
+    var promptView: PlatformView? { get }
+
     /// Re-push the pane's WORKSPACE focus. Drives the keyboard responder and the renderer's cursor
     /// (solid vs hollow — `slopdesk_termrender::layout::cursor` forces `Hollow` when unfocused,
     /// whatever the shell asked for); it does NOT gate render-liveness, so an unfocused split sibling
@@ -93,6 +107,13 @@ public protocol TerminalSurfaceHosting: AnyObject {
     /// Drop the surface. Removing the view from its superview is NOT enough: the host holds a
     /// `slopdesk-vterm` handle and a display link, and both outlive the view hierarchy unless said so.
     func detachSurface()
+}
+
+public extension TerminalSurfaceHosting {
+    /// No band. The default because most hosts genuinely have none — a headless stub, the build-status
+    /// placeholder, and the phone until its `UITextInput` conformance lands (`docs/68` §5.1) — and a
+    /// default is what keeps each of those from carrying a `nil` it would have to explain.
+    var promptView: PlatformView? { nil }
 }
 
 /// The MODAL POINTER SHIELD — whether a modal overlay card (command palette / Open Quickly /

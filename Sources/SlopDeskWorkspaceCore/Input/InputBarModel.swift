@@ -30,9 +30,6 @@ public final class InputBarModel {
     /// Exit code of the most recently finished shell command, if any.
     public private(set) var lastExitCode: Int?
 
-    /// The compose-field text (bound to the `TextField`).
-    public var compose: String = ""
-
     /// The single OUT sink: every send funnels SYNCHRONOUSLY through here, on the main
     /// actor, in true call order — wired by the pane session to
     /// `TerminalViewModel.sendInput` so input-bar bytes ride the SAME per-pane ordered OUT
@@ -61,34 +58,17 @@ public final class InputBarModel {
         return rendered
     }
 
-    /// Encodes the current compose text into the bytes to write to the PTY, per affordance:
-    /// - **A**: the line plus a carriage return (the shell reads a full line on Enter).
-    /// - **B1**: the line plus a carriage return as well, but the bytes are recorded into the
-    ///   dedup ring so the TUI's echo is suppressed (DelayedEnter handled by the caller's
-    ///   send cadence; the byte content is identical).
+    /// ⚠️ THE COMPOSE FIELD AND ITS SUBMIT ARE GONE, and what replaced them is
+    /// ``TerminalViewModel/commandPrompt``. This model used to hold the line as a plain `String` for
+    /// a `TextField` to bind — a one-line editor with no undo, no selection, no completion and a
+    /// cursor counted in Swift `Character`s — and `docs/68` §5.4's whole point is that the line
+    /// deserves a real editor. Keeping both would have been two line editors with one PTY behind
+    /// them, which is the one-implementation rule failing exactly where it costs most: they only
+    /// disagree under a composition or a paste. Deleted at the mount, 2026-09-01.
     ///
-    /// Returns `nil` for an empty compose (nothing to send).
-    public func encodeSubmit() -> Data? {
-        let text = compose
-        guard !text.isEmpty else { return nil }
-        var bytes = Data(text.utf8)
-        bytes.append(0x0D) // CR — Enter
-        if affordance == .tuiCompose {
-            box.recordComposeSent(bytes)
-        }
-        return bytes
-    }
-
-    /// Submits the compose field through ``sendSink`` and clears it. In B1 the sent bytes
-    /// are already recorded for echo-dedup by ``encodeSubmit()``. SYNCHRONOUS on the main
-    /// actor: record-then-enqueue happens atomically in call order, so the dedup ring can
-    /// never desync from wire order (a per-submit `Task` would let record and enqueue
-    /// interleave across submits and desync the two).
-    public func submit() {
-        guard let bytes = encodeSubmit() else { return }
-        compose = ""
-        sendSink?(bytes)
-    }
+    /// What stayed is everything that was never about the text: the affordance, the B1 echo-dedup
+    /// ring, and the two raw sends below — which the autotype seam, `cd -`, and synchronized input
+    /// all still ride.
 
     /// Sends a raw byte sequence through ``sendSink``.
     ///

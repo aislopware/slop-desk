@@ -486,6 +486,11 @@ pub const KEYS: &[Key] = &[
         doc: "Which ⌥ keys send ESC rather than composing a character.",
     },
     Key {
+        path: "controls.command-prompt",
+        kind: Kind::Flag { default: Some(true) },
+        doc: "Edit the command line in the app's own editor instead of the shell's readline.",
+    },
+    Key {
         path: "controls.link-detection",
         kind: Kind::Flag { default: Some(true) },
         doc: "Underline URLs, paths and issue references under the pointer.",

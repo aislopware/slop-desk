@@ -25,39 +25,42 @@ final class InputBarModelTests: XCTestCase {
         XCTAssertEqual(model.affordance, .shellCommand)
     }
 
-    func testEncodeSubmitAppendsCarriageReturn() {
-        let model = InputBarModel()
-        model.compose = "ls -la"
-        let bytes = model.encodeSubmit()
-        XCTAssertEqual(bytes, Data("ls -la\r".utf8))
-    }
-
-    func testEncodeSubmitEmptyIsNil() {
-        let model = InputBarModel()
-        model.compose = ""
-        XCTAssertNil(model.encodeSubmit())
-    }
-
-    func testB1SubmitRecordsForDedupAndShellDoesNot() throws {
-        // In B1, encodeSubmit records the bytes so the echo is suppressed: feeding the echo
-        // back through ingestOutput yields nothing to render.
+    /// ⚠️ THE COMPOSE FIELD IS GONE — `TerminalViewModel.commandPrompt` holds the line now
+    /// (`docs/68` §5.4), so what was asserted here as "encodeSubmit appends CR" is asserted on the
+    /// editor's submit instead. What is still this model's, and still worth pinning, is the ECHO
+    /// DEDUP: which affordance records what it sends.
+    func testB1RecordsWhatItSendsAndShellDoesNot() {
+        // In B1 the ring holds the bytes, so the PTY's echo of them renders as nothing.
         let model = InputBarModel()
         model.ingestOutput(enterAlt) // → B1
-        model.compose = "hi"
-        let sent = try XCTUnwrap(model.encodeSubmit()) // records "hi\r" in the ring
-        XCTAssertEqual(sent, Data("hi\r".utf8))
+        model.sendText("hi\r")
+        XCTAssertEqual(
+            model.ingestOutput(Data("hi\r\n".utf8)),
+            Data(),
+            "B1 dedup ring suppresses the recorded echo",
+        )
 
-        // The PTY echoes "hi\r\n"; the ring should strip the recorded prefix.
-        let echo = Data("hi\r\n".utf8)
-        let rendered = model.ingestOutput(echo)
-        XCTAssertEqual(rendered, Data(), "B1 dedup ring suppresses the recorded echo")
-
-        // In A (shell), the same submit must NOT record (echo shows normally).
+        // In A (shell) the same send must NOT record — the echo is what draws the command line.
         let shellModel = InputBarModel() // starts in A
-        shellModel.compose = "hi"
-        _ = shellModel.encodeSubmit()
-        let shellRendered = shellModel.ingestOutput(Data("hi\r\n".utf8))
-        XCTAssertEqual(shellRendered, Data("hi\r\n".utf8), "A mode shows echo (ring bypassed)")
+        shellModel.sendText("hi\r")
+        XCTAssertEqual(
+            shellModel.ingestOutput(Data("hi\r\n".utf8)),
+            Data("hi\r\n".utf8),
+            "A mode shows echo (ring bypassed)",
+        )
+    }
+
+    /// A CONTROL send is never recorded, in either affordance: the PTY does not echo an arrow, and a
+    /// recorded one would sit in the ring waiting to swallow a real `CUF` from a redrawing TUI.
+    func testControlSendsAreNeverRecorded() {
+        let model = InputBarModel()
+        model.ingestOutput(enterAlt) // → B1
+        model.sendRaw([0x1B, 0x5B, 0x43]) // ESC [ C
+        XCTAssertEqual(
+            model.ingestOutput(Data([0x1B, 0x5B, 0x43])),
+            Data([0x1B, 0x5B, 0x43]),
+            "a real CUF from the program still renders",
+        )
     }
 
     func testCommandRunningTracked() {

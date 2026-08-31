@@ -57,6 +57,13 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// picker makes that item a no-op rather than a wrong paste.
     var onPickFileToPaste: ((@escaping (Data?) -> Void) -> Void)?
 
+    /// Called after a menu verb changed the command prompt's text, so the band that draws it redraws.
+    ///
+    /// Separate from ``onNeedsPresent`` on purpose: that one fires on every frame the GRID changed,
+    /// and the band is not on the grid — hanging a redraw off it would repaint the prompt once per
+    /// frame of a `yes` flood for text that did not move.
+    var onPromptEdited: (() -> Void)?
+
     /// The grid the last layout produced, so a redundant layout costs no wire traffic.
     private var lastGrid: (cols: UInt16, rows: UInt16)?
 
@@ -655,8 +662,17 @@ extension TerminalSurfaceDriver {
     func run(_ item: TerminalContextMenu.Item) -> Bool {
         switch item {
         case .copy:
+            if let text = promptSelection(cutting: false) {
+                copyToPasteboard(text)
+                return true
+            }
             return copySelection()
         case .cut:
+            if let text = promptSelection(cutting: true) {
+                copyToPasteboard(text)
+                onPromptEdited?()
+                return true
+            }
             // A terminal has no editable buffer THIS side, so a cut is a copy plus the DEL bytes the
             // remote line editor would need to erase the run — and only where those bytes can erase
             // it faithfully. ``CutSelectionPolicy`` owns that ladder, including why the alternate
@@ -669,7 +685,10 @@ extension TerminalSurfaceDriver {
             guard cut != .none else { return false }
             let selection = selectionText(.plain) ?? ""
             guard copySelection() else { return false }
-            guard cut == .copyAndDelete else { return true }
+            // The DEL bytes are for a remote line editor holding the text. While the app's editor
+            // owns the line the shell holds nothing, so they would erase whatever the PREVIOUS line
+            // left — a cut over a grid selection degrades to a copy, the safe direction of the two.
+            guard cut == .copyAndDelete, !(model?.commandPromptArmed ?? false) else { return true }
             // The geometry the policy asks about, answered by the one thing that holds both the
             // selection and the cursor. It reads the last DRAWN frame, so a cut fired between a
             // programmatic selection and the next present sees the older geometry and refuses —
@@ -768,6 +787,18 @@ extension TerminalSurfaceDriver {
         case suppress
     }
 
+    /// The command editor's selection for a copy or a cut, or `nil` when this verb is the grid's.
+    ///
+    /// ⚠️ THE GRID WINS WHEN IT HAS A SELECTION, and that ordering is the whole rule: the two are
+    /// DIFFERENT selections — one is a reading of the screen, the other is a range in a line being
+    /// typed — and a reader who just dragged over scrollback meant that text. The editor answers only
+    /// when the grid has none, so a ⌘C is never stolen; without the test, arming the prompt would
+    /// silently change what the oldest verb in the app copies.
+    private func promptSelection(cutting: Bool) -> String? {
+        guard let model, model.commandPromptArmed, !hasSelection() else { return nil }
+        return cutting ? model.commandPrompt.cut() : model.commandPrompt.copy()
+    }
+
     /// Runs one paste end to end: protection, then framing, then the pty.
     ///
     /// Answers whether the paste STARTED, not whether it landed — a payload that trips the
@@ -779,6 +810,22 @@ extension TerminalSurfaceDriver {
     @discardableResult
     private func paste(_ text: String?, bracketing: PasteBracketing) -> Bool {
         guard let text, !text.isEmpty, let surface else { return false }
+        // ⚠️ THE ONE FUNNEL ALL SIX PASTE VERBS REACH, which is why the editor is asked here and not
+        // at each of them: `paste`, `pasteBracketed`, `pasteAsKeystrokes`, `pasteSelection`,
+        // `pasteEscaped` and `pasteFileBase64` differ only in the text and the framing by the time
+        // they arrive. While the app's editor owns the line, all six are TEXT INTO THE EDITOR — the
+        // text transforms (escaping, base64) already happened above, and the framing distinctions
+        // collapse because bracketing is a wire concern and nothing is reaching the wire.
+        //
+        // Ahead of the protection precheck deliberately. All four dangers are about what a SHELL does
+        // with a payload on arrival, and nothing arrives: the text lands in a buffer the user can
+        // read, edit and delete before any of it is run, which is a stronger protection than the
+        // sheet.
+        if let model, model.commandPromptArmed {
+            model.commandPrompt.paste(text)
+            onPromptEdited?()
+            return true
+        }
         let modes = surface.modes()
         switch PastePrecheck.decide(
             clipboard: text,

@@ -94,6 +94,9 @@ final class MacTerminalLeafView: NSView {
     /// The pixels: the production renderer's own view, or the headless placeholder. Held as `NSView`
     /// because that is all this file may know about it.
     private var surfaceView: NSView?
+    /// The command prompt's band along the pane bottom, when the host has one. Torn down with the
+    /// surface, since it draws that surface's editor.
+    private var promptBand: NSView?
     /// The renderer behind ``surfaceView``, when there is one. `nil` for the placeholder and for a
     /// pane with no model yet.
     private var surfaceHost: TerminalSurfaceHosting?
@@ -265,6 +268,8 @@ final class MacTerminalLeafView: NSView {
         surfaceHost = nil
         surfaceView?.removeFromSuperview()
         surfaceView = nil
+        promptBand?.removeFromSuperview()
+        promptBand = nil
         for decoration in decorations { decoration.removeFromSuperview() }
         decorations = []
     }
@@ -391,6 +396,8 @@ final class MacTerminalLeafView: NSView {
     private func mountSurface() {
         surfaceView?.removeFromSuperview()
         surfaceView = nil
+        promptBand?.removeFromSuperview()
+        promptBand = nil
         surfaceHost = nil
         for decoration in decorations { decoration.removeFromSuperview() }
         decorations = []
@@ -406,11 +413,27 @@ final class MacTerminalLeafView: NSView {
             pixels = MacBuildStatusPlaceholderView(model: model)
         }
         surfaceView = pixels
-        fill(pixels, below: chipColumn)
+        // The command prompt's band along the bottom, with the grid taking what is left. It sizes
+        // itself, so it is given three edges and no height — see ``TerminalSurfaceHosting/promptView``
+        // for why it is a sibling of the grid rather than a subview of it.
+        promptBand = surfaceHost?.promptView
+        if let band = promptBand {
+            band.translatesAutoresizingMaskIntoConstraints = false
+            surfaceArea.addSubview(band, positioned: .below, relativeTo: chipColumn)
+            NSLayoutConstraint.activate([
+                band.leadingAnchor.constraint(equalTo: surfaceArea.leadingAnchor),
+                band.trailingAnchor.constraint(equalTo: surfaceArea.trailingAnchor),
+                band.bottomAnchor.constraint(equalTo: surfaceArea.bottomAnchor),
+            ])
+        }
+        fill(pixels, below: chipColumn, above: promptBand)
 
-        // The four decorations, in the SwiftUI half's z-order. Each is coincident with the surface —
-        // the surface area IS the surface's rect here, since a Mac pane is never letterboxed — so the
-        // cell metrics (origin 0,0 = surface top-left) map straight onto them.
+        // The four decorations, in the SwiftUI half's z-order. Each is coincident with the SURFACE —
+        // the grid's own rect, which is the surface area minus the prompt band, since a Mac pane is
+        // never letterboxed — so the cell metrics (origin 0,0 = surface top-left) map straight onto
+        // them. ⚠️ Pinned to `pixels` and not to `surfaceArea`: with the band up those two rects are
+        // no longer the same one, and a link underline positioned by the wrong one would sit a whole
+        // band's height off.
         for decoration in [
             MacLinkHighlightOverlay(model: model, cwd: life.cwd) as NSView,
             MacPromptJumpFlashOverlay(model: model),
@@ -418,17 +441,23 @@ final class MacTerminalLeafView: NSView {
             MacHintModeOverlay(model: model),
         ] {
             decorations.append(decoration)
-            fill(decoration, below: chipColumn)
+            decoration.translatesAutoresizingMaskIntoConstraints = false
+            surfaceArea.addSubview(decoration, positioned: .below, relativeTo: chipColumn)
+            NSLayoutConstraint.activate(decoration.slateEdges(of: pixels))
         }
     }
 
-    /// Pin `view` to the surface area's four edges, under `sibling` so the chrome stays on top.
-    private func fill(_ view: NSView, below sibling: NSView) {
+    /// Pin `view` to the surface area's edges, under `sibling` so the chrome stays on top.
+    ///
+    /// `above` names the prompt band when there is one: the view's BOTTOM then meets the band's top
+    /// instead of the surface area's, which is what makes the grid give up the rows the band occupies
+    /// rather than draw underneath it.
+    private func fill(_ view: NSView, below sibling: NSView, above floor: NSView? = nil) {
         view.translatesAutoresizingMaskIntoConstraints = false
         surfaceArea.addSubview(view, positioned: .below, relativeTo: sibling)
         NSLayoutConstraint.activate([
             view.topAnchor.constraint(equalTo: surfaceArea.topAnchor),
-            view.bottomAnchor.constraint(equalTo: surfaceArea.bottomAnchor),
+            view.bottomAnchor.constraint(equalTo: floor?.topAnchor ?? surfaceArea.bottomAnchor),
             view.leadingAnchor.constraint(equalTo: surfaceArea.leadingAnchor),
             view.trailingAnchor.constraint(equalTo: surfaceArea.trailingAnchor),
         ])

@@ -571,6 +571,22 @@ public enum SettingsKey {
         AppConfig.current.choice("controls.option-as-alt", OptionAsAlt.off)
     }
 
+    // MARK: - The command prompt
+
+    /// Whether the app's own editor owns the command line at a shell prompt
+    /// (`controls.command-prompt`), default ON.
+    ///
+    /// ⚠️ THE ONE SETTING THAT TAKES THE KEYBOARD AWAY FROM THE SHELL, which is why it exists at all:
+    /// with it on, a keystroke at an idle prompt edits ``CommandPrompt`` and the shell sees nothing
+    /// until Enter sends the whole line. Off, every press goes straight through and `readline` is the
+    /// editor again — the behaviour every other terminal has, and the escape hatch for a shell whose
+    /// own line editor the user would rather keep (vi-mode zsh, a custom ZLE widget set).
+    ///
+    /// It gates ARMING only. A prompt that is already mid-edit when the setting flips keeps its text
+    /// until it is submitted or cleared, because dropping a half-typed command to honour a preference
+    /// is a worse answer than finishing it.
+    public static var commandPromptEnabled: Bool { AppConfig.current.flag("controls.command-prompt") }
+
     // MARK: - Links
 
     /// Detect paths and URLs in terminal output and underline them on ⌘-hover

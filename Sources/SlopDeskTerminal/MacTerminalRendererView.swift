@@ -78,6 +78,49 @@ final class MacTerminalRendererView: NSView {
     /// for a press that will never read it.
     private var committed: [String]?
 
+    /// TRUE only for the span of one `interpretKeyEvents` call the command prompt asked for.
+    ///
+    /// ⚠️ THE ONE FLAG THAT REDIRECTS `NSTextInputClient`. AppKit answers a press by calling BACK
+    /// into this view — ``insertText(_:replacementRange:)``, ``setMarkedText(_:selectedRange:replacementRange:)``,
+    /// ``doCommand(by:)`` — and those callbacks cannot be told who asked. Without this the same
+    /// commit would reach the shell as a keystroke whether the editor owned the line or not.
+    ///
+    /// Set and cleared around the call rather than tracked as a mode, because `insertText` ALSO
+    /// arrives outside a press (a menu equivalent, the character palette) and that text belongs
+    /// wherever the keyboard currently points, which is the same question ``commandPromptArmed``
+    /// answers on its own.
+    private var editingPrompt = false
+
+    /// The key codes whose PRESS the engine was actually given, waiting for their release.
+    ///
+    /// ⚠️ A POSITIVE SET, and it has to be. The obvious spelling is the negative one — record what the
+    /// app SWALLOWED and forward every other release — and it was wrong the moment the Edit menu
+    /// gained working key equivalents: AppKit resolves ⌘C against the main menu before the responder
+    /// chain, so ``keyDown(with:)`` is never called for it and nothing can be recorded there, while
+    /// the RELEASE is delivered to the first responder as normal. A negative set therefore forwards a
+    /// ⌘C release for a press the shell never saw, which under the kitty protocol is a reported event
+    /// about a key that was never down. Asking "did the engine see the press" instead is answerable at
+    /// the one place a press can reach the engine, so a route nobody thought of defaults to silence.
+    ///
+    /// A set rather than a flag because presses overlap: holding ⌥ and typing is several keys down at
+    /// once, and each one's release has to be matched against its own press. Bounded by the number of
+    /// keys a person can physically hold, and a key whose release is never delivered (the window lost
+    /// focus mid-press) costs one `UInt16` until the same key is pressed again.
+    private var pressedKeys: Set<UInt16> = []
+
+    /// The band the command prompt draws in, once the leaf has asked for it.
+    private var promptBand: MacTerminalPromptView?
+
+    /// What ``TerminalViewModel/commandPromptArmed`` last answered, so the band is told when it flips.
+    private var lastPromptArmed = false
+
+    /// Called after every edit the command prompt took, so the view that draws it can redraw.
+    ///
+    /// A closure rather than a reference to the prompt view: this file names no sibling view, and the
+    /// leaf that mounts both is already where the other five callback pairs are wired
+    /// (`TerminalPaneWiring`). `nil` in a headless build, which is also the build with no prompt view.
+    var promptDidChange: (() -> Void)?
+
     /// Whether this pane holds the workspace focus, as the last push said.
     ///
     /// Mirrored here rather than asked of the model because the model has no such property to ask —
@@ -108,7 +151,11 @@ final class MacTerminalRendererView: NSView {
             layer = hosted
         }
 
-        driver.onNeedsPresent = { [weak self] in self?.needsPresent = true }
+        driver.onNeedsPresent = { [weak self] in
+            self?.needsPresent = true
+            self?.notePromptArming()
+        }
+        driver.onPromptEdited = { [weak self] in self?.promptDidChange?() }
         driver.onConfirmClipboardWrite = { [weak self] text, decide in
             self?.confirm(.clipboardWrite, preview: text, dangers: [], decide)
         }
@@ -240,6 +287,9 @@ final class MacTerminalRendererView: NSView {
             model?.handleCopyModeKey(TerminalViewModel.makeCopyModeKey(event: event))
             return
         }
+        // The app's own command-line editor, when it owns the line. Above the input method because a
+        // press it refuses must still compose, and below copy mode because copy mode is modal.
+        if editsPrompt(event) { return }
         if takesPromptEdit(event) { return }
         let action: UInt8 = event.isARepeat ? 2 : 0
         guard belongsToInputMethod(event) else {
@@ -275,6 +325,10 @@ final class MacTerminalRendererView: NSView {
             // last of a sequence and encodes nothing on its own, so the engine is handed the text
             // with the modifiers the layout already spent marked consumed.
             let mods = Self.mods(event.modifierFlags)
+            // The one press that reaches the engine WITHOUT going through
+            // ``send(_:action:composing:)``, so it records itself. Its release is owed exactly like
+            // any other's — the commit is text, but the key was still physically down.
+            pressedKeys.insert(event.keyCode)
             for text in commits {
                 _ = driver.sendKey(
                     keyCode: event.keyCode, action: action, mods: mods,
@@ -347,7 +401,361 @@ final class MacTerminalRendererView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        // A release is forwarded ONLY for a press the engine was given. Under the kitty protocol a
+        // release is its own reported event, so an unmatched one tells a program that a key it never
+        // saw pressed has just come up.
+        //
+        // ⚠️ KEYED ON THE PRESS, NOT ON `commandPromptArmed`, and the difference is every state flip
+        // between the two halves of one keystroke. Enter submits, the command starts, the prompt
+        // disarms — and a release matched against the CURRENT arming would be forwarded for a press
+        // the shell never saw. The other direction is the same fault mirrored: a forwarded ⌃C's press
+        // reached the shell, so its release must too, and an arming test would swallow it.
+        guard pressedKeys.remove(event.keyCode) != nil else { return }
         send(event, action: 1, composing: false)
+    }
+
+    // MARK: - The command prompt
+
+    /// The editor's turn at the press — `true` when it took it and nothing should reach the shell.
+    ///
+    /// ⚠️ THIS IS WHERE THE KEYBOARD CHANGES HANDS, and the ladder position is the whole design: the
+    /// rebindable chord table and copy mode both outrank it (a bound ⌘D is a split, and copy mode is
+    /// modal), and it outranks the input method, because a press the editor refuses must still be
+    /// composable. `docs/68` §5.4.
+    ///
+    /// Three branches, in the order a shell would answer them:
+    ///
+    /// 1. **A `⌃` letter the editor may not have** — `⌃C`, `⌃D` on an empty line, `⌃Z`, `⌃L`. The rule
+    ///    is Rust's (``PromptControlAction``); this side only reads which letter the press is.
+    /// 2. **`⌃R`** — the one editor chord AppKit's key-binding table does not name, so it is
+    ///    recognised here rather than waited for in ``doCommand(by:)``.
+    /// 3. **⌘Z / ⇧⌘Z / ⌘Y** — the editor's own history. AppKit's key-binding table does not name them
+    ///    either (undo is a menu item everywhere else in the app, and this view is not in the menu's
+    ///    responder chain for it), so they are read here.
+    /// 4. **Everything else** — handed to `interpretKeyEvents`, which is what turns ⌥← into
+    ///    `moveWordLeft:` and a Telex sequence into one commit. The callbacks land in this file with
+    ///    ``editingPrompt`` set, which is what redirects them.
+    private func editsPrompt(_ event: NSEvent) -> Bool {
+        guard let model, model.commandPromptArmed else { return false }
+        let prompt = model.commandPrompt
+        let flags = event.modifierFlags
+        if flags.contains(.control), !flags.contains(.command),
+           let letter = (event.charactersIgnoringModifiers ?? "").first
+        {
+            if letter == "r" || letter == "R" {
+                searchPrompt(prompt, again: prompt.isSearching)
+                return true
+            }
+            switch PromptControlAction.of(letter: letter, bufferEmpty: prompt.text.isEmpty) {
+            // The two forwarding branches record nothing HERE either — ``send(_:action:composing:)``
+            // does it for them, which is the point of asking the question at the engine's door.
+            case .editor: break
+            case .forward:
+                send(event, action: event.isARepeat ? 2 : 0, composing: false)
+                return true
+            case .forwardAndClear:
+                prompt.clear()
+                send(event, action: event.isARepeat ? 2 : 0, composing: false)
+                promptDidChange?()
+                return true
+            }
+        }
+        if let step = Self.promptUndoStep(event) {
+            _ = step == .undo ? prompt.undo() : prompt.redo()
+            promptDidChange?()
+            return true
+        }
+        editingPrompt = true
+        interpretKeyEvents([event])
+        editingPrompt = false
+        promptDidChange?()
+        return true
+    }
+
+    /// Which way through the editor's history a press asks to go, if it asks at all.
+    ///
+    /// ⚠️ NOT GATED ON `controls.undo-at-prompt`, and the two are not the same key doing the same
+    /// thing. That setting decides whether ⌘Z **emits the readline undo byte** to a shell holding the
+    /// line (``TerminalSurfaceDriver/takesPromptEdit(undo:redo:)``, which this branch shadows while
+    /// armed). Here the app's own editor holds the line, no byte is going anywhere, and ⌘Z is the same
+    /// undo it is in every other text field — a setting about talking to readline cannot switch it off.
+    ///
+    /// The chord is read exactly as ``takesPromptEdit(_:)`` reads it: ⌃ and ⌥ refused because those are
+    /// other line-edit chords, and the letter off `charactersIgnoringModifiers` so it survives a
+    /// non-QWERTY layout.
+    private static func promptUndoStep(_ event: NSEvent) -> PromptUndoStep? {
+        let flags = event.modifierFlags
+        guard flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
+            return nil
+        }
+        let base = (event.charactersIgnoringModifiers ?? "").lowercased()
+        let shift = flags.contains(.shift)
+        if base == "z" { return shift ? .redo : .undo }
+        // ⌘Y ignores ⇧, exactly as ``takesPromptEdit(_:)`` reads it. Two spellings of the same chord
+        // disagreeing about one modifier is the kind of drift nobody finds by using the app.
+        return base == "y" ? .redo : nil
+    }
+
+    private enum PromptUndoStep { case undo, redo }
+
+    /// Tells the band when the editor takes the keyboard, or gives it back.
+    ///
+    /// ⚠️ NOTHING ELSE REDRAWS ON AN ARMING EDGE, and every edge is caused by the far side rather than
+    /// by a key: the shell's `OSC 133` prompt marks, a program entering the alternate screen, a pane
+    /// losing its connection. Enter is the visible one — the command runs, the prompt disarms, and a
+    /// band that redrew only on keystrokes would keep the submitted line on screen with a height to
+    /// match until the next one. Driven off the present callback because that is what already fires
+    /// when the far side changed anything.
+    private func notePromptArming() {
+        let armed = model?.commandPromptArmed ?? false
+        guard armed != lastPromptArmed else { return }
+        lastPromptArmed = armed
+        promptDidChange?()
+    }
+
+    /// Whether text arriving through `NSTextInputClient` belongs to the editor.
+    ///
+    /// Two conditions rather than one because the callbacks arrive from two places: ``editingPrompt``
+    /// is set around the `interpretKeyEvents` this file makes, and covers a press whose arming was
+    /// already checked; ``TerminalViewModel/commandPromptArmed`` covers everything AppKit delivers on
+    /// its own, with no press behind it.
+    private var promptOwnsText: Bool {
+        editingPrompt || model?.commandPromptArmed == true
+    }
+
+    /// ⌃R: open a reverse search, or step it to the next older hit.
+    private func searchPrompt(_ prompt: CommandPrompt, again: Bool) {
+        if again { _ = prompt.searchAgain() } else { prompt.beginSearch() }
+        promptDidChange?()
+    }
+
+    /// One AppKit editing verb, applied to the editor.
+    ///
+    /// ⚠️ EVERY CHORD IN THIS FILE IS APPKIT'S, NOT OURS. `⌥←`, `⌃A`, `⇧⌘→`, `fn⌫` and the rest are
+    /// already named by the standard key-binding table, and a press arrives here having been through
+    /// it — so this maps SELECTORS, never keys, and inherits every layout and every user's
+    /// `DefaultKeyBinding.dict` for free. That is also `docs/68` §10's rule read literally: a motion
+    /// crosses as a case, never as a key.
+    ///
+    /// An unrecognised selector is DROPPED rather than passed to `super`. `NSResponder`'s default is
+    /// `noResponder`, which beeps, and there is no second reading of an editing verb at a prompt.
+    private func applyPromptCommand(_ selector: Selector, to prompt: CommandPrompt) {
+        // Scrollback FIRST, because it is not the editor's at all. PageUp at a prompt reads what
+        // already scrolled past, in this app as in every other terminal — and these selectors would
+        // otherwise fall through to the `default:` and be dropped, which is the one way the editor
+        // could take a terminal feature away by existing.
+        if let scroll = Self.promptScroll(selector) {
+            driver.scroll(scroll)
+            return
+        }
+        if Self.promptWalksHistory(selector), walkPromptHistory(prompt, selector: selector) { return }
+        if let motion = Self.promptMotion(selector) {
+            if Self.promptExtendsSelection(selector) { prompt.extend(motion) } else { prompt.move(motion) }
+            return
+        }
+        if let motion = Self.promptDeletion(selector) {
+            // A running ⌃R edits its QUERY, not the document: the searched line is never put into the
+            // buffer while the search runs (`prompt/mod.rs` says why), so there is nothing there for a
+            // ⌫ to take back.
+            if prompt.isSearching, motion == .grapheme(.backward) {
+                prompt.searchBackspace()
+            } else {
+                prompt.delete(motion)
+            }
+            return
+        }
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)): submitPrompt(prompt)
+        case #selector(NSResponder.insertLineBreak(_:)): prompt.insertNewline()
+        case #selector(NSResponder.insertTab(_:)): completePrompt(prompt, forward: true)
+        case #selector(NSResponder.insertBacktab(_:)): completePrompt(prompt, forward: false)
+        case #selector(NSResponder.cancelOperation(_:)): cancelPrompt(prompt)
+        case #selector(NSResponder.selectAll(_:)): prompt.selectAll()
+        case #selector(NSResponder.yank(_:)): pastePrompt(prompt)
+        default: break
+        }
+    }
+
+    /// Return: run what the editor holds, or add a line when the document is still open.
+    ///
+    /// A live candidate list claims the key first — that is what every completion UI does, and the
+    /// alternative is running a command the user was still choosing the last word of.
+    private func submitPrompt(_ prompt: CommandPrompt) {
+        if !prompt.candidates.isEmpty {
+            prompt.acceptCompletion()
+            return
+        }
+        if prompt.isSearching {
+            _ = prompt.acceptSearch()
+            return
+        }
+        model?.submitCommandPrompt()
+    }
+
+    /// Tab: ask for candidates, then step through them.
+    ///
+    /// The first Tab COMPLETES — with one candidate it is applied outright, which is the behaviour a
+    /// shell has and the reason Tab is worth pressing at all. Later Tabs move the highlight.
+    private func completePrompt(_ prompt: CommandPrompt, forward: Bool) {
+        guard prompt.candidates.isEmpty else {
+            if forward { prompt.selectNextCandidate() } else { prompt.selectPreviousCandidate() }
+            return
+        }
+        guard forward, prompt.complete() == 1 else { return }
+        prompt.acceptCompletion()
+    }
+
+    /// Escape: undo the most recent thing that is up, innermost first.
+    ///
+    /// Never clears the TEXT. A key that can throw away a half-typed command by being pressed one
+    /// time too many is the wrong key for the job — `⌃C` is the one that abandons a line, and it does
+    /// it by telling the shell so.
+    private func cancelPrompt(_ prompt: CommandPrompt) {
+        if prompt.isSearching {
+            prompt.cancelSearch()
+            return
+        }
+        prompt.dismissCompletion()
+    }
+
+    /// ⌃Y, and the paste half of ⌘V once the editor owns the line.
+    private func pastePrompt(_ prompt: CommandPrompt) {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        prompt.paste(text)
+    }
+
+    /// The VIEWPORT scroll an AppKit selector names, or `nil` when it names none.
+    ///
+    /// These are the keys that were never about the line: PageUp/PageDown and Home/End-of-document
+    /// read the SCROLLBACK, which the editor does not own and has no opinion about. Kept apart from
+    /// ``promptMotion(_:)`` because that table answers a caret question and this one does not — note
+    /// that ⌘↑ (`moveToBeginningOfDocument:`) is the EDITOR's, since on a multi-line command the
+    /// document in question is the one being typed.
+    ///
+    /// Negative pages reveal OLDER output, which is the direction ``TerminalRendererSurface/ScrollRequest``
+    /// reads negative.
+    private static func promptScroll(_ selector: Selector) -> TerminalRendererSurface.ScrollRequest? {
+        switch selector {
+        case #selector(NSResponder.pageUp(_:)),
+             #selector(NSResponder.pageUpAndModifySelection(_:)),
+             #selector(NSResponder.scrollPageUp(_:)):
+            .pages(-1)
+        case #selector(NSResponder.pageDown(_:)),
+             #selector(NSResponder.pageDownAndModifySelection(_:)),
+             #selector(NSResponder.scrollPageDown(_:)):
+            .pages(1)
+        case #selector(NSResponder.scrollToBeginningOfDocument(_:)): .top
+        case #selector(NSResponder.scrollToEndOfDocument(_:)): .bottom
+        case #selector(NSResponder.scrollLineUp(_:)): .rows(-1)
+        case #selector(NSResponder.scrollLineDown(_:)): .rows(1)
+        default: nil
+        }
+    }
+
+    /// Whether the selector is a bare ↑ / ↓ — the two keys that mean two things at a prompt.
+    ///
+    /// The `…AndModifySelection:` twins are NOT here: a shift-arrow is unambiguously a selection
+    /// gesture, and a history walk that also selected something would be nonsense.
+    private static func promptWalksHistory(_ selector: Selector) -> Bool {
+        selector == #selector(NSResponder.moveUp(_:)) || selector == #selector(NSResponder.moveDown(_:))
+    }
+
+    /// ↑ / ↓ where they mean HISTORY rather than a line, and `true` when they did.
+    ///
+    /// The rule is the one every shell with a multi-line editor converged on: ↑ walks back only from
+    /// the FIRST line and ↓ walks forward only from the LAST, so inside a `for … done` the arrows
+    /// navigate the thing being edited, and at either edge they leave it. On a one-line document both
+    /// edges are the same line, which is why an ordinary prompt behaves exactly like `readline`.
+    ///
+    /// The edge is counted here rather than asked of a door because both halves are already on this
+    /// side — the text and the caret's byte offset — and a door would answer a question this can only
+    /// get wrong by disagreeing with the string it was handed.
+    private func walkPromptHistory(_ prompt: CommandPrompt, selector: Selector) -> Bool {
+        let text = prompt.text
+        let caret = text.utf8.index(text.utf8.startIndex, offsetBy: min(prompt.cursor, text.utf8.count))
+        let before = text.utf8[..<caret]
+        if selector == #selector(NSResponder.moveUp(_:)) {
+            guard !before.contains(0x0A) else { return false }
+            return prompt.historyPrevious()
+        }
+        guard !text.utf8[caret...].contains(0x0A) else { return false }
+        return prompt.historyNext()
+    }
+
+    /// The caret motion an AppKit selector names, or `nil` when it names none.
+    ///
+    /// Each selector appears once with its `…AndModifySelection:` twin, because the two differ only
+    /// in whether the anchor moves — which is ``promptExtendsSelection(_:)``'s question, asked of the
+    /// same selector rather than encoded twice here.
+    private static func promptMotion(_ selector: Selector) -> PromptMotion? {
+        switch selector {
+        case #selector(NSResponder.moveLeft(_:)),
+             #selector(NSResponder.moveLeftAndModifySelection(_:)):
+            .grapheme(.backward)
+        case #selector(NSResponder.moveRight(_:)),
+             #selector(NSResponder.moveRightAndModifySelection(_:)):
+            .grapheme(.forward)
+        case #selector(NSResponder.moveUp(_:)),
+             #selector(NSResponder.moveUpAndModifySelection(_:)):
+            .line(.backward)
+        case #selector(NSResponder.moveDown(_:)),
+             #selector(NSResponder.moveDownAndModifySelection(_:)):
+            .line(.forward)
+        case #selector(NSResponder.moveWordLeft(_:)),
+             #selector(NSResponder.moveWordLeftAndModifySelection(_:)),
+             #selector(NSResponder.moveWordBackward(_:)),
+             #selector(NSResponder.moveWordBackwardAndModifySelection(_:)):
+            .word(.backward)
+        case #selector(NSResponder.moveWordRight(_:)),
+             #selector(NSResponder.moveWordRightAndModifySelection(_:)),
+             #selector(NSResponder.moveWordForward(_:)),
+             #selector(NSResponder.moveWordForwardAndModifySelection(_:)):
+            .word(.forward)
+        case #selector(NSResponder.moveToBeginningOfLine(_:)),
+             #selector(NSResponder.moveToBeginningOfLineAndModifySelection(_:)),
+             #selector(NSResponder.moveToLeftEndOfLine(_:)),
+             #selector(NSResponder.moveToLeftEndOfLineAndModifySelection(_:)):
+            .lineEdge(.backward)
+        case #selector(NSResponder.moveToEndOfLine(_:)),
+             #selector(NSResponder.moveToEndOfLineAndModifySelection(_:)),
+             #selector(NSResponder.moveToRightEndOfLine(_:)),
+             #selector(NSResponder.moveToRightEndOfLineAndModifySelection(_:)):
+            .lineEdge(.forward)
+        case #selector(NSResponder.moveToBeginningOfDocument(_:)),
+             #selector(NSResponder.moveToBeginningOfDocumentAndModifySelection(_:)):
+            .documentEdge(.backward)
+        case #selector(NSResponder.moveToEndOfDocument(_:)),
+             #selector(NSResponder.moveToEndOfDocumentAndModifySelection(_:)):
+            .documentEdge(.forward)
+        default: nil
+        }
+    }
+
+    /// Whether the selector is one of the `…AndModifySelection:` family.
+    ///
+    /// Asked by NAME rather than listed, because AppKit's convention is total: every motion has
+    /// exactly one such twin and the suffix is what tells them apart. A hand-kept list would go stale
+    /// the first time a selector was added to ``promptMotion(_:)`` and its twin was not.
+    private static func promptExtendsSelection(_ selector: Selector) -> Bool {
+        NSStringFromSelector(selector).hasSuffix("AndModifySelection:")
+    }
+
+    /// The deletion granularity an AppKit selector names, or `nil`.
+    ///
+    /// ⌫ with a selection deletes the selection, and that is the editor's own rule
+    /// (`slopdesk_terminal::prompt`) rather than a case here — the granularity is what crosses.
+    private static func promptDeletion(_ selector: Selector) -> PromptMotion? {
+        switch selector {
+        case #selector(NSResponder.deleteBackward(_:)),
+             #selector(NSResponder.deleteBackwardByDecomposingPreviousCharacter(_:)):
+            .grapheme(.backward)
+        case #selector(NSResponder.deleteForward(_:)): .grapheme(.forward)
+        case #selector(NSResponder.deleteWordBackward(_:)): .word(.backward)
+        case #selector(NSResponder.deleteWordForward(_:)): .word(.forward)
+        case #selector(NSResponder.deleteToBeginningOfLine(_:)): .lineEdge(.backward)
+        case #selector(NSResponder.deleteToEndOfLine(_:)): .lineEdge(.forward)
+        default: nil
+        }
     }
 
     /// Encodes one press through the engine and sends what it produced.
@@ -355,6 +763,9 @@ final class MacTerminalRendererView: NSView {
     /// `composing` is the engine's own flag for "an input method is mid-composition": the press is
     /// REPORTED — the kitty protocol says so — and encodes to no bytes.
     private func send(_ event: NSEvent, action: UInt8, composing: Bool) {
+        // Every press that reaches the engine passes here, which is what makes ``pressedKeys`` an
+        // answer rather than a guess. Action 1 is the release itself, already removed by its caller.
+        if action != 1 { pressedKeys.insert(event.keyCode) }
         _ = driver.sendKey(
             keyCode: event.keyCode,
             action: action,
@@ -417,7 +828,24 @@ final class MacTerminalRendererView: NSView {
     /// ⚠️ IN THE CLASS BODY, NOT THE `NSTextInputClient` EXTENSION IT BELONGS TO BY SUBJECT.
     /// `NSResponder` declares this too, so the implementation OVERRIDES rather than merely conforms —
     /// and Swift does not allow `override` in an extension. Split by that language rule alone.
-    override func doCommand(by _: Selector) {}
+    ///
+    /// With the command prompt armed the verb finally HAS a document to act on, and this is the door
+    /// every editing chord arrives through — see ``applyPromptCommand(_:to:)``.
+    override func doCommand(by selector: Selector) {
+        guard editingPrompt, let prompt = model?.commandPrompt else { return }
+        applyPromptCommand(selector, to: prompt)
+    }
+
+    /// What an input method is composing over the editor's line, and where its own caret sits inside
+    /// it — the pair the prompt view draws as an underlined preedit run at the caret.
+    ///
+    /// `nil` when nothing is being composed. The text is NOT in the editor's buffer: a composition is
+    /// not an edit until it commits, and putting it there would give the undo stack a step per
+    /// keystroke of a syllable the user has not finished spelling.
+    var markedComposition: (text: String, selection: NSRange)? {
+        guard let markedText else { return nil }
+        return (markedText, markedSelection)
+    }
 
     // MARK: - Pointer
 
@@ -759,6 +1187,47 @@ final class MacTerminalRendererView: NSView {
         }
     }
 
+    // MARK: - The standard editing verbs
+
+    /// ⌘C / ⌘X / ⌘V / ⌘A, which reach this view as RESPONDER SELECTORS and nothing else.
+    ///
+    /// ⚠️ THEY WERE DEAD IN THE TERMINAL UNTIL THIS EXISTED, and the reason is worth keeping written
+    /// down because nothing about the tree looked wrong. `WorkspaceCommands` builds the Edit menu with
+    /// `cut:`/`copy:`/`paste:`/`selectAll:` as key equivalents — it has to, since this process has no
+    /// MainMenu.nib and even an `NSTextField` gets its ⌘V from that menu. AppKit resolves a key
+    /// equivalent against the RESPONDER CHAIN, before any application key monitor sees the event, so
+    /// the workspace dispatcher could never have caught them either. This view is the pane's first
+    /// responder and implemented none of the four, so the chain ran out and the four oldest chords on
+    /// the platform did nothing in the one pane the app exists for.
+    ///
+    /// Each is one line because the DECISIONS are all already made elsewhere: ``TerminalSurfaceDriver``
+    /// `run(_:)` is the single dispatcher the long-press menu, the right-click paste and the phone's
+    /// ``TerminalViewModel/onRequestMenuItem`` seam already share, and it is what knows that a copy
+    /// while the editor is armed is the editor's only when the grid has no selection, that a paste
+    /// while armed is text into the editor, and that a cut over a grid selection degrades to a copy.
+    @objc
+    private func copy(_: Any?) { driver.run(.copy) }
+
+    @objc
+    private func cut(_: Any?) { driver.run(.cut) }
+
+    @objc
+    private func paste(_: Any?) { driver.run(.paste) }
+
+    /// ⌘A. The one of the four whose ANSWER changes with the arming, rather than only its side
+    /// effects: "everything" means the line being typed while the editor holds it and the whole
+    /// scrollback otherwise, and the driver's `.selectAll` only knows about the grid.
+    /// `override` because this one — unlike the other three — is `NSResponder`'s already
+    /// (`NSStandardKeyBindingResponding`), which is also why `doCommand(by:)` can route it.
+    override func selectAll(_: Any?) {
+        if let prompt = model?.commandPrompt, model?.commandPromptArmed == true {
+            prompt.selectAll()
+            promptDidChange?()
+            return
+        }
+        driver.run(.selectAll)
+    }
+
     /// Runs a link item against the span the menu was built over, through the one shared actuator.
     @objc
     private func linkMenuAction(_ sender: NSMenuItem) {
@@ -826,10 +1295,27 @@ extension MacTerminalRendererView: @MainActor NSTextInputClient {
         let text = Self.plainText(string)
         clearMarkedText()
         guard !text.isEmpty else { return }
+        // The editor owns the line, so the text is the DOCUMENT's — or the ⌃R query's, which is the
+        // one place typing does not touch the document at all.
+        //
+        // ``promptOwnsText`` rather than ``editingPrompt`` alone, because this callback ALSO arrives
+        // outside a press: an emoji from the character palette, a menu equivalent, an accessibility
+        // insertion. Those belong wherever the keyboard currently points, and while the band is up
+        // that is the band — a palette emoji landing in the shell's invisible readline instead is
+        // exactly the divergence the one-implementation rule exists to prevent.
+        if promptOwnsText, let prompt = model?.commandPrompt {
+            if prompt.isSearching { prompt.searchType(text) } else { prompt.insert(text) }
+            promptDidChange?()
+            return
+        }
         if committed != nil {
             committed?.append(text)
             return
         }
+        // The one press-shaped call that deliberately does NOT record into ``pressedKeys``: there is
+        // no physical key behind it (`keyCode: 0` is a placeholder, not a position) and therefore no
+        // release will ever arrive to match. Recording it would leave a keycode standing until some
+        // unrelated key with the same code was released, and that release would be forwarded twice.
         _ = driver.sendKey(
             keyCode: 0, action: 0, mods: 0, consumedMods: 0, text: text, composing: false,
         )
@@ -843,6 +1329,13 @@ extension MacTerminalRendererView: @MainActor NSTextInputClient {
         }
         markedText = text
         markedSelection = selectedRange
+        // A composition over the EDITOR's line is drawn by the prompt view, which reads
+        // ``markedComposition`` — so the grid, which is not where the line is, must not also draw it.
+        // Two preedit runs on screen at once is what handing this to the surface would look like.
+        if promptOwnsText {
+            promptDidChange?()
+            return
+        }
         // AppKit counts in UTF-16 and the door takes UTF-8. `String.Index(utf16Offset:in:)` lands on
         // `endIndex` for an offset past the end, which is the same "caret after everything" the door
         // falls back to — so an out-of-range report is handled once, here, rather than twice.
@@ -881,7 +1374,15 @@ extension MacTerminalRendererView: @MainActor NSTextInputClient {
     /// stack of headers is exactly where the two disagree. An empty rect at the pointer is the
     /// honest fallback for a cursor that is not on screen; AppKit places the window itself.
     func firstRect(forCharacterRange _: NSRange, actualRange _: NSRangePointer?) -> NSRect {
-        guard let cell = driver.caretRect(), let window else { return .zero }
+        guard let window else { return .zero }
+        // While the editor owns the line the caret is in the BAND, not on the grid, and the band is a
+        // sibling view — so the rect is converted from ITS coordinates. A candidate list hanging off
+        // the grid's stale cursor cell while the letters appear a band's height below is the most
+        // visible way a Telex session can look broken.
+        if let band = promptBand, let caret = band.caretRect {
+            return window.convertToScreen(band.convert(caret, to: nil))
+        }
+        guard let cell = driver.caretRect() else { return .zero }
         return window.convertToScreen(convert(cell, to: nil))
     }
 
@@ -901,11 +1402,17 @@ extension MacTerminalRendererView: @MainActor NSTextInputClient {
     func characterIndex(for _: NSPoint) -> Int { NSNotFound }
 
     /// Drops the composition on both sides, so the mirror and the surface can never disagree.
+    ///
+    /// The band is told too, because it draws the preedit itself when the editor owns the line and
+    /// nothing else would tell it the run just went away. Cancelling a Telex composition — Escape, a
+    /// click elsewhere — leaves no keystroke and no frame behind it, so the underlined letters would
+    /// stay on screen until something unrelated happened to repaint.
     private func clearMarkedText() {
         guard markedText != nil else { return }
         markedText = nil
         markedSelection = NSRange(location: 0, length: 0)
         driver.setMarkedText("", cursorBytes: 0)
+        promptDidChange?()
     }
 
     /// The plain text inside whatever `NSTextInputClient` handed over.
@@ -918,6 +1425,37 @@ extension MacTerminalRendererView: @MainActor NSTextInputClient {
         case let text as String: text
         case let text as NSAttributedString: text.string
         default: ""
+        }
+    }
+}
+
+// MARK: - Menu validation
+
+extension MacTerminalRendererView: @MainActor NSMenuItemValidation {
+    /// Greys out the two Edit-menu verbs that would have nothing to act on.
+    ///
+    /// The conformance is DECLARED rather than overridden because `NSView` has no
+    /// `validateMenuItem(_:)` to override — only `NSMenuItemValidation` declares it, and AppKit asks a
+    /// target for it exactly when that target answers the item's action. So `true` is the right
+    /// default here: it reaches this method only for an action this view implements, and the two
+    /// context-menu actuators below (`contextMenuAction:`, `linkMenuAction:`) build items that were
+    /// already unconditionally enabled.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(copy(_:)),
+             #selector(cut(_:)):
+            // A selection SOMEWHERE — the grid's, or the editor's while it holds the line. Cut is not
+            // asked the narrower question ``CutSelectionPolicy`` will ask it (alternate screen, prompt
+            // zone, does the selection end at the cursor): a cut that degrades to a copy still did
+            // something, and greying it out here would hide a verb that would have worked.
+            driver.hasSelection() || model?.commandPrompt.selection != nil
+        case #selector(paste(_:)):
+            // The SAME reader every paste verb uses, so the item is enabled exactly when the verb
+            // would find something — a `canReadObject(forClasses:)` probe would answer for a
+            // pasteboard shape `ClientPasteboard` does not read.
+            ClientPasteboard.text()?.isEmpty == false
+        default:
+            true
         }
     }
 }
@@ -940,6 +1478,25 @@ extension MacTerminalRendererView: @MainActor TerminalMenuItemRunning {
 
 extension MacTerminalRendererView: @MainActor TerminalSurfaceHosting {
     var surfaceView: PlatformView { self }
+
+    /// The command prompt's band, built on first ask and kept for the pane's life.
+    ///
+    /// Lazy because the leaf asks for it exactly once, at mount, and building it in `init` would put a
+    /// Core Text font lookup on the path of every headless surface that never draws one. The three
+    /// closures are how it reads THIS view without holding it: `weak self` throughout, so the band
+    /// outliving its renderer draws nothing rather than resurrecting one.
+    var promptView: PlatformView? {
+        if let promptBand { return promptBand }
+        guard let model else { return nil }
+        let band = MacTerminalPromptView(
+            prompt: model.commandPrompt,
+            armed: { [weak self] in self?.model?.commandPromptArmed ?? false },
+            composition: { [weak self] in self?.markedComposition },
+        )
+        promptBand = band
+        promptDidChange = { [weak band] in band?.refresh() }
+        return band
+    }
 
     func setPaneFocused(_ isFocused: Bool) {
         pushFocus(isFocused)

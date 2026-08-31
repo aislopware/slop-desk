@@ -18459,3 +18459,75 @@ the whole OSC-52 path, was folded into the per-direction gate by the dead bundle
 write path asked `SettingsKey.clipboardWrite` on its own and never saw the switch. Turning the master
 switch off did nothing. It is now folded inside the accessor every caller already uses, both
 directions in one crossing, so a caller cannot forget it.
+
+## The prompt goes in a BAND, not inline on the grid (2026-09-01)
+
+The editor-like command prompt was built whole and mounted nowhere: `rust/slopdesk-terminal/src/prompt/`,
+forty-five FFI doors, a 668-line Swift face, and zero callers. Mounting it needed one decision first,
+and the tree gave two contradictory answers.
+
+`prompt/mod.rs`'s own header said **`slopdesk-termrender` owns PLACE** — "where the caret rectangle is
+in device pixels… how the completion list is drawn" — which describes an INLINE prompt: the editor
+drawn into the terminal's cell grid at the shell's own prompt row, the way Warp looks. `docs/68` §5.4
+says the opposite: the prompt "is what goes inside the box", the box being the external input
+affordance `inputbox.rs` selects, and §10 files "the candidate list's appearance" in the view with the
+rest of the composition work.
+
+§5.4 wins, and not only because it is the later document. The inline reading requires the renderer to
+grow a second text pipeline — prompt layout, caret rects, a candidate popup — inside a crate whose own
+header says it has "no font engine". The band reading needs none of that: the editor is a sibling
+`NSView` doing its own Core Text layout, and `slopdesk-termrender` keeps drawing exactly one thing.
+The inline paragraph in `prompt/mod.rs` was describing an architecture nobody had chosen; it is
+corrected rather than left to mislead the next reader.
+
+What the band costs, stated plainly: the grid gets shorter by the band's height, so the shell has
+fewer rows. That is honest — those rows are not the shell's any more — and it is forced besides, since
+`surfaceView` is layer-HOSTING and AppKit does not promise a subview of one of those a layer.
+
+**The prompt view takes no keyboard focus.** `MacTerminalRendererView` stays the pane's one first
+responder and routes into the editor from `keyDown`. A second responder inside the pane would divide
+the focus region the TAB owns, which is the exact shape of the four focus bugs of 2026-08-10. It also
+means the whole `NSTextInputClient` stack — Telex, marked text, `consumed_mods` — is written once and
+serves both the grid and the editor.
+
+**Every editing chord is AppKit's.** The press is handed to `interpretKeyEvents`, and what comes back
+is a SELECTOR: `moveWordLeft:`, `deleteToBeginningOfLine:`, `moveToRightEndOfLineAndModifySelection:`.
+Mapping selectors instead of keys is `docs/68` §10 read literally (a motion crosses as a case, never as
+a key) and it inherits every layout, every locale and every user's `DefaultKeyBinding.dict` for free.
+A hand-rolled chord table would have been a worse copy of a table the OS already keeps.
+
+**Four control keys are carved out**, in Rust (`prompt::keys`): `⌃C`, `⌃D` on an empty line, `⌃Z`,
+`⌃L`. `readline` never owned those either, and an editor that swallowed one leaves the terminal in a
+state the user cannot get out of. Everything else — `⌃A`, `⌃E`, `⌃K`, `⌃W`, `⌃R` — is the editor's,
+because the editor is the thing doing the editing.
+
+**The clipboard verbs follow the line, and the scrollback keys never did.** Arming an editor in front
+of a shell silently re-points three of the oldest verbs in the app, so each was decided rather than
+left to fall out. A PASTE while armed is text into the editor — all six paste variants, redirected at
+the single funnel they already share, ahead of the protection sheet, because the four dangers that
+sheet asks about are about what a shell does with a payload on ARRIVAL and nothing arrives. A COPY or
+a CUT is the editor's only when the GRID has no selection: the two are different selections, and a
+reader who just dragged over scrollback meant that text. A cut over a grid selection while armed
+degrades to a copy, since the DEL bytes it would otherwise send have no line at the far end to erase.
+And PageUp/PageDown/Home/End-of-document are mapped to the VIEWPORT rather than dropped — the editor
+existing must not take scrollback away, which is what an unrecognised selector falling through to a
+`default:` would have done.
+
+**⌘Z while armed is the editor's history, and `controls.undo-at-prompt` does not reach it.** That
+setting decides one narrow thing — whether ⌘Z emits the readline undo BYTE to a shell holding the
+line — and while our editor holds it there is no shell to send a byte to and no ambiguity for a
+setting to settle. So the chord is read in the same place as every other press the editor takes,
+before the fall-through to `interpretKeyEvents` that would otherwise drop it (AppKit's key-binding
+table names no undo; undo is a menu item, and the terminal view is not in that menu's chain). The
+alternative — leaving ⌘Z inert while armed — would have shipped an editor advertising undo with
+coalescing behind a key that does nothing.
+
+**`InputBarModel.compose` is deleted in the same change.** It held the command line as a plain
+`String` for a `TextField` that was never built, and keeping it would have been two line editors with
+one PTY behind them — the one-implementation rule failing where it costs most, since the two only
+disagree under a composition or a paste.
+
+⚠️ This is NOT the command ladder struck on 2026-08-10 (`6eb148c5`), and the check was made before
+building. That was a per-command instrument on the pane's TRAILING edge — a rail of ticks with a hover
+peek — and `DESIGN.md:527-529` bans exactly that. A bottom band holding the line being typed is a
+different object in a different place answering a different question.

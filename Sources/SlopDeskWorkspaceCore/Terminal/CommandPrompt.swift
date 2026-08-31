@@ -212,6 +212,31 @@ public struct PromptPathEntry: Sendable, Equatable {
     }
 }
 
+/// What a `⌃`-modified letter does while the editor owns the command line.
+public enum PromptControlAction: Sendable, Equatable {
+    /// The editor's own — no byte reaches the shell.
+    case editor
+    /// The shell's: send the control byte, leave the editor's text alone.
+    case forward
+    /// The shell's, and it abandons the line: send the byte, then clear the editor.
+    case forwardAndClear
+
+    /// What `⌃`+`letter` does with the editor holding `text`.
+    ///
+    /// The rule is `slopdesk_terminal::prompt::keys` — four keys the editor may not have, because
+    /// `readline` never had them either and swallowing one leaves the terminal with no way out. The
+    /// letter is lowercased here so a caller can hand over whatever the platform reported.
+    public static func of(letter: Character, bufferEmpty: Bool) -> Self {
+        let lowered = letter.lowercased().utf8
+        guard lowered.count == 1, let ascii = lowered.first else { return .editor }
+        switch slopdesk_prompt_control_action(ascii, bufferEmpty) {
+        case UInt8(SLOPDESK_PROMPT_CONTROL_FORWARD): return .forward
+        case UInt8(SLOPDESK_PROMPT_CONTROL_FORWARD_AND_CLEAR): return .forwardAndClear
+        default: return .editor
+        }
+    }
+}
+
 /// What the submit key did.
 public enum PromptSubmission: Sendable, Equatable {
     /// The document was closed: it was recorded in the history, the prompt is empty, and this is

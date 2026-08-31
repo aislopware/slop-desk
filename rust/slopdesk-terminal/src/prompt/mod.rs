@@ -14,12 +14,21 @@
 //! undo step, what would complete here, what colour each byte should be, and — the one rule that
 //! decides whether Enter runs anything — whether the document is syntactically closed.
 //!
-//! **`slopdesk-termrender` owns PLACE.** How many screen rows the text wraps to at a given column
-//! count, where the caret rectangle is in device pixels, which colour a [`syntax::TokenKind`] maps
-//! to, and how the completion list is drawn. The one thing that crosses is a byte offset, and the
-//! one conversion this module offers — [`buffer::LineColumn`] — is in display CELLS through the
-//! same [`crate::link::text_cells`] every other overlay measures with, so the caret and a link
-//! badge on one row cannot disagree about a column.
+//! **THE VIEW owns PLACE.** Where the text wraps, where the caret rectangle is in device pixels,
+//! which colour a [`syntax::TokenKind`] maps to, and how the candidate list is drawn.
+//!
+//! ⚠️ THIS PARAGRAPH USED TO NAME `slopdesk-termrender`, and it was describing an architecture that
+//! was never chosen. `docs/68` §5.4 puts the prompt inside the external input BOX — a sibling view
+//! below the grid, doing its own text layout — and §10 puts "the candidate list's appearance" in
+//! the view with the rest of the composition work. The renderer draws the terminal GRID; the prompt
+//! is not on it, so there is no caret rectangle for the renderer to answer and no prompt layout for
+//! it to grow. Corrected 2026-09-01 at the mount; `docs/DECISIONS.md` records why the inline
+//! reading lost.
+//!
+//! The one thing that crosses is a byte offset, and the one conversion this module offers —
+//! [`buffer::LineColumn`] — is in display CELLS through the same [`crate::link::text_cells`] every
+//! other overlay measures with, so the caret and a link badge on one row cannot disagree about a
+//! column.
 //!
 //! **The shell owns EXECUTION.** [`CommandEditor::submit`] answers a `String`; it does not write to
 //! a PTY, does not know a PTY exists, and takes no view of what the command means. The bytes go out
@@ -51,6 +60,7 @@
 pub mod buffer;
 pub mod complete;
 pub mod history;
+pub mod keys;
 pub mod syntax;
 pub mod undo;
 

@@ -3780,6 +3780,16 @@ typedef struct SlopDeskPrompt SlopDeskPrompt;
 #define SLOPDESK_PROMPT_SUBMISSION_RUN 0u
 #define SLOPDESK_PROMPT_SUBMISSION_CONTINUED 1u
 
+/* What a Ctrl-letter does while the editor owns the command line. Four keys were never readline's
+ * either — ^C, ^D on an empty line, ^Z, ^L — and an editor that swallowed them would leave the
+ * terminal with no way out. */
+#define SLOPDESK_PROMPT_CONTROL_EDITOR 0u
+#define SLOPDESK_PROMPT_CONTROL_FORWARD 1u
+#define SLOPDESK_PROMPT_CONTROL_FORWARD_AND_CLEAR 2u
+
+/* letter is the LOWERCASE ASCII letter; anything else answers _EDITOR. */
+uint8_t slopdesk_prompt_control_action(uint8_t letter, bool buffer_empty);
+
 /* Everything a view binds, in ONE record — so a keystroke cannot interleave between two reads and
  * pair a cursor from before it with a selection from after. Offsets are BYTES into _text. */
 typedef struct {

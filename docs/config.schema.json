@@ -309,6 +309,11 @@
           "enum": ["off", "both", "left", "right"],
           "default": "off"
         },
+        "command-prompt": {
+          "description": "Edit the command line in the app's own editor instead of the shell's readline.",
+          "type": "boolean",
+          "default": true
+        },
         "link-detection": {
           "description": "Underline URLs, paths and issue references under the pointer.",
           "type": "boolean",

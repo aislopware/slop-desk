@@ -388,6 +388,42 @@ what goes inside the box; the affordance is which box it is.
 (`NSTextInputClient` / `UITextInput`), key mapping and the candidate list's appearance stay in the
 view per §10: a motion crosses as a case, never as a key.
 
+**MOUNTED on macOS, 2026-09-01.** The box is a band along the pane's bottom edge
+(`Sources/SlopDeskTerminal/MacTerminalPromptView.swift`), reached through a new
+`TerminalSurfaceHosting.promptView` so the leaf mounts it without naming the renderer. The band is a
+SIBLING of the grid, not a subview: `surfaceView` is layer-hosting and AppKit does not promise a
+subview of one of those a layer of its own — so the grid gives up the rows the band takes, which is
+the honest arrangement anyway. The four decoration overlays are pinned to the GRID's rect rather than
+the pane's, or a link underline would sit a band's height off.
+
+The band takes **no keyboard focus**. `MacTerminalRendererView` stays the pane's one first responder
+and routes into the editor from `keyDown` (`editsPrompt(_:)`), above the input method and below copy
+mode. That keeps the focus region the tab owns undivided, and it means the whole IME stack — Telex,
+marked text, `consumed_mods` — is written once and serves the grid and the editor both. A composition
+over the editor's line is DRAWN by the band and never enters the buffer.
+
+Every editing chord arrives as an AppKit **selector** through `interpretKeyEvents`, so the standard
+key-binding table supplies ⌥←, ⌃A, ⇧⌘→ and the rest for free. Four control keys are carved out in
+Rust (`prompt::keys`) because `readline` never owned them either: `⌃C`, `⌃D` on an empty line, `⌃Z`,
+`⌃L`. Three chords the binding table does not name are read on the Swift side instead: `⌃R` (reverse
+search) and ⌘Z / ⇧⌘Z / ⌘Y, which drive the editor's own history rather than
+`controls.undo-at-prompt`'s readline byte — while the editor holds the line there is no shell to
+send that byte to. `controls.command-prompt` (default on) is the one setting that hands the line back
+to the shell.
+
+Three verbs the editor SHADOWS while it is armed, each decided in `docs/DECISIONS.md`: paste goes
+into the editor at the driver's single funnel; copy and cut are the editor's only when the grid has
+no selection; and PageUp/PageDown/document-edge SCROLLING stays the viewport's, so mounting an editor
+cannot take scrollback away.
+
+`InputBarModel.compose` went in the same change — it was the second line editor, and the rule allows
+one. `docs/DECISIONS.md` records why the band beat the inline reading `prompt/mod.rs`'s header used
+to describe.
+
+Not done: the phone. `PhoneTerminalRendererView` conforms to no text-input protocol, so
+`promptView` is `nil` there and the shell's own `readline` is still the editor on iOS — the same
+`UITextInput` gap §5.1 already names.
+
 ### 5.5 OSC 8 hyperlinks
 
 The engine carries them and we now read them. `CellFlags::HYPERLINK` marks every cell of a link's

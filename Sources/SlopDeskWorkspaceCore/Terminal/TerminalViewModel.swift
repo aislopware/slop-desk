@@ -1942,6 +1942,45 @@ public final class TerminalViewModel {
         connectionStatus.isLive && shellActivity == .idle && !isAlternateScreen
     }
 
+    /// The app's own command-line editor — `docs/68` §5.4, the half of the Warp-class terminal that is
+    /// not blocks. One per pane, alive for the pane's whole life so the history survives every command.
+    ///
+    /// ⚠️ NOT `@Observable`, and deliberately: every edit arrives from a key event the renderer view is
+    /// already handling, so the view that mutates it is the view that redraws. Publishing it would add a
+    /// diff pass per keystroke to learn what the caller already knew.
+    @ObservationIgnored public let commandPrompt = CommandPrompt()
+
+    /// Whether the editor owns the keyboard for the NEXT press.
+    ///
+    /// Three terms, and each is a different kind of no. The setting is the user's
+    /// (``SettingsKey/commandPromptEnabled`` — off means `readline` is the editor, as in every other
+    /// terminal). ``isAtEditablePrompt`` is the shell's: mid-command or under a full-screen TUI the
+    /// bytes belong to the program, and OSC-133 is what says which. Copy mode is the app's own modal
+    /// layer and outranks both.
+    ///
+    /// A press is offered here BEFORE the input method, so this must not consult anything that changes
+    /// mid-composition.
+    public var commandPromptArmed: Bool {
+        SettingsKey.commandPromptEnabled && isAtEditablePrompt && !takesModalKeys
+    }
+
+    /// Runs what the editor holds, if the document is closed.
+    ///
+    /// The line goes out through ``sendInput(_:)`` — the pane's ONE ordered OUT FIFO, the same one
+    /// keystrokes and the input bar ride — and the shell echoes it, which is what opens the block. The
+    /// editor is empty again and the command is in its history before this returns.
+    ///
+    /// `false` means the document was still open (a quote, a `$(`, a trailing `\`): the key added a
+    /// line instead, and ``CommandPrompt/unterminated`` names what is holding it open.
+    @discardableResult
+    public func submitCommandPrompt() -> Bool {
+        guard case let .run(command) = commandPrompt.submit() else { return false }
+        var bytes = Data(command.utf8)
+        bytes.append(0x0D) // CR — what a shell's line discipline reads as Enter.
+        sendInput(bytes)
+        return true
+    }
+
     /// The OBSERVABLE twin of ``isAlternateScreen`` — the same truth, readable by an overlay that needs to
     /// be told when it changes. Same idiom as the ``isCopyMode``/``copyModeBadgeActive`` pair above,
     /// and here for the same reason: ``modeTracker`` is `@ObservationIgnored`, so reading
