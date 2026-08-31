@@ -32,7 +32,7 @@ path = "src/lib.rs"
 # The letterpress rides into the sheet as a base64 data URI, and this is the repo's one codec for
 # that — the same `base64` `slopdesk-wire` uses for retained pane bytes, rather than a second
 # alphabet table written out beside a CSS builder.
-base64 = "0.22"
+base64 = "0.23"
 
 [dev-dependencies]
 # The catalogue is 800 lines of JSON nothing in this process reads. Only a TEST needs a parser, and

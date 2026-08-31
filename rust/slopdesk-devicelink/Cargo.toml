@@ -46,7 +46,7 @@ slopdesk-devicepanel = { path = "../slopdesk-devicepanel" }
 # once per dial. `base64` is the repo's one codec for this, the same version `slopdesk-wire` and
 # `slopdesk-codepanel` take.
 sha1_smol = "1"
-base64 = "0.22"
+base64 = "0.23"
 
 # Linked into the app; the hot path is a frame header parse per message.
 [profile.release]

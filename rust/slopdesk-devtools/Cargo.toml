@@ -78,7 +78,7 @@ rayon = "1"
 # function or a `shasum` fork: it is the reference implementation the rest of the ecosystem audits,
 # it is `no_std`-clean and dependency-light, and hashing in-process is what turns a stamp scan from
 # hundreds of process spawns into one pass over the bytes.
-sha2 = "0.10"
+sha2 = "0.11"
 # Both engines answer in JSON and the diff is FIELD-level. Hand-rolling a reader for a document
 # upstream controls is the classic place to be wrong, and the projection has to compare values
 # structurally — `"1.0"` and `1.0` are not the same answer.

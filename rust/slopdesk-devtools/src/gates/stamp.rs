@@ -66,9 +66,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
-
 use super::code_text;
+use super::digest::TreeStamp;
 
 /// The file extensions the two typecheck gates compile or read.
 const COMPILED: &[&str] = &["swift", "yml", "plist", "metal", "h"];
@@ -290,21 +289,19 @@ pub fn current(root: &Path) -> Result<String, String> {
 /// # Errors
 /// When an input tree cannot be walked or a file that exists cannot be read.
 pub fn current_for(root: &Path, scope: Scope) -> Result<String, String> {
-    let mut outer = Sha256::new();
+    let mut stamp = TreeStamp::new();
     for path in inputs_for(root, scope)? {
         let file = PathBuf::from(&path);
         let bytes = fs::read(root.join(&file)).unwrap_or_default();
-        let mut inner = Sha256::new();
         // Source is hashed as CODE, everything else as bytes. See [`code_text`] for the
         // measurement: a doc-comment edit under `Sources/` used to cost fifteen minutes of
         // `xcodebuild` for a change the lexer discards before it parses a declaration.
         match code_text::Dialect::of(&file) {
-            Some(dialect) => inner.update(code_text::code_only(&bytes, dialect)),
-            None => inner.update(&bytes),
+            Some(dialect) => stamp.push(&path, &code_text::code_only(&bytes, dialect)),
+            None => stamp.push(&path, &bytes),
         }
-        outer.update(format!("{:x}  {path}\n", inner.finalize()));
     }
-    Ok(format!("{:x}", outer.finalize()))
+    Ok(stamp.finish())
 }
 
 /// True when `marker` records exactly `want`.

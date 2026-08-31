@@ -55,7 +55,7 @@ imprecise_flops = "allow"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # The digest, computed as the bytes stream past on their way to disk. The same crate the release
 # pipeline already hashes with, for the same reason: it is the implementation the ecosystem audits.
-sha2 = "0.10"
+sha2 = "0.11"
 # `tar.gz`, in-process. `flate2` is the rust-lang organisation's own zlib binding and `tar` is its
 # long-standing companion; between them they replace a `tar -xzf` spawn whose only failure report
 # was a foreign program's exit code.

@@ -105,6 +105,7 @@
 
 pub mod android;
 pub mod code_text;
+pub mod digest;
 pub mod ffi;
 pub mod golden;
 pub mod hooks;

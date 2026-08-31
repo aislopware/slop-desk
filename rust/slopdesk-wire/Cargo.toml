@@ -60,7 +60,7 @@ path = "src/lib.rs"
 # wrote every file already on disk. The `STANDARD` engine is that alphabet with canonical padding
 # required — which is also the strictness the reader needs, since a truncated or spliced file must
 # be refused rather than half-decoded into a plausible-looking short one.
-base64 = "0.22"
+base64 = "0.23"
 # Where a front-truncated stream was w.r.t. the alternate screen — the ring's eviction repair. Its
 # own crate because superd's journal needs the same scanner and must not depend on the protocol.
 slopdesk-altscreen = { path = "../slopdesk-altscreen" }

@@ -39,7 +39,7 @@ path = "src/lib.rs"
 # One codec for both directions: `blocks` encodes retained output into the JSON reply, `sniffer`
 # decodes kitty's `e=1` notification payloads. Both were twenty hand-written lines agreeing with
 # each other by inspection; they read the same `STANDARD` engine now.
-base64 = "0.22"
+base64 = "0.23"
 libc = "0.2"
 # The whole of superd's `unsafe`, extracted (stage 28). A linked library rather than a socket
 # because a syscall cannot be asked for over a wire: it is lifetime-coupled to its caller by

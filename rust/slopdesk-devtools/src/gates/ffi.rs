@@ -49,8 +49,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use sha2::{Digest, Sha256};
-
+use super::digest::TreeStamp;
 use super::{code_text, stamp};
 
 /// The shim crate, whose path dependencies decide what the artifact is built from.
@@ -430,17 +429,15 @@ fn resolve_relative(source: &str, target: &str) -> Option<String> {
 /// # Errors
 /// When [`stamp_inputs`] cannot be built.
 pub fn current_stamp(root: &Path) -> Result<String, String> {
-    let mut outer = Sha256::new();
+    let mut stamp = TreeStamp::new();
     for path in stamp_inputs(root)? {
         let mut bytes = fs::read(root.join(&path)).unwrap_or_default();
         if Path::new(&path).extension().and_then(|value| value.to_str()) == Some("rs") {
             bytes = code_text::code_only(&bytes, code_text::Dialect::Rust);
         }
-        let mut inner = Sha256::new();
-        inner.update(&bytes);
-        outer.update(format!("{:x}  {path}\n", inner.finalize()));
+        stamp.push(&path, &bytes);
     }
-    Ok(format!("{:x}", outer.finalize()))
+    Ok(stamp.finish())
 }
 
 /// Build, check or force the xcframework.
