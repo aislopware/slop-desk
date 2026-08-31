@@ -25,6 +25,9 @@ const VOUCHING_ROOTS: [&str; 4] = ["Sources", "Tests", "Apps", "ThirdParty/ghost
 /// The trees whose Swift comments are SCANNED for links.
 const SCANNED_ROOTS: [&str; 2] = ["Sources", "Tests"];
 
+/// The one file carrying every rule's provenance — the `origin:` column.
+const RULE_REGISTRY: &str = "rust/slopdesk-invariants/src/rules/mod.rs";
+
 /// Framework symbols `DocC` resolves through an import, which this repo therefore never declares.
 ///
 /// Keep it short, and add to it only for a symbol Apple actually ships.
@@ -455,6 +458,224 @@ fn cited_paths(tree: &Tree, docs: &[String], roots: &[String]) -> BTreeSet<Strin
     cited
 }
 
+/// Every `§` a rule's provenance cites, paired with the doc it was cited into.
+///
+/// The scan is positional rather than a single regex, because an `origin` names a doc once and then
+/// several sections of it — `docs/51 §6.5, §6.7, §1` is three citations into one document, and
+/// `docs/45 §5.3, docs/55 §8` switches documents halfway. A `§` with no `docs/` before it belongs
+/// to something this rule does not read (`CLAUDE.md §Rules`, a shell script's own numbering) and is
+/// dropped rather than attached to whatever document came later.
+fn cited_sections(origin: &str) -> Vec<(String, String)> {
+    let mut cited = Vec::new();
+    let mut doc: Option<String> = None;
+    let bytes = origin.as_bytes();
+    let mut index = 0;
+    while index < origin.len() {
+        if origin[index..].starts_with("docs/") {
+            let rest = &origin[index + "docs/".len()..];
+            let end = rest
+                .find(|c: char| !c.is_ascii_alphanumeric() && !"_.-".contains(c))
+                .unwrap_or(rest.len());
+            doc = Some(rest[..end].trim_end_matches('.').to_owned());
+            index += "docs/".len() + end;
+            continue;
+        }
+        if origin[index..].starts_with('§') {
+            let rest = origin[index + '§'.len_utf8()..].trim_start();
+            // A section runs to the next comma, because that is where every multi-section origin in
+            // the registry breaks: `§4, step 4`, `§4c, §8`, `§5, step 5b`.
+            let token = rest.split(',').next().unwrap_or(rest).trim();
+            if let Some(named) = doc.as_ref()
+                && !token.is_empty()
+            {
+                cited.push((named.clone(), token.to_owned()));
+            }
+            index += '§'.len_utf8();
+            continue;
+        }
+        index += 1;
+        while index < origin.len() && (bytes[index] & 0xC0) == 0x80 {
+            index += 1;
+        }
+    }
+    cited
+}
+
+/// The heading and bold-lead lines of a document — the only lines a section number can be ON.
+///
+/// Both spellings are the tree's, not a guess: `docs/51` writes `## 6.4 …` and `**2.3 — …**`, and
+/// `docs/61` writes `## §1 …`. Restricting to marker lines is what makes this a rule about sections
+/// rather than about mentions — `docs/62` names `§4.4` in a paragraph nine hundred lines below the
+/// hazard it is about, and a citation satisfied by that prose is satisfied by a sentence, which is
+/// the failure this whole family exists to refuse.
+fn section_markers(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| line.starts_with('#') || line.starts_with("**"))
+        .collect()
+}
+
+/// Whether `section` is spelled as a marker on `line`.
+///
+/// Two forms, because the tree writes both: the section LEADS the marker (`## 6.4 The shim …`), or
+/// it rides in it behind a `§` (`### Hazard 8 (§4.8) — …`). The boundary refuses a longer number,
+/// so a citation to `§4` is not satisfied by a document that only has `§4.1`: that is the exact
+/// shape of a renumbering, and answering it "found" would make this rule agree with the drift.
+fn marks_section(line: &str, section: &str) -> bool {
+    let lead = line
+        .trim_start_matches('#')
+        .trim_start()
+        .trim_start_matches('*')
+        .trim_start()
+        .trim_start_matches('§');
+    let ends_cleanly = |rest: &str| {
+        let mut chars = rest.chars();
+        match chars.next() {
+            None => true,
+            Some('.') => !chars.next().is_some_and(|next| next.is_ascii_digit()),
+            Some(next) => !next.is_ascii_alphanumeric(),
+        }
+    };
+    if let Some(rest) = lead.strip_prefix(section)
+        && ends_cleanly(rest)
+    {
+        return true;
+    }
+    line.match_indices('§').any(|(at, _)| {
+        let rest = line[at + '§'.len_utf8()..].trim_start();
+        rest.strip_prefix(section).is_some_and(ends_cleanly)
+    })
+}
+
+/// Every `§` the rule registry cites names a section the document actually has.
+///
+/// The registry carries a provenance column — an `origin:` on every rule, past three hundred and
+/// sixty of them, saying which document it was read out of — and until now nothing read it. The
+/// count is in `docs/DECISIONS.md`, dated; spelling it here would be the rot one door down.
+/// `main.rs --list` PRINTS it and that is the whole of its life. A citation is the only thing
+/// standing between a rule and the sentence that justifies it, so a citation that resolves to
+/// nothing is a rule whose reason cannot be found: the next reader opens the document, searches for
+/// §6, and has to decide from the code alone whether the rule is still wanted.
+///
+/// It had rotted eleven ways. `docs/48 §4` and `docs/49 §6` cited a numbering those two documents
+/// have never had at any commit — the origins were written against the numbered checks of the shell
+/// scripts the rules were ported from, and `docs/51 §3b` still carried its script's own `3b` in the
+/// function's doc comment. `docs/56 §3.6` cited one past the last section that exists. And seven of
+/// the nine phone-hazard ratchets cited `docs/62 §4.1`–`§4.7` while only Hazards 8 and 9 carried
+/// the `(§4.N)` marker their siblings did not — the document's own convention, applied to two of
+/// nine.
+///
+/// ## The two halves this does NOT read, each on purpose
+///
+/// **Tree-wide citations.** Three thousand `docs/…` tokens are spelled across the source trees, and
+/// scanning them all would report `docs/new.md` and `docs/x.md` — fixture filenames inside two
+/// codec tests, which [`crate::tree::Source::statements`] keeps because they are string literals
+/// and keeping them is what makes every other rule here work. The registry column is exact: one
+/// field, one meaning, no literals that are not citations.
+///
+/// **Section tokens with no digit in them.** `§increment 38` and `§the one duplication still
+/// standing` are checked as prose — the token has to appear in a marker line — but a bare word
+/// after a `§` is not turned into a numeric claim.
+///
+/// ## ⚠️ THE DOCUMENTS ARE READ RAW, AND THE REGISTRY IS NOT
+///
+/// The same admission [`super::gate_health::the_gate_census_names_every_gate`] carries: the
+/// registry side reads [`crate::tree::Source::statements`], so a commented-out `Rule` block cites
+/// nothing, and the DOCUMENT side reads raw text because a Markdown heading is prose by
+/// construction. A satisfier reading prose is the thing this crate refuses; the exception is when
+/// the subject IS the prose, and it is written here so the next sweep does not "fix" it into a rule
+/// that can never fire.
+#[must_use]
+pub fn every_cited_section_exists(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let Some(registry) = report.source(tree, RULE_REGISTRY, "there would be no provenance to check") else {
+        return report;
+    };
+    let origins = text::capture_all(registry.statements(), r#"origin: "([^"]*)""#);
+    if origins.is_empty() {
+        report.fail(format!(
+            "{RULE_REGISTRY}: no `origin:` field parsed — this rule is blind"
+        ));
+        return report;
+    }
+
+    let mut checked = 0_usize;
+    for origin in &origins {
+        for (doc, section) in cited_sections(origin) {
+            let named = tree.paths().find(|path| {
+                path.parent()
+                    .is_some_and(|parent| parent == std::path::Path::new("docs"))
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| {
+                            name == doc || name.strip_prefix(&doc).is_some_and(|rest| rest.starts_with('-'))
+                        })
+            });
+            let Some(named) = named else {
+                report.fail(format!(
+                    "`{origin}` cites docs/{doc}, and the tree has no such document — a rule whose \
+                     provenance names nothing is a rule nobody can decide to delete"
+                ));
+                continue;
+            };
+            let Some(source) = tree.get(&named.to_string_lossy()) else {
+                continue;
+            };
+            let markers = section_markers(&source.text);
+            let numeric = section
+                .split_whitespace()
+                .next()
+                .is_some_and(|word| word.chars().any(|c| c.is_ascii_digit()));
+            let wanted: Vec<String> = if numeric {
+                let head = section.split_whitespace().next().unwrap_or(&section);
+                // A range cites both ends — `§1-3` is three sections, and the two that are written
+                // down are the ones a reader navigates by.
+                if head.contains('-')
+                    && head
+                        .split('-')
+                        .all(|part| part.chars().any(|c| c.is_ascii_digit()))
+                {
+                    head.split('-').map(str::to_owned).collect()
+                } else {
+                    vec![head.to_owned()]
+                }
+            } else {
+                vec![section.clone()]
+            };
+            for want in wanted {
+                checked += 1;
+                let found = if numeric {
+                    markers.iter().any(|line| marks_section(line, &want))
+                } else {
+                    let lowered = want.to_lowercase();
+                    markers.iter().any(|line| line.to_lowercase().contains(&lowered))
+                };
+                report.fail_if(
+                    !found,
+                    format!(
+                        "`{origin}` cites §{want} of {} and that document has no such section — repoint the \
+                         origin at a heading that exists, or give the heading the marker the citation \
+                         already promises a reader will find",
+                        named.display()
+                    ),
+                );
+            }
+        }
+    }
+
+    // The vacuity floor every reader in this crate owes: a renamed field, a registry that stopped
+    // spelling `§`, or a marker convention this scan does not know would leave it checking nothing
+    // and reporting clean.
+    report.fail_if(
+        checked < 60,
+        format!(
+            "only {checked} section citations parsed out of {RULE_REGISTRY} — this rule is reading an empty \
+             set"
+        ),
+    );
+    report
+}
+
 /// The repository's top-level directory names, which bound what counts as a rooted path.
 ///
 /// `repo_invariants::live_docs_cite_files_that_exist` asks the same question over a different
@@ -475,10 +696,123 @@ pub(super) fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cited_paths, cited_symbols, every_cited_path_exists, every_docc_link_resolves,
-        the_read_first_table_resolves, unspent_tombstones,
+        cited_paths, cited_sections, cited_symbols, every_cited_path_exists, every_cited_section_exists,
+        every_docc_link_resolves, marks_section, section_markers, the_read_first_table_resolves,
+        unspent_tombstones,
     };
     use crate::tests::Fixture;
+
+    /// A registry with enough live citations to clear the vacuity floor, plus whatever is under
+    /// test.
+    ///
+    /// The floor is 60, and every fixture here would otherwise trip it before reaching the citation
+    /// it is about — which is the guard doing its job, and useless for testing anything else.
+    fn registry(extra: &str) -> String {
+        let mut text = String::from("pub fn registry() -> Vec<Rule> {\n    vec![\n");
+        for _ in 0..60 {
+            text.push_str("        Rule { name: \"r\", origin: \"docs/99 §2\", check: m::f },\n");
+        }
+        text.push_str(extra);
+        text.push_str("    ]\n}\n");
+        text
+    }
+
+    /// The document every fixture cites into, carrying the sections the padding needs.
+    const PADDING_DOC: &str = "# 99 — a doc\n\n## 1. First\n\n## 2. Second\n";
+
+    /// An origin names a doc once and several sections of it; a `§` before any doc is not ours.
+    #[test]
+    fn a_section_belongs_to_the_doc_named_before_it() {
+        assert_eq!(cited_sections("docs/51 §6.5, §6.7, §1"), vec![
+            ("51".to_owned(), "6.5".to_owned()),
+            ("51".to_owned(), "6.7".to_owned()),
+            ("51".to_owned(), "1".to_owned()),
+        ]);
+        assert_eq!(cited_sections("docs/45 §5.3, docs/55 §8"), vec![
+            ("45".to_owned(), "5.3".to_owned()),
+            ("55".to_owned(), "8".to_owned())
+        ]);
+        assert!(
+            cited_sections("CLAUDE.md §Rules, docs/55").is_empty(),
+            "a § with no docs/ before it is another document's numbering"
+        );
+    }
+
+    /// A citation to §4 is not answered by a document that only has §4.1.
+    #[test]
+    fn a_longer_number_does_not_satisfy_a_shorter_citation() {
+        assert!(marks_section("## 4. The safety argument", "4"));
+        assert!(!marks_section("### 4.1 The first hazard", "4"));
+        assert!(marks_section("### Hazard 8 (§4.8) — the ratchets", "4.8"));
+        assert!(marks_section("**2.3 — the duplicate**", "2.3"));
+        assert!(marks_section("## §1 The cascade", "1"));
+    }
+
+    /// A section named in a PARAGRAPH is not a section — which is the layer that decides it.
+    ///
+    /// [`marks_section`] answers about a line it is handed and would say yes to the prose below;
+    /// what refuses it is [`section_markers`], which never hands that line over. Asserting this on
+    /// `marks_section` passes for the wrong reason, and `docs/62`'s own `§4.4` mention nine hundred
+    /// lines under the hazard is the live case.
+    #[test]
+    fn a_section_named_in_prose_is_not_a_marker() {
+        let doc = "## 4. The safety argument\n\nrather than against §4's guess: §4.4's rule is the one.\n";
+        assert_eq!(section_markers(doc), vec!["## 4. The safety argument"]);
+        assert!(!section_markers(doc).iter().any(|line| marks_section(line, "4.4")));
+    }
+
+    /// The ported case: a citation to a section the document does not have.
+    #[test]
+    fn a_citation_to_a_section_that_was_never_written_is_red() {
+        let fixture = Fixture::new("origin-dangling-section");
+        fixture.write("docs/99-padding.md", PADDING_DOC);
+        fixture.write("docs/98-thin.md", "# 98 — a doc\n\n## The shape\n");
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            &registry("        Rule { name: \"x\", origin: \"docs/98 §4\", check: m::g },\n"),
+        );
+        let report = every_cited_section_exists(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(format!("{report:?}").contains("§4"), "{report:?}");
+
+        let clean = Fixture::new("origin-live-section");
+        clean.write("docs/99-padding.md", PADDING_DOC);
+        clean.write("docs/98-thin.md", "# 98 — a doc\n\n## The shape\n");
+        clean.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            &registry("        Rule { name: \"x\", origin: \"docs/98 §the shape\", check: m::g },\n"),
+        );
+        assert!(every_cited_section_exists(&clean.tree()).is_clean());
+    }
+
+    /// A provenance naming a document the tree does not have is red before any section is looked
+    /// for.
+    #[test]
+    fn a_citation_into_a_deleted_document_is_red() {
+        let fixture = Fixture::new("origin-deleted-doc");
+        fixture.write("docs/99-padding.md", PADDING_DOC);
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            &registry("        Rule { name: \"x\", origin: \"docs/97 §1\", check: m::g },\n"),
+        );
+        let report = every_cited_section_exists(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(format!("{report:?}").contains("no such document"), "{report:?}");
+    }
+
+    /// A registry this scan cannot read is reported, not passed.
+    #[test]
+    fn a_registry_that_spells_no_origin_is_red() {
+        let fixture = Fixture::new("origin-blind");
+        fixture.write("docs/99-padding.md", PADDING_DOC);
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            "pub fn registry() -> Vec<Rule> {\n    vec![]\n}\n",
+        );
+        let report = every_cited_section_exists(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(format!("{report:?}").contains("blind"), "{report:?}");
+    }
 
     /// The two ways a tombstone dies, and the one way it stays alive.
     #[test]

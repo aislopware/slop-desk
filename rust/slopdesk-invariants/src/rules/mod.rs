@@ -137,7 +137,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "listener-kinds",
-            origin: "docs/51 §3b",
+            origin: "docs/51 §6.6",
             check: supervisor_envelope::listener_kinds,
         },
         Rule {
@@ -982,7 +982,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "defaults-suite-env-key",
-            origin: "docs/55 §shared constants, docs/58",
+            origin: "docs/55 §8, docs/58",
             check: settings_is_a_file::the_defaults_suite_variable_is_spelled_once,
         },
         Rule {
@@ -1132,7 +1132,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "android-bridge-both-ways",
-            origin: "docs/48 §4",
+            origin: "docs/48 §the bridge's own dialect",
             check: sidecar_wires::the_android_bridge_agrees_both_ways,
         },
         Rule {
@@ -1147,12 +1147,12 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "announce-lines-one-string",
-            origin: "docs/49 §6",
+            origin: "docs/49 §every sidecar carries its own version",
             check: sidecar_wires::every_announce_line_is_one_string,
         },
         Rule {
             name: "sidecar-version-policy",
-            origin: "docs/49 §6",
+            origin: "docs/49 §every sidecar carries its own version",
             check: sidecar_wires::the_sidecar_version_policy_is_one_table,
         },
         Rule {
@@ -1552,12 +1552,12 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "palette-verb-platform",
-            origin: "docs/56 §3.6",
+            origin: "docs/56 §increment 38",
             check: command_surface::a_palette_verb_names_its_platform_once,
         },
         Rule {
             name: "palette-reaches-bindings",
-            origin: "docs/56 §3.6",
+            origin: "docs/56 §increment 64",
             check: command_surface::every_keybinding_is_reachable_from_the_palette,
         },
         Rule {
@@ -1884,6 +1884,11 @@ pub fn registry() -> Vec<Rule> {
             name: "tombstones-bury-something",
             origin: "docs/DECISIONS.md 2026-08-16",
             check: doc_citations::every_tombstone_still_buries_something,
+        },
+        Rule {
+            name: "origins-cite-live-sections",
+            origin: "rust/slopdesk-invariants/src/rules/mod.rs — the provenance column itself",
+            check: doc_citations::every_cited_section_exists,
         },
         Rule {
             name: "opaque-cap-inequality",

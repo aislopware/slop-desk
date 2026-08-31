@@ -654,7 +654,7 @@ that runs never."* Its break-test is a sibling `#[cfg(test)] mod tests` in the s
 `Claim` whose pattern is a SwiftUI *spelling* does not fail when the SwiftUI goes — it passes over a
 tree that no longer contains anything it can catch.
 
-### Hazard 1 — retain cycles in target/action and delegate wiring
+### Hazard 1 (§4.1) — retain cycles in target/action and delegate wiring
 
 **What SwiftUI prevented.** A `View` is a value; it cannot be captured, so an action closure could not
 close over it.
@@ -672,7 +672,7 @@ is `[weak self]`-captured where it captures anything — text-decidable and brea
 decide a cycle through two objects neither of which is `self`. Proposed:
 **`phone-closure-sinks-are-weak`**.
 
-### Hazard 2 — `[weak self]` discipline in escaping closures
+### Hazard 2 (§4.2) — `[weak self]` discipline in escaping closures
 
 **Countermeasure**, and it is stronger than a convention: the §3.1 idiom pairs `[weak self]` with a
 **generation counter**, and the generation is what makes it correct. `[weak self]` alone lets a
@@ -688,7 +688,7 @@ legal shape in this tree and it is checkable as text: every `withObservationTrac
 removed. A companion floor (`Claim::Populated`) keeps it from passing by reading an empty tree, the way
 `design_ratchets.rs:56-62` already does.
 
-### Hazard 3 — use-after-free through stale index paths
+### Hazard 3 (§4.3) — use-after-free through stale index paths
 
 **What SwiftUI prevented.** `ForEach` handed the *element*, never an index; a row's identity was its
 `Identifiable` id.
@@ -704,7 +704,7 @@ moves under the index path, and the seven collection surfaces of §3.4 are all l
 — the shapes `[indexPath.item]` and `[indexPath.row]` — which forces `itemIdentifier(for:)`. Proposed:
 **`phone-rows-resolve-by-identifier`**.
 
-### Hazard 4 — main-thread violations and background `UIView` mutation
+### Hazard 4 (§4.4) — main-thread violations and background `UIView` mutation
 
 **What SwiftUI prevented.** Less than it seems — this hazard exists today. What changes is the blast
 radius: a background write to `@State` was a runtime warning; a background `view.frame = …` is a
@@ -731,7 +731,7 @@ name `DispatchQueue.main.async` or a display-link callback; ban `nonisolated(uns
 neither has a use here that is not a silenced diagnostic. Proposed:
 **`phone-assume-isolated-is-earned`**.
 
-### Hazard 5 — dangling observers and KVO
+### Hazard 5 (§4.5) — dangling observers and KVO
 
 **Countermeasure.** Keep the near-absence. The observation mechanism is `Observation`, whose
 registration dies with the closure; there is **no KVO** in the phone tree and there should be none
@@ -744,7 +744,7 @@ selector-based form is auto-removed since iOS 9 and is the safer default.
 **Enforceable? Yes.** Every `addObserver(forName:` in the phone targets must have a `removeObserver` in
 the same file. Proposed: **`phone-notification-tokens-are-retired`**.
 
-### Hazard 6 — timer and `CADisplayLink` lifetime
+### Hazard 6 (§4.6) — timer and `CADisplayLink` lifetime
 
 **This is the hazard the port creates**, and it is the only one where UIKit is strictly worse.
 `.task(id:)` cancelled its work when the view left the tree. There are **eleven** such lifetimes today:
@@ -777,7 +777,7 @@ link created and never invalidated anywhere). Whether `invalidate()` is *reached
 and stays a review item. Proposed: **`phone-display-links-are-invalidated`**,
 **`phone-has-no-scheduled-timers`**.
 
-### Hazard 7 — reentrancy during `layoutSubviews`
+### Hazard 7 (§4.7) — reentrancy during `layoutSubviews`
 
 **What SwiftUI prevented.** `body` was pure; it could not mutate the model it read.
 

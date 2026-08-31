@@ -18116,3 +18116,44 @@ rule* — a mechanism that is not running is worse than no mechanism, because it
 the real one. *Truncating the scan at `#[cfg(test)]` and exempting the three modules whose doc
 comments spell it* — an allowlist over a defect in the scanner, and it would grow one entry every
 time somebody explains the truncation in prose.
+
+## The provenance column nobody read (2026-08-31)
+
+Every rule in `slopdesk-invariants` carries an `origin:` — which document it was read out of, and
+which section of it. There are 362 of them, and `slopdesk-invariants --list` printing the column is
+the whole of its life. Nothing has ever asked whether a citation resolves.
+
+The FILE half turned out to be clean, and for a reason worth writing down: all 27 distinct `docs/…`
+tokens in the column exist today, because `docs-cite-live-paths` and its neighbours already ratchet
+paths in the other direction. The SECTION half had rotted eleven ways.
+
+Four of them cite a numbering that never existed. `docs/48 §4` and `docs/49 §6` were written in
+`d3b1f328` against the numbered checks of the shell scripts those rules were ported from, and
+neither document has had a numbered section at any commit — `listener-kinds` still carries its
+script's own `3b` in the function's doc comment. `docs/56 §3.6` cites one past the last section
+there is. The other seven are one defect: the nine phone-hazard ratchets cite `docs/62 §4.1`–`§4.9`,
+and only Hazards 8 and 9 carry the `(§4.N)` marker — someone applied the document's own convention
+to two of nine, and the seven citations under it have pointed at nothing since.
+
+The fix is per-citation rather than uniform, because the two failures are different. Where the
+document has the section and only lacks the marker, the document gets the marker: Hazards 1–7 now
+read `### Hazard N (§4.N) —`, the way their siblings already did. Where the citation names a
+numbering that never existed, the citation moves — `docs/51 §6.6`, `docs/48 §the bridge's own
+dialect`, `docs/49 §every sidecar carries its own version`, `docs/56 §increment 38` and
+`§increment 64`. A twelfth turned up on the way: `docs/55 §shared constants` names no heading in
+that document, and the rule it justifies is about cross-language constant drift, which is `§8`.
+
+`origins-cite-live-sections` reads it now. A section is looked for only on a MARKER line — a heading
+or a bold lead — never in prose, which is the point: `docs/62` names `§4.4` in a paragraph nine
+hundred lines below the hazard, and a citation satisfied by that sentence is satisfied by a sentence.
+A shorter citation is not satisfied by a longer number either, since `§4` resolving against `§4.1` is
+precisely the shape a renumbering has. Measured before the fix: 94 section citations parsed, 11 red.
+
+**Rejected.** *Scanning every `docs/…` token in the tree* — 3 053 of them across 997 files, and the
+scan reports `docs/new.md` and `docs/x.md`, which are fixture FILENAMES inside two codec tests;
+`statements()` keeps string literals on purpose and that is what makes every other rule here work.
+The registry column is one field with one meaning, so it is the corpus. *Numbering `docs/48` and
+`docs/49`* — fourteen headings in one of them, renumbered to satisfy a citation rather than a reader.
+*Requiring a quoted heading (`§"The shape"`)* — the origin is a Rust string literal, so the quotes
+have to be escaped, and the crate's own `origin: "([^"]*)"` extraction truncates on the one entry
+that already does it. A bare `§the shape` reads the same and parses.
