@@ -126,10 +126,11 @@ bool slopdesk_term_forwards_encoder_text(const uint8_t *characters, size_t chara
 // The byte an undo/redo gesture sends, or -1 for none. A one-byte answer is 0..=255, so the
 // sentinel is outside the range by construction.
 int32_t slopdesk_term_prompt_edit_byte(bool undo, bool redo, bool in_prompt_zone);
-// `action` is the CONFIG TOKEN ("paste", "copy-or-paste", …), the spelling the config file
-// carries, so there is no second vocabulary. An unrecognised token does not intercept.
-bool slopdesk_term_right_click_intercepts_as_paste(const uint8_t *action, size_t action_len,
-                                                   bool has_selection, bool mouse_captured);
+// What a bare right-click does: 0 forward · 1 paste · 2 copy · 3 menu · 4 ignore. `action` is the
+// CONFIG TOKEN ("paste", "copy-or-paste", …), the spelling the config file carries, so there is no
+// second vocabulary. An unrecognised token answers the menu, the token's own repair.
+uint8_t slopdesk_term_right_click(const uint8_t *action, size_t action_len, bool has_selection,
+                                  bool mouse_captured);
 
 // ---------------------------------------------------------------------------
 // Agent detection — rust/slopdesk-agent.
@@ -2984,6 +2985,19 @@ void slopdesk_term_surface_set_focus(SlopDeskTerminalSurface *handle, bool focus
  * one-pixel border of the wrong colour around every glyph. */
 void slopdesk_term_surface_set_theme(SlopDeskTerminalSurface *handle, uint32_t foreground,
                                      uint32_t background, uint32_t selection);
+
+/* The ANSI palette, as a PREFIX of 0x00RRGGBB words from index 0. Apart from _set_theme because a
+ * theme always states its three colours and a palette is optional: a config that names none leaves
+ * the engine's own 256 standing, which is a different outcome from naming sixteen black ones. */
+void slopdesk_term_surface_set_palette(SlopDeskTerminalSurface *handle, const uint32_t *entries,
+                                       size_t count);
+
+/* Rebuilds the face stack at a family and point size, answering the grid it now fits, packed
+ * `cols << 16 | rows` exactly as _set_geometry does — a font change resizes the cell, so it reflows
+ * the grid and the caller owes the host a resize. A family Core Text cannot resolve leaves the
+ * current stack standing rather than refusing to draw. */
+uint32_t slopdesk_term_surface_set_font(SlopDeskTerminalSurface *handle, const uint8_t *family,
+                                        size_t family_len, double point_size);
 
 /* Scrolls the viewport: mode 0 by rows, 1 by PAGES, 2 to the bottom, 3 to the top. `lines` is
  * signed and negative reveals OLDER output. A page is converted against the grid the surface last

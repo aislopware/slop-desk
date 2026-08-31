@@ -147,9 +147,8 @@ pub struct Controls<'a> {
     /// A program may capture the mouse.
     pub allow_mouse_capture: bool,
     /// The `right-click-action` token. The deleted libghostty fork owned the bare right click end
-    /// to end once this crossed to it; with the fork gone,
-    /// `crate::surface::right_click_intercepts_as_paste` reads the same token directly to make
-    /// the one decision (paste vs. forward) that still needs a pre-click answer.
+    /// to end once this crossed to it; with the fork gone, `crate::surface::right_click` reads the
+    /// same token directly and makes the whole dispatch here.
     pub right_click_action: &'a str,
     /// Shift with an arrow adjusts the selection. Off does not mean "emit nothing" — the vendored
     /// fork binds these by default, so off has to unbind them or the arrows never reach the

@@ -32,6 +32,14 @@ package enum ClientTerminalPalette {
                 foreground: theme.terminalForegroundHex,
                 palette: theme.ansiPalette,
                 selectionBackground: theme.selectionBackgroundHex,
+                // Straight from the profile's own 24-bit literals — the hex four lines up are
+                // `hex6` of these. See ``ResolvedTerminalTheme/Words``.
+                words: ResolvedTerminalTheme.Words(
+                    background: theme.glass.face,
+                    foreground: theme.glass.ink,
+                    palette: theme.ansi,
+                    selection: theme.glass.edge,
+                ),
             )
         }
     }

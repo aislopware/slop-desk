@@ -198,10 +198,10 @@ public enum RightClickAction: Sendable, CaseIterable, RawRepresentable, Codable 
     // the cursor (a race), and its `rightMouseDown` (compile-only behind `#if canImport(CGhostty)`)
     // enforced ONLY the ⌃-right-always-menu override.
     //
-    // ⚠️ `libghostty-vt` has no UI of its own, so it cannot own this end-to-end the way the fork did:
-    // `MacTerminalRendererView.rightMouseDown` forwards the click through `driver.sendMouse` and, when
-    // the engine does not consume it, falls through to AppKit's own `menu(for:)` / ``TerminalContextMenu``
-    // — this config value's live consumer is worth re-checking against that path rather than assumed.
+    // `libghostty-vt` has no UI of its own, so it cannot own this the way the fork did. The dispatch
+    // moved to ``RightClickPolicy`` over `slopdesk_terminal::surface::right_click`, which
+    // `MacTerminalRendererView.rightMouseDown` actuates — and it still reads the selection BEFORE
+    // forwarding the click, which is the race the fork's arrangement was avoiding.
 }
 
 /// Whether ⇧+click / ⇧+drag bypasses a program's mouse capture to make a native selection ("Allow Shift

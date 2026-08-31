@@ -20,6 +20,7 @@ import CoreGraphics
 import CSlopDeskFFI
 import Foundation
 import QuartzCore
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 
 /// The framework-neutral half of the terminal renderer.
@@ -105,7 +106,22 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         onWrite = { [weak model] bytes in model?.sendInput(bytes) }
         model.attachSurface(self)
         discardReplayLeftovers()
-        applyOptionAsAlt()
+        followSettings()
+    }
+
+    /// Follows ``TerminalConfigBroadcaster`` for the life of this driver, applying on every publish.
+    ///
+    /// ⚠️ **The generation is the whole dependency, deliberately.** It bumps on every publish even
+    /// when nothing moved (`PreferenceRules`' comment says so), and reading the individual fields
+    /// inside the tracking block would follow them one by one for no gain — the apply re-reads all of
+    /// them anyway. Arming performs the first apply synchronously, which is why `bind` no longer
+    /// pushes anything itself: the arm IS the initial push.
+    private func followSettings() {
+        ObservationFollow.arm(self) { _ in
+            TerminalConfigBroadcaster.shared.generation
+        } apply: { driver, _ in
+            driver.applySettings()
+        }
     }
 
     /// Drops the replay's pty replies and clipboard writes without acting on either.
@@ -215,16 +231,35 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     func setGeometry(size: CGSize, scale: CGFloat) {
         guard let surface, size.width > 0, size.height > 0 else { return }
         guard let grid = surface.setGeometry(size: size, scale: scale) else { return }
-        let replies = surface.takePtyReplies()
-        if !replies.isEmpty {
-            onWrite?(replies)
-        }
+        settle(grid)
+    }
+
+    /// What a re-measure owes once the surface has answered its new grid, wherever the re-measure
+    /// came from — a layout pass or a font change.
+    ///
+    /// ⚠️ **The pty drain runs here**, because a resize can emit an in-band size report and that
+    /// report is a reply the far side is waiting on exactly like a `CSI 6n`. Answers whether the grid
+    /// actually moved, so a caller with its OWN reason to repaint can tell that reason apart from
+    /// this one.
+    @discardableResult
+    private func settle(_ grid: (cols: UInt16, rows: UInt16)) -> Bool {
+        drainPtyReplies()
         // `if let` rather than comparing the optionals: a tuple is not `Equatable`, so `==` reaches
         // the arity-2 overload only once both sides are unwrapped.
-        if let lastGrid, lastGrid == grid { return }
+        if let lastGrid, lastGrid == grid { return false }
         lastGrid = grid
         setSize(cols: grid.cols, rows: grid.rows)
         onNeedsPresent?()
+        return true
+    }
+
+    /// Hands the far side whatever the engine queued for it.
+    ///
+    /// Split out of ``settle(_:)`` because a re-measure that does NOT settle still owes this: the
+    /// engine answers in band, and a reply held back is a far side waiting forever.
+    private func drainPtyReplies() {
+        guard let replies = surface?.takePtyReplies(), !replies.isEmpty else { return }
+        onWrite?(replies)
     }
 
     /// Pushes the pane's workspace focus and the blink clock's phase.
@@ -239,7 +274,51 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         onNeedsPresent?()
     }
 
-    /// Re-reads `macos-option-as-alt` and pushes it. Called on bind and on a settings change.
+    /// Rebuilds the face stack at a new family and size, and settles the grid that came out of it.
+    ///
+    /// The present is unconditional rather than `settle`'s: a font change invalidates every glyph in
+    /// the atlas whether or not the grid moved, and a family swap at the same metrics is exactly the
+    /// case where it does not move.
+    ///
+    /// ⚠️ **Before the first layout there is no grid to settle.** `bind` applies the settings
+    /// synchronously, which is earlier than the view's first `layout` — the surface would answer the
+    /// grid of its PLACEHOLDER size and `settle` would mirror that made-up geometry to the host as a
+    /// resize. The grid comes from layout, so a pre-layout font change only rebuilds the faces and
+    /// waits: ``setGeometry(size:scale:)`` mirrors it a moment later with the real one.
+    func setFont(family: String, pointSize: Double) {
+        guard let surface, !family.isEmpty, pointSize > 0 else { return }
+        guard let grid = surface.setFont(family: family, pointSize: pointSize) else { return }
+        if lastGrid != nil {
+            settle(grid)
+        } else {
+            drainPtyReplies()
+        }
+        onNeedsPresent?()
+    }
+
+    /// Re-reads every process-wide terminal setting and pushes it. Called on bind and on each
+    /// ``TerminalConfigBroadcaster`` generation.
+    ///
+    /// ⚠️ **This is the whole live-reload path.** The deleted fork re-parsed a config STRING and
+    /// re-applied itself; the renderer that replaced it has typed doors, so "the settings changed"
+    /// has to be spelled as the calls below. A setting that grows a door and is not added here is a
+    /// setting the user can only change by reopening the pane.
+    func applySettings() {
+        let broadcaster = TerminalConfigBroadcaster.shared
+        setFont(family: broadcaster.fontFamily, pointSize: broadcaster.fontSize)
+        if let words = broadcaster.themeWords {
+            setTheme(
+                foreground: words.foreground,
+                background: words.background,
+                selection: words.selection,
+            )
+            surface?.setPalette(words.palette)
+            onNeedsPresent?()
+        }
+        applyOptionAsAlt()
+    }
+
+    /// Re-reads `macos-option-as-alt` and pushes it.
     func applyOptionAsAlt() {
         surface?.setOptionAsAlt(SettingsKey.optionAsAlt.surfaceCode)
     }
@@ -271,18 +350,44 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
             consumedMods: consumedMods, text: text, composing: composing,
         )
         guard !bytes.isEmpty else { return false }
+        // `selection-clear-on-typing`: a selection is a reading of the screen, and typing moves the
+        // screen out from under it. Gated on bytes actually being produced, so a bare modifier press
+        // — which encodes to nothing — does not clear what the user is about to copy.
+        if SettingsKey.clearSelectionOnTypingEnabled, hasSelection() {
+            clearSelection()
+        }
         onWrite?(bytes)
         return true
     }
 
     /// Encodes one pointer event. Answers `false` when the far side is not tracking the mouse, which
     /// the view reads as "this gesture is mine" and answers with a selection instead.
+    ///
+    /// `mouse-reporting = false` makes every event answer `false` without asking the engine: the
+    /// setting's whole meaning is "programs do not get the mouse", and the honest place to enforce it
+    /// is the one call that would hand a program an event. Refusing here rather than at each caller
+    /// is also what makes the setting cover the wheel, the drag and the hover in one line instead of
+    /// six.
     @discardableResult
     func sendMouse(action: UInt8, button: UInt8, mods: UInt16, at point: CGPoint) -> Bool {
-        guard let surface else { return false }
+        guard let surface, SettingsKey.allowMouseCaptureEnabled else { return false }
         let bytes = surface.encodeMouse(action: action, button: button, mods: mods, at: point)
         guard !bytes.isEmpty else { return false }
         onWrite?(bytes)
+        return true
+    }
+
+    /// ⌘Z / ⌘⇧Z / ⌘Y at an editable shell prompt — the ONE ⌘ chord that is terminal input rather than
+    /// an app shortcut. Answers whether it was consumed.
+    ///
+    /// The rule is ``PromptEditPolicy`` (the readline undo byte itself, and why redo is recognised and
+    /// deliberately unanswered); the platform's job is only to say which chord was pressed. Both
+    /// shells call THIS, so the Mac and the phone cannot drift on which prompts accept an undo.
+    func takesPromptEdit(undo: Bool, redo: Bool) -> Bool {
+        guard SettingsKey.undoAtPromptEnabled, undo || redo else { return false }
+        guard let bytes = PromptEditPolicy.bytes(forUndo: undo, redo: redo, inPromptZone: isPromptZone)
+        else { return false }
+        onWrite?(Data(bytes))
         return true
     }
 
@@ -315,7 +420,25 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
 
     func selectRelease(at point: CGPoint) {
         surface?.selectRelease(at: point)
+        // `copy-on-select`: the X11 habit, and the release is the only moment it can fire — a copy per
+        // drag step would put a partial selection on the board dozens of times per gesture. It writes
+        // through the same receipt path as ⌘C, so the `COPIED` chip does not distinguish them.
+        if SettingsKey.copyOnSelectEnabled, let text = selectionText(.plain), !text.isEmpty {
+            copyToPasteboard(text)
+        }
         onNeedsPresent?()
+    }
+
+    /// Puts `text` on the pasteboard and records the receipt the `COPIED · N` chip renders.
+    ///
+    /// Every copy this driver makes goes through here rather than touching the board directly: the
+    /// receipt is the user's only confirmation that a copy landed, and a path that skipped it would be
+    /// a copy the app denies having made.
+    @discardableResult
+    private func copyToPasteboard(_ text: String) -> Bool {
+        guard ClientPasteboard.shared.write(text) else { return false }
+        model?.noteClipboardCopy(text)
+        return true
     }
 
     /// Which way a live drag wants the viewport to move, asked once per display tick.
@@ -369,18 +492,32 @@ extension TerminalSurfaceDriver {
     @discardableResult
     func run(_ item: TerminalContextMenu.Item) -> Bool {
         switch item {
-        case .copy,
-             .cut:
-            // Cut is copy at a terminal: there is no editable buffer this side to delete from, and
-            // the shell's own kill-line is a keystroke the user can send.
-            guard let text = selectionText(.plain), !text.isEmpty else { return false }
-            // The user's own gesture IS the consent, which is why this takes the two-arm primitive
-            // rather than the `clipboard-write` setting: that setting gates what a remote PROGRAM
-            // may do, and applying it to a ⌘C would gate the user against themselves.
-            guard case .write = ClipboardWritePolicy.decide(confirmRequested: false, text: text) else {
-                return false
+        case .copy:
+            return copySelection()
+        case .cut:
+            // A terminal has no editable buffer THIS side, so a cut is a copy plus the DEL bytes the
+            // remote line editor would need to erase the run — and only where those bytes can erase
+            // it faithfully. ``CutSelectionPolicy`` owns that ladder, including why the alternate
+            // screen is refused before the prompt zone is even asked about.
+            let cut = CutSelectionPolicy.action(
+                hasSelection: hasSelection(),
+                isAlternateScreen: modes().isAlternateScreen,
+                isPromptZone: isPromptZone,
+            )
+            guard cut != .none else { return false }
+            let selection = selectionText(.plain) ?? ""
+            guard copySelection() else { return false }
+            guard cut == .copyAndDelete else { return true }
+            // `selectionEndsAtCursor` is the policy's own documented seam and is passed `false` on
+            // both platforms: nothing today can PROVE the selection ends where the cursor is, and an
+            // unprovable geometry deletes nothing rather than the wrong characters. The count is
+            // therefore 0 and the cut degrades to a copy — which is the safe half of the rule, not a
+            // missing call.
+            let deletes = CutSelectionPolicy.deleteCount(selection: selection, selectionEndsAtCursor: false)
+            if deletes > 0 {
+                onWrite?(Data(repeating: 0x7F, count: deletes))
             }
-            return ClientPasteboard.shared.write(text)
+            return true
         case .selectAll:
             let selected = surface?.selection(.all) ?? false
             if selected { onNeedsPresent?() }
@@ -390,9 +527,16 @@ extension TerminalSurfaceDriver {
             onNeedsPresent?()
             return cleared
         case .copyOutput:
-            // The latest block's output is the BLOCK store's to fetch (request type 15), not the
-            // grid's — the surface has no idea which rows were one command.
-            return false
+            // The latest block's output is the MODEL's to fetch (request type 15), not the grid's —
+            // the surface has no idea which rows were one command. The reply is asynchronous and may
+            // be empty (a block whose output the host no longer holds), which is a silent no-op
+            // rather than an empty copy: `true` here means the request went out.
+            guard let model, let index = model.blocks.latest?.index else { return false }
+            model.copyBlockOutput(index: index) { [weak self] text in
+                guard let text, !text.isEmpty else { return }
+                self?.copyToPasteboard(text)
+            }
+            return true
         case .paste:
             return paste(ClientPasteboard.text(), bracketing: .askTheProgram)
         case .pasteBracketed:
@@ -424,6 +568,27 @@ extension TerminalSurfaceDriver {
             return false
         }
     }
+
+    /// Copies the selection, honouring `selection-clear-on-copy`. `false` when nothing is selected.
+    ///
+    /// The user's own gesture IS the consent, which is why this takes the two-arm primitive rather
+    /// than the `clipboard-write` setting: that setting gates what a remote PROGRAM may do, and
+    /// applying it to a ⌘C would gate the user against themselves.
+    private func copySelection() -> Bool {
+        guard let text = selectionText(.plain), !text.isEmpty else { return false }
+        guard case .write = ClipboardWritePolicy.decide(confirmRequested: false, text: text) else {
+            return false
+        }
+        guard copyToPasteboard(text) else { return false }
+        if SettingsKey.clearSelectionOnCopyEnabled {
+            clearSelection()
+        }
+        return true
+    }
+
+    /// Whether the terminal is at an EDITABLE shell prompt, as the MODEL derives it — the one
+    /// derivation both prompt-gated features and both shells read. No surface ⇒ no prompt.
+    var isPromptZone: Bool { model?.isAtEditablePrompt ?? false }
 
     /// Whether a paste item overrides the program's own bracketed-paste mode.
     ///

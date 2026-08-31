@@ -1930,6 +1930,18 @@ public final class TerminalViewModel {
     /// suppress ONLY inside a true full-screen TUI.
     public var isAlternateScreen: Bool { modeTracker.mode == .altScreen }
 
+    /// TRUE while the terminal sits at an EDITABLE shell prompt: connected, OSC-133 idle, and no
+    /// full-screen program holding the alternate screen.
+    ///
+    /// The one derivation every prompt-gated feature reads — ⌘X's delete half
+    /// (``CutSelectionPolicy``) and ⌘Z's readline undo (``PromptEditPolicy``), on both shells. It lives
+    /// here because all three facts do, and because it was written out by hand at each call site until
+    /// the second shell needed it: three ANDs is exactly the size of rule two copies agree on until one
+    /// of them gains a term.
+    public var isAtEditablePrompt: Bool {
+        connectionStatus.isLive && shellActivity == .idle && !isAlternateScreen
+    }
+
     /// The OBSERVABLE twin of ``isAlternateScreen`` — the same truth, readable by an overlay that needs to
     /// be told when it changes. Same idiom as the ``isCopyMode``/``copyModeBadgeActive`` pair above,
     /// and here for the same reason: ``modeTracker`` is `@ObservationIgnored`, so reading

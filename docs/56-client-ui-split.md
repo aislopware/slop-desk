@@ -1337,7 +1337,7 @@ gate is the target.
 **Its caller is not under `Sources/`.** `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`
 is the libghostty embedder, added to the two Xcode app targets by `slopdesk-ops enable-renderer macos` /
 `… ios` and compiled by neither `swift build` nor `just quick`'s macOS half. It is
-where `PasteSafetyAnalyzer`, `PastePrecheck`, `ClipboardWritePolicy`, `RightClickPasteInterceptPolicy`
+where `PasteSafetyAnalyzer`, `PastePrecheck`, `ClipboardWritePolicy`, `RightClickPolicy`
 and `PasteTransform` are all reached from — so a grep over `Sources/` reports that whole cluster as
 dead, and it is not. Anything moved or renamed here was verified by hand, through a two-step recipe
 that first re-injected the embedder into the app spec and then ran `xcodebuild` over it.

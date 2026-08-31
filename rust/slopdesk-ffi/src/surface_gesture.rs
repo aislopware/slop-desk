@@ -13,7 +13,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_terminal::surface::{self, ClipboardWrite, Cut};
+use slopdesk_terminal::surface::{self, ClipboardWrite, Cut, RightClick};
 
 use crate::borrow;
 
@@ -121,7 +121,8 @@ pub const extern "C" fn slopdesk_term_prompt_edit_byte(undo: bool, redo: bool, i
     }
 }
 
-/// Whether a bare right-click must be intercepted as a paste. `action` is the config token.
+/// What a bare right-click does: `0` forward · `1` paste · `2` copy · `3` menu · `4` ignore.
+/// `action` is the config token.
 ///
 /// # Safety
 /// `(action, len)` must be null, or describe `len` live bytes for the call.
@@ -130,15 +131,21 @@ pub const extern "C" fn slopdesk_term_prompt_edit_byte(undo: bool, redo: bool, i
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_term_right_click_intercepts_as_paste(
+pub unsafe extern "C" fn slopdesk_term_right_click(
     action: *const c_uchar,
     action_len: usize,
     has_selection: bool,
     mouse_captured: bool,
-) -> bool {
+) -> u8 {
     // SAFETY: the caller's obligation, restated above; `borrow` states its own.
     let action = String::from_utf8_lossy(unsafe { borrow(action, action_len) });
-    surface::right_click_intercepts_as_paste(&action, has_selection, mouse_captured)
+    match surface::right_click(&action, has_selection, mouse_captured) {
+        RightClick::Forward => 0,
+        RightClick::Paste => 1,
+        RightClick::Copy => 2,
+        RightClick::Menu => 3,
+        RightClick::Ignore => 4,
+    }
 }
 
 #[cfg(test)]
@@ -147,8 +154,7 @@ mod tests {
 
     use super::{
         slopdesk_term_clipboard_write, slopdesk_term_cut_action, slopdesk_term_cut_delete_count,
-        slopdesk_term_forwards_encoder_text, slopdesk_term_prompt_edit_byte,
-        slopdesk_term_right_click_intercepts_as_paste,
+        slopdesk_term_forwards_encoder_text, slopdesk_term_prompt_edit_byte, slopdesk_term_right_click,
     };
 
     #[test]
@@ -190,15 +196,17 @@ mod tests {
     #[test]
     fn the_right_click_reads_the_config_token_it_was_written_with() {
         // SAFETY: one live literal, borrowed for the call.
-        let intercepts = |action: &str, selected, captured| unsafe {
-            slopdesk_term_right_click_intercepts_as_paste(action.as_ptr(), action.len(), selected, captured)
+        let click = |action: &str, selected, captured| unsafe {
+            slopdesk_term_right_click(action.as_ptr(), action.len(), selected, captured)
         };
-        assert!(intercepts("paste", true, false));
-        assert!(!intercepts("copy-or-paste", true, false));
-        assert!(intercepts("copy-or-paste", false, false));
-        assert!(!intercepts("paste", false, true));
-        assert!(
-            !intercepts("contextMenu", false, false),
+        assert_eq!(click("paste", true, false), 1);
+        assert_eq!(click("copy-or-paste", true, false), 2);
+        assert_eq!(click("copy-or-paste", false, false), 1);
+        assert_eq!(click("paste", false, true), 0, "the program owns the pointer");
+        assert_eq!(click("ignore", false, false), 4);
+        assert_eq!(
+            click("contextMenu", false, false),
+            3,
             "the token, not the case name"
         );
     }

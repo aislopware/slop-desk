@@ -152,7 +152,10 @@ public final class PreferencesStore {
         // `prefs` already carries the EFFECTIVE size — the ⌘± delta was folded in above — so the
         // renderer measures its grid from the same number the config string encodes.
         TerminalConfigBroadcaster.shared.publish(
-            config, fontFamily: prefs.fontFamily, fontSize: prefs.fontSize,
+            config,
+            fontFamily: prefs.fontFamily,
+            fontSize: prefs.fontSize,
+            themeWords: themeColors?.words,
         )
     }
 
@@ -340,24 +343,34 @@ public final class TerminalConfigBroadcaster {
     /// takes it. Empty until the first publish, which the renderer reads as "the engine's default".
     public private(set) var fontFamily = ""
 
+    /// Monotonic publish counter — the renderer keys its "apply on change" off this, so re-publishing
+    /// the same values still reloads.
+    public private(set) var generation = 0
+
+    public init() {}
+
     /// The EFFECTIVE point size — the file's `terminal.font-size` plus whatever ⌘± has moved it by.
     /// `0` until the first publish, for ``fontFamily``'s reason.
     ///
     /// Effective rather than configured, because the renderer measures a grid from it: handing over
     /// the configured size would draw at one size and lay out at another the moment ⌘+ was pressed.
-    /// Monotonic publish counter — the renderer keys its "apply on change" off this, so re-publishing the
-    /// same string still reloads.
-    public private(set) var generation = 0
-
-    public init() {}
-
     public private(set) var fontSize: Double = 0
 
-    /// Publish a new config string and the resolved font (bumps ``generation`` even if unchanged).
-    public func publish(_ config: String, fontFamily: String = "", fontSize: Double = 0) {
+    /// The cell colours as the renderer's doors take them, or `nil` where no GUI filled the seam
+    /// (headless, pre-launch) and the engine's own defaults stand.
+    public private(set) var themeWords: ResolvedTerminalTheme.Words?
+
+    /// Publish the resolved terminal settings (bumps ``generation`` even if nothing moved).
+    public func publish(
+        _ config: String,
+        fontFamily: String = "",
+        fontSize: Double = 0,
+        themeWords: ResolvedTerminalTheme.Words? = nil,
+    ) {
         configString = config
         self.fontFamily = fontFamily
         self.fontSize = fontSize
+        self.themeWords = themeWords
         generation &+= 1
     }
 }

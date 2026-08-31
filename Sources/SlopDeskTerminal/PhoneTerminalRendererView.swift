@@ -41,6 +41,16 @@ final class PhoneTerminalRendererView: UIView {
     /// hands over — a terminal scrolls by lines, and rounding per-callback would lose the remainder.
     private var panRowRemainder: CGFloat = 0
 
+    /// The system edit menu, which renders the SAME ``TerminalContextMenu`` table the Mac's `NSMenu`
+    /// renders, with the same order and the same enablement — so the two menus cannot come to offer
+    /// different things.
+    private var editMenu: UIEditMenuInteraction?
+
+    /// The detected link the OPEN menu was offered on, resolved at the release point and stashed
+    /// because a `UIAction` closure fires long after that point is gone. The Mac's `pendingMenuLink`,
+    /// and one slot suffices for its reason: a menu is modal per view.
+    private var pendingMenuLink: DetectedLink?
+
     init?(model: TerminalViewModel, isFocused: Bool) {
         guard let driver = TerminalSurfaceDriver(
             family: TerminalConfigBroadcaster.shared.fontFamily,
@@ -214,7 +224,13 @@ final class PhoneTerminalRendererView: UIView {
         addGestureRecognizer(pan)
 
         let press = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress))
+        press.minimumPressDuration = TerminalTouchSelection.longPressDuration
+        press.allowableMovement = CGFloat(TerminalTouchSelection.longPressAllowableMovement)
         addGestureRecognizer(press)
+
+        let menu = UIEditMenuInteraction(delegate: self)
+        addInteraction(menu)
+        editMenu = menu
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         // The tap must yield to the long press, or every selection would begin with a focus tap
@@ -261,6 +277,10 @@ final class PhoneTerminalRendererView: UIView {
         lastPointerPoint = point
         switch gesture.state {
         case .began:
+            // A second press replaces the first menu rather than stacking one on it, and the link the
+            // old menu was offered on dies with it.
+            editMenu?.dismissMenu()
+            pendingMenuLink = nil
             isSelecting = true
             isRectangularDrag = false
             driver.selectPress(
@@ -278,6 +298,105 @@ final class PhoneTerminalRendererView: UIView {
             guard isSelecting else { return }
             isSelecting = false
             driver.selectRelease(at: point)
+            // A CANCELLED gesture (a system gesture took the touch) is not a request for a menu, and a
+            // program tracking the mouse owns the press outright — ``TerminalTouchSelection`` owns that
+            // second rule, so the two shells cannot disagree about when a menu appears.
+            guard gesture.state == .ended,
+                  TerminalTouchSelection.presentsMenuOnRelease(mouseCaptured: driver.modes().isMouseTracking)
+            else { return }
+            // Resolved at the RELEASE point, which is the point the menu anchors to — the same reading
+            // the Mac's `menu(for:)` takes at the location its menu opens at.
+            pendingMenuLink = detectedLink(at: point)
+            editMenu?.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
+        }
+    }
+
+    // MARK: - The edit menu
+
+    /// The detected link under a point, or `nil` when the touch landed on none.
+    ///
+    /// ``TerminalTouchSelection/linkHitSlop`` rather than the Mac's exact reading: a fingertip is a
+    /// contact patch whose reported centre is a guess, and the phone gets ONE shot at the question with
+    /// no hover to correct it. The detection and the hit-test are the same pair the Mac runs.
+    private func detectedLink(at point: CGPoint) -> DetectedLink? {
+        guard SettingsKey.linkDetectionEnabled, let metrics = driver.cellMetrics() else { return nil }
+        let links = TerminalLinkDetector.detect(
+            rows: driver.viewportTextRows(),
+            cwd: model?.linkCwd,
+            schemes: SettingsKey.linkSchemePolicy,
+        )
+        return TerminalLinkHitTest.link(
+            in: links, metrics: metrics, pointX: point.x, pointY: point.y,
+            slop: CGFloat(TerminalTouchSelection.linkHitSlop),
+        )
+    }
+
+    /// The menu, built from the PURE ``TerminalContextMenu``: same items, same order, same enablement,
+    /// same glyphs. The Mac renders that table as an `NSMenu`; this renders it as a `UIMenu`.
+    ///
+    /// `Item.separatorBefore` opens a new GROUP, and UIKit draws an inline submenu with the rule an
+    /// `NSMenuItem.separator()` draws on the Mac — same table, each framework's own spelling. The link
+    /// group is first and EMPTY for a press over no link, which is most presses; the `filter` drops it,
+    /// so there is never a rule over nothing.
+    private func menuElements() -> [UIMenuElement] {
+        let context = TerminalContextMenu.Context(
+            hasSelection: driver.hasSelection(),
+            clipboardHasText: !(ClientPasteboard.text()?.isEmpty ?? true),
+            paneConnected: model?.connectionStatus.isLive ?? false,
+            hasCommandOutput: model?.blocks.latest?.complete ?? false,
+        )
+        var groups: [[UIMenuElement]] = [linkActions(), []]
+        for item in TerminalContextMenu.items {
+            if item.separatorBefore { groups.append([]) }
+            groups[groups.count - 1].append(action(for: item, context: context))
+            if item == .paste {
+                groups[groups.count - 1].append(UIMenu(
+                    title: TerminalContextMenu.pasteAsSubmenuTitle,
+                    image: UIImage(systemName: TerminalContextMenu.Item.paste.symbol),
+                    children: TerminalContextMenu.pasteAsItems.map { action(for: $0, context: context) },
+                ))
+            }
+        }
+        return groups.filter { !$0.isEmpty }.map { UIMenu(title: "", options: .displayInline, children: $0) }
+    }
+
+    /// One item, greyed by the same unit-tested rule the Mac greys by.
+    ///
+    /// The two verbs that are the WORKSPACE's rather than the surface's go to the pane's own callbacks,
+    /// exactly as they do on the Mac; everything else is one call into the driver.
+    private func action(
+        for item: TerminalContextMenu.Item, context: TerminalContextMenu.Context,
+    ) -> UIAction {
+        let enabled = TerminalContextMenu.isEnabled(item, context: context)
+        return UIAction(
+            title: item.title,
+            image: UIImage(systemName: item.symbol),
+            attributes: enabled ? [] : .disabled,
+        ) { [weak self] _ in
+            guard let self else { return }
+            switch item {
+            case .splitRight: model?.onContextMenuSplit?(true)
+            case .splitDown: model?.onContextMenuSplit?(false)
+            case .find: model?.onRequestFind?()
+            default: driver.run(item)
+            }
+        }
+    }
+
+    /// The link items for ``pendingMenuLink``, or nothing when the press landed on no link.
+    ///
+    /// Which items a kind offers is ``TerminalContextMenu/linkItems(for:)``'s and what each DOES is
+    /// ``LinkActionPolicy``'s — both pure, both already shared with the Mac — so the whole of this
+    /// half is the labels.
+    private func linkActions() -> [UIMenuElement] {
+        guard let link = pendingMenuLink else { return [] }
+        return TerminalContextMenu.linkItems(for: link.kind).map { item in
+            let action = LinkActionPolicy.action(for: item, link: link)
+            return UIAction(
+                title: item.title(for: link.kind), image: UIImage(systemName: item.symbol),
+            ) { [weak self] _ in
+                LinkActionActuator.actuate(action, model: self?.model)
+            }
         }
     }
 
@@ -322,6 +441,21 @@ final class PhoneTerminalRendererView: UIView {
         // clear.
         objc_setAssociatedObject(picker, &FilePasteDelegate.key, delegate, .OBJC_ASSOCIATION_RETAIN)
         presenter.present(picker, animated: true)
+    }
+}
+
+// MARK: - The edit menu's delegate
+
+extension PhoneTerminalRendererView: @MainActor UIEditMenuInteractionDelegate {
+    /// ⚠️ The system's `suggestedActions` are deliberately DROPPED. They are the responder chain's
+    /// Copy/Paste over a `UITextInput` this view is not, and offering both would put two Copies with
+    /// different meanings in one menu.
+    func editMenuInteraction(
+        _: UIEditMenuInteraction,
+        menuFor _: UIEditMenuConfiguration,
+        suggestedActions _: [UIMenuElement],
+    ) -> UIMenu? {
+        UIMenu(children: menuElements())
     }
 }
 

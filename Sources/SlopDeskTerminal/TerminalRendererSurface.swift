@@ -166,6 +166,27 @@ final class TerminalRendererSurface {
         slopdesk_term_surface_set_theme(handle, foreground, background, selection)
     }
 
+    /// Pushes the theme's ANSI colours, from index `0`. A prefix — see the door.
+    func setPalette(_ entries: [UInt32]) {
+        guard let handle, !entries.isEmpty else { return }
+        entries.withUnsafeBufferPointer { colours in
+            slopdesk_term_surface_set_palette(handle, colours.baseAddress, colours.count)
+        }
+    }
+
+    /// Rebuilds the face stack at a new family and size, answering the grid that now fits.
+    ///
+    /// Answers the pair for ``setGeometry(size:scale:)``'s reason, and the caller owes the same
+    /// follow-through: a new cell size is a new grid, and the host is still holding the old one.
+    func setFont(family: String, pointSize: Double) -> (cols: UInt16, rows: UInt16)? {
+        guard let handle else { return nil }
+        let packed = Array(family.utf8).withUnsafeBufferPointer { bytes in
+            slopdesk_term_surface_set_font(handle, bytes.baseAddress, bytes.count, pointSize)
+        }
+        guard packed != 0 else { return nil }
+        return (cols: UInt16(packed >> 16), rows: UInt16(packed & 0xFFFF))
+    }
+
     /// Which absolute or relative scroll a gesture or key asked for.
     enum ScrollRequest {
         /// By a signed number of rows. Negative reveals OLDER output.

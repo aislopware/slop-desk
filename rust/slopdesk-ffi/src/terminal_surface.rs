@@ -68,7 +68,7 @@ use slopdesk_vterm::{
     key_from_macos_keycode,
 };
 
-use crate::{borrow, deliver, lent, push_text, saturating_u32};
+use crate::{borrow, deliver, lent, push_text, records_of, saturating_u32};
 
 /// The gutter, header and gap a command block is drawn with, in POINTS.
 ///
@@ -275,6 +275,42 @@ impl Surface {
                 self.cache = GlyphCache::default();
             }
         }
+        self.apply_geometry();
+        self.session.size()
+    }
+
+    /// Rebuilds the face stack at a new family and point size, answering the grid that now fits.
+    ///
+    /// The rebuild is [`Self::set_geometry`]'s rescale branch with the other two inputs moving
+    /// instead of the scale, and for the same reason: the atlas holds coverage masks measured
+    /// against ONE face at ONE size, so a new face invalidates every glyph in it. Rebuilding any
+    /// subset would pair last size's atlas with this size's shaper.
+    ///
+    /// A family Core Text cannot resolve leaves the current stack standing rather than refusing to
+    /// draw — the honest outcome for a font name the user mistyped in `config.toml`, and the same
+    /// one a scale change takes.
+    fn set_font(&mut self, family: &str, point_size: f64) -> (u16, u16) {
+        // Bit-equality is a CONSERVATIVE test here, not an exact one: an identical pair is
+        // certainly unchanged, and a pair that differs by an ulp costs one needless atlas rebuild
+        // rather than a wrong frame. The publish this answers fires on every settings write, so the
+        // early-out is what keeps an unrelated toggle from re-rasterising the screen.
+        #[expect(
+            clippy::float_cmp,
+            reason = "a conservative unchanged-test, argued immediately above"
+        )]
+        let unchanged = family == self.family && point_size == self.point_size;
+        if unchanged {
+            return self.session.size();
+        }
+        let Some(font) = FontStack::new(family, point_size, self.geometry.scale) else {
+            return self.session.size();
+        };
+        self.shaper = font.shaper();
+        self.rasterizer = font.rasterizer();
+        self.font = font;
+        self.cache = GlyphCache::default();
+        family.clone_into(&mut self.family);
+        self.point_size = point_size;
         self.apply_geometry();
         self.session.size()
     }
@@ -673,6 +709,70 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_theme(
         background: rgb(selection).into(),
         foreground: None,
     };
+}
+
+/// The ANSI palette, as a PREFIX of `0x00RRGGBB` words from index `0`.
+///
+/// Apart from [`slopdesk_term_surface_set_theme`] because the two have different lifetimes: a theme
+/// always states its three colours, and a palette is optional — a config that names none leaves the
+/// engine's own 256 standing, which is a different outcome from naming sixteen black ones. Folding
+/// them into one door would make "no palette" unspellable.
+///
+/// A prefix rather than all 256 for [`slopdesk_vterm::VtSession::set_palette`]'s reason: a theme
+/// states the sixteen ANSI colours and says nothing about the cube or the ramp. `count` past 256 is
+/// ignored past the 256th entry rather than refused.
+///
+/// # Safety
+/// [`held`]'s, plus `entries` being null or describing `count` live `u32` for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_palette(
+    handle: *mut SlopDeskTerminalSurface,
+    entries: *const u32,
+    count: usize,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    // SAFETY: the caller's obligation; `records_of` answers an empty slice for a null pointer.
+    let packed = unsafe { records_of(entries, count) };
+    let palette: Vec<Rgb> = packed.iter().copied().map(rgb).collect();
+    let _refused = surface.session.set_palette(&palette);
+}
+
+/// Rebuilds the face stack at `family` and `point_size`, answering the grid it now fits, packed
+/// `cols << 16 | rows` exactly as [`slopdesk_term_surface_set_geometry`] does.
+///
+/// The grid comes BACK rather than being read separately for that door's reason: a font change
+/// resizes the cell, so it reflows the grid, and the caller owes the host a `resize` for the new
+/// one. `0` for a null handle.
+///
+/// # Safety
+/// [`held`]'s, plus `(family, family_len)` being a live UTF-8 span for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_set_font(
+    handle: *mut SlopDeskTerminalSurface,
+    family: *const c_uchar,
+    family_len: usize,
+    point_size: f64,
+) -> u32 {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    // SAFETY: the caller's obligation, discharged by the shared span helper.
+    let family = unsafe { lent(family, family_len) };
+    let (cols, rows) = surface.set_font(family, point_size);
+    (u32::from(cols) << 16) | u32::from(rows)
 }
 
 /// A `0x00RRGGBB` word as a colour. The high byte is ignored rather than read as alpha: every

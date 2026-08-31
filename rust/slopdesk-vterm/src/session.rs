@@ -167,9 +167,14 @@ pub struct VtSession {
     /// The surface's pixel geometry, as the last `set_surface_geometry` gave it.
     geometry: SurfaceGeometry,
     revision: u64,
-    /// Set when geometry changed since the last scan, which forces a full refill even if the engine
-    /// only reports rows dirty: a reshaped frame has rows that were never filled at all.
-    reshaped: bool,
+    /// Set when something OUTSIDE the engine's own damage tracking invalidated the frame, which
+    /// forces a full refill even where the engine reports nothing dirty.
+    ///
+    /// Two things do that. Geometry: a reshaped frame has rows that were never filled at all. And
+    /// colour: `frame.colors` is written past the clean early-out, and every cell's resolved colour
+    /// is filled against it, so a theme or palette the engine accepted without touching a cell
+    /// would otherwise sit invisible until the next byte arrived.
+    refill: bool,
     /// Reused buffers for the cell currently being copied. Held on the session rather than made per
     /// cell so a repaint of a full viewport allocates nothing.
     scratch: CellScratch,
@@ -233,7 +238,7 @@ impl VtSession {
             cell_height_px,
             geometry: SurfaceGeometry::default(),
             revision: 0,
-            reshaped: true,
+            refill: true,
             scratch: CellScratch::default(),
             events,
         })
@@ -346,7 +351,7 @@ impl VtSession {
         self.cell_width_px = cell_width_px;
         self.cell_height_px = cell_height_px;
         self.frame.reshape(cols, rows);
-        self.reshaped = true;
+        self.refill = true;
         Ok(())
     }
 
@@ -358,7 +363,7 @@ impl VtSession {
     /// A full reset (RIS), keeping the grid dimensions.
     pub fn reset(&mut self) {
         self.terminal.reset();
-        self.reshaped = true;
+        self.refill = true;
         // A reply the OLD terminal owed is an answer about state that no longer exists, and a bell
         // it rang was about output that is gone. Sending either after a reset would be reporting
         // the wrong terminal.
@@ -559,14 +564,21 @@ impl VtSession {
     pub fn set_default_colors(&mut self, foreground: Rgb, background: Rgb) -> Result<()> {
         self.terminal.set_default_fg_color(Some(rgb_out(foreground)))?;
         self.terminal.set_default_bg_color(Some(rgb_out(background)))?;
+        self.refill = true;
         Ok(())
     }
 
-    /// Replaces the 256-entry palette.
+    /// Overrides the palette from index `0`, leaving every slot past `palette` at the engine's own
+    /// default.
+    ///
+    /// A PREFIX rather than all 256 entries because that is the shape the only caller has: a theme
+    /// states the 16 ANSI colours and says nothing about the 6×6×6 cube or the greyscale ramp, and
+    /// a door that demanded 256 would make the caller invent 240 of them. Entries past 255 are
+    /// ignored, so a longer slice is a caller's arithmetic error rather than a panic.
     ///
     /// # Errors
     /// The engine's own error.
-    pub fn set_palette(&mut self, palette: &[Rgb; 256]) -> Result<()> {
+    pub fn set_palette(&mut self, palette: &[Rgb]) -> Result<()> {
         let mut out = libghostty_vt::style::Palette::default();
         for (index, colour) in palette.iter().enumerate() {
             let Ok(index) = u8::try_from(index) else {
@@ -575,6 +587,7 @@ impl VtSession {
             out.set(libghostty_vt::style::PaletteIndex(index), rgb_out(*colour));
         }
         self.terminal.set_default_color_palette(Some(out))?;
+        self.refill = true;
         Ok(())
     }
 
@@ -594,7 +607,7 @@ impl VtSession {
             row_iter,
             cell_iter,
             frame,
-            reshaped,
+            refill,
             revision,
             scratch,
             ..
@@ -606,13 +619,14 @@ impl VtSession {
         let snapshot = render.begin_update(terminal)?.end()?;
 
         let reported = FrameDirty::from(snapshot.dirty()?);
-        let force = *reshaped || reported == FrameDirty::Full;
+        let force = *refill || reported == FrameDirty::Full;
         if !force && reported == FrameDirty::Clean {
             return Ok(FrameDirty::Clean);
         }
-        // A reshape refills every row whatever the engine reported, so the answer must not be
+        // A refill covers every row whatever the engine reported, so the answer must not be
         // `Clean`: a caller that keys its draw off the return value would skip the one repaint that
-        // has to happen — the frame it is holding has rows that were never filled at all.
+        // has to happen — the frame it is holding has rows that were never filled, or were filled
+        // against colours that are no longer the ones in force.
         let dirty = if force { FrameDirty::Full } else { reported };
 
         let colors = snapshot.colors()?;
@@ -686,7 +700,7 @@ impl VtSession {
             row.set_dirty(false)?;
         }
 
-        *reshaped = false;
+        *refill = false;
         *revision = revision.wrapping_add(1);
         frame.revision = *revision;
         frame.dirty = dirty;
@@ -1152,6 +1166,50 @@ mod tests {
         assert_eq!(session.frame().colors.foreground, fg);
         assert_eq!(session.frame().colors.background, bg);
         assert_eq!(session.frame().colors.palette[3], palette[3]);
+    }
+
+    #[test]
+    fn a_short_palette_overrides_a_prefix_and_leaves_the_rest_at_the_default() {
+        let mut session = session();
+        let defaults = {
+            session.render().unwrap();
+            session.frame().colors.palette
+        };
+        let ansi = [Rgb::new(0xAA, 0xBB, 0xCC); 16];
+        session.set_palette(&ansi).unwrap();
+        session.feed(b"x");
+        session.render().unwrap();
+        assert_eq!(session.frame().colors.palette[0], ansi[0]);
+        assert_eq!(session.frame().colors.palette[15], ansi[15]);
+        // Index 16 is the first slot the theme said nothing about; it must still be the engine's.
+        assert_eq!(session.frame().colors.palette[16], defaults[16]);
+        assert_eq!(session.frame().colors.palette[255], defaults[255]);
+    }
+
+    #[test]
+    fn a_colour_change_alone_forces_a_repaint() {
+        // The engine's damage tracking counts CELLS, and a theme change touches none — so without
+        // the refill flag this is the frame that would keep last theme's colours until the user
+        // happened to type. Both existing colour tests feed a byte first, which hides exactly that.
+        let mut session = session();
+        session.feed(b"x");
+        session.render().unwrap();
+        assert_eq!(session.render().unwrap(), FrameDirty::Clean, "quiescent first");
+
+        session
+            .set_default_colors(Rgb::new(0x11, 0x22, 0x33), Rgb::new(0x44, 0x55, 0x66))
+            .unwrap();
+        assert_eq!(session.render().unwrap(), FrameDirty::Full);
+        assert_eq!(session.frame().colors.foreground, Rgb::new(0x11, 0x22, 0x33));
+        assert!(
+            session.frame().row(0).unwrap().dirty,
+            "the row repaints against them"
+        );
+
+        session.render().unwrap();
+        session.set_palette(&[Rgb::new(0xAA, 0xBB, 0xCC); 16]).unwrap();
+        assert_eq!(session.render().unwrap(), FrameDirty::Full);
+        assert_eq!(session.frame().colors.palette[0], Rgb::new(0xAA, 0xBB, 0xCC));
     }
 
     #[test]

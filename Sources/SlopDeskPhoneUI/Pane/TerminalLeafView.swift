@@ -1216,9 +1216,9 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// recognised and deliberately unanswered. What is this side's is only the mapping of a `UIKey` to
     /// that call, which is what an `NSEvent` needs its own of over there.
     ///
-    /// The prompt zone is read LIVE off the model's public OSC-133 truth, identically to the Mac:
-    /// connected AND idle AND not on the alternate screen, so ⌘Z passes through to a full-screen program
-    /// that keeps its own undo. ⌃ and ⌥ are refused because those are other line-edit chords, and the key
+    /// The prompt zone is ``TerminalViewModel/isAtEditablePrompt`` — the model's own derivation, which
+    /// the Mac's `keyDown` reads through the driver, so ⌘Z passes through to a full-screen program that
+    /// keeps its own undo. ⌃ and ⌥ are refused because those are other line-edit chords, and the key
     /// is read off `charactersIgnoringModifiers` so the chord is layout-aware.
     private func takesPromptUndo(_ press: PhoneKey.Press) -> Bool {
         guard SettingsKey.undoAtPromptEnabled,
@@ -1229,10 +1229,9 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         let isUndo = base == "z" && !press.shift
         let isRedo = (base == "z" && press.shift) || base == "y"
         guard isUndo || isRedo else { return false }
-        let inPromptZone = model.connectionStatus.isLive
-            && model.shellActivity == .idle
-            && !model.isAlternateScreen
-        guard let bytes = PromptEditPolicy.bytes(forUndo: isUndo, redo: isRedo, inPromptZone: inPromptZone)
+        guard let bytes = PromptEditPolicy.bytes(
+            forUndo: isUndo, redo: isRedo, inPromptZone: model.isAtEditablePrompt,
+        )
         else { return false }
         live?.sendBytes(bytes)
         return true

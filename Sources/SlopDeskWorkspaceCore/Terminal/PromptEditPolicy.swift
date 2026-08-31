@@ -16,8 +16,9 @@ public enum PromptEditPolicy {
     ///   - undo: whether the gesture is an UNDO (⌘Z without Shift).
     ///   - redo: whether the gesture is a REDO (⌘⇧Z or ⌘Y). Recognised so the view can centralise the
     ///     decision here, but **always** yields `nil` — there is no portable readline redo.
-    ///   - inPromptZone: whether the terminal is at an EDITABLE shell prompt (the GUI derives this as
-    ///     connected AND OSC-133 idle — false while a full-screen program owns the alternate screen).
+    ///   - inPromptZone: whether the terminal is at an EDITABLE shell prompt. Both platforms pass
+    ///     ``TerminalViewModel/isAtEditablePrompt`` — connected AND OSC-133 idle AND not the alternate
+    ///     screen — rather than re-deriving the three terms at each call site.
     /// - Returns: the raw bytes to send, or `nil` to forward / drop the gesture.
     public static func bytes(forUndo undo: Bool, redo: Bool, inPromptZone: Bool) -> [UInt8]? {
         let byte = slopdesk_term_prompt_edit_byte(undo, redo, inPromptZone)

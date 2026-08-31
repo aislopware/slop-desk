@@ -137,8 +137,8 @@ impl RightClickAction {
     /// the action let libghostty perform it end to end, where a near-side dispatch would have
     /// had to re-read whether a selection existed AFTER libghostty had already word-selected
     /// under the cursor, and read the wrong answer. The fork is gone, but the same token is
-    /// what `crate::surface::right_click_intercepts_as_paste` reads directly now, and it still
-    /// reads selection state BEFORE forwarding the click for the identical reason.
+    /// what `crate::surface::right_click` reads directly now, and it still reads selection state
+    /// BEFORE forwarding the click for the identical reason.
     #[must_use]
     pub const fn token(self) -> &'static str {
         match self {

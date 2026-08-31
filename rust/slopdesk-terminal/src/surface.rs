@@ -168,37 +168,69 @@ pub const fn prompt_edit_byte(undo: bool, redo: bool, in_prompt_zone: bool) -> O
     Some(READLINE_UNDO)
 }
 
-/// Whether a bare right-click must be intercepted as a paste rather than forwarded.
+/// What a bare (non-⌃) right-click does on the terminal surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RightClick {
+    /// Hand the press to the program — it asked for the pointer, so the click is its input.
+    Forward,
+    /// Take it as a paste, through the broad pre-check.
+    Paste,
+    /// Copy the selection.
+    Copy,
+    /// Pop the native context menu.
+    Menu,
+    /// Swallow it.
+    Ignore,
+}
+
+/// What a bare right-click means, from the `right-click-action` token.
 ///
-/// `libghostty-vt` has no notion of a right-click policy at all — the bare-right-click dispatch is
-/// entirely this side's now, driven by the `right-click-action` token. Without this gate a right
-/// click never becomes a paste by itself, so it would skip the four-danger analysis this codebase
-/// runs on ⌘V — a single-line `sudo`, control characters, a trailing newline, multiple lines —
-/// entirely; the embedder must take the click here first for that analysis to apply at all.
+/// `libghostty-vt` has no notion of a right-click policy at all — the deleted fork owned this
+/// dispatch end to end inside its embedder, and when the fork went the four arms that are not the
+/// menu went with it. So the whole rule is this side's now, and it is one decision rather than the
+/// "is it a paste?" boolean it replaced: that boolean answered only the arm with a safety story,
+/// and every other arm silently degraded to the menu — a drawn, persisted setting with three dead
+/// values.
+///
+/// The paste arm is the one that needs a reason rather than a mapping. Without it a right click
+/// never becomes a paste by itself, so it would skip the four-danger analysis this codebase runs on
+/// ⌘V — a single-line `sudo`, control characters, a trailing newline, multiple lines — entirely;
+/// the embedder must take the click here first for that analysis to apply at all.
 ///
 /// `action` is the config token, the same spelling the `ghostty` config file format carries, so
-/// there is no second vocabulary to keep in step. An unrecognised token does not intercept.
+/// there is no second vocabulary to keep in step. An unrecognised token falls to the menu, which is
+/// the token's own documented repair.
 #[must_use]
-pub fn right_click_intercepts_as_paste(action: &str, has_selection: bool, mouse_captured: bool) -> bool {
+pub fn right_click(action: &str, has_selection: bool, mouse_captured: bool) -> RightClick {
+    // A mouse-reporting program owns the pointer, so no local arm applies — including `ignore`,
+    // which would otherwise eat a click the program is waiting for.
     if mouse_captured {
-        return false;
+        return RightClick::Forward;
     }
     match action {
-        "paste" => true,
+        "paste" => RightClick::Paste,
+        "copy" => RightClick::Copy,
         // Copy-or-Paste pastes only when there is nothing selected to copy. The selection is read
         // BEFORE the click is forwarded, so it is the genuine pre-click one rather than a
         // word-select a downstream forward could inject — the same hazard the deleted libghostty
         // fork's own right-click word-select used to create.
-        "copy-or-paste" => !has_selection,
-        _ => false,
+        "copy-or-paste" => {
+            if has_selection {
+                RightClick::Copy
+            } else {
+                RightClick::Paste
+            }
+        },
+        "ignore" => RightClick::Ignore,
+        _ => RightClick::Menu,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipboardWrite, Cut, READLINE_UNDO, clipboard_write, cut_action, cut_delete_count,
-        focus_follows_mouse, forwards_encoder_text, prompt_edit_byte, right_click_intercepts_as_paste,
+        ClipboardWrite, Cut, READLINE_UNDO, RightClick, clipboard_write, cut_action, cut_delete_count,
+        focus_follows_mouse, forwards_encoder_text, prompt_edit_byte, right_click,
     };
 
     #[test]
@@ -274,15 +306,36 @@ mod tests {
 
     #[test]
     fn a_captured_pointer_keeps_its_right_click() {
-        assert!(right_click_intercepts_as_paste("paste", false, false));
-        assert!(!right_click_intercepts_as_paste("paste", false, true));
-        assert!(right_click_intercepts_as_paste("copy-or-paste", false, false));
-        assert!(
-            !right_click_intercepts_as_paste("copy-or-paste", true, false),
-            "with a selection it copies, which needs no protection"
-        );
-        for action in ["context-menu", "copy", "ignore", "not-an-action"] {
-            assert!(!right_click_intercepts_as_paste(action, false, false));
+        assert_eq!(right_click("paste", false, false), RightClick::Paste);
+        for action in ["paste", "copy", "copy-or-paste", "ignore", "context-menu"] {
+            assert_eq!(
+                right_click(action, false, true),
+                RightClick::Forward,
+                "the program owning the pointer outranks every arm, {action} included"
+            );
         }
+    }
+
+    #[test]
+    fn every_arm_of_the_setting_dispatches() {
+        assert_eq!(right_click("copy", true, false), RightClick::Copy);
+        assert_eq!(
+            right_click("copy", false, false),
+            RightClick::Copy,
+            "with nothing selected the copy is empty, which is not the menu"
+        );
+        assert_eq!(right_click("copy-or-paste", true, false), RightClick::Copy);
+        assert_eq!(
+            right_click("copy-or-paste", false, false),
+            RightClick::Paste,
+            "with a selection it copies, which needs no paste protection"
+        );
+        assert_eq!(right_click("ignore", false, false), RightClick::Ignore);
+        assert_eq!(right_click("context-menu", false, false), RightClick::Menu);
+        assert_eq!(
+            right_click("not-an-action", false, false),
+            RightClick::Menu,
+            "an unrecognised token repairs to the default the same way the enum does"
+        );
     }
 }
