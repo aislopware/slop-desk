@@ -6,7 +6,7 @@ import XCTest
 /// Exercises the extensions to ``TerminalViewModel/handleCopyModeKey(_:)`` — the PURE vi
 /// repeat-count accumulation, the `?` backward-find bias, and the `v`/`V`/`⌃v` visual modes (+ their
 /// `adjust_selection` selection-extend) — entirely in-memory: an abstract ``TerminalViewModel/CopyModeKey``
-/// in, a recording ``TerminalSurfaceActions`` mock out. NO `NSEvent`, NO `GhosttySurface`, NO window server
+/// in, a recording ``TerminalSurfaceActions`` mock out. NO `NSEvent`, NO `TerminalSurfaceDriver`, NO window server
 /// (the hang-safety rule). Each test asserts the EXACT binding-action string(s) and the observable pill
 /// mirrors (``viPendingCount`` / ``viVisualMode``), so a key → action regression is caught here, not on
 /// hardware. These are the counterparts to ``CopyModeTests`` (the base nav/copy/exit mapping).
@@ -83,7 +83,7 @@ final class TerminalViewModelViMotionTests: XCTestCase {
     }
 
     /// `n`/`N` are directional (no magnitude), so the count REPEATS the action — `2n` steps two matches. With
-    /// NO find bar wired (the headless fallback: ``onRequestFindNext`` nil) `n` drives libghostty's own forward
+    /// NO find bar wired (the headless fallback: ``onRequestFindNext`` nil) `n` drives libghostty-vt's own forward
     /// nav, so `2n` records two `navigate_search:next` on the surface.
     func testSearchNavRepeatsUnderCount() {
         let (model, rec) = makeModel()
@@ -222,7 +222,7 @@ final class TerminalViewModelViMotionTests: XCTestCase {
         )
     }
 
-    /// `o` (anchor-swap) is a documented no-op — the pinned libghostty fork exposes no swap-ends action — so it
+    /// `o` (anchor-swap) is a documented no-op — libghostty-vt exposes no swap-ends action — so it
     /// emits NOTHING and does not leave the visual mode (the char-range ceiling, see DECISIONS.md).
     func testAnchorSwapIsADocumentedNoOp() {
         let (model, rec) = makeModel()
@@ -264,7 +264,7 @@ final class TerminalViewModelViMotionTests: XCTestCase {
     func testEnterYankExitsViMode() {
         let recorder = RecordingSurfaceActions()
         recorder.selectionText = nil
-        recorder.scrollbackLines = ["one", "two"]
+        recorder.scrollbackText = ["one", "two"]
         let model = TerminalViewModel(surface: recorder)
         var copied: String?
         model.copyToPasteboard = { copied = $0 }

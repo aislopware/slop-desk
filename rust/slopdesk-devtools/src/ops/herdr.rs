@@ -8,8 +8,8 @@
 //!    (`slopdesk-herdr manifests`, which fails loudly if the manifest SET changed),
 //! 3. list `src/detect` `*.rs` changes — engine-code changes need a manual port, but even an unread
 //!    one cannot slip through, because step 5 diffs the real binaries,
-//! 4. build the herdr oracle (its vendored `libghostty-vt` needs the pinned Zig and the `xcrun` SDK
-//!    shim from `ThirdParty/ghostty`) and slopdesk's own, `slopdesk-screend explain`,
+//! 4. build the herdr oracle (its vendored `libghostty-vt` needs a host Zig) and slopdesk's own,
+//!    `slopdesk-screend explain`,
 //! 5. run `slopdesk-herdr differential` — ~10k generated screens through BOTH engines, field-level
 //!    diff of the full evaluation traces,
 //! 6. run the screend parity suite,
@@ -21,9 +21,8 @@
 //! `set -u` treats an empty array's expansion as an unbound variable, and the ANSI escape codes
 //! hand-written into every log line.
 
-use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
-use std::{env, fs};
 
 use super::say;
 use crate::proc;
@@ -165,7 +164,7 @@ pub fn run(root: &Path, herdr_dir: &Path, target: &str, update_pin: bool) -> Res
         "herdr-sync",
         "building herdr oracle (cargo, vendored libghostty-vt via Zig)…",
     );
-    build_oracle(root, herdr_dir)?;
+    build_oracle(herdr_dir)?;
 
     say(
         "herdr-sync",
@@ -266,44 +265,27 @@ fn report_delta(root: &Path, herdr_dir: &Path, pin: &str, target_sha: &str) -> R
     Ok(())
 }
 
-/// Build herdr's own binary, with the pinned Zig and the SDK shim on `PATH` when they are there.
+/// Build herdr's own binary, with whatever Zig the host has.
+///
+/// It needs one: herdr vendors `libghostty-vt`, whose `build.rs` compiles ghostty with Zig. This
+/// used to hand it the fork's OWN pinned toolchain and `xcrun` SDK shim out of
+/// `ThirdParty/ghostty/.toolchain` and `.work/bin`, both of them by-products of a
+/// `build-libghostty.sh` run. The fork is gone (`docs/68`), so those directories can no longer be
+/// produced and pointing at them would be a warm path to nothing. Our own engine takes its source
+/// from `ThirdParty/tools/tools.lock` and needs no toolchain of the fork's, so the UPSTREAM oracle
+/// is left to resolve Zig the way its own README says — a failure here is a missing host
+/// dependency, and it says so in cargo's words rather than in ours.
 ///
 /// # Errors
 /// When the build fails.
-fn build_oracle(root: &Path, herdr_dir: &Path) -> Result<(), String> {
+fn build_oracle(herdr_dir: &Path) -> Result<(), String> {
     use std::process::Command;
 
-    let zig = root.join("ThirdParty/ghostty/.toolchain/zig-aarch64-macos-0.15.2/zig");
-    let shim = root.join("ThirdParty/ghostty/.work/bin");
-    let mut overrides: BTreeMap<&str, String> = BTreeMap::new();
-    if zig.is_file() {
-        overrides.insert("ZIG", zig.display().to_string());
-    }
-    if shim.join("xcrun").is_file() {
-        let path = env::var("PATH").unwrap_or_default();
-        overrides.insert("PATH", format!("{}:{path}", shim.display()));
-    } else {
-        say(
-            "herdr-sync",
-            &format!(
-                "warning: no xcrun SDK shim at {} — if the zig step fails with",
-                shim.display()
-            ),
-        );
-        say(
-            "herdr-sync",
-            "         undefined libSystem symbols, run ThirdParty/ghostty/build-libghostty.sh once",
-        );
-    }
-
-    let mut command = Command::new("cargo");
-    command
+    let status = Command::new("cargo")
         .args(["build", "--release", "--bin", "herdr"])
-        .current_dir(herdr_dir);
-    for (key, value) in overrides {
-        command.env(key, value);
-    }
-    let status = command.status().map_err(|error| format!("cargo: {error}"))?;
+        .current_dir(herdr_dir)
+        .status()
+        .map_err(|error| format!("cargo: {error}"))?;
     if status.success() {
         Ok(())
     } else {

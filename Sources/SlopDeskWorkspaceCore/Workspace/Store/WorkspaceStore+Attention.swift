@@ -501,7 +501,7 @@ public extension WorkspaceStore {
     /// question (the type-27 ``paneAgentLabel``, or `nil`), and the last few command-block lines as the
     /// "recent output" stand-in. ALL client-side + swift-build-visible — the spec title from the tree, the
     /// label from ``agentLabel(for:)``, and the recent lines from the per-pane ``TerminalBlockModel`` (no
-    /// `GhosttySurface`/`scrollbackTextLines()` app-target dependency, so the overlay compiles + tests
+    /// live-surface / `scrollbackLines()` dependency, so the overlay compiles + tests
     /// headlessly). When neither a label nor any block exists, `recent` is empty (the view shows a
     /// "no recent output" note).
     func peekContent(for id: PaneID, recentLimit: Int = 4) -> PeekContent {

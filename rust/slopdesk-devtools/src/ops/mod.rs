@@ -2,7 +2,7 @@
 //!
 //! ## Where the line with [`crate::gates`] falls
 //! A gate answers a yes/no about the tree and a `just` target runs it. Nothing here does. These
-//! install a `LaunchAgent`, restart a live daemon, rewrite a generated `project.yml`, re-sync a
+//! install a `LaunchAgent`, restart a live daemon, regenerate an `.xcodeproj`, re-sync a
 //! vendor's theme resources, or drive an eighty-second soak — every one of them CHANGES the
 //! machine or the working tree, which is exactly why none of them is in `just check` and why each
 //! prints what it is about to do before it does it.
@@ -14,7 +14,7 @@
 //! | --- | --- |
 //! | `restart-hostd.sh` | [`hostd`] |
 //! | `install-superd.sh` · `install-screend.sh` | [`launchd`] — one installer, two agents |
-//! | `enable-macos-renderer.sh` · `enable-ios-renderer.sh` | [`renderer`] — one injector, two specs |
+//! | `enable-macos-renderer.sh` · `enable-ios-renderer.sh` | GONE — see [`xcodegen`] |
 //! | `monokai-sync.sh` | [`monokai`] |
 //! | `herdr-sync.sh` | [`herdr`] |
 //! | `measure-code-server-start.sh` | [`codeserver`] |
@@ -25,6 +25,15 @@
 //! `project.yml` anchor sets — and shell had no way to share the logic without a third file to
 //! `source`. The pairs are one function and two constants here, which is the whole reason the
 //! ported line count is under half the shell's.
+//!
+//! ## The pair that stopped existing
+//! The two renderer injectors are gone with the libghostty fork they wired in (`docs/68` §10). They
+//! existed because the terminal conformer was compiled by NO `Package.swift` target — it joined the
+//! Xcode app by a text insert into a committed spec, on demand, because the xcframework it linked
+//! was gitignored and xcodegen resolves a framework path at GENERATE time. The conformer is a
+//! package source now, `swift build` compiles it, and a spec that names no un-buildable artifact
+//! needs no injector. What is LEFT of that pair is the half that was never about the fork:
+//! [`xcodegen`], the one place this crate shells out to regenerate a `.xcodeproj`.
 //!
 //! ## What stopped being a dependency
 //! `jq` (the launch record is [`serde_json`]), `python3` (the timestamps, the JSON transform and
@@ -45,12 +54,14 @@ pub mod herdr;
 pub mod hostd;
 pub mod launchd;
 pub mod monokai;
-pub mod renderer;
 pub mod soak;
 pub mod videoinput;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::proc;
 
 /// The `SLOPDESK_*` pairs that give a daemon a container of its own, with the directories made.
 ///
@@ -111,6 +122,60 @@ pub fn say(tool: &str, what: &str) {
     println!("{tool}: {what}");
 }
 
+/// The two client apps whose `.xcodeproj` is generated, by the name the CLI spells.
+///
+/// A table rather than two verbs, for the same reason [`launchd`]'s agents are one: the pair
+/// differs in a path and in nothing else, and the shell's answer to that was a second 170-line
+/// file.
+const SPECS: &[(&str, &str)] = &[
+    ("macos", "Apps/ClientApp-macOS/project.yml"),
+    ("ios", "Apps/ClientApp-iOS/project.yml"),
+];
+
+/// The spec a target name selects, relative to the repo root.
+///
+/// # Errors
+/// When the name is neither of the two.
+pub fn spec_for(name: &str) -> Result<&'static str, String> {
+    SPECS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, spec)| *spec)
+        .ok_or_else(|| format!("unknown app: {name} (macos | ios)"))
+}
+
+/// Regenerate a spec's `.xcodeproj`, with `xcodegen`'s own chatter swallowed.
+///
+/// Two callers, and they are shared rather than each spawning their own because they must agree on
+/// what "generated" means: the `regenerate` verb, and [`crate::gui`]'s `build_app`, which every GUI
+/// gate goes through. A generated project that has drifted from its spec fails to build with no
+/// hint at the cause — the failure names a missing FILE, never the stale `.xcodeproj` that still
+/// lists it — so both regenerate before they build rather than trusting what the last run left.
+///
+/// [`crate::release`] deliberately does NOT come through here: it spawns `xcodegen --quiet` under
+/// its own `proc::run`, so every command a release issues appears in the release's own step log.
+/// That is one narrative a caller should not be able to opt out of.
+///
+/// # Errors
+/// When `xcodegen` is missing or fails.
+pub fn xcodegen(root: &Path, spec: &Path) -> Result<(), String> {
+    if !proc::on_path("xcodegen") {
+        return Err("xcodegen not found on PATH (install: brew install xcodegen)".to_owned());
+    }
+    say("xcodegen", &format!("generate --spec {}", spec.display()));
+    let status = Command::new("xcodegen")
+        .args(["generate", "--spec", &spec.to_string_lossy()])
+        .current_dir(root)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .map_err(|error| format!("xcodegen: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("xcodegen exited {}", status.code().unwrap_or(-1)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// All four variables, and the two sub-directories actually made.
@@ -130,5 +195,19 @@ mod tests {
         assert!(root.join("scrollback").is_dir(), "the journal directory is made");
         assert!(root.join("drop").is_dir(), "the file-drop directory is made");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Both app names resolve, and a third is refused rather than guessed at.
+    #[test]
+    fn only_the_two_apps_that_exist_resolve() {
+        assert_eq!(
+            super::spec_for("macos").expect("macos"),
+            "Apps/ClientApp-macOS/project.yml"
+        );
+        assert_eq!(
+            super::spec_for("ios").expect("ios"),
+            "Apps/ClientApp-iOS/project.yml"
+        );
+        assert!(super::spec_for("tvos").is_err());
     }
 }

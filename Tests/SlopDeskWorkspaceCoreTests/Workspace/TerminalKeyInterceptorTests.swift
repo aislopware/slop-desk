@@ -3,7 +3,7 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// WS-B / B4·B5·B6·B7 — the PURE, headless ``TerminalKeyInterceptor`` the per-surface key paths (the
-/// libghostty terminal, the remote-video surface, the iOS responder) consult BEFORE their own raw-byte
+/// libghostty-vt terminal, the remote-video surface, the iOS responder) consult BEFORE their own raw-byte
 /// branches. Driven entirely via `intercept(_:)` with an injected single-chord resolver and action sink —
 /// no AppKit/UIKit. The interceptor is single-chord ONLY: the tmux-style prefix engine it once carried is
 /// REMOVED (DECISIONS.md 2026-07-22), so a Ctrl-letter is never claimed and ⌃B reaches the PTY untouched.

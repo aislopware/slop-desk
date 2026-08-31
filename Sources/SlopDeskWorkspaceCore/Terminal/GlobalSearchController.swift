@@ -145,7 +145,7 @@ public struct GlobalSearchCollapseState: Equatable, Sendable {
 
 /// The PURE engine behind ⇧⌘F Global Search: it runs the proven ``TerminalSearchController/computeMatches``
 /// over every live terminal pane's scrollback mirror and assembles the grouped, summarised results the
-/// global-search surface renders. NO view, NO store, NO libghostty — the surface-collection glue (snapshotting
+/// global-search surface renders. NO view, NO store, NO engine — the surface-collection glue (snapshotting
 /// each pane's scrollback, the jump) lives in `WorkspaceStore`; THIS is the single, fully unit-testable core,
 /// reusing the SAME match math as the in-pane find bar so the two never drift.
 ///
@@ -223,23 +223,23 @@ public enum GlobalSearchController {
         return GlobalSearchResults(groups: groups, totalMatches: totalMatches, tabCount: groups.count)
     }
 
-    /// The ORDERED libghostty surface-action sequence (click-to-line) that lands the in-pane viewport on the
+    /// The ORDERED terminal-surface action sequence (click-to-line) that lands the in-pane viewport on the
     /// CLICKED `hit` — correct in EVERY mode (literal case-insensitive, literal case-sensitive, and regex).
     ///
     /// LANDING is mode-INDEPENDENT and viewport-INDEPENDENT: ALWAYS scroll the viewport straight to the clicked
-    /// hit's row via `scroll_to_row:<physicalRow>`. `hit.line` indexes the LOGICAL (unwrapped)
+    /// hit's row via `scroll_to_row:<screenRow>`. `hit.line` indexes the LOGICAL (unwrapped)
     /// `searchScrollbackLines()` mirror that `computeMatches` scanned, whereas `scroll_to_row:<usize>` addresses
-    /// PHYSICAL grid rows (soft-wrap continuations count) — so the logical index is mapped through
-    /// ``ScrollbackWrapMapper/physicalRow(forLogicalLine:in:columns:)`` (passing the source `lines` + grid
-    /// `columns`) before scrolling, landing the clicked row regardless of case-sensitivity, regex, wrapped
-    /// output, or where the viewport currently sits. When `columns <= 0` (grid width unknown) the mapping is
-    /// the identity (row treated as unwrapped). An ordinal `navigate_search:next` walk is avoided: it is
+    /// SCREEN rows (soft-wrap continuations count) — so the row is READ OFF the same mirror
+    /// (``TerminalScrollbackLine/firstRow``, which the engine reported) before scrolling, landing the clicked
+    /// row regardless of case-sensitivity, regex, wrapped output, or where the viewport currently sits. A
+    /// caller that passes no `lines` (or a stale index) gets `hit.line` unmapped — the pre-wrap-fix behaviour,
+    /// which is the honest floor when there is no mirror to ask. An ordinal `navigate_search:next` walk is avoided: it is
     /// viewport-relative, so a mid-buffer viewport mis-lands, and it is WRONG in case-SENSITIVE mode — this
-    /// engine counts hits case-sensitively, but libghostty `search:` is case-INSENSITIVE, so a case-sensitive
-    /// ordinal does not map to libghostty's larger case-insensitive match cursor.
+    /// engine counts hits case-sensitively, but the surface's own `search:` (`VtSession::search`) is
+    /// case-INSENSITIVE, so a case-sensitive ordinal does not map to its larger case-insensitive match cursor.
     ///
     /// The literal `search:<query>` matcher is armed ONLY as an amber-highlight aid in the one mode where it is
-    /// FAITHFUL — literal + case-INSENSITIVE (libghostty's `changeNeedle` compares needles case-insensitively).
+    /// FAITHFUL — literal + case-INSENSITIVE (`VtSession::search` compares needles case-insensitively).
     /// In literal case-SENSITIVE mode arming it would tint extra case-folded spans, and in REGEX mode it would
     /// tint the pattern TEXT (usually 0 hits once it holds metacharacters); in BOTH we instead `end_search` to
     /// clear any stale highlight and just scroll — matching the find bar's documented literal-highlight ceiling
@@ -251,14 +251,14 @@ public enum GlobalSearchController {
         query: String,
         caseSensitive: Bool = false,
         isRegex: Bool = false,
-        lines: [String] = [],
-        columns: Int = 0,
+        lines: [TerminalScrollbackLine] = [],
     ) -> [String] {
         guard !query.isEmpty else { return [] }
-        // Map the LOGICAL (unwrapped) hit line to the PHYSICAL grid row `scroll_to_row` addresses (soft-wrap
-        // continuations count). `columns <= 0` (unknown grid width) ⇒ identity, i.e. the pre-wrap-fix row.
-        let row = ScrollbackWrapMapper.physicalRow(forLogicalLine: hit.line, in: lines, columns: columns)
-        // Literal + case-insensitive is the ONLY mode where libghostty's literal matcher highlights the SAME
+        // The LOGICAL (unwrapped) hit line's SCREEN row, read off the same mirror `computeMatches` scanned —
+        // the engine's own number, not an estimate from the grid width. No mirror / stale index ⇒ the
+        // unmapped row, i.e. the pre-wrap-fix behaviour.
+        let row = lines.row(forLine: hit.line) ?? hit.line
+        // Literal + case-insensitive is the ONLY mode where the surface's own literal matcher highlights the SAME
         // spans this engine found — arm it for the amber highlight, THEN scroll_to_row to land on the exact
         // clicked row (the arm itself only scrolls to the nearest match, so the scroll must follow it). In
         // case-sensitive literal OR regex mode arming it would highlight wrong/zero spans, so the stale

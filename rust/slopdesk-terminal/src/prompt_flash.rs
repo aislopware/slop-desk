@@ -11,10 +11,11 @@
 //!
 //! ## The two field reports this encodes
 //!
-//! libghostty pins the jumped-to prompt at row 0, but the OSC-133 `A` mark is emitted at the
-//! PRE-PROMPT cursor position. With a spacer-printing prompt — starship's default `add_newline` —
-//! the pinned row is that blank spacer and the visible prompt text sits on row 1 or 2. A `row 0 is
-//! non-empty` guard therefore made the flash never paint on a starship host at all.
+//! The jump-to-prompt scroll (already Rust, not the engine's decision — `docs/68` §10) pins the
+//! landed prompt at row 0, but the OSC-133 `A` mark is emitted at the PRE-PROMPT cursor position.
+//! With a spacer-printing prompt — starship's default `add_newline` — the pinned row is that blank
+//! spacer and the visible prompt text sits on row 1 or 2. A `row 0 is non-empty` guard therefore
+//! made the flash never paint on a starship host at all.
 //!
 //! And a row whose text fills the whole grid width soft-wrapped, so the row below CONTINUES the
 //! same logical line. The first fix flashed only the anchor row, which read as a truncated cue.

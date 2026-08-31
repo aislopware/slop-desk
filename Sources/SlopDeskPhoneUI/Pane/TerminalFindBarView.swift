@@ -7,9 +7,9 @@
 // than agree with them.
 //
 // The behaviour the model owns, in one line each, so this file can be read without opening it: the
-// counter counts the `scrollbackTextLines()` snapshot taken on open while libghostty owns the live
+// counter counts the `scrollbackLines()` snapshot taken on open while the surface owns the live
 // highlight (a documented divergence); regex / whole-word / case-sensitive modes are ROW-DRIVEN because
-// libghostty's matcher is a literal, case-insensitive substring scan; literal mode arms `search:` and
+// the surface's matcher is a literal, case-insensitive substring scan; literal mode arms `search:` and
 // steps `navigate_search:`. The full argument is in the model's header.
 //
 // Anatomy matches `find.png` (top-trailing of the focused pane, floating card, `Slate.*` tokens ONLY):
@@ -44,7 +44,7 @@
 // through two DIFFERENT doors — ↩ is `textFieldShouldReturn`, ⇧↩ is a published `UIKeyCommand` — so the
 // guard is structural here and a value that re-stated it would be a value with nothing to decide.
 //
-// Hang-safety: NO `GhosttySurface` / VideoToolbox / Metal is touched here — the bar only calls the model
+// Hang-safety: NO `TerminalSurface` / VideoToolbox / Metal is touched here — the bar only calls the model
 // seam, which probes `surface as? TerminalSurfaceActions` and degrades to a no-op on a headless surface.
 
 #if os(iOS)
@@ -327,7 +327,7 @@ final class TerminalFindBarView: UIView, UITextFieldDelegate {
 
     @objc
     private func queryChanged() {
-        // Live query edit — the model recomputes the counter and re-arms libghostty's highlight.
+        // Live query edit — the model recomputes the counter and re-arms `libghostty-vt`'s highlight.
         model.setQuery(field.text ?? "")
     }
 

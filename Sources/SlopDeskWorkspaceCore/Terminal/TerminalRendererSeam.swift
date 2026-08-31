@@ -1,11 +1,17 @@
 // TerminalRendererSeam — the seam between the client's canvas and the terminal pixels.
 //
 // PATH 1 streams raw VT bytes; *how* they become pixels is hidden behind this seam so the UI
-// compiles and is testable WITHOUT libghostty. The production renderer is `GhosttyLayerBackedView`
-// (`ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`), a LAYER-HOSTING view
-// libghostty installs its own `IOSurfaceLayer` into. It lives in the Xcode app target, which links
-// `libghostty.xcframework` and imports the `CGhostty` clang module, so a headless `swift build`
-// never sees it — hence a registered factory rather than a direct reference.
+// compiles and is testable without a GPU. The production renderer lives in `Sources/SlopDeskTerminal/`
+// now, a layer-hosting view that owns a `CAMetalLayer` Rust draws into (`docs/68`).
+//
+// ⚠️ THE SEAM SURVIVED ITS OWN REASON FOR EXISTING, and that is worth stating rather than letting
+// the next reader assume it is vestigial. It used to be a factory because the conformer was OUTSIDE
+// the SwiftPM graph: it linked a vendored `libghostty.xcframework` through the `CGhostty` clang
+// module, joined the Xcode app through a spec entry, and naming it here would have dragged the fork
+// into a headless `swift build`. That is all gone — `swift build` compiles the conformer today. What
+// keeps the factory is the OTHER half of the argument, which never depended on the fork: the `nil`
+// path is how every canvas test mounts a leaf with no renderer at all (`LeafSeamSlotTests`), and a
+// canvas naming the view directly would create a Metal device under `swift test`.
 //
 // ⚠️ THIS SEAM HAD TWO SHAPES AND NOW HAS ONE. `shared`/`make` used to hand back a SwiftUI
 // `AnyView`, and `nativeShared`/`makeNative` handed back the `NSView` itself; the doc comment on the
@@ -24,9 +30,9 @@
 
 /// Injects the production terminal renderer when the app target provides one.
 ///
-/// The cross-platform library cannot reference `GhosttyTerminalView` — naming it would force
-/// libghostty into the headless `swift build`. Instead the Xcode app target sets ``shared`` at
-/// launch and the canvas calls ``make(model:isFocused:)``. This is the documented extension point.
+/// The cross-platform library does not reference the renderer view — naming it would create a Metal
+/// device in every canvas test. Instead `SlopDeskTerminal`'s installer sets ``shared`` at launch and
+/// the canvas calls ``make(model:isFocused:)``. This is the documented extension point.
 @preconcurrency
 @MainActor
 public final class TerminalRendererFactory {
@@ -50,7 +56,8 @@ public final class TerminalRendererFactory {
     ///
     /// `nil` rather than a placeholder view: the canvas is the only thing that knows where a
     /// build-status panel belongs in ITS layout, and a seam that returned one would be choosing.
-    /// libghostty is the renderer (DECISIONS / doc 17) — there is no fallback VT emulator.
+    /// `libghostty-vt` through `rust/slopdesk-vterm` is the engine and this repo's own renderer draws
+    /// it (`docs/68`) — there is no second VT emulator to fall back to.
     public static func make(model: TerminalViewModel, isFocused: Bool) -> TerminalSurfaceHosting? {
         guard let factory = shared else { return nil }
         return factory(model, isFocused)
@@ -65,33 +72,32 @@ public final class TerminalRendererFactory {
 /// would be the canvas reaching into the renderer, and the renderer is the one thing on this seam
 /// neither UI target may name.
 ///
-/// ⚠️ The only conformer is `GhosttyLayerBackedView`, in
-/// `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — a file NO
-/// `Package.swift` target compiles (it joins the Xcode app target via
-/// `slopdesk-ops enable-renderer macos`). A grep over `Sources/` and `Tests/` alone reads this
-/// protocol as unimplemented, and it is not. Same trap as
-/// ``TerminalViewModel/makeCopyModeKey(event:)``.
+/// The conformer is in `Sources/SlopDeskTerminal/`, and `swift build` compiles it. That is new: it
+/// used to live outside every `Package.swift` target, joining the Xcode app through an operator
+/// script, so a grep over `Sources/` and `Tests/` read this protocol as unimplemented when it was
+/// not. Nothing to warn about here any more — the trap moved out with the fork (`docs/68`).
 @preconcurrency
 @MainActor
 public protocol TerminalSurfaceHosting: AnyObject {
     /// The layer-hosting view to add as a subview. Add it, size it, and otherwise leave it alone: it
-    /// owns its `layer` slot (libghostty installs an `IOSurfaceLayer` there) and sizes that layer in
-    /// its own layout pass.
+    /// owns its `layer` slot (a `CAMetalLayer` the renderer draws into) and sizes that layer, and the
+    /// drawable behind it, in its own layout pass.
     var surfaceView: PlatformView { get }
 
-    /// Re-push the pane's WORKSPACE focus. Drives the keyboard responder and libghostty's render
-    /// focus (solid vs hollow cursor); it does NOT gate render-liveness, so an unfocused split
-    /// sibling keeps repainting. Idempotent — the renderer dedupes and coalesces.
+    /// Re-push the pane's WORKSPACE focus. Drives the keyboard responder and the renderer's cursor
+    /// (solid vs hollow — `slopdesk_termrender::layout::cursor` forces `Hollow` when unfocused,
+    /// whatever the shell asked for); it does NOT gate render-liveness, so an unfocused split sibling
+    /// keeps repainting. Idempotent — the renderer dedupes and coalesces.
     func setPaneFocused(_ isFocused: Bool)
 
-    /// Drop the libghostty surface. Removing the view from its superview is NOT enough: the surface
-    /// owns renderer/io threads that must be torn down explicitly.
+    /// Drop the surface. Removing the view from its superview is NOT enough: the host holds a
+    /// `slopdesk-vterm` handle and a display link, and both outlive the view hierarchy unless said so.
     func detachSurface()
 }
 
 /// The MODAL POINTER SHIELD — whether a modal overlay card (command palette / Open Quickly /
 /// connect / cheat sheet / Peek & Reply) is floating over the workspace, read by the production
-/// renderer's pointer-move handling before it forwards a position to libghostty.
+/// renderer's pointer-move handling before it forwards a position to the engine.
 ///
 /// The shield exists because an AppKit `NSTrackingArea` is RECT-based: it keeps firing no matter
 /// what is composited above it, so with the palette open the terminal underneath kept feeding

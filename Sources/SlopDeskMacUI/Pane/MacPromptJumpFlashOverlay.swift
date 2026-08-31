@@ -3,7 +3,7 @@
 // The AppKit half of ``PromptJumpFlashOverlayView`` (the vim-highlightedyank idiom). A ⌘PageUp/⌘PageDown
 // (or navigator) prompt jump replaces the whole viewport in one frame — the eye has no scroll motion
 // to follow, so the user lands with zero orientation. This overlay paints ONE accent fade over the
-// landed prompt row the instant the jump settles, anchoring the eye where the jump went. libghostty
+// landed prompt row the instant the jump settles, anchoring the eye where the jump went. `libghostty-vt`
 // PINS the jumped-to prompt at viewport row 0, so row 0 is the honest target, and the model's
 // arm/settle logic already SUPPRESSED the epoch bump for the one case where that would lie (a forward
 // jump clamped into the active area) — absent, never wrong.
@@ -26,7 +26,6 @@
 import AppKit
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 @MainActor

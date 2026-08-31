@@ -10,8 +10,9 @@
 # GitHub secret is BETTER_UPDATE_ROBOT — the robot token that unlocks the vault. Setup and the
 # full variable list: docs/49-release-pipeline.md.
 #
-# ARM64 ONLY. libghostty ships a macos-arm64 slice and nothing else, and the apps deploy against
-# macOS 26 (no Intel Mac runs it). There is deliberately no x86_64 matrix leg.
+# ARM64 ONLY. The apps deploy against macOS 26, which no Intel Mac runs, and the tap's formula and
+# cask both declare `depends_on arch: :arm64` (docs/49 reasons 2 and 3 — either alone is
+# sufficient). There is deliberately no x86_64 matrix leg.
 name: Release
 
 run-name: "Release ${{ inputs.version || github.ref_name }}${{ inputs.dry-run && ' (dry run)' || '' }}"
@@ -37,76 +38,15 @@ concurrency: release
 permissions: {}
 
 jobs:
-  # ── libghostty ────────────────────────────────────────────────────────────────────────────
-  # Split out and cached because it is the slow, fragile half: a pinned Zig 0.15.2 toolchain,
-  # a ghostty fork clone, a Metal shader compile, and a `zig build` that is EXPECTED to exit
-  # non-zero (build-libghostty.sh harvests the intermediate libtool archives itself — see
-  # caveat #3 in its header). It only reruns when the recipe or the pinned delta changes.
-  libghostty:
-    name: libghostty.xcframework
-    runs-on: macos-26
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Cache the built xcframework
-        id: cache
-        uses: actions/cache@v6
-        with:
-          path: ThirdParty/ghostty/libghostty.xcframework
-          # Everything that can change the output: the recipe, the consolidated fork delta, and
-          # the pins recorded in the README. Bump nothing by hand — edit those files instead.
-          key: libghostty-${{ runner.os }}-universal-${{ hashFiles('ThirdParty/ghostty/build-libghostty.sh', 'ThirdParty/ghostty/slopdesk-libghostty-on-v1.3.1.patch', 'ThirdParty/ghostty/README.md') }}
-
-      # build-libghostty.sh needs an OLD macOS SDK (<= 15.x) for its xcrun shim: Zig 0.15.2
-      # cannot link the macOS 26 SDK (caveat #1). The runner image keeps older SDKs inside the
-      # older Xcode bundles, so find one instead of assuming the CLT path the script defaults to.
-      - name: Locate a <= 15.x macOS SDK for the xcrun shim
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          sdk="$(find /Library/Developer/CommandLineTools/SDKs /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs \
-                   -maxdepth 1 -name 'MacOSX1[45]*.sdk' 2>/dev/null | sort -V | tail -1)"
-          if [ -z "${sdk}" ]; then
-            echo "::error::No MacOSX14/15 SDK on this runner — the Zig 0.15.2 link wall (build-libghostty.sh caveat #1) cannot be worked around. Pin an older Xcode with maxim-lobanov/setup-xcode, or vendor the xcframework."
-            exit 1
-          fi
-          echo "Using SDK shim: ${sdk}"
-          echo "MACOS_SDK_SHIM_PATH=${sdk}" >> "${GITHUB_ENV}"
-
-      - name: Install the Metal toolchain
-        if: steps.cache.outputs.cache-hit != 'true'
-        # The fork compiles Ghostty.metallib; without this the libtool step never runs and the
-        # harvest finds nothing (caveat #2). Already present on some images — hence `|| true`
-        # is NOT used: a real failure here must fail the job, not surface 40 minutes later.
-        run: xcodebuild -downloadComponent MetalToolchain
-
-      # XCFRAMEWORK_TARGET=universal, not the default `native`, even though this release ships
-      # macOS arm64 only. The native path assembles its macOS slice from libghostty-fat.a plus the
-      # Zig root and nothing else; the universal path additionally re-adds the standalone
-      # dependency archives (sentry, libmacos, freetype, oniguruma…) that the fork's per-slice
-      # libtool merge drops. A native slice therefore links the CLI fine and then fails the app
-      # link with hundreds of undefined _sentry_*/_zig_os_log_with_type symbols — which is exactly
-      # what CI did. `universal` is also the artifact the dev host has validated (README, "Build
-      # outcome"). The extra iOS slices cost build time and are otherwise inert here; no iOS SDK
-      # constraint applies (caveat #4).
-      - name: Build libghostty.xcframework
-        if: steps.cache.outputs.cache-hit != 'true'
-        env:
-          XCFRAMEWORK_TARGET: universal
-        run: ThirdParty/ghostty/build-libghostty.sh
-
-      - name: Upload the xcframework
-        uses: actions/upload-artifact@v7
-        with:
-          name: libghostty-xcframework
-          path: ThirdParty/ghostty/libghostty.xcframework
-          retention-days: 1
-
   # ── build + sign + notarize ───────────────────────────────────────────────────────────────
+  # There used to be a `libghostty` job ahead of this one, split out and cached because it was the
+  # slow, fragile half: a pinned Zig 0.15.2 toolchain, a fork clone that could not link the macOS 26
+  # SDK, a Metal shader compile, and a `zig build` that was EXPECTED to exit non-zero. The fork is
+  # gone (docs/68), so the pipeline is one job again — the terminal engine is a crate the FFI step
+  # below already builds, and it takes its ghostty source from the commit `ThirdParty/tools/tools.lock`
+  # pins rather than from a clone this workflow has to perform.
   package:
     name: Build, sign, notarize
-    needs: libghostty
     runs-on: macos-26
     timeout-minutes: 90
     outputs:
@@ -137,19 +77,14 @@ jobs:
           cargo run --release --quiet --manifest-path rust/slopdesk-devtools/Cargo.toml \
             --bin slopdesk-release -- changelog section "${{ steps.version.outputs.version }}" > /dev/null
 
-      - uses: actions/download-artifact@v8
-        with:
-          name: libghostty-xcframework
-          path: ThirdParty/ghostty/libghostty.xcframework
-
-      # The OTHER linked artifact, and the pipeline did not know about it. `Package.swift` declares a
+      # The ONE linked artifact, and the pipeline did not know about it. `Package.swift` declares a
       # `binaryTarget` at `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework`, that path is gitignored
       # (110 MB for the three slices, rewritten by every Rust edit — `slopdesk-devtools`'
       # `gates::ffi` explains the choice), and no step here built it: SwiftPM cannot resolve the
       # graph at all without the file, so the first tag cut after the FFI work lands would fail
       # before it compiled a line. It never bit because the whole port was still uncommitted, which
-      # is exactly the window in which to notice. Same shape as the libghostty job above, minus the
-      # cache: the gate stamps its own inputs and a runner is cold every time regardless.
+      # is exactly the window in which to notice. No cache: the gate stamps its own inputs and a
+      # runner is cold every time regardless.
       #
       # `just ffi` rather than a script path, and `linked-artifacts-are-built` in
       # `rust/slopdesk-invariants` is what keeps this step honest: it derives the producer from the

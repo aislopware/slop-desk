@@ -341,7 +341,12 @@ const OWN_PATH: &str = "rust/slopdesk-invariants/src/rules/shared_constants.rs";
 /// those would report every golden expectation in the tree as a transcription of the constant it
 /// exists to hold still. So the exclusion is a `Tests` PATH COMPONENT and not the single top-level
 /// root: the iOS suite lives inside `Apps/`, which this does audit.
-const SWIFT_ROOTS: [&str; 3] = ["Sources", "Apps", "ThirdParty/ghostty/integration"];
+///
+/// The third entry is gone with the fork that needed it (docs/68): `ThirdParty/ghostty/integration`
+/// was audited because it held Swift that no `Package.swift` target compiled, and its constants
+/// were therefore transcribed rather than imported. That code is package source under `Sources` now
+/// and the first entry reaches it.
+const SWIFT_ROOTS: [&str; 2] = ["Sources", "Apps"];
 
 // ------------------------------------------------------------------------------------------- //
 // Reading numbers

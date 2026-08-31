@@ -13,7 +13,7 @@ import XCTest
 ///     `FakePaneSession`-shaped store, using the `foldEventForTesting` + `onResumeIdentitySnapshot`
 ///     seam exactly as `ConnectionViewModelTitleTests` uses `onTitleChanged`.
 ///
-/// Tests use no `NWConnection`, no `GhosttySurface`, no real network — hang-safe by construction.
+/// Tests use no `NWConnection`, no `TerminalSurfaceDriver`, no real network — hang-safe by construction.
 @MainActor
 final class DetachResumeIdentityTests: XCTestCase {
     // MARK: - Helpers

@@ -109,7 +109,9 @@ prefix that has never existed in this checkout.)
 - `rust/slopdesk-instruments/src/bin/fuzzybench.rs` — the ranking-parity bench against real `fzf --filter`
 - `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — the production renderer's
   `find(_:)` responder and context-menu item (line numbers from the 2026-06-25 survey are long stale;
-  the file is ~4000 lines now)
+  the file was ~4000 lines by the end). DELETED with the fork by `docs/68-terminal-surface-in-rust.md`;
+  the responder and the menu item are event plumbing and stay Swift on the new surface view (`docs/68`
+  §10), so what this row names moved file, not layer
 
 ---
 
@@ -131,7 +133,7 @@ All four sub-claims of the 2026-06-25 "never mounted" finding are now false:
 
 ### Find-in-terminal: the chain terminates in a view now
 
-`GhosttyTerminalView.find(_:)` → `model.onRequestFind?()` → the bar, because
+the surface view's `find(_:)` (`GhosttyTerminalView.find(_:)` when this was written) → `model.onRequestFind?()` → the bar, because
 `TerminalPaneWiring.swift:222` assigns the closure when a pane mounts and clears it at :242.
 `WorkspaceStore.requestFindInActivePane()` fires the same callback for the menu/chord path. The
 `TODO(L3)` placeholder in `TerminalLeafView` is gone.

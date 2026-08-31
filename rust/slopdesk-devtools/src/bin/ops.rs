@@ -5,13 +5,13 @@
 //! tool in this crate does, and prints the failure it is handed.
 //!
 //! These are NOT gates. Every verb changes the machine or the working tree — it installs a
-//! `LaunchAgent`, restarts a live daemon, rewrites a generated `project.yml`, re-downloads a
+//! `LaunchAgent`, restarts a live daemon, rewrites a generated `.xcodeproj`, re-downloads a
 //! vendor's themes, or drives an eighty-second soak — which is why none of them is in `just check`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use slopdesk_devtools::ops::{codeserver, herdr, hostd, launchd, monokai, renderer, soak, videoinput};
+use slopdesk_devtools::ops::{codeserver, herdr, hostd, launchd, monokai, soak, videoinput};
 use slopdesk_devtools::repo;
 
 /// What the binary answers to.
@@ -23,8 +23,7 @@ usage: slopdesk-ops [--repo-root DIR] <verb> [options]
   install <superd|screend|hostd> [--force] [--uninstall]
                                         the LaunchAgent for a daemon — hostd included, which is
                                         the only way to give a cold machine its first host
-  enable-renderer <macos|ios>           wire the ghostty renderer into a client spec
-  regenerate <macos|ios>                regenerate a spec's .xcodeproj (the restore half)
+  regenerate <macos|ios>                regenerate a client spec's .xcodeproj from the spec
   monokai-sync [--latest]               re-sync the code panel's themes from the marketplace
   herdr-sync [--update-pin] [REF]       prove detect-engine parity against upstream herdr
   measure-code-server [RUNS]            spawn → listening latency, RUNS times (default 3)
@@ -69,8 +68,7 @@ fn main() -> ExitCode {
     match verb.as_str() {
         "restart-hostd" => restart_hostd(&root, rest),
         "install" => install(&root, rest),
-        "enable-renderer" => with_target(rest, |target| renderer::enable(&root, target)),
-        "regenerate" => with_target(rest, |target| renderer::generate(&root, &root.join(target.spec))),
+        "regenerate" => regenerate(&root, rest),
         "monokai-sync" => finish(monokai::run(&root, has_flag(rest, "--latest"))),
         "herdr-sync" => herdr_sync(&root, rest),
         "measure-code-server" => measure_code_server(&root, rest),
@@ -156,17 +154,18 @@ fn install(root: &Path, arguments: &[String]) -> ExitCode {
     }
 }
 
-/// The two verbs that take a renderer target name and nothing else.
-fn with_target<F>(arguments: &[String], act: F) -> ExitCode
-where
-    F: FnOnce(&'static renderer::Target) -> Result<(), String>,
-{
+/// `regenerate <macos|ios>` — put an app's `.xcodeproj` back in step with its committed spec.
+///
+/// A verb rather than something only the gates do internally, because a hand-edited spec is a
+/// normal thing to have and the project generated from the PREVIOUS one fails to build with a
+/// message that names a file rather than the staleness — which is a debugging session, not a hint.
+fn regenerate(root: &Path, arguments: &[String]) -> ExitCode {
     let Some(name) = arguments.first() else {
-        eprintln!("slopdesk-ops: this verb needs a target (macos or ios)");
+        eprintln!("slopdesk-ops: regenerate needs an app (macos or ios)");
         return ExitCode::from(2);
     };
-    match renderer::by_name(name) {
-        Ok(target) => finish(act(target)),
+    match slopdesk_devtools::ops::spec_for(name) {
+        Ok(spec) => finish(slopdesk_devtools::ops::xcodegen(root, &root.join(spec))),
         Err(why) => {
             eprintln!("slopdesk-ops: {why}");
             ExitCode::from(2)

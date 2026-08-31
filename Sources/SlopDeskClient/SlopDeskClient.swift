@@ -61,7 +61,7 @@ public actor SlopDeskClient {
         /// upserts a per-pane block keyed by `index` (the request key for ``blockOutput``). A running
         /// block: `complete == false`, nil exit/duration, partial `outputLen`. `promptOrdinal` is the
         /// block's 1-based prompt-cycle ordinal (counts EVERY OSC-133 `A` cycle incl. blockless empty
-        /// Enters, matching libghostty's `.prompt` rows — the outline-jump anchor; 0 = unknown). See
+        /// Enters, matching `libghostty-vt`'s `.prompt` row marks — the outline-jump anchor; 0 = unknown). See
         /// ``WireMessage/commandBlock(index:exitCode:durationMS:complete:outputLen:commandText:promptOrdinal:)``.
         case commandBlock(
             index: UInt32,

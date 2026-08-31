@@ -7,7 +7,7 @@
 // is empty.
 //
 // The mounting rule is the load-bearing one. Keep-all-mounted is the invariant that keeps a
-// libghostty surface alive across a tab AND a session switch, and it is spelled as a filter over
+// libghostty-vt surface alive across a tab AND a session switch, and it is spelled as a filter over
 // three inputs — so an intersection that drops the active session, or a retention set that goes
 // stale, is a teardown of every pane on screen.
 

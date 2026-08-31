@@ -9,7 +9,7 @@ import XCTest
 /// BETWEEN adjacent siblings (tagged with the right `splitID` / leading `childIndex` / `axis`), and the
 /// degenerate empty / single-leaf cases.
 ///
-/// GUI views are compiled + code-reviewed only (hang-safety — no SCStream/VT/Metal/libghostty in tests);
+/// GUI views are compiled + code-reviewed only (hang-safety — no SCStream/VT/Metal/libghostty-vt in tests);
 /// this render model is the headless proof of the split-view geometry.
 final class SplitTreeRenderModelTests: XCTestCase {
     private let eps: CGFloat = 1e-6

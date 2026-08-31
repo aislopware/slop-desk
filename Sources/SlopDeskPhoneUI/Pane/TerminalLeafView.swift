@@ -17,7 +17,7 @@
 // ``TerminalRendererFactory/shared`` returns a ``TerminalSurfaceHosting`` whose `surfaceView` is a
 // `PlatformView` — a `UIView` here. It is mounted DIRECTLY; there is no hosting view left to interpose,
 // and interposing one is exactly the hit-claim the crossing exists to remove. A headless `swift build`
-// registers no factory at all and gets the placeholder; nothing in this file names libghostty or Metal.
+// registers no factory at all and gets the placeholder; nothing in this file names `libghostty-vt` or Metal.
 //
 // ## THREE THINGS THE MAC DOES NOT HAVE, and this file does
 //
@@ -62,7 +62,6 @@
 import Foundation
 import SlopDeskClientCore // TerminalPaneWiring / TerminalLeafPolicy / PaneStatusPillPresentation
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
-import SlopDeskTerminal // TerminalLetterbox / TerminalViewportSnapshotting — the placement's two inputs
 import SlopDeskVideoProtocol // ConfigRevision — the config-file edge the tracked read arms on
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the two task keys
@@ -108,7 +107,7 @@ final class TerminalLeafView: UIView {
 
     /// The four DECORATION overlays, coincident with the surface (origin 0,0 = surface top-left) and each
     /// inert until its own gate opens. They are decorations and never a content branch — the
-    /// libghostty-freeze guardrail — so all four refuse touches except hint mode, which is deliberately
+    /// surface-teardown/focus-freeze guardrail — so all four refuse touches except hint mode, which is deliberately
     /// interactive while it is armed.
     private var decorations: [UIView] = []
 
@@ -250,9 +249,10 @@ final class TerminalLeafView: UIView {
     /// The WIRING detaches when the leaf leaves the view tree. It is idempotent and re-installable, so
     /// re-attaching costs nothing.
     ///
-    /// The SURFACE does not. ``TerminalSurfaceHosting/detachSurface()`` drops libghostty's renderer and
-    /// io threads, which is not re-installable and would take the session with it — and a leaf can leave
-    /// the tree without its pane going away (a split rearrange re-parents it). So the surface is dropped
+    /// The SURFACE does not. ``TerminalSurfaceHosting/detachSurface()`` drops the terminal renderer —
+    /// its display link and Metal layer — which is not re-installable and would take the session with
+    /// it — and a leaf can leave the tree without its pane going away (a split rearrange re-parents
+    /// it). So the surface is dropped
     /// only by ``teardown()``, which the mounter calls when the pane is closed for good.
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -272,7 +272,7 @@ final class TerminalLeafView: UIView {
         dropNavigator()
     }
 
-    /// The pane is closed for good: drop the wiring, the responder AND the libghostty surface. See
+    /// The pane is closed for good: drop the wiring, the responder AND the terminal surface. See
     /// ``TerminalLeafLifecycle`` for why the last is not automatic.
     func teardown() {
         life.detach()
@@ -348,10 +348,11 @@ final class TerminalLeafView: UIView {
     ///
     /// TWO THINGS MOVE, where the Mac needs three.
     ///
-    /// 1. `layer.opacity`, NEVER `isHidden`. The terminal surface is a layer-hosting view: libghostty
-    ///    installs its own surface layer in the `layer` slot and sizes that layer's frame and
-    ///    `contentsScale` in `layoutSubviews`, which does not run on a hidden subtree. A device rotated
-    ///    or moved to an external display while this tab was hidden would un-hide onto stale geometry.
+    /// 1. `layer.opacity`, NEVER `isHidden`. The terminal surface is a layer-hosting view: the renderer
+    ///    hands over the Metal layer it owns as a sublayer, and `layoutSubviews` pushes that layer's
+    ///    frame and `contentsScale` through `driver.setGeometry(size:scale:)`, which does not run on a
+    ///    hidden subtree. A device rotated or moved to an external display while this tab was hidden
+    ///    would un-hide onto stale geometry.
     ///    Faded, the leaf keeps laying out and there is nothing to catch up on.
     ///
     /// 2. `isUserInteractionEnabled`, which is the whole of the Mac's points 2 AND 3. UIKit refuses hits
@@ -379,7 +380,7 @@ final class TerminalLeafView: UIView {
     // MARK: - The pixels
 
     /// The terminal surface seam — the production renderer if the app registered a native factory, else
-    /// the headless placeholder. This target NEVER imports libghostty or Metal: it only calls the factory.
+    /// the headless placeholder. This target NEVER imports `libghostty-vt` or Metal: it only calls the factory.
     ///
     /// The decorations are rebuilt with it because every one of them is constructed AROUND a model.
     private func mountSurface() {
@@ -1193,7 +1194,7 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         guard PhoneKey.routesToKeyEncoding(press) else { return false }
         if swallowsAsWorkspaceChord(press) { return true }
         // UNDO AT PROMPT, below the binding table and above the encoder — the same rung the Mac gives it,
-        // where the app-level monitor has already had the chord and libghostty has not yet seen it. Not
+        // where the app-level monitor has already had the chord and `libghostty-vt` has not yet seen it. Not
         // through the repeater: an undo that fired twenty times a second on a held ⌘Z would roll the line
         // back past what the reader can see, which is the argument `swallowsAsWorkspaceChord(_:)` makes
         // for a held ⌘D.
@@ -1211,7 +1212,7 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// ⌘Z fell out of `handle(_:)` and died while the Mac emitted the readline undo byte.
     ///
     /// The rule is `slopdesk_terminal::surface::prompt_edit_byte` through ``PromptEditPolicy`` — the SAME
-    /// function the libghostty surface's `keyDown` calls, including the byte itself and why redo is
+    /// function the Mac's terminal-surface `keyDown` calls, including the byte itself and why redo is
     /// recognised and deliberately unanswered. What is this side's is only the mapping of a `UIKey` to
     /// that call, which is what an `NSEvent` needs its own of over there.
     ///

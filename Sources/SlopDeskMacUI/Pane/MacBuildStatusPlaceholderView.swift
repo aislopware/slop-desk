@@ -1,15 +1,15 @@
 // MacBuildStatusPlaceholderView — the HEADLESS terminal-renderer fallback, in AppKit
 // (docs/56 wave R, batch R9).
 //
-// The AppKit half of ``BuildStatusPlaceholderView``. libghostty IS the renderer (DECISIONS / doc 17),
-// and it is injected by the Xcode app target through `TerminalRendererFactory` — so a plain
-// `swift build`, which never compiles the embedder, has no renderer to mount. Rather than leave the
+// The AppKit half of ``BuildStatusPlaceholderView``. The production terminal renderer (docs/68) is
+// injected by the Xcode app target through `TerminalRendererFactory` — so a plain
+// `swift build`, which never compiles that renderer, has no renderer to mount. Rather than leave the
 // leaf's pixel slot empty and make "the terminal is blank" mean two unrelated things, the leaf mounts
 // THIS: build-status telemetry drawn over the pane's own paper.
 //
 // It reads only what a headless process can answer — the connection status and the byte count off
 // ``TerminalViewModel`` — and never attaches a surface, so it is safe in tests and previews. That is
-// the whole reason it can exist in a target that must not link Metal or libghostty.
+// the whole reason it can exist in a target that must not link Metal or `libghostty-vt`.
 //
 // PORTED FAITHFULLY, INCLUDING ONE THING WORTH FLAGGING. The SwiftUI half paints its text with the
 // CHROME ink ladder (`Slate.Text.primary` / `.secondary`) and its live dot with the CHROME green

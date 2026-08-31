@@ -38,7 +38,7 @@ folded the first into `PhoneAppDelegate` and split the second in two):
 | --- | --- | --- |
 | `import UIKit` in `Sources/SlopDeskPhoneUI` | 10 | `TerminalInputHost`, `PhoneRootKeyResponder`, `PaneMoveEscapeResponder`, `SimulatorScreenView`, `AndroidScreenView`, `DeviceSoftKeyboard`, `PhonePanelSheet`, `CodeSidebarWebView`, `ImageDecode`, `SlopDeskPhoneApp` |
 | `UIViewRepresentable` reachable from the phone shell | **7** | five in `SlopDeskPhoneUI`, one in `SlopDeskVideoClientPhone`, one vendored (§2.4). `UIViewControllerRepresentable`: **0** |
-| the terminal renderer | already a `UIView` | `GhosttyTerminalView.swift:2995` — `GhosttyLayerBackedView: UIView`, wrapped at `:2953` |
+| the terminal renderer | already a `UIView` | `GhosttyTerminalView.swift:2995` — `GhosttyLayerBackedView: UIView`, wrapped at `:2953`. That file is gone (`docs/68-terminal-surface-in-rust.md`); its replacement is a `UIView` over a `CAMetalLayer`, so the row's verdict is unchanged |
 | the video renderer | already a `UIView` | `Sources/SlopDeskVideoClientPhone/MetalLayerBackedView.swift`, 1,260 lines, wrapped by 129 |
 | the two device screens | already `UIView`s | `SimulatorScreenView.swift:54` and `AndroidScreenView.swift:46` — **only 29 of 363 and 25 of 389 lines are SwiftUI** |
 | the app delegate | already exists | `PhoneRootKeyResponder.swift:46` — `UIResponder, UIApplicationDelegate`, mounted by `@UIApplicationDelegateAdaptor` at `SlopDeskPhoneApp.swift:50` |
@@ -261,7 +261,7 @@ SwiftUI canvas above and a 300 ms failure requirement is 300 ms of a click alrea
 | `Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift:334` | 363 | `SimulatorScreenUIView` | added as a subview |
 | `Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift:364` | 389 | `AndroidScreenUIView` | ditto |
 | `Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift:46` | 81 | a pooled `WKWebView` in a clipping `UIView` `:42` | the pool hands the page straight to a controller; `updateUIView`'s four hand-written constraints `:62-79` become the controller's |
-| `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2953` | — | `GhosttyLayerBackedView: UIView` `:2995` | §8: **vendored.** What changes is not this file but the seam it satisfies |
+| `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2953` | — | `GhosttyLayerBackedView: UIView` `:2995` | §8: **vendored** at the time of this ledger, and DELETED since by `docs/68-terminal-surface-in-rust.md`. What changed was not this file but the seam it satisfies, and the seam outlived it |
 
 **The seam loses a shape, and that is a ledger row of its own.**
 `Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift:47-51` has two:
@@ -1993,6 +1993,10 @@ platform measures, Rust decides, the view places.**
   code belongs. Deleting it is a fork of the vendor and is not this campaign's business. (`docs/56`'s
   own memory records the trap: the embedder Swift lives in `ThirdParty/`, not `Sources/`, so a
   `Sources/` grep calls a live cluster dead.)
+  **Overtaken, and only in its premise:** `docs/68-terminal-surface-in-rust.md` deleted the vendored
+  tree outright, so there is no `ThirdParty/` grep trap left and no vendored dead code. The
+  conclusion this bullet exists for held — the seam is what moved, the renderer is what got replaced
+  under it — and `TerminalRendererSeam.swift` is still three members and one conformer.
 
 - **No feature is dropped for being hard in UIKit.** `docs/56` §3: *"Layout diverges; capability does
   not."* Every surface listed in §2 has a UIKit form in §3, including the ones that look like SwiftUI
@@ -2028,4 +2032,6 @@ platform measures, Rust decides, the view places.**
   `VideoWindowPipeline`) is not a UI target and stays; only `SlopDeskVideoClientPhone`'s 129-line
   wrapper goes. And `Apps/ClientApp-iOS/project-video.yml` — the renderer-disabled variant — is not a
   port target, but it is a constraint: `AppMain.swift` must keep compiling with both `CGhostty` and
-  `SlopDeskVideoClientPhone` absent, at every stage.
+  `SlopDeskVideoClientPhone` absent, at every stage. (Half of that constraint retired itself:
+  `docs/68-terminal-surface-in-rust.md` deleted `CGhostty`, so the renderer-disabled variant now
+  differs from the shipping spec in the video target alone.)

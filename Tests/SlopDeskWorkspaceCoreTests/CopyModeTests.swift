@@ -5,8 +5,8 @@ import XCTest
 
 /// Exercises ``TerminalViewModel/handleCopyModeKey(_:)`` — the modal keyboard copy-mode dispatch — entirely
 /// in-memory: an abstract ``TerminalViewModel/CopyModeKey`` in, a recording ``TerminalSurfaceActions`` mock
-/// out. NO `NSEvent`, NO `GhosttySurface`, NO window server (the hang-safety rule). Each test asserts the
-/// EXACT libghostty binding-action string the key maps to (or the find/copy/exit side effect), so a key →
+/// out. NO `NSEvent`, NO `TerminalSurfaceDriver`, NO window server (the hang-safety rule). Each test asserts the
+/// EXACT libghostty-vt binding-action string the key maps to (or the find/copy/exit side effect), so a key →
 /// action regression is caught here, not on hardware.
 @MainActor
 final class CopyModeTests: XCTestCase {
@@ -99,7 +99,7 @@ final class CopyModeTests: XCTestCase {
         )
     }
 
-    // MARK: Copy — reads libghostty's selection truth (never a client-guessed position)
+    // MARK: Copy — reads libghostty-vt's selection truth (never a client-guessed position)
 
     func testCopyWithSelectionCopiesSelectionAndConfirms() {
         let recorder = RecordingSurfaceActions()
@@ -120,7 +120,7 @@ final class CopyModeTests: XCTestCase {
     func testCopyWithoutSelectionFallsBackToScrollback() {
         let recorder = RecordingSurfaceActions()
         recorder.selectionText = nil
-        recorder.scrollbackLines = ["line one", "line two", "line three"]
+        recorder.scrollbackText = ["line one", "line two", "line three"]
         let model = TerminalViewModel(surface: recorder)
         var copied: String?
         model.copyToPasteboard = { copied = $0 }
@@ -132,7 +132,7 @@ final class CopyModeTests: XCTestCase {
     func testCopyWithNothingToCopyDoesNotConfirm() {
         let recorder = RecordingSurfaceActions()
         recorder.selectionText = nil
-        recorder.scrollbackLines = []
+        recorder.scrollbackText = []
         let model = TerminalViewModel(surface: recorder)
         var copied: String?
         model.copyToPasteboard = { copied = $0 }

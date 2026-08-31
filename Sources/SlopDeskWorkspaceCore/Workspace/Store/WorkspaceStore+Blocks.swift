@@ -1,6 +1,5 @@
 import CSlopDeskFFI
 import os
-import SlopDeskTerminal
 import SlopDeskWorkspaceModel
 
 // MARK: - CommandBlock → PeekBlockLine (the peek "recent output" shape)
@@ -61,38 +60,41 @@ public struct BlockBookmarkSeam {
 /// ``TerminalSurfaceActions`` seam; `nonisolated` so both call sites reach it.
 ///
 /// ## Why an ORDINAL, not a "position among the blocks"
-/// libghostty's `scrollPrompt` (ghostty `PageList.zig`, pinned v1.3.1) counts `.prompt` ROWS — one per
-/// OSC-133 `A` mark — including prompt cycles that never became a block (an empty Enter / Ctrl-C re-fires
-/// `A` but the segmenter discards the blockless cycle). A delta from the block COUNT therefore
-/// under-counts by every such cycle and lands on an older command. The host stamps each block with its
+/// The deleted fork's libghostty (`ghostty`'s `PageList.zig`, pinned v1.3.1) counted `.prompt` ROWS —
+/// one per OSC-133 `A` mark — including prompt cycles that never became a block (an empty Enter /
+/// Ctrl-C re-fires `A` but the segmenter discards the blockless cycle). A delta from the block COUNT
+/// therefore under-counts by every such cycle and lands on an older command. `slopdesk-vterm`'s
+/// hand-rolled `VtSession::prompt_row` walk (`rust/slopdesk-vterm/src/screen.rs` — `libghostty-vt`
+/// exposes the per-row OSC-133 flag and no jump door of its own, so this walks rows and counts) counts
+/// the same way, one per prompt-flagged row. The host stamps each block with its
 /// ``CommandBlock/promptOrdinal`` (the 1-based `A`-cycle count at the block's start) so the jump counts
-/// exactly what ghostty counts.
+/// exactly what that walk counts.
 ///
 /// ## Why anchor with a HUGE NEGATIVE jump, not `scroll_to_top`
-/// For a downward (positive) delta ghostty starts its `PromptIterator` at `viewport_top.down(1)` — the
-/// prompt ON the viewport-top row is never counted. After `scroll_to_top` the top row may or may not be a
-/// prompt row (fresh pane: the shell's FIRST prompt IS row 0; after a banner or ring eviction it is not),
-/// so a top-anchored count is off by one in the common fresh-pane case and the client can't know which
-/// holds. A `jump_to_prompt:` with a negative delta LARGER than the prompt count instead exhausts the
-/// upward iterator, moving the viewport to the LAST prompt found — the OLDEST retained prompt row. That
-/// makes "the viewport top IS prompt row #1" an invariant, so a downward delta of `k` deterministically
-/// lands prompt row #(k + 1): delta `ordinal − 1` lands the block's own prompt row (no second jump for
-/// ordinal 1 — the anchor already landed on it). A target inside the active area pins the viewport to
-/// `.active` (ghostty can't scroll DOWN into it) — on screen, the correct landing. `scroll_to_bottom`
-/// first makes the anchor state deterministic regardless of the user's scroll position.
+/// For a downward (positive) delta `prompt_row`'s walk starts at the viewport-top row and steps AWAY
+/// from it before checking — the prompt ON the viewport-top row is never counted. After `scroll_to_top`
+/// the top row may or may not be a prompt row (fresh pane: the shell's FIRST prompt IS row 0; after a
+/// banner or ring eviction it is not), so a top-anchored count is off by one in the common fresh-pane
+/// case and the client can't know which holds. A `jump_to_prompt:` with a negative delta LARGER than the
+/// prompt count instead exhausts the walk, landing the viewport on the LAST prompt found — the OLDEST
+/// retained prompt row. That makes "the viewport top IS prompt row #1" an invariant, so a downward delta
+/// of `k` deterministically lands prompt row #(k + 1): delta `ordinal − 1` lands the block's own prompt
+/// row (no second jump for ordinal 1 — the anchor already landed on it). `scroll_to_bottom` first makes
+/// the anchor state deterministic regardless of the user's scroll position.
 ///
-/// Degradation: if ghostty's scrollback RING has evicted the earliest prompts, the oldest RETAINED
+/// Degradation: if the scrollback RING has evicted the earliest prompts, the oldest RETAINED
 /// prompt is no longer ordinal #1 and the landing shifts by the evicted count — the long-session edge;
 /// every jump in a normal session lands exactly.
 enum BlockJump {
     /// The anchor delta, read from `slopdesk_terminal::blocks` rather than typed twice.
     ///
-    /// It MUST be larger than any real scrollback's prompt count — that is what exhausts ghostty's
-    /// upward `PromptIterator` and pins the viewport to the OLDEST retained prompt row (see the type
-    /// doc) — and it must fit ghostty's binding parameter type: `jump_to_prompt` is declared `i16`
-    /// (`Binding.zig`, pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the
-    /// whole binding silently no-ops. Both bounds are stated where the value lives; a second literal
-    /// here is a second place for them to be wrong.
+    /// It MUST be larger than any real scrollback's prompt count — that is what exhausts
+    /// `VtSession::prompt_row`'s upward walk and pins the viewport to the OLDEST retained prompt row
+    /// (see the type doc) — and it must fit `prompt_row`'s delta type: `jump_to_prompt` takes an `i16`
+    /// (`rust/slopdesk-vterm/src/screen.rs`, matching the deleted fork's `Binding.zig` parameter type,
+    /// pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the whole binding
+    /// silently no-ops. Both bounds are stated where the value lives; a second literal here is a
+    /// second place for them to be wrong.
     nonisolated static var reAnchorDelta: UInt32 { slopdesk_block_jump_re_anchor_delta() }
 
     /// The largest single forward hop the binding accepts, for a caller ASSERTING the bound. Nothing
@@ -115,10 +117,12 @@ enum BlockJump {
             debugLog("jump SKIPPED: ordinal 0 (mid-stream join — host stamped no prompt ordinal)")
             return false
         }
-        let anchor1 = actions.performBindingAction("scroll_to_bottom")
-        let anchor2 = actions.performBindingAction("jump_to_prompt:-\(reAnchorDelta)")
+        let anchor1 = actions.performBindingAction(TerminalBindingAction.scrollToBottom.wire)
+        let anchor2 = actions.performBindingAction(TerminalBindingAction.jumpToPrompt(-Int(reAnchorDelta)).wire)
         var stepsOK = true
-        for hop in hops where !actions.performBindingAction("jump_to_prompt:\(hop)") { stepsOK = false }
+        for hop in hops where !actions.performBindingAction(TerminalBindingAction.jumpToPrompt(Int(hop)).wire) {
+            stepsOK = false
+        }
         // A `false` from a REAL surface (out-of-range/rejected delta, or a headless/placeholder surface)
         // means the viewport did NOT move to the target. Log at DEFAULT level — not only the debug-gated
         // trace — so a silently-failed navigator / Jump-to-Failed jump is diagnosable in the field without
@@ -231,13 +235,13 @@ public extension WorkspaceStore {
     }
 
     /// Jumps the active pane's viewport to the previous (`delta < 0`) / next (`delta > 0`) shell prompt —
-    /// ⌃⌘[ / ⌃⌘] (and the navigator's per-row jump). Routes to libghostty's `jump_to_prompt:<delta>`
+    /// ⌃⌘[ / ⌃⌘] (and the navigator's per-row jump). Routes to the surface's `jump_to_prompt` action
     /// via the active surface's ``TerminalSurfaceActions`` seam (the same lever the jump-to-prompt uses).
     /// A no-op for a non-terminal pane, an empty shell, or a headless/placeholder surface (no seam).
     func jumpToBlockInActivePane(delta: Int) {
         guard let model = activeTerminalModel,
               let actions = model.surface as? TerminalSurfaceActions else { return }
-        guard actions.performBindingAction("jump_to_prompt:\(delta)") else { return }
+        guard actions.performBindingAction(TerminalBindingAction.jumpToPrompt(delta).wire) else { return }
         // Arm the landed flash: the renderer's scrollbar echo settles it (flash at the pinned prompt
         // row) or it lapses (no-op jump / bottom clamp) — see `TerminalViewModel.noteViewportScroll`.
         model.notePromptJumpIssued()

@@ -9,8 +9,12 @@
 # FloatingCursorController / KeyboardAccessoryBar — doc 17 §2.5). The `@main` entry is
 # `AppMain.swift` beside this spec → `PhoneAppDelegate`.
 #
-# The libghostty `GhosttyTerminalView` is added once the xcframework exists; until then the
-# BUILD-STATUS placeholder renders (libghostty-only policy, no fallback VT engine).
+# The terminal's conformer view is NOT listed here and no longer can be. It used to be: it linked
+# a gitignored `libghostty.xcframework` and imported a `CGhostty` clang module, so it was a member
+# of no `Package.swift` target and joined THIS app by an injected sources entry + a framework
+# dependency + a `SWIFT_INCLUDE_PATHS` line, all three written in by `slopdesk-ops enable-renderer`.
+# The fork is gone (docs/68) — the conformer lives in `Sources/SlopDeskTerminal/`, `swift build`
+# compiles it, and this target reaches it through the `SlopDeskPhoneUI` product like everything else.
 name: ClientApp-iOS
 options:
   bundleIdPrefix: com.slopdesk
@@ -42,15 +46,17 @@ targets:
       # layered/tinted icon variants; pairs with ASSETCATALOG_COMPILER_APPICON_NAME.
       - path: ../../docs/brand/SlopDesk.icon
         buildPhase: resources
-      # PATH 1 (libghostty renderer): the gated renderer host + binding (GhosttySurface.swift
-      # + GhosttyTerminalView.swift). NOT members of any Package.swift target — they join THIS
-      # app target so `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
-      - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
       # The iOS app shell: AppMain launches `PhoneAppDelegate` from this product, which transitively
       # pulls in the view layer, `SlopDeskClientCore` and `SlopDeskWorkspaceCore` (logic + seam types).
       - package: SlopDesk
         product: SlopDeskPhoneUI
+      # The RENDERER, named DIRECTLY rather than pulled through the UI shell. `AppMain` calls
+      # `installTerminalRenderer()`, and the UI shell must never depend on this product: the whole
+      # point of `TerminalRendererFactory` is that a canvas mounts a terminal without naming the view
+      # that draws one, so a canvas target that linked it would have the seam and the coupling both.
+      - package: SlopDesk
+        product: SlopDeskTerminal
       # PATH 2 (GUI video path): links the client decode/render/cursor pipeline so
       # AppMain can register VideoWindowFactory.shared with the real VideoWindowView.
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.
@@ -64,12 +70,6 @@ targets:
         product: SlopDeskVideoClient
       - package: SlopDesk
         product: SlopDeskVideoClientPhone
-      # PATH 1 (libghostty renderer): the libghostty static binary (link-time `ghostty`
-      # C-ABI symbols) as an xcframework. The UNIVERSAL build ships ios-arm64 (device) +
-      # ios-arm64-simulator slices, both built on this host against the iOS 26.5 SDK; the
-      # xcframework auto-selects the right slice per destination.
-      - framework: ../../ThirdParty/ghostty/libghostty.xcframework
-        embed: true
     info:
       path: Info.plist
       properties:
@@ -110,30 +110,25 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
-        # PATH 1 (libghostty renderer): point the Swift importer at the CGhostty clang
-        # module map (module.modulemap + vendored ghostty.h) so `import CGhostty` resolves
-        # and `#if canImport(CGhostty)` flips true → GhosttyTerminalView/GhosttySurface
-        # compile into this target and link against libghostty.xcframework.
-        SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../ThirdParty/ghostty/integration/CGhostty
-        # The xcframework ships ios-arm64 (device) + ios-arm64-simulator — both arm64
-        # only (Apple-silicon target). Pin ARCHS=arm64 so a generic 'iOS Simulator'
-        # destination does NOT also demand an x86_64 slice (which would fail to link).
+        # arm64 only, and it stays that way now that the fork it arrived with is gone. The pin's
+        # ORIGINAL reason was the fork's xcframework, which shipped ios-arm64 + ios-arm64-simulator
+        # and no x86_64 slice for a generic 'iOS Simulator' destination to demand. What binds now is
+        # docs/49 §"arm64 only" reason 2: this app deploys against iOS 26, and every simulator that
+        # runs it is hosted on the same Apple-silicon Mac the release is built on.
+        #
+        # `ONLY_ACTIVE_ARCH: NO` so a local debug build produces the same single slice a release
+        # does, rather than silently narrowing to whatever the developer's machine is.
         ARCHS: arm64
         ONLY_ACTIVE_ARCH: "NO"
-        # libghostty vendors C/C++ deps (Dear ImGui, spirv-cross, glslang, FreeType,
-        # sentry, oniguruma, …) referencing the C++ runtime + a few iOS system frameworks
-        # (CoreText/CoreGraphics for fonts, QuartzCore/Metal for the layer). NO Carbon —
-        # it is macOS-only; the iOS slice does not reference it.
-        OTHER_LDFLAGS:
-          - -lc++
-          - -framework
-          - CoreText
-          - -framework
-          - CoreGraphics
-          - -framework
-          - QuartzCore
-          - -framework
-          - Metal
+        # There is deliberately no `SWIFT_INCLUDE_PATHS` and no `OTHER_LDFLAGS` here. Both existed
+        # only to make the fork link: an include path at its `CGhostty` module map, and `-lc++`
+        # plus four frameworks to resolve the C/C++ dependencies its static library vendored. This
+        # target compiles ONE Swift file (`AppMain.swift`) and links SwiftPM products; every
+        # framework the Rust half needs is named by `Package.swift`'s linker settings, where an
+        # `.xcframework` can no longer carry `#[link]` metadata across `-create-xcframework`, and
+        # everything the Swift half needs is auto-linked by the `import` that uses it. A framework
+        # listed HERE instead would be invisible to `swift build` and would fail only in Xcode.
+        #
         # Best-effort builds run unsigned for an iOS Simulator destination:
         #   xcodebuild build -destination 'generic/platform=iOS Simulator' \
         #     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
@@ -141,9 +136,9 @@ targets:
   # The iOS-triple XCTest bundle — the only place a test can OBSERVE an `#if os(iOS)` branch.
   # `swift test` compiles the macOS slice, so every iOS default (`WorkspaceClientKind.thisPlatform`,
   # `DevicePreferences.platformDefaultFollowSessionFocus`, the letterbox's phone-shaped geometry) is
-  # asserted against the WRONG branch there. A HOST-LESS logic bundle on purpose: it needs no app, no
-  # window server and no libghostty, so `slopdesk-gate ios-tests` can load it straight into the
-  # simulator's `xctest` agent.
+  # asserted against the WRONG branch there. A HOST-LESS logic bundle on purpose: it needs no app and
+  # no window server, so `slopdesk-gate ios-tests` can load it straight into the simulator's `xctest`
+  # agent.
   #
   # docs/56 F4c: it is ALSO the home of every `SlopDeskPhoneUI` view test, because `SlopDeskPhoneUI` is
   # `#if os(iOS)` end to end — the SwiftPM test target that used to hold them (`SlopDeskPhoneUITests`)

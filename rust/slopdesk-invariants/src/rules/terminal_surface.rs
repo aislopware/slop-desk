@@ -12,8 +12,8 @@ const SWIFT_BLOCKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlock
 const RUST_BLOCKS: &str = "rust/slopdesk-terminal/src/blocks.rs";
 const SWIFT_SEARCH: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
 const SWIFT_SEARCH_ACTION: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift";
-const SWIFT_METRICS: &str = "Sources/SlopDeskTerminal/TerminalSurface.swift";
-const SWIFT_FIT: &str = "Sources/SlopDeskTerminal/TerminalGridFit.swift";
+const SWIFT_METRICS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSurface.swift";
+const SWIFT_FIT: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalGridFit.swift";
 const RUST_GEOMETRY: &str = "rust/slopdesk-terminal/src/geometry.rs";
 const RUST_LINK_HIT: &str = "rust/slopdesk-terminal/src/link_hit.rs";
 const SWIFT_FOLDS: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/StoreFolds.swift";
@@ -162,7 +162,7 @@ pub fn grid_readout(tree: &Tree) -> Report {
                       says about it, are slopdesk_workspace::grid_readout's",
         },
         // `Sources` alone, for [`crate::claim::SWIFT_ROOTS`]'s third reason and the same one the
-        // libghostty action strings carry below: the readout is a SENTENCE a door returns, so the
+        // engine action strings carry below: the readout is a SENTENCE a door returns, so the
         // only way a test can check the join is to spell the expected sentence —
         // `WorkspaceMirrorFactsTests` asserts `paneGridReadout` equals `120×40 · sized by MacBook
         // Pro`. That assertion IS this rule, run against the shipped door. A test that could only
@@ -317,17 +317,18 @@ pub fn command_blocks(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The SEARCH surfaces: libghostty's binding grammar, and the two decisions both of them make.
+/// The SEARCH surfaces: the engine's binding grammar, and the two decisions both of them make.
 ///
 /// `rust/slopdesk-workspace`'s `find_bar`, through `TerminalSearchSurfaceAction` — the one Swift
 /// type allowed to hold the vocabulary, and the reason it sits in `SlopDeskWorkspaceCore` rather
 /// than beside either bar: THREE callers speak it, in two targets.
 ///
 /// The five spellings are the rare table where a second copy is not a style question. They are a
-/// FOREIGN protocol — libghostty parses them, and the parser is vendored under `ThirdParty/`, so
-/// nothing on this side regenerates them — and a typo produces a control that silently does nothing
-/// rather than a build error. All three callers had written them out; two of those copies had
-/// already drifted from the third on which modes may arm the literal matcher.
+/// FOREIGN protocol — the terminal engine parses them, and its source is provisioned at a pinned
+/// commit rather than written here, so nothing on this side regenerates them — and a typo produces
+/// a control that silently does nothing rather than a build error. All three callers had written
+/// them out; two of those copies had already drifted from the third on which modes may arm the
+/// literal matcher.
 ///
 /// `Tests` is deliberately NOT scanned: the suites assert the strings AS STRINGS on purpose,
 /// because a test comparing `.end` to `.end` would pass on the day the spelling drifted from what
@@ -344,7 +345,7 @@ pub fn search_surface(tree: &Tree) -> Report {
                 "slopdesk_ws_find_bar_nav_forward",
             ],
             message: "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift no longer \
-                      calls {entry} — libghostty's binding grammar and the modes it may be armed in are \
+                      calls {entry} — the engine's binding grammar and the modes it may be armed in are \
                       rust/slopdesk-workspace's find_bar",
         },
         Claim::Doors {
@@ -366,9 +367,9 @@ pub fn search_surface(tree: &Tree) -> Report {
             unless: &[],
             view: View::Statements,
             exempt: &[],
-            message: "a libghostty search binding-action string is spelled in {files} — the grammar is \
-                      foreign and lives in ONE place, `TerminalSearchSurfaceAction.wire`, which crosses for \
-                      the whole string rather than assembling it from a prefix",
+            message: "a search binding-action string is spelled in {files} — the grammar is foreign and \
+                      lives in ONE place, `TerminalSearchSurfaceAction.wire`, which crosses for the whole \
+                      string rather than assembling it from a prefix",
         },
         // The three-flag verdict, matched on the shape it had at each of the two call sites it was
         // written out at. Either one growing back is the drift that let the case-sensitive arm land on
@@ -383,7 +384,7 @@ pub fn search_surface(tree: &Tree) -> Report {
             exempt: &[],
             message: "the row-driven-nav partition is spelled again in {files} — both search surfaces read \
                       `TerminalSearchSurfaceAction.needsRowDrivenNav`, so neither can decide alone which \
-                      modes libghostty may be trusted with",
+                      modes the engine may be trusted with",
         },
     ];
     check_all(tree, &claims)
@@ -429,14 +430,20 @@ fn span_rect(metrics: CellMetrics, span: LinkSpan) -> Rect {
         let fixture = Fixture::new("grid-geometry");
         fixture
             .write("rust/slopdesk-terminal/src/geometry.rs", "pub fn rect() {}\n")
-            .write("Sources/SlopDeskTerminal/TerminalSurface.swift", metrics)
-            .write("Sources/SlopDeskTerminal/TerminalGridFit.swift", fit)
+            .write(
+                "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSurface.swift",
+                metrics,
+            )
+            .write(
+                "Sources/SlopDeskWorkspaceCore/Terminal/TerminalGridFit.swift",
+                fit,
+            )
             .write("rust/slopdesk-terminal/src/link_hit.rs", hit);
         assert!(super::grid_geometry(&fixture.tree()).is_clean());
 
         // The Swift half drifts first: a face that "saves a crossing" by deriving the width itself.
         fixture.write(
-            "Sources/SlopDeskTerminal/TerminalSurface.swift",
+            "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSurface.swift",
             &metrics.replace(
                 "Self.cgRect(slopdesk_grid_rect(cellWidth",
                 "CGRect(x: originX, y: originY, width: cellWidth * CGFloat(colEnd - colStart), height: \
@@ -456,7 +463,10 @@ fn span_rect(metrics: CellMetrics, span: LinkSpan) -> Rect {
         // ASSEMBLED rather than spelled: `no-fused-multiply-add` bans one anywhere in the tree, so
         // a break-test that seeds one has to seed it without being one.
         fixture
-            .write("Sources/SlopDeskTerminal/TerminalSurface.swift", metrics)
+            .write(
+                "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSurface.swift",
+                metrics,
+            )
             .write(
                 "rust/slopdesk-terminal/src/link_hit.rs",
                 &hit.replace(
@@ -612,7 +622,7 @@ static let maxBookmarks = 32
         );
     }
 
-    /// The two ways one search surface starts disagreeing with the other: it retypes libghostty's
+    /// The two ways one search surface starts disagreeing with the other: it retypes the engine's
     /// grammar, or it retypes the partition that decides when the grammar may be used. Both had
     /// already happened once, and neither failed a test — the strings still parsed, and each
     /// surface's own suite passed against its own reading.

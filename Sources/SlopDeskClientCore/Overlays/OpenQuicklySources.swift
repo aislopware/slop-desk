@@ -71,7 +71,7 @@ package enum OpenQuicklySources {
         model: TerminalViewModel?, cwd: String?,
     ) -> [JumpToItem] {
         guard let model else { return [] }
-        let rows = model.searchScrollbackLines()
+        let rows = model.searchScrollbackLines().text
         let links: [DetectedLink] = SettingsKey.linkDetectionEnabled
             ? TerminalLinkDetector.detect(rows: rows, cwd: cwd, schemes: SettingsKey.linkSchemePolicy)
             : []

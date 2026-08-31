@@ -92,7 +92,7 @@ final class CodeSidebarFocusPolicyTests: XCTestCase {
         // their keybinding gated on the native build, because in a browser they are the Edit
         // menu's, and this app's menus are shortcut-less. The webview claims them and drives
         // WebKit's own editing actions instead; unclaimed they bounce back and became phantom
-        // terminal input (libghostty's cmd+v paste binding).
+        // terminal input (libghostty-vt's cmd+v paste binding).
         XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "c"), .copy)
         XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "v"), .paste)
         XCTAssertEqual(CodeSidebarFocusPolicy.editingCommand(modifiers: [.command], key: "x"), .cut)

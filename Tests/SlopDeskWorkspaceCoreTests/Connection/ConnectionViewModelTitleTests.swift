@@ -5,7 +5,7 @@ import XCTest
 
 /// Tests for ``ConnectionViewModel/onTitleChanged`` (Goal A).
 /// Uses `foldEventForTesting` — the DEBUG hook exposed for synchronous unit testing — so no
-/// async event loop or network is needed.  No `GhosttySurface`/`SCStream`/`VT`/Metal instantiation.
+/// async event loop or network is needed.  No `TerminalSurfaceDriver`/`SCStream`/`VT`/Metal instantiation.
 @MainActor
 final class ConnectionViewModelTitleTests: XCTestCase {
     // MARK: - Helpers

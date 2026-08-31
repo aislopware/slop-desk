@@ -14,7 +14,7 @@
 import CoreGraphics
 import CSlopDeskFFI
 import Foundation
-import SlopDeskTerminal
+import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
 /// The landed-flash anchor rules and the rects they map to.

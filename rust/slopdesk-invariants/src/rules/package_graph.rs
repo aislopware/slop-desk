@@ -114,20 +114,22 @@ fn recipe_name(line: &str) -> Option<&str> {
 
 /// Every producer this repo declares, as the command the workflow would have to run.
 ///
-/// Two shapes, because the two artifacts are built two ways and neither is a list anyone maintains:
+/// ONE shape, and it used to be two. A producer is a `just` RECIPE whose DOC names the artifact —
+/// the `# Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (…)` line directly above `ffi:`.
+/// That doc is what `just --list` prints, so it is the declaration a reader already uses, and it is
+/// the one this reads. A recipe header that names the artifact on its own line counts too.
 ///
-/// * a `just` RECIPE whose DOC names the artifact — the `# Build
-///   ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (…)` line directly above `ffi:`. That doc is
-///   what `just --list` prints, so it is the declaration a reader already uses, and it is the one
-///   this reads. A recipe header that names the artifact on its own line counts too.
-/// * a shell script under `ThirdParty/` that names it outside a comment. The vendored dependency
-///   builds itself, and that half did not move into Rust because it is not ours.
+/// The second shape was "a shell script under `ThirdParty/` that names it outside a comment",
+/// because the terminal fork's builder was carried close to upstream's shape and stayed shell. That
+/// script is gone with the fork (docs/68), `ThirdParty` is not a walked root any more, and the
+/// branch that read it could only ever return an empty set — so it is deleted rather than left as a
+/// shape somebody might build for.
 ///
-/// Comment lines are stripped on the script side: `slopdesk-gate ffi` discussed libghostty's
-/// gitignore in prose, which is how it came to be nominated as libghostty's builder. The justfile
-/// side cannot do the same, because the doc IS a comment — so the association is what stands in for
-/// it: only a comment whose block runs uninterrupted into a recipe header is that recipe's
-/// declaration, exactly as just itself decides.
+/// Comment lines were STRIPPED on that script side, and the reason is worth keeping even though the
+/// side is not: `slopdesk-gate ffi` discussed a gitignore in prose, which is how it came to be
+/// nominated as an artifact's builder. The justfile side cannot use the same trick, because there
+/// the doc IS a comment — so ASSOCIATION stands in for it: only a comment whose block runs
+/// uninterrupted into a recipe header is that recipe's declaration, exactly as just itself decides.
 #[must_use]
 pub fn producers(tree: &Tree, artifact: &str) -> BTreeSet<String> {
     let basename = artifact.rsplit('/').next().unwrap_or(artifact);
@@ -154,22 +156,6 @@ pub fn producers(tree: &Tree, artifact: &str) -> BTreeSet<String> {
         }
     }
 
-    let scripts: Vec<String> = tree
-        .paths()
-        .filter(|path| path.starts_with("ThirdParty") && path.extension().is_some_and(|value| value == "sh"))
-        .filter_map(|path| path.to_str().map(str::to_owned))
-        .collect();
-    for script in scripts {
-        let text = tree.read(&script).unwrap_or_default();
-        let code: String = text
-            .lines()
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if code.contains(basename) {
-            found.insert(script);
-        }
-    }
     found
 }
 
@@ -177,9 +163,12 @@ pub fn producers(tree: &Tree, artifact: &str) -> BTreeSet<String> {
 ///
 /// `Package.swift` declares a `binaryTarget` path, and `SwiftPM` cannot resolve the graph without
 /// the FILE — so on a fresh runner a path nothing produces is not a missing optimisation, it is a
-/// release that fails before it compiles a line. `libghostty` had a job; `SlopDeskFFI.xcframework`
-/// had nothing, and the only reason it never bit is that the whole FFI port was still uncommitted —
-/// the window in which to notice rather than the reason not to.
+/// release that fails before it compiles a line. When this rule was written there were TWO declared
+/// artifacts: the terminal fork's had a workflow job, `SlopDeskFFI.xcframework` had nothing, and
+/// the only reason that never bit is that the whole FFI port was still uncommitted — the window in
+/// which to notice rather than the reason not to. There is one artifact now (docs/68), which makes
+/// this rule narrower and not weaker: the last one standing is the one that must never lose its
+/// step.
 ///
 /// Asked of EVERY declared artifact rather than only the gitignored ones, which is where this
 /// differs from the shell it replaces. `git check-ignore` is a process, and this crate spawns none;

@@ -2,7 +2,7 @@ import CSlopDeskFFI
 
 // MARK: - PUA function-key text filter
 
-/// What `text` a key event may carry into libghostty's encoder (`ghostty_input_key_s.text`): given the raw
+/// What `text` a key event may carry into libghostty-vt's encoder (`slopdesk_term_surface_key`'s `text`): given the raw
 /// `NSEvent.characters` of a press, the text the encoder should see — or `nil` when the characters are an
 /// `AppKit` **function-key placeholder** or a **control-led payload** that must never reach the wire.
 ///
@@ -13,11 +13,12 @@ import CSlopDeskFFI
 ///
 /// ## Scope (deliberate delta from upstream `ghosttyCharacters`)
 /// Upstream's helper also re-translates a single **C0 control** character (Ctrl-C → U+0003) back to its
-/// letter so ghostty's KeyEncoder owns control encoding. slopdesk intercepts that whole class EARLIER —
-/// the documented Ctrl+C0 fast path in `GhosttyTerminalView.keyDown` sends the raw control byte and
-/// returns (the universal-interrupt fix), so control-modified C0 text never reaches this policy.
+/// letter so libghostty-vt's `KeyEncoder` owns control encoding. slopdesk intercepts that whole class
+/// EARLIER — the documented Ctrl+C0 raw fast path (`TerminalViewModel.sendInput`'s doc names it) sends
+/// the raw control byte and returns (the universal-interrupt fix), so control-modified C0 text never
+/// reaches this policy.
 public enum KeyEventTextPolicy {
-    /// The text (if any) a key event should hand to libghostty's key encoder.
+    /// The text (if any) a key event should hand to libghostty-vt's key encoder.
     ///
     /// - Parameter characters: the event's raw `characters` string (`AppKit`'s translation of the press).
     /// - Returns: `characters` verbatim for real text (multi-scalar IME output included), or `nil` when it

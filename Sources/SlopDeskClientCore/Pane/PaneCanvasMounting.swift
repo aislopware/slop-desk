@@ -2,7 +2,7 @@
 // tab it shows.
 //
 // KEEP-ALL-MOUNTED is the canvas's load-bearing invariant: every tab of every retained session stays in
-// the tree at `opacity(0)`, never unmounted, because unmounting a tab's subtree destroys its libghostty
+// the tree at `opacity(0)`, never unmounted, because unmounting a tab's subtree destroys its terminal
 // surface and its video session. A returning tab then has to be repainted from the replay ring, which
 // is lossy — the regression it produced in the field was an unfocused pane losing its prompt. So the
 // mounted SET is a correctness rule, not a performance tweak, and it was a computed property on a
@@ -74,7 +74,7 @@ package enum PaneCanvasMounting {
     /// BEFORE IT DETACHES (docs/62 §3.2).
     ///
     /// The order is the whole point and it is why this is a function rather than three lines written
-    /// out at each of the four reconcile sites. A mounted pane owns a libghostty surface, a video
+    /// out at each of the four reconcile sites. A mounted pane owns a terminal surface, a video
     /// session and an observation arm; detaching the view first leaves that machinery running against a
     /// parent it no longer has, and the leak only shows up as a stuck decoder much later. Teardown
     /// first, detach second, forget third — always.

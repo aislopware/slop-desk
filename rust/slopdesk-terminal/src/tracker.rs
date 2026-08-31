@@ -4,10 +4,14 @@
 //! [`AltScreen`](TerminalMode::AltScreen)) and emits OSC 133 command-boundary events.
 //!
 //! ## Why a hand-rolled mini-parser (not a full VT parser)
-//! libghostty's surface is opaque — there is no parsed grid or alt-screen action to read (docs/14
-//! §"Open questions libghostty"). So we sniff the byte stream ourselves for the handful of markers
-//! we need (DECSET/DECRST 1049/47/1047 + OSC 133 A/B/C/D) and treat everything else as opaque
-//! content. We deliberately do **not** model the full screen.
+//! The deleted libghostty fork's SURFACE was opaque — there was no parsed grid or alt-screen action
+//! to read through it (docs/14 §"Open questions libghostty", which already flagged that the
+//! underlying `libghostty-vt` DOES carry an active-screen fact the surface never exposed). This
+//! crate stays `forbid(unsafe_code)` with no engine dependency at all (see `lib.rs`'s guarantees),
+//! so even with `libghostty-vt` now the engine (`docs/68`), there is still no engine handle here to
+//! query — we sniff the byte stream ourselves for the handful of markers we need (DECSET/DECRST
+//! 1049/47/1047 + OSC 133 A/B/C/D) and treat everything else as opaque content, confirmed still the
+//! plan in `docs/68` §5.3. We deliberately do **not** model the full screen.
 //!
 //! ## Robustness to split sequences (the #1 thing that silently breaks)
 //! This is a true byte-at-a-time state machine. An escape sequence may be split across arbitrary
@@ -122,7 +126,7 @@ impl TerminalModeTracker {
     /// Independent of [`mode`](Self::mode) (a shell prompt enables it; a TUI may too). It emits NO
     /// event, unlike alt-screen: it is a passive flag the paste-protection pre-check reads to skip
     /// the confirmation sheet when the program frames the paste as an inert bracketed block
-    /// (matching libghostty's own `clipboard-paste-bracketed-safe`).
+    /// (matching `ghostty`'s own `clipboard-paste-bracketed-safe`).
     #[must_use]
     pub const fn bracketed_paste_active(&self) -> bool {
         self.bracketed_paste_active
@@ -132,8 +136,9 @@ impl TerminalModeTracker {
     /// enabled.
     ///
     /// Same passive-flag contract as [`bracketed_paste_active`](Self::bracketed_paste_active). Read
-    /// by the iOS hand-rolled key encoder to pick SS3 (`ESC O A`) over CSI (`ESC [ A`) arrows — the
-    /// macOS path never needs it, because libghostty's surface owns true DECCKM there (docs/29).
+    /// by the iOS hand-rolled key encoder to pick SS3 (`ESC O A`) over CSI (`ESC [ A`) arrows. The
+    /// deleted libghostty fork's macOS surface owned true DECCKM state itself and never needed this
+    /// flag (docs/29) — that is why only iOS reads it here.
     #[must_use]
     pub const fn cursor_keys_application(&self) -> bool {
         self.cursor_keys_application

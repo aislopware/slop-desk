@@ -3,7 +3,7 @@ import XCTest
 
 /// The pure ⌘F find-in-terminal engine (docs/42 W14 #5): literal + regex matching, case toggle, the
 /// ordered match list, next/prev/wrap navigation, the "N of M" position, and re-anchoring on recompute.
-/// All against an in-memory line buffer — no view, no libghostty.
+/// All against an in-memory line buffer — no view, no libghostty-vt.
 final class TerminalSearchControllerTests: XCTestCase {
     private let buffer = [
         "the quick brown fox",

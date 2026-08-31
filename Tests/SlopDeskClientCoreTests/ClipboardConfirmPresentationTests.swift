@@ -1,7 +1,7 @@
 // ClipboardConfirmPresentationTests — the three clipboard questions, and the mailbox that carries them
 // to a renderer that cannot be called.
 //
-// The gap these pin is a PARITY gap rather than a crash: the phone's half of the libghostty embedder used
+// The gap these pin is a PARITY gap rather than a crash: the phone's half of the deleted fork's embedder used
 // to auto-approve an unsafe paste and an OSC-52 clipboard READ, and to drop an OSC-52 WRITE it had been
 // told to ask about — so the same Settings ▸ Controls row meant Ask on a Mac, Allow on a phone (read) and
 // Deny on a phone (write). Nothing was red; the setting was simply inert on one of the two halves.
@@ -9,7 +9,7 @@
 // Two things are pinned. The SHAPE both renderers read — bullets or the ask's reason, never both, and the
 // preview only where there is one — because that branch is the whole of what a second renderer would
 // otherwise decide again slightly differently. And the mailbox's two disciplines, which are memory-safety
-// rather than taste: a libghostty clipboard request is completed EXACTLY ONCE, and a question is never
+// rather than taste: a libghostty-vt clipboard request is completed EXACTLY ONCE, and a question is never
 // dropped to make room for a newer one.
 
 import XCTest

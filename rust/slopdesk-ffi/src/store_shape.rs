@@ -19,6 +19,7 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_terminal::surface_action::{SelectionEdge, SurfaceAction};
 use slopdesk_workspace::store_shape::{
     self, BootstrapKind, FocusLanding, FocusTab, ScrollAction, WeightSlot,
 };
@@ -265,10 +266,10 @@ pub extern "C" fn slopdesk_ws_inspector_port(terminal: u16) -> i32 {
 }
 
 // ---------------------------------------------------------------------------------------------- //
-// The named viewport scrolls
+// The binding-action grammar
 // ---------------------------------------------------------------------------------------------- //
 
-/// The libghostty named binding action one scroll fires: 1 run, or `0` for a code this build does
+/// The binding action one named scroll fires: §4's byte count, or `0` for a code this build does
 /// not know.
 ///
 /// # Safety
@@ -278,16 +279,90 @@ pub extern "C" fn slopdesk_ws_inspector_port(terminal: u16) -> i32 {
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point, and the buffer is the caller's"
 )]
-pub const unsafe extern "C" fn slopdesk_ws_scroll_action(
-    code: c_uchar,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
+pub unsafe extern "C" fn slopdesk_ws_scroll_action(code: c_uchar, out: *mut c_uchar, cap: usize) -> usize {
     let Some(action) = ScrollAction::from_code(code) else {
         return 0;
     };
     // SAFETY: the caller's obligation, restated above.
-    unsafe { deliver(action.libghostty_action().as_bytes(), out, cap) }
+    unsafe { deliver(action.wire().as_bytes(), out, cap) }
+}
+
+/// One binding action WITH an argument, spelled by the grammar's only speller.
+///
+/// ⚠️ **This door exists so that no `String` naming an action is ever built in Swift.** The
+/// executor at the other end (`slopdesk_term_surface_binding_action`) answers a spelling it does
+/// not recognise by doing NOTHING and returning `false` — a typo does not raise, it makes a
+/// keystroke quietly stop working. So the client knows the verbs as NUMBERS, which a compiler
+/// checks, and asks here for the one string it then carries.
+///
+/// | `code` | action | `argument` |
+/// | --- | --- | --- |
+/// | 1 | `scroll_page_lines` | signed rows |
+/// | 2 | `scroll_page_fractional` | signed THOUSANDTHS of a page (`-900` is `-0.9`) |
+/// | 3 | `jump_to_prompt` | signed prompts |
+/// | 4 | `adjust_selection` | `0` up, `1` down, `2` left, `3` right |
+/// | 5 | `scroll_to_top` | ignored |
+/// | 6 | `scroll_to_bottom` | ignored |
+/// | 7 | `scroll_to_row` | the screen row |
+///
+/// Thousandths rather than an `f64` for code 2 because the fraction is one of two design constants
+/// (`0.5` for `⌃d`, `0.9` for `⌃f`) and an integer cannot arrive as a NaN — the one input the
+/// grammar refuses. §4's byte count; `0` for a code this build does not know, and for an argument
+/// outside its verb's range.
+///
+/// # Safety
+/// `out` must either be null or point to `cap` writable bytes for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and the buffer is the caller's"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_ws_binding_action(
+    code: c_uchar,
+    argument: i64,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let Some(spelling) = spell(code, argument) else {
+        return 0;
+    };
+    // SAFETY: the caller's obligation, restated above.
+    unsafe { deliver(spelling.as_bytes(), out, cap) }
+}
+
+/// The code table above, as a function.
+///
+/// Split out of the door so the whole table is testable without a pointer, and so an argument that
+/// does not fit its verb answers `None` HERE rather than being silently clamped into a different
+/// action than the caller asked for.
+fn spell(code: c_uchar, argument: i64) -> Option<String> {
+    let action = match code {
+        1 => SurfaceAction::ScrollLines(i32::try_from(argument).ok()?),
+        2 => {
+            // Exact for every value the client sends, and now provably so rather than by argument:
+            // the `i32` narrowing is checked, and every `i32` converts to `f64` infallibly. The
+            // `cast_precision_loss` exemption this used to carry described an `as` cast that is
+            // gone — a `From` conversion cannot lose precision, so there is nothing left to exempt.
+            let fraction = f64::from(i32::try_from(argument).ok()?) / 1000.0;
+            SurfaceAction::ScrollFraction(fraction)
+        },
+        3 => SurfaceAction::JumpToPrompt(i16::try_from(argument).ok()?),
+        4 => {
+            SurfaceAction::AdjustSelection(match argument {
+                0 => SelectionEdge::Up,
+                1 => SelectionEdge::Down,
+                2 => SelectionEdge::Left,
+                3 => SelectionEdge::Right,
+                _ => return None,
+            })
+        },
+        5 => SurfaceAction::ScrollToTop,
+        6 => SurfaceAction::ScrollToBottom,
+        7 => SurfaceAction::ScrollToRow(u32::try_from(argument).ok()?),
+        _ => return None,
+    };
+    Some(action.spell())
 }
 
 // ---------------------------------------------------------------------------------------------- //
@@ -375,9 +450,10 @@ mod tests {
 
     use super::{
         SlopDeskWsFocusLanding, SlopDeskWsFocusTab, SlopDeskWsWeightChange, SlopDeskWsWeightSlot,
-        slopdesk_ws_automation_override, slopdesk_ws_bootstrap_kind, slopdesk_ws_changed_divider_weight,
-        slopdesk_ws_device_focus_landing, slopdesk_ws_inspector_port, slopdesk_ws_leading_weight,
-        slopdesk_ws_scroll_action, slopdesk_ws_swap_partner, slopdesk_ws_terminal_target_port,
+        slopdesk_ws_automation_override, slopdesk_ws_binding_action, slopdesk_ws_bootstrap_kind,
+        slopdesk_ws_changed_divider_weight, slopdesk_ws_device_focus_landing, slopdesk_ws_inspector_port,
+        slopdesk_ws_leading_weight, slopdesk_ws_scroll_action, slopdesk_ws_swap_partner,
+        slopdesk_ws_terminal_target_port, spell,
     };
 
     /// A flex slot, as the caller writes one.
@@ -621,7 +697,7 @@ mod tests {
     #[test]
     fn every_scroll_action_crosses_verbatim() {
         for action in ScrollAction::ALL {
-            let expected = action.libghostty_action();
+            let expected = action.wire();
             let mut out = [0_u8; 64];
             // SAFETY: the buffer is a live local for the call.
             let written = unsafe { slopdesk_ws_scroll_action(action.code(), out.as_mut_ptr(), out.len()) };
@@ -649,7 +725,58 @@ mod tests {
         assert_eq!(written, 0);
         // SAFETY: a null `out` is the documented probe.
         let probed = unsafe { slopdesk_ws_scroll_action(0, core::ptr::null_mut(), 0) };
-        assert_eq!(probed, ScrollAction::PageUp.libghostty_action().len());
+        assert_eq!(probed, ScrollAction::PageUp.wire().len());
+    }
+
+    /// The whole code table, pinned as literals. ⚠️ These strings are a CONTRACT with the executor,
+    /// which answers an unrecognised one by silently doing nothing — so they are asserted here
+    /// rather than derived, and a change that renames a verb must fail here first.
+    #[test]
+    fn every_argument_carrying_code_spells_its_action() {
+        for (code, argument, expected) in [
+            (1_u8, -3_i64, "scroll_page_lines:-3"),
+            (1, 12, "scroll_page_lines:12"),
+            (2, -900, "scroll_page_fractional:-0.9"),
+            (2, 500, "scroll_page_fractional:0.5"),
+            (3, -1, "jump_to_prompt:-1"),
+            (4, 0, "adjust_selection:up"),
+            (4, 1, "adjust_selection:down"),
+            (4, 2, "adjust_selection:left"),
+            (4, 3, "adjust_selection:right"),
+            (5, 0, "scroll_to_top"),
+            (6, 0, "scroll_to_bottom"),
+            (7, 42, "scroll_to_row:42"),
+        ] {
+            assert_eq!(spell(code, argument).as_deref(), Some(expected));
+        }
+    }
+
+    /// An argument outside its verb's range must produce NO action rather than a different one: a
+    /// clamped row is a jump somewhere the caller did not ask for, which is worse than a dead key.
+    #[test]
+    fn an_argument_that_does_not_fit_its_verb_spells_nothing() {
+        assert!(spell(1, i64::from(i32::MAX) + 1).is_none());
+        assert!(spell(3, 40_000).is_none());
+        assert!(spell(4, 4).is_none());
+        assert!(spell(7, -1).is_none());
+        assert!(spell(0, 0).is_none());
+        assert!(spell(8, 0).is_none());
+    }
+
+    #[test]
+    fn an_argument_carrying_action_crosses_verbatim() {
+        let expected = spell(1, -3).unwrap_or_default();
+        let mut out = [0_u8; 64];
+        // SAFETY: the buffer is a live local for the call.
+        let written = unsafe { slopdesk_ws_binding_action(1, -3, out.as_mut_ptr(), out.len()) };
+        assert_eq!(written, expected.len());
+        assert_eq!(
+            core::str::from_utf8(out.get(..written).unwrap_or_default()).unwrap_or_default(),
+            expected
+        );
+        // SAFETY: a null `out` is the documented probe.
+        let unknown = unsafe { slopdesk_ws_binding_action(9, 0, core::ptr::null_mut(), 0) };
+        assert_eq!(unknown, 0);
     }
 
     /// A tab, as the caller writes one.

@@ -3,7 +3,7 @@ import XCTest
 
 /// Store-level wiring for ⇧⌘F Global Search, observed on a ``RecordingTerminalPaneSession`` that
 /// carries a REAL ``TerminalViewModel`` whose `surface` is a recording ``TerminalSurfaceActions`` — so the
-/// cross-seam scrollback mirror + the libghostty navigation actions are pinned WITHOUT a real GhosttySurface
+/// cross-seam scrollback mirror + the libghostty-vt navigation actions are pinned WITHOUT a real `TerminalSurfaceDriver`
 /// (the hang-safety rule: no VideoToolbox / Metal / SCStream / real window server).
 ///
 /// Covers the two functional polish fixes:
@@ -38,7 +38,7 @@ final class GlobalSearchStoreTests: XCTestCase {
         let store = makeStore()
         let session = try activeSession(store)
         let recorder = try XCTUnwrap(session.surfaceRecorder)
-        recorder.scrollbackLines = ["alpha doc", "beta doc", "gamma doc"]
+        recorder.scrollbackText = ["alpha doc", "beta doc", "gamma doc"]
 
         store.beginGlobalSearchSession()
         store.runGlobalSearch(query: "doc", caseSensitive: false, isRegex: false)
@@ -65,7 +65,7 @@ final class GlobalSearchStoreTests: XCTestCase {
     func testJumpWithEmptyQueryIsANoOp() throws {
         let store = makeStore()
         let recorder = try XCTUnwrap(activeSession(store).surfaceRecorder)
-        recorder.scrollbackLines = ["alpha doc"]
+        recorder.scrollbackText = ["alpha doc"]
         store.beginGlobalSearchSession()
         store.runGlobalSearch(query: "doc", caseSensitive: false, isRegex: false)
         let hit = try XCTUnwrap(store.globalSearch?.groups.first?.hits.first)
@@ -78,24 +78,24 @@ final class GlobalSearchStoreTests: XCTestCase {
 
     // MARK: - Fix #2: snapshot once per overlay-open, not per keystroke
 
-    /// The scrollback is mirrored across the libghostty seam ONCE on overlay-open; every keystroke re-runs only
+    /// The scrollback is mirrored across the libghostty-vt seam ONCE on overlay-open; every keystroke re-runs only
     /// the in-memory match pass and must NOT re-cross the seam. A re-open re-snapshots. Revert
     /// ``runGlobalSearch`` to gather sources on every call and the per-keystroke count assertion fails.
     func testScrollbackGatheredOncePerOverlayOpenNotPerKeystroke() throws {
         let store = makeStore()
         let recorder = try XCTUnwrap(activeSession(store).surfaceRecorder)
-        recorder.scrollbackLines = ["one doc", "two doc"]
+        recorder.scrollbackText = ["one doc", "two doc"]
 
         // Open: snapshot ONCE.
         store.beginGlobalSearchSession()
-        XCTAssertEqual(recorder.scrollbackTextLinesCallCount, 1, "open crosses the seam once")
+        XCTAssertEqual(recorder.scrollbackLinesCallCount, 1, "open crosses the seam once")
 
         // Three keystrokes: in-memory match pass only — the seam is not re-crossed.
         store.runGlobalSearch(query: "d", caseSensitive: false, isRegex: false)
         store.runGlobalSearch(query: "do", caseSensitive: false, isRegex: false)
         store.runGlobalSearch(query: "doc", caseSensitive: false, isRegex: false)
         XCTAssertEqual(
-            recorder.scrollbackTextLinesCallCount, 1,
+            recorder.scrollbackLinesCallCount, 1,
             "keystrokes re-run only the match pass — the scrollback seam is not re-crossed",
         )
 
@@ -105,7 +105,7 @@ final class GlobalSearchStoreTests: XCTestCase {
         // A re-open re-snapshots fresh scrollback.
         store.endGlobalSearchSession()
         store.beginGlobalSearchSession()
-        XCTAssertEqual(recorder.scrollbackTextLinesCallCount, 2, "a re-open re-snapshots")
+        XCTAssertEqual(recorder.scrollbackLinesCallCount, 2, "a re-open re-snapshots")
     }
 
     /// Defensive: ``runGlobalSearch`` called with no active overlay session (no `begin`) still works by
@@ -113,9 +113,9 @@ final class GlobalSearchStoreTests: XCTestCase {
     func testRunWithoutSessionSnapshotsOnDemand() throws {
         let store = makeStore()
         let recorder = try XCTUnwrap(activeSession(store).surfaceRecorder)
-        recorder.scrollbackLines = ["lone doc"]
+        recorder.scrollbackText = ["lone doc"]
         store.runGlobalSearch(query: "doc", caseSensitive: false, isRegex: false)
         XCTAssertEqual(store.globalSearch?.totalMatches, 1)
-        XCTAssertGreaterThanOrEqual(recorder.scrollbackTextLinesCallCount, 1)
+        XCTAssertGreaterThanOrEqual(recorder.scrollbackLinesCallCount, 1)
     }
 }

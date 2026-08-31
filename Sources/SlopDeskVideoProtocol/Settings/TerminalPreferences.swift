@@ -33,8 +33,9 @@ public enum TerminalFactoryDefaults {
 }
 
 /// Live, client-side terminal-render preferences (decision #6: these DO apply live, unlike the video
-/// flags). READ from the config file's `[terminal]` table via ``init(_:)``; font/theme apply live via
-/// `ghostty_config_load_string` before `ghostty_config_finalize`.
+/// flags). READ from the config file's `[terminal]` table via ``init(_:)``; font/theme used to apply
+/// live via the deleted fork's `ghostty_config_load_string` before `ghostty_config_finalize` — see
+/// docs/68 for what replaced that apply path.
 ///
 /// **Not `Codable`.** It used to be, for a `UserDefaults` blob that no longer exists: the file is the
 /// only authoring surface now and ``AppConfig`` already decodes it, so a second decode path here
@@ -42,7 +43,8 @@ public enum TerminalFactoryDefaults {
 /// it — a config file simply omits what it does not override, and the row's own default answers.
 ///
 /// Pure value type — no SwiftUI import, so it is headlessly testable and the libghostty
-/// config-string builder (`ghosttyConfigString()`) can be unit-tested without a surface. Every
+/// config-string builder (``TerminalConfigBuilder/string(for:keybinds:backgroundOverride:foregroundOverride:paletteOverride:selectionBackgroundOverride:controls:)``)
+/// can be unit-tested without a surface. Every
 /// field has a real default (these are render prefs, not env overrides), so a default-constructed
 /// value is a sensible terminal.
 public struct TerminalPreferences: Sendable, Equatable {

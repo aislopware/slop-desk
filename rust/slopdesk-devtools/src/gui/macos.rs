@@ -6,18 +6,24 @@
 //! drive a native macOS app, it only targets iOS, Android and web. This closes that gap with the
 //! toolchain every Mac already has.
 //!
-//! ## Three modes
-//! - **default** — build the committed PLACEHOLDER app, launch, assert alive AND windowed AND
-//!   mounted, screenshot.
-//! - **`--renderer`** — wire libghostty in first ([`crate::ops::renderer`]), then the same. This is
-//!   what proves the renderer app launches without crashing; the ~3 s launch crash it once caught
-//!   was an off-main `MainActor.assumeIsolated` in libghostty's wakeup/write/resize callbacks,
-//!   fired from its own renderer and io threads.
-//! - **`--connect`** — `--renderer` PLUS a real end-to-end check: a live `slopdesk-hostd`, an app
-//!   that auto-connects on launch, an ESTABLISHED TCP session, and — the part a live socket cannot
-//!   vouch for — a command auto-typed through the real keystroke chain that the remote shell
-//!   EXECUTES. The marker is COMPUTED (`$((6*7))` → 42), so an echo of the literal keystrokes
-//!   cannot satisfy it.
+//! ## Two modes
+//! - **default** — build the committed app, launch, assert alive AND windowed AND mounted,
+//!   screenshot.
+//! - **`--connect`** — the same PLUS a real end-to-end check: a live `slopdesk-hostd`, an app that
+//!   auto-connects on launch, an ESTABLISHED TCP session, and — the part a live socket cannot vouch
+//!   for — a command auto-typed through the real keystroke chain that the remote shell EXECUTES.
+//!   The marker is COMPUTED (`$((6*7))` → 42), so an echo of the literal keystrokes cannot satisfy
+//!   it.
+//!
+//! There used to be a THIRD, `--renderer`, and with it a spec guard: the terminal conformer linked
+//! a gitignored xcframework, joined the app by a text insert into the committed spec, and was
+//! compiled by no `Package.swift` target — so "does the renderer app launch" was a different build
+//! from "does the app launch", and the gate had to make one before it could ask. It caught a real
+//! failure that way, a ~3 s launch crash from an off-main `MainActor.assumeIsolated` in
+//! libghostty's wakeup/write/resize callbacks, fired from its own renderer and io threads. Both the
+//! fork and the second build are gone (`docs/68` §10): the conformer is a package source, every
+//! mode below builds it, and the concurrency shape that produced that crash is ours now rather than
+//! an engine's.
 //!
 //! Requires a logged-in GUI session: it drives a real window, so it is not headless.
 
@@ -31,16 +37,13 @@ use super::{
     Hostd, Log, Suite, alive, banner, build_app, build_cli, complain, kill_matching, poll, port, raise, reap,
     say, screenshot, window_census_binary, window_count, work_dir,
 };
-use crate::ops::renderer;
 
-/// Which of the three modes to run.
+/// Which of the two modes to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// The committed placeholder app.
-    Placeholder,
-    /// The libghostty renderer wired in.
-    Renderer,
-    /// The renderer, a live host, and the typed-command round trip.
+    /// Build the committed app and ask it what it mounted.
+    Launch,
+    /// The same, plus a live host and the typed-command round trip.
     Connect,
 }
 
@@ -48,24 +51,17 @@ impl Mode {
     /// Read a mode off the command line, the way the shell's `case` did.
     ///
     /// # Errors
-    /// When the flag is not one of the two.
+    /// When the flag is not the one there is.
     pub fn parse(flag: Option<&str>) -> Result<Self, String> {
         match flag {
-            None | Some("") => Ok(Self::Placeholder),
-            Some("--renderer") => Ok(Self::Renderer),
+            None | Some("") => Ok(Self::Launch),
             Some("--connect") => Ok(Self::Connect),
             Some(other) => {
                 Err(format!(
-                    "unknown flag {other} — usage: slopdesk-guigate macos [--renderer | --connect]"
+                    "unknown flag {other} — usage: slopdesk-guigate macos [--connect]"
                 ))
             },
         }
-    }
-
-    /// Whether the libghostty wiring goes in.
-    #[must_use]
-    pub const fn wires_the_renderer(self) -> bool {
-        matches!(self, Self::Renderer | Self::Connect)
     }
 
     /// How long the app gets to settle before it is asked anything.
@@ -76,43 +72,7 @@ impl Mode {
     pub const fn settle(self) -> Duration {
         match self {
             Self::Connect => Duration::from_secs(7),
-            _ => Duration::from_secs(4),
-        }
-    }
-}
-
-/// The committed `project.yml`, put back exactly as it was.
-///
-/// The shell restored it with `git checkout -- <spec>`, which is wrong in a way that only shows up
-/// on a bad day: it discards whatever UNCOMMITTED work the developer had in that file, and this
-/// gate runs on the tree they are working in. Holding the bytes and writing them back restores the
-/// same file whether or not it was committed, and the regenerate afterwards is not optional —
-/// putting the placeholder spec back and leaving a generated project that still names the
-/// framework fails to build with no hint at the cause.
-#[derive(Debug)]
-struct SpecGuard {
-    spec: PathBuf,
-    root: PathBuf,
-    before: String,
-}
-
-impl SpecGuard {
-    fn hold(root: &Path) -> Result<Self, String> {
-        let spec = root.join("Apps/ClientApp-macOS/project.yml");
-        let before = fs::read_to_string(&spec).map_err(|error| format!("{}: {error}", spec.display()))?;
-        Ok(Self {
-            spec,
-            root: root.to_path_buf(),
-            before,
-        })
-    }
-}
-
-impl Drop for SpecGuard {
-    fn drop(&mut self) {
-        say("macos", "restoring the project.yml this run injected into");
-        if fs::write(&self.spec, &self.before).is_ok() {
-            let _ = renderer::generate(&self.root, &self.spec);
+            Self::Launch => Duration::from_secs(4),
         }
     }
 }
@@ -222,19 +182,10 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     let control = Control::new(root, "macos");
     control.unlink();
 
-    // Held for the whole run, so a failure anywhere below still puts the spec back.
-    let _spec = if mode.wires_the_renderer() {
-        let guard = SpecGuard::hold(root)?;
-        say("macos", "enabling the libghostty renderer (restored on exit)");
-        renderer::enable(root, renderer::by_name("macos")?)?;
-        Some(guard)
-    } else {
-        None
-    };
-
     say("macos", "building SlopDesk.app (Debug, unsigned)");
-    // The renderer path has already regenerated the project from the injected spec; the default
-    // path regenerates from the committed one, which is what keeps the `.xcodeproj` in step.
+    // [`build_app`] regenerates the project from the committed spec first, which is what keeps the
+    // `.xcodeproj` in step. This gate used to have a second, INJECTED spec to build from and a
+    // guard to put the committed one back afterwards; the fork that needed the injection is gone.
     let app = build_app(root, &work, "DerivedData")?;
     say("macos", &format!("build OK: {}", app.binary.display()));
 
@@ -314,9 +265,9 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     say("macos", &format!("alive after {}s ✅", mode.settle().as_secs()));
 
     // ── it has a WINDOW, asserted off the window server, in every mode ──────────────────────
-    // The default and --renderer modes have NOTHING else to say: they carry no auto-connect, so
-    // every check below them never runs for those two. Without this they printed
-    // `alive after Ns ✅` and screenshotted the bare desktop.
+    // The default mode has NOTHING else to say: it carries no auto-connect, so every check below
+    // it never runs. Without this it printed `alive after Ns ✅` and screenshotted the bare
+    // desktop.
     say(
         "macos",
         &format!("counting the app's on-screen windows (CGWindowList, pid {pid})…"),
@@ -412,9 +363,10 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     let mut lines = vec![format!("screenshot: {}", shot.display())];
     if mode == Mode::Connect {
         lines.push(
-            "PASS also needs the picture: libghostty rendering a LIVE remote shell — prompt, ANSI".to_owned(),
+            "PASS also needs the picture: the terminal renderer showing a LIVE remote shell — prompt,"
+                .to_owned(),
         );
-        lines.push("colours, nerd-font glyphs.".to_owned());
+        lines.push("ANSI colours, nerd-font glyphs.".to_owned());
     } else {
         lines.push("PASS also needs the picture: the rendered window.".to_owned());
     }
@@ -493,28 +445,24 @@ fn connected_half(hostd: &Hostd, proof: &OutProof, app_log: &Log) -> Result<(), 
 mod tests {
     use super::Mode;
 
-    /// The three spellings the shell's `case` accepted, and nothing else.
+    /// The two spellings that survive, and nothing else.
+    ///
+    /// `--renderer` was the third, and it is deliberately NOT accepted as a synonym for the
+    /// default: it named a second build of a fork that no longer exists, and a flag silently
+    /// meaning something else is how a gate goes on reporting green over a thing it stopped doing.
     #[test]
-    fn the_modes_are_the_three_the_shell_had() {
-        assert_eq!(Mode::parse(None), Ok(Mode::Placeholder));
-        assert_eq!(Mode::parse(Some("--renderer")), Ok(Mode::Renderer));
+    fn the_modes_are_the_two_that_are_left() {
+        assert_eq!(Mode::parse(None), Ok(Mode::Launch));
         assert_eq!(Mode::parse(Some("--connect")), Ok(Mode::Connect));
-        assert!(Mode::parse(Some("--renderer=1")).is_err());
-    }
-
-    /// `--connect` wires the renderer too — it is `--renderer` PLUS the host, never instead of it.
-    #[test]
-    fn connect_wires_the_renderer_as_well() {
-        assert!(!Mode::Placeholder.wires_the_renderer());
-        assert!(Mode::Renderer.wires_the_renderer());
-        assert!(Mode::Connect.wires_the_renderer());
+        assert!(Mode::parse(Some("--renderer")).is_err());
+        assert!(Mode::parse(Some("--connect=1")).is_err());
     }
 
     /// The connect settle is longer, because it covers a TCP connect and a first render rather
     /// than a launch.
     #[test]
     fn connect_settles_longer_than_a_bare_launch() {
-        assert!(Mode::Connect.settle() > Mode::Renderer.settle());
+        assert!(Mode::Connect.settle() > Mode::Launch.settle());
     }
 
     /// The OUT-path marker leaves the `$((6*7))` UNEXPANDED — this process must not compute the

@@ -1,6 +1,7 @@
 // NerdSymbolFont — the bundled Symbols Nerd Font, and the one place chrome text learns to draw it.
 //
-// The TERMINAL grid already renders nerd-font glyphs: ghostty embeds this exact face as its fallback.
+// The TERMINAL grid already renders nerd-font glyphs: its Core Text glyph pipeline (`slopdesk-apple-text`)
+// falls back to this exact face.
 // The CHROME did not — a program/agent title carrying a private-use glyph (Claude Code's mark, a
 // starship segment, an nvim filetype icon) fell through the system cascade to a notdef dot, because
 // private-use codepoints have no system fallback BY DESIGN (they mean nothing outside the font that
@@ -148,12 +149,12 @@ package enum NerdSymbolFont {
 }
 
 /// The bundled JetBrains Mono VARIABLE faces (upright + italic, weights 100–800 in one file each) —
-/// the terminal's true face: libghostty embeds JetBrains Mono and renders it whenever the preferred
-/// "SF Mono" does not resolve (it is absent on a stock system — verified via CoreText on both dev
+/// the terminal's true face: its Core Text fallback (`slopdesk-apple-text`) resolves to JetBrains Mono
+/// whenever the preferred "SF Mono" does not resolve (it is absent on a stock system — verified via CoreText on both dev
 /// machines). The code sidebar injects these bytes as @font-face data URIs so the embedded editor
 /// shares the terminal's mono exactly (`CodeSidebarPageDressing`); the chrome itself keeps
 /// `Slate.Typeface` (which independently prefers JetBrains Mono when installed). Vendored from the
-/// same upstream release ghostty pins (OFL-1.1 — license beside the TTFs).
+/// same upstream release `libghostty-vt` pins (OFL-1.1 — license beside the TTFs).
 package enum JetBrainsMonoFont {
     /// The upright variable TTF (`JetBrainsMono[wght]`).
     package static var bundledUprightURL: URL? {

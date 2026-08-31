@@ -4,11 +4,14 @@
 
 **Source of truth:** the tree, checked against `docs/ui-shell/spec/` + `docs/ui-shell/screenshots/`.
 Re-verified against code on **2026-08-22**; the previous revision was a docs-driven audit dated 2026-06-29
-and it had gone badly stale — see §0. SlopDesk's terminal **emulation** is the embedded **libghostty**
-engine (the real ghostty), so the entire VT/Terminal-API section (C0/ESC/CSI/OSC *parsing*) comes from
-libghostty, not reimplemented — only the **app-level** OSC behaviours (7/8/9/52/133/9;4/1337) are
-slopdesk's own. Note that the embedder Swift lives under `ThirdParty/ghostty/integration/`, not `Sources/`:
-a `Sources/`-only search calls the whole paste/clipboard/selection cluster dead.
+and it had gone badly stale — see §0. SlopDesk's terminal **emulation** is still ghostty's, so the
+entire VT/Terminal-API section (C0/ESC/CSI/OSC *parsing*) comes from it, not reimplemented — only the
+**app-level** OSC behaviours (7/8/9/52/133/9;4/1337) are slopdesk's own. What changed since this
+re-verification: `docs/68-terminal-surface-in-rust.md` swapped the embedded full **surface** for
+`libghostty-vt` through `rust/slopdesk-vterm` and put the renderer in this repo, and deleted the
+embedder Swift under `ThirdParty/ghostty/integration/` with it. So the old warning — a `Sources/`-only
+search calls the whole paste/clipboard/selection cluster dead — no longer applies, and any row below
+citing a `Ghostty*` file is naming what that row's behaviour used to be implemented by.
 
 Spec sections: Getting Started, User Interface (9), Workflows (6), Terminal Features (16), Working with
 Agents (9), Customization (7), Terminal API/VT (~65, = libghostty), Reference (7), About. All 47 spec pages
@@ -146,7 +149,7 @@ a reason, and the reason is the condition for bringing it back.
 
 | Old ceiling row | Now |
 |---|---|
-| Scroll-Past-Last/First-Line rendering | **REMOVED 2026-07-30**, not absent. They shipped ahead of a renderer that could actuate them; `ScrollPastPolicy` was deleted with them. The reason and the condition for return are recorded at `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2161-2165`: "the fork exposes no row-snap hook and no overscroll-margin API … Add the settings back with the viewport hook that actuates them, not before." **A `Sources/` + `rust/` grep finds nothing here — the evidence is under `ThirdParty/`** |
+| Scroll-Past-Last/First-Line rendering | **REMOVED 2026-07-30**, not absent. They shipped ahead of a renderer that could actuate them; `ScrollPastPolicy` was deleted with them. The reason and the condition for return were recorded at `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2161-2165`: "the fork exposes no row-snap hook and no overscroll-margin API … Add the settings back with the viewport hook that actuates them, not before." **That file went with the fork (`docs/68-terminal-surface-in-rust.md`) — `git show` recovers the comment, and the condition it names is now satisfiable: `docs/68` §5.1 item 9 puts scrollbar and viewport geometry in this repo, so the hook that was missing is one we write** |
 | Backspace-Deletes-Selection | no `backspaceDeletesSelection` key anywhere — **superseded**, not merely dropped: Cut (⌘X) is the shipped verb (`Sources/SlopDeskWorkspaceCore/Terminal/CutSelectionPolicy.swift`) |
 | Smooth-Scroll OFF (row-snap) | **REMOVED 2026-07-30** with scroll-past, same commit and same reason — `smoothScroll` OFF rendered exactly like ON |
 | Cursor Animation Smooth | no animation field on `TerminalPreferences` |

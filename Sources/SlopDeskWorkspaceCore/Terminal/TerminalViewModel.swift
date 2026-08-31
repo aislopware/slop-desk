@@ -3,7 +3,6 @@ import Foundation
 import SlopDeskClaudeCode
 import SlopDeskClient
 import SlopDeskProtocol
-import SlopDeskTerminal
 import SlopDeskWorkspaceModel
 #if canImport(AppKit)
 import AppKit
@@ -56,11 +55,12 @@ public enum PaneProgress: Equatable, Sendable {
 /// `withObservationTracking` arms (`MacTerminalLeafView` / `TerminalLeafView` and the rollups above
 /// them), each of which RE-ARMS from its own handler, since `withObservationTracking` fires exactly
 /// once per arm. The terminal **pixels** are produced by the ``SlopDeskTerminal/TerminalSurface``
-/// the view-model feeds (the libghostty `GhosttySurface` in the app target, or `nil` in the
-/// headless/placeholder case) — the view-model never parses VT itself (libghostty-only).
+/// the view-model feeds (`TerminalSurfaceDriver` in the app target, or `nil` in the
+/// headless/placeholder case) — the view-model never parses VT itself; `libghostty-vt` does.
 ///
-/// `@MainActor` so it is safe to mutate from the shells and to drive a `@MainActor`
-/// `GhosttySurface`; `@Observable` so a tracked arm is woken by a change instead of polling.
+/// `@MainActor` so it is safe to mutate from the shells and to drive a `@MainActor` surface — which
+/// the surface must be, because a `libghostty-vt` handle is `!Send`/`!Sync` with no lock of its own;
+/// `@Observable` so a tracked arm is woken by a change instead of polling.
 @preconcurrency
 @MainActor
 @Observable
@@ -146,11 +146,11 @@ public final class TerminalViewModel {
     // MARK: Wiring
 
     /// The terminal renderer the model feeds inbound bytes to. `nil` in the headless / placeholder case;
-    /// the app target sets it to a libghostty ``GhosttySurface``.
+    /// the app target sets it to a `TerminalSurfaceDriver`, which drives `libghostty-vt`.
     ///
     /// `@ObservationIgnored`: WIRING, not view state — like ``inputSink`` / ``resizeSink`` / ``onRequestFocus``.
     /// It MUST NOT be observation-tracked, and the reason is the READ-THEN-WRITE in ``attachSurface(_:)``: it
-    /// compares (`self.surface !== surface`) and then assigns, from inside `GhosttyLayerBackedView.attach(model:)`
+    /// compares (`self.surface !== surface`) and then assigns, from inside `TerminalSurfaceDriver.bind(to:)`
     /// — the renderer's own mount path. Tracked, that pair is a self-invalidating cycle: any arm that read
     /// `surface` would be woken by the write its own re-arm provoked.
     ///
@@ -165,20 +165,20 @@ public final class TerminalViewModel {
     /// and this is only the feed target.
     @ObservationIgnored public weak var surface: (any TerminalSurface)?
 
-    /// OUT path sink: the encoded keystroke/escape bytes libghostty emits from the renderer's `key`/`text`
-    /// events (`GhosttySurface.onWrite`). ``ConnectionViewModel`` sets this on connect to forward to the live
+    /// OUT path sink: the encoded keystroke/escape bytes libghostty-vt emits from the renderer's `key`/`text`
+    /// events (`TerminalSurfaceDriver.onWrite`). ``ConnectionViewModel`` sets this on connect to forward to the live
     /// ``SlopDeskClient/sendInput(_:)`` and clears it on teardown; while `nil` (disconnected) keystrokes are
     /// dropped — no host to receive them. The renderer routes `onWrite` here via ``sendInput(_:)``, decoupling
     /// view-attach timing from connect timing (the closure reads the latest sink at call time).
     /// `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var inputSink: ((Data) -> Void)?
 
-    /// OUT path sink for grid resizes (cols/rows) the renderer derives from layout (`GhosttySurface.onResize`).
+    /// OUT path sink for grid resizes (cols/rows) the renderer derives from layout (`TerminalSurfaceDriver.setGeometry`).
     /// Same lifecycle as ``inputSink``: set on connect to forward to
     /// ``SlopDeskClient/sendResize(cols:rows:pxWidth:pxHeight:)`` (→ host `TIOCSWINSZ`), cleared on teardown.
-    /// Wiring it (on connect) FLUSHES the latest grid the renderer derived: libghostty's `resize_callback`
-    /// fires during surface creation / initial layout — BEFORE `connect()` wires this sink — so those early
-    /// grids would otherwise be lost and the host PTY would stay at its 80×24 init size while libghostty renders
+    /// Wiring it (on connect) FLUSHES the latest grid the renderer derived: the view's first layout pass
+    /// measures a grid — BEFORE `connect()` wires this sink — so those early
+    /// grids would otherwise be lost and the host PTY would stay at its 80×24 init size while the surface renders
     /// the real grid (the garbled-render / overlapping-glyph bug: zsh wraps at 80 cols, fzf draws at row 24,
     /// but the surface is a different size). `didSet` delivers the pending size the instant a sink appears, so
     /// the host always learns the real grid even when no further resize happens after connect.
@@ -195,8 +195,9 @@ public final class TerminalViewModel {
     /// there is no sink yet) so it can be flushed the moment ``resizeSink`` is wired on connect.
     @ObservationIgnored private var pendingSize: (cols: UInt16, rows: UInt16)?
 
-    /// Last grid size actually FORWARDED through the sink, so a duplicate resize (libghostty emits `onResize`
-    /// both from `setSize` directly AND from its `resize_callback` for the same layout pass) is coalesced.
+    /// Last grid size actually FORWARDED through the sink, so a duplicate resize is coalesced — a window
+    /// resize, a scale change and a font change can each land a `setGeometry` for one settled grid, and
+    /// `TerminalSurfaceDriver` only suppresses the pair it can see.
     /// Only updated on a genuine delivery — a resize attempted while disconnected (sink nil) must NOT poison
     /// this, or the dedup would later suppress the real send once the sink is wired.
     @ObservationIgnored private var lastSentSize: (cols: UInt16, rows: UInt16)?
@@ -208,9 +209,9 @@ public final class TerminalViewModel {
     /// Default off.
     @ObservationIgnored private var resizeDeliverySuspended = false
 
-    /// Click-to-focus hook (macOS). The terminal NSView (`GhosttyLayerBackedView`) installs `mouseDown`, and it
+    /// Click-to-focus hook (macOS). `MacTerminalRendererView` installs `mouseDown`, and it
     /// is the DEEPEST view in the pane, so it wins the hit-test and the click never reaches any focus handler
-    /// an ancestor might install — a click would start a libghostty selection but NOT focus the pane (no focus
+    /// an ancestor might install — a click would start a libghostty-vt selection but NOT focus the pane (no focus
     /// ring, keyboard stuck on the old pane). The renderer calls this at the TOP of `mouseDown`; the leaf wires
     /// it to `store.focus(paneID)` so the click ALSO transfers workspace focus. `@ObservationIgnored`: wiring,
     /// not view state. Nil for headless callers (no store), never invoked.
@@ -284,7 +285,7 @@ public final class TerminalViewModel {
 
     /// The ⌘G "Find Next" / ⇧⌘G "Find Previous" actions — advance / retreat the find bar's match
     /// over THIS pane (and OPEN the bar when closed). The leaf's `TerminalPaneWiring` binds these to the
-    /// pane's `TerminalFindBarModel` (next()/previous() + the libghostty `navigate_search:` highlight);
+    /// pane's `TerminalFindBarModel` (next()/previous() + the libghostty-vt `navigate_search:` highlight);
     /// the store reaches them via
     /// ``WorkspaceStore/requestFindNextInActivePane()`` / `requestFindPrevInActivePane()`, falling back to
     /// ``onRequestFind`` when unset so ⌘G still opens the bar. `@ObservationIgnored`: wiring, not view state.
@@ -301,14 +302,17 @@ public final class TerminalViewModel {
     /// never a launch surprise. `@ObservationIgnored`: wiring, not view state; nil for headless/preview callers.
     @ObservationIgnored public var onResumeOutcomeResolved: ((SlopDeskClient.SessionResumeOutcome) -> Void)?
 
-    /// Find + global search surface seams over the active ``TerminalSurfaceActions`` conformer (production
-    /// ``GhosttySurface``): the flat scrollback text mirror the find bar / global search scan, and the
-    /// passthrough to libghostty's own in-surface search bindings (`search:`/`navigate_search:`/`end_search`/
-    /// `scroll_to_row`, which own the amber highlight + scroll-to-match). A headless / preview surface does NOT
-    /// conform (hang-safety — never instantiated in a test) → `[]` / `false`. Wiring funcs (read
-    /// `surface as? TerminalSurfaceActions`, the copy-mode pattern), NOT `@Observable` state.
-    public func searchScrollbackLines() -> [String] {
-        (surface as? TerminalSurfaceActions)?.scrollbackTextLines() ?? []
+    /// Find + global search surface seams over the active ``TerminalSurfaceActions`` conformer: the
+    /// scrollback mirror the find bar / global search scan, and the passthrough to the surface's own
+    /// search bindings (`search:`/`navigate_search:`/`end_search`/`scroll_to_row`, which own the amber
+    /// highlight + scroll-to-match). A headless / preview surface does NOT conform (hang-safety — never
+    /// instantiated in a test) → `[]` / `false`. Wiring funcs (read `surface as? TerminalSurfaceActions`,
+    /// the copy-mode pattern), NOT `@Observable` state.
+    ///
+    /// Each line carries the screen rows it occupies, so a caller that matched line N scrolls to
+    /// `lines.row(forLine: N)` rather than estimating one — see ``TerminalScrollbackLine``.
+    public func searchScrollbackLines() -> [TerminalScrollbackLine] {
+        (surface as? TerminalSurfaceActions)?.scrollbackLines() ?? []
     }
 
     @discardableResult
@@ -316,16 +320,8 @@ public final class TerminalViewModel {
         (surface as? TerminalSurfaceActions)?.performBindingAction(action) ?? false
     }
 
-    /// The live grid COLUMN count, used to map an unwrapped LOGICAL scrollback line index (into
-    /// ``searchScrollbackLines()``) to the PHYSICAL grid row `scroll_to_row:` addresses (soft-wrap
-    /// continuations count). `0` on a headless / preview surface (no conformer / grid not laid out) → the
-    /// caller (``ScrollbackWrapMapper``) treats the mapping as the identity.
-    public func searchGridColumns() -> Int {
-        (surface as? TerminalSurfaceActions)?.scrollbackGridColumns() ?? 0
-    }
-
-    /// Find bar close → return keyboard focus to the surface: the renderer wires this in `attach(model:)`
-    /// so the pane's ghostty NSView re-claims the window's first responder. Needed because closing the find bar
+    /// Find bar close → return keyboard focus to the surface: `installTerminalRenderer()` wires this when it
+    /// builds the host, so the pane's renderer view re-claims the window's first responder. Needed because closing the find bar
     /// tears down the focused query `TextField` WITHOUT any workspace-focus change — the surface's own reclaim
     /// paths (`isFocusedPane` didSet, mount, mouseDown, focus-follows-mouse) all gate on a focus TRANSITION or a
     /// click, none of which fire here, so the window would otherwise stay first responder and keystrokes go
@@ -337,10 +333,11 @@ public final class TerminalViewModel {
     /// workspace-focus change). No-op on a headless / preview model (``onReclaimKeyboardFocus`` unset).
     public func reclaimKeyboardFocus() { onReclaimKeyboardFocus?() }
 
-    /// The PURE keybinding interceptor (the override-aware single-chord table) the libghostty surface's
-    /// `keyDown` consults BEFORE its raw-byte branches. The store wires it (in `wireMaterializedLeaf`) so a
-    /// rebindable ⌘D/⌘⇧D split is owned by the shared engine rather than a hard-coded split branch. `nil`
-    /// for headless/preview callers (no store), where the surface keeps its plain libghostty path.
+    /// The PURE keybinding interceptor (the override-aware single-chord table) the renderer view's
+    /// `keyDown` consults BEFORE handing the press to the engine. The store wires it (in
+    /// `wireMaterializedLeaf`) so a rebindable ⌘D/⌘⇧D split is owned by the shared table rather than a
+    /// hard-coded split branch. `nil` for headless/preview callers (no store), where every press goes
+    /// straight to the engine.
     /// `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var keyInterceptor: TerminalKeyInterceptor?
 
@@ -353,8 +350,8 @@ public final class TerminalViewModel {
     /// drain. But with the live-resize design the host `TIOCSWINSZ` is DEFERRED to release — so the host's
     /// SIGWINCH-driven redraw bytes arrive ~1 RTT AFTER release, possibly LATER than the layout-anchored burst
     /// (the final layout often even hits the renderer's same-size guard and arms no fresh burst). Once the burst
-    /// expires, those bytes' only present is a one-shot `requestPresent`, which can drain before libghostty
-    /// finishes lazily rasterizing the reflowed grid → the pane stays blank/stale until the next content event.
+    /// expires, those bytes' only present is a one-shot `requestPresent`, which can drain before the reflowed
+    /// grid has been rasterized → the pane stays blank/stale until the next content event.
     /// Re-arming the burst at the FLUSH moment (here) anchors the keep-alive window to the release, covering the
     /// RTT until the reflow bytes land and rasterize. `@ObservationIgnored`: wiring, not view state. Nil for
     /// headless/preview callers (never invoked).
@@ -405,7 +402,7 @@ public final class TerminalViewModel {
 
     /// Records that `text` just landed on the clipboard: publishes a fresh ``CopyReceipt``, which IS the
     /// confirmation — the chip renders it and its epoch restarts the dwell. RECORD-only: the pasteboard
-    /// write itself stays at the call site (libghostty writes internally; ``copyToPasteboard`` for ours).
+    /// write itself stays at the call site (libghostty-vt writes internally; ``copyToPasteboard`` for ours).
     /// Empty text is a no-op (nothing was copied ⇒ nothing to confirm).
     public func noteClipboardCopy(_ text: String) {
         guard !text.isEmpty else { return }
@@ -422,13 +419,13 @@ public final class TerminalViewModel {
 
     /// Bumped once per CONFIRMED prompt-jump landing — OBSERVABLE: the pane's flash overlay
     /// (`PromptJumpFlashOverlay`) paints a one-shot ~240ms accent fade over viewport row 0 (where
-    /// libghostty PINS the jumped-to prompt) on each bump. The two-step arm/settle below keeps it
+    /// libghostty-vt PINS the jumped-to prompt) on each bump. The two-step arm/settle below keeps it
     /// honest: it fires only when a jump actually MOVED the viewport to a pinned prompt, never when
     /// the jump was a no-op or landed in the ACTIVE area (bottom clamp — the prompt is then NOT at
     /// row 0, so the flash is suppressed: absent, never wrong).
     public private(set) var promptJumpFlashEpoch = 0
 
-    /// The arm instant of an issued-but-unsettled prompt jump. libghostty reports the resulting
+    /// The arm instant of an issued-but-unsettled prompt jump. libghostty-vt reports the resulting
     /// viewport move asynchronously (the renderer's scrollbar action on the next frame), so the jump
     /// call arms this and the FIRST scrollbar change inside ``promptJumpSettleWindow`` settles it.
     @ObservationIgnored private var promptJumpArmedAt: ContinuousClock.Instant?
@@ -447,7 +444,7 @@ public final class TerminalViewModel {
 
     /// One viewport-scroll report from the renderer (the surface's scrollbar hook). Settles a pending
     /// jump: inside the window and NOT bottom-clamped ⇒ the prompt is pinned at viewport row 0 ⇒ flash.
-    /// `atBottom` (viewport == active area) means libghostty could not pin the prompt to the top, so
+    /// `atBottom` (viewport == active area) means libghostty-vt could not pin the prompt to the top, so
     /// the row is unknown ⇒ no flash. Always disarms — one jump, at most one flash.
     public func noteViewportScroll(atBottom: Bool) {
         // A viewport move (wheel scroll, host output) shifts where the copy-mode cursor sits on
@@ -599,7 +596,7 @@ public final class TerminalViewModel {
     /// overlay then draws nothing — absent, never wrong). Recomputed from a FRESH
     /// ``TerminalSelectionControl/viewportInfo()`` readback after every copy-mode key AND on each
     /// renderer scroll echo (``noteViewportScroll(atBottom:)``), so a wheel scroll during copy-mode
-    /// moves/hides the drawn cursor in lock-step with libghostty truth.
+    /// moves/hides the drawn cursor in lock-step with libghostty-vt truth.
     public struct ViCursorCell: Equatable, Sendable {
         public let col: Int
         public let row: Int
@@ -674,9 +671,10 @@ public final class TerminalViewModel {
     /// key collapses to a `.char` carrying its first character + control/shift state (Command-combos are app
     /// shortcuts intercepted upstream, never reaching the surface keyDown).
     ///
-    /// Its ONLY caller is `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — the
-    /// renderer the Xcode app target injects through `TerminalRendererFactory`. A grep over `Sources/` and
-    /// `Tests/` alone reads this as dead, and it is not.
+    /// Its ONLY caller is the renderer view in `Sources/SlopDeskTerminal/`, which registers itself through
+    /// `TerminalRendererFactory`. It used to be the fork's embedder, outside every `Package.swift` target,
+    /// which is why this note warned that a grep read the method as dead — `swift build` compiles the
+    /// caller now, so it does not.
     public static func makeCopyModeKey(event: NSEvent) -> CopyModeKey {
         let control = event.modifierFlags.contains(.control)
         let shift = event.modifierFlags.contains(.shift)
@@ -742,7 +740,7 @@ public final class TerminalViewModel {
 
     /// Offers one phone press to whichever mode is armed, answering whether a mode took it.
     ///
-    /// The layer ORDER is the Mac's, and for the Mac's reason (`GhosttyTerminalView.keyDown`): hint
+    /// The layer ORDER is the Mac's, and for the Mac's reason (`MacTerminalRendererView.keyDown`): hint
     /// mode can be armed ON TOP of copy mode — copy-mode `f` is one of the ways in — so it is the
     /// topmost layer and is asked first. Asked second, copy mode would swallow every label letter
     /// and its Esc would tear down the bottom layer first.
@@ -780,10 +778,10 @@ public final class TerminalViewModel {
     /// cursor in SCREEN coordinates — `h/l/←/→` column motions, `0/^/$` line columns, `w/b/e` word motions
     /// (``ViLineMotion`` over the seam's row text), `j/k/↑/↓` cursor rows with viewport-follow scrolling, and
     /// the page/absolute jumps move cursor AND viewport. `v`/`V`/`⌃v` anchor AT the cursor and drive
-    /// `setSelection` so libghostty renders the selection natively; `o` swaps anchor↔cursor; `y`/Enter yanks
+    /// `setSelection` so libghostty-vt renders the selection natively; `o` swaps anchor↔cursor; `y`/Enter yanks
     /// the real range; `Y` yanks the cursor row. Every motion re-reads `viewportInfo()` FIRST (the anti-jitter
     /// rule: the cursor is client state, but every claim about where it sits derives from same-keystroke
-    /// libghostty truth, re-clamped — never a cached offset).
+    /// libghostty-vt truth, re-clamped — never a cached offset).
     ///
     /// LEGACY FALLBACK (seam absent — headless conformers, placeholder surfaces): the pre-lift behavior is
     /// kept verbatim — line motions scroll (`scroll_page_lines:±count`), visual modes EXTEND a mouse-anchored
@@ -792,7 +790,7 @@ public final class TerminalViewModel {
     ///
     /// Scroll-sign convention (Binding.zig): NEGATIVE = UP toward older scrollback, so `j`/↓ = `+1` (down),
     /// `k`/↑ = `-1` (up). `jump_to_prompt`/scroll actions are re-resolved every call (the seam reads live
-    /// libghostty truth — never cache a client line index, which drifts under host output).
+    /// libghostty-vt truth — never cache a client line index, which drifts under host output).
     public func handleCopyModeKey(_ key: CopyModeKey) {
         let actions = surface as? TerminalSurfaceActions
         // Every path re-syncs the pill mirrors after mutating the pure ``copyModeState`` (digit append /
@@ -865,7 +863,7 @@ public final class TerminalViewModel {
              .char("G", control: false, _):
             applyAbsoluteJump(actions, toTop: false)
         // Prompt jump: the count SCALES the magnitude (`3]` → jump_to_prompt:3); on the cursor path the
-        // cursor re-anchors to the landed viewport top (the prompt row libghostty pinned).
+        // cursor re-anchors to the landed viewport top (the prompt row libghostty-vt pinned).
         case .char("[", control: false, _):
             applyPromptJump(actions, sign: -1)
         case .char("]", control: false, _):
@@ -907,7 +905,7 @@ public final class TerminalViewModel {
              .char("N", control: false, _):
             let count = copyModeState.consumeCount()
             for _ in 0..<count { stepFindInSearchDirection(actions, reverse: true) }
-        // Yank: copies the live selection (a cursor-driven visual range IS the live libghostty selection) /
+        // Yank: copies the live selection (a cursor-driven visual range IS the live libghostty-vt selection) /
         // the mouse-made selection / visible scrollback, then EXITS vi mode (spec).
         case .char("y", control: false, shift: false),
              .enter:
@@ -941,7 +939,7 @@ public final class TerminalViewModel {
     /// (``onRequestFindNext`` / ``onRequestFindPrev`` → the find bar's `next()` / `previous()`, biased on
     /// `searchBackward`), so after a copy-mode `?foo` the bar — not this handler — owns the concrete direction:
     /// `n` walks UP the buffer and `N` walks down (vim parity). Must NOT hardcode `navigate_search:next`, which
-    /// always steps forward regardless of how the search was opened. Falls back to libghostty's own forward/back
+    /// always steps forward regardless of how the search was opened. Falls back to the engine's own forward/back
     /// nav ONLY when no find bar is wired (headless / preview), where there is no search direction to
     /// honor anyway.
     private func stepFindInSearchDirection(_ actions: TerminalSurfaceActions?, reverse: Bool) {
@@ -958,7 +956,7 @@ public final class TerminalViewModel {
     /// pre-lift scroll-only behavior).
     private var selectionControl: TerminalSelectionControl? { surface as? TerminalSelectionControl }
 
-    /// Fresh libghostty truth for one cursor-path step, or `nil` → legacy. Re-read EVERY key (the
+    /// Fresh libghostty-vt truth for one cursor-path step, or `nil` → legacy. Re-read EVERY key (the
     /// anti-jitter rule) and sanity-gated so a degenerate readback can never divide/clamp into nonsense.
     private func cursorContext() -> (ctl: TerminalSelectionControl, info: TerminalViewportInfo)? {
         guard let ctl = selectionControl, let info = ctl.viewportInfo(),
@@ -1034,11 +1032,11 @@ public final class TerminalViewModel {
                 0
             }
         guard delta != 0 else { return }
-        actions?.performBindingAction("scroll_page_lines:\(delta)")
+        actions?.performBindingAction(TerminalBindingAction.scrollLines(delta).wire)
     }
 
     /// Re-issues the native selection for the active cursor-driven visual mode after any cursor move
-    /// (anchor→cursor; `.line` spans full rows; `.block` sets the rectangle flag). libghostty renders
+    /// (anchor→cursor; `.line` spans full rows; `.block` sets the rectangle flag). libghostty-vt renders
     /// it — never a client-drawn selection.
     private func refreshVisualSelection(_ ctl: TerminalSelectionControl, info: TerminalViewportInfo) {
         guard copyModeState.visualMode != .none,
@@ -1083,10 +1081,11 @@ public final class TerminalViewModel {
             return
         }
         if copyModeState.visualMode != .none {
-            let direction = sign > 0 ? "down" : "up"
-            for _ in 0..<count { actions?.performBindingAction("adjust_selection:\(direction)") }
+            let edge: TerminalBindingAction.Edge = sign > 0 ? .down : .up
+            let step = TerminalBindingAction.adjustSelection(edge).wire
+            for _ in 0..<count { actions?.performBindingAction(step) }
         } else {
-            actions?.performBindingAction("scroll_page_lines:\(sign * count)")
+            actions?.performBindingAction(TerminalBindingAction.scrollLines(sign * count).wire)
         }
     }
 
@@ -1217,7 +1216,7 @@ public final class TerminalViewModel {
             let lines = Double(info.viewportRows) * fraction
             let magnitude = max(1, Int(lines.rounded(.down)))
             let delta = sign * magnitude
-            actions?.performBindingAction("scroll_page_lines:\(delta)")
+            actions?.performBindingAction(TerminalBindingAction.scrollLines(delta).wire)
             var cursor = seededCursor(info)
             cursor.row = min(max(cursor.row + delta, 0), info.totalRows - 1)
             cursor = settledOnRowText(cursor, ctl: ctl, info: info)
@@ -1230,7 +1229,7 @@ public final class TerminalViewModel {
             }
             return
         }
-        actions?.performBindingAction("scroll_page_fractional:\(sign > 0 ? fraction : -fraction)")
+        actions?.performBindingAction(TerminalBindingAction.scrollFraction(sign > 0 ? fraction : -fraction).wire)
     }
 
     /// `g`/`G` — absolute top/bottom: the viewport jumps via the native action; on the cursor path
@@ -1238,7 +1237,7 @@ public final class TerminalViewModel {
     /// active grid's blank tail rows are padding, never a landing).
     private func applyAbsoluteJump(_ actions: TerminalSurfaceActions?, toTop: Bool) {
         _ = copyModeState.consumeCount()
-        actions?.performBindingAction(toTop ? "scroll_to_top" : "scroll_to_bottom")
+        actions?.performBindingAction((toTop ? TerminalBindingAction.scrollToTop : .scrollToBottom).wire)
         guard let (ctl, info) = cursorContext() else { return }
         var cursor = seededCursor(info)
         cursor.row = toTop ? 0 : lastTextRow(ctl, info: info)
@@ -1249,12 +1248,12 @@ public final class TerminalViewModel {
     }
 
     /// `[`/`]` — the prompt jump keeps the native `jump_to_prompt:±count`; on the cursor path the
-    /// cursor then re-anchors to the LANDED viewport top (the row libghostty pinned the prompt to —
+    /// cursor then re-anchors to the LANDED viewport top (the row libghostty-vt pinned the prompt to —
     /// the binding action mutates core synchronously, so the post-jump readback is already fresh),
     /// landing on the prompt row's first glyph (vim's line-jump column rule).
     private func applyPromptJump(_ actions: TerminalSurfaceActions?, sign: Int) {
         let count = copyModeState.consumeCount()
-        actions?.performBindingAction("jump_to_prompt:\(sign * count)")
+        actions?.performBindingAction(TerminalBindingAction.jumpToPrompt(sign * count).wire)
         guard let (ctl, info) = cursorContext() else { return }
         var cursor = seededCursor(info)
         cursor.row = info.viewportTopRow
@@ -1332,15 +1331,15 @@ public final class TerminalViewModel {
         refreshVisualSelection(ctl, info: info)
     }
 
-    /// Copies the libghostty selection if one exists, else the visible scrollback text — then flashes the
+    /// Copies the libghostty-vt selection if one exists, else the visible scrollback text — then flashes the
     /// "copied" confirmation. Nothing to copy (no selection, empty scrollback) → no pasteboard write and no
-    /// confirmation. Reads libghostty truth only (never a client-guessed range).
+    /// confirmation. Reads libghostty-vt truth only (never a client-guessed range).
     private func copyCurrentSelectionOrScrollback(_ actions: TerminalSurfaceActions?) {
         let text: String?
         if actions?.hasSelection() == true, let selection = actions?.readSelection(), !selection.isEmpty {
             text = selection
         } else {
-            let lines = actions?.scrollbackTextLines() ?? []
+            let lines = actions?.scrollbackLines().text ?? []
             text = lines.isEmpty ? nil : lines.joined(separator: "\n")
         }
         guard let payload = text, !payload.isEmpty else { return }
@@ -1573,14 +1572,14 @@ public final class TerminalViewModel {
     /// A monotonic tick bumped whenever the LOCAL viewport scrolls (mouse-wheel / trackpad scrollback
     /// navigation) WITHOUT any new wire bytes — the signal the link-highlight overlay's arm tracks so its
     /// ⌘-hold underlines RE-DETECT against the post-scroll `viewportTextRows()` instead of clinging to the
-    /// pre-scroll rows at fixed screen positions. libghostty owns the viewport internally, so a local scrollback
+    /// pre-scroll rows at fixed screen positions. libghostty-vt owns the viewport internally, so a local scrollback
     /// scroll bumps no ``bytesReceived`` (the only other viewport-change signal); the renderer's `scrollWheel` /
     /// pan handler calls ``noteViewportScrolled()`` after forwarding the delta. OBSERVABLE so the overlay's arm
     /// re-fires; the MAGNITUDE is never read (a pure change-signal), so a wrap is harmless. Inert on a pane
     /// with no ⌘-hold underline active.
     public private(set) var viewportRevision: Int = 0
 
-    /// Bumps ``viewportRevision`` — called by the renderer AFTER forwarding a LOCAL scroll to libghostty so the
+    /// Bumps ``viewportRevision`` — called by the renderer AFTER forwarding a LOCAL scroll to libghostty-vt so the
     /// ⌘-hold link overlay re-detects against the moved viewport. `&+` wrap: a pure change-signal, never read
     /// for magnitude. WRITE-ONLY from the renderer's event handler — the renderer never reads it back, so
     /// there is no dependency for the write to invalidate and none of the cycle documented on ``surface``.
@@ -1749,7 +1748,7 @@ public final class TerminalViewModel {
     // MARK: Replay byte-ring (surface-rebuild survival)
 
     /// Bounded FIFO of the COMPLETE `output` chunks fed to the surface, kept so a REBUILT surface can be
-    /// repainted from scratch. When a leaf comes down, ``detachSurface(_:)`` closes the live `GhosttySurface`;
+    /// repainted from scratch. When a leaf comes down, ``detachSurface(_:)`` closes the live surface;
     /// on the next mount ``attachSurface(_:)`` receives a BRAND-NEW empty one. The *connection never dropped*,
     /// so the host does NOT re-send the scrollback — without this ring the prior screen would be lost. On
     /// attach of a different surface instance we replay it (see ``attachSurface(_:)``).
@@ -1834,11 +1833,11 @@ public final class TerminalViewModel {
 
     // MARK: OUT path (renderer → host)
 
-    /// Routes terminal OUT bytes (keystrokes libghostty encoded) to the live client. A no-op while disconnected
-    /// (``inputSink`` is `nil`). Called on the main actor by the renderer's `GhosttySurface.onWrite` bridge.
+    /// Routes terminal OUT bytes (keystrokes libghostty-vt encoded) to the live client. A no-op while disconnected
+    /// (``inputSink`` is `nil`). Called on the main actor by the renderer's `TerminalSurfaceDriver.onWrite` bridge.
     public func sendInput(_ data: Data) {
         // READ-ONLY gate: this is the SINGLE outbound ingress seam — every key/paste/IME-commit/
-        // mouse-report/click-to-move byte libghostty encodes funnels here via `onWrite`, plus the iOS
+        // mouse-report/click-to-move byte libghostty-vt encodes funnels here via `onWrite`, plus the iOS
         // input-bar submit, the Ctrl+C0 raw fast-path, and the synchronized-input broadcast. Dropping at the
         // top (before `inputSink`/`syncInputTap`, before any echo-probe / glitch-caret bookkeeping) blocks
         // EVERY input path with one check, so neither the local host nor the broadcast siblings see the bytes.
@@ -1949,16 +1948,16 @@ public final class TerminalViewModel {
     public private(set) var alternateScreenActive = false
 
     /// TRUE while the foreground program has bracketed-paste mode (DECSET `?2004h`) enabled — the real
-    /// parse from the host output stream (the same bracketed state libghostty's surface derives). The
+    /// parse from the host output stream (the same bracketed state the engine's surface derives). The
     /// paste-protection pre-check reads this as `programAdvertisedBracketed`: with the "Paste Bracketed
     /// Safe" setting on, a program that frames the paste as an inert bracketed block does not trip the
-    /// sheet, matching libghostty's own `clipboard-paste-bracketed-safe` gate that the embedder preempts.
+    /// sheet, matching the engine's own `clipboard-paste-bracketed-safe` gate that the embedder preempts.
     public var isBracketedPasteActive: Bool { modeTracker.bracketedPasteActive }
 
     /// TRUE while the foreground program has DECCKM (application cursor keys, DECSET `?1h`) enabled —
     /// the real parse from the host output stream. The iOS hand-rolled key path reads this to emit SS3
     /// arrows (`ESC O A`) instead of CSI (`ESC [ A`) while a full-screen app has switched cursor-key
-    /// mode (docs/29 backlog #6); macOS never consults it (libghostty's surface owns DECCKM there).
+    /// mode (docs/29 backlog #6); macOS never consults it (the engine's surface owns DECCKM there).
     public var isCursorKeysApplication: Bool { modeTracker.cursorKeysApplication }
 
     private var glitchCaretArmed: Bool {
@@ -2032,8 +2031,8 @@ public final class TerminalViewModel {
     @ObservationIgnored private var probeInputAt: ContinuousClock.Instant?
 
     /// Mirrors a grid resize to the host (`TIOCSWINSZ`). A no-op while disconnected. Called on the main actor
-    /// by the renderer's `GhosttySurface.onResize` bridge. Coalesces consecutive duplicates (same cols/rows) so
-    /// libghostty's double-emit per layout pass forwards at most one resize.
+    /// by the renderer's `TerminalSurfaceDriver.setGeometry` bridge. Coalesces consecutive duplicates (same cols/rows) so
+    /// the engine's double-emit per layout pass forwards at most one resize.
     public func sendResize(cols: UInt16, rows: UInt16) {
         pendingSize = (cols, rows) // record the latest grid even if not connected yet
         deliverResizeIfNeeded()
@@ -2204,9 +2203,8 @@ public final class TerminalViewModel {
     /// inside one (doc-18-§C: the surface's write/flush trio must not interleave with suspension).
     ///
     /// RENDER-SIDE BACKPRESSURE: before EVERY pass (including the first) the pump awaits
-    /// ``FeedBackpressuring/feedBackpressure()`` when the surface conforms. With an asynchronous feed
-    /// (GhosttySurface's serial feed queue, docs/31 #5) the mux's credit-at-consumption would otherwise decouple
-    /// wire credit from parse progress — `takeOutputBatch` grants window credit the moment the pump TAKES bytes,
+    /// ``FeedBackpressuring/feedBackpressure()`` when the surface conforms. With an asynchronous feed the
+    /// mux's credit-at-consumption would otherwise decouple wire credit from parse progress — `takeOutputBatch` grants window credit the moment the pump TAKES bytes,
     /// so a flood would pile up un-parsed in the feed queue without bound. Parking here stops the take → stops
     /// the credit → the wire window holds the flood at the host, end-to-end. Synchronous surfaces (tests,
     /// headless) don't conform — no await.
@@ -2364,7 +2362,7 @@ public final class TerminalViewModel {
     /// Replay is fully synchronous (DECSTR soft reset, then every retained chunk in FIFO order) to honor the
     /// surface main-thread no-`await` contract ([18 §C] — `feed`/`refresh`/`draw` must not interleave with
     /// suspension). Attaching the SAME instance again does NOT replay — the bytes are already on screen and
-    /// re-feeding would duplicate them. The caller, `GhosttyLayerBackedView.attach(model:)`, is deliberately
+    /// re-feeding would duplicate them. The caller, `TerminalSurfaceDriver.bind(to:)`, is deliberately
     /// idempotent and re-runs on every re-mount, so that guard is load-bearing rather than defensive.
     public func attachSurface(_ surface: any TerminalSurface) {
         let isDifferentInstance = (self.surface !== surface)
@@ -2389,7 +2387,7 @@ public final class TerminalViewModel {
     /// ⚠️ THE GATE OUTLIVED THE FRAMEWORK THAT MOTIVATED IT. It was written when SwiftUI could build the
     /// terminal representable more than once for one pane (a sizing/identity pass), which is what made a stale
     /// duplicate ordinary. The imperative canvas builds one view per mount — but the ORDERING is still the
-    /// renderer's to decide, not the model's: `GhosttyLayerBackedView.detach()` passes the surface it is
+    /// renderer's to decide, not the model's: `TerminalSurfaceHosting.detachSurface()` passes the surface it is
     /// closing, and a view the factory built but nothing ever mounted makes NO call at all, precisely so it
     /// cannot reach the unconditional branch and nil out a live pane's surface. Deleting the gate would give
     /// the model an ordering guarantee no caller offers it.

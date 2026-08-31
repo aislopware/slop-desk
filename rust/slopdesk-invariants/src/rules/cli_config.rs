@@ -107,10 +107,10 @@ pub fn the_config_file_has_one_reader(tree: &Tree) -> Report {
 /// `SLOPDESK_PLAYOUT_MS=60` and `font-size = 13` are the same question — what a user types for this
 /// number — and it had two answers, one per language, differing only in the limit at which an
 /// integer stops being written as one. The rule lives in `rust/slopdesk-terminal`'s `config` now,
-/// taking that limit as an argument, so the env overlay and the libghostty config text cannot
-/// drift; the limit is not a number either Swift file spells. The measure-then-fill dance around
-/// every text door is the same shape, and a measure that disagrees with its fill is a truncated
-/// answer — written once in `lentText` so the two calls cannot drift either.
+/// taking that limit as an argument, so the env overlay and the terminal engine's config text
+/// cannot drift; the limit is not a number either Swift file spells. The measure-then-fill dance
+/// around every text door is the same shape, and a measure that disagrees with its fill is a
+/// truncated answer — written once in `lentText` so the two calls cannot drift either.
 #[must_use]
 pub fn a_number_is_spelled_once(tree: &Tree) -> Report {
     let claims = [

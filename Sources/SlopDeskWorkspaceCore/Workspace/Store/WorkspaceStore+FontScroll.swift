@@ -1,12 +1,12 @@
 import CSlopDeskFFI
 import Foundation
-import SlopDeskTerminal
 
 // MARK: - FontSizeStep (the ⌘+ / ⌘- / ⌘0 font-zoom intent the active-pane hooks route through)
 
 /// The three font-zoom intents ⌘+/⌘-/⌘0 fire. The store routes them through ``WorkspaceStore/onFontSizeStep``
 /// to the live ``PreferencesStore`` (the single source of truth for `terminal.fontSize`), so the Settings
-/// "Size" stepper stays in sync — never libghostty's INTERNAL font-size state, which the stepper can't see.
+/// "Size" stepper stays in sync — never an internal font-size state the stepper can't see (the deleted
+/// fork carried one; the live renderer draws only the size ``TerminalConfigBroadcaster`` hands it).
 public enum FontSizeStep: Equatable, Sendable {
     /// ⌘+ / ⌘= — one step larger.
     case increase
@@ -19,11 +19,13 @@ public enum FontSizeStep: Equatable, Sendable {
 // MARK: - ScrollAction (the named viewport-scroll the ⇧PageUp/Down + ⇧Home/End chords route through)
 
 /// The four viewport-scroll intents the keymap binds to the named scroll keys (⇧PageUp/PageDown →
-/// page up/down, ⇧Home/End → buffer top/bottom). A framework-neutral enum (no AppKit / no libghostty
-/// import) so the routing + the store hook stay headless; the libghostty action string each maps to is the
-/// single source of the mapping (``libghosttyAction``).
+/// page up/down, ⇧Home/End → buffer top/bottom). A framework-neutral enum (no AppKit / no renderer
+/// import) so the routing + the store hook stay headless; the binding-action string each maps to (owned
+/// by Rust, per ``TerminalSurfaceActions/performBindingAction(_:)``) is the single source of the mapping
+/// (``ScrollAction/wire``).
 ///
-/// Scroll-sign convention (libghostty `Binding.zig`, mirrored by ``TerminalViewModel/handleCopyModeKey(_:)``):
+/// Scroll-sign convention (the deleted fork's libghostty `Binding.zig`, mirrored by
+/// ``TerminalViewModel/handleCopyModeKey(_:)``):
 /// NEGATIVE = UP toward OLDER scrollback. So `.pageUp` is `scroll_page_fractional:-0.9` and `.pageDown` is
 /// `scroll_page_fractional:0.9`. `0.9` (≈ one page minus a sliver of overlap context) is the same "≈ a page"
 /// fraction the plan pins — distinct from copy-mode's half-page `±0.5` (Ctrl-D/U), which is a different
@@ -40,7 +42,7 @@ public enum ScrollAction: Equatable, Sendable {
 
     /// The discriminant this scroll crosses as — `slopdesk_workspace::store_shape::ScrollAction`'s
     /// own order, which is this case list's. The cases stay in Swift because a `switch` in the
-    /// routing reads them; the STRINGS do not, for the reason ``libghosttyAction`` gives.
+    /// routing reads them; the STRINGS do not, for the reason ``wire`` gives.
     private var ffiByte: UInt8 {
         switch self {
         case .pageUp: 0
@@ -50,26 +52,18 @@ public enum ScrollAction: Equatable, Sendable {
         }
     }
 
-    /// The libghostty named binding action this scroll intent fires through
+    /// The binding action this scroll intent fires through
     /// ``TerminalSurfaceActions/performBindingAction(_:)`` — the SINGLE source of the intent→action
     /// mapping (so the store hook and any test pin the same string), and it is
-    /// `slopdesk_workspace::store_shape::ScrollAction::libghostty_action`. Two conventions live in
-    /// those four strings and neither survives being written twice: the SIGN (negative is up, toward
-    /// older scrollback) and the FRACTION (`0.9` ≈ a page minus a sliver of overlap — deliberately
-    /// not copy mode's half page, which is a different gesture on a different key).
-    var libghosttyAction: String {
-        func read(_ capacity: Int) -> (bytes: [UInt8], written: Int) {
-            var out = [UInt8](repeating: 0, count: capacity)
-            let written = out.withUnsafeMutableBufferPointer {
-                slopdesk_ws_scroll_action(ffiByte, $0.baseAddress, $0.count)
-            }
-            return (out, written)
+    /// `slopdesk_workspace::store_shape::ScrollAction::action`. Two conventions live in those four
+    /// strings and neither survives being written twice: the SIGN (negative is up, toward older
+    /// scrollback) and the FRACTION (`0.9` ≈ a page minus a sliver of overlap — deliberately not copy
+    /// mode's half page, which is a different gesture on a different key). Both are Rust's; this side
+    /// only names the intent and carries the answer.
+    var wire: String {
+        TerminalActionBuffer.read { out, capacity in
+            slopdesk_ws_scroll_action(ffiByte, out, capacity)
         }
-        // Generous by an order of magnitude; the retry exists to be correct rather than to be used.
-        var answer = read(64)
-        if answer.written > answer.bytes.count { answer = read(answer.written) }
-        guard answer.written > 0, answer.written <= answer.bytes.count else { return "" }
-        return String(bytes: answer.bytes[..<answer.written], encoding: .utf8) ?? ""
     }
 }
 
@@ -79,18 +73,19 @@ public enum ScrollAction: Equatable, Sendable {
 /// (already large) ``WorkspaceStore`` body stays under the lint type-body ceiling — the same reason
 /// ``WorkspaceStore+Blocks`` exists. Each one mirrors ``WorkspaceStore/jumpToBlockInActivePane(delta:)``:
 /// resolve the active pane's live ``TerminalViewModel`` (``activeTerminalModel``), probe its `surface` for
-/// the ``TerminalSurfaceActions`` capability seam, and fire the matching libghostty named binding action.
+/// the ``TerminalSurfaceActions`` capability seam, and fire the matching binding action.
 ///
 /// All four are a clean no-op for a non-terminal active pane (`.desktop`), an empty
 /// shell, or a headless / placeholder surface that does not conform to ``TerminalSurfaceActions`` (no seam) —
 /// the same graceful degradation the block hooks use. None instantiate a renderer, so the whole surface is
 /// unit-testable against a recording ``TerminalSurfaceActions`` fake (the hang-safety rule: no real
-/// `GhosttySurface` in a test).
+/// `TerminalSurface` in a test).
 public extension WorkspaceStore {
     /// ⌘= (and the auto-shifted ⌘+) — bumps the terminal render font size one step. Routes through the
     /// ``onFontSizeStep`` seam to the live ``PreferencesStore`` (`terminal.fontSize`, the SINGLE source of
-    /// truth) — NOT libghostty's internal `increase_font_size`, which the Settings "Size" stepper can't see
-    /// and so desynced from it. A larger font fits FEWER cells in the same pane pixel box, so the PTY grid
+    /// truth) — NOT the deleted fork's own `increase_font_size` responder action, which desynced from the
+    /// Settings "Size" stepper because the stepper could not observe it. A larger font fits FEWER cells in
+    /// the same pane pixel box, so the PTY grid
     /// (cols/rows) shrinks and the remote PTY IS reflowed via SIGWINCH — a font-SIZE step is NOT
     /// grid-preserving (only font FAMILY/STYLE rebuilds are). A no-op for a non-terminal active pane / no seam.
     func increaseFontInActivePane() {
@@ -118,11 +113,11 @@ public extension WorkspaceStore {
     }
 
     /// Scrolls the active pane's viewport per the named ``ScrollAction`` (⇧PageUp/Down → page up/down,
-    /// ⇧Home/End → buffer top/bottom). Routes the action's ``ScrollAction/libghosttyAction`` string through
+    /// ⇧Home/End → buffer top/bottom). Routes the action's ``ScrollAction/wire`` string through
     /// the active surface's ``TerminalSurfaceActions`` seam — the SAME lever jump-to-prompt / copy-mode scroll
     /// use. A no-op for a non-terminal pane, an empty shell, or a headless / placeholder surface (no seam).
     func scrollActivePane(_ action: ScrollAction) {
-        performActiveSurfaceAction(action.libghosttyAction)
+        performActiveSurfaceAction(action.wire)
     }
 
     /// The shared resolve-then-fire used by the font + scroll hooks: resolve the active terminal model,

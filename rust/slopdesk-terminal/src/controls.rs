@@ -1,4 +1,4 @@
-//! The multi-state CONTROL knobs: what each stored token means, and which libghostty token it
+//! The multi-state CONTROL knobs: what each stored token means, and which `ghostty` config token it
 //! becomes.
 //!
 //! Seven settings in the Controls pane are not switches — each is a small closed vocabulary that
@@ -10,14 +10,14 @@
 //!    validate-then-REPAIR to the documented default — never a trap, never an [`Option`] the caller
 //!    can unwrap into one.
 //! 2. **The wire token.** Two of the seven persist under slopdesk's own semantic spelling and are
-//!    EMITTED under libghostty's, and one of those mappings is INVERTED — see
+//!    EMITTED under `ghostty`'s, and one of those mappings is INVERTED — see
 //!    [`MouseShiftCapture::config_value`], which is the single most misreadable line in the pane.
 //! 3. **The projection.** A four-state value read by a two-state control has to project, and the
 //!    projection is a rule ([`MouseShiftCapture::extends_selection`]), not a `== .enabled` check.
 //!
 //! [`crate::config::Controls`] takes every one of these fields PRE-RESOLVED, which is exactly what
-//! made the mapping the portable half: the builder already speaks libghostty tokens, so what
-//! crossed from Swift was the enum→token step and nothing else.
+//! made the mapping the portable half: the builder already speaks `ghostty`'s config tokens, so
+//! what crossed from Swift was the enum→token step and nothing else.
 //!
 //! What is NOT here: the bundle that reads them. Its every field comes from a typed key in the
 //! preference store, and a property wrapper whose point is that the platform observes the read does
@@ -53,7 +53,7 @@ impl ClipboardAccess {
         }
     }
 
-    /// The stored token, which is ALSO the libghostty `clipboard-read` / `clipboard-write` value —
+    /// The stored token, which is ALSO the `ghostty` `clipboard-read` / `clipboard-write` value —
     /// this is the one vocabulary of the seven that needs no second spelling.
     #[must_use]
     pub const fn token(self) -> &'static str {
@@ -71,9 +71,13 @@ impl ClipboardAccess {
     /// dropped reply leaves the requesting program waiting. [`ClipboardAccess::Ask`] answers
     /// [`None`] — the surface puts the sheet up and maps the verdict onto the same two answers.
     ///
-    /// The paired completion is `confirmed: true` in BOTH allow and deny, which is not a formality:
-    /// a `confirmed: false` completion re-enters libghostty's read gate and asks again. A read is
-    /// not a paste, and the two contracts differ exactly here.
+    /// The paired completion is `confirmed: true` in BOTH allow and deny — a rule carried over from
+    /// the deleted libghostty fork, whose surface would re-enter its own read gate and ask again on
+    /// a `confirmed: false` completion. `libghostty-vt` drops an OSC 52 READ upstream and never
+    /// forwards it at all (`docs/DECISIONS.md`, "Dropped: the OSC-52 clipboard READ gate"), so
+    /// this function currently has no caller; the contract is kept in case a read gate is
+    /// rebuilt on top of the new engine. A read is not a paste, and the two contracts differed
+    /// exactly here.
     #[must_use]
     pub fn silent_read(self, text: &str) -> Option<String> {
         match self {
@@ -126,12 +130,15 @@ impl RightClickAction {
         }
     }
 
-    /// The stored token, which the builder emits verbatim as libghostty's `right-click-action`.
+    /// The stored token, which the builder emits verbatim as the `ghostty` config format's
+    /// `right-click-action` line.
     ///
-    /// That is deliberate and it is a RACE fix, not a shortcut: handing libghostty the action makes
-    /// libghostty perform it, where a near-side dispatch would have to re-read whether a selection
-    /// exists AFTER libghostty had already word-selected under the cursor, and read the wrong
-    /// answer.
+    /// That was originally a RACE fix rather than a shortcut: handing the deleted libghostty fork
+    /// the action let libghostty perform it end to end, where a near-side dispatch would have
+    /// had to re-read whether a selection existed AFTER libghostty had already word-selected
+    /// under the cursor, and read the wrong answer. The fork is gone, but the same token is
+    /// what `crate::surface::right_click_intercepts_as_paste` reads directly now, and it still
+    /// reads selection state BEFORE forwarding the click for the identical reason.
     #[must_use]
     pub const fn token(self) -> &'static str {
         match self {
@@ -186,12 +193,12 @@ impl MouseShiftCapture {
         }
     }
 
-    /// The libghostty `mouse-shift-capture` token.
+    /// The `ghostty` config format's `mouse-shift-capture` token.
     ///
     /// **The mapping is INVERTED, on purpose.** This enum's axis is "⇧ SELECTS TEXT even when the
-    /// app captures the mouse"; libghostty's is the opposite — whether ⇧ is CAPTURED INTO the
+    /// app captures the mouse"; `ghostty`'s is the opposite — whether ⇧ is CAPTURED INTO the
     /// mouse protocol and sent to the program. From the vendored `Config.zig`: `false` = ⇧ is
-    /// not sent and extends the selection (libghostty's own default, overridable by the program
+    /// not sent and extends the selection (`ghostty`'s own default, overridable by the program
     /// through `XTSHIFTESCAPE`); `true` = ⇧ is sent to the program (overridable); `never` =
     /// `false` and the program CANNOT override; `always` = `true` and the program cannot
     /// override.
@@ -199,14 +206,14 @@ impl MouseShiftCapture {
     /// So "⇧ selects" maps to the DON'T-capture tokens and "⇧ to the program" maps to the capture
     /// ones, and the two hard states swap words as well as sense:
     ///
-    /// | this enum | means | libghostty |
+    /// | this enum | means | `ghostty` |
     /// | --- | --- | --- |
     /// | [`Self::Enabled`] | ⇧ extends the selection, soft | `false` |
     /// | [`Self::Disabled`] | ⇧ goes to the program, soft | `true` |
     /// | [`Self::Always`] | ⇧ always selects, hard | `never` |
     /// | [`Self::Never`] | ⇧ never selects, hard | `always` |
     ///
-    /// [`Self::Enabled`] landing on libghostty's own default is what makes a factory terminal
+    /// [`Self::Enabled`] landing on `ghostty`'s own default is what makes a factory terminal
     /// HONOUR the upstream behaviour rather than pin it.
     #[must_use]
     pub const fn config_value(self) -> &'static str {
@@ -271,8 +278,8 @@ impl OptionAsAlt {
         }
     }
 
-    /// The libghostty `macos-option-as-alt` token. Only the two ENDS are respelled — `off` →
-    /// `false` and `both` → `true` — while the two sided values are already libghostty's own
+    /// The `ghostty` `macos-option-as-alt` token. Only the two ENDS are respelled — `off` →
+    /// `false` and `both` → `true` — while the two sided values are already `ghostty`'s own
     /// words.
     #[must_use]
     pub const fn config_value(self) -> &'static str {
@@ -507,7 +514,7 @@ mod tests {
         for state in [MouseShiftCapture::Always, MouseShiftCapture::Never] {
             assert_ne!(state.config_value(), state.token(), "{state:?}");
         }
-        // The default honours libghostty's own default rather than pinning against it.
+        // The default honours `ghostty`'s own default rather than pinning against it.
         assert_eq!(MouseShiftCapture::default().config_value(), "false");
     }
 

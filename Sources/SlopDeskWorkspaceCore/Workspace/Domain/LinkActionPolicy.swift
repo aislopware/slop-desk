@@ -163,7 +163,7 @@ public enum LinkActionPolicy {
     /// (the detector already stripped the `:line:col`, leaving a file), so the line tries the path first and,
     /// only if that fails, its dir: `cd '<path>' 2>/dev/null || cd '<parent>'\n`. For a real directory the
     /// first `cd` succeeds and the fallback never runs. Both operands are single-quote-escaped so spaces / `$`
-    /// / `;` land literally. ALL THREE actuators (TerminalLeafView, JumpToView, GhosttyTerminalView) emit this
+    /// / `;` land literally. ALL THREE actuators (TerminalLeafView, JumpToView, MacTerminalRendererView/PhoneTerminalRendererView) emit this
     /// one string (`Data(line.utf8)`) so the idiom cannot drift; NEVER via `SendKeysParser` (cd is verbatim).
     /// Pinned by ``LinkActionPolicyTests`` (revert-to-confirm-fail: a bare `cd '<file>'` must not regress).
     public static func changeDirectoryCommandLine(_ path: String) -> String {

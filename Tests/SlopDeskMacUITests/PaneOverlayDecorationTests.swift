@@ -7,7 +7,7 @@
 //    is written down. An `NSView` is y-UP by default. A port that dropped `isFlipped` compiles, runs,
 //    and draws every decoration mirrored about the viewport's middle: the vi block at the wrong row,
 //    the underlines under the wrong text, and the landing flash on the bottom row of a pane whose
-//    prompt libghostty pinned at the top. Nothing crashes and nothing is empty, which is exactly the
+//    prompt libghostty-vt pinned at the top. Nothing crashes and nothing is empty, which is exactly the
 //    kind of wrongness that survives a review.
 //
 // 2. THEY ARE ALL TRANSPARENT TO THE POINTER. These sit OVER a terminal that must keep every click —
@@ -27,7 +27,7 @@
 //
 // Headless: `isFlipped`, `hitTest`, a layer's opacity and a rect inset all need no window (the
 // hang-safety rule forbids an `NSWindow` in a test), and the models are built over a `nil` surface so
-// no libghostty / Metal / socket is touched.
+// no libghostty-vt / Metal / socket is touched.
 
 #if os(macOS)
 import AppKit

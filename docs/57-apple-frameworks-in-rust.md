@@ -142,11 +142,11 @@ and each call site's remaining job is the one thing a reader can actually check 
 of them: *does this function's name contain `Copy` or `Create`?* The cap is unchanged and
 `apple-family` still counts two qualified paths; what moved is where the crate spends them.
 
-**And TWO crates are exempt from the raw-pointer ban, because their frameworks hand out MEMORY
-rather than objects.** `slopdesk-apple-audio` and `slopdesk-apple-vt` may write
-`slice::from_raw_parts`, `.read()`, `.add()` and their kin; every other crate in the family may not.
-They are a NAMED LIST in `crate_policy.rs`, each with its own site cap, and a third does not join by
-resembling them — it joins by a change to this paragraph.
+**And THREE crates are exempt from the raw-pointer ban, because their frameworks hand out MEMORY
+rather than objects.** `slopdesk-apple-audio`, `slopdesk-apple-vt` and `slopdesk-apple-metal` may
+write `slice::from_raw_parts`, `.read()`, `.add()` and their kin; every other crate in the family may
+not. They are a NAMED LIST in `crate_policy.rs`, each with its own site cap, and a fourth does not
+join by resembling them — it joins by a change to this paragraph.
 
 The reason is a difference in what the framework gives you, not in what the crate wants. Everywhere
 else in this family the thing crossing is an OBJECT — a `CGEvent`, an `AXUIElement`, a
@@ -203,6 +203,32 @@ slice rather than a base address, and no framework pointer leaves that crate at 
 needed no exemption of its own, and the whole spend is three reads: `copy_parameter_sets_into` and
 the two plane views.
 
+`slopdesk-apple-metal` is the third, it is the first that WRITES rather than reads, and it is the
+smallest of the three: **one site.** A `MTLBuffer` in shared storage is a mapping in the same sense a
+locked pixel buffer is — `contents()` answers the address the GPU will read the vertex stream from —
+and Metal publishes no copy-in call for it. `setBytes:length:atIndex:` exists on the ENCODER, not on
+the buffer, and it allocates: it is for the handful of bytes a uniform is, and this crate does use it
+for exactly that (the viewport). The instance stream is not that shape.
+
+The three-route test refuses every alternative on its own terms. Route one — move the obligation to
+`slopdesk-ffi` — is a dependency CYCLE, the same wall `slopdesk-apple-audio` hit and the opposite of
+the open hatch that delayed `slopdesk-apple-vt` for years: the shim already links this crate, because
+`slopdesk_term_surface_draw` is what drives it. Route two —
+`newBufferWithBytes:length:options:` per frame — is a fresh allocation about 180 times a second, and
+it makes the triple-buffered ring pointless: the ring exists so the CPU can fill slot N+1 while the
+GPU reads slot N, and a buffer allocated per fill has no slot to be. `docs/68` §6 is the latency
+argument this surface exists to protect. Route three is keeping the renderer in Swift, which is what
+this family exists to stop.
+
+⚠️ **The ban did not catch this site until the change that admitted it**, and that is recorded here
+rather than quietly fixed. `frames.rs` writes `destination.copy_from_nonoverlapping(…)` — the METHOD
+— where the ban's pattern read only the `ptr::copy` PATH, so a crate that plainly trips the rule read
+green through it. Booking an exemption from an unenforced rule would be worse than either half alone:
+it looks like scrutiny and is not. `scan_spend`'s pattern now reads
+`\.copy_(from|to)(_nonoverlapping)?\(` as well, anchored on the `(` so the safe
+`<[T]>::copy_from_slice` does not match, and `the_method_spelling_of_a_pointer_copy_is_the_same_ban`
+pins both halves.
+
 So each exemption is real, and what keeps it from being a door is that it is a RATCHET rather than a
 category. `apple-family` counts the raw-pointer sites in each listed crate against ITS OWN fixed
 number and fails BOTH ways: above it, because a crate that grew a site did so in a commit that should
@@ -235,19 +261,26 @@ no-op, not a fault.`
 
    **Where the bar and the rule above it collide, the rule wins — and the crate is BOOKED.** `ax`
    was the first: the accessibility client API genuinely is that wide, and splitting it would draw
-   two crates across one framework area. Four more rows have landed on the same side since — `vt`,
-   `sck`, `audio`, `cgvirtualdisplay` — so it is a pattern rather than one crate's excuse, and a
-   pattern with no instrument is drift. `rules::crate_policy::apple_family` now counts every crate in
-   the family and holds each booked one to the width it MEASURED, so an excused crate cannot also
-   grow unremarked, and one that comes back under the bar loses its booking. The per-crate numbers
-   live in that rule's `WIDE` table with the reason each area is indivisible; a census here would be
-   a second place for them to be wrong.
+   two crates across one framework area. Six more rows have landed on the same side since — `vt`,
+   `sck`, `audio`, `text`, `metal`, `cgvirtualdisplay` — so it is a pattern rather than one crate's
+   excuse, and a pattern with no instrument is drift. `rules::crate_policy::apple_family` now counts
+   every crate in the family and holds each booked one to the width it MEASURED, so an excused
+   crate cannot also grow unremarked, and one that comes back under the bar loses its booking. The
+   per-crate numbers live in that rule's `WIDE` table with the reason each area is indivisible; a
+   census here would be a second place for them to be wrong.
 
    The other thing an over-bar count can mean is portable RULES that belong one crate down, the way
    `vt`'s Swift original was mostly rules before they moved. That is the question to answer BEFORE
    booking one: a module that names no framework at all is a move, not an excuse.
-5. `cargo test` runs it on macOS; on any other host every module is `#[cfg(target_os = "macos")]` and
-   the crate compiles to nothing.
+5. `cargo test` runs it on macOS; on any host the crate's own gate does not name, every module is
+   `#[cfg]`-ed out and the crate compiles to nothing.
+
+   **The gate is the framework's reach, not the habit.** Most of the family is
+   `cfg(target_os = "macos")` because the API does not exist on a phone; the ones whose framework
+   DOES — `pasteboard`, `metal`, `text` — are `cfg(any(target_os = "macos", target_os = "ios"))`,
+   and `slopdesk-ffi`'s edge to them is gated the same way. Reach for `any(macos, ios)` rather than
+   `target_vendor = "apple"`: the tree builds three slices and nothing else, and the wider spelling
+   would silently claim tvOS and visionOS nobody compiles.
 
 ### A macOS-only crate may enter `slopdesk-ffi`'s graph, by ONE route
 
@@ -504,9 +537,10 @@ imported VideoToolbox itself, and the import was the link. **Every future row th
 or reads an `extern` constant will hit this, and it presents as a wall of undefined symbols at the
 final link, long after the crate and `just ffi` are both green.**
 
-**The decoder closes the row, and it is where the family first reached iOS.** Every other crate in
-this family is macOS-gated in `slopdesk-ffi`'s manifest, most because the API does not exist on a
-phone at all. VideoToolbox is the exception: iOS has it, and the two halves have opposite audiences
+**The decoder closes the row, and it is where the family first reached iOS.** Every crate in this
+family up to this row was macOS-gated in `slopdesk-ffi`'s manifest, most because the API does not
+exist on a phone at all. VideoToolbox is the first exception: iOS has it, and the two halves have
+opposite audiences
 — only the host COMPRESSES, every client DECOMPRESSES. So the crate gates its own compression half
 with `#[cfg(target_os = "macos")]` and its Cargo edge widened to `cfg(any(macos, ios))`, which makes
 `decoder.rs` the only ungated `slopdesk-apple-*` door in the header and puts its declarations

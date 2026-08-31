@@ -33,7 +33,6 @@ import AppKit
 import Combine
 import ObjectiveC
 import SlopDeskClientCore
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 extension SlopDeskMacApp {
@@ -131,7 +130,7 @@ extension SlopDeskMacApp {
     ///   2. Real cell metrics: `grid` uses the LIVE per-cell advance of the active terminal surface; before it
     ///      lays out we use a font-DERIVED fallback (`WindowSizeMath.fallbackCell`) instead of a wrong hard
     ///      8×16, and DEFER the commit until real metrics exist — so the window recomputes to the
-    ///      exact cols×rows once libghostty reports its true cell advance, on the ONE deferred re-measure
+    ///      exact cols×rows once the renderer reports its true cell advance, on the ONE deferred re-measure
     ///      ``MacWorkspaceWindowController/retryGridSizeWhenCellMetricsArrive(_:)`` offers, rather than
     ///      permanently committing the approximation.
     ///

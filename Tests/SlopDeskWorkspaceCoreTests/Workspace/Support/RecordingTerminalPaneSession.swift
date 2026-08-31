@@ -1,13 +1,12 @@
 import Foundation
-import SlopDeskTerminal
 import SlopDeskWorkspaceModel
 @testable import SlopDeskWorkspaceCore
 
 // MARK: - RecordingSurfaceActions (a headless TerminalSurface that records performBindingAction)
 
 /// A headless ``TerminalSurface`` that ALSO conforms to ``TerminalSurfaceActions`` and RECORDS every
-/// `performBindingAction` string in call order — so a store-level test can observe the libghostty actions
-/// the WB2/WB3 jump glue emits (`scroll_to_bottom`, `jump_to_prompt:<delta>`) WITHOUT a real GhosttySurface
+/// `performBindingAction` string in call order — so a store-level test can observe the libghostty-vt actions
+/// the WB2/WB3 jump glue emits (`scroll_to_bottom`, `jump_to_prompt:<delta>`) WITHOUT a real `TerminalSurfaceDriver`
 /// (which hangs without a window server — the hang-safety rule). It never touches VideoToolbox / Metal /
 /// SCStream / a real terminal; it is a pure in-memory recorder.
 ///
@@ -23,14 +22,15 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
     /// (non-nil = a selection exists). Default `nil` = no selection (the WB2/WB3 jump tests want that).
     var selectionText: String?
 
-    /// Drives ``scrollbackTextLines`` so the no-selection copy fallback has something to return.
-    var scrollbackLines: [String] = []
+    /// Drives ``scrollbackLines()`` so the no-selection copy fallback has something to return. Each
+    /// entry lands on its own screen row — the shape of a grid nothing wrapped in.
+    var scrollbackText: [String] = []
 
     private var scrollbackCalls = 0
 
-    /// How many times ``scrollbackTextLines`` was called — the assertion surface for the E5 perf fix
+    /// How many times ``scrollbackLines()`` was called — the assertion surface for the E5 perf fix
     /// (the cross-seam scrollback mirror must be gathered ONCE per overlay-open, not once per keystroke).
-    var scrollbackTextLinesCallCount: Int {
+    var scrollbackLinesCallCount: Int {
         lock.lock()
         defer { lock.unlock() }
         return scrollbackCalls
@@ -66,11 +66,13 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
         return true
     }
 
-    func scrollbackTextLines() -> [String] {
+    func scrollbackLines() -> [TerminalScrollbackLine] {
         lock.lock()
         scrollbackCalls += 1
         lock.unlock()
-        return scrollbackLines
+        return scrollbackText.enumerated().map { row, text in
+            TerminalScrollbackLine(text: text, firstRow: row, lastRow: row)
+        }
     }
 }
 
@@ -100,7 +102,7 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
 
     /// Mouse-selection stand-ins for the yank fallback (mirrors ``RecordingSurfaceActions``).
     var selectionText: String?
-    var scrollbackLines: [String] = []
+    var scrollbackText: [String] = []
 
     /// One recorded `setSelection` call.
     struct SelectionCall: Equatable {
@@ -142,7 +144,11 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
         return true
     }
 
-    func scrollbackTextLines() -> [String] { scrollbackLines }
+    func scrollbackLines() -> [TerminalScrollbackLine] {
+        scrollbackText.enumerated().map { row, text in
+            TerminalScrollbackLine(text: text, firstRow: row, lastRow: row)
+        }
+    }
 
     // TerminalSelectionControl.
     func viewportInfo() -> TerminalViewportInfo? { info }

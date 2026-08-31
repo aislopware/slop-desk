@@ -5,7 +5,7 @@ import PackageDescription
 //
 // Headless-first (docs/19-implementation-plan.md): the PATH 1 byte pipeline (host PTY <->
 // TCP/TCP_NODELAY <-> client, replay-buffer reconnect) is the de-risked core; builds + tests
-// with NO GUI, NO libghostty.
+// with NO GUI and NO terminal pixels.
 //
 // Swift 6 tools default to Swift 6 language mode (strict concurrency).
 
@@ -210,13 +210,16 @@ let package = Package(
         //
         // Built by `just ffi` — `slopdesk-gate ffi`, which any `just build`/`test`/`check` runs first — and
         // GITIGNORED: 17 MB of archive rewritten by every Rust edit is not a source. cargo still
-        // never runs inside `swift build` — the artifact is an input to it, the way
-        // `libghostty.xcframework` is to the Xcode targets.
+        // never runs inside `swift build` — the artifact is an INPUT to it, produced by a step that
+        // runs before.
         //
-        // Unlike libghostty, this one IS in the SwiftPM graph, and that is the point: the
-        // one-implementation rule means a ported module's Swift original is DELETED, so the Rust
-        // has to be what `swift test` actually exercises. A binary target reachable only from Xcode
-        // would have left the Swift copy alive as the thing under test.
+        // It is the last such artifact, and it is in the SwiftPM graph, which is the point. The
+        // terminal fork's `libghostty.xcframework` was the other one and was reachable only from the
+        // two Xcode app targets, so the Swift it backed was compiled by no `swift build` and tested
+        // by nothing — which is exactly how a Swift copy survives a port as the thing actually under
+        // test. The one-implementation rule means a ported module's Swift original is DELETED, so the
+        // Rust has to be what `swift test` exercises; a binary target Xcode alone can see cannot
+        // carry that.
         .binaryTarget(
             name: "CSlopDeskFFI",
             path: "ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework",
@@ -272,9 +275,10 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // The bundled FACES: the Symbols Nerd Font (the SAME fallback face ghostty gives the terminal
-        // grid) and JetBrains Mono (the face libghostty falls back to when "SF Mono" does not resolve,
-        // which on a stock system it does not). Foundation + CoreText, no package dependency, and the
+        // The bundled FACES: the Symbols Nerd Font (the same fallback face upstream ghostty gives the
+        // terminal grid, which is why a glyph that renders there renders here) and JetBrains Mono (the
+        // face the grid falls back to when "SF Mono" does not resolve, which on a stock system it does
+        // not). Foundation + CoreText, no package dependency, and the
         // 2.9 MB of TTF is the whole reason it is a target rather than a file.
         //
         // It used to live in `SlopDeskClientCore`, and could not stay there once `SlopDeskSlate`
@@ -309,16 +313,32 @@ let package = Package(
         // the table of cases underneath them, whose every failure is silent rather than visible.
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol", "CSlopDeskFFI"]),
 
-        // TerminalSurface protocol + HeadlessTerminalSurface. The libghostty-backed GhosttySurface
-        // lives in the GUI app target (WF-5) and conforms to the same protocol.
+        // THE TERMINAL RENDERER — the `TerminalSurfaceHosting` conformer, its two platform views and
+        // the installer the app shells call. `docs/68-terminal-surface-in-rust.md` is the argument:
+        // the surface drives `libghostty-vt` through `slopdesk_term_surface_*` and draws into a
+        // `CAMetalLayer` Rust owns, so this target's whole C dependency is `CSlopDeskFFI`.
         //
-        // CSlopDeskFFI: the GEOMETRY here — where a cell span draws, where a grid the client did not
-        // choose is letterboxed — is `slopdesk_terminal::geometry`. It was the one drift pair docs/55
-        // §8 left deliberately open, because `rect` alone did not justify linking an archive into a
-        // target whose whole dependency list was `SlopDeskProtocol`. The letterbox beside it did.
+        // ⚠️ THIS TARGET'S EDGE POINTS THE OTHER WAY NOW, and the flip is the change rather than a
+        // side effect of it. It used to hold the `TerminalSurface` PROTOCOLS and be a leaf that
+        // `SlopDeskWorkspaceCore` depended on — which was fine while nothing conformed, and became
+        // a CYCLE the moment the conformer arrived: a renderer needs `TerminalViewModel`,
+        // `TerminalSurfaceHosting` and `PlatformView`, and all three are WorkspaceCore's.
+        //
+        // The fix is not a fourth terminal target. It is that a module named for the renderer should
+        // BE the renderer: the protocols moved down beside the seam they describe
+        // (`SlopDeskWorkspaceCore/Terminal/`, where `TerminalRendererSeam.swift` already lived — one
+        // directory now answers "what may a canvas ask of a terminal" instead of two), and what is
+        // left here is the one thing that satisfies them. Every file that imported this target for a
+        // protocol dropped the import rather than gaining one; only the two `AppMain.swift`s still
+        // name it, to call `installTerminalRenderer()`.
         .target(
             name: "SlopDeskTerminal",
-            dependencies: ["CSlopDeskFFI"],
+            // `SlopDeskClientCore` for the three things the surface must not hold a second copy of:
+            // `ClipboardConfirmPresentation` (the words of all three confirm dialogs),
+            // `ClipboardConfirmRequests` (the phone's mailbox, since UIKit cannot present from a
+            // drain), and `KeyChordNormalizer` (the named keys a binding can bind). Acyclic —
+            // nothing depends on this target; the two app targets link it.
+            dependencies: ["SlopDeskWorkspaceCore", "SlopDeskClientCore", "CSlopDeskFFI"],
             linkerSettings: ffiCLibraries,
         ),
 
@@ -367,7 +387,7 @@ let package = Package(
         // Imports NO view chrome / design-system tokens — every SwiftUI/AppKit/UIKit *presentation*
         // file was deleted (D1), SEAM placeholder `View` bodies split out (A2). The terminal pixels
         // and remote-GUI video view stay behind the factory seams so the library + tests stay headless
-        // (no libghostty / Metal / VideoToolbox / SCStream in `swift build` or a test).
+        // (no Metal / VideoToolbox / SCStream in `swift build` or a test).
         //
         // Builds macOS 26 + iOS 26 (the deployment floor — no fallback below).
         .target(
@@ -390,7 +410,6 @@ let package = Package(
                 // W5: the pure headless Claude-status enum (`ClaudeStatus`) the sidebar/chrome dots read.
                 // AgentDetect depends on nothing GUI/transport/video, so this never widens the graph.
                 "SlopDeskAgentDetect",
-                "SlopDeskTerminal",
                 // W13: the W12 settings MODELS + the pure config bridges (`VideoPreferences`,
                 // `TerminalPreferences`, `AgentPreferences`, `KeybindingPreferences`, `EnvConfig`,
                 // `EnvBridge`, `TerminalConfigBuilder`) the `PreferencesStore` binds to.
@@ -482,8 +501,7 @@ let package = Package(
                 // geometry over the viewport seam, so the DECISION lives here and only the drawing is
                 // per-framework. Transitive via WorkspaceCore, but a direct `import` needs it declared
                 // here (same rationale as Protocol/Inspector/Transport).
-                "SlopDeskTerminal",
-                // `SlateTheme.app` — `ClientTerminalPalette` hands libghostty the app's flat palette,
+                // `SlateTheme.app` — `ClientTerminalPalette` hands the terminal engine the app's flat palette,
                 // which is the same constant on both shells. Transitive via WorkspaceCore, but a
                 // direct `import` needs it declared here (same rationale as Terminal, above).
                 "SlopDeskSlate",
@@ -663,7 +681,6 @@ let package = Package(
                 "SlopDeskWorkspaceCore",
                 "SlopDeskWorkspaceModel",
                 // Live cell metrics for the `grid` window-size mode.
-                "SlopDeskTerminal",
                 // The peek card names the pending tool call the blocked agent is asking about, and
                 // reads that agent's own status for the header's glyph.
                 "SlopDeskInspector",
@@ -931,7 +948,7 @@ let package = Package(
         // lifecycle, the terminal block/search engines, the iOS input timing/mapping logic, the
         // PreferencesStore, and the video/remote-window logic. Genuinely view-rendering tests
         // (DS tokens, chrome transforms, palette-entry/sidebar views) were deleted with the views.
-        // Deterministic, runs on macOS — no libghostty / Metal / VideoToolbox instantiated.
+        // Deterministic, runs on macOS — no Metal / VideoToolbox instantiated.
         // The workspace VALUE MODEL's own suite. Depends on the leaf and NOTHING else — that is the
         // point: if a tree/canvas/parser test needs a client, a transport or a store to compile, the
         // type under test does not belong in the leaf target.
@@ -952,7 +969,6 @@ let package = Package(
                 "SlopDeskInspector",
                 "SlopDeskClaudeCode",
                 "SlopDeskAgentDetect",
-                "SlopDeskTerminal",
                 "SlopDeskVideoProtocol",
                 "SlopDeskBenchClock",
                 "SlopDeskTestSupport",
@@ -1029,6 +1045,17 @@ let package = Package(
             dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol"],
         ),
 
+        // The RENDERER target's own suite. It covers exactly one thing and deliberately no more: the
+        // pure DECODERS that turn an FFI blob back into a Swift value. Nothing here opens a surface —
+        // `TerminalRendererSurface.init` asks for a Metal device, which `swift test` has no business
+        // acquiring — so every case feeds a hand-written byte frame to a `static` decoder and reads
+        // the answer. That is the half of the boundary a Rust test cannot reach: `slopdesk-ffi`'s own
+        // tests prove what it WRITES, and these prove Swift reads the same bytes the same way.
+        .testTarget(
+            name: "SlopDeskTerminalTests",
+            dependencies: ["SlopDeskTerminal", "SlopDeskWorkspaceCore"],
+        ),
+
         // docs/56: the client's presentation-logic suite, moved out of `SlopDeskClientUITests` with
         // the code it covers. What is left in the UI suite is what actually renders — a snapshot, a
         // layout, a mount — and the split is load-bearing rather than tidy: these run on a phone
@@ -1040,7 +1067,7 @@ let package = Package(
             // drive the find bar's view-model headlessly. It arrived with increment 54.
             dependencies: [
                 "SlopDeskClientCore", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
-                "SlopDeskProtocol", "SlopDeskClient", "SlopDeskTerminal", "SlopDeskTestSupport",
+                "SlopDeskProtocol", "SlopDeskClient", "SlopDeskTestSupport",
                 // `NerdSymbolFontTests` and `CodeSidebarPageDressingTests` read the BUNDLE — the
                 // registration and the three TTF URLs the sidebar injects as data URIs.
                 "SlopDeskFontFaces",

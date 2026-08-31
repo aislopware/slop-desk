@@ -8,9 +8,9 @@
 // than agree with them, and this is the reader that argument was written for.
 //
 // The behaviour the model owns, in one line each, so this file can be read without opening it: the
-// counter counts the `scrollbackTextLines()` snapshot taken on open while libghostty owns the live
+// counter counts the `scrollbackLines()` snapshot taken on open while the surface owns the live
 // highlight (a documented divergence); regex / whole-word / case-sensitive modes are ROW-DRIVEN
-// because libghostty's matcher is a literal, case-insensitive substring scan; literal mode arms
+// because the surface's matcher is a literal, case-insensitive substring scan; literal mode arms
 // `search:` and steps `navigate_search:`. The full argument is in the model's header.
 //
 // Anatomy matches `find.png` (top-trailing of the focused pane, floating card, `Slate.*` tokens ONLY):
@@ -48,7 +48,7 @@
 // line). Only the mode chips keep their own hairline outlines, and the query line keeps its own inner
 // one — see ``MacFindQueryWell``.
 //
-// Hang-safety: NO `GhosttySurface` / VideoToolbox / Metal is touched here — the bar only calls the model
+// Hang-safety: NO `TerminalSurface` / VideoToolbox / Metal is touched here — the bar only calls the model
 // seam, which probes `surface as? TerminalSurfaceActions` and degrades to a no-op on a headless surface.
 
 import AppKit
@@ -366,7 +366,7 @@ final class MacTerminalFindBar: NSView, NSTextFieldDelegate {
 
     // MARK: The keyboard
 
-    /// Live query edit — the model recomputes the counter and re-arms libghostty's highlight.
+    /// Live query edit — the model recomputes the counter and re-arms `libghostty-vt`'s highlight.
     func controlTextDidChange(_: Notification) {
         model.setQuery(field.stringValue)
     }

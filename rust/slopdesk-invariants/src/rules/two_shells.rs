@@ -306,7 +306,7 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
 ///
 /// RE-PINNED 2026-08-28, downward again and much harder: `3f11c6e6` deleted the `SwiftUI` phone
 /// whole, and the `UIKit` rebuild has not written its copy yet. The Mac still reads 63 phrases; the
-/// phone reads THREE — `Cancel`, the `SLOPDESK_AUTOCONNECT_HOST` gate name, and the ghostty
+/// phone reads THREE — `Cancel`, the `SLOPDESK_AUTOCONNECT_HOST` gate name, and the terminal's
 /// headless-build hint — and all three are shared. Ceiling 3, floor 1.
 ///
 /// ⚠️ WHAT THE OLD NUMBERS WERE DOING WHILE THE PHONE WAS EMPTY, and the reason this is the rule

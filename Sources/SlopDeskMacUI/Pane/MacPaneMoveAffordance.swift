@@ -42,7 +42,7 @@
 // 1. HOVER IS A TRACKING AREA, AND A TRACKING AREA IS RECT-BASED. `.onHover` respects SwiftUI's
 //    hit-testing; an `NSTrackingArea` respects nothing — it keeps firing under a subtree at
 //    `alphaValue = 0` and it keeps firing when `hitTest` returns nil. The canvas keeps EVERY tab
-//    mounted (the invariant that keeps a libghostty surface alive across a tab switch) and reveals one,
+//    mounted (the invariant that keeps a terminal surface alive across a tab switch) and reveals one,
 //    so a hidden tab's pills would light up over the visible tab's panes. That is docs/56 risk 3, and
 //    the answer is ``tracksHover(interactive:hidden:hasWindow:)``: the area is torn down and rebuilt on
 //    every `updateTrackingAreas`, and it is not installed at all unless the leaf is the interactive

@@ -25,7 +25,6 @@
 // than de-duplicate anything. A read that only one half performs is not a clone.
 
 import CoreGraphics
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 /// The ⌘-hold link underline's read.
@@ -91,7 +90,7 @@ package enum DecorationLinkUnderline {
 package enum DecorationViCursor {
     /// The tracked read: the copy-mode gate and the cell, and nothing else.
     ///
-    /// The geometry read stays OUT of it deliberately — `cellMetrics()` is a libghostty readback
+    /// The geometry read stays OUT of it deliberately — `cellMetrics()` is a renderer readback
     /// rather than observable state, so tracking it would register nothing and cost a call per arm.
     package static func track(_ model: TerminalViewModel) -> (active: Bool, cell: TerminalViewModel.ViCursorCell?) {
         (active: model.copyModeBadgeActive, cell: model.viCursorCell)

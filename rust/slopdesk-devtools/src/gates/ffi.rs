@@ -9,8 +9,9 @@
 //!
 //! ## Why the artifact is not committed
 //! Measured 2026-08-15: 38 MB per slice, 110 MB for the three, rewritten by every Rust edit. That
-//! is a git history nobody wants for a build output. `ThirdParty/ghostty/libghostty.xcframework` is
-//! gitignored for the same reason and rebuilt by its own script; this follows that precedent. What
+//! is a git history nobody wants for a build output — the RECIPE is committed and the artifact is
+//! not, which is the same bargain `ThirdParty/tools/tools.lock` strikes for every pinned dependency
+//! this repo materialises rather than vendors. What
 //! the app actually PAYS is far smaller, because an archive is not a binary: a probe calling one
 //! plain door links to 439 KB after `-dead_strip`, and 1.61 MB once it calls
 //! `slopdesk_ws_redact_secrets` and pulls `regex` in with it.
@@ -263,6 +264,22 @@ pub fn path_dependencies(manifest: &str) -> Vec<String> {
 /// line of source, and a stamp that reads only sources calls the result fresh.
 const SHIM_LOCK: &str = "rust/slopdesk-ffi/Cargo.lock";
 
+/// What the terminal ENGINE is compiled from, which no `path =` edge reaches (`docs/68` §10.2).
+///
+/// [`input_crates`] derives this stamp's tree list by following the shim's `path = "../…"` edges,
+/// so making `slopdesk-vterm` a path dependency covers its sources AND its `Cargo.toml` — which is
+/// where the `libghostty-vt` bindings `rev` lives — and [`SHIM_LOCK`] records the commit those
+/// resolve to. Neither covers the ZIG half: `libghostty-vt-sys`'s `build.rs` compiles ghostty
+/// itself, from the tree `tools.lock` pins and `rust/.cargo/config.toml` points
+/// `GHOSTTY_SOURCE_DIR` at. Bump either and every `.rs` in the closure is byte-identical while the
+/// three slices are compiled from different Zig sources — a warm stamp over an artifact that is not
+/// the one it was computed against, which is the whole failure this gate exists to catch.
+///
+/// By NAME, because there is no edge to follow to them. The two are held in step with each other by
+/// `slopdesk-invariants`' `engine-source-read-at-its-pin`; what THAT cannot do is notice that the
+/// pin moved and the artifact did not.
+const ENGINE_PIN: [&str; 2] = ["ThirdParty/tools/tools.lock", "rust/.cargo/config.toml"];
+
 /// The files a `.rs` source splices into the crate at compile time.
 ///
 /// `include_str!("../resources/recommendation-tips.json")` makes that JSON part of the library as
@@ -366,6 +383,9 @@ pub fn stamp_inputs(root: &Path) -> Result<Vec<String>, String> {
         found.push(file.to_owned());
     }
     found.push(SHIM_LOCK.to_owned());
+    for file in ENGINE_PIN {
+        found.push(file.to_owned());
+    }
     found.sort_unstable();
     found.dedup();
     Ok(found)
@@ -502,19 +522,21 @@ fn preflight(root: &Path) -> Result<(), String> {
 /// Stage the headers under a directory named after the MODULE, which is load-bearing.
 ///
 /// `xcodebuild -create-xcframework -headers X` copies X's CONTENTS to each slice's `Headers/`, and
-/// Xcode's `ProcessXCFramework` then copies that into `$BUILT_PRODUCTS_DIR/include/`. FLAT. Both
-/// app targets also link `ThirdParty/ghostty/libghostty.xcframework`, whose `Headers/` likewise
-/// holds a `module.modulemap` — so with both at their Headers root, two `ProcessXCFramework`
+/// Xcode's `ProcessXCFramework` then copies that into `$BUILT_PRODUCTS_DIR/include/`. FLAT. So the
+/// destination is keyed on the file NAME and nothing else, and the moment a SECOND xcframework in
+/// an app's graph holds a `Headers/module.modulemap` at its own root, two `ProcessXCFramework`
 /// commands write the same `include/module.modulemap` and Xcode refuses the graph:
 ///
 /// ```text
 /// error: Multiple commands produce '…/Build/Products/Debug/include/module.modulemap'
 /// ```
 ///
-/// Neither app built, on either platform, from the moment this xcframework joined the graph.
-/// Nothing caught it: `swift build` and `swift test` never process an xcframework this way, and the
-/// two gates that DO build the apps (`slopdesk-guigate macos`, `slopdesk-gate ios`) are reachable
-/// from no `just` target and no hook.
+/// That is not hypothetical: both apps linked `libghostty.xcframework` beside this one, and neither
+/// built, on either platform, from the moment this xcframework joined the graph. Nothing caught it
+/// — `swift build` and `swift test` never process an xcframework this way, and the two gates that
+/// DO build the apps (`slopdesk-guigate macos`, `slopdesk-gate ios`) are reachable from no `just`
+/// target and no hook. The fork is gone and this one is alone in the graph today; the nesting
+/// stays, because "alone" is a property of the current spec and not of the rule Xcode applies.
 ///
 /// Nesting under `CSlopDeskFFI/` gives the copy a unique destination. `SwiftPM` still resolves the
 /// module — it walks the whole Headers tree for a `module.modulemap` rather than only its root —
@@ -746,8 +768,9 @@ fn assert_nesting(xcframework: &Path) -> Result<(), String> {
         }
         if headers.join("module.modulemap").is_file() {
             return Err(format!(
-                "build-ffi: FAIL — {} has a modulemap at its Headers ROOT — it will collide with \
-                 libghostty's in $BUILT_PRODUCTS_DIR/include and neither app will build",
+                "build-ffi: FAIL — {} has a modulemap at its Headers ROOT — every ROOT modulemap in the \
+                 graph is copied to the SAME $BUILT_PRODUCTS_DIR/include path, so a second xcframework \
+                 joining the app is `Multiple commands produce` and neither app builds",
                 slice.display()
             ));
         }

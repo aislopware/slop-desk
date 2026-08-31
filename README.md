@@ -2,7 +2,7 @@
 
 Remote coding for Apple platforms: a macOS **host** exposes shells and windows; macOS/iOS **clients** show them as a tiling workspace of panes (terminal or live GUI window, mixed freely). Typical use: several shells and Claude Code agents on a workstation, supervised from a laptop or iPad.
 
-Build floor: macOS 26 / iOS 26. Terminal renderer: **libghostty**.
+Build floor: macOS 26 / iOS 26. Terminal engine: **libghostty-vt** through `rust/slopdesk-vterm`; the renderer above it is this repo's own ([`docs/68-terminal-surface-in-rust.md`](docs/68-terminal-surface-in-rust.md)).
 
 ## Design
 
@@ -13,7 +13,7 @@ Three independent transports (separate sockets, message sets, version `1` only):
 
 | Path | Transport | Role |
 |------|-----------|------|
-| Terminal | TCP (data + control) | Host PTY → libghostty; dual channel + replay buffer for lossless reconnect |
+| Terminal | TCP (data + control) | Host PTY → libghostty-vt → this repo's renderer; dual channel + replay buffer for lossless reconnect |
 | GUI window | UDP | ScreenCaptureKit → HEVC → Metal; RS-FEC, ABR, client-side cursor |
 | Inspector | TCP | Read-only Claude Code JSONL/hooks (tool calls, subagents, todos) |
 
@@ -51,7 +51,7 @@ brew install just
 just install-tools
 ```
 
-Headless core needs no GUI, libghostty, or signing:
+Headless core needs no GUI, no Metal, and no signing:
 
 ```sh
 swift build
@@ -90,12 +90,11 @@ Sessions survive disconnect; clients resume from the replay buffer. Claude is a 
 # local escape: Ctrl-]  |  scripting: --no-raw
 ```
 
-**GUI apps** (libghostty outside SwiftPM; build xcframework once):
+**GUI apps** (the terminal engine's sources are pinned in `ThirdParty/tools/tools.lock`, so provision once):
 
 ```sh
-XCFRAMEWORK_TARGET=universal bash ThirdParty/ghostty/build-libghostty.sh
+just provision
 
-(cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- enable-renderer macos)
 xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj \
   -scheme ClientApp-macOS -destination 'generic/platform=macOS' \
   CODE_SIGNING_ALLOWED=NO build
@@ -106,7 +105,7 @@ xcodebuild -project Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-Details: [`build-libghostty.sh`](ThirdParty/ghostty/build-libghostty.sh), [`docs/21-HANDOFF.md`](docs/21-HANDOFF.md).
+Details: [`docs/68-terminal-surface-in-rust.md`](docs/68-terminal-surface-in-rust.md), [`docs/21-HANDOFF.md`](docs/21-HANDOFF.md).
 
 ## Docs
 

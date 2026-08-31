@@ -2,9 +2,9 @@
 //! each item's ENABLEMENT for the current pane state.
 //!
 //! Copy needs a selection, paste needs clipboard text, the block copy needs a completed block. The
-//! `NSMenu` the Mac builds is a thin renderer over this, and routing each item to libghostty
-//! (`copy_to_clipboard` / `paste_from_clipboard` / `select_all` / `clear_screen`) and to the
-//! workspace's split and find ops is compile-only.
+//! `NSMenu` the Mac builds is a thin renderer over this, and routing each item to the terminal
+//! surface (`TerminalSurfaceDriver.run(_:)` — `surface?.selection(.all)` / `.clear`,
+//! `ClientPasteboard`) and to the workspace's split and find ops is compile-only.
 //!
 //! ## The submenu is not in the menu
 //!

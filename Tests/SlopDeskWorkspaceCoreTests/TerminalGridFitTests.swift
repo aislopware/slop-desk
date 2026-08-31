@@ -1,5 +1,5 @@
 import CoreGraphics
-import SlopDeskTerminal
+import SlopDeskWorkspaceCore
 import XCTest
 
 /// A phone places a grid it did not choose (docs/45 §8.3): iOS is size-passive HOST-side, so the

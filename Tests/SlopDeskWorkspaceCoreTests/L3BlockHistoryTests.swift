@@ -3,7 +3,7 @@
 //
 // Logic-level only: the "Failed only" filter (`TerminalBlockModel.blocks(filter:)`),
 // the `CommandBlock` status → symbol/label/tint mapping, and the bookmark
-// toggle. NO view rendering (no libghostty / Metal / surface). The block model
+// toggle. NO view rendering (no libghostty-vt / Metal / surface). The block model
 // is pure + `@MainActor`, so these run headless under the guarded runner.
 
 import SlopDeskWorkspaceCore

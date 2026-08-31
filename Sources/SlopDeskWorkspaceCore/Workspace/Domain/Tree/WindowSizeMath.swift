@@ -19,7 +19,6 @@
 
 import CoreGraphics
 import CSlopDeskFFI
-import SlopDeskTerminal
 
 // MARK: - WindowSizeMath (the window-sizing arithmetic, marshalled)
 

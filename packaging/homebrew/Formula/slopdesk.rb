@@ -17,9 +17,10 @@ class Slopdesk < Formula
   sha256 "6783dbd856e9e93591582113edf19cc609d5751ee675d5b85c7fb6542db4f053"
   license "MIT"
 
-  # Apple silicon only, and not by preference: the client links libghostty, which ships a
-  # macos-arm64 slice and nothing else, and the apps deploy against macOS 26 — which no Intel
-  # Mac runs. The CLI is built from the same tree and released as one arm64 artifact.
+  # Apple silicon only, and not by preference: the apps deploy against macOS 26, which no Intel
+  # Mac runs. The CLI is built from the same tree and released as one arm64 artifact. (The older
+  # reason — a vendored libghostty that shipped a macos-arm64 slice and nothing else — died with
+  # that fork; the deployment target is what is left, and it is enough on its own.)
   depends_on arch: :arm64
   depends_on macos: :tahoe
 

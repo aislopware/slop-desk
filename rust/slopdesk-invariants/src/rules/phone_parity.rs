@@ -85,8 +85,6 @@ const STAGES: &[&str] = &[
     "Sources/SlopDeskPhoneUI/Panel/Simulator/PhoneSimulatorStageView.swift",
     "Sources/SlopDeskPhoneUI/Panel/Android/PhoneAndroidStageView.swift",
 ];
-/// The terminal renderer both shells embed.
-const RENDERER: &str = "ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift";
 /// The phone's remote-GUI pane leaf.
 const PHONE_GUI_LEAF: &str = "Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift";
 /// The phone's video surface.
@@ -182,13 +180,23 @@ pub fn the_phones_terminal_takes_editing_chords(tree: &Tree) -> Report {
                       keyCommands for ⌘C/⌘X/⌘V/⌘A, which no other rung can carry (the table leaves C/X/V/A \
                       to the terminal)",
         },
-        Claim::Matches {
-            path: RENDERER,
-            pattern: r"onRequestMenuItem = \{",
-            message: "the phone's editing chords are handed to nobody — the renderer must bind \
-                      TerminalViewModel.onRequestMenuItem when it attaches, or ⌘C/⌘X/⌘V/⌘A are swallowed \
-                      and dropped",
-        },
+        // ⚠️ A THIRD CLAIM IS MISSING HERE, deliberately and temporarily (docs/68). It read
+        //
+        //     Claim::Matches { path: <the renderer>, pattern: r"onRequestMenuItem = \{",
+        //                      message: "the phone's editing chords are handed to nobody — the
+        //                                renderer must bind TerminalViewModel.onRequestMenuItem when
+        //                                it attaches, or ⌘C/⌘X/⌘V/⌘A are swallowed and dropped" }
+        //
+        // and it was aimed at the fork's embedder, under the vendored ghostty tree docs/68 deleted,
+        // so the deletion took the rule's target with it. The successor conformer lives in
+        // `Sources/SlopDeskTerminal/` and does not exist yet, so there is no path to re-aim at and a
+        // guessed one would be a rule that fails for the wrong reason forever.
+        //
+        // It is the SINK half of a two-ended safety net and the half that actually swallows chords:
+        // the claim below only checks that `TerminalInputHost` refuses to offer a `UIKeyCommand`
+        // while nothing is bound, which fails SAFE (the chord reaches the system). Losing the bind
+        // fails SILENT — the chord is claimed and dropped. Restore this the moment the conformer
+        // lands, against its real filename.
         Claim::Matches {
             path: INPUT_HOST,
             pattern: r"guard live\?\.terminalModel\?\.onRequestMenuItem != nil",

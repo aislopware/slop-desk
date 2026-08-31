@@ -6,8 +6,8 @@ import CSlopDeskFFI
 /// THIS pane is already the focused one, should hovering it claim the workspace focus?
 ///
 /// The gate — and why the already-focused term is load-bearing rather than an optimisation — is
-/// `slopdesk_terminal::surface::focus_follows_mouse`. The GUI view (`GhosttyTerminalView`, compile-only
-/// behind `#if canImport(CGhostty)`) is the thin actuator: its `mouseEntered` / `mouseMoved` consult this
+/// `slopdesk_terminal::surface::focus_follows_mouse`. The GUI view (`MacTerminalRendererView` /
+/// `PhoneTerminalRendererView`) is the thin actuator: its `mouseEntered` / `mouseMoved` consult this
 /// and, on `true`, fire `TerminalViewModel.onRequestFocus`.
 public enum FocusFollowsMousePolicy {
     /// Whether a hover over this pane should request the workspace focus.

@@ -1,14 +1,17 @@
-// ClipboardConfirmRequests — the phone's mailbox between the libghostty embedder and a mounted view.
+// ClipboardConfirmRequests — the phone's mailbox between the terminal surface's clipboard-write drain
+// and a mounted view.
 //
 // The Mac has no use for this file and that is not an asymmetry in the DECISION, only in the two
 // frameworks' idea of what "present a dialog" is. `NSAlert.beginSheetModal(for:)` can be called from
-// inside a C callback: the presenter IS a function. SwiftUI has no such function — a surface exists
-// because something in a mounted tree says it does — so the callback cannot present, it can only ASK,
+// inside a drain: the presenter IS a function. SwiftUI has no such function — a surface exists
+// because something in a mounted tree says it does — so the drain cannot present, it can only ASK,
 // and this is the thing it asks. ``ClipboardConfirmCard`` (`SlopDeskPhoneUI`) drains it.
 //
-// ⚠️ EVERY REQUEST IN HERE IS A LIVE libghostty CLIPBOARD REQUEST, and libghostty is holding state for
-// it until the embedder completes it EXACTLY ONCE. Two rules fall out, and both are enforced here rather
-// than trusted to the renderer:
+// ⚠️ EVERY REQUEST IN HERE IS A LIVE CLIPBOARD-WRITE REQUEST pulled off the terminal surface's own
+// sink (`TerminalSurfaceDriver`'s `takeClipboardWrites()` drain — the FFI boundary is pull-only, there
+// are no callbacks), and ``TerminalSurfaceDriver/apply(_:)`` is holding the completion open until this
+// file answers it EXACTLY ONCE. Two rules fall out, and both are enforced here rather than trusted to
+// the renderer:
 //
 //  * A request is answered ONCE. ``answer(_:allow:)`` removes the entry BEFORE it calls the completion,
 //    so a double-tap, or a renderer that answers a card it has already torn down, is a no-op rather than
@@ -16,10 +19,11 @@
 //  * A request is never DROPPED to make room. A second ask arriving while one is up QUEUES — it does not
 //    replace, and the mailbox never presents itself as empty while it holds one. Replacing would decide
 //    the older question on the user's behalf, which is the whole gap this seam exists to close; dropping
-//    the newer one would leak libghostty's request state forever.
+//    the newer one would leak the surface's pending completion forever.
 //
-// It is a process-wide singleton for the same reason ``TerminalConfigBroadcaster`` is: the writer is a
-// C callback that has a surface pointer and nothing else, and the reader is the app's one window.
+// It is a process-wide singleton for the same reason ``TerminalConfigBroadcaster`` is: the writer is
+// the per-pane surface's drain loop, which has a `TerminalSurfaceDriver` and nothing else, and the
+// reader is the app's one window.
 
 import Foundation
 
@@ -29,10 +33,10 @@ import Foundation
 @MainActor
 @Observable
 public final class ClipboardConfirmRequests {
-    /// The one mailbox. The embedder writes it from a libghostty callback; the phone's root reads it.
+    /// The one mailbox. The renderer view writes it from the surface's clipboard-write drain; the phone's root reads it.
     public static let shared = ClipboardConfirmRequests()
 
-    /// One unanswered question: what to ask, and the libghostty completion that is waiting on the answer.
+    /// One unanswered question: what to ask, and the completion the surface's drain is waiting on for the answer.
     ///
     /// `answer` is deliberately NOT public — nothing outside this type may call a completion, because
     /// calling it without removing the entry is the double-completion above. Renderers go through
@@ -56,7 +60,7 @@ public final class ClipboardConfirmRequests {
 
     public init() {}
 
-    /// File a confirmation. `answer` is the libghostty completion: `true` = the affirmative button,
+    /// File a confirmation. `answer` is the completion the surface's drain is waiting on: `true` = the affirmative button,
     /// `false` = Cancel. It runs exactly once, on the main actor, when the user decides — never before,
     /// and never because the app found the question inconvenient.
     public func ask(

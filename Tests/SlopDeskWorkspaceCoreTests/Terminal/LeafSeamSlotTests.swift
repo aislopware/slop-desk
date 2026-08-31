@@ -23,11 +23,12 @@ import XCTest
 /// arrangement's premise does, and it expires silently — it kept passing right up until the premise
 /// was checked by hand. The three tests below pin behaviour, which is why they survived the fold.
 ///
-/// What is NOT here, and cannot be: whether a registered factory actually renders anything. The only
-/// conformer of either protocol lives in `ThirdParty/ghostty/integration/GhosttySurface/` and
-/// `SlopDeskVideoClient`, neither reachable from a headless `swift build` — the embedder is not in any
-/// `Package.swift` target at all. Those halves are verified by `slopdesk-ops enable-renderer macos` +
-/// `xcodebuild`, by hand.
+/// What is NOT here, and cannot be: whether a registered factory actually renders anything.
+/// `TerminalSurfaceDriver` (`Sources/SlopDeskTerminal/`) compiles under `swift build` now (docs/68 §10) —
+/// unlike the deleted fork's embedder, which joined no `Package.swift` target — but
+/// `installTerminalRenderer()` is called only from the two `AppMain.swift` Xcode-app entry points, so
+/// `swift test` never registers it. `SlopDeskVideoClient` is the same story for its own reasons. Both
+/// halves are verified by hand, through the Xcode app target.
 @MainActor
 final class LeafSeamSlotTests: XCTestCase {
     /// A stand-in surface: the seam promises a ``PlatformView`` and two pushes, and nothing about what

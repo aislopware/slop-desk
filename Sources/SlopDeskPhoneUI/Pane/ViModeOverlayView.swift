@@ -22,7 +22,7 @@
 // has no UIKit equivalent whatsoever, and neither does `Layout`, which is precisely why that ladder was
 // pushed to the floor before either renderer needed it.
 //
-// `Slate.*` tokens only, in their native (`UIColor`/`UIFont`) spelling. No libghostty / Metal /
+// `Slate.*` tokens only, in their native (`UIColor`/`UIFont`) spelling. No `libghostty-vt` / Metal /
 // VideoToolbox is touched: these are plain layer-backed chips driven by the pane model's observables.
 //
 // HONESTY (the "nothing is a dead key" rule) lives with the tables, not here: ``ViKeyHintPresentation``

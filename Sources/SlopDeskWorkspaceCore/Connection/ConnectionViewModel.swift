@@ -183,7 +183,7 @@ public final class ConnectionViewModel {
     ///
     /// `internal` (not `private`) so ``ConnectGate/plan(_:maxInputFrameBytes:)`` — which is what
     /// decides how this FIFO leaves — is headlessly testable; `Equatable` so a test can assert WHICH
-    /// events survived. The `.resize` payload is the libghostty grid (cols,rows) only — the wire's
+    /// events survived. The `.resize` payload is the terminal grid (cols,rows) only — the wire's
     /// px/py path is driven downstream by `SlopDeskClient.sendResize` (px/py = 0), unchanged.
     enum OutEvent: Equatable { case input(Data)
         case resize(cols: UInt16, rows: UInt16)
@@ -296,7 +296,7 @@ public final class ConnectionViewModel {
         let myGeneration = connectRun.begin()
 
         // OUT path (renderer → host): the terminal model's `sendInput`/`sendResize` (driven by
-        // `GhosttyTerminalView`'s onWrite/onResize) append into ONE main-actor FIFO; a single drain task
+        // `TerminalSurfaceDriver`'s onWrite / `setGeometry(size:scale:)`) append into ONE main-actor FIFO; a single drain task
         // BATCH-pulls it, PLANS it (latest-wins resizes, `.input` as a barrier — see `ConnectGate.plan`),
         // and awaits the client SEQUENTIALLY so bytes/resizes are never reordered. The wake is a
         // `bufferingNewest(1)` signal so N appends collapse to one drain. Captures `weak client/self` so a
@@ -590,7 +590,7 @@ public final class ConnectionViewModel {
             // `TerminalViewModel.markReconnecting`), whose PTY starts at its 80×24 init size. connect()'s
             // grid re-assert (resendCurrentSize + a +400ms re-assert) runs ONLY on the initial connect,
             // NOT here — the supervisor re-establishes the session internally and only emits this event.
-            // Without re-sending the renderer's real grid, the new PTY stays at 80×24 while libghostty
+            // Without re-sending the renderer's real grid, the new PTY stays at 80×24 while libghostty-vt
             // renders the layout-derived grid (e.g. 79×22), so zsh wraps at the wrong column and TUIs draw
             // at the wrong row (overlapping / skewed glyphs). Mirror connect()'s two-shot re-assert: now,
             // then again after the host control-reader is reliably pumping (it may not be the instant the

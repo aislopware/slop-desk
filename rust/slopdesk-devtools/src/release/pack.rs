@@ -7,9 +7,14 @@
 //! by hand run identical steps.
 //!
 //! ## ARM64 only — a hard constraint, not a default
-//! * `ThirdParty/ghostty/libghostty.xcframework` ships a `macos-arm64` slice and nothing else, and
-//!   `Apps/ClientApp-macOS` pins `ARCHS=arm64` because of it. An Intel client app cannot link.
-//! * The apps deploy against macOS 26, which no Intel Mac runs.
+//! * The apps deploy against macOS 26, which no Intel Mac runs (`docs/49` reason 2).
+//! * The Homebrew formula and cask both declare `depends_on arch: :arm64`, so `brew` refuses the
+//!   install rather than handing an Intel user a binary that dies at launch (`docs/49` reason 3).
+//!
+//! Either alone is sufficient. `Apps/ClientApp-macOS` also pins `ARCHS=arm64`, which used to be the
+//! FIRST reason — the fork's xcframework shipped a `macos-arm64` slice and no other, so an Intel
+//! client app could not link. That fork is gone (`docs/68`) and the pin has outlived it, so the pin
+//! is now the spec's own choice and the two reasons above are what actually bind.
 //!
 //! So this REFUSES to run on an `x86_64` host rather than emitting a half-broken slice.
 //!
@@ -21,9 +26,9 @@
 //! | `MANIFEST.json` | one entry per shipped binary: its OWN version, its source stamp, its SHA |
 //! | `SHA256SUMS` | what the Homebrew tap's cask + formula pin |
 //!
-//! The `libghostty` xcframework must already exist (`ThirdParty/ghostty/build-libghostty.sh`, or
-//! the cached CI artifact). Building it here would hide a 20-minute Zig build inside a packaging
-//! step.
+//! `SlopDeskFFI.xcframework` must already exist — `slopdesk-gate ffi` is its own step of the
+//! workflow, ahead of this one (`docs/49`). Building it here would hide a multi-minute Rust + Zig
+//! build inside a packaging step, and it is stamped so the step costs nothing when nothing moved.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -217,7 +222,8 @@ fn preflight(layout: &Layout, settings: &Settings) -> Result<(), String> {
     let machine = proc::capture("/usr/bin/uname", &["-m"], &layout.root)?;
     if machine != "arm64" {
         return Err(format!(
-            "arm64-only release: this host is {machine}. libghostty ships no x86_64 slice."
+            "arm64-only release: this host is {machine}. The apps deploy against macOS 26 and the tap \
+             declares `depends_on arch: :arm64` (docs/49)."
         ));
     }
     // `cargo` is here for the same reason as the rest: the sidecars are Rust, and a missing
@@ -227,13 +233,12 @@ fn preflight(layout: &Layout, settings: &Settings) -> Result<(), String> {
             return Err(format!("missing required tool: {tool}"));
         }
     }
-    let xcframework = layout.root.join("ThirdParty/ghostty/libghostty.xcframework");
-    if !xcframework.join("macos-arm64").is_dir() {
-        return Err(format!(
-            "{} is missing its macos-arm64 slice. Build it first:\n  ThirdParty/ghostty/build-libghostty.sh",
-            xcframework.display()
-        ));
-    }
+    // There used to be a slice check for the fork's xcframework here, because it was gitignored,
+    // built by a script this step did not run, and an absent slice failed deep inside `xcodebuild`.
+    // The one linked artifact left is `SlopDeskFFI.xcframework`, and it needs no preflight of its
+    // own: `Package.swift` declares it as a `binaryTarget`, so SwiftPM refuses to RESOLVE the graph
+    // without it and says which path is missing — a first-line failure that names itself, which is
+    // all the check bought. `slopdesk-invariants` ratchets that the workflow builds it (`docs/49`).
     let identities = proc::capture(
         "security",
         &["find-identity", "-v", "-p", "codesigning"],
@@ -400,13 +405,11 @@ fn sign_cli(layout: &Layout, settings: &Settings) -> Result<(), String> {
 /// literal `CFBundleShortVersionString` that `MARKETING_VERSION` does not override), and editing a
 /// plist inside a signed bundle invalidates the signature.
 fn build_and_sign_apps(layout: &Layout, settings: &Settings) -> Result<(), String> {
-    // The client is the ONLY target that links libghostty. The renderer wiring injects the
-    // xcframework + CGhostty module map into the (deliberately placeholder) committed spec and
-    // regenerates the project; it is idempotent, and the spec is checked back out afterwards.
-    proc::step("Wiring the libghostty renderer into ClientApp-macOS");
-    // An in-process call, not a spawn: the injector is [`crate::ops::renderer`] in this same
-    // binary, and shelling out to a copy of itself would only add a way for the two to disagree.
-    crate::ops::renderer::enable(&layout.root, &crate::ops::renderer::MACOS)?;
+    // This used to open with a renderer-wiring step: the terminal conformer linked a gitignored
+    // xcframework, so the committed spec was a deliberate PLACEHOLDER and the release injected the
+    // framework + the `CGhostty` module map into it, built, then checked the spec back out. The
+    // fork is gone (`docs/68` §10) and the conformer is an ordinary package source, so the
+    // committed spec is now the one the release builds — no injection, and no restore to forget.
 
     // ONE app since `docs/60` F.9: the menu-bar host is gone and the daemon it supervised ships in
     // the CLI tarball below, driven by `slopdesk-ops`. This used to be a loop over two bundles;
@@ -424,13 +427,6 @@ fn build_and_sign_apps(layout: &Layout, settings: &Settings) -> Result<(), Strin
         settings,
         APP,
         "Apps/ClientApp-macOS/ClientApp-macOS.entitlements",
-    )?;
-
-    // Restore the committed placeholder spec so a CI checkout (and a developer's tree) stays clean.
-    proc::run(
-        "git",
-        &["checkout", "--", "Apps/ClientApp-macOS/project.yml"],
-        &layout.root,
     )
 }
 

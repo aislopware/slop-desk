@@ -1339,10 +1339,11 @@ is the libghostty embedder, added to the two Xcode app targets by `slopdesk-ops 
 `… ios` and compiled by neither `swift build` nor `just quick`'s macOS half. It is
 where `PasteSafetyAnalyzer`, `PastePrecheck`, `ClipboardWritePolicy`, `RightClickPasteInterceptPolicy`
 and `PasteTransform` are all reached from — so a grep over `Sources/` reports that whole cluster as
-dead, and it is not. Anything moved or renamed here is verified by hand:
-`(cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- enable-renderer macos) && xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
--scheme ClientApp-macOS -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO build`, then
-`git checkout -- Apps/ClientApp-macOS/project.yml && xcodegen generate --spec Apps/ClientApp-macOS/project.yml`.
+dead, and it is not. Anything moved or renamed here was verified by hand, through a two-step recipe
+that first re-injected the embedder into the app spec and then ran `xcodebuild` over it.
+**That whole hazard is retired:** `docs/68-terminal-surface-in-rust.md` deleted the embedder and
+`slopdesk-ops enable-renderer` with it, the surface view now lives in `Sources/SlopDeskTerminal/`, and
+`swift build` compiles the paste cluster's caller like any other file. A `Sources/` grep is honest again.
 
 What is new is what did NOT move with it. The sheet was carrying four sentences of its own — three
 headings, two OSC-52 reasons, the "Paste Anyway" button — plus a 28-line preview renderer that capped
@@ -2035,6 +2036,13 @@ renderer, exactly as `MacOSIntegrationRows`' and `MacCLIInstallCard`'s already d
 one half has nothing to spell once.
 
 ### Increment 50 — the pointer tables, and the mirror that was a third copy
+
+> ⚠️ **Undone by `docs/68`, and recorded rather than edited away.** Both tables, both doors and both
+> Swift faces are DELETED. The producer was the fork's `action_cb`, and `libghostty-vt` exposes no
+> handler for OSC 22 (`docs/DECISIONS.md`, "Dropped: OSC-22 pointer shape"), while hiding the pointer
+> while typing turned out to need no engine at all. What survives here is the ARGUMENT — why a Swift
+> mirror of a C enum is a third copy — which is the part worth keeping when the next table crosses.
+> The rest of this section describes code that is gone.
 
 Two lookup tables libghostty hands the embedder — `GHOSTTY_ACTION_MOUSE_SHAPE` (OSC 22) and
 `GHOSTTY_ACTION_MOUSE_VISIBILITY` (`mouse-hide-while-typing`) — are `slopdesk_terminal::pointer`

@@ -1,5 +1,4 @@
 import SlopDeskClient
-import SlopDeskTerminal
 import SlopDeskTestSupport
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -260,7 +259,8 @@ final class TerminalViewModelTests: XCTestCase {
         var calls: [(cols: UInt16, rows: UInt16)] = []
         model.resizeSink = { calls.append((cols: $0, rows: $1)) }
         model.sendResize(cols: 80, rows: 24)
-        model.sendResize(cols: 80, rows: 24) // duplicate (libghostty double-emits) → coalesced
+        model
+            .sendResize(cols: 80, rows: 24) // duplicate (the deleted fork's resize callback double-emitted) → coalesced
         model.sendResize(cols: 100, rows: 30) // changed → forwarded
         model.sendResize(cols: 100, rows: 30) // duplicate → coalesced
         XCTAssertEqual(calls.count, 2, "consecutive duplicate resizes are coalesced")
@@ -446,10 +446,11 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(calls, 2, "reset re-arms coalescing so the same size re-sends on reconnect")
     }
 
-    /// libghostty's `resize_callback` fires during surface creation / initial layout — BEFORE
+    /// Terminal geometry is DERIVED from layout via `TerminalSurfaceDriver.setGeometry(size:scale:)` (no
+    /// callback) and can be established during surface creation / initial layout — BEFORE
     /// `ConnectionViewModel.connect()` wires `resizeSink`. If `sendResize` recorded `lastSentSize`
     /// even with a nil sink, the grid would be dropped AND the dedup would then suppress the real
-    /// send once the sink appeared → the host PTY would stay at its 80×24 init size while libghostty
+    /// send once the sink appeared → the host PTY would stay at its 80×24 init size while the surface
     /// rendered the true grid (overlapping glyphs, fzf drawn at the wrong row). Wiring the sink must
     /// FLUSH the latest pre-connect grid.
     func testPreConnectResizeIsFlushedWhenSinkWired() {
@@ -573,14 +574,15 @@ final class TerminalViewModelTests: XCTestCase {
 
     /// REGRESSION (the multi-second-beachball "crash"): `surface` MUST be `@ObservationIgnored`.
     /// `attachSurface(_:)` both reads (`self.surface !== surface`) and writes (`self.surface = surface`)
-    /// this property, and the renderer calls it from `GhosttyMetalLayerView.updateNSView` — i.e. from
-    /// inside a SwiftUI AttributeGraph update. If `surface` were observation-tracked, that read would
-    /// register the updating attribute as a dependency and the write would invalidate it, so SwiftUI
-    /// would re-run the update → `updateNSView` → `attach` → `attachSurface` → invalidate → ∞ (an
-    /// infinite re-render loop pinning the main thread — observed as a hang when a focus change / new
-    /// pane / reconnect triggers `updateNSView`). Here: read `model.surface` INSIDE
-    /// `withObservationTracking`; with `@ObservationIgnored` that read registers no dependency, so the
-    /// `attachSurface` write must NOT fire `onChange`. Drop `@ObservationIgnored` and this fails.
+    /// this property, and the renderer calls it from `TerminalSurfaceDriver.bind(to:)` — the renderer's
+    /// own mount path. The hazard was first written against SwiftUI, where the same attach ran inside an
+    /// AttributeGraph update and the cycle was body → `updateNSView` → `attach` → read+write → invalidate
+    /// → ∞; the imperative AppKit/UIKit shells did not retire it, because `withObservationTracking`
+    /// registers dependencies the same way — an arm that read `surface` would be woken by the write its
+    /// own re-arm provoked, a main-thread pin that reads as a multi-second beachball on a focus change or
+    /// a reconnect. Here: read `model.surface` INSIDE `withObservationTracking`; with `@ObservationIgnored`
+    /// that read registers no dependency, so the `attachSurface` write must NOT fire `onChange`. Drop
+    /// `@ObservationIgnored` and this fails.
     func testSurfaceMutationDoesNotTriggerObservation() {
         final class Flag: @unchecked Sendable { var fired = false }
         let model = TerminalViewModel()

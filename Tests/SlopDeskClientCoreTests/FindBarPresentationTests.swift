@@ -1,12 +1,12 @@
 // FindBarPresentationTests — the in-pane find bar's words, its two sizing rungs, the mode chip's
-// appearance verdict, and the closed vocabulary the bar speaks to libghostty with.
+// appearance verdict, and the closed vocabulary the bar speaks to libghostty-vt with.
 //
 // The counter's three-way rule is the one worth having as a value: `N of M`, a verdict, or NOTHING. The
 // third branch is the one a re-derivation gets wrong — "No results" under an empty field reports a
 // failure nobody asked for, and it looks perfectly reasonable in code.
 //
 // The WIRE strings are asserted literally. `TerminalSearchSurfaceAction` exists to stop five
-// interpolations drifting apart, not to become the definition of the protocol: libghostty parses these
+// interpolations drifting apart, not to become the definition of the protocol: libghostty-vt parses these
 // spellings, so a test that compared the enum to itself would pass on the day a colon went missing.
 
 import XCTest
@@ -39,7 +39,7 @@ final class FindBarPresentationTests: XCTestCase {
 
     /// The in-pane bar offers all three chips, whole-word in the middle; the cross-tab search offers two.
     /// Whole-word is the in-pane bar's alone because the global search runs over a scrollback mirror
-    /// rather than libghostty's buffer, and the two engines disagree about a word boundary.
+    /// rather than libghostty-vt's buffer, and the two engines disagree about a word boundary.
     func testInPaneBarOffersWholeWordAndGlobalSearchDoesNot() {
         XCTAssertEqual(FindModePill.inPaneFindBar, [.caseSensitive, .wholeWord, .regex])
         XCTAssertFalse(FindModePill.globalSearch.contains(.wholeWord))
@@ -77,7 +77,7 @@ final class FindBarPresentationTests: XCTestCase {
 
     // MARK: - The wire vocabulary
 
-    /// The five spellings libghostty parses. They were five interpolations at five call sites inside one
+    /// The five spellings libghostty-vt parses. They were five interpolations at five call sites inside one
     /// file; they are one table now, and this is the table.
     func testEveryActionSpellsItsWire() {
         XCTAssertEqual(TerminalSearchSurfaceAction.search(needle: "docs").wire, "search:docs")

@@ -26,8 +26,9 @@ package enum PaneFocusPolicy {
     ///
     /// TRUE only when `tab` is the ACTIVE tab AND `paneID` is that tab's `activePane`. Every mounted
     /// background tab still carries its own `activePane`, but it must NOT claim first responder
-    /// (`GhosttyLayerBackedView.applyKeyboardFocus` acts only when `isFocusedPane`), or the
-    /// last-mounted hidden tab would steal the keyboard from the visible one.
+    /// (`MacTerminalRendererView`'s `isFocused` didSet only calls `driver.setFocus` for the
+    /// genuinely-focused pane), or the last-mounted hidden tab would steal the keyboard from the
+    /// visible one.
     package static func isPaneFocused(
         _ paneID: PaneID, in tab: SlopDeskWorkspaceModel.Tab, activeTabID: TabID?,
     ) -> Bool {

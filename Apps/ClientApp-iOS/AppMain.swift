@@ -10,10 +10,11 @@
 // The SEAM types (`TerminalRendererFactory`,
 // `VideoWindowFactory`, `RemoteWindowDiscovery`, `RemoteWindowSummary`) live in
 // `SlopDeskWorkspaceCore`; the seam registrations below stay PRESERVED — only the production renderer/video/discovery
-// closures are injected here (the GUI app target links libghostty/SlopDeskVideoClientPhone; the
-// cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
+// closures are injected here (the GUI app target links `SlopDeskTerminal`/`SlopDeskVideoClientPhone`;
+// the cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
 // `swift build`).
 import SlopDeskPhoneUI
+import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 // TWO MODULES, ONE GATE (docs/56 §3, the video carve). `SlopDeskVideoClient` is the platform-free
@@ -34,46 +35,38 @@ import SlopDeskVideoClientPhone
 /// The `@main` entry for the iOS Xcode app target.
 ///
 /// The whole app object lives in the `SlopDeskPhoneUI` SwiftPM library (`PhoneAppDelegate`); this
-/// shell only attaches `@main` and, when the libghostty xcframework is present, registers the
-/// production terminal renderer with ``TerminalRendererFactory``. Until the xcframework is
-/// built, no factory is registered and the canvas mounts its own build-status surface
-/// (libghostty-only policy — there is NO fallback VT renderer).
+/// shell only attaches `@main` and registers the production terminal renderer with
+/// ``TerminalRendererFactory``, unconditionally.
 ///
-/// ## Wiring the production renderer (once the xcframework exists)
-/// 1. Build it: `ThirdParty/ghostty/build-libghostty.sh` → `libghostty.xcframework`.
-/// 2. Add the xcframework to this app target (project.yml `dependencies:` / Xcode "Frameworks").
-/// 3. Add `ThirdParty/ghostty/integration/GhosttySurface/GhosttySurface.swift` +
-///    the `CGhostty` module map to this target's sources/headers.
-/// 4. Add a `UIView` conforming to ``TerminalSurfaceHosting``, owning a `GhosttySurface` attached
-///    to `model.surface` and feeding `model`'s output.
-/// 5. Register it through `GhosttyRendererSeam.install()` below — never by assigning the factory
-///    here, which is what `one_seam_two_shapes_one_installer` bans.
+/// ## Why "unconditionally" is the change worth reading
+/// This used to be a `#if canImport(CGhostty)` block, and the doc that stood here was a five-step
+/// recipe for making that gate flip: build a fork's xcframework by hand, add it to this target, add
+/// a source group and a clang module map, then write the conformer. Every step existed because the
+/// conformer was a member of no `Package.swift` target — it could only ever join an Xcode app, so
+/// `swift build` never saw it and the gate had to have a false arm for the build that could not.
+///
+/// The renderer is `Sources/SlopDeskTerminal/` now (docs/68), which `swift build` compiles like any
+/// other target. There is nothing left to gate on: if the installer is missing, THIS file fails to
+/// compile, which is the failure everybody wanted and nobody could have.
 @main
 struct ClientAppMain {
     // `main()` performs the five seam registrations (the load-bearing wiring that injects the production
     // renderer/video/discovery closures the cross-platform UI library cannot reference) and then hands the
     // process to ``PhoneAppDelegate``. This app target is NOT in `swift build`.
     static func main() {
-        // PATH 1 (terminal, libghostty-only): register the production renderer. The
-        // cross-platform `SlopDeskClientUI` view layer cannot reference `GhosttyTerminalView`
-        // (it would force linking `libghostty.xcframework` + the `CGhostty` clang module
-        // into the headless `swift build`/tests), so the GUI app target injects it here.
-        //
-        // GATED on `#if canImport(CGhostty)`: the `CGhostty` module exists only once the
-        // xcframework is built and added to this app target (see the wiring notes above +
-        // docs/21-HANDOFF.md). Until then this block compiles to NOTHING and the seam
-        // shows the gated `BuildStatusPlaceholderView` (libghostty-only policy — no
-        // fallback VT renderer).
+        // PATH 1 (terminal): register the production renderer. The cross-platform view layer cannot
+        // reference the UIKit conformer — it would pull Core Text and Metal into the headless
+        // `swift build`/tests — so the GUI app target injects it here, at the one moment a UIKit
+        // process is guaranteed to exist.
         //
         // ONE CALL, ONE SHAPE (docs/56 stage F, risk 2). The seam used to carry TWO slots and this
         // comment used to explain why: `shared` returned an `AnyView` and was "iOS's ONLY shape — the
         // phone has no `NSView`". The phone draws in UIKit now, both platforms hand back a
         // ``PlatformView``, and the second slot is banned rather than required. The installer still
-        // lives in the embedder rather than here, because that is what keeps the registration in one
-        // place no app target can half-do.
-        #if canImport(CGhostty)
-        MainActor.assumeIsolated { GhosttyRendererSeam.install() }
-        #endif
+        // lives in the terminal module rather than here, because that is what keeps the registration
+        // in one place no app target can half-do — assigning ``TerminalRendererFactory`` from THIS
+        // file is what `one_seam_two_shapes_one_installer` bans.
+        MainActor.assumeIsolated { SlopDeskTerminal.installTerminalRenderer() }
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
         // view. The cross-platform view layer cannot reference

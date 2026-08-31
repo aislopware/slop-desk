@@ -17,7 +17,6 @@
 
 import CoreGraphics
 import Foundation
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 /// One straight decoration stroke in the surface's coordinate space (origin 0,0 = the cell grid's

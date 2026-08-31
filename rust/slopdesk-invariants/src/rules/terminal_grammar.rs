@@ -190,7 +190,7 @@ pub fn one_paste_guard_secret_one(tree: &Tree) -> Report {
                       {entry} — the confirmation's words are one implementation",
         },
         Claim::NoneOf {
-            paths: &["Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift"],
+            paths: &["Sources/SlopDeskTerminal/PasteProtectionSheet.swift"],
             pattern: r#"previewLimit|messageText = "|Paste Anyway|OSC 52"#,
             view: View::Code,
             message: "{files} spells the confirmation's own words — slopdesk-terminal::paste owns every \
@@ -388,7 +388,7 @@ mod tests {
                 "slopdesk_paste_confirmation\nkept so the ban has a haystack\n",
             )
             .write(
-                "Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift",
+                "Sources/SlopDeskTerminal/PasteProtectionSheet.swift",
                 "kept so the ban has a haystack\n",
             )
             .write(

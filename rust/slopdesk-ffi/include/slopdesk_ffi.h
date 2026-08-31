@@ -2913,6 +2913,293 @@ size_t slopdesk_terminal_config_string(SlopDeskTerminalConfig config, const uint
                                        size_t keybind_count, const SlopDeskConfigRun *palette,
                                        size_t palette_count, uint8_t *out, size_t out_cap);
 
+/* ---- the terminal surface: the engine, its fonts, its arithmetic and its GPU ------------ *
+ *
+ * `docs/68-terminal-surface-in-rust.md` is the argument. ONE handle joins four crates —
+ * `slopdesk-vterm` (what the bytes did), `slopdesk-termrender` (where every pixel goes),
+ * `slopdesk-apple-text` (what a glyph looks like), `slopdesk-apple-metal` (the draw) — because
+ * they only exist together and the contents scale picks something in all four. See
+ * `rust/slopdesk-ffi/src/terminal_surface.rs`'s header.
+ *
+ * ⚠️ MAIN THREAD, EVERY DOOR, and this one is not a convention. The engine's terminal is `!Send`
+ * and `!Sync` with no lock upstream, a `CAMetalLayer` is main-thread-affine, and Core Text's font
+ * objects are the same — so the handle carries no lock at all, because a second thread may not
+ * have it. A feed from a background queue CORRUPTS the grid rather than tripping an assertion.
+ *
+ * NOT inside the TARGET_OS_OSX region below: every client draws a terminal and both slices draw
+ * it the same way. Exactly one _free per _new, and NULL is inert at every entry point — a machine
+ * with no Metal device answers NULL from _new and nothing after it crashes. */
+typedef struct SlopDeskTerminalSurface SlopDeskTerminalSurface;
+
+/* Opens a surface, or NULL when this machine cannot draw one (no Metal device, pipelines that
+ * will not build, a point size that is no sane number of device pixels). A refusal does not
+ * become true a frame later, so the caller latches it. An UNKNOWN family is not a refusal —
+ * Core Text answers Helvetica, and `slopdesk font list` is how the user finds out what to type. */
+SlopDeskTerminalSurface *slopdesk_term_surface_new(const uint8_t *family, size_t family_len,
+                                                   double point_size, double scale,
+                                                   double width_points, double height_points);
+/* Teardown is TWO doors, and the split is load-bearing.
+ *
+ * _close takes the state — engine, atlas, layer, device — and leaves the handle valid and inert.
+ * Call it the instant the view has let go of the LENT layer and not before: the layer's drawable
+ * source dies here, so a view still hosting it afterwards is hosting a layer with nothing behind it.
+ *
+ * _free returns the allocation, and belongs in `deinit` and nowhere else — a handle freed anywhere
+ * else is a claim about which threads are running (slopdesk-invariants' handle-freed-in-deinit).
+ * `deinit` runs when the LAST reference goes, which may be after the view was asked to draw again,
+ * which is exactly why the two cannot be one door.
+ *
+ * _close is idempotent, and every other door on a closed handle answers its inert value. */
+void slopdesk_term_surface_close(SlopDeskTerminalSurface *handle);
+void slopdesk_term_surface_free(SlopDeskTerminalSurface *handle);
+
+/* The CAMetalLayer to host, LENT at +0 — the opposite of the decoder's pixels, which cross at +1.
+ * Rust made it, Rust owns it for the handle's whole life, and the view only hosts it:
+ * `Unmanaged<CAMetalLayer>.fromOpaque(_:).takeUnretainedValue()`, never released. Its
+ * drawableSize and contentsScale belong to _set_geometry; a second writer is the drift the single
+ * handle exists to prevent. */
+void *slopdesk_term_surface_layer(SlopDeskTerminalSurface *handle);
+
+/* Inbound PTY bytes. Never fails and never blocks. */
+void slopdesk_term_surface_feed(SlopDeskTerminalSurface *handle, const uint8_t *bytes, size_t len);
+
+/* Re-measures the view and answers the grid it now fits, packed `cols << 16 | rows` — ONE word
+ * because the pair is one answer, and two reads could straddle a second resize and mirror the
+ * host a grid that never existed. A scale change rebuilds the face stack and the atlas together. */
+uint32_t slopdesk_term_surface_set_geometry(SlopDeskTerminalSurface *handle, double width_points,
+                                            double height_points, double scale);
+
+/* Draws one frame. false = there was nowhere to draw (a collapsed split, a window mid-resize, a
+ * drawable the compositor declined). Not an error and needs no recovery. */
+bool slopdesk_term_surface_draw(SlopDeskTerminalSurface *handle);
+
+/* Workspace focus and the blink clock's phase, together because the cursor is the only thing
+ * either changes and an unfocused surface has no cursor to blink. Focus drives the hollow cursor
+ * and NOT render-liveness: an unfocused split sibling keeps repainting. */
+void slopdesk_term_surface_set_focus(SlopDeskTerminalSurface *handle, bool focused,
+                                     bool blink_visible);
+
+/* The theme, as three 0x00RRGGBB words. One door because the background is BOTH the engine's
+ * default colour and the pass's clear colour, and setting one without the other draws a
+ * one-pixel border of the wrong colour around every glyph. */
+void slopdesk_term_surface_set_theme(SlopDeskTerminalSurface *handle, uint32_t foreground,
+                                     uint32_t background, uint32_t selection);
+
+/* Scrolls the viewport: mode 0 by rows, 1 by PAGES, 2 to the bottom, 3 to the top. `lines` is
+ * signed and negative reveals OLDER output. A page is converted against the grid the surface last
+ * fitted, because a caller's own row count can be a resize stale. */
+void slopdesk_term_surface_scroll(SlopDeskTerminalSurface *handle, uint8_t mode, int32_t lines);
+
+/* Whether the Option key is Alt: 0 off, 1 both, 2 left, 3 right (`macos-option-as-alt`). */
+void slopdesk_term_surface_set_option_as_alt(SlopDeskTerminalSurface *handle, uint8_t value);
+
+/* The `mods` word the key and mouse doors take, built from what the platform says is held.
+ *
+ * ⚠️ This door exists so that no modifier BIT is ever spelled in Swift. The bits are libghostty's
+ * `key::Mods`, upstream's to renumber; a client that hard-coded them would hold a second copy of a
+ * layout it does not own, and the failure mode is silent — ⌃C encoding as ⌥C rather than as an
+ * error. The client passes what it actually knows (which physical keys AppKit or UIKit reported)
+ * and gets back the one word the encoder wants.
+ *
+ * The right_* flags say which SIDE a held modifier is on and mean nothing without their held flag.
+ * Only `macos-option-as-alt = left|right` reads one, but all four cross on every press: a mods word
+ * that depended on a config value would be one the caller could build differently from the one the
+ * encoder resolves against. Pure — no handle, no state; nothing held is 0. */
+uint16_t slopdesk_term_mods(bool shift, bool alt, bool ctrl, bool command, bool caps_lock,
+                            bool num_lock, bool right_shift, bool right_alt, bool right_ctrl,
+                            bool right_command);
+
+/* One key press, encoded to the bytes the far side expects. `keycode` is an AppKit
+ * NSEvent.keyCode — a POSITION, which the engine's own table turns into the KEY its encoder needs
+ * — and 0xFFFF means "no key at all", which is an IME commit where `text` is the whole event. iOS
+ * passes 0xFFFF for every press: a UIKey carries characters, not a hardware position.
+ * `action` 0 press / 1 release / 2 repeat. Answers §4's byte count; 0 is a press that encodes to
+ * nothing (a bare modifier, or a press while composing). */
+size_t slopdesk_term_surface_key(SlopDeskTerminalSurface *handle, uint16_t keycode, uint8_t action,
+                                 uint16_t mods, uint16_t consumed_mods, const uint8_t *text,
+                                 size_t text_len, bool composing, uint8_t *out, size_t cap);
+
+/* One pointer event, or 0 when the far side is not tracking the mouse — which the caller reads as
+ * "this gesture is mine", and falls through to the selection doors below. `action` 0 press /
+ * 1 release / 2 motion; `button` 0 left / 1 right / 2 middle / 255 none / n>2 the nth button.
+ * x and y are the view's POINTS, top-left origin: the surface scales them, because the scale it
+ * would use is the one it drew with and a caller's copy can be a frame stale. */
+size_t slopdesk_term_surface_mouse(SlopDeskTerminalSurface *handle, uint8_t action, uint8_t button,
+                                   uint16_t mods, double x, double y, uint8_t *out, size_t cap);
+
+/* Pointer selection, over the ENGINE's own gesture state machine — the click ladder (single a
+ * cell, double a word, triple a line) is a rule about a gesture's HISTORY, so it is not
+ * re-derived on this side. The three time/slop numbers are the platform's own
+ * (NSEvent.doubleClickInterval, and the slop a finger is allowed); milliseconds and points.
+ * Each answers whether the selection CHANGED. */
+bool slopdesk_term_surface_select_press(SlopDeskTerminalSurface *handle, double x, double y,
+                                        double time_ms, double repeat_interval_ms,
+                                        double repeat_distance);
+bool slopdesk_term_surface_select_drag(SlopDeskTerminalSurface *handle, double x, double y,
+                                       bool rectangle);
+void slopdesk_term_surface_select_release(SlopDeskTerminalSurface *handle, double x, double y);
+
+/* Which way a live drag wants the viewport to move — 0 nowhere, 1 up, 2 down — and one tick of it.
+ * Two doors because the tick needs the pointer's CURRENT position and only the view has it;
+ * folding them would make the engine keep a copy a mouse-up could strand. */
+uint8_t slopdesk_term_surface_autoscroll_direction(SlopDeskTerminalSurface *handle);
+bool slopdesk_term_surface_select_autoscroll(SlopDeskTerminalSurface *handle, double x, double y,
+                                             bool rectangle);
+
+/* The selection verbs that take no pointer: 0 clear, 1 select all, 2 ask. Each answers whether
+ * anything is selected AFTERWARDS, so a menu item's enablement is the same read after all three. */
+bool slopdesk_term_surface_selection_verb(SlopDeskTerminalSurface *handle, uint8_t verb);
+
+/* The selection as text: 0 plain, 1 with its SGR escapes, 2 as HTML. §4's byte count; 0 = nothing
+ * selected. Soft-wrapped lines are UNWRAPPED and trailing blanks trimmed — a copied command that
+ * pastes back as two broken ones is the failure that settles it. */
+size_t slopdesk_term_surface_selection_text(SlopDeskTerminalSurface *handle, uint8_t format,
+                                            uint8_t *out, size_t cap);
+
+/* The visible rows as text, for the link-underline and Hint Mode overlays:
+ *   [u32 row_count] row_count × [u32 length][UTF-8 bytes]
+ * From the same frame the painter drew, never a second scan: an underline placed against a row the
+ * surface has since scrolled is an underline under the wrong text. */
+size_t slopdesk_term_surface_viewport_rows(SlopDeskTerminalSurface *handle, uint8_t *out,
+                                           size_t cap);
+
+/* The live cell geometry, in POINTS, as TerminalCellMetrics reads it:
+ *   [f64 cell_width][f64 cell_height][u32 cols][u32 rows][f64 origin_x][f64 origin_y]
+ * The ONE door that converts back out of device pixels. An overlay is a view laid out in points,
+ * and handing it pixels would put a second contents-scale division in the client. */
+size_t slopdesk_term_surface_cell_metrics(SlopDeskTerminalSurface *handle, uint8_t *out,
+                                          size_t cap);
+
+/* The four flags the client's policy layers ask about, as bits: 1 alternate screen, 2 mouse
+ * tracking, 4 viewport at the bottom, 8 DEC bracketed paste (?2004h). One door because all four are
+ * read on the SAME events, and four reads is four chances to act on a mixed state — forwarding a
+ * scroll as a mouse report because tracking was read before the alt-screen flip, or skipping the
+ * paste-protection sheet on a ?2004h the program has since turned off. */
+uint8_t slopdesk_term_surface_modes(SlopDeskTerminalSurface *handle);
+
+/* The exact bytes a paste of (bytes, len) should put on the pty.
+ *
+ * A paste is not "write these bytes". The engine scrubs the control bytes a payload must never
+ * carry into a prompt (NUL, ESC, DEL), turns newlines into carriage returns when the paste is NOT
+ * bracketed, and strips any embedded ESC [ 201 ~ before wrapping — the bracketed-paste breakout,
+ * where a clipboard that smuggled an end marker closes the block early and injects its tail as live
+ * input. All three are rules about the FAR side's parser, so they belong to the engine that owns it;
+ * a Swift "\e[200~" + text would be a second, worse paste implementation.
+ *
+ * `bracketed` is the caller's on purpose: ordinary Paste passes bit 8 of _modes, Bracketed Paste
+ * forces true, and Paste as Keystrokes forces false so the payload arrives as if typed.
+ *
+ * This door writes nothing and consults no setting — the paste-protection decision (PastePrecheck)
+ * happens BEFORE these bytes are asked for. Non-UTF-8 input answers 0. */
+size_t slopdesk_term_surface_encode_paste(SlopDeskTerminalSurface *handle, const uint8_t *bytes,
+                                          size_t len, bool bracketed, uint8_t *out, size_t cap);
+
+/* ---- screen coordinates: where the viewport sits, and what is on a row ------------------- */
+
+/* Where the viewport sits in the SCREEN coordinate space, and where the cursor is in it:
+ *   [u32 total_rows][u32 viewport_top_row][u32 viewport_rows][u32 cols][u32 cur_col][u32 cur_row]
+ * One door for six numbers because copy mode reads them together, and any two of them from
+ * different moments describe a grid that never existed. The cursor is in SCREEN rows, not viewport
+ * rows: mixing one viewport-relative number into a screen-space blob is the kind of seam that
+ * reads correct until the user scrolls. No visible cursor answers the viewport's top-left. */
+size_t slopdesk_term_surface_viewport_info(SlopDeskTerminalSurface *handle, uint8_t *out,
+                                           size_t cap);
+
+/* Selects from one SCREEN coordinate to another, replacing whatever was selected. Both ends are
+ * inclusive and either order; `rectangle` selects a block. `false` means an endpoint has scrolled
+ * out of the buffer — an ordinary outcome for a coordinate the caller held across time. */
+bool slopdesk_term_surface_set_selection(SlopDeskTerminalSurface *handle, uint32_t anchor_col,
+                                         uint32_t anchor_row, uint32_t head_col, uint32_t head_row,
+                                         bool rectangle);
+
+/* One SCREEN row's text, trailing padding trimmed. 0 for a row no longer retained AND for a blank
+ * one — the same answer to "what text is there". A caller that must tell them apart asks
+ * slopdesk_term_surface_viewport_info for the extent. */
+size_t slopdesk_term_surface_screen_row(SlopDeskTerminalSurface *handle, uint32_t row, uint8_t *out,
+                                        size_t cap);
+
+/* The inclusive SCREEN row range of the logical line containing `row`:
+ *   [u32 first][u32 last]
+ * 0 for a row no longer retained. An unwrapped row answers `row, row`, so the caller never needs a
+ * separate "is this wrapped" question. */
+size_t slopdesk_term_surface_line_range(SlopDeskTerminalSurface *handle, uint32_t row, uint8_t *out,
+                                        size_t cap);
+
+/* The whole scrollback unwrapped, each entry carrying the rows it occupies:
+ *   [u32 count] count × [u32 first_row][u32 last_row][u32 length][UTF-8 bytes]
+ * The rows travel WITH the text because a match is somewhere to scroll, and a line's index is not
+ * its row — one wrapped line is several rows. Leaving that mapping to the client would put the
+ * arithmetic in Swift, which is the wrong side of the boundary for arithmetic.
+ *
+ * ⚠️ This reads the entire scrollback and allocates its text. It is a GESTURE door — the find
+ * bar's row-driven modes and the block extractor — and must never be called per frame. */
+size_t slopdesk_term_surface_logical_lines(SlopDeskTerminalSurface *handle, uint8_t *out,
+                                           size_t cap);
+
+/* Performs one keybinding action, spelled by slopdesk_ws_binding_action or the surface grammar.
+ *
+ * ⚠️ The client never parses this string and never composes one by hand. A spelling this door does
+ * not recognise is answered by doing NOTHING and returning false, because there is no sound way to
+ * guess what a typo meant — which is also why the answer is a bool and not void: a keystroke that
+ * quietly did nothing is the failure this seam exists to make visible.
+ *
+ * false ALSO means the action was understood and had nothing to do — no prompt in that direction,
+ * no selection to adjust, no hit to navigate to. The caller wants the same thing either way: leave
+ * the key unhandled so something else can have it. */
+bool slopdesk_term_surface_binding_action(SlopDeskTerminalSurface *handle, const uint8_t *action,
+                                          size_t action_len);
+
+/* What the terminal owes the pty: the reply to CSI 6n, CSI c, CSI > q, OSC 10/11/4 ?, and the
+ * in-band size report. Raw bytes, written back to the shell verbatim and in order.
+ *
+ * ⚠️ The caller must poll this after every slopdesk_term_surface_feed AND after every
+ * slopdesk_term_surface_set_geometry — a resize can emit an in-band size report. It is not
+ * optional and not a feature: a dropped device-status reply is a vim that never finishes
+ * starting. Two attempts, never a loop; the queue is held until a call actually writes it, so a
+ * retry cannot lose the reply the first call refused to truncate.
+ *
+ * ⚠️ Drain and DISCARD once after a replay. `TerminalViewModel.attachSurface` re-feeds the
+ * retained output ring into a rebuilt surface, and those bytes contain the OLD CSI 6n / CSI c
+ * queries — forwarding the fresh engine's answers to them types escape garbage at a live prompt. */
+size_t slopdesk_term_surface_take_pty_replies(SlopDeskTerminalSurface *handle, uint8_t *out,
+                                              size_t cap);
+
+/* The clipboard writes running programs asked for over OSC 52 (and iTerm2's OSC 1337 Copy):
+ *   [u16 count] × [u8 target: 0 standard · 1 selection · 2 primary][u32 len][UTF-8]
+ * 0 on the common day, which is one call and no allocation.
+ *
+ * The other things the engine sees and this door does NOT carry — the bell, the OSC-9/777
+ * notification, the OSC-9;4 progress report, the OSC 0/2 title, the OSC-7 working directory — all
+ * arrive as their own wire messages from the host, which is the only owner that survives
+ * multiclient and the only one that does not re-fire on a replay. A clipboard is per-CLIENT, so it
+ * is the one push with nowhere else to come from.
+ *
+ * ⚠️ A write here has NOT been applied. The frame says what a program ASKED for, and
+ * slopdesk_term_clipboard_write decides whether it happens. Pasting from this frame directly would
+ * make the "Ask" policy behave as "Allow". Replay applies here too: drain and discard once. */
+size_t slopdesk_term_surface_take_clipboard_writes(SlopDeskTerminalSurface *handle, uint8_t *out,
+                                                   size_t cap);
+
+/* One binding action WITH an argument, spelled by the grammar's only speller.
+ *
+ * ⚠️ This door exists so that no String naming an action is ever built in Swift. The executor at
+ * the other end (slopdesk_term_surface_binding_action) answers an unrecognised spelling by doing
+ * NOTHING — a typo does not raise, it makes a keystroke quietly stop working. So the client knows
+ * the verbs as NUMBERS, which a compiler checks, and asks here for the one string it then carries.
+ *
+ *   code 1 scroll_page_lines        signed rows
+ *   code 2 scroll_page_fractional   signed THOUSANDTHS of a page (-900 is -0.9)
+ *   code 3 jump_to_prompt           signed prompts
+ *   code 4 adjust_selection         0 up · 1 down · 2 left · 3 right
+ *   code 5 scroll_to_top            argument ignored
+ *   code 6 scroll_to_bottom         argument ignored
+ *   code 7 scroll_to_row            the screen row
+ *
+ * Thousandths rather than a double for code 2 because the fraction is one of two design constants
+ * (0.5 for ⌃d, 0.9 for ⌃f) and an integer cannot arrive as a NaN — the one input the grammar
+ * refuses. 0 for a code this build does not know, and for an argument outside its verb's range. */
+size_t slopdesk_ws_binding_action(uint8_t code, int64_t argument, uint8_t *out, size_t cap);
+
 /* The text a SLOPDESK_* number is written with — the same rule the config text writes its own
  * numbers by, at the limit an env value reaches. The limit is not a thing the near side spells. */
 size_t slopdesk_settings_env_number_text(double value, uint8_t *out, size_t cap);
@@ -3918,34 +4205,6 @@ size_t slopdesk_find_matches(const uint8_t *rows, size_t rows_len,
                              const uint8_t *query, size_t query_len,
                              bool case_sensitive, bool is_regex, bool whole_word,
                              uint8_t *out, size_t cap);
-
-/* ---- and where to SCROLL to a match: a logical line's physical grid row ------------------
- * The scan above finds a match at a LOGICAL line — an index into the unwrapped scrollback mirror,
- * where a soft-wrapped line spanning four grid rows is one entry. libghostty's `scroll_to_row:`
- * addresses PHYSICAL rows, where every continuation counts for itself. Feeding one into the other
- * lands the viewport N rows too high, N being the continuation rows above the target, which reads
- * as the search simply not working. This sums each preceding line's `ceil(cells / columns)` and
- * answers the row the target STARTS on.
- *
- * The mirror crosses ONCE, in the flat-blob shape the link and hint scans take their rows in. That
- * is the entire reason this is a door: the Swift loop it replaced asked a per-string width door for
- * a width per line, so a match at logical line N cost N crossings to run one loop. That door has
- * since been deleted for want of a caller. Widths come from the same cell table those columns do,
- * reached without crossing at all, so the scroll target and the link underline cannot disagree
- * about a CJK row.
- *
- * Both counts are intptr_t rather than size_t because a negative one MEANS something on the near
- * side: `columns <= 0` is the caller saying it could not resolve the grid width — headless, or
- * before first layout — and the answer degrades to the identity so it still scrolls where the
- * un-mapped code did. As size_t that -1 would arrive as SIZE_MAX and be answered as a real grid.
- *
- * No (out, cap) and no refusal: the answer is one row, and §4's "0 means no answer" is unavailable
- * because row 0 — the top of the scrollback — is the most common answer this gives. It does not
- * need the sentinel. Every input has a row, including a bogus index (zero) and one past the
- * mirror's end (one phantom row each, for a snapshot of a buffer that has since shrunk).       */
-size_t slopdesk_scrollback_physical_row(const uint8_t *lines, size_t lines_len,
-                                        const size_t *line_lengths, size_t line_count,
-                                        intptr_t logical_line, intptr_t columns);
 
 /* ---------------------------------------------------------------------------- *
  * The per-pane command blocks: one record per command the shell ran.
@@ -8289,27 +8548,6 @@ size_t slopdesk_android_version_label(const unsigned char *release,
 //              "current"?}]}
 // An empty `previous` is a first install — every tool reads "added". Zero when `current` is not a
 // readable manifest, which is the caller's cue to say so rather than act on a plan it does not have.
-
-// ---- The pointer libghostty hands to the embedder --------------------------------
-//
-// Two actions, both one raw C enum value in and one scalar out. The RAW value
-// crosses because the C callback already holds it; parsing it Swift-side first
-// would need a Swift mirror of the C enum, which is the third copy of a table
-// whose first two already have to agree.
-
-// KEEP the cursor the pointer is already wearing — the answer for the nineteen
-// shapes macOS has no native cursor for AND for any value no libghostty emits.
-#define SLOPDESK_POINTER_TOKEN_NONE (-1)
-
-// The cursor a `ghostty_action_mouse_shape_e` asks for, as a PointerShapeToken
-// discriminant, or SLOPDESK_POINTER_TOKEN_NONE.
-int32_t slopdesk_pointer_shape_token(int32_t raw);
-
-// Whether the pointer should be VISIBLE, from a
-// `ghostty_action_mouse_visibility_e`. Only the explicit hidden value hides:
-// a pointer wrongly shown is a cosmetic miss, one wrongly hidden is a person
-// moving a mouse they cannot see.
-bool slopdesk_pointer_mouse_visible(int32_t raw);
 
 // ---- The doors that cause an EFFECT — MACOS ONLY --------------------------------
 //

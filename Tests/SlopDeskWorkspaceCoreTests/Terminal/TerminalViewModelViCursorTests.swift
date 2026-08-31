@@ -1,4 +1,3 @@
-import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -9,7 +8,7 @@ import XCTest
 /// viewport-follow scroll, keyboard-STARTED visual selections (char/line/block → native
 /// `setSelection`), `o` anchor-swap, Esc leave-visual-then-exit, and the `y`/`Y` yanks — entirely
 /// in-memory against ``RecordingSelectionSurface`` (staged `viewportInfo` + row text, recorded
-/// selections). NO `NSEvent`, NO `GhosttySurface` (hang-safety rule). The LEGACY (seam-absent)
+/// selections). NO `NSEvent`, NO `TerminalSurfaceDriver` (hang-safety rule). The LEGACY (seam-absent)
 /// behavior stays pinned by ``TerminalViewModelViMotionTests`` over the base recorder.
 @MainActor
 final class TerminalViewModelViCursorTests: XCTestCase {
@@ -189,7 +188,7 @@ final class TerminalViewModelViCursorTests: XCTestCase {
 
     // MARK: Visual modes drive the NATIVE selection
 
-    /// `v` anchors at the cursor; motions re-issue `setSelection(anchor → cursor)` so libghostty
+    /// `v` anchors at the cursor; motions re-issue `setSelection(anchor → cursor)` so libghostty-vt
     /// renders a keyboard-STARTED char selection (the lifted ceiling).
     func testCharVisualStartsSelectionFromCursor() {
         let (model, rec) = makeModel()
@@ -273,7 +272,7 @@ final class TerminalViewModelViCursorTests: XCTestCase {
 
     // MARK: Yank
 
-    /// `y` copies the LIVE selection (the cursor-driven visual range IS libghostty's selection),
+    /// `y` copies the LIVE selection (the cursor-driven visual range IS libghostty-vt's selection),
     /// exits, and clears the selection on the way out.
     func testYankCopiesLiveSelectionAndExits() {
         let (model, rec) = makeModel()
@@ -281,7 +280,7 @@ final class TerminalViewModelViCursorTests: XCTestCase {
         model.copyToPasteboard = { copied.append($0) }
         model.handleCopyModeKey(key("v"))
         model.handleCopyModeKey(key("l"))
-        rec.selectionText = "swif" // what libghostty reads back for the set range
+        rec.selectionText = "swif" // what libghostty-vt reads back for the set range
         model.handleCopyModeKey(key("y"))
         XCTAssertEqual(copied, ["swif"], "y yanks the selection libghostty reports")
         XCTAssertFalse(model.isCopyMode, "yank exits the mode")

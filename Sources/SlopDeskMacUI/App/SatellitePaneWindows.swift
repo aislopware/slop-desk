@@ -129,7 +129,7 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
         closingFromCoordinator = true
         close()
         // AFTER the close, and this is the ONE place it may happen. What comes down is the RENDERER —
-        // libghostty's surface, or the video decode stack — and that is correct on BOTH paths into
+        // the terminal surface, or the video decode stack — and that is correct on BOTH paths into
         // here, including a reattach: the pane is about to remount in the canvas, where the terminal
         // ring-replays into a fresh surface and a video pane re-hellos. What must NOT come down is the
         // session, and it does not, because it is the registry's rather than this window's. The cap

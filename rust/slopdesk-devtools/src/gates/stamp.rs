@@ -18,12 +18,12 @@
 //! every `module.modulemap` in ANY of them, not the FFI tree's alone — and this gate's own source.
 //!
 //! That last distinction was a hole for as long as the sentence above claimed otherwise. The map
-//! lookup was a second walk pinned to `ThirdParty/slopdesk-ffi`, so
-//! `ThirdParty/ghostty/integration/CGhostty/module.modulemap` was in no scope's input set, while
-//! the header it exports was in all three. Both app specs point `SWIFT_INCLUDE_PATHS` at that
-//! directory, so the map decides whether `import CGhostty` resolves — and renaming the module,
-//! dropping its `export *` or pointing `header` at a different file left a warm stamp over a
-//! change nothing but a compile can find.
+//! lookup was a second walk pinned to `ThirdParty/slopdesk-ffi`, so a module map anywhere ELSE was
+//! in no scope's input set while the headers it exports were in all three. A map decides whether an
+//! `import` of its module resolves at all — so renaming the module, dropping its `export *` or
+//! pointing `header` at a different file left a warm stamp over a change nothing but a compile can
+//! find. The map that made this visible belonged to the deleted libghostty fork, and the rule it
+//! bought outlives it: the lookup is a NAME match in every tree walked, not a second walk.
 //!
 //! The Rust SOURCES are deliberately absent. A crate's body cannot change what type-checks on the
 //! far side of a C header, and the one Rust change that CAN — deleting or re-signing an exported
@@ -76,19 +76,34 @@ const COMPILED: &[&str] = &["swift", "yml", "plist", "metal", "h"];
 /// The one input with no extension to match on — matched by NAME, in every tree walked.
 const MODULE_MAP: &str = "module.modulemap";
 
-/// The one tree outside `Sources`/`Apps` that both triples compile.
-///
-/// It is here because BOTH app specs list
-/// `GhosttySurface` as a source path: those files are members of no `Package.swift` target, so
-/// nothing else in this set covers them, and an edit there used to leave a warm stamp — the gate
-/// reporting green over a file it had not compiled since the change.
-const GHOSTTY_TREE: &str = "ThirdParty/ghostty/integration";
-
 /// The C surface the Swift side imports — headers, module maps and the slice manifest.
+///
+/// The one tree outside `Sources`/`Apps` that is walked. There used to be a second,
+/// `ThirdParty/ghostty/integration`, because both app specs listed the libghostty embedder as a
+/// source path and those files were members of no `Package.swift` target — so nothing else in this
+/// set covered them and an edit there left a warm stamp. The fork is gone (`docs/68` §10) and its
+/// successor is an ordinary package source under `Sources/`, which the walk above already reaches:
+/// a tree outside the graph is a hole to plug, and not having one is better than plugging it.
 const FFI_TREE: &str = "ThirdParty/slopdesk-ffi";
 
 /// The two files that decide WHICH sources the graph compiles.
 const GRAPH: &[&str] = &["Package.swift", "Package.resolved"];
+
+/// What the linked artifact is COMPILED FROM, which no path edge in this set reaches (`docs/68`
+/// §10.2).
+///
+/// Neither file is Swift, neither is under a walked tree, and neither is named by
+/// `Package.swift` — yet between them they decide which ghostty tree the terminal engine is built
+/// out of: `tools.lock` pins the commit and `rust/.cargo/config.toml` exports the
+/// `GHOSTTY_SOURCE_DIR` that selects the materialised copy. Bump either and every source in the
+/// walk is byte-identical while the `SlopDeskFFI.xcframework` the apps link is compiled from
+/// different Zig sources — today's stamp stays warm over an artifact that is not the one it was
+/// computed against, which is the exact silence this gate exists to end.
+///
+/// By NAME rather than by walk, for the same reason [`SELF_FILES`] is: only the two files that
+/// decide the verdict belong here, and `ThirdParty/tools/` also holds a gitignored `.prefix/` of
+/// materialised downloads that no stamp may ever descend into.
+const ENGINE_PIN: &[&str] = &["ThirdParty/tools/tools.lock", "rust/.cargo/config.toml"];
 
 /// This gate's own source — the port's answer to the shell's `${SELF}`.
 ///
@@ -225,7 +240,6 @@ pub fn inputs_for(root: &Path, scope: Scope) -> Result<Vec<String>, String> {
     let mut found: Vec<String> = Vec::new();
     let mut trees: Vec<String> = scope.sources(root);
     trees.extend(scope.apps().iter().map(|app| (*app).to_owned()));
-    trees.push(GHOSTTY_TREE.to_owned());
     // The xcframework is a binaryTarget in the graph, so a narrowed scope's product closure NAMES
     // it and walks it under this filter, while `Everything` — whose closure is the literal string
     // `Sources` — did not. That made the union smaller than the thing it is the fallback FOR, by
@@ -235,12 +249,12 @@ pub fn inputs_for(root: &Path, scope: Scope) -> Result<Vec<String>, String> {
     trees.push(FFI_TREE.to_owned());
     // A module map has no extension to match on, and it is an input to EVERY tree walked here
     // rather than to the FFI one alone — which is what a second walk scoped to `FFI_TREE` used to
-    // say. `ThirdParty/ghostty/integration/CGhostty/module.modulemap` is the file that says which
-    // header `import CGhostty` exports, and both app specs point `SWIFT_INCLUDE_PATHS` straight at
-    // its directory, so it decides whether either triple type-checks at all. Its headers were in
-    // the set the whole time — `h` is a `COMPILED` extension — and the map naming them was not, so
-    // renaming the module, dropping the `export *` or pointing `header` somewhere else left a warm
-    // stamp over a change that can only be found by compiling.
+    // say. A map is what says which header its module exports, and an app spec can point
+    // `SWIFT_INCLUDE_PATHS` at any directory holding one, so a map outside the FFI tree decides
+    // whether a triple type-checks at all. Headers were in the set the whole time — `h` is a
+    // `COMPILED` extension — and the maps naming them were not, so renaming a module, dropping its
+    // `export *` or pointing `header` somewhere else left a warm stamp over a change that can only
+    // be found by compiling.
     for tree in &trees {
         walk(root, &root.join(tree), &mut found, &|path| {
             if path.file_name().and_then(|value| value.to_str()) == Some(MODULE_MAP) {
@@ -251,7 +265,7 @@ pub fn inputs_for(root: &Path, scope: Scope) -> Result<Vec<String>, String> {
                 .is_some_and(|value| COMPILED.contains(&value))
         })?;
     }
-    for file in GRAPH.iter().chain(SELF_FILES) {
+    for file in GRAPH.iter().chain(SELF_FILES).chain(ENGINE_PIN) {
         found.push((*file).to_owned());
     }
     found.sort_unstable();
@@ -380,10 +394,10 @@ mod tests {
             "m\n",
         )
         .unwrap();
-        fs::create_dir_all(root.join("ThirdParty/ghostty/integration/CGhostty")).unwrap();
+        // A module map OUTSIDE the FFI tree, which is the case the walk exists to cover.
         fs::write(
-            root.join("ThirdParty/ghostty/integration/CGhostty/module.modulemap"),
-            "module CGhostty { header \"ghostty.h\" export * }\n",
+            root.join("Sources/Deep/module.modulemap"),
+            "module CDeep { header \"deep.h\" export * }\n",
         )
         .unwrap();
         fs::write(root.join("Package.swift"), "// swift-tools-version:6.0\n").unwrap();
@@ -405,16 +419,16 @@ mod tests {
 
     /// A module map is an input wherever it sits, not only under the FFI tree.
     ///
-    /// The lookup used to be a second walk pinned to `ThirdParty/slopdesk-ffi`, which left
-    /// `CGhostty`'s map — the file both app specs resolve `import CGhostty` through — outside every
-    /// scope's input set while the header it exports was inside all of them.
+    /// The lookup used to be a second walk pinned to `ThirdParty/slopdesk-ffi`, which left every
+    /// map outside that one tree out of every scope's input set while the headers they export were
+    /// inside all of them.
     #[test]
     fn a_module_map_outside_the_ffi_tree_is_an_input() {
         let root = fixture("modulemap-anywhere");
         let found = inputs(&root).unwrap();
         assert!(
-            found.contains(&"ThirdParty/ghostty/integration/CGhostty/module.modulemap".to_owned()),
-            "the map that decides what `import CGhostty` sees is not stamped: {found:?}"
+            found.contains(&"Sources/Deep/module.modulemap".to_owned()),
+            "the map that decides what an import sees is not stamped: {found:?}"
         );
     }
 
@@ -424,11 +438,34 @@ mod tests {
         let root = fixture("modulemap-edit");
         let before = current(&root).unwrap();
         fs::write(
-            root.join("ThirdParty/ghostty/integration/CGhostty/module.modulemap"),
-            "module CGhostty { header \"somewhere-else.h\" }\n",
+            root.join("Sources/Deep/module.modulemap"),
+            "module CDeep { header \"somewhere-else.h\" }\n",
         )
         .unwrap();
         assert_ne!(before, current(&root).unwrap());
+    }
+
+    /// The engine pin is an input by NAME: bump it and the stamp moves, though every walked source
+    /// is byte-identical.
+    ///
+    /// The failure it forecloses is the one `docs/68` §10.2 names — a warm stamp over an
+    /// xcframework compiled from a different ghostty tree — and it can only be caught here, since
+    /// neither file is under a walked tree and no path edge in this set reaches either.
+    #[test]
+    fn the_engine_pin_is_an_input_by_name() {
+        let root = fixture("engine-pin");
+        let found = inputs(&root).unwrap();
+        assert!(found.contains(&"ThirdParty/tools/tools.lock".to_owned()));
+        assert!(found.contains(&"rust/.cargo/config.toml".to_owned()));
+
+        let before = current(&root).unwrap();
+        fs::create_dir_all(root.join("ThirdParty/tools")).unwrap();
+        fs::write(root.join("ThirdParty/tools/tools.lock"), "ghostty|deadbeef|git\n").unwrap();
+        assert_ne!(
+            before,
+            current(&root).unwrap(),
+            "the engine commit moved and the stamp did not"
+        );
     }
 
     /// Build output is not an input, and the walk must not even LOOK: `target/` holds tens of

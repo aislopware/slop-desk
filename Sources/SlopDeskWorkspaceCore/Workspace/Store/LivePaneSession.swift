@@ -205,7 +205,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// the same `TerminalSurfaceActions` seam find/copy-mode use (``TerminalViewModel/searchScrollbackLines()``
     /// → `[]` on a headless / preview surface, hang-safety). `nil` terminal (a video pane) ⇒ `[]`.
     public func captureScrollback(lines count: Int) -> [String] {
-        guard let lines = terminalModel?.searchScrollbackLines(),
+        guard let lines = terminalModel?.searchScrollbackLines().text,
               let start = PaneSessionRules.captureStart(lines: count, available: lines.count)
         else { return [] }
         return Array(lines.dropFirst(start))

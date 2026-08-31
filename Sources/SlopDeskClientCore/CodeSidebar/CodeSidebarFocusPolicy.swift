@@ -262,8 +262,8 @@ extension CodeSidebarFocusPolicy {
     /// the Edit menu, which drives the DOM cut/copy/paste. This app's menus are shortcut-less by
     /// design, so nobody sent WebKit the editing actions and the chords fell through "unhandled".
     /// Worse than a no-op: WebKit re-dispatches an unhandled key equivalent, and the terminal's
-    /// doCommand-redispatch tail swallowed the second pass as terminal input — libghostty's own
-    /// `cmd+v = paste` binding then pasted into the PTY while the user was looking at the editor
+    /// doCommand-redispatch tail swallowed the second pass as terminal input — the terminal surface's
+    /// own `cmd+v = paste` binding then pasted into the PTY while the user was looking at the editor
     /// (user-reported 2026-08-03). The webview claiming these three (first-responder-gated, exactly
     /// like the terminal's own claim) is the same contract a browser's Edit menu provides.
     ///

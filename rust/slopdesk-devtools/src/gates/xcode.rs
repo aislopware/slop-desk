@@ -24,8 +24,7 @@
 //! list and offers only the generic placeholder. Installing that package needs admin rights a CI or
 //! agent run does not have. `simctl` is unaffected, so the build targets the GENERIC destination
 //! (which DVT allows) and the bundle goes to the simulator's own `xctest` agent. That is also why
-//! the bundle is host-less: no app, no window server, no libghostty, so `xctest` can load it
-//! directly.
+//! the bundle is host-less: no app and no window server, so `xctest` can load it directly.
 //!
 //! ## `-derivedDataPath` under `.build/`
 //! Rather than the shared `~/Library/Developer/Xcode/DerivedData`: each gate's cache is then wiped

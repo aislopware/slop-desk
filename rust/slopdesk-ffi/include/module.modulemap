@@ -1,6 +1,6 @@
 // CSlopDeskFFI — the Clang module that lets Swift see `slopdesk_ffi.h`.
 //
-// Unlike `CGhostty`, this module IS inside the `swift build` graph: it is the whole point. The
+// This module IS inside the `swift build` graph, and that is the whole point. The
 // one-implementation rule says a ported module's Swift original is deleted in the same change, and
 // a Rust implementation that `swift test` cannot reach would leave the Swift version alive as the
 // thing actually under test — two implementations wearing one name.

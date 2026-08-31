@@ -8,7 +8,7 @@ import XCTest
 /// client-side first-command gate would re-drop the host's reattach re-assert and leave the tab's
 /// cwd line stale across a reconnect (the stale-cwd bug). Uses `foldEventForTesting` —
 /// the DEBUG hook — so no async event loop or network is needed. No
-/// `GhosttySurface`/`SCStream`/`VT`/Metal instantiation.
+/// `TerminalSurfaceDriver`/`SCStream`/`VT`/Metal instantiation.
 @MainActor
 final class ConnectionViewModelWorkingDirectoryTests: XCTestCase {
     private func makeVM() -> ConnectionViewModel {

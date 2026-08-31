@@ -16,7 +16,7 @@ The iOS/iPadOS client is first-class, equal in ambition to macOS — not a compa
 
 ## Product Purpose
 
-SlopDesk is a low-latency remote-coding workspace: the client is a Session → Tab → n-ary-split canvas where each pane is either a full-fidelity terminal (host PTY → TCP → libghostty) or a streamed GUI window (ScreenCaptureKit → HEVC → UDP), with a read-only agent inspector alongside. Right-sidebar panels embed VS Code (code-server), iOS simulators, and Android emulators; a Desktop window-OS surface is in progress.
+SlopDesk is a low-latency remote-coding workspace: the client is a Session → Tab → n-ary-split canvas where each pane is either a full-fidelity terminal (host PTY → TCP → libghostty-vt → this repo's own block renderer) or a streamed GUI window (ScreenCaptureKit → HEVC → UDP), with a read-only agent inspector alongside. Right-sidebar panels embed VS Code (code-server), iOS simulators, and Android emulators; a Desktop window-OS surface is in progress.
 
 Success means feels-local: terminal latency ≈ network RTT, GUI path measured at p50 ~27 ms compositor-to-compositor, and never losing agent or workspace state across reconnects and relaunches. It is explicitly a coding tool, not game streaming — smoothness targets are set for text and scrolling, not fps maximalism.
 
@@ -42,7 +42,7 @@ Success means feels-local: terminal latency ≈ network RTT, GUI path measured a
 - Bit-exact float discipline and FEC invariants (m == 1 ≡ old XOR) constrain any code touching the media path.
 - No backward compatibility or migration support: host and client ship together (standing directive).
 - Important features ship ON, without flags — a flag is only for genuinely optional modes (standing directive; nine flags were deleted under this rule).
-- Headless `swift build`/`swift test` must never touch libghostty/VideoToolbox/ScreenCaptureKit; unit tests must never create capture/codec/Metal sessions.
+- Headless `swift build`/`swift test` must never touch Metal/VideoToolbox/ScreenCaptureKit; unit tests must never create capture/codec/Metal sessions.
 - Client-UI dimensions go through Slate design tokens; raw font-size/cornerRadius/frame-height literals fail lint.
 
 ## Brand Commitments

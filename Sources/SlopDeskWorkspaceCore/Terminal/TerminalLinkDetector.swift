@@ -23,10 +23,11 @@
 //
 // Two overloads of `displayCellWidth(of:)` stood here so that a caller walking a line cell by cell
 // did not have to build a one-character `String` per column. All three such callers moved to Rust
-// — `ViLineMotion` to `slopdesk_terminal::vimotion`, `HintLabelAssigner` to the hint scan, and
-// `ScrollbackWrapMapper` to `slopdesk_terminal::wrap_map` — and each of them now reads the widths
-// in-crate with no crossing at all. The overloads outlived their last caller, so they and both
-// doors behind them were deleted rather than left as a face nobody dials.
+// — `ViLineMotion` to `slopdesk_terminal::vimotion` and `HintLabelAssigner` to the hint scan, each
+// now reading the widths in-crate with no crossing at all; the third, `ScrollbackWrapMapper`, was
+// deleted outright once the terminal engine started reporting each logical line's real screen rows.
+// The overloads outlived their last caller, so they and both doors behind them were deleted rather
+// than left as a face nobody dials.
 
 import CSlopDeskFFI
 import SlopDeskArena

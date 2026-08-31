@@ -1,15 +1,15 @@
 // BuildStatusPlaceholderView — the HEADLESS terminal-renderer fallback, in UIKit
 // (docs/62, the pane-leaf cluster).
 //
-// The UIKit half of what ``SlopDeskMacUI/MacBuildStatusPlaceholderView`` draws on the Mac. libghostty IS
-// the renderer (DECISIONS / doc 17), and it is injected by the Xcode app target through
-// ``TerminalRendererFactory`` — so a plain `swift build`, which never compiles the embedder, has no
+// The UIKit half of what ``SlopDeskMacUI/MacBuildStatusPlaceholderView`` draws on the Mac. The production
+// terminal renderer (docs/68) is injected by the Xcode app target through
+// ``TerminalRendererFactory`` — so a plain `swift build`, which never compiles that renderer, has no
 // renderer to mount. Rather than leave the leaf's pixel slot empty and make "the terminal is blank" mean
 // two unrelated things, the leaf mounts THIS: build-status telemetry drawn over the pane's own paper.
 //
 // It reads only what a headless process can answer — the connection status and the byte count off
 // ``TerminalViewModel`` — and never attaches a surface, so it is safe in tests and previews. That is the
-// whole reason it can exist in a target that must not link Metal or libghostty.
+// whole reason it can exist in a target that must not link Metal or `libghostty-vt`.
 //
 // ⚠️ A `UIView`, and the SwiftUI shape it replaces is DELETED rather than kept beside it. The old
 // `BuildStatusPlaceholderView: TerminalRenderingView` conformed to a seam typed in SwiftUI, which is

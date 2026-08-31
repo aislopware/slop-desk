@@ -384,7 +384,7 @@ pub fn build_app(root: &Path, work: &Path, derived_data_name: &str) -> Result<Ap
     let spec = root.join("Apps/ClientApp-macOS/project.yml");
     let project = root.join("Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj");
     let derived = work.join(derived_data_name);
-    crate::ops::renderer::generate(root, &spec)?;
+    crate::ops::xcodegen(root, &spec)?;
 
     let log = work.join("xcodebuild.log");
     let sink = fs::File::create(&log).map_err(|error| format!("{}: {error}", log.display()))?;

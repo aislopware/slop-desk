@@ -161,8 +161,9 @@ const WALK_DEPTH: usize = 2;
 /// The companion to [`build_products_live_outside_the_checkout`], and the general form of the same
 /// defect. Xcode enumerates the `SwiftPM` package root — this repository — on every invocation, and
 /// its walk SKIPS dot-directories and walks every other one. That is the whole reason the root can
-/// still hold 552 K files and cost nothing: `.build`, `.work`, `.git` and `ThirdParty/ghostty`'s
-/// two dot-directories are invisible to it.
+/// still hold 552 K files and cost nothing: `.build`, `.work`, `.git` and
+/// `ThirdParty/tools/.prefix` — the provisioned runtime deps, which since docs/68 also hold the
+/// terminal engine's source at its pinned commit — are all invisible to it.
 ///
 /// So the invariant is not about cargo. It is that any large generated tree under the root must be
 /// either DOT-PREFIXED or outside the checkout — and a new one that is neither costs every Xcode

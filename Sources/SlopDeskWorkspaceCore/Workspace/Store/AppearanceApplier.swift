@@ -12,8 +12,8 @@
 @preconcurrency
 @MainActor
 public enum AppearanceApplier {
-    /// Registered by the app target at launch: returns the app's terminal-cell palette — the libghostty
-    /// `background`/`foreground` (6-hex, no `#`) plus the 16-entry ANSI `palette` and
+    /// Registered by the app target at launch: returns the app's terminal-cell palette — the terminal
+    /// config's `background`/`foreground` (6-hex, no `#`) plus the 16-entry ANSI `palette` and
     /// `selection-background`. ``PreferencesStore`` consults this when rebuilding the terminal config so
     /// the terminal CELLS adopt the same flat palette as the chrome (a flat, gradient-free design).
     /// `nil` (headless / pre-launch) ⇒ the terminal keeps the ``TerminalPreferences`` colours, unchanged.
@@ -27,9 +27,9 @@ public enum AppearanceApplier {
 ///
 /// PURE client chrome: it carries colour strings only, never reaches the wire / `EnvConfig` / sidecar.
 public struct ResolvedTerminalTheme: Sendable, Equatable {
-    /// libghostty `background` (6-hex, no `#`).
+    /// The terminal config's `background` (6-hex, no `#`).
     public var background: String
-    /// libghostty `foreground` (6-hex, no `#`).
+    /// The terminal config's `foreground` (6-hex, no `#`).
     public var foreground: String
     /// The 16-entry ANSI palette (6-hex each); `nil` ⇒ no `palette` lines emitted.
     public var palette: [String]?

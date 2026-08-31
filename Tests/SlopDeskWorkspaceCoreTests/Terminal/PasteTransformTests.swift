@@ -2,31 +2,14 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The PURE "Paste as…" clipboard transforms: the bracketed-paste wrap, the POSIX
-/// shell escape, and the file → base64 encode. Each case pins the transform against a HAND-WRITTEN
-/// expected string (never the function's own derivation), so a broken transform fails loudly.
+/// The PURE "Paste as…" clipboard transforms: the POSIX shell escape and the file → base64 encode.
+/// Each case pins the transform against a HAND-WRITTEN expected string (never the function's own
+/// derivation), so a broken transform fails loudly.
+///
+/// The bracketed-paste wrap is NOT here any more — the framing is the engine's, and
+/// `slopdesk-vterm`'s `a_paste_is_framed_scrubbed_and_never_breaks_out_of_its_own_brackets` is where
+/// the breakout case that used to live in this file is pinned.
 final class PasteTransformTests: XCTestCase {
-    // MARK: Bracketed paste
-
-    func testBracketedWrapsWithDecMarkers() {
-        // ESC [ 200 ~  …  ESC [ 201 ~ — the DEC bracketed-paste framing, written out by hand.
-        XCTAssertEqual(PasteTransform.bracketed("ls -la"), "\u{1b}[200~ls -la\u{1b}[201~")
-    }
-
-    func testBracketedEmptyStillFramed() {
-        XCTAssertEqual(PasteTransform.bracketed(""), "\u{1b}[200~\u{1b}[201~")
-    }
-
-    func testBracketedStripsEmbeddedEndMarkerSoPasteStaysInert() {
-        // A clipboard payload carrying the END marker would otherwise BREAK OUT of the bracketed
-        // block early (the classic bracketed-paste injection) — it must be removed so the whole
-        // payload lands as one inert block. The middle "\u{1b}[201~" is dropped, the framing kept.
-        XCTAssertEqual(
-            PasteTransform.bracketed("a\u{1b}[201~b"),
-            "\u{1b}[200~ab\u{1b}[201~",
-        )
-    }
-
     // MARK: Shell escaping (POSIX, shlex.quote-equivalent)
 
     func testShellEscapedSafeStringUnquoted() {

@@ -6,7 +6,7 @@ import XCTest
 /// The pure ⇧⌘F Global Search engine: runs ``TerminalSearchController/computeMatches`` over every
 /// terminal pane's scrollback mirror, drops zero-hit sources, groups by source, builds full-line excerpts with
 /// UTF-16 highlight ranges, and counts what survived. All against in-memory sources — no view, no store, no
-/// libghostty. The `N results — M tabs` LINE those counts become is `slopdesk_workspace::global_search`'s and
+/// libghostty-vt. The `N results — M tabs` LINE those counts become is `slopdesk_workspace::global_search`'s and
 /// is pinned there; what is asserted here is the counting.
 final class GlobalSearchControllerTests: XCTestCase {
     /// Mints a source with a fresh identity (UUID-backed) and the given title + buffer.
@@ -182,7 +182,7 @@ final class GlobalSearchControllerTests: XCTestCase {
         // --- Mode 2: literal, case-SENSITIVE. Must NOT arm the (case-insensitive) literal matcher — clearing
         // any stale highlight and scrolling straight to the row. This is the revert-to-confirm-fail case: the
         // old code routed case-sensitive through the ordinal `navigate_search:next` walk, which both emits no
-        // `scroll_to_row` AND mis-lands (case-sensitive ordinal ≠ libghostty's case-insensitive cursor).
+        // `scroll_to_row` AND mis-lands (case-sensitive ordinal ≠ libghostty-vt's case-insensitive cursor).
         let sensitive = try hitsFor(
             query: "DOC", caseSensitive: true, isRegex: false,
             lines: ["alpha DOC", "beta DOC", "gamma DOC"],
@@ -219,27 +219,32 @@ final class GlobalSearchControllerTests: XCTestCase {
     }
 
     /// Soft-wrap coordinate mapping: the click-to-line `scroll_to_row` must target the PHYSICAL grid
-    /// row, not the logical (unwrapped) mirror index. When the caller passes the source `lines` + grid
-    /// `columns`, a wide (wrapped) line above the hit shifts its physical row down. Revert-to-confirm-fail:
-    /// the un-fixed `navigationActions` emitted `scroll_to_row:<hit.line>` (the logical index), one row too
-    /// high per wrap continuation above the hit.
+    /// row, not the logical (unwrapped) mirror index. A wrapped line above the hit shifts its physical
+    /// row down. Revert-to-confirm-fail: the un-fixed `navigationActions` emitted
+    /// `scroll_to_row:<hit.line>` (the logical index), one row too high per wrap continuation above it.
+    ///
+    /// ⚠️ The rows are the ENGINE's, read off the mirror — `firstRow`/`lastRow` per logical line. The
+    /// client used to recompute them from the text and a column count, which was a second wrap
+    /// implementation that could not see a double-width glyph; `ScrollbackWrapMapper` and the
+    /// `columns:` argument went with it (docs/68).
     func testNavigationActionsMapLogicalLineToPhysicalRowAcrossWrap() throws {
-        // cols = 4. Row 0 ("abcdefgh", 8 cells) wraps to 2 physical rows; the "doc" on logical line 1 starts
-        // at physical row 2.
-        let lines = ["abcdefgh", "beta doc"]
+        // Logical line 0 ("abcdefgh") occupies two physical rows, so line 1 starts on row 2.
+        let mirror = [
+            TerminalScrollbackLine(text: "abcdefgh", firstRow: 0, lastRow: 1),
+            TerminalScrollbackLine(text: "beta doc", firstRow: 2, lastRow: 2),
+        ]
         let results = GlobalSearchController.run(
-            sources: [source("pane", lines)], query: "doc", caseSensitive: false, isRegex: false,
+            sources: [source("pane", mirror.text)], query: "doc", caseSensitive: false, isRegex: false,
         )
         let hit = try XCTUnwrap(results.groups.first?.hits.first)
         XCTAssertEqual(hit.line, 1, "the match's LOGICAL mirror index is 1")
 
-        // With the grid width, the logical line 1 maps to physical row 2 (past the 2-row wrapped line 0).
         let mapped = GlobalSearchController.navigationActions(
-            for: hit, query: "doc", caseSensitive: false, isRegex: false, lines: lines, columns: 4,
+            for: hit, query: "doc", caseSensitive: false, isRegex: false, lines: mirror,
         )
         XCTAssertEqual(mapped, ["search:doc", "scroll_to_row:2"])
 
-        // Without a grid width (default), the mapping degrades to the identity — the pre-fix logical row.
+        // Without the mirror (default), the mapping degrades to the identity — the pre-fix logical row.
         let unmapped = GlobalSearchController.navigationActions(for: hit, query: "doc")
         XCTAssertEqual(unmapped, ["search:doc", "scroll_to_row:1"])
     }

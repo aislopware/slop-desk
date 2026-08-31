@@ -1,5 +1,4 @@
 import CoreGraphics
-import SlopDeskTerminal
 import SlopDeskTestSupport
 import XCTest
 @testable import SlopDeskWorkspaceCore

@@ -5,7 +5,7 @@ import XCTest
 /// The CONTROL passthrough leg of the pure `TerminalPreferences`/`TerminalControlsConfig` →
 /// libghostty config-string builder. Pins every control field to its exact libghostty config line
 /// (`copy-on-select`, `clipboard-*`, `selection-clear-*`, `mouse-*`, `cursor-*` + the ⇧+arrow
-/// `adjust_selection` keybinds), on AND off, headlessly (no libghostty surface — the hang-safety rule).
+/// `adjust_selection` keybinds), on AND off, headlessly (no libghostty-vt surface — the hang-safety rule).
 ///
 /// The load-bearing regression guard: a `controls: nil` build is BYTE-FOR-BYTE the no-controls output (so the
 /// existing `TerminalConfigBuilderTests` and the frozen golden corpus are untouched — controls do not
@@ -129,7 +129,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         ))
         XCTAssertEqual(map["clipboard-read"], "deny")
         XCTAssertEqual(map["clipboard-write"], "ask")
-        // The default config carries the libghostty access defaults.
+        // The default config carries the libghostty-vt access defaults.
         let defaults = parse(TerminalConfigBuilder.string(
             for: TerminalPreferences(), controls: TerminalControlsConfig(),
         ))
@@ -153,8 +153,8 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(map["mouse-reporting"], "false", "Allow-Mouse-Capture maps to libghostty `mouse-reporting`")
     }
 
-    /// The FACTORY control bundle must emit `mouse-shift-capture = false` — the libghostty token whose docs
-    /// say the shift key is NOT sent to the program and EXTENDS THE SELECTION (and libghostty's own default).
+    /// The FACTORY control bundle must emit `mouse-shift-capture = false` — the libghostty-vt token whose docs
+    /// say the shift key is NOT sent to the program and EXTENDS THE SELECTION (and libghostty-vt's own default).
     /// This pins the "Allow Shift with Mouse Click" default (hold ⇧ to select even when an app captures the
     /// mouse): a regression that flips the leaf default back to a capture token (`true`/`always`) would defeat
     /// the shift-to-select escape hatch, and is caught here independently of the `MouseShiftCapture` enum.
@@ -168,13 +168,13 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         )
     }
 
-    // MARK: Right-Click Action — libghostty owns the dispatch via `right-click-action`
+    // MARK: Right-Click Action — libghostty-vt owns the dispatch via `right-click-action`
 
-    /// The Right-Click Action token passes through verbatim as libghostty's `right-click-action`, so the
+    /// The Right-Click Action token passes through verbatim as libghostty-vt's `right-click-action`, so the
     /// surface itself performs Copy / Paste / Copy-or-Paste / Ignore / Context-Menu — the GUI view no longer
-    /// re-reads `hasSelection()` after libghostty has already word-selected. FAILS without this: the builder
-    /// would emit NO `right-click-action` line, so libghostty stays at its default Context-Menu
-    /// and word-selects on every bare right-click. Each token is one of the libghostty enum values 1:1.
+    /// re-reads `hasSelection()` after libghostty-vt has already word-selected. FAILS without this: the builder
+    /// would emit NO `right-click-action` line, so libghostty-vt stays at its default Context-Menu
+    /// and word-selects on every bare right-click. Each token is one of the libghostty-vt enum values 1:1.
     func testRightClickActionTokenPassesThroughVerbatim() {
         for token in ["context-menu", "copy", "paste", "copy-or-paste", "ignore"] {
             let map = parse(TerminalConfigBuilder.string(
@@ -184,7 +184,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         }
     }
 
-    /// The FACTORY control bundle keeps libghostty's own default Right-Click Action (`context-menu`), so a
+    /// The FACTORY control bundle keeps libghostty-vt's own default Right-Click Action (`context-menu`), so a
     /// fresh terminal shows the native menu on right-click by default.
     func testDefaultRightClickActionIsContextMenu() {
         let map = parse(TerminalConfigBuilder.string(
@@ -193,7 +193,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(map["right-click-action"], "context-menu")
     }
 
-    /// The scroll multiplier rides BOTH axes but PRESERVES libghostty's native per-axis ratio (precision:1,
+    /// The scroll multiplier rides BOTH axes but PRESERVES libghostty-vt's native per-axis ratio (precision:1,
     /// discrete:3) — precision = `m`, discrete = `3 × m`. FAILS before the fix: the builder emitted the SAME
     /// factor on both axes, so at the default `m == 1.0` discrete (mouse-wheel) scroll ran 3× slower than
     /// stock ghostty. `2.5` → `precision:2.5,discrete:7.5` (the integral-aware `formatSize` mirror).
@@ -204,7 +204,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(custom["mouse-scroll-multiplier"], "precision:2.5,discrete:7.5")
     }
 
-    /// The DEFAULT control bundle (`m == 1.0`) must emit ghostty's NATIVE per-axis defaults —
+    /// The DEFAULT control bundle (`m == 1.0`) must emit libghostty-vt's NATIVE per-axis defaults —
     /// `precision:1,discrete:3` — so out of the box mouse-wheel scroll matches stock ghostty (not the
     /// pre-fix `discrete:1`, which was 3× too slow). The pin for the default-scroll behaviour.
     func testDefaultScrollMultiplierMatchesGhosttyNativeDefaults() {
@@ -214,12 +214,12 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(unit["mouse-scroll-multiplier"], "precision:1,discrete:3")
     }
 
-    // MARK: Option as Alt — libghostty owns the macOS Option→Alt/Meta encoding via `macos-option-as-alt`
+    // MARK: Option as Alt — libghostty-vt owns the macOS Option→Alt/Meta encoding via `macos-option-as-alt`
 
-    /// The Option-as-Alt token passes through verbatim as libghostty's `macos-option-as-alt`, so the client's
-    /// libghostty surface encodes the Option key the way the user chose. FAILS before the fix: the builder
+    /// The Option-as-Alt token passes through verbatim as libghostty-vt's `macos-option-as-alt`, so the client's
+    /// libghostty-vt surface encodes the Option key the way the user chose. FAILS before the fix: the builder
     /// emitted NO `macos-option-as-alt` line, so Option always composed accented characters and never reached a
-    /// TUI as Alt/Meta. Each token is one of the libghostty `OptionAsAlt` enum values 1:1.
+    /// TUI as Alt/Meta. Each token is one of the libghostty-vt `OptionAsAlt` enum values 1:1.
     func testOptionAsAltTokenPassesThroughVerbatim() {
         for token in ["false", "true", "left", "right"] {
             let map = parse(TerminalConfigBuilder.string(
@@ -229,7 +229,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         }
     }
 
-    /// The FACTORY control bundle keeps libghostty's own default (`macos-option-as-alt = false`), so out of the
+    /// The FACTORY control bundle keeps libghostty-vt's own default (`macos-option-as-alt = false`), so out of the
     /// box Option composes accented characters — the "Option as Alt" default stays OFF.
     func testDefaultOptionAsAltIsFalse() {
         let map = parse(TerminalConfigBuilder.string(
@@ -272,7 +272,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
     }
 
     func testShiftArrowSelectOffUnbindsSoArrowsForwardToTheProgram() {
-        // libghostty's vendored fork binds shift+arrow → adjust_selection by DEFAULT, so OFF must `unbind`
+        // libghostty-vt binds shift+arrow → adjust_selection by DEFAULT, so OFF must `unbind`
         // (not simply emit nothing) for the arrow escapes to reach the program.
         let config = TerminalConfigBuilder.string(
             for: TerminalPreferences(), controls: TerminalControlsConfig(shiftArrowSelect: false),

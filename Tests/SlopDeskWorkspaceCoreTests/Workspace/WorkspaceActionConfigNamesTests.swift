@@ -10,7 +10,7 @@ import XCTest
 /// `cmd+shift+t:reopen_closed`, `cmd+1:goto_tab:1`, … . The resolver must:
 ///   - map every supported bare name to a REAL `binding.id` (no orphan);
 ///   - resolve `goto_tab:N` for N ∈ 1…9 to `pane.select.<n>`, and reject 0 / 10 / non-numeric / no-arg;
-///   - return `nil` (validate-then-drop, CLAUDE.md §3) for an unknown name and for the libghostty-only
+///   - return `nil` (validate-then-drop, CLAUDE.md §3) for an unknown name and for the libghostty-vt-only
 ///     responder actions (`copy_to_clipboard` / `paste_from_clipboard` / `select_all`) that have NO
 ///     `WorkspaceAction` — never an invented id, never a trap.
 final class WorkspaceActionConfigNamesTests: XCTestCase {
@@ -83,13 +83,13 @@ final class WorkspaceActionConfigNamesTests: XCTestCase {
         XCTAssertEqual(WorkspaceBindingRegistry.bindingID(forConfigName: "new_tab", arg: "7"), "tab.new")
     }
 
-    // MARK: - Unknown + libghostty-only responder names → nil (drop, no invented id)
+    // MARK: - Unknown + libghostty-vt-only responder names → nil (drop, no invented id)
 
     func testUnknownAndLibghosttyOnlyNamesReturnNil() {
         // Wholly unknown name.
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "frobnicate", arg: nil))
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "", arg: nil))
-        // libghostty's own responder actions — they have NO WorkspaceAction (TerminalContextMenu handles
+        // libghostty-vt's own responder actions — they have NO WorkspaceAction (TerminalContextMenu handles
         // them), so the registry must DROP them, not invent an id.
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "copy_to_clipboard", arg: nil))
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "paste_from_clipboard", arg: nil))

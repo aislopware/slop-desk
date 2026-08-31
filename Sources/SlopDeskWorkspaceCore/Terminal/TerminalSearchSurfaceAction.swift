@@ -3,7 +3,7 @@ import SlopDeskWorkspaceModel
 
 // MARK: - The five things a search surface can be asked for
 
-/// The CLOSED vocabulary of libghostty binding actions the two search surfaces drive — the INTENT half.
+/// The CLOSED vocabulary of terminal-surface binding actions the two search surfaces drive — the INTENT half.
 ///
 /// It sits here, beside ``TerminalSearchController``, rather than beside either bar, because THREE
 /// callers speak it and they are not all in one target: the in-pane ⌘F bar (`TerminalFindBarModel`),
@@ -14,27 +14,32 @@ import SlopDeskWorkspaceModel
 /// control that silently does nothing rather than a build error.
 ///
 /// The SPELLINGS are `slopdesk_workspace::find_bar::Action`'s, pinned letter for letter beside the
-/// table. They are libghostty's own grammar, parsed by a vendored embedder this side cannot
-/// regenerate from, so they cross whole rather than being assembled here from a prefix.
+/// table, and cross to `slopdesk_terminal::surface_action`'s grammar — the single Rust-owned home for
+/// every binding-action string (`docs/68` §5.2: `libghostty-vt` exposes no search of its own, so the
+/// literal matcher this drives, `slopdesk-vterm`'s `VtSession::search`, is ours to write, not an
+/// inherited libghostty grammar). They cross whole rather than being assembled here from a prefix, so
+/// the grammar stays in the one language that owns it.
 ///
 /// The two nav actions are one case with a direction rather than two cases, because every caller that
 /// has one has already resolved `forward` — through ``forwardStep(repeatingSameWay:searchBackward:)``
 /// for the bar's vi `n`/`N`, or directly for the others. Two cases would just move that `if` outward.
 public enum TerminalSearchSurfaceAction: Equatable, Sendable {
-    /// Arm libghostty's LITERAL in-surface search with `needle` — it then owns the amber highlight and
-    /// the scroll-to-match. Only the modes libghostty can express faithfully send this.
+    /// Arm the surface's LITERAL in-surface search (`VtSession::search`) with `needle` — it then owns
+    /// the amber highlight and the scroll-to-match. Only the modes that matcher can express faithfully
+    /// send this.
     case search(needle: String)
-    /// Step libghostty's own stateful search cursor, which moves the highlight and the viewport.
+    /// Step the surface's own stateful search cursor (`slopdesk-vterm`'s `FindState`), which moves the
+    /// highlight and the viewport.
     case navigate(forward: Bool)
     /// End the in-surface search, dropping every highlight it painted.
     case end
-    /// Scroll the viewport to a PHYSICAL grid row — the row-driven modes' whole navigation, since
-    /// libghostty cannot match what they matched. The row is
-    /// ``ScrollbackWrapMapper/physicalRow(forLogicalLine:in:columns:)``'s, never a logical mirror index.
+    /// Scroll the viewport to a SCREEN row — the row-driven modes' whole navigation, since the surface's
+    /// own literal matcher cannot match what they matched. The row is the one the mirror carries
+    /// (``TerminalScrollbackLine/firstRow``), never a logical mirror index.
     case scrollToRow(Int)
 
-    /// The binding-action string libghostty's `performBindingAction` parses, or `nil` for an action the
-    /// door does not spell.
+    /// The binding-action string `slopdesk_term_surface_binding_action` parses (Rust's own grammar,
+    /// `slopdesk_terminal::surface_action`), or `nil` for an action the door does not spell.
     ///
     /// The whole string crosses, needle and all. A door answering `"search:"` for this side to append
     /// to would put one grammar in two languages, which is the drift the crossing exists to close; the
@@ -42,7 +47,7 @@ public enum TerminalSearchSurfaceAction: Equatable, Sendable {
     ///
     /// `nil` cannot arise from a case listed above, and that is the point: it is what a *future* case
     /// added on one side and not the other reads as, so an action with no spelling is not sent rather
-    /// than sent blank — `performBindingAction("")` is a binding libghostty parses and REJECTS, which
+    /// than sent blank — `performBindingAction("")` is a binding the door parses and REJECTS, which
     /// reads in a log as the surface refusing a real action rather than as this side never having had one.
     public var wire: String? {
         var needle = ""
@@ -76,13 +81,13 @@ public enum TerminalSearchSurfaceAction: Equatable, Sendable {
 
     // MARK: - The two decisions every caller of this vocabulary shares
 
-    /// Whether a mode CANNOT be expressed faithfully by libghostty's own literal search, so the caller
+    /// Whether a mode CANNOT be expressed faithfully by the surface's own literal search, so the caller
     /// must drive navigation from its OWN match rows.
     ///
     /// Which flags say that, and why the case-sensitive one is among them, is
     /// `slopdesk_workspace::find_bar::needs_row_driven_nav`. Both search surfaces read it, so the ⌘F bar
-    /// and ⇧⌘F click-to-line cannot start disagreeing about which modes libghostty can be trusted with —
-    /// they disagreed once, and it took a bug report to notice.
+    /// and ⇧⌘F click-to-line cannot start disagreeing about which modes the literal matcher can be
+    /// trusted with — they disagreed once, and it took a bug report to notice.
     public static func needsRowDrivenNav(
         isRegex: Bool,
         wholeWord: Bool = false,
@@ -104,7 +109,7 @@ public enum TerminalSearchSurfaceAction: Equatable, Sendable {
         case end
         /// End it, then scroll to the current match's row — the row-driven modes' whole navigation.
         case endThenScroll
-        /// Arm libghostty's literal search with the needle; it owns the highlight and the scroll.
+        /// Arm the surface's literal search with the needle; it owns the highlight and the scroll.
         case search
     }
 

@@ -1187,11 +1187,6 @@ pub fn registry() -> Vec<Rule> {
             check: sidecar_clis::the_git_status_is_linked_and_asked_once,
         },
         Rule {
-            name: "pointer-tables-one-table",
-            origin: "docs/56, increment 50",
-            check: sidecar_clis::the_pointer_tables_are_one_table,
-        },
-        Rule {
             name: "video-surface-split",
             origin: "docs/56 §3",
             check: ui_split::the_video_surface_stays_split,

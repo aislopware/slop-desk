@@ -82,7 +82,7 @@ package typealias SlateNativeFont = UIFont
 #endif
 
 /// A TERMINAL PROFILE — the fixed palette of the terminal glass (the one deliberate-colour surface in
-/// an otherwise system-semantic app). Owns everything drawn ON the glass: the cell colours libghostty
+/// an otherwise system-semantic app). Owns everything drawn ON the glass: the cell colours the terminal
 /// paints, the ANSI set, and the ink/edge/accent the AppKit/UIKit chrome floating inside the island
 /// uses (status line, chips, focus corner) — ON-GLASS text must read against the profile, not against
 /// the OS appearance, because the glass does not follow the OS appearance.
@@ -1416,8 +1416,8 @@ package enum Slate {
         package static let footnote: CGFloat = 11
         /// Captions, kbd hints, tab subtext.
         package static let small: CGFloat = 10
-        /// The instrument face: the same family libghostty embeds as the terminal's default, so the
-        /// chrome's mono voice IS the pane's voice.
+        /// The instrument face: the same family the terminal's own Core Text fallback (`slopdesk-apple-text`)
+        /// embeds as its default, so the chrome's mono voice IS the pane's voice.
         package static let mono = "JetBrains Mono"
 
         /// Whether ``mono`` is actually resolvable on this machine — a missing family falls back to

@@ -2,8 +2,8 @@
 //
 // A DECORATION coincident with the terminal surface, drawing ONE accent-outlined cell at the vi cursor
 // while copy-mode is armed. The SELECTION is deliberately NOT drawn here — a keyboard-started visual
-// range goes through the fork's `set_selection` ABI and libghostty paints it natively; only the cursor
-// (client state by design) needs a view.
+// range goes through `libghostty-vt`'s `set_selection` door and the terminal renderer paints it; only the
+// cursor (client state by design) needs a view.
 //
 // HONESTY: the drawn position is ``TerminalViewModel/viCursorCell`` — a VIEWPORT-relative cell the model
 // re-derives from a fresh `viewportInfo()` readback after every copy-mode key and on every renderer
@@ -30,12 +30,11 @@
 // backing store the size of the pane to paint one cell (docs/62 §5.1(f)), and would then have to
 // re-derive the inset the layer gives for free.
 //
-// `Slate.*` tokens only; hit-transparent; no libghostty / Metal touched.
+// `Slate.*` tokens only; hit-transparent; no `libghostty-vt` / Metal touched.
 
 #if os(iOS)
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import UIKit
 
@@ -50,7 +49,7 @@ final class ViCursorOverlayView: UIView {
     private let block = UIView()
 
     /// The cell footprint the block currently wears, or `nil` when there is nothing honest to draw.
-    /// Stored rather than recomputed inside a layout pass: re-reading libghostty's viewport from inside
+    /// Stored rather than recomputed inside a layout pass: re-reading `libghostty-vt`'s viewport from inside
     /// layout would make the block's truth depend on when UIKit felt like asking.
     private var cell: CGRect?
 
@@ -123,7 +122,7 @@ final class ViCursorOverlayView: UIView {
 
     /// The following, through ``ObservationFollow/arm(_:read:apply:)`` — reading the two gates in `read`
     /// is what makes the block move the instant a motion lands. The geometry read stays OUT of `read`:
-    /// `cellMetrics()` is a libghostty readback, not observable state, so tracking it would register
+    /// `cellMetrics()` is a renderer readback, not observable state, so tracking it would register
     /// nothing and cost a call per arm.
     ///
     /// `apply` discards the reading and asks ``refresh()`` for the values again, because `layoutSubviews`

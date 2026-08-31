@@ -13,7 +13,7 @@ import XCTest
 /// - The store edge-notify is COALESCED (a flap does not re-fire) via the `lastNotifiedStatus` memory.
 /// - `jumpToOldestAttentionPane()` focuses the right pane across tabs/sessions (switching as needed).
 ///
-/// All tests are hang-safe: no `GhosttySurface`, no `NWConnection`, no `VideoToolbox`, no
+/// All tests are hang-safe: no `TerminalSurfaceDriver`, no `NWConnection`, no `VideoToolbox`, no
 /// `UNUserNotificationCenter` — the `onAgentAttention` sink is a closure spy.
 @MainActor
 final class AttentionTests: XCTestCase {

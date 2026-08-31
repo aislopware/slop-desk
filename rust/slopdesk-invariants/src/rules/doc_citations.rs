@@ -18,9 +18,11 @@ use crate::tree::Tree;
 
 /// The trees whose Swift VOUCHES for a name.
 ///
-/// `ThirdParty/ghostty/integration` is in it because the embedder Swift is real declarations that
-/// no `Package.swift` target compiles, and a doc may legitimately cite one.
-const VOUCHING_ROOTS: [&str; 4] = ["Sources", "Tests", "Apps", "ThirdParty/ghostty/integration"];
+/// Three, not the four it was: `ThirdParty/ghostty/integration` was in the list because the fork's
+/// embedder Swift held real declarations that no `Package.swift` target compiled, and a doc could
+/// legitimately cite one. docs/68 deleted the fork and moved that code into `Sources`, so the name
+/// a doc cites is vouched for by the first entry now.
+const VOUCHING_ROOTS: [&str; 3] = ["Sources", "Tests", "Apps"];
 
 /// The trees whose Swift comments are SCANNED for links.
 const SCANNED_ROOTS: [&str; 2] = ["Sources", "Tests"];
@@ -81,7 +83,7 @@ const DOCC_EXTERNAL: [&str; 4] = [
 /// recording a deleted file is not fixed by an entry here; it is fixed by not spelling a backticked
 /// PATH, which that rule's own doc says stays legal. Adding the name here instead silently does
 /// nothing.
-const PATH_TOMBSTONES: [&str; 29] = [
+const PATH_TOMBSTONES: [&str; 32] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -129,6 +131,20 @@ const PATH_TOMBSTONES: [&str; 29] = [
     "Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift",
     "Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift",
     "Apps/ClientApp-iOS/Tests/SidebarAutoHideWiringTests.swift",
+    // The ghostty fork, deleted whole by `docs/68-terminal-surface-in-rust.md`, and the eighth
+    // instance of the same argument. `docs/68` is the document that PERFORMS the deletion, so its
+    // citations of the fork are the "before" column by construction: §1 sends the reader to the
+    // fork's README "for the fork this deletes", §6 quotes that README's own list of the parser PRs
+    // unreachable from the pin (the whole point being that the fork could not have them), and §9's
+    // blast-radius inventory names every coupled path — the embedder, the fork, and the
+    // `slopdesk-ops enable-renderer` op — as the set the pass removes. Repointing any of them would
+    // make the pass's inventory list files the pass did not touch. `docs/62` §2.4's row and
+    // `DECISIONS.md`'s two records are the same shape one layer out: the embedder is cited as what
+    // a seam used to be satisfied by, and as the reader that made `grep Sources Apps` miss three
+    // live settings — a fact about a sweep that already happened.
+    "ThirdParty/ghostty/README.md",
+    "ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift",
+    "rust/slopdesk-devtools/src/ops/renderer.rs",
 ];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.

@@ -1,6 +1,5 @@
 import Foundation
 import SlopDeskProtocol
-import SlopDeskTerminal
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
 

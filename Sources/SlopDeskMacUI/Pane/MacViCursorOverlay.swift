@@ -2,8 +2,8 @@
 //
 // The AppKit half of ``ViCursorOverlayView``. A DECORATION coincident with the terminal surface, drawing
 // ONE accent-outlined cell at the vi cursor while copy-mode is armed. The SELECTION is deliberately
-// NOT drawn here — a keyboard-started visual range goes through the fork's `set_selection` ABI and
-// libghostty paints it natively; only the cursor (client state by design) needs a view.
+// NOT drawn here — a keyboard-started visual range goes through `libghostty-vt`'s `set_selection` door
+// and the terminal renderer paints it; only the cursor (client state by design) needs a view.
 //
 // HONESTY: the drawn position is ``TerminalViewModel/viCursorCell`` — a VIEWPORT-relative cell the
 // model re-derives from a fresh `viewportInfo()` readback after every copy-mode key and on every
@@ -20,7 +20,6 @@
 import AppKit
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 @MainActor
@@ -32,7 +31,7 @@ final class MacViCursorOverlay: NSView {
     /// The cell footprint the block currently wears, in the surface's top-left-origin space, or `nil`
     /// when there is nothing honest to draw. Stored rather than recomputed inside `draw(_:)`: a
     /// redraw can be asked for by AppKit (a window move, an appearance flip) at a moment that has
-    /// nothing to do with the cursor, and re-reading libghostty's viewport from inside a draw pass
+    /// nothing to do with the cursor, and re-reading `libghostty-vt`'s viewport from inside a draw pass
     /// would make the block's truth depend on when the compositor felt like asking.
     private var cell: CGRect?
 
@@ -108,7 +107,7 @@ final class MacViCursorOverlay: NSView {
     // MARK: The live read
 
     /// Reading the two gates here is what makes the block move the instant a motion lands. The
-    /// geometry read stays out of `read`: `cellMetrics()` is a libghostty readback, not observable
+    /// geometry read stays out of `read`: `cellMetrics()` is a renderer readback, not observable
     /// state, so tracking it would register nothing and cost a call per arm.
     ///
     /// `apply` discards the reading and asks ``refresh()`` for the values again, because `layout()`

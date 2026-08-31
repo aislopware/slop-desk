@@ -1,6 +1,6 @@
 // PromptJumpFlashTests — pins the arm/settle honesty rules behind the prompt-jump landed flash: the
 // observable epoch bumps ONLY for a jump whose scrollbar echo arrives in-window and NOT bottom-clamped
-// (libghostty pins the prompt at viewport row 0 exactly then). Everything else — unsolicited scrolls,
+// (libghostty-vt pins the prompt at viewport row 0 exactly then). Everything else — unsolicited scrolls,
 // bottom-clamped landings, lapsed arms — must stay silent: absent, never wrong.
 
 import XCTest

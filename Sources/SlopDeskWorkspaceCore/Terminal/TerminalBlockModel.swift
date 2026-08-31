@@ -57,7 +57,8 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
     /// How many output bytes the host currently holds for this block (UI size hint / "has output" gate).
     public var outputLen: UInt32
     /// The block's 1-based PROMPT-CYCLE ordinal (the count of OSC-133 `A` marks at the block's start —
-    /// including blockless empty-Enter / Ctrl-C cycles, matching libghostty's `.prompt` rows). The
+    /// including blockless empty-Enter / Ctrl-C cycles, matching the prompt rows libghostty-vt flags per
+    /// OSC-133 `A` mark). The
     /// ``BlockJump`` anchor for the outline/navigator jump. `0` = unknown (mid-stream join) — the jump
     /// is skipped for such a block rather than mis-landing.
     public var promptOrdinal: UInt32

@@ -3,8 +3,8 @@
 // ONE app-level `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` installed at launch. A SwiftUI
 // `.commands` menu alone cannot express everything the chord table needs: a user `text:`/`csi:`/`esc:`
 // literal-byte binding must SWALLOW its chord and inject bytes before the terminal first responder
-// (libghostty's `GhosttyLayerBackedView`) sees it, an `unbind:` must suppress a default without a menu
-// edit, and ⌘D must be claimed before libghostty's own keymap eats it. DECISIONS.md records the scope
+// (the terminal's `MacTerminalRendererView`) sees it, an `unbind:` must suppress a default without a menu
+// edit, and ⌘D must be claimed before `libghostty-vt`'s own key encoding eats it. DECISIONS.md records the scope
 // (WS-B / B3; the tmux-style multi-key prefix that once shared this monitor is REMOVED — 2026-07-22).
 //
 // CONTRACT (load-bearing): a BARE unmodified key MUST pass through untouched — normal typing always reaches
@@ -13,7 +13,7 @@
 // returns the event UNCHANGED.
 //
 // PURITY: NSEvent→`KeyChord` normalization lives in the pure, AppKit-free `KeyChordNormalizer` (mirrors
-// GhosttyTerminalView's `ghosttyMods` + `charactersIgnoringModifiers` for parity) so it's unit-tested
+// the deleted fork's `ghosttyMods` + `charactersIgnoringModifiers` handling, kept for parity) so it's unit-tested
 // headlessly. Only NSEvent→intent wiring is here.
 
 import AppKit

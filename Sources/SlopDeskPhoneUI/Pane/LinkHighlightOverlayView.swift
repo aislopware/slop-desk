@@ -1,7 +1,7 @@
 // LinkHighlightOverlayView — the ⌘-hold link underline, in UIKit (docs/62, the pane-leaf cluster).
 //
-// A DECORATION coincident with the terminal surface (never a content branch — the libghostty-freeze
-// guardrail): while the pane model reports ⌘ is held, it runs the pure ``TerminalLinkDetector`` over the
+// A DECORATION coincident with the terminal surface (never a content branch — the surface-teardown/
+// focus-freeze guardrail): while the pane model reports ⌘ is held, it runs the pure ``TerminalLinkDetector`` over the
 // live VISIBLE viewport rows and draws a hairline under every detected path / URL / `file://` /
 // `mailto:` span, mapped to points by the ``TerminalCellMetrics``. Only the underlines: the renderer owns
 // the open gestures and the hovered link's resolved path is the model's.
@@ -34,7 +34,6 @@
 #if os(iOS)
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
-import SlopDeskTerminal
 import SlopDeskVideoProtocol // ConfigRevision — the config-file edge the tracked read arms on
 import SlopDeskWorkspaceCore
 import UIKit

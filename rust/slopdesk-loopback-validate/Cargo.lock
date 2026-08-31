@@ -242,6 +242,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "int-enum"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e366a1634cccc76b4cfd3e7580de9b605e4d93f1edac48d786c1f867c0def495"
+dependencies = [
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -331,6 +343,21 @@ name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+
+[[package]]
+name = "libghostty-vt"
+version = "0.2.1"
+source = "git+https://github.com/Uzaaft/libghostty-rs?rev=a0b5a46#a0b5a46b52005365eb012438deac0c5ff0989b1b"
+dependencies = [
+ "bitflags",
+ "int-enum",
+ "libghostty-vt-sys",
+]
+
+[[package]]
+name = "libghostty-vt-sys"
+version = "0.2.1"
+source = "git+https://github.com/Uzaaft/libghostty-rs?rev=a0b5a46#a0b5a46b52005365eb012438deac0c5ff0989b1b"
 
 [[package]]
 name = "libgit2-sys"
@@ -592,6 +619,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-text"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d"
+dependencies = [
+ "bitflags",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+]
+
+[[package]]
 name = "objc2-core-video"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -641,6 +679,31 @@ dependencies = [
  "bitflags",
  "objc2",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-metal"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
+dependencies = [
+ "bitflags",
+ "block2",
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-quartz-core"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96c1358452b371bf9f104e21ec536d37a650eb10f7ee379fff67d2e08d537f1f"
+dependencies = [
+ "bitflags",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-metal",
 ]
 
 [[package]]
@@ -734,6 +797,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "version_check",
 ]
 
 [[package]]
@@ -1000,6 +1075,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-apple-metal"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "dispatch2",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-metal",
+ "objc2-quartz-core",
+ "slopdesk-termrender",
+]
+
+[[package]]
 name = "slopdesk-apple-nsapp"
 version = "0.1.0"
 dependencies = [
@@ -1051,6 +1140,16 @@ dependencies = [
  "objc2-screen-capture-kit",
  "slopdesk-apple-cgdisplay",
  "slopdesk-video",
+]
+
+[[package]]
+name = "slopdesk-apple-text"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-text",
+ "slopdesk-termrender",
 ]
 
 [[package]]
@@ -1159,7 +1258,9 @@ dependencies = [
  "slopdesk-androidd",
  "slopdesk-apple-audio",
  "slopdesk-apple-ax",
+ "slopdesk-apple-metal",
  "slopdesk-apple-pasteboard",
+ "slopdesk-apple-text",
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
  "slopdesk-clientctl",
@@ -1184,9 +1285,11 @@ dependencies = [
  "slopdesk-sanitize",
  "slopdesk-settings",
  "slopdesk-terminal",
+ "slopdesk-termrender",
  "slopdesk-tree",
  "slopdesk-video",
  "slopdesk-videolink",
+ "slopdesk-vterm",
  "slopdesk-wire",
  "slopdesk-workspace",
 ]
@@ -1279,9 +1382,18 @@ dependencies = [
 name = "slopdesk-terminal"
 version = "0.1.0"
 dependencies = [
+ "slopdesk-fuzzy",
  "slopdesk-ids",
  "slopdesk-sanitize",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "slopdesk-termrender"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-terminal",
+ "slopdesk-vterm",
 ]
 
 [[package]]
@@ -1329,6 +1441,13 @@ name = "slopdesk-videolink"
 version = "0.1.0"
 dependencies = [
  "slopdesk-video",
+]
+
+[[package]]
+name = "slopdesk-vterm"
+version = "0.1.0"
+dependencies = [
+ "libghostty-vt",
 ]
 
 [[package]]
@@ -1494,6 +1613,12 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "version_check"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "walkdir"

@@ -6,8 +6,8 @@
 // of them `slopdesk_terminal::paste`'s — and the LAYOUT is the only divergence: an alert's single
 // informative string over there, a card with the dangers as rows and the payload on its own plate here.
 //
-// ⚠️ WHY THIS FILE EXISTS AT ALL. Without a reader on ``ClipboardConfirmRequests``, the phone half of the
-// embedder files a question NOBODY CAN ANSWER: libghostty holds the request and the paste never
+// ⚠️ WHY THIS FILE EXISTS AT ALL. Without a reader on ``ClipboardConfirmRequests``, the renderer's
+// clipboard-write drain files a question NOBODY CAN ANSWER: the request sits queued and the paste never
 // completes, so a `clipboard-read = ask` profile hangs rather than asking. Before that reader existed at
 // all the same three settings were silently mis-honoured — an unsafe paste and an OSC-52 READ
 // auto-approved, an OSC-52 WRITE dropped — which is worse than not offering them: the same account on
@@ -18,7 +18,7 @@
 // family's other summoned members deliberately rather than by inheritance. UIKit's modal stack silently
 // DECLINES a second `present()` while one is up — a console line, no error, no queue — so Connect being
 // open, or the panel, or the cheat sheet, would have dropped the presentation on the floor with
-// libghostty still holding the request. That is a hang rather than a wrong answer. This surface is not
+// the request still queued and unanswered. That is a hang rather than a wrong answer. This surface is not
 // summoned by the user, it is RAISED BY A PROGRAM at a time nobody chose, so it may not depend on
 // nothing else being up. It is the TOPMOST child of ``PhoneOverlayLayerView`` for the same reason.
 //
@@ -50,8 +50,9 @@ final class ClipboardConfirmCardView: UIView {
     /// takes the responder in the first place.
     var onDrained: (() -> Void)?
 
-    /// The mailbox the libghostty embedder files into. A singleton by default because its writer is a C
-    /// callback that holds a surface pointer and nothing else; injectable so a probe can drive it.
+    /// The mailbox the renderer's clipboard-write drain files into. A singleton by default because its
+    /// writer runs off ``PhoneTerminalRendererView``'s drain loop with no view to hand a request to
+    /// directly; injectable so a probe can drive it.
     private let requests: ClipboardConfirmRequests
 
     /// The absorbing floor. A real control with NO action: it is here to swallow the tap, not to answer

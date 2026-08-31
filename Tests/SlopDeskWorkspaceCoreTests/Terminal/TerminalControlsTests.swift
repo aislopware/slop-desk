@@ -5,7 +5,7 @@ import XCTest
 /// Pins the pure ``TerminalControls`` bundle — the `from(config:)` factory's path→field mapping
 /// (anti-mapping-error: every field is set to a NON-default value, so a swapped / dropped path fails), the
 /// control enums' raw values + non-failable repair — which is what makes a hand-edited token from a newer
-/// build survive — and the `MouseShiftCapture.configValue` libghostty tokens the config builder emits.
+/// build survive — and the `MouseShiftCapture.configValue` libghostty-vt tokens the config builder emits.
 ///
 /// All headless, and every case builds its OWN ``AppConfig`` rather than moving the process-global: the
 /// factory takes the configuration as an argument precisely so the reading under test never has to be
@@ -92,7 +92,7 @@ final class TerminalControlsTests: XCTestCase {
     // MARK: - Enum raw values + repair
 
     /// The control enums' raw values are the tokens the USER types in `config.toml` (and, for clipboard,
-    /// the ones libghostty reads). A rename here silently invalidates a file someone already wrote →
+    /// the ones libghostty-vt reads). A rename here silently invalidates a file someone already wrote →
     /// pinned.
     func testEnumRawValuesArePinned() {
         XCTAssertEqual(ClipboardAccess.allCases.map(\.rawValue), ["allow", "deny", "ask"])
@@ -115,23 +115,23 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(MouseShiftCapture(rawValue: "nope"), .enabled)
     }
 
-    /// `MouseShiftCapture.configValue` is the libghostty `mouse-shift-capture` token the config builder emits. This is a
+    /// `MouseShiftCapture.configValue` is the libghostty-vt `mouse-shift-capture` token the config builder emits. This is a
     /// REAL ORACLE, not a restatement of the mapping: the "Allow Shift with Mouse Click" setting's axis ("hold ⇧ to
-    /// *select text* even when the running app captures the mouse") is the INVERSE of libghostty's
+    /// *select text* even when the running app captures the mouse") is the INVERSE of libghostty-vt's
     /// `mouse-shift-capture` axis (whether ⇧ is *captured into the mouse protocol and sent to the program*).
-    /// Per the vendored ghostty `Config.zig`: `false` = ⇧ extends the selection (libghostty's own default,
+    /// Per the vendored ghostty `Config.zig`: `false` = ⇧ extends the selection (libghostty-vt's own default,
     /// program may override); `true` = ⇧ is sent to the program (program may override); `never` = ⇧ ALWAYS
     /// extends selection (program can't override); `always` = ⇧ ALWAYS goes to the program (can't override).
     /// So "⇧ selects" must yield a *don't-capture* token and "⇧ goes to the program" a *capture* token.
     func testMouseShiftCaptureConfigValue() {
-        // The tokens libghostty interprets as "⇧ extends the selection" (the intent when shift-select is
-        // ALLOWED). The default/soft form must be `false` — libghostty's own default — so the factory neither
+        // The tokens libghostty-vt interprets as "⇧ extends the selection" (the intent when shift-select is
+        // ALLOWED). The default/soft form must be `false` — libghostty-vt's own default — so the factory neither
         // inverts the meaning NOR overrides the upstream default.
         let extendsSelectionTokens = Set(["false", "never"])
-        // The tokens libghostty interprets as "⇧ is sent to the running program" (selection NOT extended).
+        // The tokens libghostty-vt interprets as "⇧ is sent to the running program" (selection NOT extended).
         let capturesTokens = Set(["true", "always"])
 
-        // Default = ⇧ extends the selection, soft → libghostty's own default `false`.
+        // Default = ⇧ extends the selection, soft → libghostty-vt's own default `false`.
         XCTAssertEqual(
             MouseShiftCapture.enabled.configValue, "false",
             "the default (⇧ extends selection) must emit libghostty's `false` — the exact token whose docs say "
@@ -146,8 +146,8 @@ final class TerminalControlsTests: XCTestCase {
             "with shift-select disabled, ⇧ must be sent to the program (a capture token), not extend selection",
         )
 
-        // Hard forms: `.always` = ⇧ ALWAYS extends selection (program can't override) → libghostty `never`;
-        // `.never` = ⇧ NEVER extends selection / always forwarded to the program → libghostty `always`.
+        // Hard forms: `.always` = ⇧ ALWAYS extends selection (program can't override) → libghostty-vt `never`;
+        // `.never` = ⇧ NEVER extends selection / always forwarded to the program → libghostty-vt `always`.
         XCTAssertEqual(
             MouseShiftCapture.always.configValue, "never",
             "⇧ ALWAYS extends selection maps to libghostty `never` (extend-selection, program can't override)",
@@ -178,7 +178,7 @@ final class TerminalControlsTests: XCTestCase {
     }
 
     /// `OptionAsAlt`'s raw values are the kebab-readable tokens the file carries; `configValue` is the
-    /// libghostty `macos-option-as-alt` token (`false`/`true`/`left`/`right`) the config builder emits.
+    /// libghostty-vt `macos-option-as-alt` token (`false`/`true`/`left`/`right`) the config builder emits.
     /// The two axes DIFFER (`both` persists as `both`, emits `true`), so this is a real oracle, not a restate of
     /// the rawValue. The factory keeps OFF (Option composes accented characters by default).
     func testOptionAsAltRawValuesAndConfigValue() {
@@ -204,12 +204,13 @@ final class TerminalControlsTests: XCTestCase {
 
     // MARK: - OSC-52 read confirm decision
 
-    /// The pure OSC-52 clipboard-READ resolution the embedder's GUI-only `confirm_read_clipboard_cb`
-    /// drives. ``ClipboardAccess/silentClipboardRead(text:)`` decides the SILENT (no-dialog) outcome:
-    /// ``ClipboardAccess/allow`` hands the program the real clipboard text, ``ClipboardAccess/deny`` hands
-    /// back EMPTY (a well-formed but empty OSC-52 reply — the clipboard is never leaked), and
-    /// ``ClipboardAccess/ask`` returns `nil` (the embedder must prompt). Pinning it headlessly proves the
-    /// no-leak deny contract — and that allow ≠ deny on the SAME input — without a `GhosttySurface`.
+    /// The pure OSC-52 clipboard-READ resolution decision. The deleted fork's GUI-only
+    /// `confirm_read_clipboard_cb` callback used to drive this. ``ClipboardAccess/silentClipboardRead(text:)``
+    /// decides the SILENT (no-dialog) outcome: ``ClipboardAccess/allow`` hands the program the real
+    /// clipboard text, ``ClipboardAccess/deny`` hands back EMPTY (a well-formed but empty OSC-52 reply —
+    /// the clipboard is never leaked), and ``ClipboardAccess/ask`` returns `nil` (the embedder must
+    /// prompt). Pinning it headlessly proves the no-leak deny contract — and that allow ≠ deny on the SAME
+    /// input — without a `TerminalSurfaceDriver`.
     func testSilentClipboardReadResolvesAllowDenyAsk() {
         XCTAssertEqual(
             ClipboardAccess.allow.silentClipboardRead(text: "secret"), "secret",

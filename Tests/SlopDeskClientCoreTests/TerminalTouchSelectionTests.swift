@@ -1,6 +1,6 @@
 // TerminalTouchSelectionTests — the ramp a selection drag scrolls at, and the one release it stays quiet on.
 //
-// The gesture itself is UIKit's to recognize and libghostty's to interpret; what is pinnable without a
+// The gesture itself is UIKit's to recognize and libghostty-vt's to interpret; what is pinnable without a
 // finger is the arithmetic between them. Two things are worth pinning and both are sign/edge traps: the
 // autoscroll ramp is signed AGAINST the screen (positive reveals OLDER lines, so reaching UP scrolls
 // positive — the same convention the embedder's pan-to-scroll documents), and it must be inert in the middle
@@ -8,7 +8,6 @@
 // selection drag that never reaches an edge.
 
 import CoreGraphics
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientCore

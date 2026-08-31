@@ -1179,10 +1179,10 @@ final class MacMetalLayerBackedView: NSView {
     // so a resolved chord is consumed (handler returns `nil`) and this `keyDown` is NEVER reached for
     // those. A bare key returns unchanged and lands here as normal typing.
     //
-    // No thin pre-check is mirrored here (unlike the libghostty surface's) ON PURPOSE: `TerminalKeyInterceptor`
+    // No thin pre-check is mirrored here (unlike the terminal surface's) ON PURPOSE: `TerminalKeyInterceptor`
     // lives in `SlopDeskWorkspaceCore`, and `SlopDeskVideoClient` depends ONLY on `SlopDeskVideoProtocol`
     // (Package.swift) — importing WorkspaceCore here would invert the module graph (the HARD RULE keeps these
-    // layers separated). That belt-and-suspenders exists because the libghostty surface is hosted INSIDE the
+    // layers separated). That belt-and-suspenders exists because the terminal surface is hosted INSIDE the
     // WorkspaceCore-importing app target and can reach the engine; this gated video surface cannot and need
     // not — the monitor already covers it. (Gated module: never instantiated in tests; verified by REVIEW.)
     override func keyDown(with event: NSEvent) {

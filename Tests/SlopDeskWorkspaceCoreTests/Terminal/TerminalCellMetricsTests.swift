@@ -1,10 +1,10 @@
 import CoreGraphics
-import SlopDeskTerminal
+import SlopDeskWorkspaceCore
 import XCTest
 
 /// Pins ``TerminalCellMetrics/rect(row:colStart:colEnd:)`` — the
 /// SINGLE source of truth the ⌘-hold link underline and the Hint Mode labels both map a
-/// detected `(row, colStart ..< colEnd)` cell span through. The live `GhosttySurface` conformer is
+/// detected `(row, colStart ..< colEnd)` cell span through. The live `TerminalSurfaceDriver` conformer is
 /// compile-only (the real surface hangs without a window server — the hang-safety rule), so the pure
 /// rect arithmetic is pinned HERE.
 ///

@@ -11,7 +11,6 @@ better-update vault (org weebuild, env production)   ← p12 + notary creds + ta
         │  BETTER_UPDATE_ROBOT (the ONE GitHub secret)
         ▼
 GitHub Actions · aislopware/slop-desk · macos-26 · arm64
-   libghostty  →  cached libghostty.xcframework          (Zig 0.15.2, ~40 min cold, ~0 warm)
    package     →  slopdesk-gate ffi                   (SlopDeskFFI.xcframework, 3 arm64 slices)
                →  slopdesk-release package               (build → stamp → sign → notarize)
    publish     →  GitHub Release v<version>
@@ -31,10 +30,13 @@ subcommand of `rust/slopdesk-devtools`'s release binary, which replaced nine she
 `source`-ing each other. Each of those decidable halves is now a module with unit tests
 (`rust/slopdesk-devtools/src/release/`).
 
-**Two linked artifacts, both gitignored, both built by the pipeline rather than checked out.**
-`libghostty.xcframework` has its own job (cached, because Zig costs ~40 minutes cold);
+**One linked artifact, gitignored, built by the pipeline rather than checked out.**
 `SlopDeskFFI.xcframework` is a step inside `package`, because `slopdesk-gate ffi` stamps its own
-inputs and a runner is cold every time anyway. Neither is optional in the weak sense: `Package.swift`
+inputs and a runner is cold every time anyway. The terminal engine no longer has a job of its own:
+`docs/68-terminal-surface-in-rust.md` deleted the fork and the 40-minute Zig xcframework build with
+it, and `rust/slopdesk-vterm` now compiles as an ordinary cargo dependency inside that same step.
+⚠️ `.github/workflows/release.yml` still carries the old `libghostty` job — it has no sources left to
+build and is the next thing to delete from this pipeline. It is not optional in the weak sense: `Package.swift`
 declares a `binaryTarget` at the FFI path, so SwiftPM cannot resolve the graph without the file —
 a missing step there fails the release before it compiles a line. `slopdesk-invariants` ratchets the
 correspondence: every gitignored `binaryTarget` path must be produced by some step of this workflow.
@@ -43,9 +45,10 @@ correspondence: every gitignored `binaryTarget` path must be produced by some st
 
 Three independent reasons, any one of which is sufficient:
 
-1. `ThirdParty/ghostty/libghostty.xcframework` is built with a `macos-arm64` slice and no other
-   (`ThirdParty/ghostty/README.md`); `Apps/ClientApp-macOS/project.yml` pins `ARCHS=arm64`
-   because of it. The client app cannot link on Intel.
+1. `Apps/ClientApp-macOS/project.yml` pins `ARCHS=arm64`. The original reason was the fork's
+   xcframework, which shipped a `macos-arm64` slice and no other; that fork is gone
+   (`docs/68-terminal-surface-in-rust.md`) and the pin has outlived it, so this reason is now the
+   spec's own and reasons 2 and 3 are what actually bind.
 2. Both apps deploy against macOS 26, which no Intel Mac runs.
 3. The Homebrew formula and cask both declare `depends_on arch: :arm64`, so `brew` refuses the
    install rather than handing an Intel user a binary that dies at launch.
@@ -567,10 +570,15 @@ and the suite fails with the verb named.
   green and silently ships unticketed apps again, so §3b validates each staple and `die`s on a
   miss rather than trusting the exit code. Cost: one extra notarization round per release.
 
-## Known-fragile: the libghostty job
+## Known-fragile: the libghostty job — RETIRED
 
-This is the part most likely to break, and it breaks in CI in ways it does not break locally.
-`build-libghostty.sh` is documented at length in its own header; the three that bite in CI:
+> **Superseded by `docs/68-terminal-surface-in-rust.md`, which deleted the fork, the recipe and this
+> job's reason to exist.** The `libghostty` job is still spelled in `.github/workflows/release.yml`
+> and now builds nothing. Kept below as the record of what a Zig-toolchain job costs a release
+> pipeline, because the next vendored compiler will present the same three faces.
+
+This was the part most likely to break, and it broke in CI in ways it did not break locally.
+`build-libghostty.sh` was documented at length in its own header; the three that bit in CI:
 
 - **It needs a macOS SDK ≤ 15.x** for its `xcrun` shim, because Zig 0.15.2 cannot link the macOS
   26 SDK. The workflow *searches* for one across the runner's Xcode bundles instead of trusting
@@ -583,8 +591,8 @@ This is the part most likely to break, and it breaks in CI in ways it does not b
   archives itself and re-archives them (caveat #3). A future "fix" that makes the job fail on that
   exit code will break the build for the wrong reason.
 
-Because it is slow and fragile, it is a separate job keyed on `hashFiles` of the recipe, the
-consolidated fork delta and the README pins. It reruns only when one of those changes.
+Because it was slow and fragile, it was a separate job keyed on `hashFiles` of the recipe, the
+consolidated fork delta and the README pins, rerunning only when one of those changed.
 
 ## Deliberately not done
 

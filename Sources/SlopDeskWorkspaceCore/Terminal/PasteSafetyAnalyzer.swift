@@ -7,8 +7,10 @@ import SlopDeskWorkspaceModel
 /// The face over the **Paste Protection** safety net (Settings ▸ Controls). It classifies a
 /// clipboard payload against the four dangers the confirmation dialog flags and decides whether the
 /// dialog should appear at all (the skip rules). No view, no pasteboard, no surface — the seam of
-/// the paste-protection sheet (`PasteProtectionSheet`), wired into the libghostty embedder's
-/// `confirm_read_clipboard_cb` decision point (`GhosttyTerminalView`).
+/// the paste-protection sheet (`PasteProtectionSheet`), wired into ``PastePrecheck``'s renderer-side
+/// paste entry point (`MacTerminalRendererView` / `PhoneTerminalRendererView`'s `onConfirmPaste`) —
+/// there is no engine callback any more, so this decision is made BEFORE the paste ever reaches
+/// libghostty-vt, not from inside it.
 ///
 /// ## This is a call, not an implementation
 /// The rules are `rust/slopdesk-terminal`'s `paste` (docs/55), reached through

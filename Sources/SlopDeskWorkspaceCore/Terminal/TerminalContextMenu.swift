@@ -6,8 +6,9 @@ import SlopDeskWorkspaceModel
 /// The right-click context menu (Ghostty/Warp parity): the ordered item list and — the testable heart
 /// — each item's **enablement** for the current pane state (copy needs a selection, paste needs
 /// clipboard text, splits need a connected pane). The GUI `NSMenu` built in
-/// `GhosttyLayerBackedView.menu(for:)` is a thin renderer over this; routing each item to libghostty
-/// (`copy_to_clipboard` / `paste_from_clipboard` / `select_all` / `clear_screen` binding actions) and to
+/// `MacTerminalRendererView.menu(for:)` is a thin renderer over this; routing each item to
+/// libghostty-vt (`copy_to_clipboard` / `paste_from_clipboard` / `select_all` / `clear_screen` binding
+/// actions) and to
 /// the ``WorkspaceStore`` split/find ops is compile-only.
 ///
 /// THE ORDER CROSSES SEPARATELY FROM THE WORDS. A menu is built twice for two different reasons: once
@@ -69,9 +70,9 @@ public enum TerminalContextMenu {
     }
 
     /// The inputs that decide each item's enablement — a pure snapshot the view captures at right-click
-    /// time (libghostty `has_selection`, the host pasteboard, and whether the pane's transport is live).
+    /// time (the surface's `has_selection`, the host pasteboard, and whether the pane's transport is live).
     public struct Context: Equatable, Sendable {
-        /// The surface currently holds a text selection (`ghostty_surface_has_selection`).
+        /// The surface currently holds a text selection (`slopdesk_term_surface_selection_verb`).
         public var hasSelection: Bool
         /// The host pasteboard has a non-empty string (so Paste / Paste-as-Keystrokes have something to do).
         public var clipboardHasText: Bool

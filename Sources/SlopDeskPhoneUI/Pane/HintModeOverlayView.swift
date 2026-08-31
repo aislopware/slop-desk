@@ -1,7 +1,7 @@
 // HintModeOverlayView — the Vimium-style Hint Mode overlay, in UIKit (docs/62, the pane-leaf cluster).
 //
-// A DECORATION layered OVER the terminal surface, never a content branch (the libghostty-freeze
-// guardrail): while the pane model has an armed intent (``TerminalViewModel/hintMode``) it DIMS the
+// A DECORATION layered OVER the terminal surface, never a content branch (the surface-teardown/
+// focus-freeze guardrail): while the pane model has an armed intent (``TerminalViewModel/hintMode``) it DIMS the
 // surface so the labels pop, draws a yellow 2-letter badge at each detected target, and shows a
 // `HINTS · <intent> · ×` badge top-trailing — the `hint-mode.png` chrome, floated in the pane because
 // slopdesk has no titlebar, exactly like the vi-mode and read-only chips beside it.
@@ -33,7 +33,7 @@
 //
 // ⚠️ THE RE-PLACE ON RESIZE IS THIS HALF'S OWN, and it fixes a defect docs/62 §2.1 recorded in the
 // SwiftUI original. A font-size change or a pane resize moves every cell without bumping a single
-// observable property (`cellMetrics()` is a libghostty readback, not observable state), so an overlay
+// observable property (`cellMetrics()` is a renderer readback, not observable state), so an overlay
 // that only re-placed on an observation callback left every badge at its pre-resize point — labels
 // pointing at the wrong words, which is the one failure mode the honest-ceiling rule below exists to rule
 // out. ``layoutSubviews`` therefore re-reads the metrics, and the ``Session`` equality is what keeps that
@@ -53,7 +53,6 @@
 import SFSafeSymbols // the mark's name, spelled once on the floor and checked by the compiler
 import SlopDeskClientCore // HintPresentation — the arm predicate, the fade rule and the five strings
 import SlopDeskSlate // the ONE design ladder, in its native (UIColor/UIFont) spelling
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import UIKit
 

@@ -19,12 +19,11 @@
 //! verbs are still compared as SETS, from the two switches themselves — never as a list maintained
 //! here, which would go stale in exactly the direction that hides the drift.
 //!
-//! §§16b–16c are the tables that stopped being forked first: the git status is linked through
-//! `slopdesk-git`, and the pointer tables cross as a raw `int32_t`. Both were ports whose whole
-//! point is invisible to a test — the ANSWER is identical, only the cost and the number of
-//! declaration orders changed — so the ratchet is here or nowhere.
+//! §16b is the table that stopped being forked first: the git status is linked through
+//! `slopdesk-git`. It was a port whose whole point is invisible to a test — the ANSWER is
+//! identical, only the cost changed — so the ratchet is here or nowhere.
 
-use crate::claim::{Claim, Extract, RUST, SWIFT, SWIFT_ROOTS, SWIFT_ROOTS_AND_GHOSTTY, View, check_all};
+use crate::claim::{Claim, Extract, RUST, SWIFT, SWIFT_ROOTS, View, check_all};
 use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
@@ -62,13 +61,6 @@ const PROBE_MAIN: &str = "rust/slopdesk-probe/src/main.rs";
 const GIT_STATUS: &str = "rust/slopdesk-git/src/status.rs";
 /// The one crate that reads porcelain off libgit2's bitflags.
 const GIT_PORCELAIN: &str = "rust/slopdesk-git/src/porcelain.rs";
-
-/// The pointer shape face.
-const POINTER_SHAPE: &str = "Sources/SlopDeskWorkspaceCore/Terminal/PointerShapeMapping.swift";
-/// The mouse visibility face.
-const POINTER_VISIBILITY: &str = "Sources/SlopDeskWorkspaceCore/Terminal/MouseVisibilityMapping.swift";
-/// The door that vends both tables, and holds the discriminant test.
-const POINTER_DOOR: &str = "rust/slopdesk-ffi/src/pointer_shape.rs";
 
 /// The agent-control verb sets are one alphabet
 ///
@@ -480,74 +472,6 @@ pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
     ])
 }
 
-/// The pointer tables are one table, and the raw value crosses unparsed
-///
-/// `slopdesk_terminal::pointer` owns both of libghostty's pointer actions. This is pinned harder
-/// than its size suggests, because EVERY way it breaks is silent: a resize handle showing a hand,
-/// or a pointer hidden with no gesture that brings it back. Nothing fails to compile, nothing
-/// crashes, and `slopdesk-guigate macos` is the only thing that would ever have noticed.
-///
-/// `OSCPointerShape` (34 cases) and `MouseVisibility` existed only so a Swift `switch` had
-/// something to switch over, which made THREE copies of one declaration order — libghostty's
-/// header, the mirror, the table — where any two could drift while compiling. The raw `int32_t`
-/// travels now, and a revived mirror reads like tidying while restoring the drift.
-///
-/// `PointerShapeToken`'s discriminants ARE the wire, so they are spelled with explicit raw values
-/// on both sides and asserted THROUGH the door. A case reordered under implicit numbering is a
-/// cursor swapped for another cursor with nothing to notice it.
-///
-/// The ban's roots are `Sources`, `Tests` and `ThirdParty/ghostty/integration` — the same three the
-/// tree walks. The shell reached the last of those through a bare `ThirdParty/`, which read all 8
-/// GB of the vendored checkout through single-threaded grep and cost four minutes of a thirty-nine
-/// second gate; here it is not a scope decision at all, because the walk never held the rest.
-///
-/// BREAK-TEST: deleted `slopdesk_pointer_mouse_visible` from the visibility face ⇒ FAIL "stopped
-/// asking the door". Separately restored `enum OSCPointerShape` under Sources/ ⇒ FAIL "a Swift
-/// mirror of a libghostty pointer enum is back". Separately dropped `= 0` from `case arrow` ⇒ FAIL
-/// "stopped pinning its raw values". All three restored from /tmp; PASS.
-#[must_use]
-pub fn the_pointer_tables_are_one_table(tree: &Tree) -> Report {
-    check_all(tree, &[
-        Claim::Matches {
-            path: POINTER_SHAPE,
-            pattern: r"slopdesk_pointer_",
-            message: "PointerShapeMapping stopped asking the door — a pointer table decided in Swift is a \
-                      second table, and every way it breaks is silent (docs/56, increment 50)",
-        },
-        Claim::Matches {
-            path: POINTER_VISIBILITY,
-            pattern: r"slopdesk_pointer_",
-            message: "MouseVisibilityMapping stopped asking the door — a pointer hidden with no gesture \
-                      that brings it back fails nothing and crashes nothing (docs/56, increment 50)",
-        },
-        Claim::NoneUnder {
-            roots: SWIFT_ROOTS_AND_GHOSTTY,
-            extensions: SWIFT,
-            pattern: r"enum OSCPointerShape|enum MouseVisibility[^M]",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "a Swift mirror of a libghostty pointer enum is back — the raw int crosses now, and a \
-                      mirror restores three copies of one declaration order where any two could drift while \
-                      compiling (docs/56, increment 50): {files}",
-        },
-        Claim::Matches {
-            path: POINTER_SHAPE,
-            pattern: r"case arrow = 0",
-            message: "PointerShapeToken stopped pinning its raw values — its discriminants ARE the wire, \
-                      and a case reordered under implicit numbering is a cursor swapped for another cursor \
-                      (docs/56, increment 50)",
-        },
-        Claim::Matches {
-            path: POINTER_DOOR,
-            pattern: r"the_supported_shapes_cross_as_the_discriminants_swift_is_pinned_to",
-            message: "the door's discriminant test is gone — Swift's enum and Rust's can now renumber apart \
-                      (docs/56, increment 50)",
-        },
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -572,15 +496,6 @@ mod tests {
             ),
             (super::GIT_STATUS, "pub fn of_path(path: &str) -> Payload {}\n"),
             (super::GIT_PORCELAIN, PORCELAIN_BODY),
-            (super::POINTER_SHAPE, POINTER_SHAPE_BODY),
-            (
-                super::POINTER_VISIBILITY,
-                "func visible(_ raw: Int32) -> Bool {\n    slopdesk_pointer_mouse_visible(raw)\n}\n",
-            ),
-            (
-                super::POINTER_DOOR,
-                "#[test]\nfn the_supported_shapes_cross_as_the_discriminants_swift_is_pinned_to() {}\n",
-            ),
             ("Package.swift", "let package = Package(name: \"SlopDesk\")\n"),
         ] {
             fixture.write(path, body);
@@ -623,9 +538,6 @@ mod tests {
 
     const PORCELAIN_BODY: &str = "pub const fn nibble(character: char) -> u8 {\n    0\n}\npub const fn \
                                   pack(x: char, y: char) -> u8 {\n    (nibble(x) << 4) | nibble(y)\n}\n";
-    const POINTER_SHAPE_BODY: &str = "enum PointerShapeToken: Int32 {\n    case arrow = 0\n    case text = \
-                                      1\n}\nfunc token(_ raw: Int32) -> PointerShapeToken? {\n    \
-                                      PointerShapeToken(rawValue: slopdesk_pointer_shape_token(raw))\n}\n";
 
     /// A clean error is what makes this drift silent, so the SET is what is compared.
     #[test]
@@ -810,45 +722,6 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("back outside slopdesk-git::porcelain")),
-            "{report:?}"
-        );
-    }
-
-    #[test]
-    fn a_revived_pointer_mirror_is_red() {
-        let fixture = Fixture::new("pointer-mirror");
-        clis(&fixture);
-        assert!(super::the_pointer_tables_are_one_table(&fixture.tree()).is_clean());
-
-        fixture.write(
-            "Sources/SlopDeskWorkspaceCore/Terminal/OSCPointerShape.swift",
-            "enum OSCPointerShape: String {\n    case arrow\n}\n",
-        );
-        let report = super::the_pointer_tables_are_one_table(&fixture.tree());
-        assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("mirror of a libghostty pointer enum")),
-            "{report:?}"
-        );
-    }
-
-    /// Implicit numbering is a cursor swapped for another cursor with nothing to notice it.
-    #[test]
-    fn an_unpinned_discriminant_is_red() {
-        let fixture = Fixture::new("pointer-raw");
-        clis(&fixture);
-        fixture.write(
-            super::POINTER_SHAPE,
-            &POINTER_SHAPE_BODY.replace("case arrow = 0", "case arrow"),
-        );
-        let report = super::the_pointer_tables_are_one_table(&fixture.tree());
-        assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("stopped pinning its raw values")),
             "{report:?}"
         );
     }

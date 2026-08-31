@@ -7,8 +7,8 @@ import CSlopDeskFFI
 ///
 /// The rule is `slopdesk_terminal::surface::prompt_edit_byte`, including the readline undo byte itself, why
 /// redo is recognised and deliberately unanswered, and why the prompt zone is the only place the gesture is
-/// intercepted at all. The GUI surface (`GhosttyTerminalView`, compile-only behind
-/// `#if canImport(CGhostty)`) is the thin actuator that maps the `NSEvent` → these flags and sends the bytes.
+/// intercepted at all. The GUI surface (`MacTerminalRendererView` / `PhoneTerminalRendererView`) is the
+/// thin actuator that maps the `NSEvent` → these flags and sends the bytes.
 public enum PromptEditPolicy {
     /// Decide what bytes a prompt-edit gesture should send to the host PTY.
     ///

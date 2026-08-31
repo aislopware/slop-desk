@@ -5,7 +5,7 @@ import XCTest
 /// assignment, the type-to-filter resolve, and hintable-target detection (links via the shared detector, plus
 /// git-hash / IPv4 / user `hint-pattern` forms with overlap dedupe + cell-accurate columns).
 ///
-/// Headless + hang-safe: no `GhosttySurface`, no window server — the assigner is a deterministic text scan.
+/// Headless + hang-safe: no `TerminalSurfaceDriver`, no window server — the assigner is a deterministic text scan.
 /// Revert-to-confirm-fail: each assertion targets behaviour that breaks if the corresponding rule is removed.
 final class HintLabelAssignerTests: XCTestCase {
     // MARK: - Label assignment

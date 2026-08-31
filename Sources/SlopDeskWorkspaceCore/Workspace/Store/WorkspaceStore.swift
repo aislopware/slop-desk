@@ -1632,7 +1632,7 @@ public final class WorkspaceStore {
 
     /// SESSION-RETENTION LRU: the most-recent-first session ids whose pane subtrees the
     /// keep-mounted compositor keeps MOUNTED (at `opacity 0`) even while inactive — so an A→B→A round-trip
-    /// does NOT dismantle A's ghostty surfaces and repaint them from the lossy 256 KB ring (dropped prompts
+    /// does NOT dismantle A's terminal surfaces and repaint them from the lossy 256 KB ring (dropped prompts
     /// on unfocused panes, blank alt-screen TUIs). Capped at ``retainedSessionCap`` (active + previous;
     /// LRU-evicted beyond) so we never hold every session's live Metal surface on-window. `SplitContainer`
     /// renders a hidden layer for each retained session's tabs; retained-but-inactive sessions have no active
@@ -1872,7 +1872,7 @@ public final class WorkspaceStore {
     public private(set) var globalSearchCaseSensitive = false
     public private(set) var globalSearchRegex = false
 
-    /// The per-pane scrollback sources for the OPEN ⇧⌘F overlay, mirrored across the libghostty seam
+    /// The per-pane scrollback sources for the OPEN ⇧⌘F overlay, mirrored across the libghostty-vt seam
     /// ONCE per overlay-open (``beginGlobalSearchSession()``) and reused for every keystroke's in-memory match
     /// pass (``runGlobalSearch(query:caseSensitive:isRegex:)``) — so typing does NOT re-snapshot the full
     /// scrollback of every pane across the seam on each character. `nil` while the overlay is closed (dropped
@@ -2574,7 +2574,7 @@ public final class WorkspaceStore {
         terminal?.onContextMenuSplit = { [weak self] horizontal in
             self?.splitFromContextMenu(paneID: id, horizontal: horizontal)
         }
-        // Hand the libghostty surface its PURE keybinding interceptor (the override-aware single-chord
+        // Hand the terminal surface its PURE keybinding interceptor (the override-aware single-chord
         // table). The helper lives in WorkspaceStore+Keybinding so this body stays under the lint ceiling
         // (same pattern as `seedBlockBookmarks`).
         wireKeyInterceptor(terminal: terminal)
@@ -3195,7 +3195,7 @@ public extension WorkspaceStore {
         globalSearchRegex = isRegex
         // Re-run only the IN-MEMORY match pass over the per-overlay scrollback snapshot (gathered ONCE on
         // open by ``beginGlobalSearchSession()``), so a keystroke does not re-mirror every pane's scrollback
-        // across the libghostty seam. Fall back to a fresh snapshot when no overlay session is active
+        // across the libghostty-vt seam. Fall back to a fresh snapshot when no overlay session is active
         // (defensive — e.g. a direct call from a test or the seed path before begin); the results are
         // identical either way.
         let sources = globalSearchSourceCache ?? collectGlobalSearchSources()
@@ -3217,7 +3217,7 @@ public extension WorkspaceStore {
         globalSearchSourceCache = nil
     }
 
-    /// Crosses the libghostty seam to mirror EVERY live terminal pane's scrollback (session → tab → pane order)
+    /// Crosses the libghostty-vt seam to mirror EVERY live terminal pane's scrollback (session → tab → pane order)
     /// into a ``GlobalSearchSource`` (group title = the pane's spec title, else its last-known shell title, else
     /// "Tab"). The ONLY cross-seam step in Global Search; ``runGlobalSearch`` caches its result per overlay-open
     /// so keystrokes don't repeat it. Non-terminal (video) and never-connected panes contribute no lines and so
@@ -3236,7 +3236,7 @@ public extension WorkspaceStore {
                         sessionID: session.id,
                         tabID: tab.id,
                         groupTitle: title,
-                        lines: model.searchScrollbackLines(),
+                        lines: model.searchScrollbackLines().text,
                     ))
                 }
             }
@@ -3246,7 +3246,7 @@ public extension WorkspaceStore {
 
     /// Jumps to a Global Search hit — selects its session, its tab, and focuses its pane
     /// (``focusPaneTree(_:)`` resolves session+tab+pane together), then RE-ARMS the pane's in-surface
-    /// libghostty search near the hit so the amber highlight + scroll-to-match land on the result.
+    /// libghostty-vt search near the hit so the amber highlight + scroll-to-match land on the result.
     /// A no-op if the pane is gone.
     func jumpToGlobalSearchResult(_ hit: GlobalSearchHit) {
         guard tree.contains(hit.paneID) else { return }
@@ -3263,10 +3263,9 @@ public extension WorkspaceStore {
             query: globalSearchQuery,
             caseSensitive: globalSearchCaseSensitive,
             isRegex: globalSearchRegex,
-            // Map the logical (unwrapped) hit line to the physical grid row `scroll_to_row` addresses — the
-            // mirror collapses soft-wrapped rows, so a heavily-wrapped pane would otherwise land rows too high.
+            // The mirror the row is read OFF: it collapses soft-wrapped rows, so a heavily-wrapped pane
+            // would otherwise land rows too high — and each entry carries the screen row the engine put it on.
             lines: model.searchScrollbackLines(),
-            columns: model.searchGridColumns(),
         )
         for action in actions {
             model.performSearchSurfaceAction(action)

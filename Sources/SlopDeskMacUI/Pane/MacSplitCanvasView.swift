@@ -3,7 +3,7 @@
 //
 // KEEP-ALL-MOUNTED is the invariant the whole file exists to hold. Every tab of every RETAINED session
 // stays mounted at `alphaValue = 0`, never torn down, because unmounting an inactive tab's subtree
-// kills its libghostty surface — and switching back would then show a soft-reset screen rebuilt from
+// kills its terminal surface — and switching back would then show a soft-reset screen rebuilt from
 // the lossy ring replay instead of that pane's CURRENT one. The same rule covers a zoom: a zoomed tab
 // still emits every sibling as a hidden compositor leaf at its un-zoomed rect, so un-zoom is a pure
 // visibility flip.
@@ -266,7 +266,7 @@ private final class MacTabLayer: NSView {
     }
 
     /// A pane leaving the mounted set: its renderer comes down FIRST, then the view detaches. The one
-    /// place a pane's libghostty surface / video session may be destroyed.
+    /// place a pane's terminal surface / video session may be destroyed.
     private func unmount(_ pane: MacPaneContainer) {
         pane.teardown()
         pane.removeFromSuperview()

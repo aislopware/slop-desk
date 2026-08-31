@@ -74,8 +74,8 @@ package final class CommandNavigatorChrome {
 /// so a renderer observes THEM (each is `@Observable` where it needs to be) rather than this object.
 @MainActor
 package final class TerminalPaneWiring {
-    /// The in-pane ⌘F find bar's view-model (pure `TerminalSearchController` + the libghostty
-    /// `search:` passthrough), wired to the pane's `onRequestFind*` callbacks.
+    /// The in-pane ⌘F find bar's view-model (pure `TerminalSearchController` + the terminal surface's
+    /// own `search:` passthrough), wired to the pane's `onRequestFind*` callbacks.
     package let findBar: TerminalFindBarModel
 
     /// The per-pane macOS Secure Keyboard Entry actuator. Driven from the model's `onHostEchoChanged`

@@ -126,7 +126,7 @@ final class GlobalSearchPresentationTests: XCTestCase {
 
     /// The cross-tab search offers two of the find bar's three, in the find bar's own order. Whole
     /// word is missing on purpose: this search runs over the scrollback mirror rather than over
-    /// libghostty's buffer, and the two do not agree about where a word ends.
+    /// libghostty-vt's buffer, and the two do not agree about where a word ends.
     func testTheCrossTabSearchOffersTwoOfTheThreePills() {
         XCTAssertEqual(FindModePill.globalSearch, [.caseSensitive, .regex])
         XCTAssertFalse(FindModePill.globalSearch.contains(.wholeWord))

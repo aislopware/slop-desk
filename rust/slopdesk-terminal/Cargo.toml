@@ -53,11 +53,29 @@ slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 # This used to be `slopdesk-workspace`, which meant taking 25,000 lines of client domain — Settings
 # rows, phone keys, git status lines — to reach 110 lines of quoting. `slopdesk-ids` is the leaf
 # those 110 lines moved to, and it has no dependencies of its own.
+#
+# `shell_quoting::shlex_quoted` is the second caller: a completion candidate for `my file.txt` has to
+# insert as `'my file.txt'` or the shell reads two arguments. Same rule, same door.
 slopdesk-ids = { path = "../slopdesk-ids" }
+
+# `score`/`rank` — fzf's `FuzzyMatchV2`, which ranks the command prompt's completion candidates
+# (`prompt::complete`). Taken rather than re-derived because the ORDER is the product: that crate's
+# own header records that four search surfaces already share it so `gc` puts `getConfig` above
+# `gymnastic` everywhere, and a prompt that ranked its own way would be the fifth surface disagreeing
+# with the other four. It is a leaf with no dependencies of its own, under the same
+# `forbid(unsafe_code)` + no-panic contract as this crate, so it is a sibling path dep of exactly the
+# shape the header above already sanctions — not a supply chain.
+slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
 
 # `prompt_flash`'s cell count is a GRAPHEME count, because the Swift it replaces measured
 # `String.count` and the flash's width must not change under it. Scalars would over-count every
 # combining mark and every emoji sequence a prompt puts in front of the cursor.
+#
+# `prompt::buffer` then takes two more of its doors, and neither has an in-house substitute worth
+# writing: `GraphemeCursor` steps a caret LOCALLY, so an arrow key costs one cluster rather than one
+# re-index of a 10 MB paste, and `split_word_bound_indices` is UAX #29's word segmentation, which is
+# what ⌥→ means in a text field. (`vimotion`'s word classes are vim's, over display cells — a
+# different contract for a different caller, not a second copy of this one.)
 unicode-segmentation = "1"
 
 # Every byte of terminal output passes through the tracker, so this is a hot-path library — the same

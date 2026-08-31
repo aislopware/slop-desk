@@ -133,6 +133,15 @@ slopdesk-ids = { path = "../slopdesk-ids" }
 slopdesk-settings = { path = "../slopdesk-settings" }
 slopdesk-codepanel = { path = "../slopdesk-codepanel" }
 slopdesk-tree = { path = "../slopdesk-tree" }
+# The terminal engine and the arithmetic over its frames. UNGATED even though the only door that
+# names them — `terminal_surface` — is Apple-only, and that is deliberate rather than an oversight:
+# both are `forbid(unsafe_code)` with no platform edge at all, and gating them would put the
+# BINDINGS PIN (`slopdesk-vterm`'s `Cargo.toml` holds the `libghostty-vt` `rev`) behind a `cfg`.
+# `slopdesk-gate ffi` derives its content stamp by walking this manifest's `path` edges (`docs/68`
+# §10.2), so a gated edge is a stamp that stays warm across an engine bump on whichever slice the
+# gate happened not to resolve. A direct, ungated edge is what makes the pin an input on every one.
+slopdesk-vterm = { path = "../slopdesk-vterm" }
+slopdesk-termrender = { path = "../slopdesk-termrender" }
 
 # The ONE `slopdesk-apple-*` crate that is not macOS-gated, and the only place in this graph where
 # the family reaches an iOS slice. It wraps VideoToolbox, of which the two halves have opposite
@@ -154,6 +163,20 @@ slopdesk-apple-audio = { path = "../slopdesk-apple-audio" }
 # iOS — so nothing here is gated INSIDE the header's `TARGET_OS_OSX` region. The bijection the other
 # two carry does not apply: there is no half that must be absent on a slice.
 slopdesk-apple-pasteboard = { path = "../slopdesk-apple-pasteboard" }
+# The terminal surface's two framework areas, and the FOURTH and FIFTH members of the family to
+# reach an iOS slice — for `slopdesk-apple-pasteboard`'s reason, not VideoToolbox's. Both halves of
+# the terminal surface have the SAME audience: every client draws a terminal, and it draws it the
+# same way on both slices. So neither crate gates a half of itself internally, nothing here sits
+# inside the header's `TARGET_OS_OSX` region, and `slopdesk-gate ffi`'s present-here/absent-there
+# bijection does not apply — there is no half that must be missing anywhere.
+#
+# They are gated at all only because Metal and Core Text are Apple frameworks. Everything these two
+# crates are handed is decided by `slopdesk-termrender` above, which is ungated and
+# `forbid(unsafe_code)`: WHERE a cell goes, WHICH atlas a glyph came from, how wide an underline is.
+# That split is `docs/68` §10.1's, and it is why a Linux slice losing these two would lose the
+# effects and none of the decisions.
+slopdesk-apple-metal = { path = "../slopdesk-apple-metal" }
+slopdesk-apple-text = { path = "../slopdesk-apple-text" }
 # The client's speakers. Not `apple-*` and not gated to Apple by anything but this edge: it is
 # `forbid(unsafe_code)` over `cpal`, which is why the playback path — the one real-time deadline in
 # the client — carries no hand-written `unsafe` at all. Reached only through the player doors.

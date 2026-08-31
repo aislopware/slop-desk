@@ -22,7 +22,9 @@
 //! Two of them stood here — one for a string, one for a scalar the caller was already holding —
 //! because three Swift callers walked a line cell by cell. All three moved: vi-style line motion
 //! to `slopdesk_terminal::vimotion`, the hint assigner's column mapping to the hint scan, and the
-//! scrollback wrap map to `slopdesk_terminal::wrap_map`. What is left of them is
+//! scrollback wrap map nowhere at all — the terminal engine reports each logical line's real screen
+//! rows (`slopdesk_term_surface_logical_lines`), so estimating them from a width was deleted rather
+//! than moved. What is left of the two width doors is
 //! `slopdesk_terminal::link::{scalar_cells, text_cells}`, which those modules call in-crate with
 //! no crossing at all — so the doors were deleted rather than kept as a face nobody dials.
 

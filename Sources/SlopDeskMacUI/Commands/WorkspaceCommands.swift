@@ -13,7 +13,7 @@
 // monitor (`WorkspaceKeyDispatcher`) OWNS chord dispatch — including the multi-key tmux/zellij prefix
 // that a key equivalent cannot express. A menu shortcut would (a) DOUBLE-FIRE alongside the monitor
 // for a single-chord binding, and (b) SWALLOW a prefix sequence's follow-up key before the terminal
-// first responder (libghostty) sees it — both wrong. AppKit resolves key equivalents BEFORE the
+// first responder (`MacTerminalRendererView`) sees it — both wrong. AppKit resolves key equivalents BEFORE the
 // responder chain and before an application-scoped monitor sees the event, so this is not a
 // preference. The glyph still SHOWS on each row (appended to the title as text, never as
 // `keyEquivalent`) so the menu stays a faithful cheat sheet without binding the chord. See the

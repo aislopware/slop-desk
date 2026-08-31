@@ -57,7 +57,7 @@ public enum FindModePill: String, CaseIterable, Sendable {
     public var underlined: Bool { Self.pills[self]?.underlined ?? false }
 
     /// The two the CROSS-TAB search offers. Whole-word is the in-pane find bar's alone: the global
-    /// search runs over a scrollback mirror rather than over libghostty's own buffer, and the two
+    /// search runs over a scrollback mirror rather than over the terminal surface's own live grid, and the two
     /// engines do not agree about what a word boundary is.
     public static let globalSearch: [Self] = offered(global: true)
 

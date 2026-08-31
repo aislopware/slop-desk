@@ -19,13 +19,13 @@
 // ⚠️ THE CLIPBOARD QUESTIONS ARE TOPMOST, and stay an in-window layer rather than a presented sheet.
 // They are raised by a remote PROGRAM rather than summoned, so they may not be covered by a card the
 // user opened, and the system's modal stack DECLINES a second presentation — a declined presentation
-// here would leave libghostty holding the request forever.
+// here would leave the request queued and unanswered forever.
 //
 // ⚠️ THE MAILBOX DRAIN LIVES IN ``ClipboardConfirmCardView`` AND IS MOUNTED HERE, which is what makes
 // it real: `ClipboardConfirmRequests.shared` is filled by the embedder's OSC 52 callback and was
 // emptied by the deleted `ClipboardConfirmCard`, so between `3f11c6e6` and this mount a
-// `clipboard-read = ask` profile on iOS filed a question nobody could answer — libghostty held the
-// request and the paste never completed. The card arms its reader in `init`, so CONSTRUCTING it is
+// `clipboard-read = ask` profile on iOS filed a question nobody could answer — the deleted fork's
+// embedder held the request and the paste never completed. The card arms its reader in `init`, so CONSTRUCTING it is
 // the fix; a card that is built but never added to a window is the same hang with more code.
 
 #if os(iOS)

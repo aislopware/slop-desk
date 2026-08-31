@@ -8,13 +8,13 @@ import XCTest
 /// ``WorkspaceStore/scrollActivePane(_:)``), observed on a ``RecordingTerminalPaneSession`` that carries a
 /// REAL ``TerminalViewModel`` whose `surface` is a recording ``TerminalSurfaceActions``.
 ///
-/// The SCROLL hooks pin the EXACT libghostty named binding action (`scroll_page_fractional:-0.9`,
+/// The SCROLL hooks pin the EXACT libghostty-vt named binding action (`scroll_page_fractional:-0.9`,
 /// `scroll_to_top`, …) — a swapped page sign would fail here. The FONT hooks no longer touch the
 /// surface: they route ⌘±/⌘0 through the ``WorkspaceStore/onFontSizeStep`` seam to the single source of truth
 /// (`PreferencesStore.terminal.fontSize`, the Settings "Size" stepper's value), so they are pinned on the
 /// seam + the persisted size. They drive the store methods DIRECTLY (the registry routing is pinned elsewhere).
 ///
-/// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no `GhosttySurface` /
+/// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no `TerminalSurfaceDriver` /
 /// VideoToolbox / Metal / SCStream) — the hang-safety rule holds.
 @MainActor
 final class FontScrollHookTests: XCTestCase {
@@ -52,7 +52,7 @@ final class FontScrollHookTests: XCTestCase {
     }
 
     /// The three font hooks route ⌘=/⌘-/⌘0 through the ``WorkspaceStore/onFontSizeStep`` seam, in call order —
-    /// NOT libghostty's internal `increase_font_size` (which the Settings stepper can't see → the desync this
+    /// NOT libghostty-vt's internal `increase_font_size` (which the Settings stepper can't see → the desync this
     /// fixes). The surface receives NO font action now: the font size is driven by the single source of truth
     /// (`PreferencesStore.terminal.fontSize`) instead. Revert-to-confirm-fail vs the old surface-action path.
     func testFontHooksRouteThroughTheFontSizeSeamInOrder() throws {
@@ -125,13 +125,13 @@ final class FontScrollHookTests: XCTestCase {
         )
     }
 
-    /// The ``ScrollAction/libghosttyAction`` mapping is the single source of truth — pin it independently of
+    /// The ``ScrollAction/wire`` mapping is the single source of truth — pin it independently of
     /// the store so a refactor of the store hook can't silently re-map the intent.
     func testScrollActionMappingIsStable() {
-        XCTAssertEqual(ScrollAction.pageUp.libghosttyAction, "scroll_page_fractional:-0.9")
-        XCTAssertEqual(ScrollAction.pageDown.libghosttyAction, "scroll_page_fractional:0.9")
-        XCTAssertEqual(ScrollAction.top.libghosttyAction, "scroll_to_top")
-        XCTAssertEqual(ScrollAction.bottom.libghosttyAction, "scroll_to_bottom")
+        XCTAssertEqual(ScrollAction.pageUp.wire, "scroll_page_fractional:-0.9")
+        XCTAssertEqual(ScrollAction.pageDown.wire, "scroll_page_fractional:0.9")
+        XCTAssertEqual(ScrollAction.top.wire, "scroll_to_top")
+        XCTAssertEqual(ScrollAction.bottom.wire, "scroll_to_bottom")
     }
 
     // MARK: - Graceful no-op (non-terminal active pane)

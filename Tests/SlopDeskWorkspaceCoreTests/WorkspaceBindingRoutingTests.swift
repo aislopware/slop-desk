@@ -6,7 +6,7 @@ import XCTest
 /// carries a REAL ``TerminalViewModel`` (so the view-focus callbacks are exercised end-to-end WITHOUT a
 /// socket or a real renderer).
 ///
-/// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no GhosttySurface /
+/// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no `TerminalSurfaceDriver` /
 /// VideoToolbox / Metal / SCStream) — the hang-safety rule holds.
 @MainActor
 final class WorkspaceBindingRoutingTests: XCTestCase {

@@ -15,8 +15,8 @@ public enum CutAction: Equatable, Sendable {
     case copyAndDelete
 }
 
-/// The embedder half of the terminal **Cut** (⌘X). The GUI surface (`GhosttyTerminalView`, compile-only
-/// behind `#if canImport(CGhostty)`) is the thin actuator: it performs the `copy_to_clipboard` binding
+/// The embedder half of the terminal **Cut** (⌘X). The GUI surface (`MacTerminalRendererView` /
+/// `PhoneTerminalRendererView`) is the thin actuator: it performs the `copy_to_clipboard` binding
 /// action for a non-``CutAction/none`` decision, and on ``CutAction/copyAndDelete`` sends
 /// ``deleteCount(selection:selectionEndsAtCursor:)`` DEL (`0x7F`) bytes.
 ///
@@ -27,7 +27,7 @@ public enum CutSelectionPolicy {
     /// Decide what a Cut (⌘X / Edit ▸ Cut) should do.
     ///
     /// - Parameters:
-    ///   - hasSelection: whether the surface currently holds a text selection (`GhosttySurface.hasSelection()`).
+    ///   - hasSelection: whether the surface currently holds a text selection (`TerminalSurfaceActions.hasSelection()`).
     ///   - isAlternateScreen: whether a full-screen / foreground program owns the screen (DECSET 1049/47/1047
     ///     via the client `TerminalModeTracker`). `true` ⇒ copy only, never delete.
     ///   - isPromptZone: whether the terminal is at an EDITABLE shell prompt (OSC-133 idle + connected) — the
@@ -43,7 +43,7 @@ public enum CutSelectionPolicy {
     /// The number of DEL (`0x7F`) bytes the GUI actuator sends for the delete half of a
     /// ``CutAction/copyAndDelete``; `0` degrades the cut to a copy.
     ///
-    /// `selectionEndsAtCursor` is the documented seam for a FUTURE libghostty geometry API; until then the
+    /// `selectionEndsAtCursor` is the documented seam for a FUTURE libghostty-vt geometry API; until then the
     /// GUI passes `false` and the delete half is dormant.
     public static func deleteCount(selection: String, selectionEndsAtCursor: Bool) -> Int {
         var selection = selection

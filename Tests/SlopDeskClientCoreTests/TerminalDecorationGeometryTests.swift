@@ -9,11 +9,10 @@
 // The family's law is what these mostly assert: ABSENT, never wrong. Every input can legitimately be
 // missing, and in each case the honest answer is that nothing is drawn.
 //
-// Headless — no surface, no libghostty, no window (CLAUDE.md rule #6). Cases are hand-enumerated
+// Headless — no surface, no libghostty-vt, no window (CLAUDE.md rule #6). Cases are hand-enumerated
 // rather than derived from the expressions under test, so none of this is tautological.
 
 import CoreGraphics
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientCore

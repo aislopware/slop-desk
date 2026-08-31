@@ -185,7 +185,6 @@ pub mod paste_menu;
 pub mod paste_safety;
 pub mod peek_reply;
 pub mod phone_key;
-pub mod pointer_shape;
 pub mod preference;
 pub mod present_queue;
 pub mod prompt_flash;
@@ -226,6 +225,13 @@ pub mod swipe_recognizer;
 pub mod terminal_config;
 pub mod terminal_controls;
 pub mod terminal_mode;
+// The terminal surface itself, and the one door in this shim that owns a live object made of four
+// crates rather than marshalling a pure function. Gated to Apple because two of those crates are
+// Metal and Core Text; the two that DECIDE anything are ungated and `forbid(unsafe_code)`, which is
+// `docs/68` §10.1's split. Not inside the header's `TARGET_OS_OSX` region — every client draws a
+// terminal, and both slices draw it the same way.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod terminal_surface;
 pub mod toast;
 pub mod trendline;
 pub mod upload_progress;
@@ -252,7 +258,6 @@ pub mod workspace_liveness;
 pub mod workspace_mirror;
 pub mod workspace_state_file;
 pub mod workspace_templates;
-pub mod wrap_map;
 
 use std::ffi::c_uchar;
 

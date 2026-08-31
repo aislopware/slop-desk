@@ -2,8 +2,8 @@
 //
 // Three questions share one shape and one surface: an UNSAFE PASTE (⌘V / a middle-click of a payload
 // `slopdesk_terminal::paste` flagged), an OSC-52 clipboard READ (`clipboard-read = ask`) and an OSC-52
-// clipboard WRITE (`clipboard-write = ask`). Each arrives at the libghostty embedder as an approve/deny
-// decision the EMBEDDER owes an answer to, and each is only ever a USER's answer — on the Mac through
+// clipboard WRITE (`clipboard-write = ask`). Each arrives through the terminal surface's pull-only
+// drain as an approve/deny decision the RENDERER owes an answer to, and each is only ever a USER's answer — on the Mac through
 // `SlopDeskMacUI/PasteProtectionSheet`'s `NSAlert`, on the phone through `ClipboardConfirmCard`.
 //
 // ⚠️ NOTHING HERE IS A SENTENCE OF ITS OWN, AND NOTHING HERE IS A DECISION EITHER. Every word comes

@@ -16,7 +16,7 @@
 // Plain separate `*` (never `addingProduct`/`fma`), per CLAUDE.md §2.
 
 import CoreGraphics
-import SlopDeskTerminal
+import SlopDeskWorkspaceCore
 import XCTest
 
 final class TerminalLetterboxPlacementTests: XCTestCase {

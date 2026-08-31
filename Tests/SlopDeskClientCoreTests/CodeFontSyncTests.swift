@@ -88,7 +88,7 @@ final class CodeFontSyncTests: XCTestCase {
     func testAnUnresolvableNameIsNotTheSubstituteFacesRatio() {
         let substitute = CodeFontSync.installedFontRatio(family: "Definitely Not A Font 9001", size: 13)
         XCTAssertNil(substitute)
-        // ...and the spec then carries the embedded face's ratio, which is what ghostty renders.
+        // ...and the spec then carries the embedded face's ratio, which is what libghostty-vt renders.
         let spec = CodeFontSync.spec(terminal: prefs(family: "Definitely Not A Font 9001"))
         XCTAssertEqual(spec.lineHeight, CodeFontSync.embeddedMonoRatio)
     }

@@ -118,8 +118,8 @@ pub fn design_tokens_are_not_bypassed(tree: &Tree) -> Report {
 /// app-level `NSEvent` `.keyDown` monitor (`WorkspaceKeyDispatcher`) owns dispatch — including the
 /// multi-key tmux/zellij prefix a `.keyboardShortcut` cannot express — so a shortcut on a menu item
 /// breaks it two ways at once: it DOUBLE-FIRES alongside the monitor for a single chord, and it
-/// SWALLOWS a prefix sequence's follow-up key before the terminal first responder (libghostty) ever
-/// sees it. Neither shows up as a build failure; both show up as a key that does the wrong thing.
+/// SWALLOWS a prefix sequence's follow-up key before the terminal's first responder ever sees it.
+/// Neither shows up as a build failure; both show up as a key that does the wrong thing.
 ///
 /// The glyph goes on as a hint `Text` instead — see `menuTitle(for:)`. The file's own prose names
 /// the banned token, which is why this reads [`View::Code`] rather than the raw file.
@@ -139,7 +139,7 @@ pub fn the_menu_bar_owns_no_chord(tree: &Tree) -> Report {
             view: View::Code,
             message: "`.keyboardShortcut(` is back in WorkspaceCommands.swift — the menu MUST stay \
                       shortcut-less. WorkspaceKeyDispatcher owns chord dispatch; a menu shortcut \
-                      double-fires alongside it and swallows a multi-key prefix tail before libghostty. \
+                      double-fires alongside it and swallows a multi-key prefix tail before the terminal. \
                       Append the glyph as a hint Text instead (menuTitle(for:)) (docs/DECISIONS.md, E1 menu \
                       bar)",
         },

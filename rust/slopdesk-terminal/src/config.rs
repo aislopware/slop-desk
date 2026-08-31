@@ -1,31 +1,32 @@
-//! The libghostty config text one set of terminal preferences spells.
+//! The `ghostty` config-file text one set of terminal preferences spells.
 //!
-//! The client's terminal surface is configured by handing libghostty the same newline-separated
-//! `key = value` text a `~/.config/ghostty/config` file holds. This builds that text: every rule
-//! about which key a preference maps to, which value is skipped rather than emitted blank, and what
-//! ORDER the lines arrive in lives here, because the order is load-bearing — `background` after
-//! `theme` is what makes the explicit colour win, and the palette after `foreground` is what makes
-//! the theme's sixteen entries win over both.
+//! Upstream Ghostty's `key = value` config vocabulary is one this project deliberately still speaks
+//! — the same newline-separated syntax a `~/.config/ghostty/config` file holds. This builds that
+//! text: every rule about which key a preference maps to, which value is skipped rather than
+//! emitted blank, and what ORDER the lines arrive in lives here, because the order is load-bearing
+//! — `background` after `theme` is what makes the explicit colour win, and the palette after
+//! `foreground` is what makes the theme's sixteen entries win over both.
 //!
 //! ## What the caller resolves and what this resolves
 //! Preferences are enums on the near side, bound to a UI and to persistence, and they cross as the
 //! raw values they persist as — `"primary-only"`, `"macos-like"`, `"block_hollow"`. Turning one of
-//! those into the libghostty key it actuates is this module's job, not the caller's: the near side
-//! hands over what the user picked, and every token that reaches libghostty is written here. An
+//! those into the `ghostty` config key it actuates is this module's job, not the caller's: the near
+//! side hands over what the user picked, and every token this text carries is written here. An
 //! unrecognised raw value takes the branch that emits NOTHING, which is what a preference that
 //! predates or postdates this build should do.
 //!
 //! ## Absent, empty, and zero
 //! An empty family, theme or colour is SKIPPED rather than emitted blank: `font-family =` with
-//! nothing after it clears libghostty's default instead of leaving it alone, so "unset" has to mean
-//! "no line". That is why every optional text field can cross as an empty string — empty already
-//! means absent for all of them. The two fields where absent and present-but-empty would differ are
-//! the cell-height percent, which crosses as an [`Option`], and the control block, which crosses as
-//! one too: a build with no controls is byte-for-byte the build from before controls existed.
+//! nothing after it clears `ghostty`'s own default instead of leaving it alone, so "unset" has to
+//! mean "no line". That is why every optional text field can cross as an empty string — empty
+//! already means absent for all of them. The two fields where absent and present-but-empty would
+//! differ are the cell-height percent, which crosses as an [`Option`], and the control block, which
+//! crosses as one too: a build with no controls is byte-for-byte the build from before controls
+//! existed.
 
 use crate::keybind::trim_config_spaces;
 
-/// The per-line byte estimate that converts the user's "scrollback lines" into libghostty's BYTE
+/// The per-line byte estimate that converts the user's "scrollback lines" into `ghostty`'s BYTE
 /// `scrollback-limit`. Generous, so the user gets at least the lines they asked for.
 pub const BYTES_PER_SCROLLBACK_LINE: i64 = 256;
 
@@ -39,7 +40,7 @@ pub struct FontSettings<'a> {
     /// The primary family. Empty skips the whole family chain, fallbacks included.
     pub family: &'a str,
     /// The fallback families, comma-separated, in order. Each becomes its own repeated
-    /// `font-family` line, because libghostty has no `font-family-fallback` key.
+    /// `font-family` line, because `ghostty` has no `font-family-fallback` key.
     pub fallback: &'a str,
     /// The weight token (`font-style`). Empty emits no line.
     pub weight: &'a str,
@@ -96,7 +97,8 @@ pub struct ColorSettings<'a> {
 /// The cursor half.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CursorSettings<'a> {
-    /// The style token, already a libghostty value (`block`, `block_hollow`, `bar`, `underline`).
+    /// The style token, already a `ghostty` config value (`block`, `block_hollow`, `bar`,
+    /// `underline`).
     pub style: &'a str,
     /// The blink tri-state: `on` and `off` emit the explicit bool, anything else — `default`
     /// included — emits no line and leaves the decision to DEC mode 12.
@@ -111,8 +113,9 @@ pub struct CursorSettings<'a> {
 
 /// The control passthrough block: what the pointer, the clipboard and the selection do.
 ///
-/// Present as a whole or not at all. Every token field is already a libghostty value, resolved by
-/// the caller from a multi-state preference the way [`FontSettings::cell_height_percent`] is.
+/// Present as a whole or not at all. Every token field is already a `ghostty` config value,
+/// resolved by the caller from a multi-state preference the way
+/// [`FontSettings::cell_height_percent`] is.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each is one switch in the Controls pane, and they combine rather than exclude"
@@ -143,13 +146,16 @@ pub struct Controls<'a> {
     pub click_to_move: bool,
     /// A program may capture the mouse.
     pub allow_mouse_capture: bool,
-    /// The `right-click-action` token, which is what makes libghostty own the bare right click.
+    /// The `right-click-action` token. The deleted libghostty fork owned the bare right click end
+    /// to end once this crossed to it; with the fork gone,
+    /// `crate::surface::right_click_intercepts_as_paste` reads the same token directly to make
+    /// the one decision (paste vs. forward) that still needs a pre-click answer.
     pub right_click_action: &'a str,
     /// Shift with an arrow adjusts the selection. Off does not mean "emit nothing" — the vendored
     /// fork binds these by default, so off has to unbind them or the arrows never reach the
     /// program.
     pub shift_arrow_select: bool,
-    /// The scroll multiplier. It drives BOTH axes while keeping libghostty's own 1:3 ratio between
+    /// The scroll multiplier. It drives BOTH axes while keeping `ghostty`'s own 1:3 ratio between
     /// them, so the default multiplier reproduces stock scrolling rather than a third of it.
     pub scroll_multiplier: f64,
     /// The `macos-option-as-alt` token: `false`, `true`, `left` or `right`.
@@ -239,7 +245,7 @@ pub const FACTORY_CURSOR_OPACITY: f64 = 1.0;
 /// The scrollback depth, in lines, a fresh install carries.
 pub const FACTORY_SCROLLBACK_LINES: i64 = 10_000;
 
-/// The libghostty config text for `config`.
+/// The `ghostty` config-file text for `config`.
 ///
 /// The lines arrive in one fixed order — font, then theme and colours, then cursor, then the
 /// structural facts, then keybinds, then controls — and the same input always spells the same
@@ -254,9 +260,10 @@ pub fn config_string(config: &TerminalConfig<'_>) -> String {
         "scrollback-limit = {}",
         scrollback_limit_bytes(config.scrollback_lines)
     ));
-    // SlopDesk detects, highlights and opens links itself, so libghostty's built-in regex matcher
-    // would only draw a second underline under the same span. OSC 8 hyperlinks are a different set
-    // and are untouched. A structural fact about who owns link rendering, not a preference.
+    // SlopDesk detects, highlights and opens links itself (`TerminalLinkDetector`, already Rust per
+    // `docs/68`), so turning on `ghostty`'s own built-in regex link matcher would only draw a
+    // second underline under the same span. OSC 8 hyperlinks are a different set and are
+    // untouched. A structural fact about who owns link rendering, not a preference.
     lines.push("link-url = false".to_owned());
     // A pane's viewport is never an exact multiple of the cell size, and the default dumps the
     // whole remainder on the right and bottom, which reads as an off-centre grid inside an even
@@ -283,7 +290,7 @@ pub const fn scrollback_limit_bytes(lines: i64) -> i64 {
 
 /// Whether `value` is a 6-digit hex colour with no leading `#`.
 ///
-/// libghostty's colour type is RGB with no alpha, so an 8-digit `rrggbbaa` is not a long form of
+/// `ghostty`'s colour type is RGB with no alpha, so an 8-digit `rrggbbaa` is not a long form of
 /// the same colour — it is a value the parser rejects, and one this drops before it can.
 #[must_use]
 pub fn is_valid_hex(value: &str) -> bool {
@@ -359,7 +366,7 @@ fn append_font_parity(lines: &mut Vec<String>, font: &FontSettings<'_>) {
             // Disable synthesis for this style: the flag set seeds from all-true and only the named
             // flag flips, so this is "the primary face or nothing".
             "primary-only" => synthetic.push(format!("no-{kind}")),
-            // Re-assert the default-on synthesis. libghostty would synthesize anyway; the explicit
+            // Re-assert the default-on synthesis. `ghostty` would synthesize anyway; the explicit
             // token makes the choice self-documenting and survives a future default flip.
             "synthetic" => synthetic.push(kind.to_owned()),
             _ => {},
@@ -412,7 +419,7 @@ fn append_colors(lines: &mut Vec<String>, colors: &ColorSettings<'_>) {
 /// The cursor style and its optional blink.
 fn append_cursor(lines: &mut Vec<String>, cursor: &CursorSettings<'_>) {
     lines.push(format!("cursor-style = {}", cursor.style));
-    // libghostty's blink is an optional bool: no line is the third state, and it means the program
+    // `ghostty`'s blink is an optional bool: no line is the third state, and it means the program
     // decides through DEC mode 12.
     match cursor.blink {
         "on" => lines.push("cursor-style-blink = true".to_owned()),
@@ -457,7 +464,7 @@ fn append_controls(lines: &mut Vec<String>, controls: &Controls<'_>, cursor: &Cu
         bool_token(controls.allow_mouse_capture)
     ));
     lines.push(format!("right-click-action = {}", controls.right_click_action));
-    // One multiplier, both axes, and libghostty's own 1:3 ratio between them preserved — the
+    // One multiplier, both axes, and `ghostty`'s own 1:3 ratio between them preserved — the
     // discrete factor is three times the precision one, so the default multiplier reproduces stock
     // wheel scrolling instead of a third of it. A plain multiply, never fused.
     let precision = format_size(controls.scroll_multiplier);
@@ -501,7 +508,7 @@ fn resolved<'a>(over: &'a str, fallback: &'a str) -> &'a str {
     }
 }
 
-/// The `true` / `false` token a libghostty boolean takes.
+/// The `true` / `false` token a `ghostty` config boolean takes.
 const fn bool_token(flag: bool) -> &'static str {
     if flag { "true" } else { "false" }
 }
@@ -510,8 +517,8 @@ const fn bool_token(flag: bool) -> &'static str {
 /// triple-height cell.
 ///
 /// The bounds are IEEE minimum and maximum, which return the other operand when one is NaN, so a
-/// NaN multiplier resolves to the upper bound rather than reaching libghostty as `nan%`. That is
-/// the wanted behaviour HERE, where the question is "what number does a nonsense multiplier
+/// NaN multiplier resolves to the upper bound rather than crossing into the config text as `nan%`.
+/// That is the wanted behaviour HERE, where the question is "what number does a nonsense multiplier
 /// become"; it is the opposite of what an ordered comparison would do, and the opposite of what a
 /// reprojection window wants, where a NaN must pass through rather than be swallowed.
 /// Not `f64::clamp`, which PROPAGATES a NaN input — the one answer this must not give.
@@ -536,7 +543,7 @@ fn format_size(value: f64) -> String {
 /// A number as a settings value spells it: integral values without a decimal point, everything else
 /// as the shortest text that reads back as the same number.
 ///
-/// One spelling, two limits. The libghostty config text and the `SLOPDESK_*` env overlay ask the
+/// One spelling, two limits. The `ghostty` config text and the `SLOPDESK_*` env overlay ask the
 /// same question — "what does a user type for this number" — and answer it identically inside their
 /// own range; only where an integer stops being written as one do they differ, so the limit is the
 /// argument and the rule is not written twice.

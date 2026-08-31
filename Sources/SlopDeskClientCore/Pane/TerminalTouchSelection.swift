@@ -2,22 +2,22 @@
 //
 // The Mac selects terminal text with a pointer: a press starts a selection, motion extends it, a release
 // leaves it standing, and a right-click asks what to do with it. A phone has none of those events — a touch
-// is ambiguous until it has lasted long enough to say what it is — so the phone's half of the libghostty
-// embedder (`ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`, the `#elseif os(iOS)`
-// block) turns a LONG PRESS into that same press/motion/release triple. libghostty owns everything after
-// that: the selection state, its painting, the granularity, and the text extraction — exactly as on the Mac,
-// where the AppKit view also only forwards.
+// is ambiguous until it has lasted long enough to say what it is — so the phone's half of the renderer view
+// (`Sources/SlopDeskTerminal/`, the `#elseif canImport(UIKit)` block) turns a LONG PRESS into that same
+// press/motion/release triple. The ENGINE owns everything after that — `rust/slopdesk-vterm`'s `selection`
+// module drives libghostty-vt's own gesture state machine, so the selection state, the granularity and the
+// text extraction are all its, exactly as on the Mac where the AppKit view also only forwards.
 //
-// What is left over is this file: the four numbers and two rules the gesture needs but libghostty cannot
+// What is left over is this file: the four numbers and two rules the gesture needs but the engine cannot
 // answer, which would otherwise be typed into a UIKit view where nothing can reach them. They are kept here
 // rather than beside the recognizer for the reason docs/56 §3 gives — a decision lives below the UI and each
 // half actuates it — and because the Mac's own pointer path will want the same edge ramp the day a trackpad
 // drag on an iPad runs through it.
 //
-// ⚠️ NOTHING HERE MEASURES A CELL. A touch point goes to libghostty as POINTS (`sendMousePos`), which applies
-// the content scale and resolves the cell itself, so there is no point→cell arithmetic on this path and no
-// second copy of the grid geometry `TerminalCellMetrics` (`Sources/SlopDeskTerminal/TerminalSurface.swift`)
-// already owns. `linkHitSlop` does not break that and is the reason to say it again: it is a distance a
+// ⚠️ NOTHING HERE MEASURES A CELL. A touch point goes to the engine as POINTS, which applies the content
+// scale and resolves the cell itself, so there is no point→cell arithmetic on this path and no second copy
+// of the grid geometry `TerminalCellMetrics`
+// (`Sources/SlopDeskWorkspaceCore/Terminal/TerminalSurface.swift`) already owns. `linkHitSlop` does not break that and is the reason to say it again: it is a distance a
 // FINGER is wrong by, in points, and the only thing that ever compares it to a cell is
 // `TerminalLinkHitTest`, which is where the grid arithmetic lives for both platforms.
 

@@ -1,7 +1,7 @@
 // MacLinkHighlightOverlay — the ⌘-hold link underline, in AppKit (docs/56 wave R, batch R3).
 //
 // The AppKit half of ``LinkHighlightOverlayView``. A DECORATION coincident with the terminal surface
-// (never a content branch — the libghostty-freeze guardrail): while the pane model reports ⌘ is held,
+// (never a content branch — the surface-teardown/focus-freeze guardrail): while the pane model reports ⌘ is held,
 // it runs the pure ``TerminalLinkDetector`` over the live VISIBLE viewport rows and draws a hairline
 // under every detected path / URL / `file://` / `mailto:` span, mapped to points by the
 // ``TerminalCellMetrics``. Only the underlines: the renderer owns ⌘click / ⌘⇧click / right-click and
@@ -25,7 +25,6 @@
 import AppKit
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 @MainActor

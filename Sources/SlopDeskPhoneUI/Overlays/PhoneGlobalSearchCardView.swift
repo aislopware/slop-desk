@@ -25,7 +25,7 @@
 // survives is that both surfaces build the SAME control from the SAME ``FindModePill`` values on the
 // SAME ``FindBarMetrics/touch`` rung. WHICH pills is ``FindModePill/globalSearch``'s answer: two of the
 // find bar's three, because the cross-tab search runs over a scrollback mirror rather than over
-// libghostty's buffer and the two engines do not agree about what a word boundary is.
+// `libghostty-vt`'s buffer and the two engines do not agree about what a word boundary is.
 //
 // ⚠️ A RELOAD, NOT A DIFF, and it is the opposite call from the palette's on purpose. That list is
 // re-RANKED between keystrokes — most rows survive, so a diff moves a handful of cells and keeps the

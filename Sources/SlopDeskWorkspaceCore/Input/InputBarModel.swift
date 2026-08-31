@@ -109,8 +109,9 @@ public final class InputBarModel {
 
     /// Sends committed IME / printable `text` (post-composition) as its UTF-8 bytes,
     /// recording it for dedup in B1. Unlike ``submit()`` this appends **no** Enter: the iOS
-    /// host streams text as it is composed and routes Return as a separate key, matching
-    /// `ghostty_surface_text` (text) vs `ghostty_surface_key` (Enter) on the real surface.
+    /// host streams text as it is composed — as raw bytes, bypassing the engine's key encoder
+    /// entirely — and routes Return separately, through `slopdesk_term_surface_key` on the real
+    /// surface.
     public func sendText(_ text: String) {
         guard !text.isEmpty else { return }
         sendRaw(Array(text.utf8), record: true)

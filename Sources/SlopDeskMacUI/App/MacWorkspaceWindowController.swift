@@ -295,7 +295,7 @@ final class MacWorkspaceWindowController: NSWindowController, NSWindowDelegate {
     /// initial size on every re-render, guarded by an associated-object one-shot that
     /// ``SlopDeskMacApp/applyInitialWindowSize(to:store:chrome:fontPointSize:)`` deliberately left
     /// UNSET while a `grid` window was still on the font-derived fallback cell — so a later fire
-    /// recomputed to the exact cols×rows once libghostty reported its true advance. There are no later
+    /// recomputed to the exact cols×rows once the renderer reported its true advance. There are no later
     /// fires now, so the retry is explicit, taken once, and dropped.
     func retryGridSizeWhenCellMetricsArrive(_ retry: @escaping () -> Void) {
         gridSizeRetry = retry

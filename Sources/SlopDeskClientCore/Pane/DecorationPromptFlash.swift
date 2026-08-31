@@ -26,7 +26,6 @@
 
 import QuartzCore
 import SlopDeskSlate
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 /// One overlay's flash gate: which epochs paint, what they paint, and how the paint decays.

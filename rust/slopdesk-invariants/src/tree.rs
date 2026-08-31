@@ -453,16 +453,17 @@ pub struct Tree {
 /// crate exists for. A rule that needs a file outside these reads it with [`Tree::read`], which is
 /// the escape hatch and says so at the call site.
 ///
-/// `ThirdParty/ghostty/integration` is the ONE exception, and it is four files: the embedder Swift,
-/// which is the only registrar of the terminal seam and is compiled by no `Package.swift` target.
-/// The vendored `ThirdParty/ghostty` beside it stays out — the exception is the integration
-/// directory, not the dependency.
+/// There used to be an exception, `ThirdParty/ghostty/integration`, and it was walked for the one
+/// reason worth making an exception for: four files of OUR Swift that no `Package.swift` target
+/// compiled, holding the only registrar of the terminal seam. docs/68 deleted the fork and that
+/// code is `Sources/SlopDeskTerminal/` now, so `ThirdParty` is once again pruned whole — which is
+/// what the paragraph above wants and what makes the list below eight entries of nothing vendored.
 ///
 /// `packaging` is two Ruby files. It is walked because the install side is half of a contract whose
 /// other half is in Rust: the formula's `post_install` records the manifest the NEXT upgrade plan
 /// diffs against, and a formula that stopped recording leaves every upgrade reading as a first
 /// install (`docs/49`).
-const ROOTS: [&str; 9] = [
+const ROOTS: [&str; 8] = [
     "Sources",
     "Tests",
     "Apps",
@@ -471,7 +472,6 @@ const ROOTS: [&str; 9] = [
     "docs",
     "golden",
     "packaging",
-    "ThirdParty/ghostty/integration",
 ];
 
 /// Extensions held in memory. A file outside this set is still WALKED — its path is known, so a

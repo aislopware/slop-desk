@@ -61,7 +61,7 @@ struct SampleMemory {
     cap: usize,
 }
 
-/// Every crate exempt from the raw-pointer ban, and there are two.
+/// Every crate exempt from the raw-pointer ban, and there are three.
 ///
 /// Each is here for the SAME reason and it is the SDK's, never the code's: the framework publishes
 /// memory as a bare `(pointer, length)` and offers no copy-out variant, so there is no version of
@@ -83,6 +83,26 @@ struct SampleMemory {
 ///   how far apart its rows are, and a mapping is what those two describe — there is no plane
 ///   object to hold instead. Every other reading in the crate is a framework copy into memory this
 ///   process allocated.
+/// * `slopdesk-apple-metal` — the same shape one more time, and this one WRITES rather than reads.
+///   A `MTLBuffer` in shared storage IS a mapping: `contents()` answers where the GPU will read
+///   from, and Metal publishes no copy-in call for it — there is no `setBytes:atOffset:` on a
+///   buffer, only on an encoder, and that one allocates. Its count is ONE site, the instance write
+///   in `frames.rs`.
+///
+/// `slopdesk-apple-metal` joined by `docs/57` §2's three-route test, run in that crate's own
+/// `frames.rs` header and re-read here rather than taken on trust. Route 1, move the obligation to
+/// `slopdesk-ffi`, is a DEPENDENCY CYCLE: the shim already links this crate, so the site cannot go
+/// there. Route 2, `newBufferWithBytes:length:options:`, is a fresh allocation ~180 times a second
+/// — three draws a frame at 60 Hz — which is the triple-buffered ring's whole purpose undone, and
+/// `docs/68` §6 is the argument this surface exists to protect. Route 3, keep it in Swift, is the
+/// thing the family exists to end. So the site has nowhere better to be, which is the same sentence
+/// the two crates above earned their entries with.
+///
+/// ⚠️ The ban did not CATCH this site until the same change admitted it, and that is worth stating:
+/// `frames.rs` writes `destination.copy_from_nonoverlapping(…)`, a method, where the ban read only
+/// the `ptr::copy` PATH. An entry added without widening [`scan_spend`]'s pattern would have been
+/// an exemption from a rule that was not being enforced — a booking that looks like scrutiny and is
+/// not. Both halves land together on purpose.
 ///
 /// `slopdesk-apple-vt` joined this list in the commit that deleted `Sources/SlopDeskVideoHost`, and
 /// the timing is the whole argument. `docs/57` §2's three-route test rejects an exemption while the
@@ -97,7 +117,7 @@ struct SampleMemory {
 /// stopped being a home, and the mapping went to the crate that locks the buffer. Both moves paid
 /// for the exemption the same way — the raw type went with them, so `slopdesk-apple-vt` now hands
 /// out no framework pointer at all.
-const SAMPLE_MEMORY: [SampleMemory; 2] = [
+const SAMPLE_MEMORY: [SampleMemory; 3] = [
     SampleMemory {
         crate_dir: "rust/slopdesk-apple-audio",
         cap: 19,
@@ -105,6 +125,10 @@ const SAMPLE_MEMORY: [SampleMemory; 2] = [
     SampleMemory {
         crate_dir: "rust/slopdesk-apple-vt",
         cap: 3,
+    },
+    SampleMemory {
+        crate_dir: "rust/slopdesk-apple-metal",
+        cap: 1,
     },
 ];
 
@@ -133,13 +157,13 @@ struct Wide {
 ///
 /// §3.4 states the bar and the ONE-framework-area rule above it, and it already decided which wins
 /// where they collide: `slopdesk-apple-ax` is booked there at "the accessibility client API
-/// genuinely is [that wide], and splitting it would break the rule above it". Four more rows have
+/// genuinely is [that wide], and splitting it would break the rule above it". Six more rows have
 /// landed on the same side of that collision since, so the sentence is a PATTERN rather than one
 /// crate's excuse — and a pattern with no instrument is drift.
 ///
 /// Each was checked for the OTHER thing an over-bar count can mean: portable RULES that belong one
 /// crate down, the way `slopdesk-apple-vt`'s Swift original was mostly rules before they moved.
-/// Every module in all five names its framework — the thinnest are `sck/handoff.rs` and
+/// Every module in all seven names its framework — the thinnest are `sck/handoff.rs` and
 /// `cgvirtualdisplay/classes.rs`, at one call each — so no rules-only module hides in any of them
 /// and the width really is the area's:
 ///
@@ -155,6 +179,26 @@ struct Wide {
 /// * `slopdesk-apple-audio` — the converter, the encoder and the decoder are one codec pipeline
 ///   over one `AudioStreamBasicDescription`, and this crate holds the family's sample-memory
 ///   exemption for exactly that pipeline. Splitting it would carry the exemption to both halves.
+/// * `slopdesk-apple-text` — Core Text answers one question in four places, and the seams all run
+///   through it. The stack RESOLVES the faces, the shaper interns the face Core Text fell back to,
+///   and the rasteriser draws the glyph id the shaper emitted — all three index the SAME face
+///   table, so a split would put a face handle on one side of a crate edge and the glyph it draws
+///   on the other. `raster.rs` names Core Graphics rather than Core Text, but the two frameworks
+///   meet inside one call: `CTFontDrawGlyphs` takes a `CGContext`. The one module that could read
+///   as portable rules is `shape.rs`'s cell map, and it asks `CFCharacterSet`'s non-base set what a
+///   combining mark is rather than carrying a table of its own.
+/// * `slopdesk-apple-metal` — a `CAMetalLayer` is not a second framework area, it is the PRESENT
+///   half of this one: the layer's pixel format has to be the pipeline states' pixel format, its
+///   `drawableSize` is the vertex shader's viewport uniform, and its `maximumDrawableCount` is the
+///   number the instance ring's semaphore must be one deeper than. Split at the obvious seam and
+///   every one of those three facts becomes a contract between two crates that nothing checks. What
+///   is left after the layer is one indivisible frame — upload the atlas dirty rects, fill the
+///   instance buffers, encode three draws, present — and the width is that frame plus the argument
+///   for each latency-relevant default, which `docs/68` §6 makes macOS the veto platform for. The
+///   module that could read as portable rules is `geom.rs`, and it was checked: it is the
+///   `MTLRegion` arithmetic and the clip-space conversion the SHADER performs, both of which are
+///   Metal's coordinate conventions rather than slopdesk's, and every rule about what to draw
+///   already lives one crate down in `slopdesk-termrender`.
 /// * `slopdesk-apple-cgvirtualdisplay` — a PRIVATE framework reached by runtime class lookup. The
 ///   descriptor, the settings and the main-thread hop are three stages of constructing one object,
 ///   and the class handles they look up are the crate's whole vocabulary.
@@ -162,7 +206,7 @@ struct Wide {
 ///
 /// `cap` is the width measured when the row was written: a crate excused for its AREA may not also
 /// GROW unremarked. Raising one is a number here and a sentence in the commit, which is the review.
-const WIDE: [Wide; 5] = [
+const WIDE: [Wide; 7] = [
     Wide {
         crate_dir: "rust/slopdesk-apple-vt",
         cap: 1248,
@@ -174,6 +218,16 @@ const WIDE: [Wide; 5] = [
     Wide {
         crate_dir: "rust/slopdesk-apple-audio",
         cap: 815,
+    },
+    Wide {
+        crate_dir: "rust/slopdesk-apple-text",
+        cap: 814,
+    },
+    Wide {
+        crate_dir: "rust/slopdesk-apple-metal",
+        // 762 → 765: the row was measured before the crate had been through `cargo +nightly fmt`,
+        // which split three lines. No new API and no new `unsafe` — the width is the formatter's.
+        cap: 765,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-cgvirtualdisplay",
@@ -377,9 +431,22 @@ fn scan_spend(tree: &Tree, src: &str, sample_memory: bool) -> Spend {
                 spend.get_rule_sites += 1;
                 continue;
             }
+            // ⚠️ THE METHOD SPELLINGS ARE HERE FOR A REASON, and the reason is a hole this rule
+            // read green through. `ptr::copy_nonoverlapping(src, dst, n)` and
+            // `dst.copy_from_nonoverlapping(src, n)` are the same operation, and only the first is
+            // a `ptr::` path — so `slopdesk-apple-metal`'s write into a mapped `MTLBuffer` passed a
+            // ban it plainly trips, and would have gone on passing. The four names below are
+            // `*mut T`'s alone: `<[T]>::copy_from_slice` is safe and does NOT match, because the
+            // `\(` anchors the name rather than letting it prefix-match.
+            //
+            // `\.(read|write|add|offset)\(` is deliberately NOT hoisted up here from the ratchet
+            // below. Those four are names a safe type also has — a `File` writes, a `Duration`
+            // adds — so at ban strength they would fail a crate for calling `std`. The ratchet can
+            // afford them because it is COUNTING an already-admitted crate, where a false positive
+            // costs a cap of one too many rather than a broken gate.
             let raw = crate::text::matches_line(
                 line,
-                r"transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)",
+                r"transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)|\.copy_(from|to)(_nonoverlapping)?\(",
             );
             if sample_memory {
                 // Counted rather than waved through — see the amendment note above. The pattern is
@@ -994,6 +1061,46 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("raw-pointer operation")),
             "{report:?}"
+        );
+    }
+
+    /// ⚠️ THE HOLE THIS RULE READ GREEN THROUGH, pinned so it cannot reopen.
+    ///
+    /// `ptr::copy_nonoverlapping(src, dst, n)` and `dst.copy_from_nonoverlapping(src, n)` are the
+    /// SAME operation, and the ban's pattern read only the first. `slopdesk-apple-metal`'s write
+    /// into a mapped `MTLBuffer` is the second, so it passed a rule it plainly trips — which is
+    /// worse than an unenforced rule, because the green was read as scrutiny.
+    ///
+    /// The second half is the false positive the fix must NOT have: `<[T]>::copy_from_slice` is
+    /// safe and shares a prefix with `copy_from`, so the pattern anchors the name with `\(`
+    /// rather than letting it match anywhere. A ban that failed a crate for calling a safe
+    /// slice method would be worked around rather than obeyed.
+    #[test]
+    fn the_method_spelling_of_a_pointer_copy_is_the_same_ban() {
+        let fixture = policy_fixture("apple-raw-method");
+        assert!(super::apple_family(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            "pub fn f(dst: *mut u8, src: &[u8]) { unsafe { dst.copy_from_nonoverlapping(src.as_ptr(), \
+             src.len()) }; }\n",
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk-apple-cgevent") && v.contains("raw-pointer operation")),
+            "{report:?}"
+        );
+
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            "pub fn f(dst: &mut [u8], src: &[u8]) { dst.copy_from_slice(src); }\n",
+        );
+        assert!(
+            super::apple_family(&fixture.tree()).is_clean(),
+            "a safe slice copy is not a raw-pointer operation",
         );
     }
 

@@ -16,7 +16,7 @@ import SlopDeskWorkspaceModel
 /// `cmd+t = "new_tab"` actually rebinds the registry action instead of silently doing nothing.
 ///
 /// **Validate-then-drop (CLAUDE.md §3, applied to untrusted config text).** An unknown name, an
-/// out-of-range / non-numeric `goto_tab` arg, and the libghostty-only responder actions
+/// out-of-range / non-numeric `goto_tab` arg, and the libghostty-vt-only responder actions
 /// (`copy_to_clipboard` / `paste_from_clipboard` / `select_all`, which have NO ``WorkspaceAction`` — the
 /// terminal's own responder owns them) all return `nil`. The resolver NEVER force-unwraps, NEVER invents
 /// an id, and NEVER traps on hostile input — a malformed binding is simply dropped.
@@ -27,7 +27,7 @@ import SlopDeskWorkspaceModel
 /// `spec/customization__custom-keybindings.md`.
 public extension WorkspaceBindingRegistry {
     /// Resolve a config action `name` (with an optional `arg`) to this registry's binding id, or
-    /// `nil` if the name is unknown, the arg is out of range, or the action is a libghostty-only responder
+    /// `nil` if the name is unknown, the arg is out of range, or the action is a libghostty-vt-only responder
     /// action with no ``WorkspaceAction`` (validate-then-drop — never a trap, never an invented id).
     ///
     /// The table and the `goto_tab` bound are `slopdesk-workspace`'s `keybind`, reached through

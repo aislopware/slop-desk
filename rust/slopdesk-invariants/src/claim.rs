@@ -2184,21 +2184,14 @@ pub const RUST: &[&str] = &["rs"];
 /// directions: seven widenings reddened on real test files and were reverted after READING them,
 /// while `device_law`'s two and `host_probes`' one are GREEN widened and still wrong — nothing in
 /// the tree would have told anyone.
+/// There used to be a FOURTH root, and its disappearance is the good news. `ThirdParty/ghostty/
+/// integration` held OUR Swift — the paste and clipboard cluster, the terminal seam's registrar —
+/// compiled by no `Package.swift` target, so a ban that read these three and stopped was blind to a
+/// whole target's worth of declarations. It needed a second constant, because most bans should NOT
+/// read vendored territory and widening every port ban into it would report code we do not own.
+/// docs/68 deleted the fork; what was in that directory is package source now, under `Sources`, and
+/// the three roots below are once again all the Swift there is.
 pub const SWIFT_ROOTS: &[&str] = &["Sources", "Tests", "Apps"];
-
-/// [`SWIFT_ROOTS`] plus the fourth place Swift lives: the ghostty embedder.
-///
-/// `ThirdParty/ghostty/integration` is a `Tree::ROOTS` entry holding OUR Swift — the paste and
-/// clipboard cluster, the renderer seam — not vendored upstream code, so a ban that reads the three
-/// normal roots and stops is blind to a whole target. It is a separate constant rather than a
-/// fourth entry in `SWIFT_ROOTS` because most bans should NOT read it: a rule about client
-/// architecture has nothing to say about an embedder, and widening every port ban into vendored
-/// territory would report code we do not own. Its one user bans a DECLARATION the embedder could
-/// plausibly hold a second copy of — `sidecar_clis`' libghostty pointer enums. The other rule that
-/// reads the embedder, `ui_seams`' seam installer, spells three roots by hand instead: it is the
-/// SAME set minus `Tests`, for the reason written at that site, and a shared constant that fits it
-/// would have to drop `Tests` for everyone.
-pub const SWIFT_ROOTS_AND_GHOSTTY: &[&str] = &["Sources", "Tests", "Apps", "ThirdParty/ghostty/integration"];
 
 /// Where this gate's own rule tables live, exempted from every tree-wide ban that reads `rust/`.
 ///

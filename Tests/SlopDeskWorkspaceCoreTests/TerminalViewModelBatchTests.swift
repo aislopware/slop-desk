@@ -1,4 +1,3 @@
-import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -10,7 +9,7 @@ import XCTest
 @MainActor
 final class TerminalViewModelBatchTests: XCTestCase {
     /// Surface seam that records each write AND each flush boundary: `feed` = one write +
-    /// one flush; `feedBatch` = N writes + one flush (mirrors `GhosttySurface`'s override).
+    /// one flush; `feedBatch` = N writes + one flush (mirrors `TerminalSurfaceDriver`'s override).
     private final class FlushRecordingSurface: TerminalSurface, @unchecked Sendable {
         var writes: [Data] = []
         var flushes = 0
@@ -152,7 +151,7 @@ final class TerminalViewModelBatchTests: XCTestCase {
     // MARK: Render-side backpressure (docs/31 #5 — async-feed surfaces)
 
     /// Surface whose ``feedBackpressure()`` suspends until the test releases it —
-    /// models GhosttySurface's serial feed queue above high water.
+    /// models TerminalSurfaceDriver's serial feed queue above high water.
     ///
     /// ALL mutable state is lock-guarded: the ingest pump touches it from the main actor while
     /// the test body reads/releases from XCTest's async-test executor. The old unguarded

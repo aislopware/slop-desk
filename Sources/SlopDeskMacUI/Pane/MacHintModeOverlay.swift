@@ -1,7 +1,7 @@
 // MacHintModeOverlay — the Vimium-style Hint Mode overlay, in AppKit (docs/56 wave R, batch R4).
 //
-// A DECORATION layered OVER the terminal surface, never a content branch (the libghostty-freeze
-// guardrail): while the pane model has an armed intent (``TerminalViewModel/hintMode``) it DIMS the
+// A DECORATION layered OVER the terminal surface, never a content branch (the surface-teardown/
+// focus-freeze guardrail): while the pane model has an armed intent (``TerminalViewModel/hintMode``) it DIMS the
 // surface so the labels pop, draws a yellow 2-letter badge at each detected target, and shows a
 // `HINTS · <intent> · ×` badge top-trailing — the `hint-mode.png` chrome, floated in the pane because
 // slopdesk has no titlebar, exactly like the vi-mode and read-only chips beside it.
@@ -41,7 +41,6 @@ import AppKit
 import SFSafeSymbols // the mark's name, spelled once on the floor and checked by the compiler
 import SlopDeskClientCore // HintPresentation — the arm predicate, the fade rule and the five strings
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
-import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 
 /// The hint chrome's two PINNED values, spelled once for the file that draws them all.

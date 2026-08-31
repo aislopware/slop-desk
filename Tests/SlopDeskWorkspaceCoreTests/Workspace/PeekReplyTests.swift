@@ -20,7 +20,7 @@ import XCTest
 /// `peekReplyTargetPane`, `sendPeekReply` (reaches a NON-focused pane), `peekContent`, and the
 /// advance-to-next exclusion.
 ///
-/// All tests are hang-safe: no `GhosttySurface`, no `NWConnection`, no `VideoToolbox` — the pane handles
+/// All tests are hang-safe: no `TerminalSurfaceDriver`, no `NWConnection`, no `VideoToolbox` — the pane handles
 /// are recording doubles (``FakePaneSession`` / ``RecordingTerminalPaneSession``).
 @MainActor
 final class PeekReplyTests: XCTestCase {

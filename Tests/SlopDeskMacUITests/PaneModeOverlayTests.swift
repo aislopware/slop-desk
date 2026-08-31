@@ -9,7 +9,7 @@
 //    something the user did not aim at.
 //
 // 2. THE HINT OVERLAY IS TRANSPARENT TO THE POINTER WHILE THE MODE IS DOWN. It is mounted
-//    unconditionally over every terminal pane (the leaf never branches on it — the libghostty-freeze
+//    unconditionally over every terminal pane (the leaf never branches on it — the libghostty-vt-freeze
 //    guardrail), so it spends nearly all of its life invisible ON TOP of a surface that must keep
 //    every click. Armed, the dim plate is deliberately the opposite: it swallows stray clicks and
 //    cancels the mode. One `Bool` decides both, and getting it backwards makes the terminal
@@ -33,10 +33,10 @@
 //
 // Headless: `isFlipped`, `hitTest`, `fittingSize` and a view's own subtree all need no window (the
 // hang-safety rule forbids an `NSWindow` in a test), and the model is built over a `nil` surface so no
-// libghostty / Metal / socket is touched.
+// libghostty-vt / Metal / socket is touched.
 //
 // ⚠️ The ARMED half of the hint overlay is not reachable here, and that is the honest ceiling rather
-// than an omission: arming needs `cellMetrics()`, which only a libghostty-backed surface answers, and
+// than an omission: arming needs `cellMetrics()`, which only a libghostty-vt-backed surface answers, and
 // that surface hangs without a window server. What is testable is that the overlay is inert without
 // one — which is the same "labels are ABSENT, never wrong" promise `HintPresentation.isArmed` exists
 // to keep.

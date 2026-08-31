@@ -433,7 +433,7 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
         // serialisation, not a layout, so an `NSAlert` reads it rather than composing one beside
         // itself.
         Claim::Mentions {
-            path: "Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift",
+            path: "Sources/SlopDeskTerminal/PasteProtectionSheet.swift",
             names: &["ClipboardConfirmPresentation"],
             message: "PasteProtectionSheet.swift stopped reading {entry} — two guards, and the drift would \
                       be silent",
@@ -446,7 +446,7 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
         },
         Claim::NoneOf {
             paths: &[
-                "Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift",
+                "Sources/SlopDeskTerminal/PasteProtectionSheet.swift",
                 "Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCardView.swift",
             ],
             pattern: r#""Clipboard preview|"•"#,
@@ -619,7 +619,7 @@ mod tests {
                      $0.store)\nstore.confirmPendingClose()\nstore.cancelPendingClose()\n",
                 )
                 .write(
-                    "Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift",
+                    "Sources/SlopDeskTerminal/PasteProtectionSheet.swift",
                     "ClipboardConfirmPresentation\n",
                 )
                 .write(

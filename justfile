@@ -62,8 +62,8 @@ SWIFTFMT_PATHS := "Package.swift " + SWIFT_PATHS
 #
 # The globs stay rather than being dropped, so a script that comes back is linted rather than
 # silently unlinted — and `scripting-is-rust` in `rust/slopdesk-invariants` fails the moment one
-# does. `ThirdParty/ghostty/` is the one tree exempt from that rule: it is the vendored libghostty
-# build recipe, carried close to upstream's own shape, and is not ours to rewrite.
+# does. Nothing is exempt any more: the vendored ghostty fork used to be, because its build recipe
+# was carried close to upstream's shape, and `docs/68` deleted that whole tree.
 # `xargs echo` is the `$(strip …)` this used to carry, at the DEFINITION rather than at each use.
 # Both globs match nothing today, and two globs that each expand to nothing still leave the SPACE
 # between them — so an unstripped `SHELL_FILES` is the one-character string " ",
@@ -1169,6 +1169,24 @@ apple-ax-test:
 apple-text-test:
     cd rust/slopdesk-apple-text && cargo test
 
+# The three crates docs/68's terminal surface is made of, in the order the bytes travel: the engine
+# and its confinement (`slopdesk-vterm`), the layout and glyph residency over its frames
+# (`slopdesk-termrender`), and the Metal encode that draws them (`slopdesk-apple-metal`). Three
+# recipes rather than one because they are three cargo workspaces — each carries a profile its
+# neighbours do not want — and `just test` reaches a workspace only by entering its directory.
+
+# cargo test for the terminal engine: the session, the frame scan, selection, find, input
+vterm-test:
+    cd rust/slopdesk-vterm && cargo test
+
+# cargo test for the terminal renderer: layout, blocks, the glyph atlas, the quad builder
+termrender-test:
+    cd rust/slopdesk-termrender && cargo test
+
+# cargo test for the Metal encode (pipeline, texture upload, the device probe)
+apple-metal-test:
+    cd rust/slopdesk-apple-metal && cargo test
+
 # cargo test for the VideoToolbox session (option dictionaries, timestamps, leak check)
 apple-vt-test:
     cd rust/slopdesk-apple-vt && cargo test
@@ -1497,7 +1515,7 @@ host-status:
 # closes that.
 
 # cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + one client pane session's driver + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test devicelink-test videolink-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-nsevent-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test devicelink-test videolink-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-nsevent-test apple-cursor-test apple-ax-test apple-text-test vterm-test termrender-test apple-metal-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # The same six sidecars, for the same reason as `test` above and with more at stake: this is the

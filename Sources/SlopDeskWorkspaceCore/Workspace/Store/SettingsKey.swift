@@ -462,7 +462,7 @@ public enum SettingsKey {
     }
 
     /// Focus the pane the pointer is over without a click (`controls.focus-follows-mouse`), default
-    /// OFF. Read live by the libghostty surface's `mouseMoved` via ``FocusFollowsMousePolicy``.
+    /// OFF. Read live by the terminal surface's `mouseMoved` via ``FocusFollowsMousePolicy``.
     public static var focusFollowsMouseEnabled: Bool { AppConfig.current.flag("controls.focus-follows-mouse") }
 
     /// The scroll-wheel delta multiplier (`controls.scroll-multiplier`), default 1.
@@ -495,7 +495,7 @@ public enum SettingsKey {
     public static var clickToMoveEnabled: Bool { AppConfig.current.flag("controls.click-to-move") }
 
     /// ⌘Z at the prompt emits the readline undo (`controls.undo-at-prompt`), default ON. Read live by
-    /// the libghostty surface's `keyDown` via ``PromptEditPolicy``.
+    /// the terminal surface's `keyDown` via ``PromptEditPolicy``.
     public static var undoAtPromptEnabled: Bool { AppConfig.current.flag("controls.undo-at-prompt") }
 
     /// Engage macOS Secure Keyboard Entry automatically while the remote shell is at a no-echo prompt

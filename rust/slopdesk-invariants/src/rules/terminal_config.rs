@@ -49,11 +49,11 @@ pub fn one_keybind_grammar_no_callback(tree: &Tree) -> Report {
 
 /// One terminal config emitter, and Swift keeps only the enums it persists
 ///
-/// The libghostty config text is a stable ORDER of `key = value` lines, and the order is
+/// The terminal engine's config text is a stable ORDER of `key = value` lines, and the order is
 /// load-bearing: `background` after `theme` is what makes the explicit colour win, the palette
 /// after `foreground` is what makes the theme's sixteen entries win over both, and `font-feature`
 /// rides EVERY build because a font that ships ligatures turns them on itself. A second emitter
-/// would not fail a test — it would quietly hand libghostty a different terminal. So the tokens,
+/// would not fail a test — it would quietly hand the engine a different terminal. So the tokens,
 /// the validation and the number formatting stay in `rust/slopdesk-terminal`'s `config`, and this
 /// side crosses the RAW VALUES it persists.
 #[must_use]
@@ -73,7 +73,7 @@ pub fn one_terminal_config_emitter_swift(tree: &Tree) -> Report {
             ],
             pattern: r"font-family = |font-feature = |scrollback-limit = |selection-foreground|window-padding-balance",
             view: View::Code,
-            message: "{files} spells a libghostty config line in Swift — config.rs decides which key a \
+            message: "{files} spells a terminal config line in Swift — config.rs decides which key a \
                       preference actuates",
         },
         Claim::NoneOf {
@@ -87,8 +87,8 @@ pub fn one_terminal_config_emitter_swift(tree: &Tree) -> Report {
             paths: &["Sources/SlopDeskVideoProtocol/Settings/TerminalFontSettings.swift"],
             pattern: r"baseFeatures|syntheticTokens|disablesFace|var thickens",
             view: View::Code,
-            message: "{files} maps a font preference to a libghostty token in Swift — the enum crosses as \
-                      its RAW value",
+            message: "{files} maps a font preference to a terminal config token in Swift — the enum crosses \
+                      as its RAW value",
         },
     ];
     check_all(tree, &claims)

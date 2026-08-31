@@ -11,7 +11,7 @@ import XCTest
 ///  - the spec-critical `.jumpPreviousFailed → forward:false` / `.jumpNextFailed → forward:true`
 ///    INVERSION lands the viewport on the NEWER vs OLDER failure (a swapped mapping fails here).
 ///
-/// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no GhosttySurface /
+/// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no `TerminalSurfaceDriver` /
 /// VideoToolbox / Metal / SCStream) — the hang-safety rule holds.
 @MainActor
 final class WB3BlockRoutingDispatchTests: XCTestCase {
@@ -289,7 +289,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     // MARK: - BlockJump choreography (the shared re-anchor jump — Commands panel / navigator / jump-to-failed)
 
-    /// ghostty parses the `jump_to_prompt` parameter as `i16` — an anchor delta outside that range fails
+    /// libghostty-vt parses the `jump_to_prompt` parameter as `i16` — an anchor delta outside that range fails
     /// the binding parse and silently no-ops (the bare-`scroll_to_bottom` regression seen on hardware).
     /// Pins the constant inside the parseable range while staying far above any real prompt count.
     func testReAnchorDeltaFitsGhosttyI16BindingParameter() {
@@ -306,7 +306,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     }
 
     /// The choreography pin: ordinal 1 anchors only (the huge-negative jump already lands on prompt #1);
-    /// ordinal k ≥ 2 adds a downward `k − 1` (the anchor row's own prompt is never counted by ghostty's
+    /// ordinal k ≥ 2 adds a downward `k − 1` (the anchor row's own prompt is never counted by libghostty-vt's
     /// downward iterator, so `k − 1` lands prompt #k exactly); ordinal 0 (unknown) emits NOTHING — a
     /// mid-stream-join block must not mis-land the viewport.
     func testBlockJumpOrdinalChoreography() {
@@ -326,7 +326,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         XCTAssertTrue(recorder.actions.isEmpty, "an unknown ordinal (0) must not move the viewport at all")
     }
 
-    /// A prompt ordinal BEYOND ghostty's i16 binding-parameter range (`jump_to_prompt` is `i16`, max
+    /// A prompt ordinal BEYOND libghostty-vt's i16 binding-parameter range (`jump_to_prompt` is `i16`, max
     /// 32767) must NOT emit a single out-of-range step: a raw `jump_to_prompt:39999` fails the ACTION
     /// STRING PARSE and silently no-ops the whole binding, landing on the anchor (oldest prompt) not the
     /// target — the long-lived-detached-session bug (every Enter grows the ordinal). The downward
@@ -461,7 +461,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     // MARK: - End-to-end vs a faithful ghostty scrollPrompt model (the real land-on-the-right-command pin)
 
-    /// Replays the store's emitted libghostty actions for a jump to every block in `blocks` through
+    /// Replays the store's emitted libghostty-vt actions for a jump to every block in `blocks` through
     /// ``GhosttyScrollPromptModel`` and asserts each landing: the target's prompt row sits at the
     /// viewport top (or the viewport pins to `.active` when the row is inside the active area — either
     /// way the row must be VISIBLE).
@@ -574,8 +574,9 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 }
 
 /// A faithful, headless port of ghostty's `PageList.zig` `scrollPrompt` (+ `scroll_to_top`/`scroll_to_bottom`)
-/// over a flat prompt-flag buffer — used ONLY to prove the store's emitted libghostty actions land the
-/// viewport on the intended command prompt. Faithful on three load-bearing behaviours (pinned v1.3.1):
+/// over a flat prompt-flag buffer — used ONLY to prove the store's emitted libghostty-vt actions land the
+/// viewport on the intended command prompt. Faithful on three load-bearing behaviours (pinned to the
+/// vendored ghostty source, docs/68):
 /// the downward iterator starts at `viewport_top.down(1)` (the top row's own prompt is never counted),
 /// the upward iterator starts at `up(1)`, and a delta LARGER than the available prompt count moves to the
 /// LAST prompt found (ghostty keeps `prompt_pin` across the exhausted loop — what the huge-negative

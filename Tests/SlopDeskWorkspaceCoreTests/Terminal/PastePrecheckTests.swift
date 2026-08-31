@@ -2,13 +2,14 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// Pins the pure ``PastePrecheck`` — the embedder's paste entry-point decision that makes
-/// paste-protection reachable for the danger classes libghostty's own (narrower) `isSafe` gate misses.
+/// paste-protection reachable for the danger classes libghostty-vt's own (narrower) `isSafe` gate misses.
 ///
-/// The bug this guards: libghostty trips `confirm_read_clipboard_cb` (the only old caller of
-/// ``PasteSafetyAnalyzer``) ONLY for a `\n` / bracketed-end payload, so a SINGLE-LINE `sudo`, an ESC-laced
-/// control-char paste, or a bare-`\r` paste reached the shell SILENTLY — two of the four advertised
-/// paste dangers were suppressed. ``PastePrecheck/decide(clipboard:protectionOn:isAlternateScreen:)`` runs the
-/// analyzer BEFORE handing the bytes to libghostty, so all four classes confirm regardless of newlines.
+/// The bug this guards: the deleted fork's embedder ran ``PasteSafetyAnalyzer`` only from a
+/// `confirm_read_clipboard_cb` callback, which fired ONLY for a `\n` / bracketed-end payload, so a
+/// SINGLE-LINE `sudo`, an ESC-laced control-char paste, or a bare-`\r` paste reached the shell SILENTLY —
+/// two of the four advertised paste dangers were suppressed. ``PastePrecheck/decide(clipboard:protectionOn:isAlternateScreen:)``
+/// runs the analyzer BEFORE handing the bytes to libghostty-vt, so all four classes confirm regardless of
+/// newlines.
 ///
 /// These assertions are discriminating, not tautological: an implementation that returned `.pasteDirect`
 /// for single-line `sudo` (the OLD silent behaviour) fails ``testSingleLineSudoConfirms``; one that ignored
@@ -30,9 +31,9 @@ final class PastePrecheckTests: XCTestCase {
         return dangers
     }
 
-    // MARK: - The reachability fix: single-line dangers libghostty's `isSafe` MISSES must confirm
+    // MARK: - The reachability fix: single-line dangers libghostty-vt's `isSafe` MISSES must confirm
 
-    /// THE headline bug: a single-line `sudo rm -rf /` (no newline → libghostty `isSafe == true`) must still
+    /// THE headline bug: a single-line `sudo rm -rf /` (no newline → libghostty-vt `isSafe == true`) must still
     /// confirm. Before the embedder pre-check this pasted silently.
     func testSingleLineSudoConfirms() {
         let decision = PastePrecheck.decide(
@@ -54,7 +55,7 @@ final class PastePrecheckTests: XCTestCase {
         XCTAssertTrue(confirmedDangers(decision).contains(.controlChars))
     }
 
-    /// A bare `\r` (CR, no LF) paste — libghostty's `isSafe` flags only `\n`, so this reached the shell
+    /// A bare `\r` (CR, no LF) paste — libghostty-vt's `isSafe` flags only `\n`, so this reached the shell
     /// silently and ran the command. The trailing CR is classified as a trailing-newline danger → confirm.
     func testBareCarriageReturnConfirms() {
         let decision = PastePrecheck.decide(
@@ -65,8 +66,8 @@ final class PastePrecheckTests: XCTestCase {
         XCTAssertTrue(confirmedDangers(decision).contains(.trailingNewline))
     }
 
-    /// A multi-line paste (libghostty WOULD catch this) still confirms through the pre-check — the embedder
-    /// is now the single authority, so the same sheet appears whether or not libghostty's gate would route it.
+    /// A multi-line paste (libghostty-vt WOULD catch this) still confirms through the pre-check — the embedder
+    /// is now the single authority, so the same sheet appears whether or not libghostty-vt's gate would route it.
     func testMultiLinePasteConfirms() {
         let decision = PastePrecheck.decide(
             clipboard: "echo one\necho two\n",
@@ -80,7 +81,7 @@ final class PastePrecheckTests: XCTestCase {
 
     // MARK: - pasteDirect: safe / protection off / alt-screen
 
-    /// A plainly-safe single line → paste straight through libghostty (no dialog).
+    /// A plainly-safe single line → paste straight through libghostty-vt (no dialog).
     func testSafeSingleLinePastesDirect() {
         XCTAssertEqual(
             PastePrecheck.decide(clipboard: "git status", protectionOn: true, isAlternateScreen: false),

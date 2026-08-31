@@ -4,9 +4,9 @@
 // WHY a separate leaf file: `TerminalConfigBuilder` (also in this leaf `SlopDeskVideoProtocol`) must turn
 // these settings into libghostty `key = value` lines WITHOUT importing any UI; the font UI
 // (`FontSettingsView`, up in `SlopDeskClientUI`) binds the SAME enums. Keeping them here keeps the
-// mapping pure + headlessly testable (no SwiftUI, no libghostty surface — the hang-safety rule).
+// mapping pure + headlessly testable (no SwiftUI, no terminal surface — the hang-safety rule).
 //
-// GOLDEN-SAFETY: this config string is CLIENT-only (the libghostty surface) and NEVER on the wire, so it
+// GOLDEN-SAFETY: this config string is CLIENT-only (the terminal surface) and NEVER on the wire, so it
 // can never move a golden vector regardless of what it emits. Most settings still map to a libghostty line
 // ONLY for their NON-default value; the ONE exception is `font-feature`, emitted UNCONDITIONALLY (ligatures
 // default `.off` ⇒ the disabling set `-calt,-liga,-dlig` must always be sent). So a default-constructed

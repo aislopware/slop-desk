@@ -21,9 +21,10 @@ import SlopDeskVideoProtocol
 ///   2. **Video / agent flags → the `video-prefs.json` SIDECAR (no live apply).** The host daemon
 ///      reads them at `static let` init and cannot live-reload, so a change reaches it at the next
 ///      launch. Applies on reconnect.
-///   3. **Terminal keys → the live terminal reload.** Rebuilds the libghostty config string
-///      (``TerminalConfigBuilder``) and bumps ``TerminalConfigBroadcaster`` so the (Xcode-app-target-
-///      only) `GhosttyTerminalView` re-applies it via `ghostty_config_load_string` + a PTY grid resize.
+///   3. **Terminal keys → the live terminal reload.** Rebuilds the terminal config string
+///      (``TerminalConfigBuilder``) and bumps ``TerminalConfigBroadcaster``; the keys that have found a
+///      typed door (font family/size — see ``TerminalConfigBroadcaster``) reach the live renderer
+///      through those, not through the string.
 ///   4. **The `[keybind]` table → the registry overrides.** Publishes them to
 ///      ``WorkspaceBindingRegistry/activeOverrides`` so a chord resolves with the user override —
 ///      the registry stays the single binding TABLE; this only supplies overrides.
@@ -128,9 +129,9 @@ public final class PreferencesStore {
 
     // MARK: Apply paths
 
-    /// Rebuild the libghostty config string from the resolved terminal keys and the fire-time
-    /// Controls bundle, and bump the broadcaster so the (Xcode-only) `GhosttyTerminalView`
-    /// re-applies it live.
+    /// Rebuild the terminal config string from the resolved terminal keys and the fire-time
+    /// Controls bundle, and bump the broadcaster so the live renderer re-applies it (font family/size
+    /// through their typed doors — see ``TerminalConfigBroadcaster``).
     private func applyTerminal() {
         // The app's one terminal profile pins the CELL bg/fg (flat design) — `resolveTerminalColors`
         // reads `SlateTheme.app` (GUI only; `nil` headless ⇒ the config's own colours stand).
@@ -148,10 +149,14 @@ public final class PreferencesStore {
             selectionBackgroundOverride: themeColors?.selectionBackground,
             controls: Self.controlsConfig(from: TerminalControls.from(config: config)),
         )
-        TerminalConfigBroadcaster.shared.publish(config)
+        // `prefs` already carries the EFFECTIVE size — the ⌘± delta was folded in above — so the
+        // renderer measures its grid from the same number the config string encodes.
+        TerminalConfigBroadcaster.shared.publish(
+            config, fontFamily: prefs.fontFamily, fontSize: prefs.fontSize,
+        )
     }
 
-    /// Rebuild + publish the libghostty config from the current reading. The seam a surface calls
+    /// Rebuild + publish the terminal config from the current reading. The seam a surface calls
     /// when it needs the terminal string re-derived without a reload.
     public func refreshTerminalControls() {
         applyTerminal()
@@ -305,9 +310,10 @@ public final class PreferencesStore {
 
 // MARK: - TerminalConfigBroadcaster (the live terminal-reload seam)
 
-/// The process-wide bridge carrying the current libghostty config STRING from ``PreferencesStore`` to the
-/// (Xcode-app-target-only) `GhosttyTerminalView`, which re-applies it via `ghostty_config_load_string`
-/// and re-measures + resizes the PTY grid.
+/// The process-wide bridge carrying the current terminal config from ``PreferencesStore`` to the live
+/// renderer. It used to carry a config STRING to the deleted fork's `GhosttyTerminalView`, which
+/// re-applied it via `ghostty_config_load_string` and re-measured + resized the PTY grid — see
+/// ``configString`` below for what replaced that path.
 ///
 /// A tiny `@Observable` holder (not the model) so the gated renderer can `@Observe` it without importing
 /// the whole store; the HEADLESS build keeps a no-op consumer. The `generation` bumps on each publish so
@@ -319,18 +325,39 @@ public final class PreferencesStore {
 public final class TerminalConfigBroadcaster {
     public static let shared = TerminalConfigBroadcaster()
 
-    /// The current libghostty config string (built by ``TerminalConfigBuilder``). Empty until the first
-    /// publish (the renderer then keeps libghostty's compiled-in defaults).
+    /// The current terminal config string (built by ``TerminalConfigBuilder``, in the Ghostty-style
+    /// `key = value` grammar `rust/slopdesk-terminal/src/config.rs` now parses). Empty until the first
+    /// publish.
+    ///
+    /// ⚠️ NOTHING SHIPPING READS THIS ANY MORE. It existed for the fork's `ghostty_config_load_string`,
+    /// and the renderer that replaced it takes its settings through typed doors instead — the string
+    /// has no parser on the other end. It is published, and its `generation` still bumps, because the
+    /// keys it encodes have not all found their door yet; the ones that have are below. Deleting it is
+    /// a follow-up with its own audit, not a line to drop in passing.
     public private(set) var configString = ""
+
+    /// The monospace family the terminal draws with, as the renderer's `slopdesk_term_surface_new`
+    /// takes it. Empty until the first publish, which the renderer reads as "the engine's default".
+    public private(set) var fontFamily = ""
+
+    /// The EFFECTIVE point size — the file's `terminal.font-size` plus whatever ⌘± has moved it by.
+    /// `0` until the first publish, for ``fontFamily``'s reason.
+    ///
+    /// Effective rather than configured, because the renderer measures a grid from it: handing over
+    /// the configured size would draw at one size and lay out at another the moment ⌘+ was pressed.
     /// Monotonic publish counter — the renderer keys its "apply on change" off this, so re-publishing the
     /// same string still reloads.
     public private(set) var generation = 0
 
     public init() {}
 
-    /// Publish a new config string (bumps ``generation`` even if unchanged).
-    public func publish(_ config: String) {
+    public private(set) var fontSize: Double = 0
+
+    /// Publish a new config string and the resolved font (bumps ``generation`` even if unchanged).
+    public func publish(_ config: String, fontFamily: String = "", fontSize: Double = 0) {
         configString = config
+        self.fontFamily = fontFamily
+        self.fontSize = fontSize
         generation &+= 1
     }
 }

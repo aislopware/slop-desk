@@ -5,7 +5,7 @@ import XCTest
 // MARK: - TerminalViewModelReadOnlyTests (the single-seam read-only input gate)
 
 /// Exercises the PURE read-only state + the ``TerminalViewModel/sendInput(_:)`` gate entirely in-memory:
-/// no `NSEvent`, no `GhosttySurface`, no window server (the hang-safety rule). Because `sendInput` is the
+/// no `NSEvent`, no `TerminalSurfaceDriver`, no window server (the hang-safety rule). Because `sendInput` is the
 /// ONE outbound ingress seam (every key / paste / IME / mouse-report / click-to-move byte + the iOS
 /// input-bar + the synchronized-input broadcast funnel through it), gating it here proves the whole input
 /// surface is blocked — and that inbound ingest is untouched — without driving the renderer.

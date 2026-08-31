@@ -17,7 +17,19 @@ const MAC_WINDOW_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceWindowContr
 const PHONE_WINDOW_ROOT: &str = "Sources/SlopDeskPhoneUI/Shell/WorkspaceRootViewController.swift";
 const MAC_SIDEBAR_TOGGLE: &str = "Sources/SlopDeskMacUI/Chrome/MacWindowSidebarToggle.swift";
 const MAC_CONTENT_COLUMN: &str = "Sources/SlopDeskMacUI/Columns/MacContentColumn.swift";
-const GHOSTTY_SEAM: &str = "ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift";
+/// The one target allowed to REGISTER the terminal seam, as a directory rather than a file.
+///
+/// A directory because this rule may not know the conformer's filename and must not have to: the
+/// installer, the platform view it builds and whatever helpers sit beside them are one module's
+/// business, and naming files here would mean the exemption stops covering the module the moment
+/// somebody splits a type out of it. `Claim::NoneUnder` reads a trailing `/` as exactly this.
+///
+/// It used to be a FILE — the fork's embedder, under the vendored ghostty tree docs/68 deleted —
+/// and the difference is the point of that document: the file was compiled by no `Package.swift`
+/// target and joined an Xcode app through an injected spec entry, so this rule also had to assert
+/// that it EXISTED and that it still assigned the factory. Nothing else would have noticed either
+/// loss. `swift build` compiles this directory now.
+const TERMINAL_RENDERER_MODULE: &str = "Sources/SlopDeskTerminal/";
 const TERMINAL_SEAM: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalRendererSeam.swift";
 const VIDEO_SEAM: &str = "Sources/SlopDeskWorkspaceCore/Video/VideoWindowSeam.swift";
 const MAC_APP_MAIN: &str = "Apps/ClientApp-macOS/AppMain.swift";
@@ -256,12 +268,25 @@ pub fn the_canvas_registers_itself_in_appkit(tree: &Tree) -> Report {
 /// deletion the rule was written to prevent became the correct move. The seams return a
 /// ``PlatformView`` and nothing else.
 ///
-/// WHAT SURVIVES UNCHANGED is the failure the rule actually exists for, which was never about
-/// `SwiftUI`: REGISTERING NOTHING. The registration happens in app targets no `Package.swift`
-/// builds and the embedder is compiled by no target at all — it joins the Xcode app through
-/// `slopdesk-ops enable-renderer macos` — so an unregistered seam is not a compile error, has no
-/// test, and ships the BUILD-STATUS placeholder where a terminal should be. Every `Matches` claim
-/// below is that check, and each is now STRONGER than before: one registration cannot be half-done.
+/// WHAT SURVIVES is the failure the rule actually exists for, which was never about `SwiftUI`:
+/// REGISTERING NOTHING. The registration happens in app targets no `Package.swift` builds, so an
+/// unregistered seam is not a compile error, has no test, and ships the BUILD-STATUS placeholder
+/// where a terminal should be. The two `Matches` claims on the app mains are that check, and each
+/// is STRONGER than the pair it replaced: one registration cannot be half-done.
+///
+/// ⚠️ WHAT DOES NOT SURVIVE, and why that is a gain rather than a hole (docs/68). This rule used to
+/// carry two more claims — that the registrar FILE existed, and that it still assigned
+/// `TerminalRendererFactory.shared` — because the registrar was the fork's embedder, compiled by no
+/// target at all: it joined the Xcode app through a spec entry an operator script wrote in, so
+/// deleting the file was not a build error anywhere. The registrar is `Sources/SlopDeskTerminal/`
+/// now and `swift build` compiles it, so a missing installer fails the app mains' own compile —
+/// which is a better version of the same alarm, and the one this rule could never raise.
+///
+/// The residue is narrow and worth stating: nothing here asserts that the installer's BODY still
+/// assigns the slot. That claim needs the conformer's filename, this rule deliberately knows only
+/// its directory (see [`TERMINAL_RENDERER_MODULE`]), and a `Claim::Matches` aimed at a guess is
+/// worse than no claim. What still binds is the shape — exactly one module may assign, and both
+/// app mains must call.
 ///
 /// ⚠️ THE CODE VIEW, NOT THE RAW ONE, and that is not a preference here: the seams' own doc
 /// comments name these symbols repeatedly to explain the collapse — this paragraph included — so a
@@ -298,36 +323,27 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
     }
 
     let claims = [
-        Claim::Exists {
-            path: GHOSTTY_SEAM,
-            message: "it is the only registrar of the terminal seam and no compiler in `just check` opens \
-                      it (docs/56 stage F, P4)",
-        },
-        Claim::Matches {
-            path: GHOSTTY_SEAM,
-            pattern: r"TerminalRendererFactory\.shared *=",
-            message: "GhosttyRendererSeam.install() no longer sets TerminalRendererFactory.shared — an \
-                      unregistered seam ships the BUILD-STATUS placeholder where the terminal should be, \
-                      and no compiler in `just check` opens this file (docs/56 stage F, P4)",
-        },
-        // Every Swift root that ships, plus the embedder — and deliberately NOT `Tests`, which is
+        // Every Swift root that ships — and deliberately NOT `Tests`, which is
         // [`crate::claim::SWIFT_ROOTS`]'s third category. Assigning `shared` is how a test installs
         // a DOUBLE: `LeafSeamSlotTests` sets it to a stub, asserts `make` carries mount focus
         // through, and clears it in `tearDown`. The sentence this ban says — "a second registrar
         // resolves by mount order" — is a claim about what SHIPS, and it means nothing inside a
         // harness that owns the whole process. Widened, the ban would mean two things and would
         // fire on the suite that proves the seam works.
+        //
+        // There used to be a fourth root here, the fork's embedder, and it was the exempt one. The
+        // renderer module took its place on both counts (docs/68).
         Claim::NoneUnder {
-            roots: &["Sources", "Apps", "ThirdParty/ghostty/integration"],
+            roots: &["Sources", "Apps"],
             extensions: SWIFT,
             pattern: r"TerminalRendererFactory\.(shared|nativeShared) *=",
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &[GHOSTTY_SEAM],
-            message: "{files} registers the terminal seam outside GhosttyRendererSeam.install() — one seam \
-                      has one installer, and a second registrar resolves by mount order (docs/56 stage F, \
-                      P4)",
+            exempt: &[TERMINAL_RENDERER_MODULE],
+            message: "{files} registers the terminal seam outside SlopDeskTerminal's own installer — one \
+                      seam has one installer, and a second registrar resolves by mount order (docs/56 stage \
+                      F, P4)",
         },
         // The video seam's builder, named by its RETURN TYPE rather than by the registration line: the
         // point of the rule is that ONE value feeds the mount, and a builder that stopped returning a
@@ -353,17 +369,22 @@ pub fn one_seam_two_shapes_one_installer(tree: &Tree) -> Report {
                       since the phone gained a UIView, and a second one re-admits the hosting view over the \
                       surface that takes every keystroke (docs/56 stage F, P4)",
         },
+        // The two claims the renderer's move OUT of `ThirdParty/` did not make redundant. A missing
+        // `installTerminalRenderer` is a compile error now, but a deleted CALL is not: these two
+        // files are members of no `Package.swift` target, so `just check` compiles neither, and an
+        // app that stops registering the seam builds clean, tests clean, and shows the BUILD-STATUS
+        // placeholder where the terminal should be.
         Claim::Matches {
             path: MAC_APP_MAIN,
-            pattern: r"GhosttyRendererSeam\.install\(\)",
-            message: "the Mac app does not call GhosttyRendererSeam.install() — the renderer build shows \
-                      the BUILD-STATUS placeholder and every test still passes (docs/56 stage F, P4)",
+            pattern: r"installTerminalRenderer\(\)",
+            message: "the Mac app does not call installTerminalRenderer() — the app builds, every test \
+                      passes, and the terminal is the BUILD-STATUS placeholder (docs/56 stage F, P4)",
         },
         Claim::Matches {
             path: PHONE_APP_MAIN,
-            pattern: r"GhosttyRendererSeam\.install\(\)",
-            message: "the iOS app does not call GhosttyRendererSeam.install() — the renderer build shows \
-                      the BUILD-STATUS placeholder and every test still passes (docs/56 stage F, P4)",
+            pattern: r"installTerminalRenderer\(\)",
+            message: "the iOS app does not call installTerminalRenderer() — the app builds, every test \
+                      passes, and the terminal is the BUILD-STATUS placeholder (docs/56 stage F, P4)",
         },
     ];
     report.absorb(check_all(tree, &claims));
@@ -537,13 +558,18 @@ mod tests {
         fixture
             .write(super::TERMINAL_SEAM, shapes)
             .write(super::VIDEO_SEAM, shapes)
-            .write(super::GHOSTTY_SEAM, "TerminalRendererFactory.shared = { … }\n")
+            // The exempted module, seeded under a filename this rule does not know — which is the
+            // POINT of exempting the directory, and the reason the fixture may pick one freely.
+            .write(
+                "Sources/SlopDeskTerminal/TerminalRendererInstaller.swift",
+                "TerminalRendererFactory.shared = { … }\n",
+            )
             .write(
                 super::MAC_APP_MAIN,
                 "func build() -> MacVideoPaneSpec { … }\nVideoWindowFactory.shared = { … }\n\
-                 GhosttyRendererSeam.install()\n",
+                 installTerminalRenderer()\n",
             )
-            .write(super::PHONE_APP_MAIN, "GhosttyRendererSeam.install()\n")
+            .write(super::PHONE_APP_MAIN, "installTerminalRenderer()\n")
             // Rewritten with the rest, so a case starts from the clean tree rather than from the
             // previous case's break.
             .write("Apps/ClientApp-macOS/SeamPatch.swift", "enum SeamPatch {}\n")
@@ -556,8 +582,9 @@ mod tests {
         seams(&fixture);
         assert!(super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
-        // An unregistered seam ships the BUILD-STATUS placeholder, and no compiler opens this file.
-        fixture.write(super::GHOSTTY_SEAM, "enum GhosttyRendererSeam {}\n");
+        // An app that stops CALLING the installer ships the BUILD-STATUS placeholder, and no
+        // compiler in `just check` opens either app main to notice.
+        fixture.write(super::PHONE_APP_MAIN, "// nothing registered here\n");
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
 
         // A second registrar, which resolves by mount order rather than by anyone's intent.
@@ -590,7 +617,7 @@ mod tests {
         fixture.write(
             super::MAC_APP_MAIN,
             "func build() -> MacVideoPaneSpec { … }\nVideoWindowFactory.shared = { … \
-             }\nVideoWindowFactory.nativeShared = { … }\nGhosttyRendererSeam.install()\n",
+             }\nVideoWindowFactory.nativeShared = { … }\ninstallTerminalRenderer()\n",
         );
         assert!(!super::one_seam_two_shapes_one_installer(&fixture.tree()).is_clean());
     }

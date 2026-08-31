@@ -8,7 +8,7 @@ import XCTest
 /// 1. **Zoom keeps siblings MOUNTED** — `SplitTreeRenderModel` must emit every non-zoomed pane as a
 ///    zoom-HIDDEN compositor leaf, so `SplitContainer` keeps their surfaces alive at
 ///    `opacity 0` (the same no-teardown trick as keep-all-tabs-mounted). Before the fix the zoom branch
-///    dropped the siblings from the layout entirely → their libghostty surfaces / video streams were torn
+///    dropped the siblings from the layout entirely → their libghostty-vt surfaces / video streams were torn
 ///    down and un-zoom repainted them from the lossy replay ring.
 /// 2. **Split/focus ops while zoomed exit zoom first** (the documented applyLayout/cycleLayout rule) —
 ///    otherwise ⌘D while zoomed created an invisible focused pane and the next ⇧⌘↩ zoomed the new pane.

@@ -6,11 +6,13 @@ import Foundation
 /// The PURE engine behind ⌘F find-in-terminal (docs/42 W14 #5, Warp/Ghostty parity). It is fed a flat,
 /// line-oriented text mirror of the visible scrollback (the client keeps one off ``TerminalViewModel``)
 /// and computes the ordered match list, the current selection, the match count, and next/prev/wrap
-/// navigation — with NO view, NO libghostty, NO store. The GUI `TerminalFindBar` overlay is a thin
-/// driver over this; libghostty's own `start_search` action is wired compile-only as an enhancement
-/// (it owns the in-surface highlight), but the count/nav UX is computed HERE so it is fully unit-testable
-/// against an in-memory buffer (libghostty's search-result callbacks are not plumbed through the C
-/// `action_cb` yet — see ``SlopDeskMacUI/MacTerminalFindBar`` / ``SlopDeskPhoneUI/TerminalFindBarView``).
+/// navigation — with NO view, NO engine, NO store. The GUI `TerminalFindBar` overlay is a thin
+/// driver over this; the surface's own literal search (armed via the `search:` binding action, see
+/// ``TerminalSearchSurfaceAction``) is wired as an enhancement (it owns the in-surface highlight for the
+/// one mode it can express faithfully), but the count/nav UX is computed HERE so it is fully
+/// unit-testable against an in-memory buffer — the FFI boundary is pull-only, with no callback that
+/// could push the engine's own match state across it — see ``SlopDeskMacUI/MacTerminalFindBar`` /
+/// ``SlopDeskPhoneUI/TerminalFindBarView``.
 ///
 /// ### Matching
 /// - **Literal** (default): a case-insensitive (or case-sensitive) substring scan, finding EVERY

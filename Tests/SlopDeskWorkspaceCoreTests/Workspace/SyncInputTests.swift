@@ -11,7 +11,7 @@ import XCTest
 /// - The `.toggleSyncInput` `WorkspaceAction` is routed through `routeTree` on a `.tree`-live store.
 /// - The ⌘⇧I chord is registered and free (no collision).
 ///
-/// All tests are hang-safe: no `GhosttySurface`, no `NWConnection`, no `VideoToolbox`. The
+/// All tests are hang-safe: no `TerminalSurfaceDriver`, no `NWConnection`, no `VideoToolbox`. The
 /// `FakePaneSession` seam and a `.tree`-live `WorkspaceStore` are the only dependencies.
 @MainActor
 final class SyncInputTests: XCTestCase {

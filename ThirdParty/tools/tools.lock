@@ -8,8 +8,8 @@
 # the panel was actually written against.
 #
 # So the version lives here, pinned by URL and SHA-256, and `provision.sh` materialises it under
-# `.prefix/` (gitignored). This is the same bargain `ThirdParty/ghostty/` already strikes: the
-# RECIPE is committed, the ARTIFACT is not.
+# `.prefix/` (gitignored). One bargain, everywhere in this tree: the RECIPE is committed, the
+# ARTIFACT is not — the ghostty entry below is the same trade as the code-server one above it.
 #
 # What is deliberately NOT here, because it cannot be:
 #   * iOS simulator runtimes and `simctl` — they ship inside Xcode under Apple's licence. `baguette`

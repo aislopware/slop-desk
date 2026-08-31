@@ -4,7 +4,7 @@ Full detail split out of `CLAUDE.md` to keep that file small. `CLAUDE.md` carrie
 
 ## Gates — which one reaches which path
 
-Clean checkout builds headless with no prerequisite: `swift build`/`swift test` never see libghostty, and reach VideoToolbox / ScreenCaptureKit only as SDK frameworks `Package.swift` links on macOS (the calls are Rust's — `slopdesk-apple-vt`, `slopdesk-apple-sck` — behind `CSlopDeskFFI`); libghostty only in Xcode app targets (`TerminalSurface` seam), built via `ThirdParty/ghostty/build-libghostty.sh` (Zig; never blocks headless core).
+Clean checkout builds headless with no prerequisite: `swift build`/`swift test` reach VideoToolbox / ScreenCaptureKit only as SDK frameworks `Package.swift` links on macOS (the calls are Rust's — `slopdesk-apple-vt`, `slopdesk-apple-sck` — behind `CSlopDeskFFI`). The terminal engine is `rust/slopdesk-vterm` over `libghostty-vt`, whose sources are pinned in `ThirdParty/tools/tools.lock` and fetched by `just provision`; it reaches Swift through `CSlopDeskFFI` like every other crate, so the renderer behind the `TerminalSurface` seam compiles under a plain `swift build` and no Xcode-only framework step stands between a checkout and a green core (`docs/68-terminal-surface-in-rust.md`).
 
 | Gate | When / what it uniquely covers |
 |------|-------------------------------|
@@ -76,8 +76,8 @@ leaf to the enumerator and a directory to everything else. Re-measured five ways
 
 **The general rule, which is what to remember: the walk skips DOT-directories and walks every other
 one.** That is why the package root can still hold 552 K files and cost nothing — `.build` (159 K),
-`.work` (298 K), `.git` and `ThirdParty/ghostty`'s two dot-dirs (62 K) are all invisible to it, and
-only ~3,400 non-dot files are left. Measured directly: seeding 200 K files into a NON-dot directory
+`.work` (298 K), `.git` and, when this was measured, the ghostty fork's two dot-dirs (62 K) are all
+invisible to it, and only ~3,400 non-dot files are left. Measured directly: seeding 200 K files into a NON-dot directory
 at the root took the same probe from **15 s to 54 s**, and removing it put it back. So the invariant
 worth holding is not "keep cargo out" but **any large generated tree under the repo root must be
 either dot-prefixed or outside the checkout**. `slopdesk-targets` is outside; `.build` and `.work`
@@ -172,7 +172,7 @@ Deleted deliberately — do not reintroduce: `SLOPDESK_WORKSPACE_DOC`, `SLOPDESK
 
 ## Vendored runtime deps
 
-The right panel's surfaces stand on programs this repo does not build. They are **pinned by URL + SHA-256 in `ThirdParty/tools/tools.lock`** and provisioned by `rust/slopdesk-provision` (`just provision`, `just provision-check`) into `ThirdParty/tools/.prefix/bin` (gitignored, ~730 MB). Same bargain as `ThirdParty/ghostty/`: the recipe is committed, the artifact is not.
+The right panel's surfaces stand on programs this repo does not build. They are **pinned by URL + SHA-256 in `ThirdParty/tools/tools.lock`** and provisioned by `rust/slopdesk-provision` (`just provision`, `just provision-check`) into `ThirdParty/tools/.prefix/bin` (gitignored, ~730 MB). Same bargain the lock's fourth kind — `git`, a source tree pinned at a 40-hex commit, which is how the terminal engine arrives (`docs/68` §3) — strikes one row down: the pin is committed, what it fetches is not.
 
 **Why.** Homebrew's `code-server` formula froze at 4.112 and was deprecated, and nothing in the repo recorded — or could enforce — the version the panel was written against. The panel sat on Code 1.112 for months, below the 1.121 floor where the built-in mermaid preview landed, and no gate could see it.
 

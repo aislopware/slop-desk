@@ -66,6 +66,7 @@ version = "0.1.0"
 name = "slopdesk-terminal"
 version = "0.1.0"
 dependencies = [
+ "slopdesk-fuzzy",
  "slopdesk-ids",
  "slopdesk-sanitize",
  "unicode-segmentation",

@@ -27,12 +27,12 @@ promises is actually in each slice, and assembles
 `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework`.
 
 **It is gitignored.** Measured: 5.7 MB per slice, 17 MB for the three, rewritten by every Rust
-edit — a git history nobody wants for a build output. `libghostty.xcframework` is gitignored for
-the same reason and rebuilt by its own script. What the app pays is far smaller: **+384 KB linked**
-after `-dead_strip`.
+edit — a git history nobody wants for a build output. What the app pays is far smaller:
+**+384 KB linked** after `-dead_strip`.
 
-**It IS in the SwiftPM graph** — and this is where it differs from `libghostty`, which is
-Xcode-only. The one-implementation rule requires `swift test` to exercise the Rust, because a Rust
+**It IS in the SwiftPM graph**, and since `docs/68-terminal-surface-in-rust.md` it is the ONLY
+linked artifact — the terminal engine is `rust/slopdesk-vterm` behind this same header, not a second
+Xcode-only xcframework. The one-implementation rule requires `swift test` to exercise the Rust, because a Rust
 implementation the Swift tests cannot reach would leave the Swift version alive as the thing
 actually under test. The cost, stated plainly: a clean checkout must run `just ffi` once before
 SwiftPM resolves. `just build`, `just test` and `just check` all depend on `ffi`, and a warm tree

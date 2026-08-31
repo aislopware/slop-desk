@@ -2,14 +2,15 @@
 // BEFORE their own raw-byte branches. It is the single source of truth shared by every first-responder that
 // can swallow a keystroke ahead of the terminal/video pipeline:
 //
-//   • B4/B5  GhosttyLayerBackedView.keyDown   (the libghostty terminal surface — NOT in `swift build`)
+//   • B4/B5  MacTerminalRendererView.keyDown   (the terminal surface, driving libghostty-vt — unlike the
+//            deleted fork's Xcode-only embedder, this compiles under plain `swift build`)
 //   • B6     MetalLayerBackedView.keyDown      (the remote-video surface — gated SlopDeskVideoClient)
 //   • B7     the iOS UIKit pressesBegan path   (`TerminalInputHost` → `PhoneKey.keyChord`; the rules are in Rust, the
 //            marshalling compiles and is tested on macOS, so this arm is not a blind spot)
 //
 // The app-level `WorkspaceKeyDispatcher` (B3) is the PRIMARY interceptor (its `.keyDown` monitor fires
 // BEFORE any first responder). This type is the belt-and-suspenders layer for when one of those views IS the
-// first responder and the monitor is bypassed (e.g. a focused libghostty surface that handles the event in
+// first responder and the monitor is bypassed (e.g. a focused terminal surface that handles the event in
 // its own `keyDown`). To avoid two layers DOUBLE-routing the same chord, an interceptor instance is only
 // armed where the B3 monitor is NOT installed (iOS has no `NSEvent` monitor; the macOS surfaces consult it
 // only as a fallback) — the policy is documented at each call site.
@@ -24,7 +25,7 @@
 /// What a per-surface key path must DO with one keystroke, decided entirely here so the view stays a thin
 /// event→intent shim. A pure value type (no AppKit/UIKit) so the whole interceptor is unit-testable.
 public enum TerminalKeyDisposition: Equatable, Sendable {
-    /// Not a workspace chord — the view runs its OWN normal path (libghostty encoder, the Ctrl+C0 raw-byte
+    /// Not a workspace chord — the view runs its OWN normal path (libghostty-vt's key encoder, the Ctrl+C0 raw-byte
     /// branch, the iOS key encoder, …). Carries the chord back unchanged for convenience.
     case forward(KeyChord)
     /// SWALLOW the key: it resolved+dispatched a workspace action. The view forwards NOTHING (and — for

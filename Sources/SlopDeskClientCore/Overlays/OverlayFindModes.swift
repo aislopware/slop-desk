@@ -5,7 +5,7 @@
 // one rule that made the map worth naming.
 //
 // ⚠️ WHOLE-WORD IS NOT OFFERED HERE, AND THAT IS A DECISION, NOT AN OMISSION. Cross-tab search runs over
-// a scrollback MIRROR rather than over libghostty's own buffer, and the two engines do not agree about
+// a scrollback MIRROR rather than over the terminal surface's own live grid, and the two engines do not agree about
 // where a word ends — so the chip is absent from ``FindModePill/globalSearch`` and a tap that somehow
 // reached it changes nothing. Both shells spelled that `case .wholeWord: return` by hand, which is a
 // decision typed twice: one half re-deciding it the other way is a search that silently answers a

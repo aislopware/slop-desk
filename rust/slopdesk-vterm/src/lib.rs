@@ -1,28 +1,65 @@
-//! The terminal ENGINE, wrapped — parse, grid and scrollback, with no renderer attached.
+//! The terminal engine, and the only place in slopdesk that touches one.
+//!
+//! slopdesk drives `libghostty-vt` — the renderer-agnostic half of ghostty — rather than
+//! libghostty's opaque *surface* API. That is the whole architecture in one sentence, and
+//! `docs/68-terminal-surface-in-rust.md` argues it at length. The short form: a surface composites
+//! the entire grid into one layer and hands back pixels, so there is no seam to put a view into —
+//! and blocks are layout, not decoration. Owning the grid is what makes them possible.
+//!
+//! ## What is here
+//!
+//! - [`session`] — [`VtSession`], the one owner of every engine handle. Feeds bytes, resizes,
+//!   scrolls, and scans the viewport into a frame.
+//! - [`events`] — the two things the far side PUSHES that nothing else can carry: the replies the
+//!   terminal owes the pty, and an OSC-52 clipboard write. Held in a bounded sink until the surface
+//!   drains it, so the boundary above stays a set of questions rather than a set of callbacks. The
+//!   bell, the notification and the progress report are the HOST's to report, and the module says
+//!   why.
+//! - [`frame`] — [`Frame`], the grid flattened into plain owned data. Everything downstream reads
+//!   this and never the engine.
+//! - [`input`] — a keystroke and a pointer gesture, encoded to the bytes the far side expects,
+//!   through the engine's own encoders so the kitty protocol and mouse formats are not re-derived.
+//! - [`keycode`] — the one table between an `AppKit` `NSEvent.keyCode` and a key the engine names.
+//!   `AppKit` reports a *position*; the engine encodes a *key*. Nothing else can bridge the two.
+//! - [`search`] — the literal matcher the engine does not ship. Regex belongs to
+//!   `slopdesk_workspace::find_bar`; this is the fast path underneath it.
+//! - [`selection`] — selecting text with a pointer, over the engine's own gesture state machine,
+//!   and reading the result back as text. Click sequencing and drag granularity are rules about a
+//!   gesture's HISTORY, which is why they are not re-derived from pointer events upstream.
+//!
+//! ## What is guaranteed
+//!
+//! - **No `unsafe`.** `#![forbid(unsafe_code)]`. Every `unsafe` this crate depends on is inside
+//!   `libghostty-vt`, behind the bindings' own audited wrappers.
+//! - **The engine never escapes.** Every handle is `!Send` and `!Sync` and upstream locks nothing.
+//!   [`VtSession`] owns all of them together, so a caller cannot hold one alone, and the only thing
+//!   that leaves is a [`Frame`], which is plain data.
+//! - **No panics on hostile input.** The far side of a PTY is untrusted. `vt_write` is documented
+//!   never to fail, indexing goes through `get`, and every conversion has a defined fallback.
+//!
+//! [`VtSession`]: session::VtSession
+//! [`Frame`]: frame::Frame
 
-/// Feeds `bytes` through a fresh terminal and reports the cursor column it leaves behind.
-///
-/// A smoke test with a return value rather than a `()` probe: it proves the Zig library linked AND
-/// that the grid it maintains is readable from Rust, which a link check alone does not.
-#[must_use]
-pub fn columns_after(cols: u16, rows: u16, bytes: &[u8]) -> Option<u16> {
-    let mut terminal = libghostty_vt::Terminal::new(cols, rows).ok()?;
-    terminal.vt_write(bytes);
-    terminal.cursor_x().ok()
-}
+#![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod tests {
-    /// Proves the Zig library LINKED and its grid is readable from Rust — a link check alone would
-    /// pass with a parser that did nothing.
-    #[test]
-    fn writing_five_columns_leaves_the_cursor_at_five() {
-        assert_eq!(super::columns_after(80, 24, b"hello"), Some(5));
-    }
+pub mod events;
+pub mod find;
+pub mod frame;
+pub mod input;
+pub mod keycode;
+pub mod screen;
+pub mod search;
+pub mod selection;
+pub mod session;
 
-    /// And that it is the real parser: a carriage return is an ESCAPE, not a glyph.
-    #[test]
-    fn a_carriage_return_returns_the_cursor_rather_than_printing() {
-        assert_eq!(super::columns_after(80, 24, b"hello\rhi"), Some(2));
-    }
-}
+pub use events::{ClipboardTarget, ClipboardWrite};
+pub use frame::{
+    CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameColors, FrameCursor, FrameDirty, FrameRow,
+    Rgb, RowSemantic, TextSpan, UnderlineStyle,
+};
+pub use input::{KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt};
+pub use keycode::key_from_macos_keycode;
+pub use screen::{LogicalLineText, ScreenMatch, SelectionAdjust, ViewportInfo};
+pub use search::{Match, SearchQuery, search_rows};
+pub use selection::{Autoscroll, ClickLadder, CopyFormat, Granularity, SurfacePoint};
+pub use session::{Result, Scroll, VtError, VtSession};

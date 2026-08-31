@@ -33,8 +33,8 @@ enum ConnectGate {
     ///
     /// ### What the two halves are for
     ///
-    /// The coalesce is the resize-corruption fix. A fast drag makes libghostty emit a distinct grid
-    /// size per layout pass, and forwarding every one spreads ~100 `TIOCSWINSZ` over the wire, so
+    /// The coalesce is the resize-corruption fix. A fast drag makes the layout pass derive a distinct
+    /// grid size on every frame, and forwarding every one spreads ~100 `TIOCSWINSZ` over the wire, so
     /// zsh's incremental prompt redraw recomputes its cursor-up count against a size that keeps
     /// moving and desyncs. A local terminal never sees this because the kernel coalesces `SIGWINCH`.
     /// The TRAILING-EDGE GUARANTEE — the last resize of every batch always survives — is what makes

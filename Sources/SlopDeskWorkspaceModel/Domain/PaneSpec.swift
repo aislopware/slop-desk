@@ -12,7 +12,7 @@ import Foundation
 /// once when a leaf is created and is **stable for the lifetime of that pane's session** —
 /// split / focus / zoom / resize re-renders never change it, only a true session swap does.
 /// That stability is load-bearing: SwiftUI keys each leaf host view with `.id(PaneID)` so a
-/// `GhosttySurface` / video pipeline / input `Coordinator` is never reused across panes
+/// `TerminalSurface` / video pipeline / input `Coordinator` is never reused across panes
 /// (docs/22 §7, the `.id(PaneID)` identity hazard).
 public struct PaneID: Hashable, Sendable {
     public let raw: UUID

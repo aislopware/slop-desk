@@ -1,16 +1,28 @@
-//! The family name Core Text reads out of a font FILE.
+//! The whole of the Core Text area slopdesk touches.
 //!
-//! One question, asked by `slopdesk font import` after it has copied a face into
-//! `~/Library/Fonts`: what does the system call this thing? The answer is not the filename and
-//! usually not anything the filename suggests — `JetBrainsMonoNerdFont-Regular.ttf` is
-//! `JetBrainsMono Nerd Font` — and it is what has to be pasted under `[terminal]` for the app to
-//! resolve the face.
+//! ## Two questions
 //!
-//! ## Why it is a crate rather than a function in the CLI
-//! `rust/slopdesk-cli` is a member of the root workspace, which is `forbid(unsafe_code)`, and
-//! reaching an Apple framework at all means linking one. `CLAUDE.md`'s rule for that is the
-//! `slopdesk-apple-*` family: one crate per framework area, through `objc2`, macOS-gated at the
-//! call site. This is the whole of the Core Text area slopdesk touches.
+//! The first is `slopdesk font import`'s, asked after it has copied a face into `~/Library/Fonts`:
+//! what does the system call this thing? The answer is not the filename and usually not anything
+//! the filename suggests — `JetBrainsMonoNerdFont-Regular.ttf` is `JetBrainsMono Nerd Font` — and
+//! it is what has to be pasted under `[terminal]` for the app to resolve the face. That is
+//! [`of_file`], and it is the whole of `family` below.
+//!
+//! The second is the terminal renderer's, and it is the bulk of the crate. `slopdesk-termrender`
+//! says in its own header that it has "no font engine — not a Core Text call", and names two traits
+//! a font engine arrives through. This is that engine: [`FontStack`] resolves a family at a size
+//! into faces and metrics, [`Shaper`] turns a run of cells into positioned glyph ids, and
+//! [`Rasterizer`] turns a glyph id into a bitmap. `docs/68` §5.1 puts the renderer's home in Rust
+//! and names this crate as the one that extends, "so shaping extends an audited crate rather than
+//! opening a new `unsafe` boundary".
+//!
+//! ## Why it is a crate rather than a function in its callers
+//! `rust/slopdesk-cli` and `rust/slopdesk-termrender` both forbid `unsafe`, and reaching an Apple
+//! framework at all means linking one. `CLAUDE.md`'s rule for that is the `slopdesk-apple-*`
+//! family: one crate per framework area, through `objc2`, platform-gated at the call site. The gate
+//! here is `any(macos, ios)` rather than `macos`, because Core Text is on both slices and the
+//! terminal draws the same way on each — `docs/57` §"A macOS-only crate…" is about the crates whose
+//! framework a phone does not have, and this is not one of them.
 //!
 //! ## What is deliberately NOT here
 //! Font ENUMERATION. `slopdesk font list` asks the running app over the control socket, because the
@@ -18,13 +30,39 @@
 //! render. A second enumeration here would answer a slightly different question and look like the
 //! same one.
 //!
+//! The GPU, and the arithmetic around it. Atlas packing, run coalescing, where a glyph lands on
+//! screen and what an underline is drawn over all belong to `slopdesk-termrender`, which can test
+//! them with no display attached. A [`RasterGlyph`] leaves here as plain bytes.
+//!
+//! [`RasterGlyph`]: slopdesk_termrender::glyph::RasterGlyph
+//!
 //! ## The `unsafe` in this crate
-//! Four blocks, all in one function, and every one of them is a Core Foundation naming rule rather
-//! than a Rust one — no raw-pointer dereference and no transmute, which `docs/57` §2 bars from this
-//! family. The URL is built through the SAFE `CFURLCreateWithFileSystemPath` rather than the
-//! byte-buffer form next to it, so no pointer is handed over at all.
+//! Every block is a Core Foundation naming rule rather than a Rust one, and each carries a
+//! `# Safety` note naming the rule it depends on: CREATE-rule and COPY-rule returns, GET-rule
+//! scalar reads, the extern statics holding the attribute keys, and the `cast_unchecked`s that name
+//! an array's or a dictionary's element type.
+//!
+//! No raw-pointer DEREFERENCE and no transmute, which `docs/57` §2 bars from this family. Two
+//! shapes carry the weight: Core Text's buffer-filling accessors are used in preference to their
+//! `…Ptr` siblings because the buffer is ours, and the rasteriser hands `CGBitmapContextCreate` a
+//! `Vec<u8>` this crate allocated rather than reading back one Core Graphics owns. Both are the
+//! "writes through a slot the caller owns" shape §2 blesses through `AXValueGetValue`.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod font;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod raster;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod shape;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use font::FontStack;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use raster::Rasterizer;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use shape::Shaper;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 mod family {
     use objc2_core_foundation::{CFArray, CFRetained, CFString, CFURL, CFURLPathStyle};
     use objc2_core_text::{
@@ -98,12 +136,12 @@ mod family {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use family::of_file;
 
-/// The family name of the font file at `path` — always `None` off macOS, where there is no Core
+/// The family name of the font file at `path` — always `None` off Apple, where there is no Core
 /// Text to ask and no `~/Library/Fonts` to have imported into.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 #[must_use]
 pub fn of_file(_path: &str) -> Option<String> {
     None
@@ -125,7 +163,7 @@ mod tests {
     /// The happy path, exercised rather than reviewed. Also the leak test this family owes: a
     /// thousand reads of a real face, each taking and dropping three CF references, so a missing
     /// release shows up as growth rather than as a comment nobody checked.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     #[test]
     fn a_system_face_reads_back_the_name_the_system_calls_it_and_holds_nothing() {
         let menlo = "/System/Library/Fonts/Menlo.ttc";

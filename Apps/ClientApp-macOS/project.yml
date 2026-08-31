@@ -4,13 +4,18 @@
 # (regenerate with: `xcodegen generate --spec Apps/ClientApp-macOS/project.yml`).
 #
 # The app target depends on the LOCAL SwiftPM package product `SlopDeskMacUI` — the macOS APP
-# SHELL (docs/56 §2). It links no other UI product, and never the phone's. (`SlopDeskMacUI` (which
-# transitively pulls SlopDeskClient/SlopDeskInspector/SlopDeskClaudeCode/SlopDeskTerminal). The `@main`
-# entry is `AppMain.swift` beside this spec → `SlopDeskMacApp` (in the library).
+# SHELL (docs/56 §2). It links no other UI product, and never the phone's. (`SlopDeskMacUI`
+# transitively pulls SlopDeskClient/SlopDeskInspector/SlopDeskClaudeCode.) The `@main` entry is
+# `AppMain.swift` beside this spec → `SlopDeskMacApp` (in the library).
 #
-# The libghostty `GhosttyTerminalView` (Metal + GhosttySurface) is added once the
-# xcframework exists (see the AppMain.swift wiring notes + ThirdParty/ghostty/README);
-# until then the BUILD-STATUS placeholder renders (libghostty-only policy, no fallback).
+# The terminal's conformer view IS listed, and directly. It used to be listed by nothing: it linked
+# a gitignored `libghostty.xcframework` and imported a `CGhostty` clang module, so it was a member
+# of no `Package.swift` target and joined THIS app by an injected sources entry + a framework
+# dependency + a `SWIFT_INCLUDE_PATHS` line, all three written in by `slopdesk-ops enable-renderer`.
+# The fork is gone (docs/68) — the conformer lives in `Sources/SlopDeskTerminal/`, `swift build`
+# compiles it, and `AppMain` registers it with one call. It hangs off the APP rather than off
+# `SlopDeskMacUI` on purpose: the shell mounts terminals through `TerminalRendererFactory` and must
+# not be able to name the view that draws one.
 name: ClientApp-macOS
 options:
   bundleIdPrefix: com.slopdesk
@@ -36,18 +41,17 @@ targets:
       # + SlopDesk.icns; pairs with ASSETCATALOG_COMPILER_APPICON_NAME below.
       - path: ../../docs/brand/SlopDesk.icon
         buildPhase: resources
-      # PATH 1 (libghostty renderer): the gated renderer host + binding. This directory
-      # carries BOTH GhosttySurface.swift (the @MainActor TerminalSurface binding over the
-      # CGhostty C ABI) and GhosttyTerminalView.swift (the TerminalSurfaceHosting conformer —
-      # the file name is history, `GhosttyLayerBackedView` is what it holds).
-      # They are NOT members of any Package.swift target — they join THIS app target so
-      # `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
-      - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
       # The macOS app shell: AppMain launches `SlopDeskMacApp` from this product, which transitively
       # pulls in the view layer, `SlopDeskClientCore` and `SlopDeskWorkspaceCore` (logic + seam types).
       - package: SlopDesk
         product: SlopDeskMacUI
+      # The RENDERER, named DIRECTLY rather than pulled through the UI shell. `AppMain` calls
+      # `installTerminalRenderer()`, and the UI shell must never depend on this product: the whole
+      # point of `TerminalRendererFactory` is that a canvas mounts a terminal without naming the view
+      # that draws one, so a canvas target that linked it would have the seam and the coupling both.
+      - package: SlopDesk
+        product: SlopDeskTerminal
       # PATH 2 (GUI video path): links the client decode/render/cursor pipeline so
       # AppMain can register VideoWindowFactory.shared with the real MacVideoWindowView.
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.
@@ -61,17 +65,6 @@ targets:
         product: SlopDeskVideoClient
       - package: SlopDesk
         product: SlopDeskVideoClientMac
-      # PATH 1 (libghostty renderer): the libghostty static binary (the link-time
-      # `ghostty` C-ABI symbols) packaged as an xcframework, built ON this macOS-26.5 host
-      # by ThirdParty/ghostty/build-libghostty.sh. The universal build also ships iOS
-      # slices (see `slopdesk-ops enable-renderer ios`); this macOS target links the macOS slice.
-      # embed: false — the xcframework wraps a STATIC archive (macos-arm64.a, 198 MB). The
-      # symbols are in the executable once the link is done; embedding additionally COPIES the
-      # .a into Contents/Frameworks, where it is dead weight and unsignable — codesign walks the
-      # bundle and fails the whole app with `code object is not signed at all` on that member,
-      # which is how the release pipeline first noticed. A dylib would need embed: true.
-      - framework: ../../ThirdParty/ghostty/libghostty.xcframework
-        embed: false
     info:
       path: Info.plist
       properties:
@@ -108,32 +101,24 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
-        # PATH 1 (libghostty renderer): point the Swift importer at the CGhostty clang
-        # module map (module.modulemap + vendored ghostty.h) so `import CGhostty` resolves
-        # and `#if canImport(CGhostty)` flips true → GhosttyTerminalView/GhosttySurface
-        # compile into this target and link against libghostty.xcframework.
-        SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../ThirdParty/ghostty/integration/CGhostty
-        # libghostty.xcframework currently ships ONLY a macos-arm64 slice (built on this
-        # macOS-26.5 arm64 host; the x86_64/universal slice needs a separate build). Pin
-        # the macOS app to arm64 so the link resolves against that slice. (Apple-silicon
-        # is the target; Intel macOS is EOL for this project.)
+        # arm64 only, and it stays that way now that the fork it arrived with is gone. The pin's
+        # ORIGINAL reason was the fork's xcframework, which shipped a `macos-arm64` slice and no
+        # other; docs/49 §"arm64 only" keeps the pin on reasons 2 and 3, which bind on their own:
+        # this app deploys against macOS 26, which no Intel Mac runs, and the cask declares
+        # `depends_on arch: :arm64` so `brew` refuses an Intel install outright.
+        #
+        # `ONLY_ACTIVE_ARCH: NO` so a local debug build produces the same single slice a release
+        # does, rather than silently narrowing to whatever the developer's machine is.
         ARCHS: arm64
         ONLY_ACTIVE_ARCH: "NO"
-        # libghostty vendors C/C++ dependencies (Dear ImGui, spirv-cross, glslang,
-        # FreeType, sentry, oniguruma, …). The static lib references the C++ runtime and
-        # a handful of system frameworks (Carbon for TIS keyboard-layout APIs, CoreText/
-        # CoreGraphics for font rendering). Link them so the libghostty symbols resolve.
-        OTHER_LDFLAGS:
-          - -lc++
-          - -framework
-          - Carbon
-          - -framework
-          - CoreText
-          - -framework
-          - CoreGraphics
-          - -framework
-          - QuartzCore
-          - -framework
-          - Metal
+        # There is deliberately no `SWIFT_INCLUDE_PATHS` and no `OTHER_LDFLAGS` here. Both existed
+        # only to make the fork link: an include path at its `CGhostty` module map, and `-lc++`
+        # plus five frameworks to resolve the C/C++ dependencies its static library vendored. This
+        # target compiles ONE Swift file (`AppMain.swift`) and links SwiftPM products; every
+        # framework the Rust half needs is named by `Package.swift`'s linker settings, where an
+        # `.xcframework` can no longer carry `#[link]` metadata across `-create-xcframework`, and
+        # everything the Swift half needs is auto-linked by the `import` that uses it. A framework
+        # listed HERE instead would be invisible to `swift build` and would fail only in Xcode.
+        #
         # Best-effort builds in CI / this environment run unsigned:
         #   xcodebuild build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO

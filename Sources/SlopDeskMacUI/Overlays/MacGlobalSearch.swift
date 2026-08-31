@@ -253,7 +253,7 @@ final class MacGlobalSearchView: NSView, NSTextFieldDelegate {
     }
 
     /// A chip. `.wholeWord` moves nothing — the cross-tab search runs over a scrollback mirror rather
-    /// than over libghostty's own buffer, and the two do not agree about a word boundary — so the guard
+    /// than over `libghostty-vt`'s own buffer, and the two do not agree about a word boundary — so the guard
     /// is what stops an inert tap from re-running the query.
     private func toggle(_ mode: FindModePill) {
         guard modes.toggle(mode) else { return }

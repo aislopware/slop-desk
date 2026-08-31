@@ -9,7 +9,7 @@
 //     tab onto a pane that does not exist — an empty window with no way out.
 //   • The siblings of a zoomed pane are still SOLVED, and still emitted, flagged hidden at their
 //     un-zoomed rects. A pane the model stops emitting is a pane the view unmounts, and unmounting
-//     one dismantles the libghostty surface or the video stream behind it; un-zoom would then
+//     one dismantles the terminal surface or the video stream behind it; un-zoom would then
 //     repaint from the lossy replay ring. Zoom is a visibility change, never a teardown.
 //   • A zoomed tab draws NO seams. That gate lives behind `slopdesk_ws_render_dividers` rather than
 //     at the call site, because a renderer that decided it for itself would be a second copy of the
@@ -70,7 +70,7 @@ public enum SplitTreeRenderModel {
         public let dividers: [DividerHandle]
         /// The ZOOM-hidden leaves: while a zoom is active, every non-zoomed pane lands here at its
         /// un-zoomed rect, flagged `isHidden` — so ``compositorLeaves`` still carries the FULL pane set and
-        /// the canvas keeps the siblings mounted at zero alpha (never unmounted → the libghostty surface /
+        /// the canvas keeps the siblings mounted at zero alpha (never unmounted → the terminal surface /
         /// video stream survives the zoom toggle, and un-zoom is a pure visibility flip, no lossy
         /// ring-replay). Empty while un-zoomed, so the tiled path is byte-identical.
         public let hiddenLeaves: [CompositorLeaf]

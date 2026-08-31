@@ -117,7 +117,7 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
 
     /// The last `count` lines of this pane's scrollback (newest screen + retained scrollback), as a flat
     /// line-oriented text mirror — the source for `slopdesk pane capture --lines N`. `count <= 0` ⇒ empty.
-    /// Default returns `[]` (no terminal / nothing captured); ``LivePaneSession`` reads libghostty truth
+    /// Default returns `[]` (no terminal / nothing captured); ``LivePaneSession`` reads libghostty-vt truth
     /// ONLY through the `TerminalSurfaceActions` seam (a headless / preview surface does not conform → `[]`,
     /// hang-safety), so it is never a hang-prone real surface in a test.
     func captureScrollback(lines count: Int) -> [String]

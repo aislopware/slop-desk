@@ -121,7 +121,7 @@ public final class PhoneAppDelegate: UIResponder, UIApplicationDelegate {
         //
         // ⚠️ BEFORE the composition, not after: `PreferencesStore` builds a terminal config as it
         // comes up, and that build asks the seam. Installed second, the FIRST config a pane sees
-        // resolves against an unfilled closure and the cells come up in libghostty's own colours
+        // resolves against an unfilled closure and the cells come up in `libghostty-vt`'s own colours
         // until something dirties the config. Both shells install it ahead of their composition for
         // this reason; keeping the order identical is what keeps them one launch sequence.
         ClientTerminalPalette.install()

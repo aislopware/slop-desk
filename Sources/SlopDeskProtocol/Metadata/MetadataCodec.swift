@@ -635,7 +635,7 @@ public enum MetadataCodec {
     // MARK: - Code font spec  (syncCodeFont = 20)
 
     /// The client's terminal-font truth for the embedded workbench — the ``MetadataVerb/syncCodeFont``
-    /// REQUEST payload. The terminal face/size/rhythm are CLIENT state (libghostty renders on the
+    /// REQUEST payload. The terminal face/size/rhythm are CLIENT state (`libghostty-vt` renders on the
     /// client; the prefs never otherwise cross the wire), while the editor reads the host-side shared
     /// `settings.json` — so the client pushes the three values and the host folds them into the seeded
     /// editor keys (`CodeServerManager.syncEditorFont`). `lineHeight` is the EFFECTIVE cell-height

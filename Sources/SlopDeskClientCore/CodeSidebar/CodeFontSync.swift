@@ -2,12 +2,13 @@
 // (verb 20): the CLIENT's live terminal font truth, folded into the shared workbench settings so
 // the embedded editor reads like the terminal beside it — the CURRENT prefs, not the defaults.
 //
-// The line-height maths mirrors what the terminal ACTUALLY renders: libghostty derives the cell
-// height from the resolved face's metrics, then applies the `adjust-cell-height` percentage the
-// ``LineHeightMode`` maps to. For an INSTALLED family, CoreText supplies the metrics; for a family
-// CoreText cannot resolve (the shipping default — "SF Mono" and "JetBrains Mono" resolve on
-// neither machine), libghostty falls back to its EMBEDDED JetBrainsMono face, whose hhea metrics
-// (1020/−300/0 on upm 1000, through `Metrics.zig`'s rounding) pin the ratio at exactly 1.32.
+// The line-height maths mirrors what the terminal ACTUALLY renders: its own Core Text glyph pipeline
+// (`slopdesk-apple-text`) derives the cell height from the resolved face's metrics, then applies the
+// `adjust-cell-height` percentage the ``LineHeightMode`` maps to. For an INSTALLED family, CoreText
+// supplies the metrics; for a family CoreText cannot resolve (the shipping default — "SF Mono" and
+// "JetBrains Mono" resolve on neither machine), it falls back to the EMBEDDED JetBrainsMono face,
+// whose hhea metrics (1020/−300/0 on upm 1000, through `slopdesk-apple-text`'s own rounding) pin the
+// ratio at exactly 1.32.
 
 import CoreText
 import SlopDeskProtocol
@@ -37,7 +38,8 @@ package enum CodeFontSync {
     }
 
     /// CoreText metrics ratio for an INSTALLED family at `size` — (ascent + descent + leading) /
-    /// size, the same face-height-over-em walk ghostty's metrics take. `nil` when the family does not
+    /// size, the same face-height-over-em walk the terminal's own Core Text metrics (`slopdesk-apple-text`)
+    /// take. `nil` when the family does not
     /// resolve (→ the embedded fallback above) or `size` is not positive.
     ///
     /// CoreText, not AppKit, and the gate that used to sit here was SCOPE rather than necessity: the
@@ -49,7 +51,7 @@ package enum CodeFontSync {
     /// `NSFont(name:size:)`'s `nil` was doing double duty — resolve AND metrics — and CoreText will
     /// not hand that back: `CTFontCreateWithName` NEVER fails, it substitutes a system fallback face.
     /// So "did it resolve" is asked of the ANSWER (``resolves(_:to:)``), which is also what keeps the
-    /// embedded-face fallback honest: a substituted Helvetica's ratio is not the ratio libghostty
+    /// embedded-face fallback honest: a substituted Helvetica's ratio is not the ratio the terminal
     /// will render, and silently shipping it is worse than falling back on purpose.
     ///
     /// The AppKit metrics this replaces were the same numbers: `NSFont.ascender` / `.descender` /

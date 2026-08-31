@@ -2,10 +2,12 @@ import CSlopDeskFFI
 
 /// The Swift face of `rust/slopdesk-terminal`'s `config`, reached through the door of the same name.
 ///
-/// libghostty's `ghostty_config_load_string` accepts the same newline-separated `key = value` syntax as
-/// `~/.config/ghostty/config`. `GhosttyTerminalView` feeds ``string(for:)``'s output through it BEFORE
-/// `ghostty_config_finalize`, so a font / theme / cursor change applies live (the host PTY grid is
-/// re-measured and resized after the reflow).
+/// The deleted fork's `GhosttyTerminalView` used to feed this module's output through
+/// `ghostty_config_load_string` — which accepts the same newline-separated `key = value` syntax as
+/// `~/.config/ghostty/config` — before `ghostty_config_finalize`, so a font / theme / cursor change
+/// applied live (the host PTY grid was re-measured and resized after the reflow); see docs/68 for
+/// what replaced that apply path. The GRAMMAR survives regardless: libghostty's own
+/// newline-separated `key = value` syntax.
 ///
 /// What stays HERE is the crossing and nothing else. Every preference that is an enum on this side —
 /// the ligature mode, the two face modes, the blending mode, the cursor style and its blink tri-state —

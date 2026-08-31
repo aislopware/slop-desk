@@ -26,17 +26,20 @@
 import Foundation
 import SlopDeskWorkspaceCore
 
-// `public`, not `package`, and only for ``actuate(_:model:)``: the libghostty embedder
-// (`ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`) is compiled by the Xcode
-// app targets and by no `Package.swift` target, so it sits OUTSIDE this package and `package` is invisible
-// to it — which is the whole reason its macOS half carried a `performLinkAction` of its own, a second
-// spelling of the switch below that this file's header already described itself as mirroring. It is gone;
-// both halves of the embedder dispatch through here, so a link copied from the terminal now lights the
-// `COPIED · N` chip (`noteClipboardCopy`) and writes through `ClientPasteboard` like every other copy in
-// the app, which the AppKit copy of the switch did neither of. Everything else here stays `package` — the
+// `public`, not `package`, and only for ``actuate(_:model:)``: the terminal renderer used to be the fork's
+// embedder, compiled by the Xcode app targets and by no `Package.swift` target, so it sat OUTSIDE this
+// package where `package` is invisible — which is the whole reason its macOS half carried a
+// `performLinkAction` of its own, a second spelling of the switch below that this file's header already
+// described itself as mirroring. That copy is gone; both platforms' renderers dispatch through here, so a
+// link copied from the terminal lights the `COPIED · N` chip (`noteClipboardCopy`) and writes through
+// `ClientPasteboard` like every other copy in the app, which the AppKit copy of the switch did neither of.
+//
+// The ACCESS LEVEL outlived its reason and is kept on purpose: docs/68 moved the renderer into
+// `Sources/SlopDeskTerminal/`, so `package` would now reach it, but narrowing this is a change to who may
+// actuate a link and belongs in a change about link actuation. Everything else here stays `package` — the
 // Jump-To / Open-Quickly row table has no reader outside the package and must not grow one.
 // `@preconcurrency` rides the `@MainActor` for the same reason it does on ``TerminalViewModel``: a PUBLIC
-// main-actor declaration is a source break for a Swift 5 client, and the embedder is exactly such a client.
+// main-actor declaration is a source break for a Swift 5 client.
 @preconcurrency
 @MainActor
 public enum LinkActionActuator {

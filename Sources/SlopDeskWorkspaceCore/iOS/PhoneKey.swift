@@ -95,7 +95,7 @@ public enum PhoneKey {
         /// is not a modifier at all in bits 4-5: what ⌥ MEANS on this keyboard.
         ///
         /// `controls.optionAsAlt` is read LIVE off `Defaults` here, per press, exactly the way the
-        /// libghostty surface reads `undoAtPrompt` in its `keyDown` — so a Settings change takes
+        /// terminal surface reads `undoAtPrompt` in its `keyDown` — so a Settings change takes
         /// effect on the very next keystroke rather than on the next pane. What the value MEANS is
         /// the door's (`slopdesk_workspace::phone_key::OptionAsAlt`), including why a phone reads a
         /// LEFT/RIGHT choice the same as BOTH: a `UIKey` carries one `.alternate` bit and no side.

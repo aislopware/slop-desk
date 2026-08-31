@@ -80,7 +80,7 @@ package protocol TerminalLeafHosting: AnyObject {
     ///
     /// Called at start and again whenever the MODEL changes under a stable pane id. The surface is
     /// never dropped by ``TerminalLeafLifecycle/detach()`` — see its header for why that asymmetry is
-    /// deliberate — so this is the only path that takes libghostty's threads down.
+    /// deliberate — so this is the only path that takes the surface's threads down.
     func mountTerminalSurface()
 
     /// The session HANDLE changed; the model may not have. The phone re-points its key responder here
@@ -129,7 +129,7 @@ package struct TerminalLeafTaskKeys: Equatable {
 /// that must never leak is process-global: an engaged `EnableSecureEventInput` outliving its pane
 /// holds the keyboard for every other app on the machine, with nothing on screen to say so. It is
 /// idempotent and re-installable, so re-attaching costs nothing. The SURFACE does not:
-/// `detachSurface()` drops libghostty's renderer and io threads, which is not re-installable and
+/// `detachSurface()` drops the surface's renderer and io threads, which is not re-installable and
 /// would take the session with it — and a leaf can leave the tree without its pane going away (a
 /// split rearrange re-parents it).
 @MainActor

@@ -1,8 +1,14 @@
-# Renderer-DISABLED iOS spec for the real-device GUI-video test (PATH 2 / ô ④).
-# Drops the libghostty renderer (the 566MB xcframework is not needed to verify video decode/
-# render) and keeps only SlopDeskPhoneUI + SlopDeskVideoClient. AppMain gates the renderer on
-# `#if canImport(CGhostty)`, so without CGhostty the terminal shows the placeholder while the
-# Remote-window video sheet (SlopDeskVideoClient) works fully — which is all this test needs.
+# The narrow iOS spec for the real-device GUI-video test (PATH 2 / ô ④): SlopDeskPhoneUI +
+# SlopDeskVideoClient and nothing else, so a device run that only has to prove video decode/render
+# does not carry the rest of the app's link graph.
+#
+# ⚠️ Its ORIGINAL reason is gone and this spec may be too. It existed to drop a 566MB
+# `libghostty.xcframework` that `project.yml` listed and this one did not — AppMain gated the
+# renderer on `#if canImport(CGhostty)`, so building through here left the terminal on its
+# build-status placeholder while the video sheet worked fully. There is no xcframework in either
+# spec now (docs/68), AppMain's renderer gate is gone, and what separates the two files is only the
+# video half and the asset/entitlement detail. Whoever next runs the ô ④ test should decide whether
+# this is still a spec or a duplicate of `project.yml`.
 name: ClientApp-iOS
 options:
   bundleIdPrefix: com.slopdesk

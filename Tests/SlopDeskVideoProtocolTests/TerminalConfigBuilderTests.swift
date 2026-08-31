@@ -4,7 +4,7 @@ import XCTest
 
 /// The PURE `TerminalPreferences → ghostty config string` builder. Pins every field to its
 /// Ghostty config key (`font-family`, `font-size`, `font-style`, `theme`, `cursor-style`,
-/// `cursor-style-blink`, `scrollback-limit`) + the keybind lines, headlessly (no libghostty surface).
+/// `cursor-style-blink`, `scrollback-limit`) + the keybind lines, headlessly (no libghostty-vt surface).
 final class TerminalConfigBuilderTests: XCTestCase {
     /// Split the config string into its `key` set + a `[key: value]` map (keys are unique per build).
     private func parse(_ config: String) -> [String: String] {
@@ -29,14 +29,14 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(map["foreground"], "F8F8F2") // Dracula's primary ink
         XCTAssertEqual(map["cursor-style"], "block")
         // The default cursor blink is the TRI-STATE `.default` (defer to DEC mode 12), which SKIPS the
-        // `cursor-style-blink` line entirely (libghostty's optional-bool null). Pre-fix this emitted `true`.
+        // `cursor-style-blink` line entirely (libghostty-vt's optional-bool null). Pre-fix this emitted `true`.
         XCTAssertNil(map["cursor-style-blink"], "the .default tri-state defers to DEC mode 12 (no line)")
         // 10000 lines × 256 B/line.
         XCTAssertEqual(map["scrollback-limit"], "2560000")
     }
 
     /// The tri-state cursor blink: `.default` SKIPS the line (defer to DEC mode 12), `.on`/`.off` emit the
-    /// explicit libghostty optional-bool. FAILS before the fix (blink was a plain Bool that always emitted).
+    /// explicit libghostty-vt optional-bool. FAILS before the fix (blink was a plain Bool that always emitted).
     func testCursorBlinkTriStateEmitsOnlyForExplicitStates() {
         let def = parse(TerminalConfigBuilder.string(for: TerminalPreferences(cursorBlink: .default)))
         XCTAssertNil(def["cursor-style-blink"], ".default defers to DEC mode 12 → no line")
@@ -70,7 +70,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
         }
     }
 
-    /// The four cursor styles round-trip through `cursor-style`, including the native libghostty
+    /// The four cursor styles round-trip through `cursor-style`, including the native libghostty-vt
     /// `block_hollow` (`terminal/cursor.zig`). FAILS before the fix: the enum lacked `blockHollow`.
     func testBlockHollowCursorStyleEmitsNativeToken() {
         let map = parse(TerminalConfigBuilder.string(for: TerminalPreferences(cursorStyle: .blockHollow)))
@@ -81,7 +81,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
     }
 
     func testEmptyFamilyOrThemeIsSkippedNotEmittedEmpty() {
-        // An empty `font-family =` would CLEAR Ghostty's default to nothing — so it is skipped, not
+        // An empty `font-family =` would CLEAR libghostty-vt's default to nothing — so it is skipped, not
         // emitted as a blank line. font-size / cursor / scrollback always emit (they have real values).
         let prefs = TerminalPreferences(fontFamily: "  ", theme: "")
         let map = parse(TerminalConfigBuilder.string(for: prefs))
@@ -92,7 +92,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
     }
 
     func testBackgroundForegroundEmittedAfterThemeAndEmptySkipped() {
-        // A custom bg/fg emit their lines; an empty one is skipped (so it never clears Ghostty's value).
+        // A custom bg/fg emit their lines; an empty one is skipped (so it never clears libghostty-vt's value).
         let custom = parse(TerminalConfigBuilder.string(
             for: TerminalPreferences(background: "112233", foreground: "AABBCC"),
         ))
@@ -141,7 +141,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
 
     /// The line-to-byte conversion crosses rather than being restated here: a non-positive count is
     /// none rather than a trap, and the per-line estimate is the far side's. The crate pins the
-    /// arithmetic; this pins that the arithmetic is what reaches libghostty.
+    /// arithmetic; this pins that the arithmetic is what reaches libghostty-vt.
     func testScrollbackLimitCrossesAsBytes() {
         for (lines, bytes) in [(0, "0"), (-5, "0"), (1, "256"), (10000, "2560000")] {
             let map = parse(TerminalConfigBuilder.string(for: TerminalPreferences(scrollbackLines: lines)))
@@ -176,7 +176,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
     /// The load-bearing regression guard: a default-constructed `TerminalPreferences` with no palette /
     /// selection-bg args (nil) reproduces the EXACT default builder output. Default extras:
     /// `font-feature = -calt,-liga,-dlig` (ligatures off) and `selection-foreground = cell-foreground`
-    /// (libghostty token — keep cell colours under the highlight). No per-face / palette / cell-height /
+    /// (libghostty-vt token — keep cell colours under the highlight). No per-face / palette / cell-height /
     /// thicken / selection-background default leaks a line.
     func testDefaultPathEmitsTheExpectedLinesExactly() {
         let expected = [
@@ -195,7 +195,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(TerminalConfigBuilder.string(for: TerminalPreferences()), expected)
     }
 
-    /// `window-padding-balance = true` rides EVERY build, with and without the controls block. libghostty's
+    /// `window-padding-balance = true` rides EVERY build, with and without the controls block. libghostty-vt's
     /// default hugs the top-left cell to the edge and dumps the whole sub-cell remainder on the right +
     /// bottom, which the leaf's even 8pt gutter then reads as an off-centre grid. Not a preference —
     /// no pref gates it.
@@ -210,7 +210,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
         }
     }
 
-    /// `link-url = false` rides EVERY build, with and without the controls block. libghostty's built-in
+    /// `link-url = false` rides EVERY build, with and without the controls block. libghostty-vt's built-in
     /// regex link matcher draws its own underline on the same spans `LinkHighlightOverlay` paints, and
     /// two rules under one path is what the user saw; SlopDesk owns detection, highlight and ⌘click, so
     /// the built-in matcher is switched off rather than fought. Not a preference — no pref gates it.
@@ -282,7 +282,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
     }
 
     /// A valid selection colour emits `selection-background`; a malformed / nil one is dropped.
-    /// Every build emits `selection-foreground = cell-foreground` (libghostty: keep cell glyph colours).
+    /// Every build emits `selection-foreground = cell-foreground` (libghostty-vt: keep cell glyph colours).
     func testSelectionBackgroundOverrideEmitsWhenValidAndDropsOtherwise() {
         let valid = parse(TerminalConfigBuilder.string(
             for: TerminalPreferences(), selectionBackgroundOverride: "403E41",
@@ -292,7 +292,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
             valid["selection-foreground"], "cell-foreground",
             "keep original cell foregrounds under the selection fill",
         )
-        // 8-digit alpha is NOT valid — libghostty Color is RGB-only (3/6 hex); must drop.
+        // 8-digit alpha is NOT valid — libghostty-vt's Color is RGB-only (3/6 hex); must drop.
         let alpha = parse(TerminalConfigBuilder.string(
             for: TerminalPreferences(), selectionBackgroundOverride: "FFFFFF30",
         ))
@@ -310,7 +310,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
 
     // MARK: - Font-parity keys
 
-    /// The fallback chain (item 6): ghostty has NO `font-family-fallback` key — the chain is REPEATED
+    /// The fallback chain (item 6): libghostty-vt has NO `font-family-fallback` key — the chain is REPEATED
     /// `font-family =` lines (the primary first, then each fallback in order), since `font-family` is a
     /// `RepeatableString` in Config.zig. A blank entry in the comma list is dropped (validate-then-skip).
     func testFontFamilyFallbackEmitsRepeatedFontFamilyLinesInOrder() {
@@ -419,13 +419,13 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(syntheticLines.count, 1, "bold + italic collapse into ONE font-synthetic-style key")
     }
 
-    /// `font-synthetic-style` is a REAL ghostty key (Config.zig:218, a `FontSyntheticStyle` packed flag-set of
+    /// `font-synthetic-style` is a REAL libghostty-vt key (Config.zig:218, a `FontSyntheticStyle` packed flag-set of
     /// `bold`/`italic`/`bold-italic`) and the tokens this builder emits are in its documented vocabulary
     /// (Config.zig:201-205 — `no-bold`/`no-italic`/`no-bold-italic` disable; `bold`/`italic`/`bold-italic`
     /// enable). This pins each mode's emitted token so the mapping is provably actuated, NOT a no-op:
     /// `primaryOnly` ⇒ `no-{kind}` (disable synthesis), `synthetic` ⇒ `{kind}` (re-assert default-on synthesis).
     func testFontSyntheticStyleTokensAreValidGhosttyValues() {
-        // primary-only bold → `no-bold` (disables synthetic bold; ghostty uses only the primary face).
+        // primary-only bold → `no-bold` (disables synthetic bold; libghostty-vt uses only the primary face).
         let primaryOnly = parse(TerminalConfigBuilder.string(for: TerminalPreferences(fontBold: .primaryOnly)))
         XCTAssertEqual(primaryOnly["font-synthetic-style"], "no-bold")
         // synthetic italic → `italic` (re-asserts the default-ON synthesis for the italic face).

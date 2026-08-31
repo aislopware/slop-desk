@@ -107,7 +107,8 @@ public enum WireMessage: Equatable, Sendable {
     /// - `promptOrdinal`: 1-based count of OSC 133 `A` prompt-start marks the segmenter had seen
     ///   when this block's cycle began — the block's PROMPT-ROW ordinal, counting EVERY prompt
     ///   cycle (including empty-Enter / Ctrl-C cycles that produce no block), exactly as
-    ///   libghostty counts `.prompt` rows for `jump_to_prompt`. `0` = unknown (mid-stream join
+    ///   `libghostty-vt` marks `.prompt` rows (the outline-jump anchor; the engine exposes no jump
+    ///   door of its own, so the hop is hand-rolled). `0` = unknown (mid-stream join
     ///   with no `A` seen) — the client skips the outline jump rather than mis-landing.
     case commandBlock(
         index: UInt32,
@@ -234,7 +235,7 @@ public enum WireMessage: Equatable, Sendable {
     /// PTY master's termios `ECHO` line-discipline flag (`tcgetattr`, cleared by `sudo`/`ssh`/`login`/
     /// `read -s`/`getpass`) and emits this on a state EDGE — `enabled: true` is canonical echo (default),
     /// `enabled: false` is a no-echo password prompt. termios `ECHO` is a HOST-side attribute the child
-    /// sets with `tcsetattr`, **invisible to the output byte stream** (libghostty / DECSET / OSC-133
+    /// sets with `tcsetattr`, **invisible to the output byte stream** (`libghostty-vt` / DECSET / OSC-133
     /// parsing never see it), so AUTO-Secure-Keyboard-Entry genuinely requires this host→client signal —
     /// the client engages `EnableSecureEventInput` while `enabled == false`. 1-byte body (`enabled ? 1 : 0`),
     /// decoded as `byte != 0` (untrusted-bool rule). Additive within wire version 1 (host accepts only v1,

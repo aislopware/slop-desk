@@ -72,7 +72,7 @@ extension WorkspaceStore {
         )
     }
 
-    /// Hand pane `id`'s libghostty surface its PURE ``TerminalKeyInterceptor`` (the override-aware
+    /// Hand pane `id`'s terminal surface its PURE ``TerminalKeyInterceptor`` (the override-aware
     /// single-chord table). The surface's `keyDown` consults it BEFORE its own raw-byte branches, so the
     /// rebindable ⌘D/⌘⇧D split is owned by the shared engine (B5 removed the hard-coded split branch). A
     /// resolved action routes through the SAME `WorkspaceBindingRegistry.route` the app-level monitor (B3)

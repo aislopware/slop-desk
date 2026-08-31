@@ -144,14 +144,14 @@ public enum WorkspaceAction: Hashable, Sendable {
     case commandJumpPrev // ⌘PageUp — jump to the PREVIOUS shell prompt (reuses jumpToBlock(-1))
     case commandJumpNext // ⌘PageDown — jump to the NEXT shell prompt (reuses jumpToBlock(+1))
 
-    // View — font size (libghostty rescales the cell box, reflowing the remote PTY grid via SIGWINCH)
+    // View — font size (the renderer rescales the cell box, reflowing the remote PTY grid via SIGWINCH)
     case increaseFontSize // ⌘= / ⌘+ — bump the active pane's render font size (⌘+ via `aliasChords`)
     case decreaseFontSize // ⌘- — shrink the active pane's render font size
     case resetFontSize // ⌘0 — reset the active pane's render font size to the configured default
 
     // Blocks (Warp-style per-command blocks)
     case commandNavigator // ⌃⌘O — show/hide the searchable recent-blocks navigator over the active pane
-    case jumpPreviousBlock // ⌃⌘[ — jump the viewport to the previous shell prompt (OSC 133, libghostty)
+    case jumpPreviousBlock // ⌃⌘[ — jump the viewport to the previous shell prompt (OSC 133, libghostty-vt)
     case jumpNextBlock // ⌃⌘] — jump the viewport to the next shell prompt
     case reRunLastCommand // ⌃⌘R — re-inject the active pane's latest captured command (verbatim + newline)
     case jumpPreviousFailed // ⌃⌘⇧[ — jump to the previous (newer) FAILED block

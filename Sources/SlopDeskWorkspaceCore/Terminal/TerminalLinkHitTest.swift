@@ -59,7 +59,6 @@
 
 import CoreGraphics
 import CSlopDeskFFI
-import SlopDeskTerminal
 
 /// The PURE point → detected-link hit-test both halves of the terminal renderer run.
 public enum TerminalLinkHitTest {

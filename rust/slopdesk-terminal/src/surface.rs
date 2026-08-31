@@ -1,10 +1,11 @@
 //! What a gesture at the terminal surface MEANS before anything is sent.
 //!
-//! Five decisions the embedder makes between an `NSEvent` and libghostty, kept together because
-//! they share one shape and one hazard. The shape: each is a small guard ladder whose safe rung is
-//! "do nothing local", so a case nobody thought about degrades to the behaviour that was already
-//! there. The hazard is what makes them worth writing down at all — every one of them guards a way
-//! the terminal could do something the user did not ask for.
+//! Five decisions the embedder makes between an `NSEvent` and the engine (`libghostty-vt`, via
+//! `slopdesk-vterm`), kept together because they share one shape and one hazard. The shape: each is
+//! a small guard ladder whose safe rung is "do nothing local", so a case nobody thought about
+//! degrades to the behaviour that was already there. The hazard is what makes them worth writing
+//! down at all — every one of them guards a way the terminal could do something the user did not
+//! ask for.
 //!
 //! ## Who owns the click, and who owns the screen
 //!
@@ -14,11 +15,13 @@
 //! why a right-click inside a TUI is never stolen for a paste, and why undo at the prompt is the
 //! only place undo is intercepted at all.
 //!
-//! The surfaces that read these are compile-only behind `#if canImport(CGhostty)` on the near
-//! side, which is exactly why the decisions are here: the actuator cannot be tested, so nothing
-//! that can be decided is left in it.
+//! The surfaces that read these are compile-only behind `#if canImport(AppKit)` / `#if
+//! canImport(UIKit)` on the near side (`MacTerminalRendererView`/`PhoneTerminalRendererView`),
+//! which is exactly why the decisions are here: the actuator cannot be tested, so nothing that can
+//! be decided is left in it.
 
-/// What the embedder does when libghostty asks it to WRITE the pasteboard.
+/// What the embedder does once the engine's drained queue reports a program asked to WRITE the
+/// pasteboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipboardWrite {
     /// Write it now — the program is allowed (`clipboard-write = allow`).
@@ -31,10 +34,11 @@ pub enum ClipboardWrite {
 
 /// What a clipboard WRITE should do.
 ///
-/// libghostty enforces `deny` and `allow` itself; `ask` is DELEGATED — it calls the write callback
-/// with `confirm` set and trusts the embedder to gate. A callback that ignored that flag would make
-/// "Ask" behave as "Allow", so any remote OSC 52 could overwrite the clipboard silently. That is
-/// the whole reason this is a decision rather than a write.
+/// The engine enforces nothing itself — every OSC-52 write attempt is REPORTED through the drained
+/// queue (`docs/68` §4.1), never applied engine-side, so `deny`/`allow`/`ask` are entirely this
+/// side's job. `confirm_requested` carries `ask`; a caller that applied the report without checking
+/// this decision would still make "Ask" behave as "Allow", so any remote OSC 52 could overwrite the
+/// clipboard silently. That is the whole reason this is a decision rather than a write.
 #[must_use]
 pub const fn clipboard_write(confirm_requested: bool, text: &str) -> ClipboardWrite {
     if text.is_empty() {
@@ -76,10 +80,13 @@ pub const fn cut_action(has_selection: bool, alternate_screen: bool, prompt_zone
 /// How many DEL (`0x7F`) bytes the delete half of a cut sends.
 ///
 /// DEL always erases the characters immediately BEFORE the cursor, so it erases the SELECTED run
-/// only when that run ends at the cursor. The pinned libghostty fork exposes no selection geometry,
-/// so the embedder cannot prove it — and an optimistic pre-send over a mid-line selection would
-/// delete the wrong characters, which is silent data loss. Hence a count only when the caller can
-/// PROVE both facts, and `0` otherwise, which degrades the cut to a copy.
+/// only when that run ends at the cursor. The pinned libghostty fork exposed no selection geometry,
+/// so the embedder could not prove it — and an optimistic pre-send over a mid-line selection would
+/// delete the wrong characters, which is silent data loss. `libghostty-vt`'s selection API is
+/// richer (`docs/68` §4, "Selection is a gain, not a gap"), but this door still takes the proof as
+/// a caller-supplied bool rather than asking the engine itself, so the same conservative rule
+/// holds: a count only when the caller can PROVE both facts, and `0` otherwise, which degrades the
+/// cut to a copy.
 ///
 /// The full length rather than one less: unlike a Backspace keystroke there is no fall-through key
 /// for ⌘X, so nothing else erases a character.
@@ -96,8 +103,10 @@ pub fn cut_delete_count(selection: &str, selection_ends_at_cursor: bool) -> usiz
 
 /// Whether a hover should claim the workspace focus.
 ///
-/// libghostty's own `focus-follows-mouse` only relays focus inside ITS split tree, and a slopdesk
-/// pane is a separate surface tiled by the client, so the cross-pane relay has to be ours.
+/// The deleted libghostty fork's own `focus-follows-mouse` only relayed focus inside ITS split
+/// tree; a slopdesk pane was always a separate surface tiled by the client. `libghostty-vt` has no
+/// app object and no splits at all, so the cross-pane relay was always ours and now has no
+/// competing implementation to defer to.
 ///
 /// The `!already_focused` term is load-bearing rather than an optimisation: the hover fires on
 /// every pointer motion, so without it a focused pane would re-request focus on each one, redrawing
@@ -111,7 +120,8 @@ pub const fn focus_follows_mouse(setting: bool, already_focused: bool) -> bool {
 /// and upstream Ghostty filters — is the whole F700–F8FF.
 const FUNCTION_KEY_PUA: core::ops::RangeInclusive<u32> = 0xF700..=0xF8FF;
 
-/// Whether a key event's `characters` may be handed to libghostty's key encoder as text.
+/// Whether a key event's `characters` may be handed to the engine's key encoder (`KeyEncoder`, via
+/// `slopdesk-vterm`) as text.
 ///
 /// Two payloads must never be, and each one silently broke something:
 ///
@@ -160,13 +170,14 @@ pub const fn prompt_edit_byte(undo: bool, redo: bool, in_prompt_zone: bool) -> O
 
 /// Whether a bare right-click must be intercepted as a paste rather than forwarded.
 ///
-/// The bare-right-click dispatch is libghostty's, through `right-click-action`, and its own paste
-/// gate only flags a newline or a bracketed-paste end. The four-danger analysis this codebase runs
-/// on ⌘V — a single-line `sudo`, control characters, a trailing newline, multiple lines — is
-/// therefore unreachable from a right-click unless the embedder takes the click first.
+/// `libghostty-vt` has no notion of a right-click policy at all — the bare-right-click dispatch is
+/// entirely this side's now, driven by the `right-click-action` token. Without this gate a right
+/// click never becomes a paste by itself, so it would skip the four-danger analysis this codebase
+/// runs on ⌘V — a single-line `sudo`, control characters, a trailing newline, multiple lines —
+/// entirely; the embedder must take the click here first for that analysis to apply at all.
 ///
-/// `action` is the config token, the same spelling the config file carries, so there is no second
-/// vocabulary to keep in step. An unrecognised token does not intercept.
+/// `action` is the config token, the same spelling the `ghostty` config file format carries, so
+/// there is no second vocabulary to keep in step. An unrecognised token does not intercept.
 #[must_use]
 pub fn right_click_intercepts_as_paste(action: &str, has_selection: bool, mouse_captured: bool) -> bool {
     if mouse_captured {
@@ -176,7 +187,8 @@ pub fn right_click_intercepts_as_paste(action: &str, has_selection: bool, mouse_
         "paste" => true,
         // Copy-or-Paste pastes only when there is nothing selected to copy. The selection is read
         // BEFORE the click is forwarded, so it is the genuine pre-click one rather than a
-        // word-select libghostty injected.
+        // word-select a downstream forward could inject — the same hazard the deleted libghostty
+        // fork's own right-click word-select used to create.
         "copy-or-paste" => !has_selection,
         _ => false,
     }

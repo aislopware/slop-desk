@@ -3,8 +3,9 @@
 // primitives this takes (`charactersIgnoringModifiers`, `keyCode`, the four modifier booleans) and feeds
 // them here; this file imports NO AppKit so a ClientUI test can exercise every chord without an `NSEvent`.
 //
-// PARITY with GhosttyTerminalView: the terminal's `keyDown` reads `event.modifierFlags` (mapped by
-// `ghosttyMods`) + `charactersIgnoringModifiers` to key its own chords (the ⌘D/⌘⇧D split branch). We mirror
+// PARITY with `MacTerminalRendererView`: the terminal's `keyDown` reads `event.modifierFlags` (mapped by
+// `MacTerminalRendererView.mods(_:)`, which packs the AppKit flags into `libghostty_vt`'s `key::Mods` layout)
+// + `charactersIgnoringModifiers` to key its own chords (the ⌘D/⌘⇧D split branch). We mirror
 // the SAME two signals — modifier flags → `KeyChord.Modifiers`, and `charactersIgnoringModifiers` (which
 // ignores ⌘/⌥/⌃ but NOT ⇧, so a shifted key still reports its base via the lowercase normalization in
 // `KeyChord.init(character:)`) → the base key — so the dispatcher and the terminal agree on what a chord is.
@@ -19,7 +20,7 @@ import SlopDeskWorkspaceCore
 /// unmapped keystroke (which the dispatcher then leaves untouched — never swallowed).
 package enum KeyChordNormalizer {
     /// The four modifier booleans, destructured from `NSEvent.modifierFlags` by the caller so this stays
-    /// AppKit-free and testable. Mirrors the set `ghosttyMods` reads (shift/control/option/command).
+    /// AppKit-free and testable. Mirrors the set `MacTerminalRendererView.mods(_:)` reads (shift/control/option/command).
     package struct Modifiers {
         package let shift: Bool
         package let control: Bool

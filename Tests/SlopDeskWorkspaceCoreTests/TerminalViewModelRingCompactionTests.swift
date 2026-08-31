@@ -1,4 +1,3 @@
-import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

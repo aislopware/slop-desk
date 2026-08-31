@@ -192,10 +192,6 @@ const FLOOR: &[(&str, Floor)] = &[
     ("Sources/SlopDeskSlate/SlateVectorArt.swift", Floor::DrawingArt),
     ("Sources/SlopDeskSlate/SlateVectorDraw.swift", Floor::DrawingArt),
     (
-        "Sources/SlopDeskTerminal/SerialFeedGate.swift",
-        Floor::SwiftRuntime,
-    ),
-    (
         "Sources/SlopDeskTransport/MessageChannel.swift",
         Floor::Vocabulary,
     ),

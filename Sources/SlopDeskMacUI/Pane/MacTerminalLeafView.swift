@@ -20,7 +20,7 @@
 // THAT would have put a full-bleed hosting layer over the ONE surface in this app that must take
 // every keystroke — exactly the hit-claim stage D spent five increments removing. The SwiftUI slot
 // is now deleted outright, so the trap is gone rather than merely avoided here. Nothing in this file
-// names `GhosttyLayerBackedView`; a headless `swift build` registers no factory at all and gets the
+// names `MacTerminalRendererView`; a headless `swift build` registers no factory at all and gets the
 // placeholder.
 //
 // ## RISK 3 — occlusion is not visibility, and the tracking areas are the reason
@@ -87,7 +87,7 @@ final class MacTerminalLeafView: NSView {
     /// The padded interior. The SwiftUI half spends `.padding(Slate.Metric.space2)` on the surface so
     /// terminal content is not flush against the pane edges / split divider; EVEN on all four sides
     /// since the command ladder was removed and the gutter carries nothing. The inset shrinks the
-    /// libghostty surface, so the host PTY grid loses ~1 col/row each side and reflows through the
+    /// terminal surface, so the host PTY grid loses ~1 col/row each side and reflows through the
     /// existing size → resize-scrim → `TIOCSWINSZ` path. No new signal.
     private let surfaceArea = NSView()
 
@@ -100,7 +100,7 @@ final class MacTerminalLeafView: NSView {
 
     /// The four DECORATION overlays, coincident with the surface (origin 0,0 = surface top-left) and
     /// each inert until its own gate opens. They are decorations and never a content branch — the
-    /// libghostty-freeze guardrail — so all four answer `hitTest` with `nil` except hint mode, which
+    /// surface-teardown/focus-freeze guardrail — so all four answer `hitTest` with `nil` except hint mode, which
     /// is deliberately opaque while it is armed.
     private var decorations: [NSView] = []
 
@@ -235,9 +235,9 @@ final class MacTerminalLeafView: NSView {
     /// its pane holds the keyboard for every other app on the machine, with nothing on screen to say
     /// so. It is idempotent and re-installable, so re-attaching costs nothing.
     ///
-    /// The SURFACE does not. ``TerminalSurfaceHosting/detachSurface()`` drops libghostty's renderer
-    /// and io threads, which is not re-installable and would take the session with it — and a leaf
-    /// can leave the tree without its pane going away (a split rearrange re-parents it). So the
+    /// The SURFACE does not. ``TerminalSurfaceHosting/detachSurface()`` drops the terminal renderer —
+    /// its display link and Metal layer — which is not re-installable and would take the session with
+    /// it — and a leaf can leave the tree without its pane going away (a split rearrange re-parents it). So the
     /// surface is dropped only by ``teardown()``, which the mounter calls when the pane is closed for
     /// good.
     override func viewDidMoveToWindow() {
@@ -257,7 +257,7 @@ final class MacTerminalLeafView: NSView {
         dropNavigator()
     }
 
-    /// The pane is closed for good: drop the wiring AND the libghostty surface. See
+    /// The pane is closed for good: drop the wiring AND the terminal surface. See
     /// ``TerminalLeafLifecycle`` for why the second half is not automatic.
     func teardown() {
         life.detach()
@@ -307,11 +307,12 @@ final class MacTerminalLeafView: NSView {
     ///
     /// THREE THINGS MOVE, AND ONLY THE FIRST IS ABOUT DRAWING.
     ///
-    /// 1. `alphaValue`, NEVER `isHidden`. The terminal surface is a LAYER-HOSTING view: libghostty
-    ///    installs its own `IOSurfaceLayer` in the `layer` slot and sizes that layer's frame and
-    ///    `contentsScale` in `layout()`. AppKit does not run `layout()` on a hidden subtree, so a
-    ///    window dragged to a display with a different backing scale while this tab was hidden would
-    ///    un-hide onto stale geometry — the surface presenting at the old scale, in the old rect,
+    /// 1. `alphaValue`, NEVER `isHidden`. The terminal surface is a LAYER-HOSTING view: the renderer
+    ///    hands over the Metal layer it owns, hosted in the `layer` slot, and `layout()` pushes that
+    ///    layer's size and `contentsScale` through `driver.setGeometry(size:scale:)`. AppKit does not
+    ///    run `layout()` on a hidden subtree, so a window dragged to a display with a different
+    ///    backing scale while this tab was hidden would un-hide onto stale geometry — the surface
+    ///    presenting at the old scale, in the old rect,
     ///    until something else dirtied it. Faded, the leaf keeps laying out and there is nothing to
     ///    catch up on.
     ///
@@ -323,7 +324,7 @@ final class MacTerminalLeafView: NSView {
     ///    subtree; an `NSTrackingArea` is a RECT plus an owner, and AppKit matches the pointer against
     ///    it with no reference to what is composited above, what `hitTest` answers, or what the
     ///    view's alpha is. A background tab's terminal therefore keeps taking `mouseMoved` and
-    ///    forwarding cursor positions to libghostty — which presents as a mouse-reporting TUI in the
+    ///    forwarding cursor positions to `libghostty-vt` — which presents as a mouse-reporting TUI in the
     ///    BACKGROUND tab tracking the pointer the user is moving in the FOREGROUND one, and as
     ///    focus-follows-mouse handing the workspace to a pane nobody can see. It is the same failure
     ///    ``TerminalPointerShield`` already answers for a modal card floating over the workspace;
@@ -383,7 +384,7 @@ final class MacTerminalLeafView: NSView {
     // MARK: - The pixels
 
     /// The terminal surface seam — the production renderer if the app registered a native factory,
-    /// else the headless placeholder. This target NEVER imports libghostty or Metal: it only calls
+    /// else the headless placeholder. This target NEVER imports `libghostty-vt` or Metal: it only calls
     /// the factory.
     ///
     /// The decorations are rebuilt with it because every one of them is constructed AROUND a model.

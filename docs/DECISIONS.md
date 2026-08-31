@@ -4,7 +4,7 @@
 > Status: ✅ decided · 🔬 needs a measurement spike · ⏸️ deferred · ❓ open.
 
 ## Philosophy
-- ✅ **Commit to one good choice per problem.** Renderer = **libghostty** (full surface); structured view = the **read-only inspector**; native Swift owns the wire. No fallback paths to maintain.
+- ✅ **Commit to one good choice per problem.** Renderer = **libghostty** (full surface); structured view = the **read-only inspector**; native Swift owns the wire. No fallback paths to maintain. **⚠️ SUPERSEDED IN ITS RENDERER HALF by [68](68-terminal-surface-in-rust.md):** the engine ruling stands and is strengthened — ghostty still parses every byte, now as `libghostty-vt` through `rust/slopdesk-vterm` — but the *full surface* is gone, because an opaque surface owns grid layout and blocks are layout, not decoration. "One good choice, no fallback" is unchanged; so is "native Swift owns the wire", which its own later entries reversed for Rust.
 - ✅ **Phase 0 — de-risk gate BEFORE building production.** Do NOT park "could kill the architecture" unknowns in a later phase (if they break, all prior-phase work is wasted). Every architecture-defining spike runs in Phase 0; only build once it passes. **Most of Phase 0 has already been measured on M1 Max/macOS 26.5** (harness: [research/spikes/vtbench]). → [18 §0]
 
 ## Scope & architecture
@@ -25,14 +25,14 @@
 - ✅ **Discovery:** mDNS/Bonjour is same-LAN only (does not traverse the mesh) → connect by mesh DNS/IP. → [13]
 - ✅ **A lightweight control plane is still needed** despite P2P (push notification + offline-queue): mesh management + APNs/FCM directly. → [13 §5b], [15]
 
-## Terminal renderer (client)
-- ✅ **libghostty full surface** (not vt + own renderer). → [12]
+## Terminal renderer (client) — ⚠️ the SURFACE half of this section is superseded by [68](68-terminal-surface-in-rust.md); the entries stand as the record of the fork era
+- ✅ **libghostty full surface** (not vt + own renderer). → [12] · **REVERSED by [68]: it is vt + our own renderer**, on the layout argument in its §2 — the surface composites the whole grid into one layer, so a block (collapse, padding, a native action bar between two blocks) has no seam to go in. The parser is still ghostty's.
 - ✅ **Own a minimal external-backend patch ourselves** (ref `daiimus/ghostty` External.zig; Lakr233 InMemorySession + build.yml as reference), build the XCFramework via Zig, pin the upstream SHA. Do NOT depend on the wiedymi fork (the weakest one). → [12]
-- ✅ **Renderer = libghostty** (full surface). SwiftTerm is referenced only as a *citation* for the POSIX PTY pattern (forkpty/DispatchIO) in [12] Part B — not a dependency. → [12]
+- ✅ **Renderer = libghostty** (full surface). SwiftTerm is referenced only as a *citation* for the POSIX PTY pattern (forkpty/DispatchIO) in [12] Part B — not a dependency. → [12] · **Renderer half superseded by [68]; SwiftTerm is still not a dependency and never was.**
 - ✅ **Route every key through `ghostty_surface_key`** (Ghostty encodes kitty/DECCKM itself); do NOT use the Lakr233 bypass path. → [12]
-- ✅ **Do NOT build a full Mosh shadow-framebuffer predictor (v1).** Opaque ghostty → would force a duplicate VT parser (desync risk); the Claude Code TUI uses alt-screen → the predictor is OFF there; the benefit exists only at the shell prompt, and at the mesh's low RTT Mosh itself withholds prediction. **Glitch-window caret (cursor column)** = cheap Phase 2 option. → [17]
+- ✅ **Do NOT build a full Mosh shadow-framebuffer predictor (v1).** Opaque ghostty → would force a duplicate VT parser (desync risk); the Claude Code TUI uses alt-screen → the predictor is OFF there; the benefit exists only at the shell prompt, and at the mesh's low RTT Mosh itself withholds prediction. **Glitch-window caret (cursor column)** = cheap Phase 2 option. → [17] · **NOT reversed by [68]**, which reads this entry the same way: it rejected a *second* parser kept beside libghostty's, and [68] replaces the one parser rather than adding one. No prediction is built on the new engine either.
 - ✅ **External-IO exists only in forks** (verified: NOT in upstream): `wiedymi/ghostty:custom-io` (VVTerm ships it) + `daiimus/ghostty:ios-external-backend` (Geistty ships it, has External.zig+resize+tests). The pattern is battle-tested. → [17]
-- ✅ **2026-07-11 — libghostty delta SLIMMED to external-IO-only** (12.5k → 2k patch lines). The daiimus fork's tmux control-mode viewer + iOS sync-search + `selection_bounds` C APIs were DROPPED (zero Swift references — SlopDesk *is* the *mux replacement*); dropping tmux restored upstream's DCS/ST parser (`dcs.zig`/`parse_table.zig`) and removed a per-keystroke mutex round-trip in `queueWrite`, which also retired local patch 0002 (`queueWriteLocked` — its recursive-lock trigger left with the tmux wrapping). Ex-patch 0001 (sync `updateFrame` in `draw()`) was folded into the consolidated delta and RACE-FIXED with a new `update_mutex` in `generic.zig` serializing every `updateFrame` entry (audit found main-thread `draw()` racing the renderer thread's `updateFrame` on unlocked renderer state). Kept: External.zig + embedded glue + `draw_now` + config `load_string`/`load_file_len` + Metal teardown-UAF fix + Unicode-17 width tables + a Termio `size`-under-lock torn-read fix. → [`ThirdParty/ghostty/README.md` "Pins + the SLIM delta"]
+- ✅ **2026-07-11 — libghostty delta SLIMMED to external-IO-only** (12.5k → 2k patch lines). The daiimus fork's tmux control-mode viewer + iOS sync-search + `selection_bounds` C APIs were DROPPED (zero Swift references — SlopDesk *is* the *mux replacement*); dropping tmux restored upstream's DCS/ST parser (`dcs.zig`/`parse_table.zig`) and removed a per-keystroke mutex round-trip in `queueWrite`, which also retired local patch 0002 (`queueWriteLocked` — its recursive-lock trigger left with the tmux wrapping). Ex-patch 0001 (sync `updateFrame` in `draw()`) was folded into the consolidated delta and RACE-FIXED with a new `update_mutex` in `generic.zig` serializing every `updateFrame` entry (audit found main-thread `draw()` racing the renderer thread's `updateFrame` on unlocked renderer state). Kept: External.zig + embedded glue + `draw_now` + config `load_string`/`load_file_len` + Metal teardown-UAF fix + Unicode-17 width tables + a Termio `size`-under-lock torn-read fix. → the fork's own README, deleted with the fork by [68](68-terminal-surface-in-rust.md); `git show` recovers it, and [68] §4 is the ledger of what that delta bought and what `libghostty-vt` ships free.
 - ✅ **Threading (C) = SOLVED:** feed_data/refresh/draw **main thread only**; TCP-rx bg thread → `await MainActor.run`; CVDisplayLink cb → `DispatchQueue.main.async`. Avoid actor-suspension escapes. → [18 C]
 - ✅ **Echo-latency PATH 1 = MEASURED** (2 machines, WireGuard-mesh P2P): round-trip p50 **9.2ms** / p99 17.8ms → feels-local, **predictor NOT needed** (confirms dropping Mosh). → [18 §0]
 - 🔬 Remaining spikes: alt-screen e2e, iOS XCFramework binary size, shell-integration OSC e2e. → [12], [17]
@@ -425,7 +425,7 @@
 > LOW-severity TERM / keyboard-input parity pass. Host ENV (`TERM`) is OFF-wire and `macos-option-as-alt` is a client-side libghostty config string — the golden corpus is untouched by all of these.
 - 🔁 **DELIBERATE CHOICE (rationalized): the host PTY `TERM` default stays `xterm-ghostty`, not a conservative `xterm-256color` — because slopdesk's renderer genuinely IS libghostty.** A conservative terminal that is NOT itself a ghostty implementation would need to avoid setting `term = xterm-ghostty`: claiming to be one would make programs emit kitty/DEC-2026 sequences it cannot render. slopdesk's CLIENT renders the PTY stream with **libghostty** behind `TerminalSurface` — a real ghostty emulator that DOES interpret those sequences — so `xterm-ghostty` is the genuinely-correct capability database for what the client can display (kitty keyboard protocol, DEC 2026 synchronized output). The one real risk that concern would guard against (a TUI on the host calling `setupterm("xterm-ghostty")` on a box that lacks the entry) is ALREADY mitigated, independent of this default, by `TerminfoResolver` (Ghostty #54700 model): it probes the host terminfo DB and auto-falls-back to `xterm-256color` when the entry is unresolvable, and an operator can force `--xterm256`. So we keep the feature-rich default with a safe fallback rather than a needlessly conservative default that would drop ghostty features our own renderer supports. → `ClaudeCodeProfile.swift`, `TerminfoResolver.swift`, `HostEnvironment.swift`
 - ✅ **"Option as Alt" is now a real Settings → Controls → Keyboard toggle wired to libghostty `macos-option-as-alt`.** The macOS Option→Alt/Meta decision is made by the CLIENT's libghostty surface (it owns key→byte encoding, emitting bytes over the wire), and `macos-option-as-alt` is a verified stock ghostty config key (`input/config.zig` enum `false`/`true`/`left`/`right`) — so it is reachable through the existing headless `TerminalConfigBuilder` → `ghostty_config_load_string` seam, NOT renderer-internal plumbing. A new 4-state `OptionAsAlt` enum (Off / Both / Left / Right; persistence tokens `off`/`both`/`left`/`right`, libghostty token via `configValue`) rides `TerminalControls` → `TerminalControlsConfig` → the builder's control block, persisted as the fire-time `Defaults` key `controls.optionAsAlt` (default Off, repaired via `PreferRawRepresentable`), surfaced in the Controls Keyboard section + the searchable All-Settings list, and covered by the reset sets. Pinned headlessly by `TerminalConfigBuilderControlsTests` (`testOptionAsAltTokenPassesThroughVerbatim`, `testDefaultOptionAsAltIsFalse`) + `TerminalControlsTests` (`testOptionAsAltRawValuesAndConfigValue`, `testFactoryReadsOptionAsAlt`). → `TerminalControls.swift`, `TerminalConfigBuilder.swift`, `SettingsKey.swift`, `PreferencesStore.swift`, `SettingsView.swift`, `AllSettingsCatalog.swift`, `AllSettingsListView.swift`
-- ⏸️ **DEFERRED CEILING (no stock config key — honest gap over a fake toggle): "Kitty Keyboard Protocol" + "Allow VT100 Application Keypad Mode" are NOT surfaced as Settings toggles.** Both toggles have NO corresponding stock libghostty config key — grepping the vendored ghostty `config/Config.zig` finds neither a `kitty-keyboard`/`keyboard-protocol` key nor an application-keypad key (the protocol is negotiated at runtime by the program via CSI sequences and the emulator always honours it; DECKPAM is an emulator mode with no enable/disable config). Exposing a faithful toggle would require forking the libghostty keyboard/emulator layer to add a gate — renderer-target-only plumbing not reachable through the headless config-string seam — which is out of scope for a LOW-severity polish item. Recorded as an honest gap rather than a dead toggle that persists but does nothing (the same discipline as E14's `titleReport` ceiling). → `ThirdParty/ghostty/.work/ghostty-src/src/config/Config.zig`
+- ⏸️ **DEFERRED CEILING (no stock config key — honest gap over a fake toggle): "Kitty Keyboard Protocol" + "Allow VT100 Application Keypad Mode" are NOT surfaced as Settings toggles.** Both toggles have NO corresponding stock libghostty config key — grepping the vendored ghostty `config/Config.zig` finds neither a `kitty-keyboard`/`keyboard-protocol` key nor an application-keypad key (the protocol is negotiated at runtime by the program via CSI sequences and the emulator always honours it; DECKPAM is an emulator mode with no enable/disable config). Exposing a faithful toggle would require forking the libghostty keyboard/emulator layer to add a gate — renderer-target-only plumbing not reachable through the headless config-string seam — which is out of scope for a LOW-severity polish item. Recorded as an honest gap rather than a dead toggle that persists but does nothing (the same discipline as E14's `titleReport` ceiling). → the fork's vendored `Config.zig`, deleted with the fork by [68](68-terminal-surface-in-rust.md); the config/keybind layer is ours to write now ([68] §4, "Ours to build"), so the ceiling this entry records is no longer a vendor's to lift.
 - ✅ **The Settings → Appearance → Cursor live-preview prompt colours now match `cursor-style.png`: `john` green, `@doe-pc` muted blue-gray, the rest default foreground.** The mock renders the host run (`@doe-pc`) in a muted blue-gray DISTINCT from the green user (`john`); the pre-fix preview rendered `doe-pc` in the SAME green (`Slate.Status.ok`) and split `@` onto the foreground, so user and host read identically. `@doe-pc` is now one run on the `Slate.Status.info` blue token (the closest theme-aware blue-gray in the token palette — raw hex would break the file's Slate.*-tokens-only discipline), faithful to the screenshot's user/host colour split. Cosmetic, client-only. → `CursorPreviewView.swift`, `cursor-style.png`
 
 ## Details / recipes / remote-window / theming / web-pane (2026-06-29) — Batch-4 audit polish
@@ -17642,9 +17642,14 @@ carries. That is the argument the phone and mux blocks above it already make.
 
 `ThirdParty/ghostty/.../GhosttyTerminalView.swift:2953` was the one row that was not a ledger entry —
 `...` is prose elision, and `.` and `/` are both inside the path class, so the widened rule captured
-a path that can never resolve. The doc now spells
-`ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`, which exists, so the
-citation resolves on its own.
+a path that can never resolve. The doc was made to spell
+`ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`, which resolved on its own
+at the time. ⚠️ **It does not any more, and the fix that replaced it is the one this entry argued
+against for the other seven.** `docs/68-terminal-surface-in-rust.md` deleted the whole fork, so that
+row became a ledger entry after all — an "after" column reading "deleted." — and it is a
+`PATH_TOMBSTONES` entry now, beside the fork's `README.md` and the `slopdesk-ops enable-renderer` op
+`docs/68` §9 lists as coupled. Spelling a path in full is what makes a citation checkable; it is not
+what keeps the file alive.
 
 **Rejected.** *An ellipsis exclusion in the matcher* — one row, and a doc that elides a path it is
 citing should spell the path. *Unifying `live_docs_cite_files_that_exist`'s corpus onto
@@ -18281,3 +18286,138 @@ same recorded omission `TerminalContextMenu.LinkItem` already carries. *A new wi
 are the verb, and inventing a third would have cost a golden re-pin to reach a door already open.
 *Confining the path to a cwd* — the host resolves what it is handed, the mesh is the security boundary
 (no app-layer auth), and a confinement check here would be the pairing logic `CLAUDE.md` bars.
+
+## The paste framing is the engine's, and close/free are two doors (2026-08-31)
+
+**Paste.** Six menu items in the paste family answered `false` — a dead submenu — because the
+renderer had nowhere to hand a paste. The obvious fix, framing the bytes in Swift, was rejected and
+the code that already did it was deleted. `PasteTransform.bracketed` wrapped text in `ESC [ 200 ~` /
+`ESC [ 201 ~` and stripped a smuggled end marker; it did NOT scrub the control bytes an
+escape-injection payload carries, and it did NOT rewrite newlines as carriage returns for an
+unbracketed paste. Both of those are rules about how the FAR side's parser behaves, which is exactly
+what `libghostty_vt::paste::encode` exists to know. So `slopdesk_term_surface_encode_paste` is the
+door and Swift keeps only what is genuinely the client's: which text, what shape (base64 /
+shell-quote — the latter already Rust's), and whether to ask first (`PastePrecheck`).
+
+Bit `8` of `slopdesk_term_surface_modes` now carries the live `?2004h`, read from the engine that
+parsed the DECSET. That deletes the client's second reason to parse the same bytes: a tracker that
+could only ever agree or be wrong, and whose being wrong SKIPS the paste-protection sheet.
+
+Rejected: *a `paste:` verb in `slopdesk_terminal::surface_action`.* The grammar is fire-and-forget
+and answers a `bool`; a dangerous payload has to stop and ask, and there is nowhere in a spelled
+action to put the question. *Basing "did the program ask for brackets" on the client's own
+`TerminalModeTracker`.* Two parsers of one byte stream is the drift this whole campaign deletes.
+
+**Close and free.** `slopdesk-invariants`' `handle-freed-in-deinit` caught the surface freeing its
+handle from `detachSurface()`. The rule offers two ways out and the booking would have been the lie:
+the ordering that forces an early teardown is real — the `CAMetalLayer` is LENT to the view, so the
+view must drop it before the state that draws into it dies, and `deinit` cannot express that because
+it runs when the last reference goes. The state moved behind an `Option` on the handle; `_close`
+takes it, `_free` returns the allocation from `deinit` alone, and a closed handle answers every door
+its inert value rather than faulting.
+
+## The two pushes the surface drains, the three the host already owned, and the two dropped (2026-08-31)
+
+`docs/68` §4 promises a terminal surface whose whole FFI boundary is QUESTIONS: no callback
+registration, nothing crossing into Swift uninvited. That promise held because every question is
+about the grid, and the grid is still there when you ask. Five things are not about the grid and are
+gone the instant the parser moves on. Auditing the deleted fork's callback set against the door list
+found the surface answering none of them.
+
+One is a correctness bug rather than a missing feature. **The terminal owes the pty replies.** `CSI
+6n` asks where the cursor is, `CSI c` and `CSI > q` what the terminal is and which version, `OSC
+10/11/4 ?` its colours; the engine composes each answer itself and hands it over exactly once,
+through `Terminal::on_pty_write`. Nothing was registered, so every one was dropped on the floor.
+That is not a terminal missing a feature — it is a terminal that does not answer when spoken to, and
+vim probing for truecolour, tmux asking for the cursor and any prompt negotiating bracketed paste
+all block or guess wrong against it.
+
+**Only one of the other four is the client's to observe, and the first shape of this change got that
+wrong.** A bell, an OSC-9/777 notification and an OSC-9;4 progress report were all registered as
+engine handlers and drained through a five-field frame. Every one of those three ALREADY arrives as
+its own wire message from the host sniffer, folded by `TerminalViewModel.handle(_:)` — as do the OSC
+0/2 title and the OSC-7 cwd, which the same change had added `_title` and `_pwd` doors for. That is
+two implementations of one fact, which this tree forbids, and the engine-side one is the worse of
+the two for reasons neither side can fix locally:
+
+- **Multiclient.** One pane can have several clients attached (`docs/45`). The host's detection is
+  one verdict all of them share; client-side detection is N verdicts that drift.
+- **Replay.** `TerminalViewModel.attachSurface` re-feeds the retained output ring into a rebuilt
+  surface so it repaints. Those bytes carry the OLD bells, the OLD progress report and the OLD
+  notification, so engine handlers re-beep, re-post and re-spin everything that already happened, on
+  every remount. The wire path replays nothing. This is a defect, not a preference.
+
+So `on_bell`, `on_desktop_notification` and `on_progress_report` were unregistered, the frame
+narrowed to clipboard writes alone, and the `_title` and `_pwd` doors deleted with their unused Swift
+wrappers. **A clipboard is per-CLIENT** — no wire message carries an OSC-52 write, and the metadata
+`SetClipboard`/`ReadClipboard` verbs are the host-pasteboard sync feature, a different path — so it
+is the one push with nowhere else to come from.
+
+**They arrive as pushes and leave as pulls, and the boundary is unchanged.** `slopdesk_vterm::events`
+is a bounded sink shared between the session and the two handlers the engine boxes; `feed` runs the
+parser, the parser runs the handlers, the handlers fill the sink, and `feed` returns —
+synchronously, on the one thread the whole handle is already confined to. The view then drains
+through two ordinary two-attempt doors, `slopdesk_term_surface_take_pty_replies` and
+`slopdesk_term_surface_take_clipboard_writes`, both of which answer `0` on the common day. §4's
+promise is about what crosses the C boundary, and nothing here does.
+
+Both queues are capped, because the far side of a PTY is untrusted and a view that stops draining
+must cost bounded memory rather than the process. The caps differ by what the thing IS: a pty reply
+is dropped whole rather than truncated, because half an escape sequence arriving at the far side's
+parser is worse than silence; a clipboard write evicts the oldest, because what a person coming back
+wants is the most recent.
+
+**The replay hazard bites the two survivors too, and the conformer answers it rather than dodging
+it.** A replayed `CSI 6n` makes the fresh engine compose a reply that would type `^[[3;7R` at a live
+prompt; a replayed OSC 52 under an "Allow" policy would silently overwrite the pasteboard on every
+remount. The attach path therefore drains BOTH doors and DISCARDS the result before wiring the live
+drain — deterministic rather than racy, because `attachSurface` replays synchronously.
+
+**A clipboard write is REPORTED, never applied.** The door says what a program asked for; whether it
+reaches a pasteboard is `slopdesk_term_clipboard_write`'s decision, made where the user's
+`clipboard-write` setting lives. Applying it from the frame would make "Ask" behave as "Allow" —
+the exact defect the fork's `write_clipboard_cb` carried until it learned to honour the flag.
+
+**Known and accepted: N clients answer one `CSI 6n` N times.** Each attached client runs its own
+emulator, so a device-status query fans out to as many replies as there are viewers. The fork had
+exactly this behaviour through `write_callback`, and `docs/45` states no input-owner rule that would
+elect one. Parity, recorded rather than discovered later.
+
+**Dropped: the OSC-52 clipboard READ gate.** The fork ran a whole `clipboard-read` Allow/Ask/Deny
+ladder with a documented recursion hazard around `completeClipboardReadOSC52`. It has no subject
+any more: `libghostty-vt` documents that OSC-52 read requests (`?`) are *"always ignored and never
+forwarded"*, so no program can ask and there is nothing to gate. The setting's OTHER arm — the
+metadata clipboard-read channel, verbs the host answers — is a different path and is untouched. The
+row stays; what it governs is now one thing rather than two.
+
+**Dropped: OSC-22 pointer shape.** The fork actuated `onMouseShape` onto `NSCursor`. `libghostty-vt`
+parses OSC 22 — `osc::CommandType::MouseShape` is a variant — but `Terminal` exposes no handler for
+it, so there is no observation point at any price this side of a fork. Recorded as a drop rather
+than left as a silent regression; if upstream adds `on_mouse_shape` it is one closure and one door,
+in the sink that now exists.
+
+**And the orphaned tables followed.** `slopdesk_terminal::pointer`, `slopdesk-ffi`'s
+`pointer_shape.rs`, both header declarations, `PointerShapeMapping.swift`,
+`MouseVisibilityMapping.swift`, both Swift suites and the `pointer-tables-one-table` ratchet are
+deleted. They were not an unwired door waiting for a caller: their only producer was the fork's
+`action_cb`, and the revival path named above — one closure into the sink — would not reuse a
+`ghostty_action_mouse_shape_e` discriminant table anyway. The ratchet was the worst of it, since it
+REQUIRED two dead Swift faces to keep calling two dead doors. What the increment argued — that a
+Swift mirror of a C enum is a third copy of one declaration order — is kept as prose in `docs/56`
+§50, which is where the next table that crosses will want to read it.
+
+**Not dropped, and never needed an engine: hiding the pointer while typing.** The fork's comment
+implied libghostty decided; the decision was `hide on keyDown`, which AppKit spells
+`NSCursor.setHiddenUntilMouseMoves(true)`. It lives in the view, costs no door and no vterm change —
+`MacTerminalRendererView.keyDown`, gated on `SettingsKey.mouseHideWhileTypingEnabled` and read live
+so a Settings toggle takes effect on the next keystroke. The phone has no pointer to hide.
+
+**Rejected.** *Keeping the bell/notification/progress drain as a fallback for when the host is
+older* — a fallback is the second implementation wearing a hat, and it would fire on replay exactly
+when it was least wanted. *Draining straight into the caller's buffer* — the two-attempt convention
+means a first call can answer "too small", and a reply lost on exactly the call that said "try
+again" is a program that waits forever; the handle holds the drained bytes until `deliver` has
+actually written them. *Registering `on_enquiry` and `on_xtversion`* — the engine answers both
+correctly by itself, and overriding them would mean this crate inventing a terminal name rather than
+reporting the one it is. *A push door for either survivor* — it would be the first callback across
+the boundary and would cost §4's promise for a latency the synchronous drain already has.

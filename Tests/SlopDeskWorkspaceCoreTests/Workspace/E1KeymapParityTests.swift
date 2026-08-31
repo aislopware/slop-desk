@@ -10,7 +10,7 @@ import XCTest
 /// Mirrors ``TreeCommandRoutingTests`` (same `makeTreeStore` / `route` harness): each new action must
 /// resolve to its documented chord AND route through ``WorkspaceBindingRegistry/route(_:to:)`` on a
 /// `.tree`-live store WITHOUT trapping (the registry's "no dead chords" contract). Behavioral effects that
-/// need a live terminal surface (font / scroll → libghostty) are covered by the recording-fake-surface
+/// need a live terminal surface (font / scroll → libghostty-vt) are covered by the recording-fake-surface
 /// tests in the store-hook suite; here we pin the structural store effects (split / cycle) + the chord table.
 @MainActor
 final class E1KeymapParityTests: XCTestCase {
@@ -202,7 +202,7 @@ final class E1KeymapParityTests: XCTestCase {
     }
 
     /// `route(.increaseFontSize, …)` from the ⌘+ alias chord runs through the SAME routing as ⌘= — it is a
-    /// graceful no-op against a non-live FakePaneSession surface (font scaling needs libghostty), but must not
+    /// graceful no-op against a non-live FakePaneSession surface (font scaling needs libghostty-vt), but must not
     /// trap or mutate the tree. Pins that the aliased chord drives the real action, not a dead path.
     func testIncreaseFontSizeFromAliasRoutesWithoutTrap() throws {
         let store = makeTreeStore()

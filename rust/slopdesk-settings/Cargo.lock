@@ -72,6 +72,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-fuzzy"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-ids"
 version = "0.1.0"
 
@@ -91,6 +95,7 @@ dependencies = [
 name = "slopdesk-terminal"
 version = "0.1.0"
 dependencies = [
+ "slopdesk-fuzzy",
  "slopdesk-ids",
  "slopdesk-sanitize",
  "unicode-segmentation",

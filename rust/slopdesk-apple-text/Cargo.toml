@@ -1,14 +1,24 @@
-# `slopdesk-apple-text` — what Core Text can read out of a FONT FILE, and nothing else.
+# `slopdesk-apple-text` — the whole of the Core Text area slopdesk touches, and nothing else.
 # Read `docs/57-apple-frameworks-in-rust.md` before changing it.
 #
 # ## What lives here
-# One question: given a path to a `.ttf`/`.otf`/`.ttc`/`.dfont`, what family name does the system
-# font machinery see inside it? `slopdesk font import` asks it, because the family name is the
-# awkward half of installing a font — it is not the filename, and it is what has to be pasted under
-# `[terminal]` for the app to find the face.
+# Two questions, both of them Core Text's.
 #
-# Everything ABOUT the answer — which extensions are fonts, where `~/Library/Fonts` is, whether the
-# copy succeeded, what to print — is `slopdesk-cli`'s, which forbids `unsafe` and always will.
+# The first is the CLI's: given a path to a `.ttf`/`.otf`/`.ttc`/`.dfont`, what family name does the
+# system font machinery see inside it? `slopdesk font import` asks it, because the family name is
+# the awkward half of installing a font — it is not the filename, and it is what has to be pasted
+# under `[terminal]` for the app to find the face.
+#
+# The second is the terminal renderer's, and it is the bulk of the crate: resolve a family into a
+# stack of faces, turn a run of cells into positioned glyph ids, and turn a glyph id into a bitmap.
+# `docs/68` §5.1 puts the renderer's home in Rust and names this crate as the one that extends,
+# because it "already declares itself the whole of the Core Text area" — so shaping opens no new
+# `unsafe` boundary and no fourth hand-written-`unsafe` crate is proposed.
+#
+# Everything ABOUT either answer — which extensions are fonts, where `~/Library/Fonts` is, where a
+# glyph goes on screen, how an atlas is packed — belongs to `slopdesk-cli` and
+# `slopdesk-termrender`, which forbid `unsafe` and always will. This crate holds the two traits'
+# implementations and no renderer arithmetic beyond what a font metric forces.
 #
 # ## What is deliberately NOT here
 # Font ENUMERATION. `slopdesk font list` asks the running app over the control socket, because the
@@ -16,19 +26,38 @@
 # render. A second enumeration here would answer a slightly different question and look like the
 # same one.
 #
-# ## The `unsafe` in this crate
-# Four blocks, all in one function, each a Core Foundation naming rule rather than a Rust one and
-# each with a `# Safety` note naming the rule: the CREATE-rule descriptor array, the extern static
-# holding the family-name key, the COPY-rule attribute read, and the `cast_unchecked` that names
-# the array's element type — the same one `slopdesk-apple-cgwindow` and `slopdesk-apple-ax` write,
-# because C's `CFArrayRef` has nowhere to carry it. No raw-pointer dereference and no transmute,
-# which §2 bars from this family; the URL is built through the SAFE `CFURLCreateWithFileSystemPath`
-# rather than the byte-buffer form beside it, so no pointer is handed over at all.
+# The GPU. `slopdesk-apple-metal` owns the device and the pipelines; a `RasterGlyph` leaves here as
+# plain bytes so that every test below runs with no display attached.
 #
-# ## macOS ONLY, and how that is kept true
-# `slopdesk-cli` links it behind `[target.'cfg(target_os = "macos")'.dependencies]`, and the one
-# caller sits behind the same `cfg`. Nothing in the iOS slices reaches it: there is no font import
-# on a device whose filesystem the CLI cannot see.
+# ## The `unsafe` in this crate
+# Every block is a Core Foundation naming rule rather than a Rust one, and each carries a `# Safety`
+# note naming the rule it depends on: CREATE-rule returns (`CTFontCreateWithName`,
+# `CTLineCreateWithAttributedString`, `CGBitmapContextCreate`), COPY-rule returns
+# (`CTFontDescriptorCopyAttribute`, `CTFontCreateCopyWithSymbolicTraits`), GET-rule scalar reads
+# (the metric family, `CTFontGetSymbolicTraits`), the extern statics holding the attribute keys, and
+# the `cast_unchecked`s that name an array's or a dictionary's element type — the same ones
+# `slopdesk-apple-cgwindow` and `slopdesk-apple-ax` write, because C's `CFArrayRef` has nowhere to
+# carry it.
+#
+# No raw-pointer DEREFERENCE and no transmute, which §2 bars from this family. Two shapes carry the
+# weight there. Core Text's buffer-filling accessors (`CTRunGetGlyphs`, `CTFontGetGlyphsForCharacters`)
+# are used in preference to their `…Ptr` siblings precisely because the buffer is ours and reading it
+# back is an ordinary slice read; and the rasteriser hands `CGBitmapContextCreate` a `Vec<u8>` this
+# crate allocated rather than letting Core Graphics allocate and calling `CGBitmapContextGetData`,
+# which would need `slice::from_raw_parts`. Both are the "writes through a slot the caller owns"
+# shape §2 blesses through `AXValueGetValue`.
+#
+# ## APPLE-gated, not macOS-gated — and why the two callers differ
+# The gate is `cfg(any(target_os = "macos", target_os = "ios"))`, because Core Text is on both
+# slices and the terminal renderer draws a terminal the same way on both. The crate therefore gates
+# no half of ITSELF: `slopdesk-ffi` links it for all three Apple slices and reaches the shaper and
+# the rasteriser from every one.
+#
+# The other caller is narrower, and that is the CALLER's fact rather than this crate's:
+# `slopdesk-cli` links it behind `[target.'cfg(target_os = "macos")'.dependencies]` because there is
+# no `slopdesk font import` on a device whose filesystem the CLI cannot see. Off Apple entirely,
+# `of_file` is still declared and answers `None` — the CLI compiles for a Linux slice without
+# learning where it is.
 [workspace]
 resolver = "3"
 
@@ -37,7 +66,7 @@ name = "slopdesk-apple-text"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The family name Core Text reads out of a font file, for slopdesk font import"
+description = "Core Text for slopdesk: the family name inside a font file, and the terminal's font stack, shaper and glyph rasteriser"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -48,19 +77,48 @@ path = "src/lib.rs"
 # PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
 # explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
 # floor of a repository that builds three slices in CI.
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
   "std",
   "CFBase",
   "CFArray",
+  "CFAttributedString",
+  "CFCGTypes",
+  "CFCharacterSet",
+  "CFDictionary",
   "CFString",
   "CFURL",
 ] }
+# The rasteriser's whole surface: one bitmap context per glyph, drawn into a buffer this crate owns.
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CGAffineTransform",
+  "CGBitmapContext",
+  "CGColorSpace",
+  "CGContext",
+  "CGFont",
+  "CGGeometry",
+  "CGImage",
+] }
+# `objc2-core-graphics` is a FEATURE here, not just a sibling dependency: without it Core Text's
+# bindings do not expose the `CGGlyph`-shaped calls — `CTFontGetGlyphsForCharacters`,
+# `CTRunGetGlyphs`, `CTFontDrawGlyphs` — which are the three the renderer is built on.
 objc2-core-text = { version = "=0.3.2", default-features = false, features = [
   "std",
+  "CTFont",
   "CTFontDescriptor",
   "CTFontManager",
+  "CTFontTraits",
+  "CTLine",
+  "CTRun",
+  "CTStringAttributes",
+  "objc2-core-graphics",
 ] }
+
+# The two traits this crate implements, and the metrics struct it answers. A one-way edge: the
+# renderer forbids `unsafe` and declares "not a Core Text call" in its own header, so the framework
+# work has to arrive from this side. Nothing here reaches back for renderer arithmetic.
+slopdesk-termrender = { path = "../slopdesk-termrender" }
 
 # Mirrors the other read crates': this is linked into the same archive.
 [profile.release]

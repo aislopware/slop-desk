@@ -2,7 +2,7 @@
 // prefix machine. Exercised headlessly: the normalizer is AppKit-free (takes the destructured event fields),
 // so no `NSEvent` is constructed and no SCStream/VT/Metal/VideoWindowView is touched. Each test pins a fact
 // the dispatcher relies on: modifier mapping, the base-key/charactersIgnoringModifiers parity with
-// GhosttyTerminalView + the keybindings editor, the named-key keyCodes, the bare-key passthrough boundary,
+// `MacTerminalRendererView` + the keybindings editor, the named-key keyCodes, the bare-key passthrough boundary,
 // and the send-prefix C0 literal-byte mapping.
 
 #if os(macOS)
@@ -27,8 +27,8 @@ final class KeyChordNormalizerTests: XCTestCase {
         XCTAssertEqual(chord, KeyChord(character: "d", [.command]))
     }
 
-    /// Every modifier bit maps to its `KeyChord.Modifiers` flag (parity with `ghosttyMods`'s shift/ctrl/opt/
-    /// cmd reads). ⇧⌥⌘C → the centre-all chord shape.
+    /// Every modifier bit maps to its `KeyChord.Modifiers` flag (parity with the deleted fork's `ghosttyMods`
+    /// shift/ctrl/opt/cmd reads, kept for behavioral parity). ⇧⌥⌘C → the centre-all chord shape.
     func testAllModifiersMap() {
         let chord = KeyChordNormalizer.chord(
             charactersIgnoringModifiers: "c", keyCode: 8,

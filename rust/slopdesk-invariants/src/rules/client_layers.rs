@@ -279,7 +279,7 @@ const DOMAIN_LAYERS: &[&str] = &["Sources/SlopDeskWorkspaceCore", "Sources/SlopD
 /// list rather than a ban — found 2026-08-30 by
 /// `gate_health::every_exemption_names_a_path_the_tree_has` once it learned to read a list spelled
 /// as a `const` rather than inline. The kind was "a headless-build seam", a protocol plus a mount
-/// point so the headless build never linked libghostty or `VideoToolbox`:
+/// point so the headless build never linked the terminal engine or `VideoToolbox`:
 /// * `TerminalRenderingView.swift` had been DELETED outright, and this list went on naming it;
 /// * `VideoWindowSeam.swift` still exists and imports `CoreGraphics` alone — the view frameworks
 ///   arrived through `import SwiftUI` transitively, and left with it;

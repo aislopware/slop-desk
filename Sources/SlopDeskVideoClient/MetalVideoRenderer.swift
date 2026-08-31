@@ -254,7 +254,7 @@ public final class MetalVideoRenderer {
         // target resolves to the layer's POINT bounds (656×433), not the drawable texture's pixels
         // (1312×866) on a 2× display — so the full-size quad rendered into the top-left half, rest
         // cleared black, then stretched to fill: video landed in the top-left QUARTER (shrunk into one
-        // corner at half-scale). libghostty sets its own viewport, so the terminal never showed this. Explicit
+        // corner at half-scale). `MacTerminalRendererView` sets its own viewport, so the terminal never showed this. Explicit
         // texture-size viewport makes the quad cover the whole drawable. (drawable.texture matches
         // metalLayer.drawableSize.)
         encoder.setViewport(MTLViewport(

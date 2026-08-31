@@ -62,14 +62,14 @@ public final class TerminalModeTracker {
     /// TRUE while the foreground program has bracketed-paste mode (DECSET `?2004h`) enabled — set on
     /// `ESC[?2004h`, cleared on `ESC[?2004l`. Independent of ``mode`` (a shell prompt enables it; a TUI
     /// may too). It emits NO event: it is a passive flag the E8 paste-protection pre-check reads to skip
-    /// the sheet when the program frames the paste as an inert bracketed block (matching libghostty's own
-    /// `clipboard-paste-bracketed-safe`).
+    /// the sheet when the program frames the paste as an inert bracketed block (matching libghostty's
+    /// own `clipboard-paste-bracketed-safe` config key).
     public var bracketedPasteActive: Bool { slopdesk_mode_tracker_bracketed_paste_active(handle) }
 
     /// TRUE while the foreground program has DECCKM (application cursor keys, DECSET `?1h`) enabled —
     /// set on `ESC[?1h`, cleared on `ESC[?1l`. Same passive-flag contract as ``bracketedPasteActive``.
     /// Read by the iOS hand-rolled key encoder to pick SS3 (`ESC O A`) over CSI (`ESC [ A`) arrows —
-    /// the macOS path never needs it (libghostty's surface owns true DECCKM there); see docs/29.
+    /// the macOS path never needs it (`libghostty-vt`'s session owns true DECCKM there); see docs/29.
     public var cursorKeysApplication: Bool { slopdesk_mode_tracker_cursor_keys_application(handle) }
 
     /// Returns the tracker to its initial state (`.shellPrompt`, ground, empty buffers), emitting no

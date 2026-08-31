@@ -3,36 +3,26 @@ import SlopDeskWorkspaceModel
 
 // MARK: - "Paste as…" clipboard transforms
 
-/// PURE clipboard transforms behind the **Edit ▸ Paste as…** submenu. Each variant rewrites the text
-/// (or file bytes) BEFORE it reaches the shell via the surface's `text(_:)` typing path. Cross-platform,
-/// AppKit-free, allocation-light — the testable heart of the Paste-as wiring in `GhosttyTerminalView`.
+/// PURE clipboard transforms behind the **Edit ▸ Paste as…** submenu. Each rewrites the text (or file
+/// bytes) BEFORE the engine frames it. Cross-platform, AppKit-free, allocation-light.
 ///
-/// One of the four Paste-as variants is NOT a transform and lives in the GUI/store as ROUTING, not here:
-/// - **Paste Selection** reads `surface.readSelection()` instead of the clipboard (a source swap).
+/// ## What is deliberately NOT here: the framing
 ///
-/// The three that ARE transforms:
-/// - ``bracketed(_:)`` — force DEC bracketed-paste framing even if the program never advertised it.
+/// This type used to carry a `bracketed(_:)` that wrapped text in `ESC [ 200 ~` / `ESC [ 201 ~` and
+/// stripped any smuggled end marker. Every one of those is a rule about how the FAR side's parser
+/// behaves, and the engine that owns that parser implements all of them plus the control-byte scrub
+/// and the newline rewrite — `slopdesk_term_surface_encode_paste`. Two spellings of the framing is
+/// how one of them drifts, and the one that would drift is the one with no VT100 test suite behind
+/// it. `TerminalSurfaceDriver.PasteBracketing` is where "bracketed or not" is now decided.
+///
+/// Two of the four Paste-as variants are not transforms at all: **Paste Selection** is a source swap
+/// (the surface's selection instead of the clipboard) and **Bracketed Paste** is a framing override.
+///
+/// The two that ARE transforms:
 /// - ``shellEscaped(_:)`` — POSIX shell-quote so spaces / metacharacters land as literals (ideal for a
 ///   pasted file path).
 /// - ``base64(ofFileBytes:)`` — base64-encode chosen file bytes so binary content can ride a text session.
 public enum PasteTransform {
-    /// DEC bracketed-paste START marker (`ESC [ 200 ~`).
-    public static let bracketStart = "\u{1b}[200~"
-    /// DEC bracketed-paste END marker (`ESC [ 201 ~`).
-    public static let bracketEnd = "\u{1b}[201~"
-
-    /// Wraps `text` in DEC bracketed-paste markers so the receiving program treats it as one inert block
-    /// (newlines are NOT interpreted as Enter), regardless of whether it advertised `?2004h`.
-    ///
-    /// Any END marker already embedded in `text` is STRIPPED first: a clipboard payload that smuggled an
-    /// `ESC [ 201 ~` could otherwise terminate the bracketed block early and inject the trailing bytes as
-    /// live input (the classic bracketed-paste breakout). Removing it keeps the whole payload inert — the
-    /// guarantee the "Paste Bracketed Safe" skip rule (`PasteSafetyAnalyzer`) relies on.
-    public static func bracketed(_ text: String) -> String {
-        let inert = text.replacingOccurrences(of: bracketEnd, with: "")
-        return bracketStart + inert + bracketEnd
-    }
-
     /// POSIX shell-quotes `text` (equivalent to Python's `shlex.quote`): a token of only safe characters is
     /// returned verbatim; anything else is wrapped in single quotes, with each embedded single-quote emitted
     /// as `'\''` (close-quote, backslash-escaped quote, reopen-quote). The empty string becomes `''`.

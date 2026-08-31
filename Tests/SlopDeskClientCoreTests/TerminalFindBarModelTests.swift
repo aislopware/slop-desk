@@ -1,8 +1,8 @@
 // TerminalFindBarModelTests pins the in-pane find bar's driver (``TerminalFindBarModel``):
-// the wrapper over the PURE ``TerminalSearchController`` (count / N-of-M / next-prev-wrap) + the libghostty
+// the wrapper over the PURE ``TerminalSearchController`` (count / N-of-M / next-prev-wrap) + the libghostty-vt
 // `search:` / `navigate_search:` / `end_search` passthrough. The model is HEADLESS — its only renderer touch
 // is `surface as? TerminalSurfaceActions`, which a pure in-memory ``FakeSearchSurface`` satisfies (NO real
-// `GhosttySurface` / VideoToolbox / Metal — the hang-safety rule; this mirrors the existing
+// `TerminalSurfaceDriver` / VideoToolbox / Metal — the hang-safety rule; this mirrors the existing
 // `CapturingSurface`/`RecordingSurface` fakes in `TerminalViewModelTests`).
 //
 // It moved here with the model (docs/56 §3): the driver never needed a view framework — it imported SwiftUI
@@ -10,7 +10,7 @@
 // phone's find bar and the Mac's read one implementation.
 //
 // The bind-action strings are still asserted as STRINGS on purpose, even though the model now builds them
-// through ``TerminalSearchSurfaceAction``. They are libghostty's wire vocabulary, not ours: a test that
+// through ``TerminalSearchSurfaceAction``. They are libghostty-vt's wire vocabulary, not ours: a test that
 // asserted `.end` against `.end` would pass on the day the enum's `wire` spelling drifted from what the
 // surface parses.
 //
@@ -18,7 +18,6 @@
 // transition (visibility / query / flags / `N of M` / the fired bind-action strings) against expected values,
 // never against the output's own derivation.
 
-import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore
@@ -26,18 +25,23 @@ import XCTest
 @MainActor
 final class TerminalFindBarModelTests: XCTestCase {
     /// A pure in-memory terminal surface: returns a canned scrollback mirror for `searchScrollbackLines()` and
-    /// RECORDS the libghostty bind-action strings (`search:…` / `navigate_search:…` / `end_search`) the find
+    /// RECORDS the libghostty-vt bind-action strings (`search:…` / `navigate_search:…` / `end_search`) the find
     /// bar fires, so the driver is pinned without a real renderer. Hang-safe (no SCStream/VT/Metal).
     private final class FakeSearchSurface: TerminalSurface, TerminalSurfaceActions, @unchecked Sendable {
-        var lines: [String]
-        /// The reported grid width for the physical-row mapping (0 ⇒ unknown ⇒ identity mapping).
-        var columns: Int
+        var lines: [TerminalScrollbackLine]
         private(set) var actions: [String] = []
         var onWrite: ((Data) -> Void)?
 
-        init(lines: [String], columns: Int = 0) {
+        init(lines: [TerminalScrollbackLine]) {
             self.lines = lines
-            self.columns = columns
+        }
+
+        /// The unwrapped shape: line N sits on screen row N, which is what a grid nothing wrapped in
+        /// reports. Tests about the WRAP mapping build their rows explicitly instead.
+        convenience init(lines: [String]) {
+            self.init(lines: lines.enumerated().map { index, text in
+                TerminalScrollbackLine(text: text, firstRow: index, lastRow: index)
+            })
         }
 
         // TerminalSurface
@@ -53,8 +57,7 @@ final class TerminalFindBarModelTests: XCTestCase {
             return true
         }
 
-        func scrollbackTextLines() -> [String] { lines }
-        func scrollbackGridColumns() -> Int { columns }
+        func scrollbackLines() -> [TerminalScrollbackLine] { lines }
 
         /// Drop the recorded actions so a test can assert on a fresh window of bind-actions (e.g. only those
         /// fired by a subsequent `next()`/`previous()`), without the open/query priming noise.
@@ -90,7 +93,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// ↩/⌘G next + ⇧↩/⇧⌘G prev advance + wrap the selection AND fire the libghostty nav bind-actions.
+    /// ↩/⌘G next + ⇧↩/⇧⌘G prev advance + wrap the selection AND fire the libghostty-vt nav bind-actions.
     func testNextPreviousWrapAndFireSurfaceNav() {
         withBar(lines: ["docs", "docs", "docs"]) { bar, surface in
             bar.open()
@@ -202,7 +205,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// Regex-mode honesty: in `.*` mode the bar must NOT arm libghostty's LITERAL search
+    /// Regex-mode honesty: in `.*` mode the bar must NOT arm libghostty-vt's LITERAL search
     /// (`search:<pattern>` / `navigate_search:`) — that matcher has no regex engine, so it would paint a
     /// misleading literal highlight beside the controller's correct regex count and leave the chevrons dead.
     /// Instead each open / next / previous drives in-grid navigation from the controller's own match rows via
@@ -218,7 +221,7 @@ final class TerminalFindBarModelTests: XCTestCase {
 
             bar.setQuery("do.")
             XCTAssertEqual(bar.controller.matchCount, 3, "regex `do.` matches do1/do2/do3")
-            // The literal needle is NEVER pushed to libghostty in regex mode (would highlight 0 hits + lie).
+            // The literal needle is NEVER pushed to libghostty-vt in regex mode (would highlight 0 hits + lie).
             XCTAssertFalse(
                 surface.actions.contains("search:do."),
                 "regex mode must not arm libghostty's literal search",
@@ -245,7 +248,7 @@ final class TerminalFindBarModelTests: XCTestCase {
     }
 
     /// `ab` whole-word: the toggle flips the controller flag and NARROWS the literal match set to standalone
-    /// words (`the` matches "the"/"the cat" but not "theory"). Because libghostty's literal in-surface search
+    /// words (`the` matches "the"/"the cat" but not "theory"). Because libghostty-vt's literal in-surface search
     /// has no word-boundary filter, whole-word mode (like regex) must NOT arm `search:`/`navigate_search:` —
     /// it ends the literal search and drives the viewport from its own match rows via `scroll_to_row` so the
     /// chevrons step the SAME set the counter reports. Revert-to-confirm-fail: the un-fixed model had no
@@ -279,7 +282,7 @@ final class TerminalFindBarModelTests: XCTestCase {
     }
 
     /// Companion guard: LITERAL mode is UNCHANGED by the regex fix — it still arms `search:` and steps
-    /// libghostty's own `navigate_search:next`/`previous`, and never falls back to scroll_to_row.
+    /// libghostty-vt's own `navigate_search:next`/`previous`, and never falls back to scroll_to_row.
     func testLiteralModeStillArmsSearchAndNavigateSearch() {
         withBar(lines: ["docs", "docs"]) { bar, surface in
             bar.open()
@@ -317,7 +320,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// Aa case-sensitive honesty: libghostty's in-surface matcher is HARD-WIRED case-insensitive, so
+    /// Aa case-sensitive honesty: libghostty-vt's in-surface matcher is HARD-WIRED case-insensitive, so
     /// case-SENSITIVE literal mode must NOT arm `search:` / `navigate_search:` (they would highlight + step
     /// case-folded occurrences the case-sensitive counter says don't exist). Like regex / whole-word, it drives
     /// the viewport from the controller's own match rows via `scroll_to_row` (end_search clears any stale
@@ -351,15 +354,18 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// Soft-wrap coordinate mapping: a row-driven `scroll_to_row` must target the PHYSICAL grid row,
-    /// not the logical (unwrapped) mirror index — every soft-wrapped continuation row ABOVE the match shifts
-    /// the physical row down. With a known grid width, a wide line above the hit adds its wrap rows.
-    /// Revert-to-confirm-fail: the un-fixed `scrollToCurrentMatchRow` emitted `scroll_to_row:<Match.line>`
-    /// (the logical index, 1), landing one row too high; the fix maps it through the grid width.
-    func testRowDrivenNavMapsLogicalLineToPhysicalRowAcrossWrap() {
-        // cols = 4. Row 0 is 8 cells wide ⇒ wraps to 2 physical rows (0,1). The regex match on logical line 1
-        // ("do1", 3 cells, 1 row) therefore STARTS at physical row 2, not 1.
-        let surface = FakeSearchSurface(lines: ["abcdefgh", "do1"], columns: 4)
+    /// Soft-wrap coordinate mapping: a row-driven `scroll_to_row` must target the SCREEN row, not the
+    /// logical (unwrapped) mirror index — every soft-wrapped continuation row ABOVE the match shifts the
+    /// screen row down. The mirror carries the engine's own row per line, so the bar reads it rather than
+    /// deriving it. Revert-to-confirm-fail: the un-fixed `scrollToCurrentMatchRow` emitted
+    /// `scroll_to_row:<Match.line>` (the logical index, 1), landing one row too high.
+    func testRowDrivenNavScrollsToTheLinesScreenRowAcrossWrap() {
+        // The first line wrapped over screen rows 0–1, so the second line STARTS at row 2, not 1 — which is
+        // what the engine reports and what the un-fixed logical index would have got wrong.
+        let surface = FakeSearchSurface(lines: [
+            TerminalScrollbackLine(text: "abcdefgh", firstRow: 0, lastRow: 1),
+            TerminalScrollbackLine(text: "do1", firstRow: 2, lastRow: 2),
+        ])
         let vm = TerminalViewModel(surface: surface)
         let bar = TerminalFindBarModel()
         bar.attach(vm)
@@ -370,11 +376,11 @@ final class TerminalFindBarModelTests: XCTestCase {
         XCTAssertEqual(bar.controller.current?.line, 1, "the match's LOGICAL mirror index is 1")
         XCTAssertTrue(
             surface.actions.contains("scroll_to_row:2"),
-            "the logical line 1 maps to physical row 2 (the wide row 0 occupies 2 physical rows)",
+            "logical line 1 sits on screen row 2 (the wrapped line above occupies two rows)",
         )
         XCTAssertFalse(
             surface.actions.contains("scroll_to_row:1"),
-            "must NOT scroll to the un-mapped logical index (one physical row too high)",
+            "must NOT scroll to the un-mapped logical index (one screen row too high)",
         )
         withExtendedLifetime((vm, surface)) {}
     }

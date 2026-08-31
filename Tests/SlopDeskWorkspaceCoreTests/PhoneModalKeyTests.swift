@@ -133,7 +133,8 @@ final class PhoneModalKeyTests: XCTestCase {
     }
 
     /// Hint mode can be armed ON TOP of copy mode, so it is asked first and its Esc peels only its own
-    /// layer — the ordering `GhosttyTerminalView.keyDown` documents, now spelled once for both halves.
+    /// layer — the ordering the deleted fork's `GhosttyTerminalView.keyDown` used to document, now spelled
+    /// once for both halves.
     func testHintModeIsTheTopLayer() {
         let (model, rec) = makeModel()
         model.enterCopyMode()
@@ -152,7 +153,7 @@ final class PhoneModalKeyTests: XCTestCase {
     /// up regardless — a receipt for a copy that had reached nothing.
     func testAYankReachesThePasteboardBeforeItReportsOne() {
         let (model, rec) = makeModel()
-        rec.scrollbackLines = ["mercury", "venus"]
+        rec.scrollbackText = ["mercury", "venus"]
         model.enterCopyMode()
         model.handleCopyModeKey(.char("y", control: false, shift: false))
         XCTAssertEqual(model.copyReceipt?.lineCount, 2, "the chip says it copied both lines")

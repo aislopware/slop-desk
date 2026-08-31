@@ -1,5 +1,5 @@
 import CoreGraphics
-import SlopDeskTerminal
+import SlopDeskWorkspaceCore
 import XCTest
 
 /// The letterbox, at the geometry it exists for (docs/45 §8.3 rule 7).

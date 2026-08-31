@@ -334,9 +334,12 @@ pub fn shell_quoting_has_one_owner(tree: &Tree) -> Report {
 /// preference — a shell gate's decidable half cannot be unit-tested, which is how four of the
 /// ported ones turned out to have been reading an empty haystack for years.
 ///
-/// `ThirdParty/ghostty/` is out of scope and stays out: `build-libghostty.sh` is the dependency's
-/// own builder, carried close to upstream's shape. `ThirdParty/tools/` is NOT out of scope, and the
-/// distinction is authorship rather than directory — `provision.sh` lived there and was ours, and
+/// There used to be an exception, and it is gone rather than widened. `ThirdParty/ghostty/` held
+/// `build-libghostty.sh` — the dependency's own builder, carried close to upstream's shape — so the
+/// walk skipped it by prefix. docs/68 deleted the fork, `ThirdParty` is not a `Tree::ROOTS` entry
+/// any more, and a filter for a directory the walk cannot reach is a rule about nothing.
+/// `ThirdParty/tools/` was NEVER out of scope, and the distinction was authorship rather than
+/// directory — `provision.sh` lived there and was ours, and
 /// the argument that kept it (a bootstrap installs what a Rust gate would need) was never true of
 /// it: it installs the PANEL's runtime deps, and cargo is a prerequisite of this tree either way.
 /// It is `rust/slopdesk-provision` now, and this rule is what stops it coming back.
@@ -345,7 +348,6 @@ pub fn scripting_is_rust(tree: &Tree) -> Report {
     let mut report = Report::new();
     let found: Vec<String> = tree
         .paths()
-        .filter(|path| !path.starts_with("ThirdParty/ghostty"))
         .filter(|path| {
             path.extension()
                 .and_then(|value| value.to_str())

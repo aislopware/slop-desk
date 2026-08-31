@@ -2,9 +2,10 @@
 
 /// Which screen the host's terminal is currently presenting.
 ///
-/// Derived from the host→client output byte stream (docs/14 §"External input box" A: sniff
-/// DECSET/DECRST 1049 before feeding ghostty — libghostty's surface is opaque, so we sniff
-/// ourselves).
+/// Derived from the host→client output byte stream by sniffing DECSET/DECRST 1049 ourselves
+/// (docs/14 §"External input box" A) rather than asking an engine: the deleted libghostty fork's
+/// surface exposed no alt-screen query, and `tracker.rs`'s module doc explains why this crate still
+/// sniffs independently of the engine now in use (`libghostty-vt`, `docs/68` §5.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TerminalMode {
     /// Main screen — a shell prompt / inline content. The external input box runs in **'A' (shell

@@ -22,12 +22,17 @@
 //!
 //! ## The half that is not words
 //!
-//! The bar also DRIVES the live surface, and that half was spelled in Swift: the five
-//! binding-action strings libghostty parses, the three-flag test for whether libghostty's own
-//! search can express the bar's mode, the branch that decides what a keystroke arms, vi's `n`/`N`
-//! against the direction the bar opened in, and where the selection lands after a step or a rescan.
-//! None of it needs a view, and every one of those is a rule the phone's bar and the Mac's must not
-//! answer differently.
+//! The bar also DRIVES the live surface, and that half was spelled in Swift: the binding actions
+//! the surface answers to, the three-flag test for whether the surface's own search can express the
+//! bar's mode, the branch that decides what a keystroke arms, vi's `n`/`N` against the direction
+//! the bar opened in, and where the selection lands after a step or a rescan. None of it needs a
+//! view, and every one of those is a rule the phone's bar and the Mac's must not answer
+//! differently.
+//!
+//! The actions themselves are NOT spelled here: [`slopdesk_terminal::surface_action`] owns that
+//! grammar, and [`Action::wire`] delegates to it. A second speller is a typo nothing raises on.
+
+use slopdesk_terminal::surface_action::SurfaceAction;
 
 /// The query field's placeholder — the one word the bar shows before anything is typed.
 pub const PLACEHOLDER: &str = "Find";
@@ -192,16 +197,26 @@ pub enum Action<'a> {
     ScrollToRow(u32),
 }
 
-impl Action<'_> {
+impl<'a> Action<'a> {
     /// The binding-action string `performBindingAction` parses.
+    ///
+    /// ⚠️ Spelled by [`SurfaceAction::spell`] rather than by a `format!` here, because the grammar
+    /// has exactly one home (`slopdesk_terminal::surface_action`) and the executor answers an
+    /// unrecognised action by silently doing nothing. A second speller is a typo that costs a
+    /// keystroke and raises nothing.
     #[must_use]
     pub fn wire(self) -> String {
+        self.action().spell()
+    }
+
+    /// This action as the shared grammar's variant.
+    #[must_use]
+    pub const fn action(self) -> SurfaceAction<'a> {
         match self {
-            Self::Search { needle } => format!("search:{needle}"),
-            Self::Navigate { forward: true } => String::from("navigate_search:next"),
-            Self::Navigate { forward: false } => String::from("navigate_search:previous"),
-            Self::End => String::from("end_search"),
-            Self::ScrollToRow(row) => format!("scroll_to_row:{row}"),
+            Self::Search { needle } => SurfaceAction::Search { needle },
+            Self::Navigate { forward } => SurfaceAction::NavigateSearch { forward },
+            Self::End => SurfaceAction::EndSearch,
+            Self::ScrollToRow(row) => SurfaceAction::ScrollToRow(row),
         }
     }
 

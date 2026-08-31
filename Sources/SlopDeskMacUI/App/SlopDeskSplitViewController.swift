@@ -2,7 +2,7 @@
 // `NSSplitViewItem`s (navigator | content | code panel), each one a view controller THIS target owns:
 // ``MacNavigatorColumn``, ``MacContentColumn``, ``MacCodePanelColumn``. Modelled on CodeEdit's
 // `CodeEditSplitViewController`. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds
-// subtrees) is the load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills
+// subtrees) is the load-bearing no-teardown choice for L2's terminal panes — a torn-down NSView kills
 // the surface. There is no Details column — the app is keyboard-centric. The sentence that used to
 // follow, "the Git details window opens from the palette / View menu instead", was true when the
 // column was cut and is not now: there is no `GitStatusView`, no git verb in the palette, and none in
@@ -303,7 +303,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     private func applyItemCollapse(_ item: NSSplitViewItem?, collapsed: Bool) {
         guard let item, item.isCollapsed != collapsed else { return }
         // LOST-PROMPT FIX: `animator().isCollapsed = …` applies the FIRST collapse-animation layout frame
-        // SYNCHRONOUSLY, which fires `GhosttyLayerBackedView.layout()` and forwards an INTERMEDIATE grid
+        // SYNCHRONOUSLY, which fires `MacTerminalRendererView.layout()` and forwards an INTERMEDIATE grid
         // size to the host BEFORE `splitViewSubviewsDidResize` (the notification) suspends forwarding. That
         // premature SIGWINCH makes zsh run `zle reset-prompt` at the wrong width, double-firing against the
         // final-width reset and erasing the prompt line. Suspend FIRST so the intermediate frames are held;

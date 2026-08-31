@@ -130,6 +130,82 @@ Verified against `Uzaaft/libghostty-rs` @ `a0b5a46`, MIT, pinning ghostty `22d13
 and `format_selection` with `unwrap`/`trim`. `SelectLineOptions::with_semantic_prompt_boundary` is
 OSC 133-aware — the same boundary `rust/slopdesk-terminal/src/blocks.rs` derives by re-parsing.
 
+### 4.1 The two pushes the surface drains, and the three that are the host's
+
+Five things the far side does are not about the grid and vanish when the parser moves on: the reply
+the terminal owes the pty (`CSI 6n`, `CSI c`, `CSI > q`, `OSC 10/11/4 ?`, the in-band size report),
+an OSC-52 clipboard write, the bell, an OSC-777 notification, an OSC-9;4 progress report. A pull-only
+door cannot ask for them after the fact, because by then they are gone.
+
+**Only the first two are drained here, and the split is not arbitrary.** The bell, the notification,
+the progress report — and the OSC 0/2 title and the OSC-7 cwd, which the engine also sees — already
+arrive as their own wire messages from the host sniffer, and `TerminalViewModel.handle(_:)` folds
+each one. Draining them here as well would be a second implementation of the same fact, which this
+tree forbids, and it would be the WORSE one for two reasons the client cannot fix locally:
+
+- **Multiclient.** One pane can have several clients attached (`docs/45`). The host's detection is
+  one verdict all of them share; client-side detection is N verdicts that drift.
+- **Replay.** `TerminalViewModel.attachSurface` re-feeds the retained output ring into a rebuilt
+  surface so it repaints. Those bytes carry the OLD bells, the OLD progress report and the OLD
+  notification, so engine-side handlers would re-beep, re-post and re-spin everything that already
+  happened, on every remount. The wire path replays nothing.
+
+A clipboard is per-CLIENT, so it is the one push with nowhere else to come from — and the pty reply
+is the client's by definition, because the client is the emulator.
+
+**The pushes that survived are NOT callback doors.** `slopdesk-vterm`'s two engine handlers fill a
+bounded Rust-side sink during `feed`, and the view drains it through ordinary two-attempt doors —
+`slopdesk_term_surface_take_pty_replies` and `_take_clipboard_writes`. Nothing crosses the C boundary
+except an answer to a question the caller asked. Each queue's ceiling matches what the thing IS: a
+pty reply is dropped WHOLE rather than split, because half an escape sequence at the far side's
+parser is worse than silence; clipboard writes evict oldest, because a person wants the most recent.
+
+**The pty drain is not optional.** A caller that feeds without draining is a caller whose vim, tmux
+and prompt negotiation hang waiting for a reply that was written and thrown away. Drain after every
+feed batch AND after every resize — a resize can emit an in-band size report.
+
+**The replay hazard bites both survivors, and the conformer answers it rather than dodging it.** A
+replayed `CSI 6n` makes the fresh engine compose a reply that would type `^[[3;7R` at a live prompt,
+and a replayed OSC 52 under an "Allow" policy would silently overwrite the pasteboard on remount. So
+the attach path drains BOTH doors and DISCARDS the result before wiring the live drain. That is
+deterministic rather than racy because `attachSurface` replays synchronously.
+
+**A clipboard write is REPORTED, never applied.** The door says what a program asked for;
+`ClipboardWritePolicy` decides. Writing straight from the frame would make "Ask" behave as "Allow".
+
+### 4.2 Paste, and why the framing could not stay in Swift
+
+A paste looks like the one operation the client could do itself — put these bytes on the pty — and
+it is not. `slopdesk_term_surface_encode_paste` exists because three of the rules are the far side's
+parser's, not ours:
+
+* **The control-byte scrub.** NUL, ESC and DEL in a clipboard payload are an escape-injection
+  vector; the engine replaces them.
+* **The newline rewrite.** An UNBRACKETED paste sends CR where the text had LF, because that is what
+  a shell reads as Return. A bracketed one does not.
+* **The end-marker strip.** A payload carrying its own `ESC [ 201 ~` would close the bracketed block
+  early and inject its tail as live input. The encoder removes it before wrapping.
+
+Swift held a `"\u{1b}[200~" + text + "\u{1b}[201~"` (`PasteTransform.bracketed`) that did the third
+and neither of the first two. It is deleted. What stays this side is what is genuinely the client's:
+which TEXT (clipboard, selection, or a picked file's bytes), what SHAPE (`PasteTransform.base64` /
+`.shellEscaped`, the latter already a face over Rust's `ShellQuoting`), and whether the payload is
+dangerous enough to ask about (`PastePrecheck`). Only the framing crossed.
+
+`bracketed` is the caller's argument rather than something the door reads, because three menu items
+disagree on purpose: **Paste** takes the live `?2004h` (bit `8` of `_modes`, read from the engine
+that parsed the DECSET — the client no longer runs a second parser for it), **Bracketed Paste**
+forces it, and **Paste as Keystrokes** suppresses it.
+
+### 4.3 Close and free are two doors
+
+`slopdesk_term_surface_close` takes the state; `_free` returns the allocation. The split is the
+lent `CAMetalLayer`: the view must drop the layer before the state that draws into it dies, and
+`deinit` cannot express that ordering because it runs when the LAST reference goes — which may be
+after the view was asked to draw again. A closed handle stays valid and answers every door its inert
+value, so a teardown that races a runloop turn is ordinary rather than a crash. `_free` in `deinit`
+and nowhere else is `slopdesk-invariants`' `handle-freed-in-deinit`.
+
 ## 5. The build list
 
 ### 5.1 The glyph renderer
@@ -370,3 +446,72 @@ libghostty tokens.
 
 Per `CLAUDE.md`, this lands as ONE pass — the fork and the embedder go first, the tree is red in the
 middle, and it is green once at the end.
+
+## 10. Where each responsibility lands
+
+Written before the cut, not after it. `GhosttyTerminalView.swift` is 3 954 lines across seventeen
+`MARK:` sections and `GhosttySurface.swift` another 1 085; deleting that much at once is how a
+behaviour disappears without anyone deciding it should. Every section below is one of those
+sections, and every row names its new owner. `git show` recovers the file for reading, but a file
+you have to go read is not a plan.
+
+The reframing that makes the number smaller than it looks: **most of this Swift is event plumbing,
+and event plumbing stays Swift.** An `NSView` that receives `keyDown` and forwards it is the same
+view before and after — what changes is the C ABI it forwards INTO. The lines that actually die are
+the ones that exist because libghostty owned a surface, a thread and a config.
+
+| Section | Lands |
+| --- | --- |
+| process-wide `GhosttyApp`, `ghostty_init`/`app_new`/`tick`, config build | **deleted.** There is no app object: a surface is a `slopdesk-vterm` handle, and config is `slopdesk_config`'s already |
+| `write_callback` / `resize_callback` / the `ghosttyOnMainActor` hop | **deleted as callbacks, kept as a drain.** The hop existed to get off libghostty's IO thread; the feed is a direct FFI write under the surface's own lock (§8). What the terminal owes the pty still exists and is now PULLED — see §4.1 |
+| resize → grid | **Rust.** `rust/slopdesk-terminal/src/geometry.rs` already computes cols·rows; the door resizes the vterm |
+| key input encoding | **Rust.** vt ships `KeyEncoder`; the view forwards the event's fields |
+| IME / `NSTextInputClient` / `UITextInput`, marked text | **Swift view, and it must be.** Composition state is the platform's. Only the DRAWING of preedit crosses (§5.1 item 8) |
+| mouse / scroll forwarding, tracking area, hover | **Swift view** for the events, **Rust** for the encoding — vt ships `MouseEncoder` |
+| OSC-22 pointer shape | **dropped.** `osc.rs` parses it into `CommandType::MouseShape`, but `Terminal` exposes no handler for it, so there is no observation point at any price — recorded in `DECISIONS.md` |
+| mouse-hide-while-typing, focus-follows-mouse, pointer shield | **Swift view.** Pure AppKit/UIKit policy, no engine edge |
+| clipboard responder selectors, OSC 52 | **Rust** reports the write and decides the policy (`ClipboardWritePolicy`); the view drains it, asks if the policy says ask, and calls the pasteboard. OSC-52 *reads* are dropped upstream and never forwarded, so there is no read gate to build |
+| link highlight, link click, hit-test | **already Rust** — `TerminalLinkDetector`/`TerminalLinkHitTest` are policy files, and the grid text they need is what the new surface hands over |
+| jump-to-prompt, context menu, edit menu | **already Rust** for the table; the view renders it |
+| pan-to-scroll, tap-to-mouse, long-press-select, gesture arbitration (iOS) | **Swift view.** UIKit gesture recognisers, one framework the rule keeps |
+| keyboard-focus reclaim (iOS) | **Swift view** |
+| `renderTick` / `presentTicks` / `IOSurfaceLayer` | **Rust.** A `CAMetalLayer` the view creates and Rust draws into, on a display link |
+| scrollbar geometry (`ghostty_surface_viewport_info`) | **Rust.** §5.1 item 9 |
+| the `TerminalSurfaceHosting` conformance | **Swift view**, unchanged — three members, same three |
+
+**The seam itself survives, and the factory with it.** Collapsing `TerminalRendererFactory` into a
+direct reference was considered and rejected: its `nil` path is what lets every canvas test mount a
+leaf without a renderer (`LeafSeamSlotTests`), and a canvas naming the view directly would create a
+Metal device under `swift test`. What DOES change is where the conformer is compiled — the new view
+has no clang-module dependency on a fork, only on `CSlopDeskFFI`, which `Sources/SlopDeskTerminal`
+already links. So it moves into the package, `swift build` compiles it, `swift test` can reach it,
+and `slopdesk-ops enable-renderer` goes away. The registration call moves from an Xcode-only file to
+a `public func` the two `AppMain.swift`s call.
+
+### 10.1 The crates
+
+Four, split by what may hold `unsafe` (`CLAUDE.md`, `docs/57` §2):
+
+- **`rust/slopdesk-vterm`** — the engine, wrapped. Landed (`744e80ab`). Grows the grid snapshot,
+  the key/mouse encoders, and the literal search of §5.2.
+- **`rust/slopdesk-apple-metal`** — NEW, `slopdesk-apple-*` family: one framework area (Metal, and
+  the `CAMetalLayer` that presents it), through `objc2`. Its one gated admission is `Retained::retain`
+  on the layer Swift hands over.
+- **`rust/slopdesk-apple-text`** — EXTENDED: glyph rasterisation and shaping. Already declares
+  itself "the whole of the Core Text area slopdesk touches", so this opens no new boundary.
+- **`rust/slopdesk-termrender`** — NEW, `forbid(unsafe_code)`: the atlas allocator, cell→quad
+  building, block layout, cursor/selection/underline geometry. Every DECISION lives here; the two
+  Apple crates above turn its output into an effect and make none of their own.
+
+### 10.2 The stamp, and the two files outside the graph
+
+`slopdesk-gate ffi` derives its inputs from the shim's `path = "../…"` edges, so making
+`slopdesk-vterm` a path dependency of `slopdesk-ffi` covers its sources AND its `Cargo.toml` — which
+is where the bindings `rev` lives. `rust/slopdesk-ffi/Cargo.lock` is already an input and records the
+resolved commit, so the bindings pin is doubly covered.
+
+Two inputs are NOT in that graph and must be added to `SELF_FILES`' neighbourhood by name, because
+they decide what the artifact is compiled from and no path edge reaches them:
+`ThirdParty/tools/tools.lock` (the engine commit) and `rust/.cargo/config.toml` (the
+`GHOSTTY_SOURCE_DIR` that selects the tree). Bump either and today's stamp stays warm over an
+xcframework built from different Zig sources — the exact silence the gate exists to end.

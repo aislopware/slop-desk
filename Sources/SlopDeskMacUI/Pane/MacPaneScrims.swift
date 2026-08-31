@@ -7,7 +7,7 @@
 // WHY TWO NAMED CONSTRUCTORS AND NOT ONE TAKING AN ALPHA. They are veils over the same rectangle and
 // they mean opposite things. The resize veil HIDES a surface whose pixels are briefly wrong (a divider
 // drag commits on release, so both panes' content is frozen at the pre-drag size while the seam moves;
-// a window-edge resize stretches the libghostty surface without a reflow). The recede veil keeps a
+// a window-edge resize stretches the terminal surface without a reflow). The recede veil keeps a
 // surface LEGIBLE while marking it as not-the-subject during a ⌃⇥ walk. An initialiser taking an alpha
 // would let a caller pick either number for either job, and the two numbers are the only thing that
 // distinguishes them — so `init` is private and each rung is spelled once, at its own factory.

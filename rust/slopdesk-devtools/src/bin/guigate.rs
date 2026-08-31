@@ -20,7 +20,7 @@ use slopdesk_devtools::repo;
 const USAGE: &str = "\
 usage: slopdesk-guigate [--repo-root DIR] <gate> [options]
 
-  macos [--renderer|--connect]          build, window, mount a scene; --connect types a command
+  macos [--connect]                     build, window, mount a scene; --connect types a command
                                         that must EXECUTE on the host
   video [--window-title S]              capture -> HEVC -> UDP -> decode -> a Metal drawable
         [--second-client]               …and a second client on the same stream

@@ -10,7 +10,7 @@ DerivedData/
 
 # Local work / tooling dirs (transient — never committed).
 # /.work/ = repo-root scratch: build logs, the iOS DerivedData (-derivedDataPath .work/ios-dd),
-#           xcframework backups, etc. (ThirdParty/ghostty/.work/ is ignored separately below.)
+#           the golden-vector mint, the release staging tree, xcframework backups.
 # .claude/ = Claude Code session state (scheduled_tasks.lock, etc.).
 /.work/
 .claude/
@@ -36,28 +36,12 @@ Apps/**/*.xcodeproj
 
 # NOTE: Package.resolved is intentionally NOT ignored — pin the dependency graph.
 
-# WF-5 libghostty build infra — derived / large artifacts (the SCRIPT is committed;
-# the toolchain, cloned source, and built binary are reproducible from pinned SHAs).
-# NOTE: .gitignore does NOT support inline comments — patterns must stand alone.
-# .toolchain/ = downloaded pinned Zig (~80 MB extracted).
-# .work/      = shallow clone of pinned ghostty fork + Zig caches.
-# *.xcframework/ = assembled XCFramework (built artifact; fork emits "GhosttyKit").
 # Vendored host-side runtime deps — the PIN (tools.lock), the recipe (provision.sh) and the
 # one small committed artifact (vendor/scrcpy-server, 716 KB) are the deliverable; the provisioned
-# tree is not. .prefix/ runs to ~730 MB extracted (code-server carries its own Node).
+# tree is not. .prefix/ runs to ~730 MB extracted (code-server carries its own Node), and since
+# docs/68 it also holds the terminal engine's source at the commit tools.lock pins.
+# NOTE: .gitignore does NOT support inline comments — patterns must stand alone.
 ThirdParty/tools/.prefix/
-
-ThirdParty/ghostty/.toolchain/
-ThirdParty/ghostty/.work/
-ThirdParty/ghostty/build/
-ThirdParty/ghostty/libghostty.xcframework/
-ThirdParty/ghostty/GhosttyKit.xcframework/
-*.xcframework/
-# Defensive: any *.xcframework* sibling (e.g. a "*.xcframework.incomplete-bak" repair
-# backup left by an artifact-rebuild step). The "*.xcframework/" pattern above only
-# matches the exact ".xcframework/" directory boundary, not ".xcframework.<suffix>".
-ThirdParty/ghostty/*.xcframework*
-.work/
 
 # Release artifacts built by `slopdesk-release package` (dmg / tarball / SHA256SUMS).
 # They live on the GitHub Release, never in git.
@@ -84,6 +68,8 @@ rust/**/target
 rust/target/
 rust/target
 
-# Built by `just ffi` (`slopdesk-gate ffi`) from rust/slopdesk-ffi — 17 MB of slices that change on every
-# Rust edit. Same reasoning as libghostty above: a build output, not a source.
+# Built by `just ffi` (`slopdesk-gate ffi`) from rust/slopdesk-ffi — 17 MB of slices that change on
+# every Rust edit. Same reasoning as `ThirdParty/tools/.prefix/` above: a build output, not a source.
+# The whole directory rather than the `.xcframework` inside it, so a repair step's
+# `.xcframework.incomplete-bak` sibling is covered by the same line.
 ThirdParty/slopdesk-ffi/

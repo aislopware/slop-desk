@@ -24,6 +24,7 @@
 use std::collections::BTreeMap;
 
 use slopdesk_ids::{PaneId, SessionId, TabId};
+use slopdesk_terminal::surface_action::SurfaceAction;
 use slopdesk_tree::{Session, SplitNode, Tab, TreeWorkspace, tree_ops};
 
 // ---------------------------------------------------------------------------------------------- //
@@ -372,20 +373,29 @@ impl ScrollAction {
         }
     }
 
-    /// The libghostty named binding action this scroll fires.
+    /// The binding action this scroll fires, as the shared grammar's variant.
     ///
-    /// Two conventions live in these four strings and neither is negotiable. The SIGN is
-    /// libghostty's: negative is up, toward older scrollback. The FRACTION is a page minus a sliver
-    /// of overlap, so a reader keeps a line of context across the jump — deliberately not copy
-    /// mode's half page, which is a different gesture with a different key.
+    /// Two conventions live in these four actions and neither is negotiable. The SIGN is the
+    /// grammar's: negative is up, toward older scrollback. The FRACTION is a page minus a sliver of
+    /// overlap, so a reader keeps a line of context across the jump — deliberately not copy mode's
+    /// half page, which is a different gesture with a different key.
     #[must_use]
-    pub const fn libghostty_action(self) -> &'static str {
+    pub const fn action(self) -> SurfaceAction<'static> {
         match self {
-            Self::PageUp => "scroll_page_fractional:-0.9",
-            Self::PageDown => "scroll_page_fractional:0.9",
-            Self::Top => "scroll_to_top",
-            Self::Bottom => "scroll_to_bottom",
+            Self::PageUp => SurfaceAction::ScrollFraction(-0.9),
+            Self::PageDown => SurfaceAction::ScrollFraction(0.9),
+            Self::Top => SurfaceAction::ScrollToTop,
+            Self::Bottom => SurfaceAction::ScrollToBottom,
         }
+    }
+
+    /// The spelling that action carries across the seam.
+    ///
+    /// ⚠️ Spelled by [`SurfaceAction::spell`], never by a literal here — see that module's header
+    /// for why a second speller of this grammar is a silently dead keystroke.
+    #[must_use]
+    pub fn wire(self) -> String {
+        self.action().spell()
     }
 }
 
@@ -813,23 +823,17 @@ mod tests {
 
     #[test]
     fn f_every_scroll_action_names_its_libghostty_binding() {
-        assert_eq!(
-            ScrollAction::PageUp.libghostty_action(),
-            "scroll_page_fractional:-0.9"
-        );
-        assert_eq!(
-            ScrollAction::PageDown.libghostty_action(),
-            "scroll_page_fractional:0.9"
-        );
-        assert_eq!(ScrollAction::Top.libghostty_action(), "scroll_to_top");
-        assert_eq!(ScrollAction::Bottom.libghostty_action(), "scroll_to_bottom");
+        assert_eq!(ScrollAction::PageUp.wire(), "scroll_page_fractional:-0.9");
+        assert_eq!(ScrollAction::PageDown.wire(), "scroll_page_fractional:0.9");
+        assert_eq!(ScrollAction::Top.wire(), "scroll_to_top");
+        assert_eq!(ScrollAction::Bottom.wire(), "scroll_to_bottom");
     }
 
     #[test]
     fn the_page_scrolls_are_a_signed_pair_of_the_same_fraction() {
         // Negative is UP, and the two directions must move the same distance.
-        let up = ScrollAction::PageUp.libghostty_action();
-        let down = ScrollAction::PageDown.libghostty_action();
+        let up = ScrollAction::PageUp.wire();
+        let down = ScrollAction::PageDown.wire();
         assert_eq!(up.replace(":-", ":"), down);
     }
 

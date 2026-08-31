@@ -345,7 +345,7 @@ package final class VideoWindowPipeline {
         // an INTERACTIVE desktop (drag / scroll / type) the north star is FRESHNESS, not cadence smoothing —
         // a held frame is rubber-band lag, exactly what reads as "worse than Parsec" on a clean link. The
         // host cursor is drawn on the LOCAL pointer from a SEPARATE socket and the terminal renders through
-        // libghostty (never this pacer), so present latency here is the whole game.
+        // its own Rust surface (`TerminalRendererSurface`, never this pacer), so present latency here is the whole game.
         // DEADLINE MODE (opt-in `SLOPDESK_PACER=deadline`) anchors presentation to the content rhythm
         // (`lastDeadline + interval`) with a small adaptive playout buffer, absorbing FEC/LTR recovery
         // arrival jitter instead of letting it bunch the present cadence — HW-validated over NetBird
