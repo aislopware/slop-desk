@@ -51,10 +51,12 @@
 //!   verbatim, so `# cargo +nightly miri test` in `check` satisfied the obligation `CLAUDE.md`
 //!   names as the price of `rust/slopdesk-gfsimd`'s `unsafe`. `reach::commands_only`, before the
 //!   substitutions.
-//! * [`golden`] — YES, and it is DOCUMENTED rather than fixed. `readers` counts a file that names a
-//!   frozen key in prose while opening the corpus; the honest fix needs literal-preserving comment
-//!   stripping, which lives in another cargo workspace. `NOT_A_READER` says the rest, and the
-//!   measurement is there: zero of the 27 frozen keys are prose-only today.
+//! * [`golden`] — YES, and it is fixed. `readers` counted a file that named a frozen key in prose
+//!   while opening the corpus, and the minter — which explains fourteen of them in comments — was
+//!   excluded by PATH, closing one file rather than the class. The honest fix needs
+//!   literal-preserving comment stripping, and that used to live in another cargo workspace; it is
+//!   [`code_text`] in this directory now, so every candidate is read as code and the allowlist is
+//!   gone. `golden::tests::every_frozen_key_in_this_tree_has_a_reader` holds the measurement.
 //! * [`ffi`] — no, in both halves. A commented declaration in the header mints a symbol the built
 //!   library does not export, which fails LOUD, and `path_dependencies` rejects a name carrying a
 //!   `#` before it ever looks for a path.

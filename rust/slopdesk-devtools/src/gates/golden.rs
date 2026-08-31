@@ -35,6 +35,10 @@
 //! suite is gone — the arithmetic is `slopdesk_video::virtual_display`'s, and the four keys are
 //! replayed from both sides, through the Swift face and through the rule.
 //!
+//! And the same shape one level up: a claim a COMMENT can answer for. [`MINTER`] named fourteen
+//! frozen keys in prose while replaying none, and was excluded by a path allowlist — one file, not
+//! the class. [`readers`] now reads every candidate as CODE, which closes it.
+//!
 //! ## Updating the corpus
 //! Run `just golden`, which mints with NO `SLOPDESK_*` env set and leaves the result at
 //! [`SCRATCH`], then merge the changed keys out of that file surgically — never `>` it over
@@ -46,6 +50,8 @@ use std::fs;
 use std::path::Path;
 
 use serde_json::Value;
+
+use super::code_text;
 
 /// The committed corpus.
 pub const CORPUS: &str = "golden/golden_vectors.json";
@@ -153,36 +159,6 @@ const READER_TREES: &[&str] = &["Tests"];
 
 /// The other half: each `rust/<crate>/tests` directory, one level down.
 const RUST_TESTS: &str = "rust";
-
-/// Directory names inside a reader tree that are NOT readers, however much they look like one.
-///
-/// [`MINTER`] is the whole list, and it is here because moving it under `Tests/` put it inside a
-/// reader tree. It says `golden_vectors` in its own prose and NAMES fourteen frozen keys, in the
-/// comments explaining why each stopped being minted — which is the
-/// `a_crates_own_source_is_not_a_reader` shape exactly: a file that mentions the key and opens the
-/// corpus, and replays neither. Left in, it would answer for those fourteen and the check could no
-/// longer notice a real replay suite being deleted. A minter is not a reader; it is the thing
-/// readers are read against.
-///
-/// ## ⚠️ This carve-out stands in for a VIEW, and knows it
-///
-/// Read that paragraph again: what disqualified the minter is that it names the keys IN COMMENTS.
-/// That is the prose-satisfaction class `slopdesk-invariants` closed over the whole tree — a
-/// positive claim answered by a sentence — and here it is patched with a path allowlist, which
-/// closes one file rather than the class. Any other file that explains a frozen key in prose while
-/// opening the corpus answers for it too.
-///
-/// It stays a carve-out for one reason, and the reason is a boundary rather than an oversight. The
-/// honest fix reads the bodies through a comment stripper that PRESERVES STRING LITERALS, because a
-/// reader cites its key as `"naluJoin"` and a naive strip to end-of-line corrupts any line holding
-/// `//` inside a string. That stripper exists — `slopdesk-invariants`' `Source::statements` — in
-/// another cargo workspace, and reaching it means either depending on the whole gate crate from
-/// this inner-loop one or minting a shared text crate. Both are design changes, not a sweep.
-///
-/// Measured before it was left: with comments stripped from every candidate, all 27 frozen keys
-/// keep a reader — zero are prose-only. The hole is real and currently unexercised, and this note
-/// is here so the next reader finds a documented boundary rather than an inconsistency.
-const NOT_A_READER: &[&str] = &[MINTER];
 
 /// One thing wrong with the pin, phrased for the author who has to fix it.
 pub type Failure = String;
@@ -304,7 +280,22 @@ fn canonical(value: &Value) -> String {
     }
 }
 
-/// Every frozen key with no file that both NAMES it and OPENS the corpus.
+/// Every frozen key with no file that both NAMES it and OPENS the corpus, reading CODE only.
+///
+/// ## A key named in prose is not a reader
+/// The question is positive — some file must name the key and open the corpus — which is the shape
+/// a COMMENT can answer for, and [`MINTER`] answered for fourteen keys that way: it says
+/// `golden_vectors` in its own prose and names each frozen key in the comment explaining why it
+/// stopped being minted, while replaying none of them. That was patched with a path allowlist,
+/// which closed one file rather than the class, and its note recorded why: the honest fix needs a
+/// comment stripper that PRESERVES STRING LITERALS — a reader cites its key as `"naluJoin"`, and a
+/// strip to end-of-line corrupts any line holding `//` inside a string — and the only such stripper
+/// lived in another cargo workspace.
+///
+/// It lives in this module's own directory now ([`super::code_text`], written for the FFI stamp),
+/// so the boundary is gone and the class closes: every candidate is read as code, and the allowlist
+/// with it. The minter disqualifies itself for the reason it always should have, which is that its
+/// mentions are prose.
 ///
 /// # Errors
 /// When a reader tree cannot be walked.
@@ -316,10 +307,7 @@ pub fn readers(root: &Path) -> Result<Vec<String>, String> {
     for crate_dir in crate_test_dirs(root)? {
         collect(&crate_dir, &mut candidates)?;
     }
-    let bodies: Vec<String> = candidates
-        .iter()
-        .map(|path| fs::read_to_string(path).unwrap_or_default())
-        .collect();
+    let bodies: Vec<String> = candidates.iter().filter_map(|path| code_of(path)).collect();
     Ok(FROZEN_KEYS
         .iter()
         .filter(|key| {
@@ -433,6 +421,17 @@ fn crate_test_dirs(root: &Path) -> Result<Vec<std::path::PathBuf>, String> {
     Ok(found)
 }
 
+/// One candidate's CODE, comments stripped and string literals kept verbatim.
+///
+/// `None` for a file whose language [`code_text`](super::code_text) does not lex, which is every
+/// extension [`collect`] does not gather — so the two stay in step by construction rather than by a
+/// second list. An unreadable file answers nothing rather than answering for every key.
+fn code_of(path: &Path) -> Option<String> {
+    let dialect = code_text::Dialect::of(path)?;
+    let bytes = fs::read(path).ok()?;
+    Some(String::from_utf8_lossy(&code_text::code_only(&bytes, dialect)).into_owned())
+}
+
 /// Every Swift and Rust source under `dir`, skipping build output.
 fn collect(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), String> {
     if !dir.is_dir() {
@@ -446,7 +445,7 @@ fn collect(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), String>
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         if path.is_dir() {
-            if name != "target" && name != ".build" && !NOT_A_READER.contains(&name) {
+            if name != "target" && name != ".build" {
                 collect(&path, into)?;
             }
         } else if matches!(
@@ -575,22 +574,22 @@ mod tests {
         assert!(!super::readers(&root).unwrap().contains(&"naluJoin".to_owned()));
     }
 
-    /// The MINTER must not be able to answer for a key it merely stopped minting.
+    /// A key explained in PROSE is not replayed, wherever the file lives.
     ///
-    /// It lives under `Tests/` — a reader tree — says `golden_vectors` in its own prose and names
-    /// fourteen frozen keys in the comments recording why each was frozen. That is the same shape
-    /// as `a_crates_own_source_is_not_a_reader`, one tree over, and it arrived the day the
-    /// minter stopped being an executable. Seeded here so the exclusion cannot be dropped by
-    /// tidying.
+    /// The minter is the instance that made this visible — it lives under `Tests/`, says
+    /// `golden_vectors` in its own prose and names fourteen frozen keys in the comments recording
+    /// why each was frozen — and it was excluded by path while every other file could still answer
+    /// the same way. Both halves are seeded here: the minter's own comment, and the identical
+    /// comment in a suite that really does replay other keys.
     #[test]
-    fn the_minter_is_not_a_reader_of_the_keys_it_stopped_minting() {
+    fn a_key_named_only_in_a_comment_has_no_reader() {
         let root = std::env::temp_dir().join(format!("slopdesk-golden-minter-{}", std::process::id()));
         let _ignored = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("Tests").join(super::MINTER)).unwrap();
-        let claim = "// naluJoin is frozen — see golden_vectors.json\n";
+        let prose = "// naluJoin is frozen — see golden_vectors.json\n";
         fs::write(
             root.join("Tests").join(super::MINTER).join("CoreVectors.swift"),
-            claim,
+            prose,
         )
         .unwrap();
         assert!(
@@ -598,9 +597,36 @@ mod tests {
             "the minter answered for a key it does not replay"
         );
 
+        // The same sentence one tree over, in a real suite — which is what the path allowlist could
+        // not tell apart from a replay, and what reading the bodies as CODE can.
         fs::create_dir_all(root.join("Tests/SlopDeskWireTests")).unwrap();
-        fs::write(root.join("Tests/SlopDeskWireTests/Replay.swift"), claim).unwrap();
+        fs::write(root.join("Tests/SlopDeskWireTests/Replay.swift"), prose).unwrap();
+        assert!(
+            super::readers(&root).unwrap().contains(&"naluJoin".to_owned()),
+            "a comment in a suite answered for a key the suite does not replay"
+        );
+
+        // And the replay itself: the key CITED, in the string literal a reader looks it up by. A
+        // stripper that ate literals would fail here rather than passing quietly.
+        fs::write(
+            root.join("Tests/SlopDeskWireTests/Replay.swift"),
+            "let frame = golden_vectors[\"naluJoin\"] // naluJoin\n",
+        )
+        .unwrap();
         assert!(!super::readers(&root).unwrap().contains(&"naluJoin".to_owned()));
+    }
+
+    /// The measurement the old carve-out's note recorded and could not enforce: on THIS tree, every
+    /// frozen key keeps a reader once the prose is gone.
+    ///
+    /// The live tree rather than a fixture, because the claim is about the corpus that ships. It is
+    /// the same check `run` performs, minus the several-minute Swift mint that precedes it there —
+    /// so a suite deletion that strands a frozen key is caught by `cargo test`, not only by the
+    /// golden gate.
+    #[test]
+    fn every_frozen_key_in_this_tree_has_a_reader() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        assert_eq!(super::readers(&root).unwrap(), Vec::<String>::new());
     }
 
     /// Naming the key is not enough — the file has to OPEN the corpus.

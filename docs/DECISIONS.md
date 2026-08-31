@@ -17920,3 +17920,34 @@ where the plan is. *Accepting `)` as a name boundary* so a future `(cd rust/x &&
 that shape would read as unreached and fail loudly, which is the direction this gate must round
 toward. *Treating an unparseable `members` key as "no members"* — that would report all six as
 orphans and name the wrong defect, so it is a loud error of its own.
+
+## The one carve-out that stood in for a view, once the view existed (2026-08-31)
+
+`golden::readers` proves the sentence "a frozen key is pinned by a suite, or it is not pinned at
+all". It asks a POSITIVE question — some file must name the key AND open the corpus — and that is
+the shape a comment can answer for. `slopdesk-invariants` closed that class over the tree by reading
+`Source::statements`; here it was patched with a path allowlist naming one file, the minter, which
+says `golden_vectors` in its own prose and names fourteen frozen keys in the comments recording why
+each stopped being minted.
+
+The allowlist's own note said what it was: a carve-out closing one file rather than the class,
+because the honest fix needs a comment stripper that PRESERVES STRING LITERALS — a reader cites its
+key as `"naluJoin"`, and a strip to end-of-line corrupts any line holding `//` inside a string — and
+the only such stripper lived in another cargo workspace, so reaching it meant a dependency edge or a
+new shared crate. Both were design changes rather than sweeps, and the note recorded the measurement
+that made leaving it safe: zero of the 27 frozen keys were prose-only.
+
+That boundary dissolved and the note outlived it. `gates::code_text` was written for the FFI stamp,
+in this module's own directory, and it is exactly the missing tool — Swift, Rust and C dialects,
+comments removed, string literals emitted verbatim. So `readers` reads every candidate as CODE, the
+allowlist is deleted, and the minter disqualifies itself for the reason it always should have. The
+measurement stopped being a paragraph and became `every_frozen_key_in_this_tree_has_a_reader`, which
+runs on the LIVE tree under `cargo test` — so a suite deletion that strands a frozen key is now
+caught in a second rather than only by the golden gate's several-minute Swift mint.
+
+**Rejected.** *Keeping the allowlist as belt-and-braces* — it can only re-open the hole it was
+standing in for, by excluding a file that later becomes a real reader. *Leaving the walk's extension
+list and the stripper's dialect list as two lists* — `code_of` returns `None` for a language
+`Dialect::of` does not know, so an unreadable file answers nothing rather than answering for every
+key, and the two stay in step by construction. *A fixture-only test for the tree measurement* — a
+fixture cannot notice the real suite being deleted, which is the whole failure this arm exists for.
