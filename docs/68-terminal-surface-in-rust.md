@@ -533,6 +533,17 @@ regression being codified rather than a feature that never landed; each returns 
 in the same change. `docs/DECISIONS.md` §"The rows that survived their reader" argues it and names
 the two rows that were WIRED instead.
 
+**The four that were wired rather than deleted (2026-09-01).** `terminal.line-height` is the third
+input to `set_font` — it belongs in the FONT STACK, where the taller cell centres its glyph and every
+offset the face reported rides with the baseline, not downstream where each decoration would need its
+own correction. The other three are gesture settings and stay on the embedder's side of the door,
+where the paragraph above already puts them: ⇧+arrow runs the existing `adjust_selection:<dir>`
+binding once `slopdesk_term_shift_arrow_edge` recognises the chord, and ⇧+click withholds a click
+from `slopdesk_term_surface_mouse` the way `allow-mouse-capture` already does. Only click-to-move
+needed a new door — `slopdesk_term_surface_click_to_move` — because the three things it must know
+(where the cursor is, how many GLYPHS away the click is, and whether DECCKM wants `ESC [ C` or
+`ESC O C`) are all the engine's. It answers the `←`/`→` presses a user would have made, never `↑`/`↓`:
+at a prompt those are HISTORY, so crossing rows would replace the command being typed.
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`

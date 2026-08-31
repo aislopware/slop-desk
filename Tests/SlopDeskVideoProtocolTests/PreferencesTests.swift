@@ -53,6 +53,20 @@ final class PreferencesTests: XCTestCase {
         )
     }
 
+    /// The multiplier the terminal renderer builds its face stack at. Derived from the percentage
+    /// rather than tabulated a second time, so the grid and the code panel beside it cannot drift:
+    /// `compact` is exactly 1 and `loose` exactly 1.2, which is what "20%" has always meant here.
+    func testLineHeightMultiplierIsThePercentageTheCodePanelAlreadyUses() {
+        XCTAssertEqual(LineHeightMode.default.cellHeightMultiplier, 1)
+        XCTAssertEqual(LineHeightMode.compact.cellHeightMultiplier, 1)
+        XCTAssertEqual(LineHeightMode.loose.cellHeightMultiplier, 1.2)
+        XCTAssertEqual(LineHeightMode.custom(1.35).cellHeightMultiplier, 1.35, accuracy: 1e-12)
+        XCTAssertEqual(
+            LineHeightMode.custom(0.8).cellHeightMultiplier, 0.8, accuracy: 1e-12,
+            "a multiplier under one tightens the cell; the round trip through the percentage is lossless enough",
+        )
+    }
+
     func testAgentPreferencesRoundTrip() throws {
         XCTAssertNil(AgentPreferences().preventSleep)
         let custom = AgentPreferences(preventSleep: true, resumeOnRecovery: false)

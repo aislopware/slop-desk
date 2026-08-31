@@ -54,6 +54,7 @@ final class PhoneTerminalRendererView: UIView {
         guard let driver = TerminalSurfaceDriver(
             family: TerminalConfigBroadcaster.shared.fontFamily,
             pointSize: TerminalConfigBroadcaster.shared.fontSize,
+            lineHeight: TerminalConfigBroadcaster.shared.lineHeight,
             scale: Double(UIScreen.main.scale),
             size: CGSize(width: 390, height: 600),
         ) else {
@@ -213,10 +214,13 @@ final class PhoneTerminalRendererView: UIView {
         // own `setFocused(_:)` comment forbids.
         model?.onRequestFocus?()
         let point = gesture.location(in: self)
-        // A mouse-reporting TUI gets the tap as a click; otherwise it is just focus, and the tap
-        // deliberately does NOT move a cursor — a terminal has no click-to-position.
-        _ = driver.sendMouse(action: 0, button: 0, mods: 0, at: point)
+        // A mouse-reporting TUI gets the tap as a click. Otherwise the tap is focus and, at an
+        // editable prompt with `controls.click-to-move` on, the shell's cursor: the same door the
+        // Mac's `mouseUp` reaches, so a tap and a click move the caret by the same rule rather than
+        // by two guesses at one. A tap ends where it began, so there is no selection to prefer.
+        let forwarded = driver.sendMouse(action: 0, button: 0, mods: 0, at: point)
         _ = driver.sendMouse(action: 1, button: 0, mods: 0, at: point)
+        if !forwarded { driver.clickToMove(at: point) }
     }
 
     @objc

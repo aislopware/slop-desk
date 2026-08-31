@@ -61,11 +61,11 @@ final class TerminalRendererSurface {
     private var scratch = [UInt8](repeating: 0, count: 4096)
 
     /// Opens a surface, or `nil` when this machine cannot draw one.
-    init?(family: String, pointSize: Double, scale: Double, size: CGSize) {
+    init?(family: String, pointSize: Double, lineHeight: Double, scale: Double, size: CGSize) {
         let opened = Array(family.utf8).withUnsafeBufferPointer { bytes in
             slopdesk_term_surface_new(
                 bytes.baseAddress, bytes.count,
-                pointSize, scale,
+                pointSize, lineHeight, scale,
                 Double(size.width), Double(size.height),
             )
         }
@@ -223,17 +223,30 @@ final class TerminalRendererSurface {
         }
     }
 
-    /// Rebuilds the face stack at a new family and size, answering the grid that now fits.
+    /// Rebuilds the face stack at a new family, size and cell-height multiplier, answering the grid
+    /// that now fits.
     ///
     /// Answers the pair for ``setGeometry(size:scale:)``'s reason, and the caller owes the same
     /// follow-through: a new cell size is a new grid, and the host is still holding the old one.
-    func setFont(family: String, pointSize: Double) -> (cols: UInt16, rows: UInt16)? {
+    func setFont(family: String, pointSize: Double, lineHeight: Double) -> (cols: UInt16, rows: UInt16)? {
         guard let handle else { return nil }
         let packed = Array(family.utf8).withUnsafeBufferPointer { bytes in
-            slopdesk_term_surface_set_font(handle, bytes.baseAddress, bytes.count, pointSize)
+            slopdesk_term_surface_set_font(handle, bytes.baseAddress, bytes.count, pointSize, lineHeight)
         }
         guard packed != 0 else { return nil }
         return (cols: UInt16(packed >> 16), rows: UInt16(packed & 0xFFFF))
+    }
+
+    /// The bytes that walk the shell's cursor to a clicked cell, or `nil` for a click the engine
+    /// declines. The rule — same row only, glyphs not columns, and what it refuses — is the door's.
+    func clickToMove(column: Int, row: Int) -> Data? {
+        guard let handle, let column = UInt16(exactly: column), let row = UInt16(exactly: row) else {
+            return nil
+        }
+        let bytes = answer { out, cap in
+            slopdesk_term_surface_click_to_move(handle, column, row, out, cap)
+        }
+        return bytes.isEmpty ? nil : Data(bytes)
     }
 
     /// Which absolute or relative scroll a gesture or key asked for.

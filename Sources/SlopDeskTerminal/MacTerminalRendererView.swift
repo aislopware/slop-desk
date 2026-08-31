@@ -134,6 +134,7 @@ final class MacTerminalRendererView: NSView {
         guard let driver = TerminalSurfaceDriver(
             family: TerminalConfigBroadcaster.shared.fontFamily,
             pointSize: TerminalConfigBroadcaster.shared.fontSize,
+            lineHeight: TerminalConfigBroadcaster.shared.lineHeight,
             scale: Double(NSScreen.main?.backingScaleFactor ?? 2),
             size: CGSize(width: 640, height: 400),
         ) else {
@@ -859,7 +860,16 @@ final class MacTerminalRendererView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         lastPointerPoint = point
         // A mouse-reporting program owns the click; only when it declines does the selection start.
-        guard !driver.sendMouse(action: 0, button: 0, mods: Self.mods(event.modifierFlags), at: point) else {
+        // `controls.shift-click` is the one thing that takes the click BACK off such a program: with
+        // it on, ⇧ means "this drag is mine", which is how a selection is made over a full-screen
+        // TUI at all. The setting stores four values and is read as two — ``MouseShiftCapture``'s own
+        // rule, not a comparison here. The half that is NOT actuated is the program's ability to
+        // override the bypass (DEC mode 1029): the engine exposes no reading of it, so `always` and
+        // `enabled` behave alike, as do `never` and `disabled`.
+        let shiftSelects = event.modifierFlags.contains(.shift) && SettingsKey.allowShiftClick.extendsSelection
+        if !shiftSelects,
+           driver.sendMouse(action: 0, button: 0, mods: Self.mods(event.modifierFlags), at: point)
+        {
             return
         }
         isSelecting = true
@@ -890,6 +900,13 @@ final class MacTerminalRendererView: NSView {
         if isSelecting {
             isSelecting = false
             driver.selectRelease(at: point)
+            // `controls.click-to-move`, and the RELEASE is the only honest moment for it: a press
+            // that turns into a drag is a selection, and moving the shell's cursor at the press
+            // would have fired for the first pixel of every one of them. A gesture that selected
+            // nothing is the CLICK this answers.
+            if !driver.hasSelection() {
+                driver.clickToMove(at: point)
+            }
         } else {
             _ = driver.sendMouse(action: 1, button: 0, mods: Self.mods(event.modifierFlags), at: point)
         }

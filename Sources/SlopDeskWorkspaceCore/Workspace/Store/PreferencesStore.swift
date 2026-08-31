@@ -141,6 +141,7 @@ public final class PreferencesStore {
         TerminalConfigBroadcaster.shared.publish(
             fontFamily: prefs.fontFamily,
             fontSize: prefs.fontSize,
+            lineHeight: prefs.lineHeight.cellHeightMultiplier,
             // The FALLBACK is the point, and it is what keeps `terminal.background` /
             // `terminal.foreground` honest: with the hook installed (every GUI build) the one flat
             // profile wins, and without it the file's own two colours are what the cells wear. A
@@ -325,6 +326,11 @@ public final class TerminalConfigBroadcaster {
     /// the configured size would draw at one size and lay out at another the moment ⌘+ was pressed.
     public private(set) var fontSize: Double = 0
 
+    /// How tall a cell is as a MULTIPLE of the face's natural height (`terminal.line-height`), which
+    /// is what `slopdesk_term_surface_set_font` takes. `1` — the face's own — until the first
+    /// publish, for ``fontFamily``'s reason.
+    public private(set) var lineHeight: Double = 1
+
     /// The cell colours as the renderer's doors take them, or `nil` where no GUI filled the seam
     /// (headless, pre-launch) and the engine's own defaults stand.
     public private(set) var themeWords: ResolvedTerminalTheme?
@@ -358,6 +364,7 @@ public final class TerminalConfigBroadcaster {
     public func publish(
         fontFamily: String = "",
         fontSize: Double = 0,
+        lineHeight: Double = 1,
         themeWords: ResolvedTerminalTheme? = nil,
         scrollbackLines: Int = 0,
         cursorStyle: UInt8 = 0,
@@ -368,6 +375,7 @@ public final class TerminalConfigBroadcaster {
     ) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
+        self.lineHeight = lineHeight
         self.themeWords = themeWords
         self.scrollbackLines = scrollbackLines
         self.cursorStyle = cursorStyle

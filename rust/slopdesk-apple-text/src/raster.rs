@@ -428,7 +428,7 @@ mod tests {
     /// Ink, in the format an alpha atlas takes, inside a bitmap the bearings place on the baseline.
     #[test]
     fn a_letter_comes_back_as_coverage_with_ink_in_it() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let glyph = rasterizer.rasterize(key_of(&stack, "M", 0)).unwrap();
 
@@ -455,7 +455,7 @@ mod tests {
     /// is not one.
     #[test]
     fn the_first_row_is_the_top_of_the_glyph() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         // A `T` is a full-width crossbar over a narrow stem, so its two halves carry very different
         // amounts of ink and the difference survives any amount of antialiasing.
@@ -486,7 +486,7 @@ mod tests {
     /// a box or re-rasterise a space on every frame.
     #[test]
     fn a_space_exists_and_draws_nothing() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let glyph = rasterizer.rasterize(key_of(&stack, " ", 0)).unwrap();
         assert_eq!(glyph.width, 0);
@@ -497,7 +497,7 @@ mod tests {
     /// A colour face comes back as BGRA, because coverage would lose everything about it.
     #[test]
     fn an_emoji_comes_back_as_colour() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let key = key_of(&stack, "\u{1f600}", 0);
         assert_ne!(
@@ -528,7 +528,7 @@ mod tests {
     /// one answer and the whole subpixel key would be dead weight.
     #[test]
     fn the_four_phases_are_four_different_bitmaps() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let base = key_of(&stack, "e", 0);
         let mut seen: Vec<Vec<u8>> = Vec::new();
@@ -551,7 +551,7 @@ mod tests {
     /// does: a stroke adds ink and a shear moves it sideways.
     #[test]
     fn a_synthetic_bold_is_heavier_and_a_synthetic_italic_is_wider() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let base = key_of(&stack, "H", 0);
         let plain = rasterizer.rasterize(base).unwrap();
@@ -589,7 +589,7 @@ mod tests {
     /// — "no such glyph" — rather than something drawn at the wrong size.
     #[test]
     fn a_key_from_another_stack_is_declined() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let base = key_of(&stack, "M", 0);
         assert!(
@@ -614,7 +614,7 @@ mod tests {
     /// context and a colour space.
     #[test]
     fn a_thousand_glyphs_hold_nothing() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let coverage = key_of(&stack, "W", 0);
         let color = key_of(&stack, "\u{1f600}", 0);

@@ -2865,8 +2865,9 @@ typedef struct SlopDeskTerminalSurface SlopDeskTerminalSurface;
  * become true a frame later, so the caller latches it. An UNKNOWN family is not a refusal —
  * Core Text answers Helvetica, and `slopdesk font list` is how the user finds out what to type. */
 SlopDeskTerminalSurface *slopdesk_term_surface_new(const uint8_t *family, size_t family_len,
-                                                   double point_size, double scale,
-                                                   double width_points, double height_points);
+                                                   double point_size, double line_height,
+                                                   double scale, double width_points,
+                                                   double height_points);
 /* Teardown is TWO doors, and the split is load-bearing.
  *
  * _close takes the state — engine, atlas, layer, device — and leaves the handle valid and inert.
@@ -2920,12 +2921,16 @@ void slopdesk_term_surface_set_theme(SlopDeskTerminalSurface *handle, uint32_t f
 void slopdesk_term_surface_set_palette(SlopDeskTerminalSurface *handle, const uint32_t *entries,
                                        size_t count);
 
-/* Rebuilds the face stack at a family and point size, answering the grid it now fits, packed
- * `cols << 16 | rows` exactly as _set_geometry does — a font change resizes the cell, so it reflows
- * the grid and the caller owes the host a resize. A family Core Text cannot resolve leaves the
- * current stack standing rather than refusing to draw. */
+/* Rebuilds the face stack at a family, point size and cell-height multiplier, answering the grid
+ * it now fits, packed `cols << 16 | rows` exactly as _set_geometry does — a font change resizes the
+ * cell, so it reflows the grid and the caller owes the host a resize. A family Core Text cannot
+ * resolve leaves the current stack standing rather than refusing to draw.
+ *
+ * `line_height` is `terminal.line-height` as a MULTIPLE of the face's natural cell (1 for the
+ * face's own). A taller cell centres its glyph in the space it gained and every offset the face
+ * reported rides with the baseline, so an underline stays the same distance under its own glyph. */
 uint32_t slopdesk_term_surface_set_font(SlopDeskTerminalSurface *handle, const uint8_t *family,
-                                        size_t family_len, double point_size);
+                                        size_t family_len, double point_size, double line_height);
 
 /* Scrolls the viewport: mode 0 by rows, 1 by PAGES, 2 to the bottom, 3 to the top. `lines` is
  * signed and negative reveals OLDER output. A page is converted against the grid the surface last
@@ -3009,6 +3014,32 @@ bool slopdesk_term_surface_selection_ends_at_cursor(SlopDeskTerminalSurface *han
 uint16_t slopdesk_term_mods(bool shift, bool alt, bool ctrl, bool command, bool caps_lock,
                             bool num_lock, bool right_shift, bool right_alt, bool right_ctrl,
                             bool right_command);
+
+/* Which adjust_selection edge a shift+arrow press names (0 up, 1 down, 2 left, 3 right), or -1 for
+ * a press that names none — `controls.shift-arrow-select`'s recognition step. `keycode` and `mods`
+ * are the pair _surface_key already takes.
+ *
+ * The rule is HERE and not in the client because the modifier test is subtle: a right-shift press
+ * carries SHIFT|RIGHT_SHIFT and Caps Lock and Num Lock ride along on every press while they are
+ * on, so the lock and side bits are masked before the comparison. A client's own copy would refuse
+ * a right-handed typist and everyone with Caps Lock on. Alt, Ctrl and Command are NOT masked —
+ * shift+alt+arrow is a word-wise selection the program still gets. Pure; no handle, no state. */
+int32_t slopdesk_term_shift_arrow_edge(uint16_t keycode, uint16_t mods);
+
+/* The bytes that walk the shell's cursor to a clicked cell, or 0 for a click this may not answer —
+ * `controls.click-to-move`. `column`/`row` are the clicked CELL as slopdesk_link_hit_cell resolves
+ * one, `row` being a row of the VIEWPORT. Answers §4's byte count; 0 is a refusal and the caller
+ * sends nothing.
+ *
+ * The presses are arrows because a shell's line editor owns its cursor and nothing can place it,
+ * and they are LEFT/RIGHT only: at a prompt up/down are HISTORY, so crossing rows would replace
+ * the half-typed command the user clicked into. Counted in GLYPHS — a wide character is two cells
+ * and one press — and encoded through the engine, so DECCKM picks `ESC [ C` vs `ESC O C`. Refused
+ * on the alternate screen, under a mouse-reporting program, and off the cursor's own row. Whether
+ * the shell is at an EDITABLE prompt is deliberately NOT asked here: that reading is OSC 133 plus a
+ * live connection, which the client already holds. */
+size_t slopdesk_term_surface_click_to_move(SlopDeskTerminalSurface *handle, uint16_t column,
+                                           uint16_t row, uint8_t *out, size_t cap);
 
 /* One key press, encoded to the bytes the far side expects. `keycode` is an AppKit
  * NSEvent.keyCode — a POSITION, which the engine's own table turns into the KEY its encoder needs

@@ -126,7 +126,8 @@ pub struct FontStack {
 }
 
 impl FontStack {
-    /// Resolves `family` at `point_size` on a display of `contents_scale`.
+    /// Resolves `family` at `point_size` on a display of `contents_scale`, in cells `line_height`
+    /// times the face's natural height.
     ///
     /// `None` for a size that is not a sane number of device pixels — a NaN scale, a zero point
     /// size, a value that would not survive the rounding — because every metric below is derived
@@ -137,7 +138,7 @@ impl FontStack {
     /// Helvetica. That is deliberate here too — a typo in `config.toml` gets a legible terminal in
     /// the wrong face, and `slopdesk font list` is how the user finds out what to type instead.
     #[must_use]
-    pub fn new(family: &str, point_size: f64, contents_scale: f64) -> Option<Self> {
+    pub fn new(family: &str, point_size: f64, contents_scale: f64, line_height: f64) -> Option<Self> {
         let size_px = round_u16(point_size * contents_scale)?;
         if size_px == 0 {
             return None;
@@ -155,7 +156,7 @@ impl FontStack {
         )]
         let primary = unsafe { CTFont::with_name(&name, size, ptr::null()) };
 
-        let (metrics, cell_height) = measure(&primary, size);
+        let (metrics, cell_height) = measure(&primary, size, line_height);
         let cell_width = advance(&primary)?;
 
         let bold = cut(&primary, size, CTFontSymbolicTraits::TraitBold);
@@ -299,7 +300,14 @@ fn cut(primary: &CTFont, size: f64, wanted: CTFontSymbolicTraits) -> Option<CFRe
 /// [`FontMetrics`]'s own header asks for: "Core Text reports underline position as a negative
 /// offset from the baseline; converting once, at the boundary, is why nothing below has to remember
 /// a sign convention." This is that boundary.
-fn measure(font: &CTFont, size: f64) -> (FontMetrics, f64) {
+///
+/// `line_height` is `terminal.line-height` as a MULTIPLIER of the face's natural cell — `1.0`
+/// leaves every number below exactly where the face put it. A taller cell centres the glyph in the
+/// space it gained rather than pinning it to the top: half the gain above the baseline and half
+/// below is what "looser line spacing" means to a reader, and pinning would read as a paragraph
+/// that drifted upwards. Every offset the font reported moves with the baseline, so an underline
+/// stays the same distance under its own glyph at any multiplier.
+fn measure(font: &CTFont, size: f64, line_height: f64) -> (FontMetrics, f64) {
     // SAFETY: framework rule. The Core Foundation GET rule, six times — each of these reads a
     // scalar out of a live font's own tables and returns it by value. Nothing is created, nothing
     // is retained, and there is nothing for this caller to release. They are grouped because they
@@ -328,8 +336,25 @@ fn measure(font: &CTFont, size: f64) -> (FontMetrics, f64) {
     let descent = f64::max(finite(descent, size * 0.2), 0.0);
     let leading = f64::max(finite(leading, 0.0), 0.0);
 
-    let cell_height = f64::max((leading + ascent + descent).ceil(), 1.0);
-    let baseline = f64::min((leading + ascent).ceil(), cell_height);
+    let natural_height = f64::max((leading + ascent + descent).ceil(), 1.0);
+    // The multiplier is sanitised for the face metrics' own reason: a NaN reaching the `f64::max`
+    // below would be answered by the OTHER operand and produce a plausible-looking grid at a height
+    // nobody asked for. Repaired to the NATURAL cell rather than floored at some minimum — the
+    // config table already bounds a real setting to [0.5, 3.0], so anything arriving outside that
+    // is a caller's mistake and "the height the face itself asked for" is the honest answer to
+    // it. The test is a VALIDITY guard against a constant, which is what `finite` already is;
+    // it is not a `<` ternary picking between two live values, which is what this crate's float
+    // rule bans.
+    let line_height = if line_height.is_finite() && line_height > 0.0 {
+        line_height
+    } else {
+        1.0
+    };
+    let cell_height = f64::max((natural_height * line_height).ceil(), 1.0);
+    // Half the gain, above and below. Negative when the multiplier tightened the cell, which is the
+    // same arithmetic reading the other way — the glyph rides up into the space that was removed.
+    let lift = (cell_height - natural_height) * 0.5;
+    let baseline = f64::min(f64::max((leading + ascent).ceil() + lift, 0.0), cell_height);
 
     // Never thinner than a device pixel: the renderer's own field doc says so, and a sub-pixel rect
     // on an unfiltered atlas draws as nothing at all rather than as something faint.
@@ -456,7 +481,7 @@ mod tests {
     /// cell it belongs to.
     #[test]
     fn a_real_family_measures_a_grid_that_could_hold_it() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let metrics = stack.metrics();
 
         assert_eq!(
@@ -487,7 +512,7 @@ mod tests {
     /// The family resolves four ways, and the chain starts as short as the family allows.
     #[test]
     fn the_four_cuts_resolve_before_any_text_arrives() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         // Menlo ships Regular, Bold, Italic and Bold Italic, so all four are real faces and none is
         // synthesised. A family with fewer would resolve fewer, which is what `Synthetic` covers.
         assert_eq!(stack.face_count(), 4);
@@ -497,20 +522,79 @@ mod tests {
     /// propagated into every metric below it.
     #[test]
     fn a_size_that_is_not_a_number_of_pixels_is_refused() {
-        assert!(FontStack::new(MONO, f64::NAN, 2.0).is_none());
-        assert!(FontStack::new(MONO, 13.0, f64::NAN).is_none());
-        assert!(FontStack::new(MONO, 13.0, f64::INFINITY).is_none());
-        assert!(FontStack::new(MONO, 0.0, 2.0).is_none());
-        assert!(FontStack::new(MONO, -13.0, 2.0).is_none());
-        assert!(FontStack::new(MONO, 1e9, 2.0).is_none());
+        assert!(FontStack::new(MONO, f64::NAN, 2.0, 1.0).is_none());
+        assert!(FontStack::new(MONO, 13.0, f64::NAN, 1.0).is_none());
+        assert!(FontStack::new(MONO, 13.0, f64::INFINITY, 1.0).is_none());
+        assert!(FontStack::new(MONO, 0.0, 2.0, 1.0).is_none());
+        assert!(FontStack::new(MONO, -13.0, 2.0, 1.0).is_none());
+        assert!(FontStack::new(MONO, 1e9, 2.0, 1.0).is_none());
     }
 
     /// An unknown family is Helvetica, not a failure — a typo in `config.toml` gets a legible
     /// terminal in the wrong face rather than a blank one.
     #[test]
     fn a_family_the_system_does_not_have_still_answers_a_stack() {
-        let stack = FontStack::new("No Such Family At All", 13.0, 2.0).unwrap();
+        let stack = FontStack::new("No Such Family At All", 13.0, 2.0, 1.0).unwrap();
         assert!(stack.cell_width() >= 1.0);
+    }
+
+    /// `terminal.line-height` makes the CELL taller and centres the glyph in what it gained — the
+    /// half above the baseline is what stops a loose grid from reading as text that drifted to the
+    /// top of every row. The decorations ride the baseline, so an underline stays the same distance
+    /// under its own glyph at any multiplier.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "bit-equality is the CLAIM: both sides are the same derived number, and a tolerance would \
+                  pass a multiplier that had leaked into the width"
+    )]
+    fn a_multiplier_stretches_the_cell_and_centres_the_glyph_in_it() {
+        let natural = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let loose = FontStack::new(MONO, 13.0, 2.0, 1.5).unwrap();
+
+        assert!(loose.cell_height() > natural.cell_height());
+        assert_eq!(
+            loose.cell_width(),
+            natural.cell_width(),
+            "line height is a VERTICAL setting; a stretched row would be a different font"
+        );
+
+        let lift = (loose.cell_height() - natural.cell_height()) * 0.5;
+        let drift = loose.metrics().baseline - natural.metrics().baseline - lift;
+        assert!(
+            f64::abs(drift) <= 1.0,
+            "the glyph sits half the gain lower, within the rounding the ceil() costs"
+        );
+        let under = loose.metrics().underline_position - loose.metrics().baseline;
+        let natural_under = natural.metrics().underline_position - natural.metrics().baseline;
+        assert_eq!(
+            under, natural_under,
+            "the underline is the face's distance under the baseline, not the cell's"
+        );
+        assert!(
+            loose.metrics().underline_position + loose.metrics().underline_thickness <= loose.cell_height()
+        );
+    }
+
+    /// A multiplier out of `config.toml` is repaired where the mistake was made, exactly like the
+    /// face's own metrics — a NaN reaching the `f64::max` below would be answered by the OTHER
+    /// operand and produce a plausible grid at a height nobody asked for.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "bit-equality is the CLAIM: a repaired multiplier answers the SAME cell the face measured, \
+                  not one within a tolerance of it"
+    )]
+    fn a_multiplier_that_is_not_a_number_leaves_the_natural_cell() {
+        let natural = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        for broken in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 0.0] {
+            let stack = FontStack::new(MONO, 13.0, 2.0, broken).unwrap();
+            assert_eq!(
+                stack.cell_height(),
+                natural.cell_height(),
+                "a multiplier outside the config's own [0.5, 3.0] answers the face's own cell",
+            );
+        }
     }
 
     /// The leak test this family owes: a thousand stacks, each taking and dropping four faces and a
@@ -519,7 +603,7 @@ mod tests {
     #[test]
     fn a_thousand_stacks_hold_nothing() {
         for _ in 0..1000 {
-            assert!(FontStack::new(MONO, 13.0, 2.0).is_some());
+            assert!(FontStack::new(MONO, 13.0, 2.0, 1.0).is_some());
         }
     }
 }

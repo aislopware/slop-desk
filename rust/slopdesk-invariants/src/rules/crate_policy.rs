@@ -221,7 +221,11 @@ const WIDE: [Wide; 7] = [
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-text",
-        cap: 814,
+        // 814 → 821: `terminal.line-height` became the fourth input to `FontStack::new`, so `measure`
+        // stretches the cell and centres the glyph in what it gained. Seven lines, no new API surface
+        // beyond the parameter and no new `unsafe` — the arithmetic sits inside the existing
+        // Core Text read.
+        cap: 821,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-metal",

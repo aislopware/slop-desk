@@ -9,9 +9,9 @@
 // staying as settings that lie; a ligature mode comes back the day the shaper can honour one, in
 // the same change.
 //
-// ``LineHeightMode`` stays because it has a live reader: `CodeFontSync` sends its percentage to the
-// code panel. The TERMINAL half of it is not actuated either, which is a gap on the record rather
-// than a lie — the row does something, just not everything its name suggests.
+// ``LineHeightMode`` has two live readers: `CodeFontSync` sends its percentage to the code panel,
+// and ``cellHeightMultiplier`` is what the terminal renderer builds its face stack at, so the grid
+// and the editor beside it are two readings of the one row rather than a setting that half-applies.
 
 // MARK: - LineHeightMode (`line-height`)
 
@@ -26,6 +26,16 @@ public enum LineHeightMode: Codable, Sendable, Equatable {
     case loose
     /// A user-supplied multiplier `m` → `adjust-cell-height = ((m - 1) * 100)%` (plain `*`/`+`).
     case custom(Double)
+
+    /// How tall a cell is as a MULTIPLE of the face's natural height — what the terminal renderer's
+    /// `set_font` door takes, and the TERMINAL half of this setting. Derived from
+    /// ``adjustCellHeightPercent`` rather than tabulated a second time, with plain divide-then-add
+    /// (never fused, per the codec convention): the percentage IS the definition, and a second table
+    /// would be a second answer to one question.
+    public var cellHeightMultiplier: Double {
+        guard let percent = adjustCellHeightPercent else { return 1 }
+        return 1.0 + percent / 100.0
+    }
 
     /// The `adjust-cell-height` PERCENTAGE for this mode, or `nil` for ``default`` (no line). `compact` /
     /// `loose` are exact integral constants (0 / 20) — NOT routed through the `(m-1)*100` formula, which on

@@ -42,6 +42,17 @@ public enum TerminalBindingAction: Equatable, Sendable {
         case down = 1
         case left = 2
         case right = 3
+
+        /// The edge a ⇧+arrow press names, or `nil` for a press that names none —
+        /// `controls.shift-arrow-select`'s whole recognition step.
+        ///
+        /// `keyCode` and `mods` are the pair a key event already carries to
+        /// `slopdesk_term_surface_key`, and the rule reading them is that door's neighbour rather
+        /// than a second table here: which modifier bits are masked out (the locks, the sides) is
+        /// the kind of detail a Swift copy would get subtly wrong and then disagree about.
+        public static func shiftArrow(keyCode: UInt16, mods: UInt16) -> Self? {
+            Self(rawValue: Int(slopdesk_term_shift_arrow_edge(keyCode, mods)))
+        }
     }
 
     /// The `(code, argument)` pair this action crosses as.

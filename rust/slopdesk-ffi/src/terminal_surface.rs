@@ -64,9 +64,9 @@ use slopdesk_termrender::{
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{
-    Autoscroll, CellFlags, ClickLadder, ClipboardWrite, CopyFormat, CursorShape, Frame, KeyAction, KeyPress,
-    Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SearchQuery, SelectionAdjust,
-    SurfacePoint, VtSession, key_from_macos_keycode, text_cells,
+    Autoscroll, CellFlags, ClickLadder, ClipboardWrite, CopyFormat, CursorShape, Frame, Key, KeyAction,
+    KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll, SearchQuery,
+    SelectionAdjust, SurfacePoint, VtSession, key_from_macos_keycode, text_cells,
 };
 
 use crate::{borrow, deliver, lent, push_text, records_of, saturating_u32, spill};
@@ -123,6 +123,9 @@ struct Surface {
     family: String,
     /// The point size [`Self::font`] was built at.
     point_size: f64,
+    /// The `terminal.line-height` multiplier [`Self::font`] was built at, for [`Self::family`]'s
+    /// reason: a rescale rebuilds the stack from the same inputs, and this is one of them.
+    line_height: f64,
     /// Core Text shaping, rebuilt whenever [`Self::font`] is.
     shaper: Shaper,
     /// Core Text rasterisation, rebuilt whenever [`Self::font`] is.
@@ -252,8 +255,15 @@ impl Surface {
     /// resolves no face for `family` — each of which is a machine or a configuration this build
     /// cannot draw on, and none of which becomes true a frame later. The caller latches the
     /// refusal.
-    fn create(family: &str, point_size: f64, scale: f64, width: f64, height: f64) -> Option<Self> {
-        let font = FontStack::new(family, point_size, scale)?;
+    fn create(
+        family: &str,
+        point_size: f64,
+        line_height: f64,
+        scale: f64,
+        width: f64,
+        height: f64,
+    ) -> Option<Self> {
+        let font = FontStack::new(family, point_size, scale, line_height)?;
         let renderer = Renderer::new().ok()?;
         let geometry = PixelGeometry {
             width: width * scale,
@@ -285,6 +295,7 @@ impl Surface {
             font,
             family: family.to_owned(),
             point_size,
+            line_height,
             cache: GlyphCache::default(),
             painter: Painter::new(),
             list: DrawList::default(),
@@ -341,7 +352,7 @@ impl Surface {
             // A scale change invalidates every rasterised glyph — the atlas holds coverage masks
             // measured in device pixels — so the face stack, both traits and the cache are rebuilt
             // together. Rebuilding any subset would pair a 1× atlas with a 2× shaper.
-            if let Some(font) = FontStack::new(&self.family, self.point_size, scale) {
+            if let Some(font) = FontStack::new(&self.family, self.point_size, scale, self.line_height) {
                 self.shaper = font.shaper();
                 self.rasterizer = font.rasterizer();
                 self.font = font;
@@ -362,7 +373,7 @@ impl Surface {
     /// A family Core Text cannot resolve leaves the current stack standing rather than refusing to
     /// draw — the honest outcome for a font name the user mistyped in `config.toml`, and the same
     /// one a scale change takes.
-    fn set_font(&mut self, family: &str, point_size: f64) -> (u16, u16) {
+    fn set_font(&mut self, family: &str, point_size: f64, line_height: f64) -> (u16, u16) {
         // Bit-equality is a CONSERVATIVE test here, not an exact one: an identical pair is
         // certainly unchanged, and a pair that differs by an ulp costs one needless atlas rebuild
         // rather than a wrong frame. The publish this answers fires on every settings write, so the
@@ -371,11 +382,12 @@ impl Surface {
             clippy::float_cmp,
             reason = "a conservative unchanged-test, argued immediately above"
         )]
-        let unchanged = family == self.family && point_size == self.point_size;
+        let unchanged =
+            family == self.family && point_size == self.point_size && line_height == self.line_height;
         if unchanged {
             return self.session.size();
         }
-        let Some(font) = FontStack::new(family, point_size, self.geometry.scale) else {
+        let Some(font) = FontStack::new(family, point_size, self.geometry.scale, line_height) else {
             return self.session.size();
         };
         self.shaper = font.shaper();
@@ -384,6 +396,7 @@ impl Surface {
         self.cache = GlyphCache::default();
         family.clone_into(&mut self.family);
         self.point_size = point_size;
+        self.line_height = line_height;
         self.apply_geometry();
         self.session.size()
     }
@@ -744,9 +757,10 @@ const unsafe fn held<'a>(handle: *mut SlopDeskTerminalSurface) -> Option<&'a mut
 
 /// Opens a terminal surface, or NULL when this machine cannot draw one.
 ///
-/// `family` is a font family name; `point_size` its size in points and `scale` the view's contents
-/// scale, from which every device-pixel number below is derived. `width_points` and `height_points`
-/// are the hosting view's bounds.
+/// `family` is a font family name; `point_size` its size in points, `line_height` the
+/// `terminal.line-height` multiplier of the face's natural cell (`1` for the face's own), and
+/// `scale` the view's contents scale, from which every device-pixel number below is derived.
+/// `width_points` and `height_points` are the hosting view's bounds.
 ///
 /// # Safety
 /// `(family, family_len)` must describe `family_len` live bytes for the call. The answer must be
@@ -761,16 +775,24 @@ pub unsafe extern "C" fn slopdesk_term_surface_new(
     family: *const c_uchar,
     family_len: usize,
     point_size: f64,
+    line_height: f64,
     scale: f64,
     width_points: f64,
     height_points: f64,
 ) -> *mut SlopDeskTerminalSurface {
     // SAFETY: the caller's obligation, restated above.
     let family = unsafe { lent(family, family_len) };
-    Surface::create(family, point_size, scale, width_points, height_points)
-        .map_or(core::ptr::null_mut(), |surface| {
-            Box::into_raw(Box::new(SlopDeskTerminalSurface { inner: Some(surface) }))
-        })
+    Surface::create(
+        family,
+        point_size,
+        line_height,
+        scale,
+        width_points,
+        height_points,
+    )
+    .map_or(core::ptr::null_mut(), |surface| {
+        Box::into_raw(Box::new(SlopDeskTerminalSurface { inner: Some(surface) }))
+    })
 }
 
 /// Tears the surface's STATE down — the engine, the atlas, the layer and the device — and leaves
@@ -1005,7 +1027,8 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_palette(
     let _refused = surface.session.set_palette(&palette);
 }
 
-/// Rebuilds the face stack at `family` and `point_size`, answering the grid it now fits, packed
+/// Rebuilds the face stack at `family`, `point_size` and `line_height`, answering the grid it now
+/// fits, packed
 /// `cols << 16 | rows` exactly as [`slopdesk_term_surface_set_geometry`] does.
 ///
 /// The grid comes BACK rather than being read separately for that door's reason: a font change
@@ -1025,6 +1048,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_font(
     family: *const c_uchar,
     family_len: usize,
     point_size: f64,
+    line_height: f64,
 ) -> u32 {
     // SAFETY: the caller's obligation, restated above.
     let Some(surface) = (unsafe { held(handle) }) else {
@@ -1032,7 +1056,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_font(
     };
     // SAFETY: the caller's obligation, discharged by the shared span helper.
     let family = unsafe { lent(family, family_len) };
-    let (cols, rows) = surface.set_font(family, point_size);
+    let (cols, rows) = surface.set_font(family, point_size, line_height);
     (u32::from(cols) << 16) | u32::from(rows)
 }
 
@@ -1795,6 +1819,89 @@ pub unsafe extern "C" fn slopdesk_term_mods(
         }
     }
     mods.bits()
+}
+
+/// Which `adjust_selection` edge a ⇧+arrow press names, or `-1` for a press that names none.
+///
+/// `keycode` is an `AppKit` `NSEvent.keyCode` and `mods` a [`slopdesk_term_mods`] word, the same
+/// pair [`slopdesk_term_surface_key`] takes — this is the rule that reads them, not a second
+/// encoding of them. The answer is a [`store_shape`]-coded edge (`0` up, `1` down, `2` left,
+/// `3` right), which is what a `adjust_selection:<dir>` binding carries.
+///
+/// ## The modifier test is ⇧ AND NOTHING ELSE, minus the locks and the sides
+///
+/// `Mods` reports a right-shift press as `SHIFT | RIGHT_SHIFT`, and Caps Lock and Num Lock ride
+/// along on every press while they are on. Comparing the raw word to `SHIFT` would therefore refuse
+/// a right-shift ⇧→ and refuse everyone typing with Caps Lock on, which is the class of bug that
+/// looks like a setting that works for some people. The side and lock bits are masked out; ⌘, ⌥ and
+/// ⌃ are not, because ⇧⌥→ is a word-wise selection the program should still get.
+///
+/// # Safety
+/// None to honour. The door takes two `u16`s by value and touches no pointer, so it is `unsafe`
+/// only because edition 2024 spells every exported C entry point that way; any call is sound.
+///
+/// [`store_shape`]: crate::store_shape
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub const unsafe extern "C" fn slopdesk_term_shift_arrow_edge(keycode: u16, mods: u16) -> i32 {
+    let held = mods
+        & !(Mods::CAPS_LOCK.bits()
+            | Mods::NUM_LOCK.bits()
+            | Mods::RIGHT_SHIFT.bits()
+            | Mods::RIGHT_ALT.bits()
+            | Mods::RIGHT_CTRL.bits()
+            | Mods::RIGHT_SUPER.bits());
+    if held != Mods::SHIFT.bits() {
+        return -1;
+    }
+    match key_from_macos_keycode(keycode) {
+        Some(Key::ArrowUp) => 0,
+        Some(Key::ArrowDown) => 1,
+        Some(Key::ArrowLeft) => 2,
+        Some(Key::ArrowRight) => 3,
+        _ => -1,
+    }
+}
+
+/// The bytes that walk the shell's cursor to a clicked cell, or `0` for a click this may not
+/// answer.
+///
+/// `column` and `row` are the clicked CELL, as `slopdesk_link_hit_cell` resolves one from a point —
+/// the same hit-test the link doors use, rather than a second mapping of points to cells. `row` is
+/// a row of the VIEWPORT, which is what that hit-test answers.
+///
+/// The rule, what it refuses and why it is same-row-only are [`VtSession::click_to_move`]'s.
+/// Answers §4's byte count, so a caller with a small buffer retries; `0` is a refusal, and the
+/// caller sends nothing.
+///
+/// # Safety
+/// [`held`]'s, plus `(out, cap)` being writable for `cap`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_click_to_move(
+    handle: *mut SlopDeskTerminalSurface,
+    column: u16,
+    row: u16,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let Ok(Some(bytes)) = surface.session.click_to_move(column, row) else {
+        return 0;
+    };
+    // SAFETY: as above; `deliver` writes at most `cap`.
+    unsafe { deliver(&bytes, out, cap) }
 }
 
 // MARK: - Screen coordinates
@@ -3367,6 +3474,47 @@ mod tests {
             assert_eq!(slopdesk_term_surface_line_range(null, 0, out.as_mut_ptr(), 8), 0);
             assert_eq!(slopdesk_term_surface_logical_lines(null, out.as_mut_ptr(), 8), 0);
             assert!(!slopdesk_term_surface_binding_action(null, out.as_ptr(), 0));
+            assert_eq!(
+                slopdesk_term_surface_click_to_move(null, 0, 0, out.as_mut_ptr(), 8),
+                0
+            );
+        }
+    }
+
+    /// `controls.shift-arrow-select`'s recognition step. The LOCK and SIDE bits are the whole test:
+    /// a right-shift press carries `SHIFT | RIGHT_SHIFT` and Caps Lock rides along on every press
+    /// while it is on, so a bare `== SHIFT` would refuse a right-handed typist and everyone with
+    /// Caps Lock on — a setting that works for some people, which is worse than one that does not.
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "calling an exported door, which is unsafe by definition in edition 2024"
+    )]
+    fn a_shift_arrow_names_its_edge_through_the_locks_and_the_sides() {
+        // SAFETY: a pure rule with no pointers; the `unsafe` is edition 2024's on `extern "C"`.
+        unsafe {
+            let shift = Mods::SHIFT.bits();
+            for (keycode, edge) in [(0x7E_u16, 0), (0x7D, 1), (0x7B, 2), (0x7C, 3)] {
+                assert_eq!(slopdesk_term_shift_arrow_edge(keycode, shift), edge);
+                assert_eq!(
+                    slopdesk_term_shift_arrow_edge(
+                        keycode,
+                        shift | Mods::RIGHT_SHIFT.bits() | Mods::CAPS_LOCK.bits() | Mods::NUM_LOCK.bits(),
+                    ),
+                    edge,
+                    "the right shift key and the locks are the same press",
+                );
+                // ⌥, ⌃ and ⌘ are NOT masked: ⇧⌥→ is a word-wise selection the program still gets.
+                assert_eq!(
+                    slopdesk_term_shift_arrow_edge(keycode, shift | Mods::ALT.bits()),
+                    -1
+                );
+                // And an arrow with no shift at all is just an arrow.
+                assert_eq!(slopdesk_term_shift_arrow_edge(keycode, Mods::NONE.bits()), -1);
+            }
+            // A key that is not an arrow names no edge however it is held.
+            assert_eq!(slopdesk_term_shift_arrow_edge(0x00, shift), -1);
+            assert_eq!(slopdesk_term_shift_arrow_edge(0xFFFF, shift), -1);
         }
     }
 

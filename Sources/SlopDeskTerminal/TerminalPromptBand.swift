@@ -90,10 +90,17 @@ enum TerminalPromptBand {
                 ? font
                 : CTFontCreateUIFontForLanguage(.userFixedPitch, points, nil) ?? font
             let ascent = CTFontGetAscent(resolved)
+            // `terminal.line-height` stretches the band's rows exactly as it stretches the grid's,
+            // because the band draws the shell's own prompt line and the two sit against each other:
+            // a grid at 1.3 beside a band at 1.0 reads as the prompt having its own, tighter
+            // typography. The GAIN goes below the baseline rather than around it — the band's rows
+            // are stacked from the top and its ascent is what places the first one, so centring here
+            // would push the first row's text off its own inset.
+            let natural = ascent + CTFontGetDescent(resolved) + CTFontGetLeading(resolved)
             return Self(
                 font: resolved,
                 ascent: ascent,
-                lineHeight: ascent + CTFontGetDescent(resolved) + CTFontGetLeading(resolved),
+                lineHeight: natural * CGFloat(TerminalConfigBroadcaster.shared.lineHeight),
             )
         }
     }

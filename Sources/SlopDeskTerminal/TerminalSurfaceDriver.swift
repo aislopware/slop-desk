@@ -75,9 +75,9 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// The refusal is latched by ``TerminalRendererSurface`` rather than retried: a machine with no
     /// Metal device does not acquire one a frame later, and a view that kept asking would ask every
     /// frame forever.
-    init?(family: String, pointSize: Double, scale: Double, size: CGSize) {
+    init?(family: String, pointSize: Double, lineHeight: Double, scale: Double, size: CGSize) {
         guard let opened = TerminalRendererSurface(
-            family: family, pointSize: pointSize, scale: scale, size: size,
+            family: family, pointSize: pointSize, lineHeight: lineHeight, scale: scale, size: size,
         ) else {
             return nil
         }
@@ -292,9 +292,10 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// grid of its PLACEHOLDER size and `settle` would mirror that made-up geometry to the host as a
     /// resize. The grid comes from layout, so a pre-layout font change only rebuilds the faces and
     /// waits: ``setGeometry(size:scale:)`` mirrors it a moment later with the real one.
-    func setFont(family: String, pointSize: Double) {
+    func setFont(family: String, pointSize: Double, lineHeight: Double) {
         guard let surface, !family.isEmpty, pointSize > 0 else { return }
-        guard let grid = surface.setFont(family: family, pointSize: pointSize) else { return }
+        guard let grid = surface.setFont(family: family, pointSize: pointSize, lineHeight: lineHeight)
+        else { return }
         if lastGrid != nil {
             settle(grid)
         } else {
@@ -312,7 +313,11 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// setting the user can only change by reopening the pane.
     func applySettings() {
         let broadcaster = TerminalConfigBroadcaster.shared
-        setFont(family: broadcaster.fontFamily, pointSize: broadcaster.fontSize)
+        setFont(
+            family: broadcaster.fontFamily,
+            pointSize: broadcaster.fontSize,
+            lineHeight: broadcaster.lineHeight,
+        )
         if let words = broadcaster.themeWords {
             setTheme(
                 foreground: words.foreground,
@@ -514,6 +519,18 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         composing: Bool,
     ) -> Bool {
         guard let surface else { return false }
+        // `controls.shift-arrow-select`: ⇧+arrow steers the SELECTION rather than reaching the
+        // program — but only while there is one to steer. The engine refuses to invent a selection
+        // from the cursor (`slopdesk-vterm`'s `adjust_selection` says why), and that refusal is the
+        // fall-through: with nothing selected the press encodes as the escape the program expects,
+        // so a TUI that binds ⇧→ keeps it. A release is excluded and a repeat is not — holding ⇧→
+        // extends by one cell per repeat, the way a text field does.
+        if action != 1, SettingsKey.shiftArrowSelectEnabled,
+           let edge = TerminalBindingAction.Edge.shiftArrow(keyCode: keyCode, mods: mods),
+           performBindingAction(TerminalBindingAction.adjustSelection(edge).wire)
+        {
+            return true
+        }
         let bytes = surface.encodeKey(
             keyCode: keyCode, action: action, mods: mods,
             consumedMods: consumedMods, text: text, composing: composing,
@@ -542,6 +559,28 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         guard let surface, SettingsKey.allowMouseCaptureEnabled else { return false }
         let bytes = surface.encodeMouse(action: action, button: button, mods: mods, at: point)
         guard !bytes.isEmpty else { return false }
+        onWrite?(bytes)
+        return true
+    }
+
+    /// `controls.click-to-move`: a click on the shell's own prompt line moves its cursor there.
+    /// Answers whether anything was sent.
+    ///
+    /// Two gates, and they are different questions asked of different owners. THIS side asks whether
+    /// the shell is at an editable prompt — ``isPromptZone``, the same reading ⌘Z uses, which is
+    /// OSC 133 plus a live connection — because a click into the middle of `less` is not an edit and
+    /// arrows would page it. The ENGINE asks whether the click is mechanically answerable at all
+    /// (primary screen, no mouse-reporting program, the cursor's own row) and how far it is in
+    /// GLYPHS. Neither could answer the other's question without holding a copy of the other's state.
+    @discardableResult
+    func clickToMove(at point: CGPoint) -> Bool {
+        guard SettingsKey.clickToMoveEnabled, isPromptZone,
+              let metrics = cellMetrics(),
+              let cell = TerminalLinkHitTest.cell(metrics: metrics, pointX: point.x, pointY: point.y),
+              let bytes = surface?.clickToMove(column: cell.column, row: cell.row)
+        else {
+            return false
+        }
         onWrite?(bytes)
         return true
     }

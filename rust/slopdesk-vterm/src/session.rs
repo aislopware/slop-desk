@@ -44,7 +44,9 @@ use crate::frame::{
     CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameColors, FrameCursor, FrameDirty, Rgb,
     TextSpan, UnderlineStyle,
 };
-use crate::input::{KeyPress, Keyboard, MouseMove, OptionAsAlt, Pointer, SurfaceGeometry};
+use crate::input::{
+    Key, KeyAction, KeyPress, Keyboard, Mods, MouseMove, OptionAsAlt, Pointer, SurfaceGeometry,
+};
 
 /// What went wrong. There is exactly one failure mode worth distinguishing from the engine's own.
 #[derive(Debug, Clone, Copy)]
@@ -473,6 +475,95 @@ impl VtSession {
     /// The engine's own error.
     pub fn is_mouse_tracking(&self) -> Result<bool> {
         Ok(self.terminal.is_mouse_tracking()?)
+    }
+
+    /// The arrow presses that walk the shell's cursor from where it is to the clicked cell, or
+    /// `None` when the click is not one this may answer.
+    ///
+    /// `column` and `row` are a cell of the VIEWPORT, as a hit-test resolves one from a point.
+    ///
+    /// ## Why arrows, and why only along one row
+    ///
+    /// A shell's line editor owns its cursor; nothing can place it. `←`/`→` are the only vocabulary
+    /// every editor in every shell shares for moving it, so "click to move" is spelled as the
+    /// presses a user would have made. `↑`/`↓` are NOT in that vocabulary: at a prompt they are
+    /// HISTORY, and a door that crossed rows with them would replace the half-typed command the
+    /// user clicked into. Same row or nothing — that is the whole feature, not a simplification.
+    ///
+    /// ## What it refuses, and what it leaves to the caller
+    ///
+    /// Refused on the alternate screen (a full-screen program's cursor is its own business), while
+    /// a program is tracking the mouse (the click is that program's), and for any row but the
+    /// cursor's. It deliberately does NOT decide whether the shell is at an EDITABLE prompt: that
+    /// reading is OSC 133 plus a live connection, which the client already holds for ⌘Z, and asking
+    /// it twice in two places is how the two answers drift apart.
+    ///
+    /// The count is in GLYPHS, not columns. A wide character occupies two cells and one `←`, so a
+    /// column count would walk twice as far as the user pointed for every CJK character passed.
+    ///
+    /// # Errors
+    /// The engine's own error, from the key encoder.
+    pub fn click_to_move(&mut self, column: u16, row: u16) -> Result<Option<Vec<u8>>> {
+        if self.is_alternate_screen()? || self.is_mouse_tracking()? {
+            return Ok(None);
+        }
+        let Some(cursor) = self.frame().cursor else {
+            return Ok(None);
+        };
+        if row != cursor.y {
+            return Ok(None);
+        }
+        let Some(line) = self.frame().rows.get(usize::from(row)) else {
+            return Ok(None);
+        };
+        let Ok(width) = u16::try_from(line.cells.len()) else {
+            return Ok(None);
+        };
+        // Past the end of the row is the end of the row: a click in the padding right of a short
+        // command means "the end of it", and the presses that walk there are the ones that stop.
+        let target = column.min(width);
+        let forward = target > cursor.x;
+        let (from, to) = if forward {
+            (cursor.x, target)
+        } else {
+            (target, cursor.x)
+        };
+        // The half-open range between the two cells, counting only the cells that START a glyph —
+        // the trailing half of a wide pair and the spacer before a wrapped one are the same glyph
+        // as the cell before them, and cost no keypress.
+        let steps = line
+            .cells
+            .iter()
+            .skip(usize::from(from))
+            .take(usize::from(to.saturating_sub(from)))
+            .filter(|cell| !cell.flags.hides_glyph())
+            .count();
+        if steps == 0 {
+            return Ok(None);
+        }
+        let key = if forward { Key::ArrowRight } else { Key::ArrowLeft };
+        let press = KeyPress {
+            key: Some(key),
+            action: KeyAction::Press,
+            mods: Mods::NONE,
+            consumed_mods: Mods::NONE,
+            text: None,
+            unshifted: None,
+            composing: false,
+        };
+        // Through the key encoder rather than by writing `ESC [ C`: the application cursor-key mode
+        // (DECCKM) decides between `ESC [ C` and `ESC O C`, and a shell in readline's vi mode is
+        // exactly the case that has it set.
+        //
+        // Encoded ONCE and repeated: the presses are identical, and the encoder writes into a
+        // vector's spare capacity — handed the same one `steps` times it refuses the second call
+        // rather than appending to it.
+        let mut once = Vec::new();
+        self.encode_key(&press, &mut once)?;
+        if once.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(once.repeat(steps)))
     }
 
     /// Whether the viewport is pinned to the bottom, where new output lands.
@@ -960,6 +1051,82 @@ mod tests {
             FrameDirty::Clean,
             "nothing changed, so the renderer has nothing to do"
         );
+    }
+
+    /// `controls.click-to-move` spells a click as the presses a user would have made, and the count
+    /// is what has to be right: one `→` per glyph passed, forward or back, from wherever the cursor
+    /// actually is.
+    #[test]
+    fn a_click_along_the_cursors_row_walks_there_one_press_per_glyph() {
+        let mut end = session();
+        end.feed(b"echo hello");
+        end.render().unwrap();
+        assert_eq!(end.frame().cursor.unwrap().x, 10);
+
+        // Back to just after `echo`: six glyphs to the left, six `ESC [ D`.
+        let back = end.click_to_move(4, 0).unwrap().unwrap();
+        assert_eq!(back, b"\x1b[D".repeat(6));
+        // A click on the cursor's own cell asks for no movement, which is a refusal rather than an
+        // empty write: the caller sends nothing at all.
+        assert_eq!(end.click_to_move(10, 0).unwrap(), None);
+
+        // With the cursor mid-line the other direction is the same count the other way. The door
+        // READS the cursor rather than tracking one of its own, so this is the shell's position —
+        // moved here by the escape a shell would have sent, not by the presses above.
+        let mut mid = session();
+        mid.feed(b"echo hello\x1b[5D");
+        mid.render().unwrap();
+        assert_eq!(mid.frame().cursor.unwrap().x, 5);
+        assert_eq!(mid.click_to_move(8, 0).unwrap().unwrap(), b"\x1b[C".repeat(3));
+    }
+
+    /// A wide character is two cells and ONE press. Counting columns would walk twice as far as the
+    /// user pointed for every CJK character passed.
+    #[test]
+    fn a_wide_character_costs_one_press_not_two_cells() {
+        let mut wide = session();
+        wide.feed("ab漢字".as_bytes());
+        wide.render().unwrap();
+        // Two narrow cells plus two wide pairs: the cursor sits at column 6, four glyphs in.
+        assert_eq!(wide.frame().cursor.unwrap().x, 6);
+        let back = wide.click_to_move(0, 0).unwrap().unwrap();
+        assert_eq!(back, b"\x1b[D".repeat(4), "four glyphs, not six columns");
+    }
+
+    /// ↑/↓ are HISTORY at a prompt, so a click on another row is refused outright rather than
+    /// answered with the presses that would replace the user's half-typed command.
+    #[test]
+    fn a_click_on_another_row_is_refused_rather_than_crossed() {
+        let mut two = session();
+        two.feed(b"one\r\ntwo");
+        two.render().unwrap();
+        assert_eq!(two.frame().cursor.unwrap().y, 1);
+        assert_eq!(two.click_to_move(0, 0).unwrap(), None);
+    }
+
+    /// A full-screen program's cursor is its own business, and a mouse-reporting program owns the
+    /// click outright — either way the door sends nothing.
+    #[test]
+    fn the_alternate_screen_and_a_mouse_reporting_program_both_refuse() {
+        let mut alternate = session();
+        alternate.feed(b"\x1b[?1049hecho hi");
+        alternate.render().unwrap();
+        assert_eq!(alternate.click_to_move(0, 0).unwrap(), None, "alternate screen");
+
+        let mut tracking = session();
+        tracking.feed(b"echo hi\x1b[?1000h");
+        tracking.render().unwrap();
+        assert_eq!(tracking.click_to_move(0, 0).unwrap(), None, "mouse tracking");
+    }
+
+    /// The application cursor-key mode is the engine's to know: a door that wrote `ESC [ C` itself
+    /// would send the wrong bytes to every shell in readline's vi mode.
+    #[test]
+    fn the_presses_follow_the_application_cursor_key_mode() {
+        let mut app = session();
+        app.feed(b"ab\x1b[?1h");
+        app.render().unwrap();
+        assert_eq!(app.click_to_move(0, 0).unwrap().unwrap(), b"\x1bOD".repeat(2));
     }
 
     #[test]

@@ -18613,3 +18613,52 @@ re-scans that snapshot in memory. One addresses cells in a live buffer, the othe
 snapshot — that is two questions, not one question answered twice, and the header of each says so.
 The collapse improved ⇧⌘F as a side effect: jumping to a hit now arms the surface's own four-mode
 search, so the amber per-glyph highlight survives `Aa` and `.*`, which was a documented ceiling.
+
+## The last four settings that lied, and the one door only the engine could answer (2026-09-01)
+
+Four rows in `slopdesk-settings`' table did nothing: `controls.shift-arrow-select`,
+`controls.shift-click`, `controls.click-to-move`, and the TERMINAL half of `terminal.line-height`
+(its code-panel half has been live through `CodeFontSync` all along). Three of them were the kind of
+gap that reads as a small omission and is not — a drawn, persisted, documented setting the user can
+toggle to watch nothing happen, which is the failure "The rows that survived their reader" above
+deleted twelve rows to avoid. These four were kept and wired instead, because unlike `ligatures` each
+one's feature was reachable without a decision nobody had taken.
+
+**Three are decided on THIS side, which is what the gesture settings' own paragraph already said.**
+⇧+arrow is recognised in `TerminalSurfaceDriver.sendKey` and runs the existing
+`adjust_selection:<dir>` binding — the machinery copy-mode's vi-visual selection already used, now
+reachable outside copy mode. The *recognition* is a Rust rule (`slopdesk_term_shift_arrow_edge`)
+rather than a Swift table, and the reason is one bug it would otherwise have shipped: `Mods` reports
+a right-shift press as `SHIFT | RIGHT_SHIFT`, and Caps Lock and Num Lock ride along on every press
+while they are on, so a bare `== SHIFT` refuses a right-handed typist and everyone with Caps Lock on.
+That is a setting that works for *some people*, which is worse than one that does not work at all.
+⇧+click is `MacTerminalRendererView.mouseDown` taking a click back off a mouse-reporting program —
+the only way to select over a full-screen TUI. Its four-way value is read as a binary axis by RULE
+(`MouseShiftCapture.extendsSelection`), so a stored `always` cannot read OFF.
+
+**One half is honestly not actuated and says so.** `controls.shift-click`'s `always`/`never` differ
+from `enabled`/`disabled` only in whether the PROGRAM may override the bypass (DEC mode 1029), and
+`libghostty-vt` exposes no reading of that mode. The pairs therefore behave alike. That is recorded
+in the code and the ledger rather than papered over, because the alternative — pretending the
+distinction lands — is the same lie the setting had before.
+
+**Click-to-move is the one that had to be a door, and the reason is worth keeping.** A shell's line
+editor owns its cursor; nothing can place it. `←`/`→` are the only vocabulary every editor in every
+shell shares, so the click is spelled as the presses a user would have made — and only the engine
+knows where the cursor is, how many GLYPHS lie between it and the click (a wide character is two
+cells and one press), and whether DECCKM wants `ESC [ C` or `ESC O C`. `VtSession::click_to_move`
+answers all three. It is same-row-only, and that is the feature rather than a simplification: at a
+prompt `↑`/`↓` are HISTORY, so a door that crossed rows would replace the half-typed command the user
+clicked into. The one question it refuses to answer is whether the shell is at an EDITABLE prompt —
+that reading is OSC 133 plus a live connection, the client already holds it for ⌘Z, and asking it
+twice in two languages is how two answers drift apart.
+
+**`line-height` went into the font stack, not the renderer.** `FontStack::new` takes the multiplier
+and `measure` applies it before anything else is derived, so the taller cell centres its glyph and
+every offset the face reported — baseline, underline, strikethrough — rides with it. Applying it
+downstream would have stretched the cell and left the text pinned to its top, and each decoration
+would have needed its own correction. `set_font`'s unchanged-test grew the third input with it:
+without that, changing only the line height would have been a settings write that did nothing, which
+is precisely the class of bug this pass exists to end. `TerminalPromptBand` multiplies its own rows
+by the same number, because the band draws the shell's prompt line against the grid and a grid at
+1.3 beside a band at 1.0 reads as the prompt having its own, tighter typography.

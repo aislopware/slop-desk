@@ -462,7 +462,7 @@ mod tests {
     /// The fast path's whole claim: one glyph per cell, at the grid's own positions.
     #[test]
     fn an_ascii_run_shapes_one_glyph_per_cell_on_the_grid() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut shaper = stack.shaper();
         let mut out = Vec::new();
         shaper.shape(&run("hello", 5), &mut out);
@@ -483,7 +483,7 @@ mod tests {
     /// character and only one of them is right.
     #[test]
     fn both_paths_agree_on_the_glyphs_for_ascii() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut shaper = stack.shaper();
         let text = "int main(void) { return 0; }";
         let cells = u16::try_from(text.len()).unwrap();
@@ -507,7 +507,7 @@ mod tests {
     /// `.notdef` in the primary.
     #[test]
     fn a_han_character_finds_a_face_the_latin_family_does_not_have() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let before = stack.face_count();
         let mut shaper = stack.shaper();
         let mut out = Vec::new();
@@ -532,7 +532,7 @@ mod tests {
     /// than Core Text's.
     #[test]
     fn a_combining_mark_shares_the_cell_of_its_base() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut shaper = stack.shaper();
         let mut out = Vec::new();
         // "e" + COMBINING ACUTE, then a plain "x": two cells, three characters.
@@ -574,7 +574,7 @@ mod tests {
     /// line, a run array and a dictionary every time.
     #[test]
     fn a_thousand_runs_hold_nothing() {
-        let stack = FontStack::new(MONO, 13.0, 2.0).unwrap();
+        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
         let mut shaper = stack.shaper();
         let mut out = Vec::new();
         for _ in 0..1000 {
