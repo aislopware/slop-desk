@@ -18199,3 +18199,43 @@ are left in place: each still names what its ban is about, and each scans a dire
 guarantees is empty. *Routing the dangling sites into the `Report` instead of `eprintln!`* — five
 sites across two files do it that way deliberately; the list is the detail and the `fail` is the
 verdict.
+
+## The module map the stamp did not read (2026-08-31)
+
+`slopdesk-gate macos-apps` and `slopdesk-gate ios` cost ~85 s and ~15 min respectively whether or
+not a byte changed, so their verdict is cached against a digest of their inputs. Which makes the
+input set the gate: anything outside it can change while the gate reports "cached — no compiled
+input changed", and the reason that is safe has to be written down for every file type in the tree,
+not assumed for the ones nobody thought about.
+
+`COMPILED` is five extensions — `swift`, `yml`, `plist`, `metal`, `h`. Enumerating everything under
+the four walked trees that is NOT one of them leaves ten kinds of file, and nine are correctly out:
+`.pbxproj`, `.xcworkspacedata` and `.xcscheme` are xcodegen OUTPUT of a `project.yml` that is in;
+`.a` is the Rust artifact, deliberately absent for the reason the module header already gives;
+`.entitlements`, `.ttf`, `.json` under an asset catalog and two font licences are packaging and
+resources, which decide nothing a typecheck asks; `.sha256` is the FFI gate's own record.
+
+The tenth was `module.modulemap`, and it was in the set only for `ThirdParty/slopdesk-ffi` — a
+second walk pinned to that one tree, because a module map has no extension to match on. So
+`ThirdParty/ghostty/integration/CGhostty/module.modulemap` was in NO scope's inputs: not the union,
+not iOS, not macOS. Both app specs point `SWIFT_INCLUDE_PATHS` straight at that directory, and the
+map is what says `module CGhostty { header "ghostty.h" export * }` — rename the module, drop the
+`export *`, or point `header` at a different file, and `import CGhostty` stops resolving in both
+triples with the stamp still warm. Its header was covered the whole time, because `h` is a
+`COMPILED` extension; the file naming the header was not.
+
+Measured after: 708 inputs in the union, 614 for iOS and 611 for macOS — one more each than the
+counts the module header used to spell, which is the whole of what this fix added. The header names
+no number now; a live doc that states a length states it once and is then wrong in silence.
+
+The lookup is by NAME in every walked tree now, and the second walk is gone — it covered nothing
+`COMPILED` did not already reach. Two tests: a map outside the FFI tree is an input, and editing one
+moves the stamp. The module header said "and the module maps" for as long as this was false, which
+is the same shape as the `Apps/Shared` fallback recorded two sections up — a sentence describing
+what the code was believed to do, with nothing comparing the two.
+
+**Rejected.** *Stamping the asset catalog's `Contents.json`* — a missing image is a runtime defect
+and these two gates typecheck; adding it would re-run 15 minutes of iOS for an icon. *Stamping
+`.entitlements`* — signing, checked by the release pipeline, and unreachable from a type. *Widening
+`COMPILED` rather than matching by name* — `modulemap` is not an extension of `module.modulemap`,
+and a rule spelled as an extension would have missed it a second time.

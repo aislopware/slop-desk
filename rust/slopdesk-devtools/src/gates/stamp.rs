@@ -14,8 +14,16 @@
 //! ## What the input set covers, and why that is the whole set
 //! Every Swift source these triples compile (`Sources/`, `Apps/`), the package graph that decides
 //! which of them they compile (`Package.swift`, `Package.resolved`), the project specs (hashed as
-//! part of `Apps/`), the C surface the Swift side imports (`ThirdParty/slopdesk-ffi/**/*.h` and the
-//! module maps), and this gate's own source.
+//! part of `Apps/`), the C surface the Swift side imports — every `.h` in the walked trees and
+//! every `module.modulemap` in ANY of them, not the FFI tree's alone — and this gate's own source.
+//!
+//! That last distinction was a hole for as long as the sentence above claimed otherwise. The map
+//! lookup was a second walk pinned to `ThirdParty/slopdesk-ffi`, so
+//! `ThirdParty/ghostty/integration/CGhostty/module.modulemap` was in no scope's input set, while
+//! the header it exports was in all three. Both app specs point `SWIFT_INCLUDE_PATHS` at that
+//! directory, so the map decides whether `import CGhostty` resolves — and renaming the module,
+//! dropping its `export *` or pointing `header` at a different file left a warm stamp over a
+//! change nothing but a compile can find.
 //!
 //! The Rust SOURCES are deliberately absent. A crate's body cannot change what type-checks on the
 //! far side of a C header, and the one Rust change that CAN — deleting or re-signing an exported
@@ -33,11 +41,13 @@
 //! That fallback is also how this section spent months describing something that never happened. A
 //! scope's app list holds the shells AND `Apps/Shared`, which is an asset catalog with no
 //! `project.yml`, and demanding a spec of it answered "cannot read" on every call — so every scope
-//! widened to the union and both claims above were false. Measured after the fix: 706 inputs in the
-//! union, 613 for iOS and 610 for macOS, and the difference is exactly `SlopDeskMacUI` /
+//! widened to the union and both claims above were false. What the fix bought is a union some
+//! ninety-odd inputs wider than either triple, and the difference is exactly `SlopDeskMacUI` /
 //! `SlopDeskVideoClientMac` on one side and `SlopDeskPhoneUI` / `SlopDeskVideoClientPhone` on the
 //! other, with no shared module in either. A fallback safe enough to take every time is a fallback
-//! nobody notices taking.
+//! nobody notices taking. The three exact counts are in `docs/DECISIONS.md`, dated — this file
+//! grows an input whenever the walk learns a new kind, and a number spelled in a living doc is
+//! stated once and then wrong in silence.
 //!
 //! ## Source is hashed as CODE, not as bytes
 //! A `.swift` or a `.h` in the set is digested through [`super::code_text`] — comments removed,
@@ -63,6 +73,9 @@ use super::code_text;
 /// The file extensions the two typecheck gates compile or read.
 const COMPILED: &[&str] = &["swift", "yml", "plist", "metal", "h"];
 
+/// The one input with no extension to match on — matched by NAME, in every tree walked.
+const MODULE_MAP: &str = "module.modulemap";
+
 /// The one tree outside `Sources`/`Apps` that both triples compile.
 ///
 /// It is here because BOTH app specs list
@@ -71,7 +84,7 @@ const COMPILED: &[&str] = &["swift", "yml", "plist", "metal", "h"];
 /// reporting green over a file it had not compiled since the change.
 const GHOSTTY_TREE: &str = "ThirdParty/ghostty/integration";
 
-/// The C surface, whose module maps have no extension worth matching on.
+/// The C surface the Swift side imports — headers, module maps and the slice manifest.
 const FFI_TREE: &str = "ThirdParty/slopdesk-ffi";
 
 /// The two files that decide WHICH sources the graph compiles.
@@ -220,20 +233,24 @@ pub fn inputs_for(root: &Path, scope: Scope) -> Result<Vec<String>, String> {
     // links. Unobservable while the narrowing never ran, and a fallback that covers less than
     // the scope it replaces is the one direction this gate may not be wrong in.
     trees.push(FFI_TREE.to_owned());
+    // A module map has no extension to match on, and it is an input to EVERY tree walked here
+    // rather than to the FFI one alone — which is what a second walk scoped to `FFI_TREE` used to
+    // say. `ThirdParty/ghostty/integration/CGhostty/module.modulemap` is the file that says which
+    // header `import CGhostty` exports, and both app specs point `SWIFT_INCLUDE_PATHS` straight at
+    // its directory, so it decides whether either triple type-checks at all. Its headers were in
+    // the set the whole time — `h` is a `COMPILED` extension — and the map naming them was not, so
+    // renaming the module, dropping the `export *` or pointing `header` somewhere else left a warm
+    // stamp over a change that can only be found by compiling.
     for tree in &trees {
         walk(root, &root.join(tree), &mut found, &|path| {
+            if path.file_name().and_then(|value| value.to_str()) == Some(MODULE_MAP) {
+                return true;
+            }
             path.extension()
                 .and_then(|value| value.to_str())
                 .is_some_and(|value| COMPILED.contains(&value))
         })?;
     }
-    walk(root, &root.join(FFI_TREE), &mut found, &|path| {
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default();
-        name == "module.modulemap" || path.extension().and_then(|value| value.to_str()) == Some("h")
-    })?;
     for file in GRAPH.iter().chain(SELF_FILES) {
         found.push((*file).to_owned());
     }
@@ -363,6 +380,12 @@ mod tests {
             "m\n",
         )
         .unwrap();
+        fs::create_dir_all(root.join("ThirdParty/ghostty/integration/CGhostty")).unwrap();
+        fs::write(
+            root.join("ThirdParty/ghostty/integration/CGhostty/module.modulemap"),
+            "module CGhostty { header \"ghostty.h\" export * }\n",
+        )
+        .unwrap();
         fs::write(root.join("Package.swift"), "// swift-tools-version:6.0\n").unwrap();
         root
     }
@@ -378,6 +401,34 @@ mod tests {
             !found.iter().any(|path| path.rsplit('.').next() == Some("md")),
             "a doc reached the stamp: {found:?}"
         );
+    }
+
+    /// A module map is an input wherever it sits, not only under the FFI tree.
+    ///
+    /// The lookup used to be a second walk pinned to `ThirdParty/slopdesk-ffi`, which left
+    /// `CGhostty`'s map — the file both app specs resolve `import CGhostty` through — outside every
+    /// scope's input set while the header it exports was inside all of them.
+    #[test]
+    fn a_module_map_outside_the_ffi_tree_is_an_input() {
+        let root = fixture("modulemap-anywhere");
+        let found = inputs(&root).unwrap();
+        assert!(
+            found.contains(&"ThirdParty/ghostty/integration/CGhostty/module.modulemap".to_owned()),
+            "the map that decides what `import CGhostty` sees is not stamped: {found:?}"
+        );
+    }
+
+    /// And editing it moves the stamp, which is the property the gate's verdict rests on.
+    #[test]
+    fn editing_a_module_map_moves_the_stamp() {
+        let root = fixture("modulemap-edit");
+        let before = current(&root).unwrap();
+        fs::write(
+            root.join("ThirdParty/ghostty/integration/CGhostty/module.modulemap"),
+            "module CGhostty { header \"somewhere-else.h\" }\n",
+        )
+        .unwrap();
+        assert_ne!(before, current(&root).unwrap());
     }
 
     /// Build output is not an input, and the walk must not even LOOK: `target/` holds tens of
