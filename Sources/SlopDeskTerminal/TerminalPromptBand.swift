@@ -214,9 +214,83 @@ enum TerminalPromptBand {
         // finds that line by the same walk, so the caret and the IME's candidate window cannot land
         // on two different rows.
         if let caret = caretOrigin(prompt, metrics: metrics, from: top) {
+            // The ghost UNDER the caret and before it: it is a preview of the document, so it reads at
+            // the caret's own baseline, and the bar goes over it exactly as it goes over the line.
+            //
+            // Never while an input method is composing — the caret is inside the marked run then, and
+            // a completion previewed from a caret that is not where the document's is would suggest
+            // an insertion at the wrong point.
+            if composition == nil {
+                drawGhost(prompt, metrics: metrics, at: caret, into: context)
+            }
             drawCaret(composition, metrics: metrics, at: caret, into: context)
         }
         return y
+    }
+
+    /// What the highlighted candidate would ADD if it were accepted right now, or `nil` for nothing
+    /// to preview.
+    ///
+    /// Warp's inline affordance, and the reason it is worth having next to the list: the list says
+    /// what the six choices ARE, and this says what the current one would DO — which for a long path
+    /// is the only one of the two a reader can act on without counting characters.
+    ///
+    /// Three ways to answer `nil`, and each is a case where a preview would LIE:
+    ///  * no candidates, or a selection outside them — there is nothing highlighted;
+    ///  * ``PromptCandidate/insert`` does not extend what is already typed — a candidate that REWRITES
+    ///    the word (a quoted path, a case fix) cannot be shown as a suffix, and showing its tail
+    ///    would print a word the accept would never produce;
+    ///  * nothing is left to add, so the ghost would be empty ink over the caret.
+    ///
+    /// Deliberately NOT a fourth check that the caret still sits at ``PromptCandidate/replaceEnd``,
+    /// which would be unreachable: the engine's `after_user_edit` and `after_navigation` both
+    /// dismiss the list, so every path that could move the caret away from the range takes the
+    /// candidates with it and the first guard has already answered. A guard for that state would be
+    /// code no input can reach and no test can pin — see `testMovingTheCaretTakesTheGhostWithIt`,
+    /// which pins the dismissal that stands in for it.
+    ///
+    /// ⚠️ `insert` and NOT `text`. `text` is what the LIST shows — bare, human-readable — while
+    /// `insert` is what the accept actually writes, quoted so a shell reads it back. A ghost off
+    /// `text` would drop the quoting for exactly the paths that need it, and the accept would then
+    /// insert something the user had already been shown as different.
+    static func ghost(_ prompt: CommandPrompt) -> String? {
+        let candidates = prompt.candidates
+        let selected = prompt.selectedCandidate
+        guard selected >= 0, selected < candidates.count else { return nil }
+        let candidate = candidates[selected]
+        // The replacement range is in BYTES, because that is the unit the engine edits in; the
+        // slice has to be taken on the UTF-8 view and carried back to a character position, or a
+        // multi-byte word would be cut mid-scalar.
+        let text = prompt.text
+        let utf8 = text.utf8
+        guard candidate.replaceStart >= 0, candidate.replaceStart <= candidate.replaceEnd,
+              let startByte = utf8.index(
+                  utf8.startIndex, offsetBy: candidate.replaceStart, limitedBy: utf8.endIndex,
+              ),
+              let endByte = utf8.index(
+                  utf8.startIndex, offsetBy: candidate.replaceEnd, limitedBy: utf8.endIndex,
+              ),
+              let start = startByte.samePosition(in: text), let end = endByte.samePosition(in: text)
+        else { return nil }
+        let typed = text[start..<end]
+        guard candidate.insert.hasPrefix(typed) else { return nil }
+        let rest = candidate.insert.dropFirst(typed.count)
+        return rest.isEmpty ? nil : String(rest)
+    }
+
+    /// The ghost, in the dim ink every other "this is not the document yet" row already uses.
+    private static func drawGhost(
+        _ prompt: CommandPrompt, metrics: Metrics, at origin: CGPoint, into context: CGContext,
+    ) {
+        guard let rest = ghost(prompt) else { return }
+        draw(
+            CTLineCreateWithAttributedString(NSAttributedString(string: rest, attributes: [
+                .init(kCTFontAttributeName as String): metrics.font,
+                .init(kCTForegroundColorAttributeName as String): Slate.Native.Terminal.ink2.cgColor,
+            ])),
+            at: origin,
+            into: context,
+        )
     }
 
     /// What goes UNDER the line: a running ⌃R, the candidate list, or the reason Enter did not run.

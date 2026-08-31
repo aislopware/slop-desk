@@ -198,7 +198,7 @@ genuinely absent or unwired.
 | **Hint-mode** (URL / path hints, keyboard nav) | done — unchanged, lines drifted +~50 | `HintLabelAssigner.swift`: `slopdesk_hint_scan` still at line 215 (the one citation that didn't drift). `TerminalViewModel.swift`: `beginHint` `:1646` (was 1596), `handleHintKey` `:1710` (was 1660), `confirmHintTarget` `:1734` (was 1684), `cancelHintMode` `:1741` (was 1691). `TerminalHintActuator.swift` confirmed at `Sources/SlopDeskClientCore/Pane/`. `MacHintModeOverlay.swift` confirmed; phone file is `HintModeOverlayView.swift` (not `HintModeOverlay.swift`). **Ceiling:** OSC 8 hyperlink runs are clickable and appear in the context menu as of 2026-08-31, but are still not HINTABLE — `HintLabelAssigner` scans the detector's spans, and an authored link whose display text is not itself a URL produces none. |
 | **Read-only mode** (block input to the PTY) | done — client-side, unchanged, lines drifted +~42-43 | `TerminalViewModel.isReadOnly` `:1392` (was 1350), `enterReadOnly()` `:1453` (was 1410), `exitReadOnly()` `:1460` (was 1417), `onReadOnlyChanged` `:1409`. `WorkspaceStore+ReadOnly.swift` confirmed present. `MacPaneStatusPills.swift` confirmed; phone file is `PaneStatusPillsView.swift` (not `PaneStatusPills.swift`). |
 | **Vi-mode** (libghostty NATIVE vi-mode) | n/a — the old comparison has no subject any more | `ghostty_action_readonly_e`/`GHOSTTY_ACTION_READONLY` belonged to the deleted embedder's whole C-callback/action system. `libghostty-vt` has no action/callback concept for vi-mode or readonly at all — it is a pull-only Rust library. There is nothing left to compare "declared and never called" against. slopdesk's own copy-mode engine (`rust/slopdesk-terminal/src/vimotion.rs`, reached from the modal branch in `MacTerminalRendererView.keyDown:186-191`) is the current vi-flavoured feature — see Copy-mode and Vi visual-char selection above — and it is not a port of libghostty's anything. |
-| **Autocomplete** (shell completion overlay) | missing — unchanged | No `CompletionProvider`, no autocomplete overlay, no inline-suggestion surface anywhere in `Sources`, `Tests`, `rust/slopdesk-*/src`. `docs/DECISIONS.md` records this as a deliberate non-build. Spec placeholder `docs/ui-shell/spec/terminal-features__autocomplete.md` still exists as a gap placeholder. |
+| **Autocomplete** (shell completion overlay) | **built** — this row was stale | Ranked completion is `rust/slopdesk-terminal/src/prompt/complete.rs` (subcommands, flags, paths, directories, variables, history), driven by `CommandEditor::complete` and stepped by `select_next_candidate`/`select_previous_candidate`, accepted by `accept_completion`. It crosses on the prompt handle (`slopdesk_prompt_complete`, `_candidates`, `_candidate_arena`, `_candidate_positions`, `_accept_completion`, `_dismiss_completion`) and is wired on BOTH platforms — `MacTerminalRendererView.swift:586-619`, `TerminalLeafView.swift:1483-1566`. The panel is drawn by `TerminalPromptBand.drawAccessory` (six rows, detail column, matched-scalar underline, selection in `accent`), the inline GHOST by `TerminalPromptBand.ghost`. What is genuinely not built is the **Fig-style bundled spec DB** — the providers are the ones the host can answer from itself. |
 
 ---
 
@@ -333,8 +333,12 @@ and §10, which this pass FOUND rather than inherited.
    all** — not merely unused. slopdesk's own copy-mode/read-only engines were never a port of it and
    need no reconciliation with it; see the Vi-mode matrix row.
 
-8. **Autocomplete is entirely absent** — never built, not removed. The spec placeholder
-   `docs/ui-shell/spec/terminal-features__autocomplete.md` still describes a feature with no code.
+8. ~~**Autocomplete is entirely absent**~~ — **this was false and is struck.** The engine
+   (`prompt/complete.rs`), the doors, the key wiring on both platforms, the candidate panel and the
+   inline ghost all exist; see the Autocomplete row above. What the spec placeholder
+   `docs/ui-shell/spec/terminal-features__autocomplete.md` still describes with no code is the
+   **Fig-style bundled spec DB** (715+ tools) and the frecency/auto-correction layer over it — a data
+   problem, not a surface one.
 
 9. **CLOSED 2026-09-01 — the phone pane had TWO first responders, and the newer one was unreachable.**
    ⚠️ This item previously read "every copy-mode motion ran TWICE on the phone", diagnosed from

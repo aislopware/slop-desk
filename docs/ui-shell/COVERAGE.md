@@ -127,7 +127,7 @@ MUST NOT implement, scaffold, or "fix" these as coverage gaps.** Treat them like
 
 | Feature | Doc page(s) | Size | Remote-model note |
 |---|---|---|---|
-| **Autocomplete** — inline ghost text + candidate panel + Fig spec DB (715+ tools) + frecency + auto-correction + `learn` pinning | terminal-features/autocomplete | **High** | needs host-side history + a bundled spec DB |
+| **Autocomplete's DATA half** — Fig spec DB (715+ tools) + frecency + auto-correction + `learn` pinning | terminal-features/autocomplete | **High** | needs a bundled spec DB. ⚠️ The SURFACE half of this row — inline ghost text and the candidate panel — was listed here as not built and **is built**: `prompt/complete.rs` ranks, `TerminalPromptBand` draws both the panel and the ghost, and both platforms wire Tab/⌃N/⌃P/Esc. Only the DB and the ranking-memory over it are still absent. |
 | **File pane / Folder pane** — built-in editor (syntax highlight, Markdown/SVG/HTML/image/PDF/hex/diff preview) + standalone folder browser | user-interface/files-and-links | **High** | needs host file read/write over the wire; overlaps the reserved Editor section (§D). The CODE panel covers the *editing* use case a different way. |
 | **Quick Terminal** — system-wide global-hotkey drop-down terminal (`quick-terminal-*` config keys) | reference/configuration | Med-High | a host-connected dropdown in the remote model |
 | **Cross-terminal config import/export** — ghostty/kitty/alacritty classification + preview/conflict dialog + `slopdesk import`/`export` CLI | customization/import-export, reference/cli | Med | slopdesk now transfers NOTHING — its own workspace-JSON transfer was removed 2026-07-03 (§B) |

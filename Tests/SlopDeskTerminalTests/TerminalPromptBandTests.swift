@@ -92,3 +92,61 @@ final class TerminalPromptBandTests: XCTestCase {
         XCTAssertEqual(TerminalPromptBand.searchRow(query: "", hit: ""), "(reverse-i-search)`': ")
     }
 }
+
+/// The inline ghost — Warp's other completion affordance, next to the list.
+///
+/// The list answers "what are the choices"; the ghost answers "what would THIS one do", which for a
+/// long path or a subcommand is the only one of the two a reader can act on without counting
+/// characters. What every case here pins is the same invariant from a different side: **the ghost is
+/// exactly what accepting would add, or it is nothing.** A preview that is off by even a quote is
+/// worse than no preview, because the user has already read it as the outcome.
+@MainActor
+final class TerminalPromptGhostTests: XCTestCase {
+    /// The ghost IS the accept, character for character — asserted by performing the accept.
+    ///
+    /// Deliberately not spelled as "expect `mit`": a hard-coded tail would still pass if `insert` and
+    /// `text` diverged (a quoted path, a case fix), which is the one way this can be wrong and look
+    /// right. Comparing against the document the accept actually produces cannot.
+    func testTheGhostIsExactlyWhatAcceptingWouldAdd() throws {
+        let prompt = seeded("git com")
+        XCTAssertGreaterThan(prompt.complete(), 0, "the seeded subcommand ranks")
+        let ghost = try XCTUnwrap(TerminalPromptBand.ghost(prompt), "something is highlighted to preview")
+        let before = prompt.text
+        XCTAssertTrue(prompt.acceptCompletion())
+        XCTAssertEqual(prompt.text, before + ghost)
+    }
+
+    /// Moving the caret takes the ghost with it — and pins WHY, which is not a check in the band.
+    ///
+    /// The ghost is drawn at the caret, so a caret away from the replacement's end would print the
+    /// tail in one place and insert it in another: a lie the user cannot see is a lie. The band does
+    /// not guard against that and must not, because the state cannot arise — the engine's
+    /// `after_navigation` dismisses the candidate list on every motion, so there is nothing
+    /// highlighted left to preview.
+    ///
+    /// Asserting the DISMISSAL and not just the `nil` is the point. A test that only demanded
+    /// `ghost == nil` would keep passing if the engine stopped dismissing and the ghost went stale
+    /// over a moved caret — the one regression this is here to catch.
+    func testMovingTheCaretTakesTheGhostWithIt() {
+        let prompt = seeded("git com")
+        XCTAssertGreaterThan(prompt.complete(), 0)
+        XCTAssertNotNil(TerminalPromptBand.ghost(prompt))
+        prompt.setCursor(prompt.cursor - 1)
+        XCTAssertTrue(prompt.candidates.isEmpty, "the engine dropped the list the caret invalidated")
+        XCTAssertNil(TerminalPromptBand.ghost(prompt))
+    }
+
+    /// No candidates, no ghost — the empty list is not a preview of the first thing that ranked last.
+    func testNothingHighlightedPreviewsNothing() {
+        XCTAssertNil(TerminalPromptBand.ghost(seeded("git com")))
+    }
+
+    /// A prompt holding `text`, with one command seeded so completion is deterministic and needs no
+    /// filesystem.
+    private func seeded(_ text: String) -> CommandPrompt {
+        let prompt = CommandPrompt()
+        prompt.addCommand(name: "git", subcommands: ["commit", "checkout"], flags: ["--amend"])
+        prompt.insert(text)
+        return prompt
+    }
+}
