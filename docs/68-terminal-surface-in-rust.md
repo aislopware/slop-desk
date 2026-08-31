@@ -88,10 +88,12 @@ cache, and exports `GHOSTTY_SOURCE_DIR` + `GHOSTTY_ZIG_SYSTEM_DIR`. Same shape a
 `build.rs` also returns early under `CARGO_CFG_MIRI`, so `just check`'s Miri gate keeps working
 without a native library.
 
-**V3 — baselines, measured before the old renderer is deletable.** A measured regression is the only
-veto (`CLAUDE.md`), and the old renderer cannot be measured after it is gone. Parse throughput is
-measurable on both engines and is captured in §6; input latency and scroll must be taken from the live
-app before the demolition pass begins.
+**V3 — baselines, measured before the old renderer is deletable. PARTIAL, and the shortfall is
+ruled on.** A measured regression is the only veto (`CLAUDE.md`). Parse throughput is measurable on
+both engines and is in §6; the live fork's **key→render-feed latency is pinned in §6.3** by a gate
+that re-runs unchanged on the new renderer. Draw cadence is **not** baselined — §6.3 says what
+blocked it and why resurrecting the fork later is the wrong answer. The demolition proceeds on that
+reading.
 
 ## 4. What ships free, and what is ours
 
@@ -280,6 +282,42 @@ fn main() {
     bench("unicode/cjk 200x50", 200, 50, &unicode, TOTAL);
 }
 ```
+
+### 6.3 The live-app baseline, and the one number it does not have
+
+Taken 2026-08-31 on the deployed macOS client with the fork still rendering, through
+`slopdesk-guigate macos --connect` — which builds the app, starts a real `slopdesk-hostd`, dials it,
+and types a COMPUTED marker so an echo of the literal keystrokes cannot satisfy it:
+
+```
+client↔host session ESTABLISHED on :47420
+OUT-path PROVEN: keystrokes → host PTY → shell EXECUTED (computed 42 → SLOPDESK_OUT_…_42_END)
+echo latency (n=1): median 1.4 ms, p95 1.4 ms   (key→render-feed, loopback)
+```
+
+`.work/macos-verify/macos-shot.png` is the picture the gate's own PASS criterion asks for: libghostty
+painting a live remote shell — prompt, ANSI colour, the sidebar's session rows. **That is the number
+the after-side must beat, and the gate that produces it is not ours to write** — the same invocation
+re-runs on the new renderer unchanged, which is why it is the baseline rather than a bespoke probe.
+
+Read what it measures precisely: **key→render-feed**, not glass-to-glass. It ends where the bytes are
+handed to the surface, so it prices the wire and the PTY round trip and *excludes* draw. That makes it
+the right veto for §5.1 in one direction only — a renderer that regresses drawing will not show up
+here — and §5.1 is exactly where the risk was already located.
+
+**The cadence and scroll histograms are deliberately not in this document.** `slopdesk-framewatch`
+was built and its capture path verified (`--list` enumerates on-screen windows, so SCK and the
+Screen-Recording grant are live), but a frame-cadence p99 needs the app held open under a sustained
+workload, and `--connect` tears it down after its assertions. Both gaps were reached on a box under
+load average 33 — a cadence percentile measured there prices contention, not the renderer, which is
+the same failure mode `perf-tests-load-flaky` records.
+
+So the veto is asymmetric, and stated rather than hidden: **key→render-feed is pinned and binding;
+draw cadence is not baselined.** The fork is recoverable — it is in git history — but recovering it is
+not `git show`: it is an old-tree checkout that must build and run, which means the 0.15.2 toolchain
+download, the `xcrun` SDK shim, an Xcode that has since moved and a cold `.build`. Hours, and not
+certain. If §5.1 lands and drawing feels worse, the honest move is to measure the NEW renderer's
+cadence on a quiet box against the 60 Hz ceiling directly, not to resurrect the fork.
 
 ## 7. What this does NOT touch
 
