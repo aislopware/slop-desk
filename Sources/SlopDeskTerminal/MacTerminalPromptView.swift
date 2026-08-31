@@ -152,9 +152,13 @@ final class MacTerminalPromptView: NSView {
     /// the shape a status bar takes when nobody decided.
     private func drawAccessory(metrics: Metrics, at top: CGFloat) {
         if prompt.isSearching {
-            let hit = prompt.searchHasHit ? "" : "  (no match)"
+            // ⚠️ THE HIT, not just the query. Pixel verification caught this: the row printed
+            // `(reverse-i-search)`clip'` and stopped, so a search UI showed a query and never a
+            // result. The buffer stays untouched while ⌃R runs — that is the point, cancelling must
+            // leave the draft alone — which makes this row the only place the match can appear, and
+            // it is the shape bash and zsh both print.
             drawRow(
-                "(reverse-i-search)`\(prompt.searchQuery)'\(hit)",
+                Self.searchRow(query: prompt.searchQuery, hit: prompt.searchHit),
                 ink: prompt.searchHasHit ? Slate.Native.Terminal.ink2 : Slate.Native.Terminal.err,
                 metrics: metrics,
                 at: top,
@@ -176,6 +180,18 @@ final class MacTerminalPromptView: NSView {
         }
         guard let open = Self.openLabel(prompt.unterminated) else { return }
         drawRow(open, ink: Slate.Native.Terminal.ink2, metrics: metrics, at: top)
+    }
+
+    /// The `(reverse-i-search)` row's whole text.
+    ///
+    /// ⚠️ THE HIT IS PART OF IT, and it was not until pixel verification looked at the band: the row
+    /// printed the query alone, which is a search that never shows a result. The buffer is left
+    /// untouched while ⌃R runs — cancelling has to give the draft back exactly — so this row is the
+    /// only place the match can appear, and `` `query': hit`` is the shape bash and zsh both print.
+    ///
+    /// A pure function so the finding is pinned by a test rather than by another render.
+    static func searchRow(query: String, hit: String?) -> String {
+        "(reverse-i-search)`\(query)'" + (hit.map { ": \($0)" } ?? "  (no match)")
     }
 
     /// One plain line of accessory text.

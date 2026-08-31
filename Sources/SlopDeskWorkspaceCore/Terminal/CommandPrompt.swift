@@ -325,6 +325,16 @@ public final class CommandPrompt {
         ffiAnswerText { slopdesk_prompt_search_query(handle, $0, $1) }
     }
 
+    /// The history entry the query currently matches, or `nil` when nothing does.
+    ///
+    /// The buffer is deliberately untouched while a search runs — cancelling must leave the draft
+    /// exactly as it was — so this is the ONLY way to see what ⌃R would accept. ``searchHasHit``
+    /// rather than emptiness decides, because a recorded empty command is a hit like any other.
+    public var searchHit: String? {
+        guard state.search_has_hit else { return nil }
+        return ffiAnswerText { slopdesk_prompt_search_hit(handle, $0, $1) }
+    }
+
     /// The history, oldest first — what a session save writes out.
     public var history: [String] {
         (0..<historyCount).map { index in

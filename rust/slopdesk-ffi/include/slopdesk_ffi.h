@@ -3882,6 +3882,7 @@ bool   slopdesk_prompt_search_again(SlopDeskPrompt *handle);
 bool   slopdesk_prompt_search_accept(SlopDeskPrompt *handle);
 void   slopdesk_prompt_search_cancel(SlopDeskPrompt *handle);
 size_t slopdesk_prompt_search_query(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
+size_t slopdesk_prompt_search_hit(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
 
 /* What completion may offer. The crate does no I/O and reads no PATH: the caller seeds the
  * directory it listed, the environment it holds, and the command specs it knows, each as spans into

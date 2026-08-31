@@ -1071,6 +1071,35 @@ pub unsafe extern "C" fn slopdesk_prompt_search_query(
     unsafe { deliver(query.as_bytes(), out, cap) }
 }
 
+/// Copies the reverse-search HIT out — the history entry the query currently matches.
+///
+/// Empty when no search is open or nothing matches, which `search_has_hit` distinguishes from a
+/// genuinely empty entry. The buffer is deliberately NOT changed while a search runs (see the
+/// module header), so this is the only way to see what ⌃R would accept: without it the band can
+/// print the query and nothing else, which is a search UI that never shows a result.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation and `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_search_hit(
+    handle: *mut SlopDeskPrompt,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, as above.
+    let Some(state) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let hit = state.editor.search().and_then(|session| session.hit());
+    let text = hit.map_or("", |hit| hit.text.as_str());
+    // SAFETY: `out` is null or writable for `cap` bytes, and `text` cannot overlap it.
+    unsafe { deliver(text.as_bytes(), out, cap) }
+}
+
 /// Replaces the filesystem source: the directory prefix, and the names read from it.
 ///
 /// The two arrive together because a base without its entries would rank the previous directory's
@@ -1432,10 +1461,10 @@ mod tests {
         slopdesk_prompt_candidate_arena, slopdesk_prompt_candidates, slopdesk_prompt_complete,
         slopdesk_prompt_delete, slopdesk_prompt_free, slopdesk_prompt_history_entry,
         slopdesk_prompt_history_previous, slopdesk_prompt_insert, slopdesk_prompt_new,
-        slopdesk_prompt_search_accept, slopdesk_prompt_search_begin, slopdesk_prompt_search_type,
-        slopdesk_prompt_select_all, slopdesk_prompt_set_paths, slopdesk_prompt_spans, slopdesk_prompt_state,
-        slopdesk_prompt_submit, slopdesk_prompt_take_clipboard, slopdesk_prompt_take_submitted,
-        slopdesk_prompt_text, slopdesk_prompt_undo,
+        slopdesk_prompt_search_accept, slopdesk_prompt_search_begin, slopdesk_prompt_search_hit,
+        slopdesk_prompt_search_type, slopdesk_prompt_select_all, slopdesk_prompt_set_paths,
+        slopdesk_prompt_spans, slopdesk_prompt_state, slopdesk_prompt_submit, slopdesk_prompt_take_clipboard,
+        slopdesk_prompt_take_submitted, slopdesk_prompt_text, slopdesk_prompt_undo,
     };
     use crate::{SlopDeskByteSpan, arena_text};
 
@@ -1449,6 +1478,14 @@ mod tests {
         let needed = unsafe { slopdesk_prompt_text(handle, std::ptr::null_mut(), 0) };
         let mut bytes = vec![0_u8; needed];
         let written = unsafe { slopdesk_prompt_text(handle, bytes.as_mut_ptr(), bytes.len()) };
+        assert_eq!(written, needed, "the door answered a size it would not fill");
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn read_search_hit(handle: *mut SlopDeskPrompt) -> String {
+        let needed = unsafe { slopdesk_prompt_search_hit(handle, std::ptr::null_mut(), 0) };
+        let mut bytes = vec![0_u8; needed];
+        let written = unsafe { slopdesk_prompt_search_hit(handle, bytes.as_mut_ptr(), bytes.len()) };
         assert_eq!(written, needed, "the door answered a size it would not fill");
         String::from_utf8_lossy(&bytes).into_owned()
     }
@@ -1593,6 +1630,10 @@ mod tests {
         let query = b"release";
         unsafe { slopdesk_prompt_search_type(handle, query.as_ptr(), query.len()) };
         assert!(unsafe { slopdesk_prompt_state(handle) }.search_has_hit);
+        // The hit is READABLE while the search runs, which is the whole reason the door exists: the
+        // buffer stays empty until accept, so this is all the band can show.
+        assert_eq!(read_search_hit(handle), "cargo build --release");
+        assert_eq!(read_text(handle), "");
         assert!(unsafe { slopdesk_prompt_search_accept(handle) });
         assert_eq!(read_text(handle), "cargo build --release");
         assert!(!unsafe { slopdesk_prompt_state(handle) }.searching);

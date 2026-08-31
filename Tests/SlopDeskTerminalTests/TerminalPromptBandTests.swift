@@ -72,5 +72,22 @@ final class TerminalPromptBandTests: XCTestCase {
         XCTAssertEqual(MacTerminalPromptView.openLabel(.singleQuote), "unclosed '")
         XCTAssertEqual(MacTerminalPromptView.openLabel(.substitution), "unclosed $(")
     }
+
+    /// The regression for what the first pixel render of the band found: the ⌃R row printed the
+    /// query and stopped, so the search never showed what it had matched. The buffer stays empty
+    /// until accept, which is what makes this row the only place a hit can appear.
+    func testTheSearchRowShowsTheHitItWouldAccept() {
+        XCTAssertEqual(
+            MacTerminalPromptView.searchRow(query: "clip", hit: "cargo clippy --all-targets"),
+            "(reverse-i-search)`clip': cargo clippy --all-targets",
+        )
+        XCTAssertEqual(
+            MacTerminalPromptView.searchRow(query: "zzz", hit: nil),
+            "(reverse-i-search)`zzz'  (no match)",
+        )
+        // A recorded EMPTY command is still a hit, and reads as one rather than as no match — which
+        // is why the caller keys on `searchHasHit` rather than on the string being empty.
+        XCTAssertEqual(MacTerminalPromptView.searchRow(query: "", hit: ""), "(reverse-i-search)`': ")
+    }
 }
 #endif

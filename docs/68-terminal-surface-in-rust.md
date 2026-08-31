@@ -411,6 +411,12 @@ search) and ⌘Z / ⇧⌘Z / ⌘Y, which drive the editor's own history rather t
 send that byte to. `controls.command-prompt` (default on) is the one setting that hands the line back
 to the shell.
 
+A reverse search never touches the buffer — cancelling has to give the draft back exactly — so the
+band's `(reverse-i-search)` row is the ONLY place its match can appear, and it needs two doors rather
+than one: `slopdesk_prompt_search_query` and `slopdesk_prompt_search_hit`. Shipping only the query
+plus a `search_has_hit` bool is a search that shows no result, which is what the first pixel render
+of the band caught and no test would have.
+
 Three verbs the editor SHADOWS while it is armed, each decided in `docs/DECISIONS.md`: paste goes
 into the editor at the driver's single funnel; copy and cut are the editor's only when the grid has
 no selection; and PageUp/PageDown/document-edge SCROLLING stays the viewport's, so mounting an editor
