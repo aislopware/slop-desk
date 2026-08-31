@@ -397,6 +397,46 @@ pub unsafe extern "C" fn slopdesk_phone_floating_cursor_feed(
     unsafe { deliver(&bytes, out, cap) }
 }
 
+/// Feeds one floating-cursor delta and answers the arrows it earned as a SIGNED COUNT — negative
+/// leftward — instead of as bytes.
+///
+/// The second rendering of [`FloatingCursor::feed`]'s one answer, for the caller whose cursor is
+/// not behind a PTY: while the app's own line editor owns the prompt there is no shell to send `ESC
+/// [ C` to, and the drag has to arrive as the same editing verb a ⟵/⟶ press does. Both doors run
+/// the SAME `feed`, so the quantisation, the carry and the arrow cap cannot differ between them —
+/// which is also why exactly one of the two is called per delta: each CONSUMES the travel it
+/// reports.
+///
+/// # Safety
+/// `accumulated` must be null or writable.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_phone_floating_cursor_steps(
+    accumulated: *mut f64,
+    threshold: f64,
+    delta_x: f64,
+) -> i32 {
+    // SAFETY: the caller's obligation, restated above.
+    let carried = unsafe { accumulated.as_ref() }.copied().unwrap_or(0.0);
+    let mut cursor = FloatingCursor::resumed(threshold, carried);
+    let arrows = cursor.feed(delta_x);
+    // SAFETY: as above.
+    if let Some(slot) = unsafe { accumulated.as_mut() } {
+        *slot = cursor.accumulated();
+    }
+    // The run is capped at `MAX_FLOATING_CURSOR_ARROWS`, which is three digits, so the count is an
+    // `i32` with room to spare and the sign is the direction rather than an error.
+    let steps = i32::try_from(arrows.len()).unwrap_or(i32::MAX);
+    if arrows.first() == Some(&phone_key::Arrow::Left) {
+        -steps
+    } else {
+        steps
+    }
+}
+
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 mod tests {
@@ -678,6 +718,41 @@ mod tests {
         };
         assert_eq!(out.get(..written), Some([0x1B, 0x5B, b'C'].as_slice()));
         assert!((carried - 1.0).abs() < 1e-9);
+    }
+
+    /// The COUNT door quantises exactly as the BYTES door does — same carry, same cap, and a sign
+    /// where the other one picks an escape. Held against the bytes rather than against a number
+    /// typed here: what would break silently is the two doors drifting, not either one alone.
+    #[test]
+    fn the_step_count_and_the_arrow_bytes_are_the_same_answer() {
+        let threshold = phone_key::FLOATING_CURSOR_THRESHOLD;
+        let (mut counted, mut written) = (0.0_f64, 0.0_f64);
+        let mut out = [0_u8; 64];
+        for delta in [4.0, 2.0, -30.0, 0.5, f64::NAN] {
+            // SAFETY: the accumulator is a live local.
+            let steps = unsafe { slopdesk_phone_floating_cursor_steps(&raw mut counted, threshold, delta) };
+            // SAFETY: both the accumulator and the buffer are live locals.
+            let bytes = unsafe {
+                slopdesk_phone_floating_cursor_feed(
+                    &raw mut written,
+                    threshold,
+                    delta,
+                    false,
+                    out.as_mut_ptr(),
+                    out.len(),
+                )
+            };
+            assert_eq!(steps.unsigned_abs() as usize * 3, bytes, "delta {delta}");
+            assert!((counted - written).abs() < 1e-9, "the carry diverged at {delta}");
+            let arrow = if steps < 0 { b'D' } else { b'C' };
+            assert!(
+                out.get(..bytes)
+                    .unwrap_or_default()
+                    .chunks(3)
+                    .all(|run| run == [0x1B, 0x5B, arrow]),
+                "the sign and the escape disagree at {delta}",
+            );
+        }
     }
 
     #[test]

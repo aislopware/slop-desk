@@ -1248,6 +1248,11 @@ double slopdesk_phone_floating_cursor_threshold(void);
 size_t slopdesk_phone_floating_cursor_run_capacity(void);
 size_t slopdesk_phone_floating_cursor_feed(double *accumulated, double threshold, double delta_x,
                                            bool application_cursor_keys, uint8_t *out, size_t cap);
+// The same answer as a SIGNED COUNT — negative leftward — for the caller whose cursor is not behind
+// a PTY: while the app's own line editor owns the prompt there is no shell to send `ESC [ C` to, and
+// the drag has to arrive as the editing verb an arrow PRESS does. Exactly one of the two doors is
+// called per delta; each CONSUMES the travel it reports.
+int32_t slopdesk_phone_floating_cursor_steps(double *accumulated, double threshold, double delta_x);
 
 // The tiled tree, as its PRE-ORDER walk rather than as its persisted JSON. Both languages already
 // agree on that JSON, and reusing it here would have been two lines — but `solve` runs on every

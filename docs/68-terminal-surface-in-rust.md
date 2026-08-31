@@ -256,11 +256,32 @@ pixel-pushing to the host application."
    the user has given to Alt skips the input context entirely; with the setting off, a
    US-International dead key still composes.
 
-   **UIKit is NOT done.** `PhoneTerminalRendererView` conforms to no text-input protocol at all — it
-   reads a hardware keyboard through `pressesBegan` — so the phone has no composition and no
-   software keyboard in the terminal. That is a pre-existing shape, not a regression of this work,
-   and closing it is a `UITextInput` conformance rather than more renderer work: the preedit pass
-   above is already shared.
+   **UIKit is done too, 2026-09-01, and it needed no renderer work at all** — the preedit pass above
+   was already shared, which is exactly what this paragraph predicted when it read "UIKit is NOT
+   done". `Sources/SlopDeskPhoneUI/Pane/TerminalTextInput.swift` conforms `TerminalInputHostView` to
+   `UITextInput`, and it is the same *deliberately-not-a-text-view* shape as the Mac's
+   `NSTextInputClient`: the document IS the composition and nothing else, so every position is a
+   UTF-16 offset into the marked run, and the questions that would need a real document —
+   `closestPosition(to:)`, `characterRange(at:)`, `selectionRects(for:)` — answer the honest empty
+   value rather than a guess at what the grid says.
+
+   Three things the phone had to spell that AppKit answers for free. **The two views are not one:**
+   the text client is the responder, `TerminalInputHostView`, and the pixels are its sibling — so the
+   composition crosses back over `TerminalSurfaceHosting.setComposition(_:selection:)` and the host
+   does NOT decide who draws it. The band-or-grid fork is the conformer's, written once per platform,
+   because a host deciding it would be a second copy of the rule and two preedit runs on screen the
+   first time the two copies disagreed. **The caret moves between views:** `caretAnchor` answers the
+   rect AND the view it is in — the band while the editor owns the line, the grid otherwise — and the
+   host converts, so a candidate bar cannot hang off the grid's stale cursor while the letters appear
+   a band's height below. **Every trait is off:** adopting `UITextInput` opts a view into
+   autocorrection, smart quotes and autocapitalisation that `UIKeyInput` alone never offered, and
+   `"` for `"` on a shell line is a corruption the user cannot see coming.
+
+   It also ends `FloatingCursor`'s wait: UIKit hands a space-bar drag only to a text input.
+   The accumulator was built, tested and caller-less; `beginFloatingCursor`/`update`/`end` now drive
+   it, with `slopdesk_phone_floating_cursor_steps` as the second rendering of the SAME `feed` — a
+   signed count for the drag whose cursor is the app's own line editor, where there is no shell to
+   send `ESC [ C` to and the travel has to arrive as the editing verb an arrow press does.
 9. scrollbar geometry, replacing `ghostty_surface_viewport_info` and the `SCROLLBAR` action
 10. padding, content scale, resize → cols·rows, which `rust/slopdesk-terminal/src/geometry.rs`
     already computes
@@ -470,17 +491,24 @@ only the naming §10 assigns it — `PhoneKey.promptKey(_:)`, the USB HID keyboa
 type. The Mac never calls the door, because AppKit's binding table answers the same question in
 selectors and a second Swift table would be the mirror again.
 
-Two seam members came with it, both for the same reason — on iOS the responder is not the surface,
+Four seam members came with it, all for the same reason — on iOS the responder is not the surface,
 so what the editor does not own has to cross back. `promptDidChange()` redraws and re-measures the
-band after an edit the host did not make; `scrollPages(_:)` sends PageUp to the viewport. Both
-default to no-ops, which is true of every host that answers `nil` for `promptView`.
+band after an edit the host did not make; `scrollPages(_:)` sends PageUp to the viewport;
+`setComposition(_:selection:)` reports what an input method is composing and `caretAnchor` answers
+where the caret is and in which view. All four default to no-ops or `nil`, which is true of every
+host that answers `nil` for `promptView`.
 
-Still open on the phone: the INLINE preedit. `UIKeyInput` has no marked text, so the band draws no
-composition underline (`composition: { nil }`) — but typing Vietnamese and Chinese at the prompt
-works today, because an input method shows its candidates in the keyboard's own bar and commits the
-settled string through `insertText`, which reaches the editor as text. What is missing is the
-underline and the space-bar-drag caret, which is the `UITextInput` gap §5.1 names and not a gap in
-the editor.
+The INLINE preedit CLOSED 2026-09-01 with that conformance (§5.1 item 8) — the band draws the
+composition it is handed, the grid draws the ones the editor does not own, and never both. What was
+never broken and is worth restating: typing Vietnamese and Chinese at this prompt worked before it,
+because an input method shows its candidates in the keyboard's own bar and commits the settled
+string through `insertText`. The conformance adds the underline and the space-bar-drag caret; it did
+not add the language support, and nothing about the editor was the gap.
+
+One live defect fell out of writing it, on the same seam and not in the new code: the phone's
+`insertText` had no `isSearching` fork, so a soft-keyboard character typed into an open ⌃R was
+inserted into the LINE instead of the query — the Mac has had that fork since the band landed. Fixed
+in the same change.
 
 ### 5.5 OSC 8 hyperlinks
 

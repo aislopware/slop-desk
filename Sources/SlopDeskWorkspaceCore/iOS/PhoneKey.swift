@@ -486,6 +486,20 @@ public struct FloatingCursor: Sendable, Equatable {
         return Array(out.prefix(written))
     }
 
+    /// The same delta as a SIGNED STEP COUNT — negative leftward — instead of as bytes.
+    ///
+    /// For the drag whose cursor is not behind a PTY: while the app's own line editor owns the
+    /// prompt there is no shell to send `ESC [ C` to, so the travel has to arrive as the editing
+    /// verb an arrow PRESS does. Both doors run the far side's one `feed`, which is why the carry
+    /// cannot drift between them — and why exactly one of the two is called per delta, since each
+    /// CONSUMES the travel it reports.
+    public mutating func steps(deltaX: Double) -> Int {
+        var carried = accumulated
+        let count = slopdesk_phone_floating_cursor_steps(&carried, threshold, deltaX)
+        accumulated = carried
+        return Int(count)
+    }
+
     /// Clears the carried remainder — the drag ended.
     public mutating func reset() {
         accumulated = 0

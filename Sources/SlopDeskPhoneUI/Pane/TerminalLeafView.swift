@@ -1062,12 +1062,14 @@ private enum LeafChipReveal {
 // in-window that takes no keyboard focus — which is what made it the one card whose keys reached the shell
 // behind it.
 //
-// ## What is NOT here yet
+// ## A FIFTH path, which is not a path at all: the composition
 //
-// `UITextInput` — marked text and the floating cursor. iOS shows CJK candidates in the keyboard's own bar
-// and commits through `insertText`, so typing Chinese works without it; what it costs is INLINE
-// composition display and space-bar-drag cursor movement. `PhoneKey`'s `FloatingCursor` is the prepared
-// half of the second, and stays caller-less until that conformance lands.
+// `UITextInput` landed 2026-09-01 and lives next door in `TerminalTextInput.swift` — marked text and the
+// floating cursor, the two things `UIKeyInput` alone could not carry. It does not join the split above:
+// a press routed to the PROXY is what reaches UIKit's text system, and the conformance is how that
+// system reports back what it is composing before it commits. So the routing is unchanged and what is
+// new is the REPORT — the inline preedit the band and the grid can now draw, and the space-bar drag,
+// which UIKit hands over only to a text input and which `SlopDeskWorkspaceCore.FloatingCursor` had been waiting for.
 
 /// The pane's first responder: hardware presses, software-keyboard commits, and the accessory row.
 ///
@@ -1113,6 +1115,45 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// the band it owns, and scrolling the viewport for the keys that were never the line's. Weak and
     /// set by the leaf, which owns both this responder and the host.
     weak var surface: (any TerminalSurfaceHosting)?
+
+    // MARK: The text client's state — driven from `TerminalTextInput.swift`
+
+    /// What an input method is composing right now, or `nil` when nothing is marked. The whole of
+    /// this responder's "document": there is no other text here for a position to be an index into.
+    var composition: TerminalComposition?
+
+    /// UIKit's own listener for changes this side makes. Weak by the protocol's contract.
+    weak var inputDelegate: (any UITextInputDelegate)?
+
+    /// The tokenizer UIKit asks for word and line boundaries. The stock string one over this view,
+    /// because a composition IS a string and there is nothing here it could answer differently for.
+    lazy var tokenizer: any UITextInputTokenizer = UITextInputStringTokenizer(textInput: self)
+
+    /// None. The preedit is drawn by the terminal in its OWN colours — `TerminalPromptBand` for the
+    /// editor's line, `slopdesk_termrender` for the grid — so a style accepted here would be one
+    /// UIKit expects to see honoured and nothing would honour it.
+    var markedTextStyle: [NSAttributedString.Key: Any]?
+
+    // Every trait OFF, and each one is a real regression if it is not. Adopting `UITextInput` opts
+    // this view into the corrections `UIKeyInput` alone never offered: smart quotes turn `"` into `"`
+    // on a shell line, smart dashes turn `--flag` into `–flag`, autocapitalisation shifts the first
+    // letter of every command, and autocorrect rewrites the ones it does not know — which is every
+    // command. They are stored rather than computed because `UITextInputTraits` declares them `get
+    // set` and a computed pair would have to invent somewhere to put the setter's answer.
+    var autocorrectionType: UITextAutocorrectionType = .no
+    var autocapitalizationType: UITextAutocapitalizationType = .none
+    var spellCheckingType: UITextSpellCheckingType = .no
+    var smartQuotesType: UITextSmartQuotesType = .no
+    var smartDashesType: UITextSmartDashesType = .no
+    var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
+
+    /// The space-bar drag's travel accumulator, live only between `beginFloatingCursor(at:)` and
+    /// `endFloatingCursor()`. `nil` at rest, so a stray update outside a gesture spends nothing.
+    private var floatingCursor: FloatingCursor?
+
+    /// Where the drag was last sampled, in this view's coordinates. The gesture reports POSITIONS and
+    /// the accumulator takes DELTAS, and this is the whole of the conversion.
+    private var floatingCursorPoint: CGPoint = .zero
 
     // MARK: Mounting
 
@@ -1176,6 +1217,62 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     }
 
     override var canBecomeFirstResponder: Bool { true }
+
+    /// A composition belongs to the responder that STARTED it, so it goes down with the keyboard.
+    ///
+    /// The Mac's rule, at the same seam. Left standing, an underlined run would sit over a line the
+    /// input method has already forgotten — and nothing would repaint it away, because a resignation
+    /// leaves no keystroke and no frame behind it.
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        withdrawComposition()
+        return super.resignFirstResponder()
+    }
+
+    /// The pane's model, for the conformance next door — see `TerminalTextInput.swift`.
+    var terminalModel: TerminalViewModel? { live?.terminalModel }
+
+    // MARK: The floating cursor
+
+    /// The space bar, long-pressed and dragged — on a phone with no hardware keyboard the ONLY way to
+    /// move the terminal cursor, and the reason ``FloatingCursor`` was built.
+    ///
+    /// UIKit hands this over only to a `UITextInput`, which is why the accumulator sat caller-less
+    /// until that conformance landed.
+    func beginFloatingCursor(at point: CGPoint) {
+        floatingCursor = FloatingCursor()
+        floatingCursorPoint = point
+    }
+
+    /// Spends the travel since the last sample. Two destinations and ONE quantiser: while the app's
+    /// editor owns the line there is no shell holding it, so the arrows arrive as the same editing
+    /// verb a ⟵/⟶ press does; otherwise they are bytes on the wire under the live DECCKM state.
+    func updateFloatingCursor(at point: CGPoint) {
+        guard var cursor = floatingCursor, let live else { return }
+        let deltaX = Double(point.x - floatingCursorPoint.x)
+        floatingCursorPoint = point
+        defer { floatingCursor = cursor }
+        if live.terminalModel?.commandPromptArmed == true {
+            let steps = cursor.steps(deltaX: deltaX)
+            guard steps != 0 else { return }
+            let usage = steps < 0 ? PhoneKeyUsage.left : PhoneKeyUsage.right
+            for _ in 0..<abs(steps) { _ = editsPrompt(PhoneKey.Press(hidUsage: usage)) }
+            return
+        }
+        let bytes = cursor.feed(
+            deltaX: deltaX,
+            applicationCursorKeys: live.terminalModel?.isCursorKeysApplication ?? false,
+        )
+        guard !bytes.isEmpty else { return }
+        live.sendBytes(bytes)
+    }
+
+    /// The drag ended. The carried remainder dies with it — a fresh gesture starts from rest, which is
+    /// what keeps a flick left from being paid for by the next flick right.
+    func endFloatingCursor() {
+        floatingCursor = nil
+        floatingCursorPoint = .zero
+    }
 
     // MARK: Physical keys
 
@@ -1589,6 +1686,14 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// A commit from the software keyboard — a tapped letter, or the string an input method settled on
     /// after however many keystrokes it needed.
     func insertText(_ text: String) {
+        // The commit ENDS the composition, and the preedit goes with it. UIKit usually unmarks around
+        // this call itself, but not on every path — a candidate accepted by a hardware Return arrives
+        // here with the run still marked — and a stale underline under text that is already on the
+        // line is the one artefact a user reads as the terminal being wrong.
+        //
+        // ``unmarkText()`` and NOT ``withdrawComposition()``: UIKit is the caller here, and telling it
+        // about a change it is in the middle of making is how a text input re-enters its own keyboard.
+        unmarkText()
         guard let live else { return }
         // A pane in Copy Mode or Hint Mode reads a SOFT-keyboard commit as commands too. Without this the
         // modes would work only for the minority of phones with a keyboard attached: the on-screen
@@ -1616,7 +1721,15 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         // `UITextInput` conformance at all. What that conformance would add is the INLINE preedit, and
         // `docs/68` §5.1 still names it.
         if let model = live.terminalModel, model.commandPromptArmed {
-            model.commandPrompt.insert(text)
+            // ⌃R's query is the one place typing does not touch the document at all — the Mac's fork
+            // at `MacTerminalRendererView.insertText`, and it was missing here: a soft-keyboard
+            // character typed into an open reverse search was inserted into the LINE instead, which
+            // both edited the wrong buffer and left the search reading a query it never received.
+            if model.commandPrompt.isSearching {
+                model.commandPrompt.searchType(text)
+            } else {
+                model.commandPrompt.insert(text)
+            }
             surface?.promptDidChange()
             return
         }

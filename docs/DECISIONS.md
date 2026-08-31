@@ -18662,3 +18662,57 @@ without that, changing only the line height would have been a settings write tha
 is precisely the class of bug this pass exists to end. `TerminalPromptBand` multiplies its own rows
 by the same number, because the band draws the shell's prompt line against the grid and a grid at
 1.3 beside a band at 1.0 reads as the prompt having its own, tighter typography.
+
+## The phone becomes a text client, and what that closed (2026-09-01)
+
+**`UITextInput` on the responder, not on the pixels.** The phone's terminal had marked text nowhere:
+`TerminalInputHostView` conformed to `UIKeyInput`, which carries a COMMIT and nothing else, so an
+input method's uncommitted run was visible only in the keyboard's own candidate bar. Vietnamese and
+Chinese typed correctly the whole time — `Tieengs` arrives as one `Tiếng` — and what was missing was
+the inline preedit, the underlined run under the caret that says which letters are still being
+argued over. `Sources/SlopDeskPhoneUI/Pane/TerminalTextInput.swift` is that conformance, on the
+RESPONDER rather than on the renderer, because the responder is what UIKit asks and the pixels are
+its sibling.
+
+**The document is the composition and nothing else**, which is the Mac's rule in UIKit's vocabulary.
+There is no text here to be an index into: the grid answers what is on screen, the engine owns the
+grid, and a text view's questions — `closestPosition(to:)`, `characterRange(at:)`,
+`selectionRects(for:)` — are answered with the honest empty value rather than a reconstruction the
+engine would have scrolled away by the time anyone read it. Offering selection rects in particular
+would have put UIKit's grab handles and loupe over a selection the pane already makes with its own
+long press: two selections over the same pixels, which the user then has to keep apart.
+
+**The one number that is never `nil`: `selectedTextRange`.** Several input methods refuse to START a
+composition against a nil selection, and the failure is silent — the keyboard works, the candidates
+appear, and the inline run never arrives. A zero-length caret at the only position an empty document
+has is the answer, and `TerminalComposition` clamps every offset UIKit derives so a walk off either
+end is met with an edge rather than a trap.
+
+**Two seam members, because the phone's text client is a SIBLING of the pixels.**
+`setComposition(_:selection:)` reports the run and `caretAnchor` answers where the caret is AND in
+which view. The host does NOT decide who draws the preedit — the conformer does, band while the
+editor owns the line, grid otherwise — so that fork stays written once per platform; a host deciding
+it would be a second copy of a rule the Mac already holds, and the first time the two disagreed
+there would be two underlined runs on screen. The anchor is a pair for the same reason the Mac's
+`firstRect(forCharacterRange:)` forks: a candidate bar hanging off the grid's stale cursor while the
+letters appear a band's height below is the most visible way a Telex session can look broken.
+
+**Every text trait is turned OFF, and that is not tidiness.** Adopting `UITextInput` opts a view into
+corrections `UIKeyInput` never offered: smart quotes rewrite `"` as `"` on a shell line, smart dashes
+turn `--flag` into `–flag`, autocapitalisation shifts the first letter of every command, and
+autocorrect rewrites the ones it does not know, which is all of them. Adopting the protocol without
+them would have been a regression shipped as a feature.
+
+**It also ended `FloatingCursor`'s wait, and needed one new door to do it.** UIKit hands a
+space-bar drag only to a text input, which is why the accumulator was built, tested and caller-less.
+Wiring it turned up an asymmetry: the drag's arrows are BYTES for a shell holding the line, and the
+app's own editor is not a shell — there is nothing to send `ESC [ C` to. So
+`slopdesk_phone_floating_cursor_steps` is a second RENDERING of the same `feed`, a signed count for
+the editor's path, and the two doors are pinned against each other rather than against a number
+typed in a test: what would break silently is them drifting, not either one alone. Exactly one is
+called per delta, because each consumes the travel it reports.
+
+**And it found a live defect on the seam it touched.** The phone's `insertText` had no `isSearching`
+fork, so a soft-keyboard character typed into an open ⌃R was inserted into the LINE instead of the
+query — the Mac has had that fork since the band landed. Two bugs in one: the wrong buffer was
+edited, and the search read a query it never received.

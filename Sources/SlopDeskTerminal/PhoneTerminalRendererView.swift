@@ -45,6 +45,10 @@ final class PhoneTerminalRendererView: UIView {
     /// The band under the grid, built on first ask of ``promptView``.
     private var band: PhoneTerminalPromptView?
 
+    /// What an input method is composing over the EDITOR's line, or `nil` for a composition the grid
+    /// is drawing instead — see ``setComposition(_:selection:)``. Never both.
+    private var composition: (text: String, selection: NSRange)?
+
     /// The detected link the OPEN menu was offered on, resolved at the release point and stashed
     /// because a `UIAction` closure fires long after that point is gone. The Mac's `pendingMenuLink`,
     /// and one slot suffices for its reason: a menu is modal per view.
@@ -450,24 +454,57 @@ extension PhoneTerminalRendererView: @MainActor TerminalSurfaceHosting {
     }
 
     /// The band, built on first ask and kept for the life of the surface.
-    ///
-    /// ⚠️ THE COMPOSITION IS ALWAYS `nil` HERE, and that is the phone's one remaining gap rather
-    /// than an oversight. `TerminalInputHostView` conforms to `UIKeyInput`, not `UITextInput`, so
-    /// iOS has no MARKED text to draw: an input method shows its candidates in the keyboard's own bar
-    /// and commits the settled string through `insertText`, which reaches the editor as text and is
-    /// why Vietnamese and Chinese both type correctly at this prompt today. What is missing is the
-    /// INLINE preedit — the underlined run under the caret the Mac draws — and it arrives with the
-    /// `UITextInput` conformance this file's leaf has wanted since `docs/68` §5.1.
     var promptView: PlatformView? {
         guard let model else { return nil }
         if let band { return band }
         let made = PhoneTerminalPromptView(
             prompt: model.commandPrompt,
             armed: { [weak self] in self?.model?.commandPromptArmed ?? false },
-            composition: { nil },
+            composition: { [weak self] in self?.composition },
         )
         band = made
         return made
+    }
+
+    /// The input method's preedit, and the one decision the reporting host does not make: WHICH of
+    /// the two surfaces draws it.
+    ///
+    /// `MacTerminalRendererView.setMarkedText(_:selectedRange:replacementRange:)`'s fork exactly, and
+    /// for its reason: a composition over the EDITOR's line belongs to the band, so the grid — which
+    /// is not where that line is — must not also draw it. Two underlined runs on screen at once is
+    /// what pushing every composition to both would look like.
+    ///
+    /// An empty `text` withdraws it from BOTH, unconditionally: the arming can change between the
+    /// composition starting and its cancellation, and clearing only the side that happens to be armed
+    /// now is how an underlined run gets stranded on the other one with nothing left to repaint it.
+    func setComposition(_ text: String, selection: NSRange) {
+        guard !text.isEmpty else {
+            composition = nil
+            driver.setMarkedText("", cursorBytes: 0)
+            band?.refresh()
+            return
+        }
+        if model?.commandPromptArmed == true {
+            composition = (text, selection)
+            band?.refresh()
+            return
+        }
+        composition = nil
+        // UIKit counts in UTF-16 and the door takes UTF-8. `String.Index(utf16Offset:in:)` lands on
+        // `endIndex` for an offset past the end, which is the same "caret after everything" the door
+        // falls back to — so an out-of-range report is handled once, here, rather than twice.
+        let caret = String.Index(utf16Offset: selection.location, in: text)
+        driver.setMarkedText(text, cursorBytes: text[..<caret].utf8.count)
+    }
+
+    /// The band's caret while the editor owns the line, else the grid's cell — see the seam.
+    ///
+    /// The band answers `nil` for its own caret whenever it is not armed, so the fork is ITS reading
+    /// of the arming rather than a second one spelled here.
+    var caretAnchor: (view: PlatformView, rect: CGRect)? {
+        if let band, let caret = band.caretRect { return (band, caret) }
+        guard let cell = driver.caretRect() else { return nil }
+        return (self, cell)
     }
 
     /// The responder edited the prompt — see the seam.

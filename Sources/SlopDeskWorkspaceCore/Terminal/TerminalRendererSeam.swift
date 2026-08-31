@@ -114,6 +114,31 @@ public protocol TerminalSurfaceHosting: AnyObject {
     /// which the editor does not own, and on iOS the key arrives at a view that is not the surface.
     func scrollPages(_ pages: Int)
 
+    /// What an input method is COMPOSING — the underlined preedit run under the caret — with
+    /// `selection` its own caret inside `text`, in UTF-16 offsets. An empty `text` withdraws it.
+    ///
+    /// Here for ``promptDidChange()``'s reason once more, and it is the same asymmetry: on macOS the
+    /// renderer view is itself the `NSTextInputClient`, so it holds the composition and decides who
+    /// draws it without leaving the file. On iOS the text client is `TerminalInputHostView`, a
+    /// SIBLING of the pixels, and the two places a preedit can be drawn — the prompt band and the
+    /// grid — are both behind this seam.
+    ///
+    /// ⚠️ THE HOST DOES NOT DECIDE WHICH ONE. It reports the composition and the conformer picks, so
+    /// the band-or-grid fork is written once per platform rather than once per responder; two preedit
+    /// runs on screen at the same time is what a host answering that question itself would look like.
+    func setComposition(_ text: String, selection: NSRange)
+
+    /// Where the caret is, and the view whose coordinates the rect is in.
+    ///
+    /// Two values because the answer moves between two views: while the editor owns the line the
+    /// caret is in the BAND, and otherwise it is a cell on the grid. A candidate list hanging off the
+    /// grid's stale cursor while the letters appear a band's height below is the most visible way a
+    /// Telex session can look broken, and it is what returning only a rect would guarantee.
+    ///
+    /// `nil` where there is no caret to point at — a cursor scrolled off screen, or a host with no
+    /// surface. The caller converts; UIKit places the candidate window itself.
+    var caretAnchor: (view: PlatformView, rect: CGRect)? { get }
+
     /// Re-push the pane's WORKSPACE focus. Drives the keyboard responder and the renderer's cursor
     /// (solid vs hollow — `slopdesk_termrender::layout::cursor` forces `Hollow` when unfocused,
     /// whatever the shell asked for); it does NOT gate render-liveness, so an unfocused split sibling
@@ -136,6 +161,12 @@ public extension TerminalSurfaceHosting {
 
     /// Nothing to scroll. A host with no surface has no viewport either.
     func scrollPages(_: Int) {}
+
+    /// Nowhere to draw a preedit, which is true of every host that answered `nil` above.
+    func setComposition(_: String, selection _: NSRange) {}
+
+    /// No caret. A host with no pixels has no cell for one to sit in.
+    var caretAnchor: (view: PlatformView, rect: CGRect)? { nil }
 }
 
 /// The MODAL POINTER SHIELD — whether a modal overlay card (command palette / Open Quickly /
