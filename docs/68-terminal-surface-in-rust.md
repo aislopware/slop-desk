@@ -282,6 +282,18 @@ pixel-pushing to the host application."
    it, with `slopdesk_phone_floating_cursor_steps` as the second rendering of the SAME `feed` — a
    signed count for the drag whose cursor is the app's own line editor, where there is no shell to
    send `ESC [ C` to and the travel has to arrive as the editing verb an arrow press does.
+
+   **And the preedit is verified in PIXELS, which this doc twice called blocked.** The block is real
+   for the grid — `slopdesk-apple-metal` sets `framebufferOnly = true`, so the drawable cannot be
+   read back — and does not reach the BAND, which is `CGContext` end to end and photographs
+   off-screen through the phone's own `HostedRaster`. Since the band is where the preedit goes
+   whenever the editor owns the line, that is the case the feature was built for, and
+   `Apps/ClientApp-iOS/Tests/TerminalPreeditPixelsOnIOSTests` renders it: one pin that the marked run
+   draws its underline, one that the caret the band REPORTS is the caret it DRAWS. The second failed
+   on arrival — `caretRect` took no composition, so with a conversion in flight it reported the
+   editor's cursor 48 pt away from the bar on screen, and a candidate window hangs off the reported
+   one. Fixed by measuring both off the same `CTLine` (`compositionCaret`), on both platforms at
+   once, because the band is one implementation.
 9. scrollbar geometry, replacing `ghostty_surface_viewport_info` and the `SCROLLBAR` action
 10. padding, content scale, resize → cols·rows, which `rust/slopdesk-terminal/src/geometry.rs`
     already computes

@@ -80,7 +80,9 @@ final class PhoneTerminalPromptView: UIView {
     /// points while the editor owns the line.
     var caretRect: CGRect? {
         guard armed() else { return nil }
-        return TerminalPromptBand.caretRect(prompt, metrics: TerminalPromptBand.Metrics.current)
+        return TerminalPromptBand.caretRect(
+            prompt, composition: composition(), metrics: TerminalPromptBand.Metrics.current,
+        )
     }
 
     override func draw(_: CGRect) {

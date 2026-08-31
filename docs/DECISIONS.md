@@ -18716,3 +18716,20 @@ called per delta, because each consumes the travel it reports.
 fork, so a soft-keyboard character typed into an open ⌃R was inserted into the LINE instead of the
 query — the Mac has had that fork since the band landed. Two bugs in one: the wrong buffer was
 edited, and the search read a query it never received.
+
+**The preedit's pixel verification was never blocked — only the GRID's is.** This was written off as
+needing a booted simulator, on the strength of `slopdesk-apple-metal` setting `framebufferOnly =
+true` so its drawable cannot be read back. That is true of the grid and false of the BAND, which is
+`CGContext` end to end and photographs off-screen through `HostedRaster` exactly like every other
+phone pixel rig — and the band is where the preedit goes whenever the app's own line editor owns the
+line, which is the case the feature was built for. `TerminalPreeditPixelsOnIOSTests` renders it.
+
+**Which immediately caught a second live defect, and one only pixels could catch.**
+`TerminalPromptBand.caretRect` took no composition, so with a conversion in flight it reported the
+EDITOR's cursor while `drawComposition` drew the bar shifted into the marked run. An IME hangs its
+candidate window off the reported rect, so for exactly the long conversions that need one — a
+Japanese phrase, not a Telex vowel — the window pointed at the start of the run while the caret sat
+at its end. Both platforms had it, because the band is one implementation. The fix is not a second
+correction but a shared `compositionCaret`, measured off the SAME `CTLine` that gets drawn: the two
+numbers can no longer disagree about a kern. No arithmetic assertion could have found this — the two
+spellings were each self-consistent — which is the argument for the rig, not just for the fix.

@@ -90,7 +90,9 @@ final class MacTerminalPromptView: NSView {
     /// window hangs while the editor owns the line.
     var caretRect: NSRect? {
         guard armed() else { return nil }
-        return TerminalPromptBand.caretRect(prompt, metrics: TerminalPromptBand.Metrics.current)
+        return TerminalPromptBand.caretRect(
+            prompt, composition: composition(), metrics: TerminalPromptBand.Metrics.current,
+        )
     }
 
     override func draw(_: NSRect) {

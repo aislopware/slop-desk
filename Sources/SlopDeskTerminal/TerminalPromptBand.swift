@@ -154,10 +154,21 @@ enum TerminalPromptBand {
     /// answer only while the shell owns the line. With the band up the caret is here, and a candidate
     /// list hanging off a cell the user is not typing into is the most visible way a Telex session
     /// can look broken.
-    static func caretRect(_ prompt: CommandPrompt, metrics: Metrics) -> CGRect? {
+    ///
+    /// ⚠️ THE COMPOSITION IS AN ARGUMENT because a marked run MOVES the caret. While one is in flight
+    /// the bar sits inside the preedit, not at the editor's own cursor, and this used to report the
+    /// cursor while ``drawComposition(_:metrics:at:into:)`` drew the shifted one — so for exactly the
+    /// conversions that need a candidate window most, a long Japanese one, the window anchored at the
+    /// START of the run while the caret was at its end. Both now ask ``compositionCaret``.
+    static func caretRect(
+        _ prompt: CommandPrompt,
+        composition: (text: String, selection: NSRange)?,
+        metrics: Metrics,
+    ) -> CGRect? {
         guard let origin = caretOrigin(prompt, metrics: metrics, from: inset.height) else { return nil }
+        let shift = composition.map { compositionCaret($0, metrics: metrics) } ?? 0
         return CGRect(
-            x: origin.x, y: origin.y - metrics.ascent, width: 2, height: metrics.lineHeight,
+            x: origin.x + shift, y: origin.y - metrics.ascent, width: 2, height: metrics.lineHeight,
         )
     }
 
@@ -320,25 +331,41 @@ enum TerminalPromptBand {
         at origin: CGPoint,
         into context: CGContext,
     ) {
-        let attributes: [NSAttributedString.Key: Any] = [
+        draw(composed(marked.text, metrics: metrics), at: origin, into: context)
+        context.setFillColor(Slate.Native.Terminal.accent.cgColor)
+        context.fill(CGRect(
+            x: origin.x + compositionCaret(marked, metrics: metrics),
+            y: origin.y - metrics.ascent,
+            width: 2,
+            height: metrics.lineHeight,
+        ))
+    }
+
+    /// The marked run as Core Text draws it: the band's ink, underlined, at the prompt's own font.
+    private static func composed(_ text: String, metrics: Metrics) -> CTLine {
+        CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
             .init(kCTFontAttributeName as String): metrics.font,
             .init(kCTForegroundColorAttributeName as String): Slate.Native.Terminal.ink.cgColor,
             .init(kCTUnderlineStyleAttributeName as String): CTUnderlineStyle.single.rawValue,
-        ]
-        let line = CTLineCreateWithAttributedString(
-            NSAttributedString(string: marked.text, attributes: attributes),
+        ]))
+    }
+
+    /// How far into a marked run its own caret sits, in points from the run's start.
+    ///
+    /// Measured off the SAME `CTLine` that gets drawn, so the reported rect and the drawn bar cannot
+    /// disagree about a kern or a ligature.
+    ///
+    /// ⚠️ NO MARK ON THIS LINE, so `offset(_:at:in:)` — which adds one — is the wrong helper. The
+    /// preedit is drawn on its own, starting at the caret, and both input systems already report the
+    /// selection in UTF-16, which is the unit Core Text wants: no conversion either.
+    private static func compositionCaret(
+        _ marked: (text: String, selection: NSRange), metrics: Metrics,
+    ) -> CGFloat {
+        CTLineGetOffsetForStringIndex(
+            composed(marked.text, metrics: metrics),
+            CFIndex(min(marked.selection.location, marked.text.utf16.count)),
+            nil,
         )
-        draw(line, at: origin, into: context)
-        // ⚠️ NO MARK ON THIS LINE, so `offset(_:at:in:)` — which adds one — is the wrong helper. The
-        // preedit is drawn on its own, starting at the caret, and both input systems already report
-        // the selection in UTF-16, which is the unit Core Text wants: no conversion either.
-        let caret = CTLineGetOffsetForStringIndex(
-            line, CFIndex(min(marked.selection.location, marked.text.utf16.count)), nil,
-        )
-        context.setFillColor(Slate.Native.Terminal.accent.cgColor)
-        context.fill(CGRect(
-            x: origin.x + caret, y: origin.y - metrics.ascent, width: 2, height: metrics.lineHeight,
-        ))
     }
 
     // MARK: - Text
