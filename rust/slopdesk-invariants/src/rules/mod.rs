@@ -1815,6 +1815,11 @@ pub fn registry() -> Vec<Rule> {
             check: gate_health::every_fixture_name_is_spelled_once,
         },
         Rule {
+            name: "census-is-complete",
+            origin: "rust/slopdesk-devtools/src/gates/mod.rs §\"Can a COMMENT satisfy one of these?\"",
+            check: gate_health::the_gate_census_names_every_gate,
+        },
+        Rule {
             name: "deleted-host-swift",
             origin: "docs/50 §3, docs/51 §6.14, docs/52",
             check: deleted_host_swift::deleted_host_swift,

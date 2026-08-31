@@ -18043,3 +18043,39 @@ not the property; the direction a wrong reading fails in is, and `AtMost`'s is l
 field back for an ordered claim whose ANCHOR is legitimately prose* — a `MARK:` or a section
 heading — that is the split `ByteMap` and `Corpus` already make: locate the range on the raw text,
 read the FACTS out of `statements()`. All eleven `Within`/`Before` sites anchor in code today.
+
+## The census that spelled its own length (2026-08-31)
+
+`slopdesk-devtools`' `gates/mod.rs` carries a census answering one question per gate module — can a
+COMMENT satisfy this gate? It lists the clean ones too, and says why: "not listed" and "listed as
+clean" are the same line to whoever reads it next, and only one of them is a fact.
+
+It also spelled its own length — "ALL ELEVEN modules are below" — and the directory had twelve. The
+missing one was `code_text`, the comment-stripping lexer that two rounds of fixes had just routed
+`golden::readers` and `xcode::declared_tests` through: the module that reads the MOST source text of
+any of them. The census went stale in the same change that made it accurate everywhere else, and
+nothing in the tree could say so. A count written into prose is stated once and then wrong in
+silence, which is the failure mode the census itself was written against.
+
+So the number is out of the prose and into a rule. `slopdesk-invariants`' `census-is-complete`
+compares the census bullets against the `pub mod` lines in the same file, both directions: a module
+with no bullet is a completeness the census no longer has, and a bullet naming no module is a
+sentence certifying a gate that is gone — the unfulfilled-expectation half `DELIBERATE` and
+`exemptions-are-alive` already carry. Probed by seeding the defect back into the live file: the rule
+reds naming `code_text`.
+
+The two sides read DIFFERENT views, and that is the point rather than an inconsistency. `pub mod`
+reads `statements()`, so a commented-out declaration is not a module. The census reads RAW text and
+must, because its subject IS prose: what is being satisfied is "somebody wrote a sentence about this
+module", and a sentence is the one thing a comment-blanked view cannot hold. That admission is
+written into the rule's doc so the next sweep of positive-claim views — the sweep that ended one
+round earlier by deleting the `view` field off six claim arms — does not read it as an oversight and
+"fix" it into a rule that can never fire.
+
+**Rejected.** *Writing "ALL TWELVE"* — it rots again on the thirteenth, and the rule now owns the
+fact. *Stating the census as a `Claim::SameSet` over two `Corpus` extractions* — `Corpus` dropped its
+view field precisely so a satisfier cannot read prose, which is right, and this is the one claim
+whose far side legitimately IS prose; forcing it through would have meant growing that field back
+for every caller. *Anchoring the section on the first bullet instead of the heading* — the file opens
+with a SECOND bulleted list, the port note saying what each gate used to be as a shell script, and
+reading that one as the census reports a census that names nothing as complete.

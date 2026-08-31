@@ -43,9 +43,15 @@
 //! `slopdesk-invariants` closed that class over the tree: a positive claim — one that must be
 //! SATISFIED — answered by a sentence rather than by code. These gates read text too, so the same
 //! question was asked of every reading site here, and the answer is per-site rather than global.
-//! ALL ELEVEN modules are below, including the four that read no source text at all, because "not
-//! listed" and "listed as clean" are the same line to whoever reads this next and only one of them
-//! is a fact.
+//! EVERY module in this directory is below, the ones that read no source text at all included,
+//! because "not listed" and "listed as clean" are the same line to whoever reads this next and only
+//! one of them is a fact.
+//!
+//! The count used to be spelled out here — "ALL ELEVEN" — and it went stale the moment
+//! [`code_text`] landed, which is the module that reads the MOST source text of any of them. A list
+//! that states its own length states it once and is then wrong in silence, so the length is not
+//! written down any more: `slopdesk-invariants`' `census-is-complete` compares the bullets below
+//! against the `pub mod` lines at the bottom of this file, in both directions.
 //!
 //! * [`reach`] — YES, and it is fixed. `just --dry-run` echoes a comment inside a recipe body
 //!   verbatim, so `# cargo +nightly miri test` in `check` satisfied the obligation `CLAUDE.md`
@@ -84,6 +90,11 @@
 //!   `default_install_hook_types:` is not a declaration `prek` would read either, so honouring it
 //!   would have this gate demand files for stages nothing installs. The other half of the claim is
 //!   a directory listing, which no comment can write.
+//! * [`code_text`] — the question inverts, because it is not a gate: it is the READER the two fixed
+//!   entries above go through. Nothing here can be satisfied by a comment in it; what it can do is
+//!   the opposite and worse — mistake CODE for a comment, and hand a gate a haystack with the thing
+//!   it was looking for cut out of it. That is the one direction its own header forbids, and what
+//!   its tree canary measures on every file that ships.
 //!
 //! The discriminator is the one that crate arrived at: a claim that must be SATISFIED must not read
 //! prose, and a BAN may, because a comment makes a ban fail loud rather than pass quiet.

@@ -25,6 +25,8 @@ use crate::tree::Tree;
 const HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
 /// This crate's own sources — where an exemption spelled as a `const` is declared.
 const CRATE_SRC: &str = "rust/slopdesk-invariants/src/";
+/// The gate runners' own module list, and the census above it.
+const GATE_CENSUS: &str = "rust/slopdesk-devtools/src/gates/mod.rs";
 
 /// A door with no Swift caller, and the reason it stays.
 ///
@@ -340,15 +342,182 @@ pub fn every_fixture_name_is_spelled_once(tree: &Tree) -> Report {
     report
 }
 
+/// The gate-runner census names every module in its own directory, and only live ones.
+///
+/// `slopdesk-devtools`' `gates/mod.rs` carries a census answering one question per module — can a
+/// COMMENT satisfy this gate? Its own thesis is why it lists the clean ones too: "not listed" and
+/// "listed as clean" are the same line to whoever reads it next, and only one of them is a fact.
+/// A module that arrives without a bullet is therefore not an omission in the prose; it is the
+/// census claiming a completeness it no longer has.
+///
+/// Which is what happened. The census spelled its own length — "ALL ELEVEN" — and `code_text`
+/// landed as a twelfth, the module that reads the MOST source text of any of them, so the sentence
+/// and the directory disagreed and nothing could say so. The count is gone from the prose now and
+/// lives here.
+///
+/// ## ⚠️ THE TWO SIDES READ DIFFERENT VIEWS, AND THAT IS THE RULE'S POINT
+///
+/// The `pub mod` side reads [`crate::tree::Source::statements`], so a commented-out declaration is
+/// not a module. The CENSUS side reads the raw text, and must: its subject IS prose. What is being
+/// satisfied here is "somebody wrote a sentence about this module", and a sentence is the one thing
+/// a comment-blanked view cannot hold. This is the same admission [`super::doc_citations`] carries
+/// and for the same reason, and it is written down so that the next sweep of positive-claim views
+/// does not read it as an oversight and "fix" it into a rule that can never fire.
+///
+/// Both directions fail: a module with no bullet, and a bullet naming no module. The second is the
+/// unfulfilled-expectation half — a census entry for a deleted gate is a sentence certifying
+/// something that is not there, which is worse than no sentence at all.
+#[must_use]
+pub fn the_gate_census_names_every_gate(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let Some(source) = report.source(tree, GATE_CENSUS, "there would be no census to check") else {
+        return report;
+    };
+
+    let declared = text::capture_set(source.statements(), r"^pub mod ([a-z_]+);");
+    if declared.is_empty() {
+        report.fail(format!(
+            "{GATE_CENSUS}: no `pub mod` line parsed — this rule is blind"
+        ));
+        return report;
+    }
+
+    // Anchored on the census HEADING rather than on the first bullet, because the file opens with a
+    // second bulleted list — the port note, which explains what each gate WAS as a shell script and
+    // is not a claim about comments at all. Reading that list as the census would report the census
+    // complete while it named nothing.
+    let section = text::range(
+        &source.text,
+        r"^//! ## Can a COMMENT satisfy one of these\?",
+        r"^//! The discriminator is the one that crate arrived at",
+    );
+    let censused = text::capture_set(&section, r"^//! \* \[`([a-z_]+)`\]");
+    if censused.is_empty() {
+        report.fail(format!(
+            "{GATE_CENSUS}: no census bullet parsed between the heading and the discriminator — the anchors \
+             this rule reads have moved, and it would otherwise report a census of nothing as complete"
+        ));
+        return report;
+    }
+
+    let uncensused: BTreeSet<&String> = declared.difference(&censused).collect();
+    for module in uncensused {
+        report.fail(format!(
+            "{GATE_CENSUS} declares `{module}` and the census does not answer for it — add the bullet \
+             saying whether a COMMENT can satisfy it, because an unlisted module and a module listed as \
+             clean read the same to whoever comes next"
+        ));
+    }
+    let stale: BTreeSet<&String> = censused.difference(&declared).collect();
+    for module in stale {
+        report.fail(format!(
+            "the census answers for `{module}` and no such module is declared in {GATE_CENSUS} — a bullet \
+             certifying a gate that is gone is worse than no bullet"
+        ));
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
 
     use super::{
         every_exemption_names_a_path_the_tree_has, every_ffi_door_is_opened_or_declared_deliberate,
-        every_fixture_name_is_spelled_once,
+        every_fixture_name_is_spelled_once, the_gate_census_names_every_gate,
     };
     use crate::tests::Fixture;
+
+    /// A `gates/mod.rs` whose census section and `pub mod` list agree, plus the two anchors.
+    fn census(bullets: &str, modules: &str) -> String {
+        format!(
+            "//! ## Can a COMMENT satisfy one of these? The census, so nobody re-runs it\n//! EVERY module \
+             in this directory is below.\n//!\n{bullets}//!\n//! The discriminator is the one that crate \
+             arrived at: a claim that must be SATISFIED must not read prose.\n\n{modules}"
+        )
+    }
+
+    /// A module nobody wrote a sentence about — the shape `code_text` was in when this rule landed.
+    #[test]
+    fn a_gate_module_with_no_census_bullet_is_red() {
+        let fixture = Fixture::new("gate-census-missing");
+        fixture.write(
+            "rust/slopdesk-devtools/src/gates/mod.rs",
+            &census(
+                "//! * [`reach`] — no. It reads process output.\n",
+                "pub mod reach;\npub mod code_text;\n",
+            ),
+        );
+        let report = the_gate_census_names_every_gate(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report.violations().iter().any(|line| line.contains("code_text")),
+            "the report has to name the module nobody answered for: {report:?}"
+        );
+
+        let green = Fixture::new("gate-census-complete");
+        green.write(
+            "rust/slopdesk-devtools/src/gates/mod.rs",
+            &census(
+                "//! * [`reach`] — no. It reads process output.\n//! * [`code_text`] — the question \
+                 inverts; it is the reader.\n",
+                "pub mod code_text;\npub mod reach;\n",
+            ),
+        );
+        assert!(the_gate_census_names_every_gate(&green.tree()).is_clean());
+    }
+
+    /// The unfulfilled half: a sentence certifying a gate that is gone.
+    #[test]
+    fn a_census_bullet_for_a_deleted_gate_is_red() {
+        let fixture = Fixture::new("gate-census-stale");
+        fixture.write(
+            "rust/slopdesk-devtools/src/gates/mod.rs",
+            &census(
+                "//! * [`reach`] — no. It reads process output.\n//! * [`herdr`] — no. It was deleted three \
+                 releases ago.\n",
+                "pub mod reach;\n",
+            ),
+        );
+        let report = the_gate_census_names_every_gate(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report.violations().iter().any(|line| line.contains("herdr")),
+            "the report has to name the bullet with nothing behind it: {report:?}"
+        );
+    }
+
+    /// Anchors that moved must read as BLIND, not as a census of nothing being complete.
+    ///
+    /// A section that parses empty is the failure this rule would otherwise be silent about: it is
+    /// what makes anchoring on a prose heading honest, since the heading is free to be reworded and
+    /// the rule is not free to stop noticing.
+    #[test]
+    fn a_census_section_that_parses_nothing_is_red() {
+        let fixture = Fixture::new("gate-census-blind");
+        fixture.write(
+            "rust/slopdesk-devtools/src/gates/mod.rs",
+            "//! ## A heading this rule does not know\n//! * [`reach`] — no.\n\npub mod reach;\n",
+        );
+        let report = the_gate_census_names_every_gate(&fixture.tree());
+        assert!(!report.is_clean());
+        assert!(
+            report.violations().iter().any(|line| line.contains("anchors")),
+            "a moved anchor has to say so rather than report a clean census: {report:?}"
+        );
+
+        // And the other blindness: a file with a census and no modules at all.
+        let empty = Fixture::new("gate-census-no-modules");
+        empty.write(
+            "rust/slopdesk-devtools/src/gates/mod.rs",
+            &census("//! * [`reach`] — no.\n", ""),
+        );
+        let report = the_gate_census_names_every_gate(&empty.tree());
+        assert!(
+            report.violations().iter().any(|line| line.contains("blind")),
+            "no `pub mod` line at all is a blind rule, not a green one: {report:?}"
+        );
+    }
 
     /// A header with a door and a Swift tree that never names it.
     #[test]
