@@ -305,6 +305,24 @@ pixel-pushing to the host application."
    places a preedit can be drawn are each pinned in the layer that decides them, and the one thing
    genuinely out of reach is whether a real input method STARTS a composition — a keyboard-process
    behaviour no off-screen rig on either platform can observe.
+
+   **The composition's LIFETIME is pinned on the PHONE, and cannot be on the Mac.**
+   `TerminalCompositionSeamOnIOSTests` pins all three events — a mark starts, a COMMIT ends it, a
+   RESIGNATION ends it. The last two are the ones worth a test: either left standing leaves an
+   underlined run over text the input method has already forgotten, with no keystroke and no frame
+   coming to repaint it away, and no test of the TEXT can see it because the text is right either
+   way. It can do this because `TerminalInputHostView.surface` is injectable and the responder is not
+   the renderer.
+
+   The Mac's is the same rule at the same seam (`resignFirstResponder` → `clearMarkedText`,
+   `insertText` → `clearMarkedText`) and is **blocked, measured, not assumed**:
+   `MacTerminalRendererView` cannot be constructed inside a SwiftPM test bundle at all. A probe took
+   it apart step by step — `TerminalSurfaceDriver` opens a real `CAMetalLayer`, `wantsLayer`, the
+   layer hand-off, `setFocus` and `bind` all run clean on a bare `NSView` subclass — and what dies is
+   the class's own `super.init`, on `-[NSView _setIgnoreFocusEngine:]: unrecognized selector`, an
+   AppKit internal the `xctest` host does not install. Not a Metal problem, and not ours to fix. A
+   stand-in for the driver would close it and must not be written: on the Mac the responder IS the
+   renderer, so the stand-in would be a second implementation of the surface.
 9. scrollbar geometry, replacing `ghostty_surface_viewport_info` and the `SCROLLBAR` action
 10. padding, content scale, resize → cols·rows, which `rust/slopdesk-terminal/src/geometry.rs`
     already computes
