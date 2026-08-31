@@ -102,7 +102,9 @@ pub fn extract_into(kind: Kind, archive: &Path, target: &Path) -> Result<(), Ext
     match kind {
         Kind::TarGz => untar_gz(archive, target),
         Kind::Zip => unzip(archive, target),
-        Kind::File => Err(ExtractError::Unsupported(kind)),
+        // Neither arrives as an archive: a `file` pin is committed in place and a `git` pin is
+        // cloned, so reaching this function with either is a routing bug, not a bad download.
+        Kind::File | Kind::Git => Err(ExtractError::Unsupported(kind)),
     }?;
     unquarantine(target);
     Ok(())

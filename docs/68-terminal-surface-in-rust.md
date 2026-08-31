@@ -81,9 +81,28 @@ with a reproducible release. The escape hatch is authoritative and short-circuit
 if env::var_os("GHOSTTY_SOURCE_DIR").is_some() { build_vendored(link_mode); return; }
 ```
 
-So the fetch becomes ours: one `just` recipe pins the ghostty commit, fetches once into a gitignored
-cache, and exports `GHOSTTY_SOURCE_DIR` + `GHOSTTY_ZIG_SYSTEM_DIR`. Same shape as today's
-`.work/ghostty-src`, roughly thirty lines instead of six hundred.
+So the fetch becomes ours. **LANDED**, and not as a recipe: the pin joined the file that already
+pins every other third-party dependency, and the export joined the file cargo already reads.
+
+- `ThirdParty/tools/tools.lock` gains a fourth kind, `git` — a SOURCE tree cloned at a pinned
+  commit, with no binary and no `.prefix/bin` symlink, because a source tree is not a program. Its
+  digest field is the 40-hex COMMIT rather than a SHA-256, which is the stronger pin: git is
+  content-addressed over the whole tree, and GitHub's generated archives are explicitly not
+  guaranteed byte-stable, so a tarball digest is the one thing this must NOT be. `slopdesk-provision`
+  clones with `init` + `fetch --depth 1 <sha>` + `checkout FETCH_HEAD` and then asks the clone what
+  commit it is actually at.
+- `rust/.cargo/config.toml` exports `GHOSTTY_SOURCE_DIR` through cargo's own `[env]` with
+  `relative = true`. **Not a `just` recipe**: a recipe can only export into the command it launches,
+  and these crates are built by bare `cargo` as often as by `just` — an env var that is only right
+  under one entry point is exactly the shape that produces a build nobody else can reproduce.
+- `GHOSTTY_ZIG_SYSTEM_DIR` is left unset. It overrides Zig's own system package directory and there
+  is nothing to override: the machine's `zig` is already 0.16.0, which is what this pin needs.
+
+The two files are held in step by `just lint-invariants` → `engine-source-read-at-its-pin`, because
+nothing else does and the drift is silent: bump the lock without the config and `just provision`
+fetches the new tree while every build keeps compiling the previous one still on disk — same
+directory, same `build.zig`, same successful link, wrong sources. That is
+`slopdesk-gate ffi --check`'s failure shape one layer down.
 
 `build.rs` also returns early under `CARGO_CFG_MIRI`, so `just check`'s Miri gate keeps working
 without a native library.

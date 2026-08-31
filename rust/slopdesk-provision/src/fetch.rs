@@ -53,8 +53,9 @@ impl core::fmt::Display for FetchError {
             Self::Digest { url, expected, got } => {
                 write!(
                     out,
-                    "SHA-256 mismatch for {url}\n  expected {expected}\n  got      {got}\nA corrupt \
-                     download, a re-cut upstream release, or a wrong pin — none of which are safe to run."
+                    "digest mismatch for {url}\n  expected {expected}\n  got      {got}\nA corrupt \
+                     download, a re-cut upstream release, a moved commit, or a wrong pin — none of which \
+                     are safe to run."
                 )
             },
             Self::Io { path, cause } => write!(out, "{}: {cause}", path.display()),
@@ -138,6 +139,76 @@ pub fn fetch_verified(url: &str, sha256: &str, dest: &Path) -> Result<Cached, Fe
         }
     })?;
     Ok(Cached::Downloaded)
+}
+
+/// Clones `url` into `dest` and parks it at `commit`, verified.
+///
+/// Not `git clone --branch`: a commit is not a ref, and a shallow clone of a default branch may not
+/// contain it at all. The sequence that works for an arbitrary commit — and is what a CI cache does
+/// — is `init` + `remote add` + `fetch --depth 1 <sha>` + `checkout FETCH_HEAD`, which moves
+/// exactly one commit's worth of tree.
+///
+/// The verification is the last step and it is not decoration. `fetch <sha>` can succeed against a
+/// server that resolved the argument some other way, so the clone is asked what it is actually at
+/// and that answer is compared to the pin. Git is content-addressed, so a matching commit means the
+/// whole tree matches — this is the same guarantee a SHA-256 gives an archive, over more bytes.
+///
+/// # Errors
+/// [`FetchError::Transport`] when git fails or is absent, naming the repository;
+/// [`FetchError::Digest`] when the clone parked at a commit that is not the pinned one.
+pub fn clone_at(url: &str, commit: &str, dest: &Path) -> Result<(), FetchError> {
+    let transport = |cause: String| {
+        FetchError::Transport {
+            url: url.to_owned(),
+            cause,
+        }
+    };
+    fs::create_dir_all(dest).map_err(|cause| {
+        FetchError::Io {
+            path: dest.to_path_buf(),
+            cause,
+        }
+    })?;
+
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["remote", "add", "origin", url],
+        vec!["fetch", "--quiet", "--depth", "1", "origin", commit],
+        vec!["checkout", "--quiet", "FETCH_HEAD"],
+    ] {
+        git(dest, &args).map_err(transport)?;
+    }
+
+    let got = git(dest, &["rev-parse", "HEAD"]).map_err(transport)?;
+    if !got.eq_ignore_ascii_case(commit) {
+        return Err(FetchError::Digest {
+            url: url.to_owned(),
+            expected: commit.to_owned(),
+            got,
+        });
+    }
+    Ok(())
+}
+
+/// One `git` invocation inside `dir`, with its trimmed stdout on success.
+///
+/// The error carries git's own stderr rather than an exit code: "not a valid object name" and
+/// "could not resolve host" are different problems for the reader, and an exit status of 128 says
+/// neither.
+fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|cause| format!("git {}: {cause}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed\n  {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// Whether a verified archive was already on disk.

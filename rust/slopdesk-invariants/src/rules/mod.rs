@@ -40,6 +40,7 @@ pub mod device_frames;
 pub mod device_law;
 pub mod device_streams;
 pub mod doc_citations;
+pub mod engine_pin;
 pub mod ffi_edges;
 pub mod frozen_pairs;
 pub mod gate_health;
@@ -414,6 +415,11 @@ pub fn registry() -> Vec<Rule> {
             name: "nothing-heavy-in-the-package-walk",
             origin: "docs/46 — the inner loop",
             check: target_dirs::no_generated_tree_sits_in_the_package_walk,
+        },
+        Rule {
+            name: "engine-source-read-at-its-pin",
+            origin: "docs/68 §3 V2 — no build-time clone",
+            check: engine_pin::the_engine_source_is_read_at_its_pin,
         },
         Rule {
             name: "ffi-edges-are-named",

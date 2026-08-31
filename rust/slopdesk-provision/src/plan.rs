@@ -119,7 +119,7 @@ impl Layout {
 /// The line a stamp holds: the version and digest currently installed.
 #[must_use]
 pub fn stamp_contents(pin: &Pin) -> String {
-    format!("{} {}", pin.version, pin.sha256)
+    format!("{} {}", pin.version, pin.digest)
 }
 
 /// Whether the installed copy of `pin` is the pinned one.
@@ -152,7 +152,7 @@ mod tests {
             kind: Kind::Zip,
             binary: "adb".to_owned(),
             url: "https://example.invalid/dir/platform-tools.zip".to_owned(),
-            sha256: "a".repeat(64),
+            digest: "a".repeat(64),
         }
     }
 
@@ -217,7 +217,7 @@ mod tests {
         assert!(!is_current(&bumped, true, Some(&old)));
 
         let mut redigested = pin();
-        redigested.sha256 = "b".repeat(64);
+        redigested.digest = "b".repeat(64);
         assert!(!is_current(&redigested, true, Some(&old)));
     }
 

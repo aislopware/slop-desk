@@ -1,9 +1,15 @@
-//! Materialises the pinned host-side runtime dependencies of the right panel.
+//! Materialises this repo's pinned third-party dependencies.
 //!
 //! Every surface in the right panel stands on a third-party program that is NOT part of this repo's
 //! build: the code panel runs `code-server`, the simulator panel runs `baguette serve`, the Android
 //! panel runs `adb` and pushes `scrcpy-server`. `ThirdParty/tools/tools.lock` pins each by URL and
 //! SHA-256; this crate turns that file into `.prefix/bin/<name>`.
+//!
+//! One record is not a program and does not become a symlink: [`Kind::Git`] materialises a SOURCE
+//! tree at a pinned commit, because `libghostty-vt-sys`'s `build.rs` compiles the terminal engine
+//! from source and would otherwise clone it from the network at BUILD time — which no content stamp
+//! can see. `docs/68` §3 V2 has the ruling; `just lint-invariants` holds the pin and the
+//! `GHOSTTY_SOURCE_DIR` that reads it in step.
 //!
 //! ## This is provisioning, not a runtime path
 //!
@@ -77,9 +83,52 @@ pub fn run(layout: &Layout, mode: Mode, wanted: &[String]) -> Result<Tally, Fail
                 tally.current += 1;
             },
             Kind::TarGz | Kind::Zip => step(layout, pin, mode, &mut tally)?,
+            Kind::Git => clone_step(layout, pin, mode, &mut tally)?,
         }
     }
     Ok(tally)
+}
+
+/// One SOURCE pin: a clone parked at a commit, for a build that must not reach the network.
+///
+/// Deliberately NOT `step`'s shape with a flag. Three of `step`'s five moves do not exist here —
+/// there is no archive to stage, no digest to compute over bytes, and no `.prefix/bin` symlink,
+/// because a source tree is not a program. What replaces the digest check is stronger and cheaper:
+/// git is content-addressed, so asking the clone what commit it is AT verifies the whole tree.
+fn clone_step(layout: &Layout, pin: &Pin, mode: Mode, tally: &mut Tally) -> Result<(), Failure> {
+    let target = layout.target(pin);
+    let sentinel = layout.binary(pin);
+    let stamp_path = layout.stamp(pin);
+    let stamp = fs::read_to_string(&stamp_path).ok();
+    if plan::is_current(pin, sentinel.is_file(), stamp.as_deref()) {
+        log(&format!("current  {}", relative(&target, &layout.tools)));
+        tally.current += 1;
+        return Ok(());
+    }
+    if mode == Mode::Check {
+        log("MISSING  (run without --check to provision)");
+        tally.missing += 1;
+        return Ok(());
+    }
+
+    // Remove first: a half-finished clone from an interrupted run looks exactly like a good one to
+    // every check below except the commit read, and `git clone` will not write into a non-empty
+    // directory anyway.
+    drop(fs::remove_dir_all(&target));
+    log(&format!("clone    {} @ {}", pin.url, pin.digest));
+    fetch::clone_at(&pin.url, &pin.digest, &target).map_err(|error| error.to_string())?;
+    if !sentinel.is_file() {
+        return Err(format!(
+            "{} {} cloned but {} is not in the tree — the pin names a commit that is not the project it \
+             should be",
+            pin.name, pin.version, pin.binary
+        ));
+    }
+
+    fs::write(&stamp_path, plan::stamp_contents(pin))
+        .map_err(|cause| format!("{}: {cause}", stamp_path.display()))?;
+    tally.installed += 1;
+    Ok(())
 }
 
 /// One downloadable pin.
@@ -99,7 +148,7 @@ fn step(layout: &Layout, pin: &Pin, mode: Mode, tally: &mut Tally) -> Result<(),
     }
 
     let archive = layout.archive(pin);
-    match fetch::fetch_verified(&pin.url, &pin.sha256, &archive).map_err(|error| error.to_string())? {
+    match fetch::fetch_verified(&pin.url, &pin.digest, &archive).map_err(|error| error.to_string())? {
         fetch::Cached::Already => log(&format!("cached   {}", relative(&archive, &layout.tools))),
         fetch::Cached::Downloaded => log(&format!("fetched  {}", pin.url)),
     }
@@ -139,10 +188,10 @@ fn verify_vendored(layout: &Layout, pin: &Pin) -> Result<(), Failure> {
         ));
     }
     let got = fetch::digest_of(&source).map_err(|error| error.to_string())?;
-    if !got.eq_ignore_ascii_case(&pin.sha256) {
+    if !got.eq_ignore_ascii_case(&pin.digest) {
         return Err(format!(
             "vendor/{} does not match its pin\n  expected {}\n  got      {got}",
-            pin.binary, pin.sha256
+            pin.binary, pin.digest
         ));
     }
     log(&format!("vendored (verified) vendor/{}", pin.binary));

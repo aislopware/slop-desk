@@ -1,3 +1,14 @@
 # Build products live OUTSIDE the checkout — see any member crate's config for why.
 [build]
 target-dir = "../../slopdesk-targets/_workspace"
+
+# The terminal engine's source, handed to `libghostty-vt-sys`'s `build.rs` so it does NOT clone
+# ghostty itself at build time. Set here rather than in a `just` recipe because a recipe can only
+# export into the command it launches, and the crates that need this are built by `cargo` directly
+# as often as by `just` — an env var that is only right under one entry point is the shape that
+# produces a build nobody can reproduce.
+#
+# `just provision` materialises the tree; the pin lives in `ThirdParty/tools/tools.lock` and the
+# version below MUST equal that record's, which `just lint-invariants` holds.
+[env]
+GHOSTTY_SOURCE_DIR = { value = "../ThirdParty/tools/.prefix/ghostty/22d13172", relative = true }
