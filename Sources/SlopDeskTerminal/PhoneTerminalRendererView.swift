@@ -175,7 +175,16 @@ final class PhoneTerminalRendererView: UIView {
         for press in presses {
             guard let key = press.key else { continue }
             if model?.takesModalKeys == true {
-                model?.handleCopyModeKey(TerminalViewModel.makeCopyModeKey(PhoneKey.Press(key)))
+                // ⚠️ THE PRESS ONLY. ``TerminalViewModel/handleCopyModeKey(_:)`` takes no phase — it
+                // performs the motion — and this method is the ONE place both halves of a keystroke
+                // arrive, so routing it unconditionally made every copy-mode `j` on the phone scroll
+                // TWO lines. The Mac never had it because its copy-mode branch is in `keyDown` alone.
+                // The release is still swallowed rather than forwarded: copy mode is modal, and a
+                // release reaching the shell from inside it is the same leak the Mac's `pressedKeys`
+                // exists to prevent.
+                if action == 0 {
+                    model?.handleCopyModeKey(TerminalViewModel.makeCopyModeKey(PhoneKey.Press(key)))
+                }
                 handled = true
                 continue
             }
