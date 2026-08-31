@@ -60,19 +60,44 @@ public struct ActionsPaletteSource: PaletteDataSource {
     private static let declared: [PaletteItem] = [
         // WORKING DIRECTORY — leads the palette (the section header OWNS the cwd badge in the view). "Copy
         // Path" is a CLIENT-side write of the focused pane's cwd to the platform
-        // pasteboard. Sibling "Reveal in Finder" / "Open in…" rows are host-routed —
-        // TODO: add them once the host can resolve a local Finder/Open path over the control channel.
+        // pasteboard; its two siblings actuate on the HOST instead (metadata verbs 10 / 9 — the cwd
+        // names a directory on the host Mac, so `activateFileViewerSelecting` / `NSWorkspace.open`
+        // must run there). All three resolve the SAME cwd the section header badges.
+        //
+        // "Open With…" is deliberately NOT a fourth row: it needs host app enumeration, and its
+        // absence here is the same recorded omission `TerminalContextMenu.LinkItem` already carries
+        // rather than a control that would be listed and inert (docs/DECISIONS).
         item(
             id: "action.copyPath", icon: "doc.on.doc", title: "Copy Path",
             category: .workingDirectory,
             run: { store in
-                guard let session = store.tree.activeSession,
-                      let paneID = session.activeTab?.activePane,
-                      let cwd = store.paneCwd(for: paneID), !cwd.isEmpty else { return }
+                guard let cwd = activeCwd(store) else { return }
                 copyToPasteboard(cwd)
                 // Pane-less confirmation: the palette sheet is closing as the write lands, so the
                 // window-level `COPIED · N` chip (store hook → overlay coordinator) is the receipt.
                 store.noteLocalCopy(cwd)
+            },
+        ),
+        // The title and glyph are `slopdesk_workspace::open_quickly`'s for the same verb over the same
+        // target ("Reveal CWD in Finder" / `folder`), said here rather than re-invented — Open Quickly's
+        // focused-pane row does exactly this, and two spellings of one verb is the drift the shared
+        // vocabulary exists to stop.
+        item(
+            id: "action.revealCwd", icon: "folder", title: "Reveal CWD in Finder",
+            keywords: "reveal finder show working directory cwd folder host",
+            category: .workingDirectory,
+            run: { store in
+                guard let cwd = activeCwd(store) else { return }
+                LinkActionActuator.actuate(.revealHost(cwd), model: store.activeTerminalModel)
+            },
+        ),
+        item(
+            id: "action.openCwd", icon: "arrow.up.forward.app", title: "Open CWD on Host",
+            keywords: "open working directory cwd host finder launch",
+            category: .workingDirectory,
+            run: { store in
+                guard let cwd = activeCwd(store) else { return }
+                LinkActionActuator.actuate(.openHost(cwd), model: store.activeTerminalModel)
             },
         ),
         verb(
@@ -382,10 +407,24 @@ public struct ActionsPaletteSource: PaletteDataSource {
         }
     }
 
-    /// Write `string` to the platform pasteboard — the client-side local clipboard
-    /// write. Host-routed Reveal/Open are a future addition.
+    /// Write `string` to the platform pasteboard — the client-side local clipboard write. The
+    /// host-routed siblings do NOT come through here: Reveal/Open actuate through
+    /// ``LinkActionActuator``, which is the one home for a resolved `LinkAction`.
     private static func copyToPasteboard(_ string: String) {
         ClientPasteboard.write(string)
+    }
+
+    /// The focused pane's working directory, or `nil` when there is nothing to act on (an empty
+    /// shell, a pane with no cwd yet, a blank one).
+    ///
+    /// The three Working Directory rows resolve their target through this ONE read rather than each
+    /// repeating the session → tab → pane → cwd walk, so a row cannot end up acting on a different
+    /// pane than the badge in its own section header names.
+    private static func activeCwd(_ store: WorkspaceStore) -> String? {
+        guard let session = store.tree.activeSession,
+              let paneID = session.activeTab?.activePane,
+              let cwd = store.paneCwd(for: paneID), !cwd.isEmpty else { return nil }
+        return cwd
     }
 
     /// The live registry glyph for `action`'s default chord (nil when unbound) — the ONE source the catalog

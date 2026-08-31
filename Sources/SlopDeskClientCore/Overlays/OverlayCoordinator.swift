@@ -440,7 +440,8 @@ public final class OverlayCoordinator {
             out.append(.separator("Panes", filter: .tabs))
             out.append(contentsOf: paneJumpItems)
         }
-        // Working Directory next — its header carries the cwd badge; Copy Path (+ TODO: host rows) below.
+        // Working Directory next — its header carries the cwd badge; Copy Path and its two
+        // host-routed siblings (Reveal CWD in Finder / Open CWD on Host) below.
         let workingDir = ActionsPaletteSource.items(in: .workingDirectory)
         if !workingDir.isEmpty {
             out.append(.separator(PaletteCategory.workingDirectory.label, filter: .actions))

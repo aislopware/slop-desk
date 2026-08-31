@@ -18239,3 +18239,45 @@ and these two gates typecheck; adding it would re-run 15 minutes of iOS for an i
 `.entitlements`* — signing, checked by the release pipeline, and unreachable from a type. *Widening
 `COMPILED` rather than matching by name* — `modulemap` is not an extension of `module.modulemap`,
 and a rule spelled as an extension would have missed it a second time.
+
+## The reveal D1 refused, routed to the machine that owns the path (2026-08-31)
+
+`PaletteDataSource` carried the last two live TODOs in the Swift tree, both the same sentence: a
+working-directory reveal and open, deferred "until the host can resolve a local Finder/Open path over
+the control channel." The premise had been false for some time. Metadata verbs `openPath = 9` and
+`revealPath = 10` ship, `MetadataClient` calls them, `HostPathActions` binds the two closures, and
+`OpenQuicklyPresentation`'s focused-pane row already actuates exactly this pair. So the deferral was
+not waiting on a capability; it was waiting on somebody to notice the capability had landed.
+
+Two palette rows now sit beside Copy Path under WORKING DIRECTORY — `action.revealCwd` ("Reveal CWD in
+Finder") and `action.openCwd` ("Open CWD on Host") — each resolving the same cwd the section header
+badges, through one `activeCwd(_:)` read rather than three copies of the session → tab → pane walk. A
+row that acted on a different pane than the badge above it names would be the defect that walk invites.
+
+Both fire through `LinkActionActuator`, which is the ONE home for a resolved `LinkAction`; its header
+already records that the AppKit embedder's duplicate switch was deleted for this reason. Reaching the
+actuator from a `.store` closure needed `WorkspaceStore.activeTerminalModel` widened `internal` →
+`package` — one reader across the module line, and the alternative was the palette firing
+`onRequestRevealHostPath` itself, which is the parallel dispatch the actuator exists to prevent. Not
+`public`: nothing outside the package resolves an active pane. Titles and glyphs are
+`slopdesk_workspace::open_quickly`'s and `slopdesk_terminal::context_menu`'s for the same verbs over
+the same target, said again rather than re-invented.
+
+Both rows are `Platform::Both` in `rust/slopdesk-workspace/src/palette_rows.rs`. Neither is an
+`NSWorkspace` call on the near side — that is what would have made them the Mac's alone — so the phone
+reaches them exactly as the Mac does, which is the docs/56 §3 rule (layout diverges, capability does
+not) rather than an exception to it.
+
+**This does not reverse D1.** That entry struck a details-Info "Reveal in Finder / Open in VS Code ·
+Cursor · Xcode · Typora" cluster because a CLIENT-side reveal targets the wrong machine — "there is
+nothing honest to open." That reasoning is untouched and is exactly why these two rows route to the
+host: the cwd names a directory on the host Mac, `activateFileViewerSelecting` runs there, and the
+wire carries a status byte back and no host bytes. D1 barred a local reveal; it never barred the
+remote one, and Copy Path — which D1 kept — is now the client-side member of a family of three.
+
+**Rejected.** *"Open With…" as a fourth row* — it needs host app enumeration, and listing it now would
+be the inert control D1 and `PaletteRowPlatformTests` both exist to prevent; its absence here is the
+same recorded omission `TerminalContextMenu.LinkItem` already carries. *A new wire verb* — verbs 9/10
+are the verb, and inventing a third would have cost a golden re-pin to reach a door already open.
+*Confining the path to a cwd* — the host resolves what it is handed, the mesh is the security boundary
+(no app-layer auth), and a confinement check here would be the pairing logic `CLAUDE.md` bars.

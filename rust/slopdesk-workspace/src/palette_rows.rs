@@ -56,8 +56,14 @@ const fn row(id: &'static str, platform: Platform) -> PaletteRow {
 /// process-global call (`EnableSecureEventInput`) with no iOS form at all. Everything else is
 /// `Both` — including the ones a phone reaches rarely, because docs/56 §3 is explicit that layout
 /// diverges and capability does not.
-pub const ROWS: [PaletteRow; 33] = [
+pub const ROWS: [PaletteRow; 35] = [
     row("action.copyPath", Platform::Both),
+    // The two host-routed siblings of Copy Path. They actuate on the HOST's Finder / Launch Services
+    // (metadata verbs 10 and 9) — the cwd names a directory on the host Mac, not on whatever machine
+    // is drawing the palette — so the phone reaches them exactly as the Mac does. Neither is an
+    // `NSWorkspace` call on the near side, which is what would have made them the Mac's alone.
+    row("action.revealCwd", Platform::Both),
+    row("action.openCwd", Platform::Both),
     row("action.newTerminalTab", Platform::Both),
     row("action.newDesktopTab", Platform::Both),
     row("action.closeTab", Platform::Both),

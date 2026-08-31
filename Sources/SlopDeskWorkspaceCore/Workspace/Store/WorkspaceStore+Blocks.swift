@@ -181,8 +181,16 @@ public extension WorkspaceStore {
     /// on the IDE shell, the canvas focus on the retained-but-dead path. `nil` for a non-terminal active
     /// pane (`.desktop`) or an empty shell. Shared by the block ops so the
     /// navigator / jump work on both paths — and by the ``WorkspaceStore+FontScroll`` hooks (font/scroll
-    /// resolve the same active terminal model), so it is `internal` (cross-file) rather than `private`.
-    internal var activeTerminalModel: TerminalViewModel? {
+    /// resolve the same active terminal model), so it is not `private`.
+    ///
+    /// `package` rather than `internal` for ONE reader across the module line: the palette's
+    /// host-routed working-directory rows (`action.revealCwd` / `action.openCwd`) carry a `.store`
+    /// closure, and `LinkActionActuator` — the single actuation home for a resolved `LinkAction` —
+    /// takes the pane's model. Without this the palette would have had to fire
+    /// ``TerminalViewModel/onRequestRevealHostPath`` itself, which is the parallel dispatch that
+    /// actuator exists to prevent. It stays `package`, never `public`: the widening is one package's,
+    /// and nothing outside it resolves an active pane.
+    package var activeTerminalModel: TerminalViewModel? {
         guard let activeID = activePaneID,
               let provider = handle(for: activeID) as? TerminalModelProviding else { return nil }
         return provider.terminalModel
