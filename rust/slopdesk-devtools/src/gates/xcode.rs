@@ -38,7 +38,7 @@ use std::process::Command;
 
 use regex::Regex;
 
-use super::stamp;
+use super::{code_text, stamp};
 use crate::proc;
 
 /// The iOS gate's cached verdict.
@@ -308,10 +308,11 @@ pub fn simulator_udid(json: &str, device: &str) -> Result<String, String> {
 /// Derived rather than hardcoded, because a hardcoded number is a second thing to keep in step and
 /// the day it drifted this gate would fail on an honest new test.
 ///
-/// It reads the source VERBATIM, comments and all, which is safe only in one direction: a
-/// commented-out `func test…` inflates this count and reds a run the simulator passed, and nothing
-/// a comment can say makes `xctest` execute one more case. See the census in [`super`] for why the
-/// `//` filter that would close the false alarm is deliberately not written here.
+/// It counts declarations in CODE. A commented-out `func test…` is not one, and the direction that
+/// used to be safe was still wrong: reading the source verbatim inflated the count and redded a run
+/// the simulator had passed. That was left standing while the honest fix meant hand-rolling a
+/// second `//` filter here — the duplication the census in [`super`] exists to refuse — and it
+/// stopped meaning that when [`code_text`](super::code_text) landed in this directory.
 ///
 /// # Errors
 /// When the test directory cannot be walked.
@@ -322,7 +323,9 @@ pub fn declared_tests(root: &Path) -> Result<usize, String> {
     let mut files = Vec::new();
     collect_swift(&directory, &mut files)?;
     for file in files {
-        let text = fs::read_to_string(&file).unwrap_or_default();
+        let bytes = fs::read(&file).unwrap_or_default();
+        let code = code_text::code_only(&bytes, code_text::Dialect::Swift);
+        let text = String::from_utf8_lossy(&code);
         total += text.lines().filter(|line| pattern.is_match(line)).count();
     }
     Ok(total)
@@ -496,7 +499,9 @@ fn collect_swift(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::{executed_tests, simulator_udid};
+    use std::fs;
+
+    use super::{declared_tests, executed_tests, simulator_udid};
 
     const LISTED: &str = r#"{"devices": {
       "com.apple.CoreSimulator.SimRuntime.watchOS-11-0": [
@@ -544,5 +549,31 @@ mod tests {
     #[test]
     fn one_test_is_singular_in_the_summary() {
         assert_eq!(executed_tests("Executed 1 test, with 0 failures\n"), Some(1));
+    }
+
+    /// A commented-out declaration is not one the simulator can execute.
+    ///
+    /// The gate demands the two counts be EQUAL, so an inflated left side reds a run that passed.
+    /// The fixture is a directory rather than a string because `declared_tests` walks one, and it
+    /// last line is why this is a lexer's job rather than a `//` filter's: a strip to end-of-line
+    /// would cut that URL in half, and the `//` it cut at is inside a string literal.
+    ///
+    /// A `func test…` spelled INSIDE a literal would still be counted, because `code_only` emits
+    /// literal bytes verbatim — deliberately, since a stripper that erased them is the direction
+    /// that hides code. That leaves the same false ALARM this test narrows, one shape rarer.
+    #[test]
+    fn a_commented_declaration_is_not_counted() {
+        let dir = std::env::temp_dir().join(format!("xcode-declared-{}", std::process::id()));
+        let tests = dir.join("Apps/ClientApp-iOS/Tests");
+        fs::create_dir_all(&tests).unwrap();
+        fs::write(
+            tests.join("Probe.swift"),
+            "func testReal() {}\n// func testCommented() {}\n/* func testBlocked() {} */\n\
+             func testSecond() {}\nlet url = \"https://x\" // func testTrailing() {}\n",
+        )
+        .unwrap();
+        let counted = declared_tests(&dir).unwrap();
+        fs::remove_dir_all(&dir).ok();
+        assert_eq!(counted, 2, "only the two real declarations are executable");
     }
 }

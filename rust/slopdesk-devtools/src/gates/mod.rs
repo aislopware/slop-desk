@@ -66,15 +66,14 @@
 //!   demands a binary that is not there: loud, not quiet.
 //! * [`swift_graph`] — no. The closure comes from `swift package describe`, which is `SwiftPM`'s
 //!   own resolution rather than a scan, so a commented `import` is not an edge.
-//! * [`xcode`] — the one other module that reads SOURCE, and it fails loud. `declared_tests` counts
-//!   `func test…` across `Apps/ClientApp-iOS/Tests` and demands the simulator execute exactly that
-//!   many, so a commented-out declaration INFLATES the left side and reds a run that was green: a
-//!   false alarm, never a false pass, because the right side is `xctest`'s own summary. Measured on
-//!   the tree today: 23 declarations, none of them in a comment. Left unstripped on purpose — the
-//!   honest fix is the same shared literal-preserving stripper [`golden`] is waiting on, and a
-//!   second hand-rolled `//` filter here is the duplication that note exists to refuse. Everything
-//!   else it reads — `simctl list`'s JSON, the xcodebuild log, the `Executed N tests` count — is
-//!   process output, which no comment in this tree can write.
+//! * [`xcode`] — the one other module that reads SOURCE, and it is fixed too. `declared_tests`
+//!   counts `func test…` across `Apps/ClientApp-iOS/Tests` and demands the simulator execute
+//!   exactly that many, so a commented-out declaration INFLATED the left side and redded a run that
+//!   was green — a false alarm rather than a false pass, which is why it was left standing while
+//!   the honest fix meant hand-rolling a second `//` filter here. [`code_text`] is that filter,
+//!   shared, so the count is over code now. Everything else it reads — `simctl list`'s JSON, the
+//!   xcodebuild log, the `Executed N tests` count — is process output, which no comment in this
+//!   tree can write.
 //! * [`touched`] — no source read at all. The change set is `git diff --name-only` and `git
 //!   ls-files --others`, the graph is `swift package describe`'s JSON: three processes.
 //! * [`android`] — no. `ready_devices` parses `adb devices`, and the toolchain search asks the

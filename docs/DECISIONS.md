@@ -17951,3 +17951,58 @@ list and the stripper's dialect list as two lists* — `code_of` returns `None` 
 `Dialect::of` does not know, so an unreadable file answers nothing rather than answering for every
 key, and the two stay in step by construction. *A fixture-only test for the tree measurement* — a
 fixture cannot notice the real suite being deleted, which is the whole failure this arm exists for.
+
+## The comment scanner that knew one language and was asked about three (2026-08-31)
+
+`Source::statements` is the view every POSITIVE claim in `slopdesk-invariants` reads, and the reason
+it exists is that it is the only one prose cannot answer: `code()` drops a whole comment LINE and
+keeps a trailing one, so `let x = 1 // never call .addingProduct(` reads as a call. The scanner
+behind it was written once and applied to `.swift`, `.rs` and `.h` alike, and `CommentStyle` split
+only `//` from `#` — one level too shallow, because the three slash languages disagree about the
+things a scanner has to know.
+
+Three divergences, each seeded into the live scanner and confirmed by reading its output:
+
+* `let s: &'static str = "x"; // addingProduct` — a Rust LIFETIME opened a character literal, which
+  ran to the end of the line, so the trailing comment came through verbatim and a token ban read
+  prose as a call. Rust's own rule is asked now: a `'` opens a literal only when what follows is an
+  escape, or exactly one character and then a closing `'`.
+* A Swift `"""` literal was read as one quote and closed at the next, so the scanner re-entered CODE
+  inside the literal, treated its contents as comment openers and blanked to the end of the file.
+* `"raw string for \(value ?? "unset")"` — an interpolated literal ended the one holding it, with
+  the same result. This one was found by the canary rather than by a person.
+
+All three end identically: the scanner loses the literal and blanks CODE, so whatever a ban was
+looking for is no longer there to find and the ban passes. That is the one direction this scanner
+must never fail in, and the reason the fix is a faithful three-dialect port rather than two patches
+— block comments nest in Swift and Rust and not in C, Swift's raw hashes lead the quote and Rust's
+follow an `r`, Rust's zero-hash `r"…"` is raw, Swift has no character literal at all. Every one of
+those was already wrong; nothing in the tree happened to hit them.
+
+The canary is the half that generalises: `no_source_in_this_tree_leaves_the_scanner_inside_a_literal`
+appends a comment and a statement to every slash-commented file the tree walks and requires the
+comment to go and the statement to stay. It found the third divergence, and it is the same shape as
+`code_text`'s own tree canary — the property asked of every file that ships, rather than of the
+shapes someone thought to write down.
+
+The same round closed the last site the devtools census listed as deferred. `xcode::declared_tests`
+counted `func test…` in RAW source and demanded the simulator execute exactly that many, so a
+commented-out declaration inflated the left side and redded a run that had passed. The census called
+it a false alarm rather than a false pass and left it, on the grounds that the honest fix meant
+hand-rolling a second `//` filter — the duplication that note exists to refuse. `code_text` is that
+filter, shared and already in the directory, so the count is over code now and the census carries no
+deferred entry at all. Measured across the switch, because the consumer that compares the two counts
+runs in `check` rather than in `quick` and would otherwise report a change many rounds late: 23 raw,
+23 through the filter — today's suite holds no commented declaration, so the fix moves nothing but
+the guarantee.
+
+**Rejected.** *Merging this with `slopdesk-devtools`' `gates::code_text`* — the twin lexer answers a
+different question. That one is for a content stamp, so it DROPS comments and normalises whitespace;
+this one blanks in place, because `View::Statements` promises line numbering and rules report
+`path:line:` off it. Merging means one of the two callers stops getting what it needs, and the crates
+cannot share code anyway: this one's gate is `cargo test` over the TREE and may not take an edge onto
+the gate runners. The dialect knowledge is duplicated in prose in both headers instead, which is what
+the shared canary shape is for. *Patching only the two shapes the tree hits today* — the other
+dialect facts were equally wrong and equally silent; a scanner that is right by coincidence fails the
+day someone writes an ordinary line. *Keeping the old scanner's line-bounded literals as a resync
+net* — that accident is precisely what hid the interpolation hole for as long as it existed.
