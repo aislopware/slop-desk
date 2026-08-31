@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 SlopDesk — low-latency remote coding: a macOS host (`slopdesk-hostd`), macOS/iOS clients, and six
-Rust sidecar daemons. `just help` (or `just --list`) lists every build, lint and test recipe; read
-it rather than guessing one. The one bootstrap this tree needs is `brew install just`.
+Rust sidecar daemons. `just help` lists every recipe; read it rather than guessing one. The one
+bootstrap this tree needs is `brew install just`.
 
 ## Read before you touch
 
@@ -14,80 +14,38 @@ it rather than guessing one. The one bootstrap this tree needs is `brew install 
 | agent status detection | `docs/50-agent-detection-architecture.md` |
 | a sidecar daemon | `docs/51` superd · `52` screend · `53` dropd · `54` inspectord · `48` androidd |
 | the wire | `docs/20-wire-protocol.md` — update it after wire changes |
-| Rust that Swift calls in-process | `docs/55-ffi-boundary.md` — the ABI, the artifact, the stale gate |
-| an Apple framework from Rust | `docs/57-apple-frameworks-in-rust.md` — the `objc2` family and its bar |
-| `MuxChannelSession` or `HostServer` | `docs/59-hostd-projection.md` — the six handles, in the one order that lands |
-| hostd's socket, or any Swift you think must stay | `docs/60-hostd-in-rust.md` — the stages, and the one §6 floor that was not one |
+| Rust that Swift calls in-process | `docs/55-ffi-boundary.md` |
+| an Apple framework from Rust | `docs/57-apple-frameworks-in-rust.md` |
+| `MuxChannelSession` or `HostServer` | `docs/59-hostd-projection.md` |
+| hostd's socket, or Swift you think must stay | `docs/60-hostd-in-rust.md` |
+| the terminal surface | `docs/68-terminal-surface-in-rust.md` |
 | client UI | `DESIGN.md` |
-| the iOS/iPadOS client, or a SwiftUI file on the phone | `docs/62-phone-uikit.md` — the nine stages, and why UIKit |
+| the iOS/iPadOS client | `docs/62-phone-uikit.md` |
 | release, signing, brew | `docs/49-release-pipeline.md` |
 | why something was scoped out | `docs/DECISIONS.md` |
 
 ## Rules
 
-- **`just quick` after every edit; `just check` once before pushing.** `quick` is `check` with the
-  full suite swapped for `test-touched` (the test targets whose closure contains the change, and the
-  full suite whenever a path cannot be attributed) and Miri omitted. Both are cheap on a warm tree
-  because the two expensive gates are CONTENT-STAMPED, not re-run: `slopdesk-gate ffi` against the Rust
-  sources it links, `slopdesk-gate ios` against every input the iOS triple compiles. `--force` on either
-  re-runs it when the stamp itself is in doubt. A *touched-target* green never writes the pre-push
-  green-tree marker — only a full suite on a clean tree does — so `quick` cannot make a push skip
-  what it did not run.
-- **Rust is the default; perf parity is enough to move existing Swift.** Only AppKit/UIKit — the two
-  IMPERATIVE view frameworks — justifies staying in Swift, and SwiftUI only where a surface has not
-  crossed yet: the Mac shell is AppKit already and the phone is crossing to UIKit
-  (`docs/62-phone-uikit.md`), so a new SwiftUI file is a stage that has not landed rather than a
-  choice. A *measured* regression is the only veto.
-- **A port ships over a socket, or as a linked library — pick by lifetime.** A component that must
-  outlive its caller, be `execve`d, or be dialled by two processes is a binary on a socket; one that
-  is in-process by necessity and lifetime-coupled to its caller is an `.xcframework`, the way
-  `libghostty` and `CSlopDeskFFI` already are. **cargo never runs inside `swift build`** — the
-  artifact is built by `just ffi` (`slopdesk-gate ffi`) beforehand, never by a build plugin that
-  shells out. A linked port has one failure mode a socket port does not: an artifact older than its
-  sources, green tests and all. `slopdesk-gate ffi --check` is in `just lint` for exactly that, and it
-  derives its own inputs — a wrapped crate is covered by its `path = "../…"` edge to the shim, not
-  by a list anyone maintains. See `docs/55-ffi-boundary.md`.
-- **One implementation, never two languages.** Porting means deleting the original in the same
-  change: not a fallback, not a test fake, not a cross-language mirror fixture.
-- **Three crates may HAND-WRITE `unsafe`, each about one thing** — `rust/slopdesk-posix` (a syscall
-  with no safe wrapper), `rust/slopdesk-ffi` (is this `(ptr, len)` from Swift live for the call) and
-  `rust/slopdesk-gfsimd` (does this 16-byte load stay inside its chunk). A fourth dissolves the
-  isolation; adding one is a design change, not a convenience, and the bar the third cleared is the
-  bar: a *measured* conflict where safe Rust cannot reach parity, paid for by a crate small enough to
-  read in a sitting and a differential suite that runs under Miri. Inside any of them, carry the
-  obligation that makes the code sound and nothing else: if the safety comment cannot be written
-  without naming slopdesk, the boundary is in the wrong place, so move the *operation* until the
-  obligation is local. Never lower a crate to `deny` to fit code in.
-- **`slopdesk-apple-*` is the one other family allowed `unsafe`, and only through `objc2`.** A crate
-  in it wraps exactly ONE Apple framework area, calls it through the `objc2` bindings, and may not
-  hand-write a raw-pointer dereference or a transmute — if a call needs one, the obligation belongs
-  in one of the three crates above and the operation moves there. TWO admissions, each Core
-  Foundation's own ownership convention and each at most ONE gated site per crate:
-  `CFRetained::from_raw` for a Copy/Create-rule out-parameter `objc2` hands over raw, and
-  `CFRetained::retain` — or its `objc2` twin `Retained::retain`, one admission in two spellings
-  sharing ONE budget — for a Get-rule pointer a callback borrows. Both are recognised by the
-  QUALIFIED path; any other `from_raw` is still barred. Most of what
-  these crates call is `safe` in the bindings already, so `unsafe` here means "the framework's own
-  contract", never "Rust's". Each carries `#![deny(unsafe_op_in_unsafe_fn)]`, a `# Safety` note per
-  `unsafe` block naming the framework rule it satisfies, and a leak test. This family exists because
-  the goal is Swift-as-UI-only: every effect on the system — capture, encode, injection, IOKit, the
-  accessibility tree — is Rust's. See `docs/57-apple-frameworks-in-rust.md`. Every crate outside these
-  two families is `forbid(unsafe_code)`, which no downstream `allow` can lift.
-- **Never `pkill` the host** — `just host-restart` replays hostd's recorded launch exactly. There is
-  no live config reload; the restart is the reload.
-- **superd owns `read` on every PTY master.** A second reader anywhere steals bytes rather than
-  observing them. Tests read through `PaneOutput`.
+- **`just quick` after every edit; `just check` once before pushing.**
+- **Rust is the default.** Only AppKit/UIKit justifies staying in Swift. A *measured* regression is
+  the only veto.
+- **One implementation, never two languages.** Porting deletes the original in the same change — not
+  a fallback, not a test fake, not a cross-language mirror fixture.
+- **`unsafe` lives in five crates and nowhere else.** Hand-written in `slopdesk-posix`,
+  `slopdesk-ffi` and `slopdesk-gfsimd`; through `objc2` only in the `slopdesk-apple-*` family. A
+  sixth is a design change, not a convenience — see `docs/57`. Everything else is
+  `forbid(unsafe_code)`.
+- **Never `pkill` the host** — `just host-restart` replays hostd's recorded launch. The restart is
+  the config reload; there is no live one.
+- **superd owns `read` on every PTY master.** A second reader steals bytes rather than observing
+  them. Tests read through `PaneOutput`.
 - **The wire is golden-pinned** — never `>`-redirect the generator over `golden/golden_vectors.json`.
 - **No app-layer crypto or auth** — security is the WireGuard mesh. Do not add pairing or tokens.
 - **Bit-exact floats** — keep `a * b + c` separate (never `addingProduct`/`fma`); use
   `Double.maximum`/`.minimum`, not `<`/`>` ternaries.
-- **Commit subjects are release input** — imperative, ≤72 chars, conventional-commit type. The type
-  picks the version bump; the subject lands verbatim in the changelog. Never hand-edit
-  `CHANGELOG.md` or bump a version by hand; `just release` owns every version site.
+- **Commit subjects are release input** — imperative, ≤72 chars, conventional-commit type. Never
+  hand-edit `CHANGELOG.md` or bump a version by hand; `just release` owns every version site.
 
-`just lint-invariants` (`rust/slopdesk-invariants`) ratchets the cross-language contracts — which
-Swift files must stay deleted, socket paths, relinquish-vs-terminate, every constant typed in both
-languages. Each rule carries a break-test that seeds the drift and asserts the rule fires, and each
-failure message names the doc section, so those rules are not restated here. `just lint-reach` is the
-half no rule can decide by reading: what a `just` recipe would RUN, and whether the linked artifact
-is older than its sources.
+`just lint-invariants` ratchets the cross-language contracts and each failure names its doc section,
+so those rules are not restated here. `just lint-reach` covers what no rule can decide by reading:
+what a recipe would RUN, and whether a linked artifact is older than its sources.
