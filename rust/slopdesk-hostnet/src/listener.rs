@@ -210,11 +210,20 @@ fn accept_loop(
             // same answer, and returning here drops the listener — which is what frees the port.
             return;
         }
-        let Ok(stream) = stream else {
+        let stream = match stream {
+            Ok(stream) => stream,
             // One failed accept is not a dead listener (EMFILE, a peer that reset between SYN and
             // accept). Keep serving; the process-level fd budget is superd's problem, not this
             // loop's, and exiting here would take every live pane down with it.
-            continue;
+            //
+            // But it is REPORTED, because the connection it consumed is gone: the client dialled,
+            // its socket is established, and nothing will ever read the preamble off it — so the
+            // pane waits out the client's whole handshake budget for a reason no log would name.
+            // A daemon that loses a connection silently is one whose only symptom is a hang.
+            Err(error) => {
+                eprintln!("slopdesk-hostnet: dropped an accepted socket: {error}");
+                continue;
+            },
         };
         let pending = Arc::clone(pending);
         let sender = sender.clone();
@@ -228,23 +237,23 @@ fn accept_loop(
 /// handshake still in flight when `stop` lands needs no check of its own: [`PendingLinks::admit`]
 /// closes what it refuses.
 fn handshake(stream: TcpStream, pending: &Arc<Mutex<PendingLinks>>, sender: &Sender<PairedConnection>) {
-    let Ok(()) = configure(&stream) else {
-        return;
-    };
+    if let Err(error) = configure(&stream) {
+        return abandon("could not configure", &error.to_string());
+    }
     let mut bytes = [0_u8; PREAMBLE_BYTE_COUNT];
-    let Ok(()) = (&stream).read_exact(&mut bytes) else {
+    if let Err(error) = (&stream).read_exact(&mut bytes) {
         // Includes the timeout: `SO_RCVTIMEO` surfaces as `WouldBlock` here, which is the bound
         // `HANDSHAKE_TIMEOUT` exists to impose.
-        return;
-    };
+        return abandon("no preamble from", &error.to_string());
+    }
     let Ok(preamble) = decode(&bytes) else {
-        return;
+        return abandon("undecodable preamble from", "not a slopdesk preamble");
     };
     // The handshake deadline is off now: from here the socket is a mux link, and a mux link is
     // legitimately idle between a user's keystrokes.
-    let Ok(()) = stream.set_read_timeout(None) else {
-        return;
-    };
+    if let Err(error) = stream.set_read_timeout(None) {
+        return abandon("could not un-deadline", &error.to_string());
+    }
     let label = match preamble.lane {
         Lane::Control => "host.control",
         Lane::Data => "host.data",
@@ -259,6 +268,16 @@ fn handshake(stream: TcpStream, pending: &Arc<Mutex<PendingLinks>>, sender: &Sen
         returned.0.control.close();
         returned.0.data.close();
     }
+}
+
+/// Reports a socket this daemon is about to drop, and why.
+///
+/// Every caller is a path where a client's socket is ESTABLISHED and this host then walks away from
+/// it. The client cannot tell that apart from a host that is merely slow, so it spends its whole
+/// handshake budget on a connection that has already been abandoned. One line here is the
+/// difference between a diagnosable refusal and a pane that hangs for no recorded reason.
+fn abandon(what: &str, why: &str) {
+    eprintln!("slopdesk-hostnet: {what} an accepted socket: {why}");
 }
 
 fn reap_loop(pending: &Arc<Mutex<PendingLinks>>, stopping: &Arc<AtomicBool>, tick: Duration) {

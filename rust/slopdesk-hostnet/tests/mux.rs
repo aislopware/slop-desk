@@ -50,7 +50,20 @@ impl Wired {
         let id = ConnectionId::from_bytes([42; 16]);
         let control = dial(port, Lane::Control, id);
         let data = dial(port, Lane::Data, id);
-        let pair = pairs.recv_timeout(GENEROUS).expect("the two sockets pair");
+        let pair = match pairs.recv_timeout(GENEROUS) {
+            Ok(pair) => pair,
+            // The map's own count says WHICH half went missing, and that is the whole difference
+            // between two faults: `1` means one socket parked and the other never reached `admit`
+            // — a lost accept or a handshake that returned — while `0` means neither did, so the
+            // accept loop itself never ran them. A bare "the two sockets pair" names neither, and
+            // this line only ever runs on a failure that is otherwise a ten-second silence.
+            Err(error) => {
+                panic!(
+                    "the two sockets pair: {error:?} on port {port}, {} half(s) parked",
+                    listener.pending_count()
+                )
+            },
+        };
         let (host, events, threads) = MuxConnection::serve(pair, Role::Host);
         Self {
             control,
