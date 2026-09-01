@@ -104,11 +104,13 @@ that never landed. Each comes back with its actuation, in the same change. **Fiv
 `font-family-fallback` / `-bold` / `-italic` / `-bold-italic` are declared and doored again, and
 ligature control returned as `terminal.font-feature` — ghostty's own row and syntax (`-calt, -liga,
 -dlig`), which subsumes both `ligatures` and `ligatures-alphabet` without inventing a spelling. New
-beside them: `terminal.font-thicken` and `-strength`. ⚠️ The feature row REACHES the descriptor but
-only takes effect on runs that go through `CTLine`: `Shaper::shape_monospace` answers a plain-ASCII
-run out of the cmap, which performs no substitution at all, so `-calt` and `ss01` alike are inert on
-exactly the content a terminal is mostly made of. That is the shaper's gap, not the row's — `docs/68`
-§5.11 states it and it closes in the ligature batch. `docs/DECISIONS.md`
+beside them: `terminal.font-thicken` and `-strength`. The feature row reaches every cell, including a
+plain-ASCII one: `Shaper::shape_monospace` would answer such a run out of the cmap, which performs no
+substitution, so `substitutes_over_ascii` probes each cut once at `FontStack::new` — every ordered
+pair of printable ASCII through `CTLine`, compared against the cmap — and a face that ligates loses
+the fast path for its ASCII. The probe reads the CONFIGURED descriptor, so `-calt, -liga, -dlig` hands
+the fast path back on the same family. `docs/68` §5.11 has the measurement and the two traps.
+`docs/DECISIONS.md`
 §"The rows that survived their reader" argues it, and names the two rows that were kept and wired
 instead (`terminal.background` / `terminal.foreground`, whose consumer is the headless fallback the
 `AppearanceApplier` seam already promised).

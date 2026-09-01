@@ -122,16 +122,25 @@ pub(crate) struct Style {
     pub(crate) face: u16,
     /// Empty when the family had a real cut; the rasteriser strokes or shears only what is set.
     pub(crate) synthetic: Synthetic,
+    /// Whether ASCII in this face means exactly the glyphs its `cmap` answers — [probed] once, at
+    /// [`FontStack::new`], and read by nothing but the shaper's fast path.
+    ///
+    /// [probed]: crate::shape::substitutes_over_ascii
+    pub(crate) ascii_is_literal: bool,
 }
 
 impl Style {
     /// The family as asked for, drawn as it is.
+    ///
+    /// `ascii_is_literal` is `false` here on purpose: this constant is what a style slot holds
+    /// before the stack has probed anything, and the slow path is the one that is always right.
     pub(crate) const PRIMARY: Self = Self {
         face: 0,
         synthetic: Synthetic {
             bold: false,
             italic: false,
         },
+        ascii_is_literal: false,
     };
 }
 
@@ -191,8 +200,15 @@ impl FontStack {
             CTFontSymbolicTraits::TraitBold | CTFontSymbolicTraits::TraitItalic,
         );
 
+        // One `CTLine` per distinct cut, taken here so the shaper never has to ask. A cut that
+        // ligates ASCII — which is every programming family, and the whole point of
+        // `terminal.font-feature` — is one whose ASCII the fast path would answer wrongly.
+        let literal = !crate::shape::substitutes_over_ascii(&primary);
         let mut faces = vec![Face::new(primary)];
-        let mut styles = [Style::PRIMARY; 4];
+        let mut styles = [Style {
+            ascii_is_literal: literal,
+            ..Style::PRIMARY
+        }; 4];
         for (slot, resolved, faked) in [
             (1_usize, bold, Synthetic {
                 bold: true,
@@ -211,15 +227,19 @@ impl FontStack {
                 continue;
             };
             let Some(font) = resolved else {
+                // Falling back to the primary face takes the primary's answer with it — the
+                // synthetic stroke is the rasteriser's business and changes no glyph id.
                 *style = Style {
                     face: 0,
                     synthetic: faked,
+                    ascii_is_literal: literal,
                 };
                 continue;
             };
             let Ok(index) = u16::try_from(faces.len()) else {
                 continue;
             };
+            let literal = !crate::shape::substitutes_over_ascii(&font);
             faces.push(Face::new(font));
             *style = Style {
                 face: index,
@@ -227,6 +247,7 @@ impl FontStack {
                     bold: false,
                     italic: false,
                 },
+                ascii_is_literal: literal,
             };
         }
 

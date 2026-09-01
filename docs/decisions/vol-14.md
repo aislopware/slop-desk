@@ -1055,3 +1055,54 @@ subject — the ceiling this pass was defending against is a file an agent canno
 all, not a file that is merely long. No `file-length` ratchet was added: a line count is the one
 property a rule can measure without understanding, which is exactly why it would fire on the files
 that are honest and be silenced on the ones that are not.
+
+## The fast path was an assumption; it is a measurement now (2026-09-01)
+
+`terminal.font-feature` shipped inert on the content a terminal is mostly made of, and the reason
+was one sentence in `slopdesk-apple-text`'s shaper header: "Ligatures, deliberately." The argument
+was that a ligature has to land on the cell grid to be correct and `CTLine` makes no such promise,
+so `shape_monospace` was not losing a rendering, it was skipping a substitution neither path could
+honour. **Every clause of that was checked and three of them were false.** `CTRunGetStringIndices`
+plus `cell_map` already put a cluster's first glyph on its first cell; the rasteriser sizes each
+bitmap from `CTFontGetBoundingRectsForGlyphs` rounded OUT, so a two-cell ligature is not clipped;
+and the painter's quad takes that bitmap's own width rather than the cell's. The grid's permission
+had been there the whole time. What was actually missing was the FEATURE half — the cmap runs no
+`GSUB` — which the header never said.
+
+The fix is not to delete the fast path. Its 6× is measured (4.4 µs against 0.75 µs for an 80-cell
+run) and `both_paths_agree_on_the_glyphs_for_ascii` pins it as an optimisation rather than a second
+implementation. What was wrong was that its precondition was ASSUMED, so `substitutes_over_ascii`
+now measures it: every ordered pair of printable ASCII through `CTLine` once at `FontStack::new`,
+compared against the cmap, recorded on `Style`. A face that agrees keeps the fast path; a face that
+substitutes sends its ASCII the slow way, which is what its user asked for by naming it. **The probe
+wears the configured descriptor, so no feature name is parsed anywhere** — one comparison covers a
+default-on `calt`, a user's `+ss01`, and `-calt, -liga, -dlig` handing the fast path back on the very
+same family. A `GSUB`-table-presence check was considered and dropped: it is a necessary condition
+that the empirical probe already subsumes, and it would have disabled the fast path on faces that
+carry a table they never fire.
+
+Two things the implementation had to find out the hard way, both worth keeping.
+
+**Core Text stops shaping a long line.** The first corpus was one 18 050-character `CTLine`, and it
+reported that `Helvetica` — which fuses `f`+`i` in a two-character line — substitutes nothing.
+Bisected: the substitution survives 10 000 characters and is gone by 12 000, after which Core Text
+hands back the cmap. For a probe that compares the two answers, that is the worst failure available:
+silent, total, and in the direction where every face on the system reads as literal and nobody ever
+gets a ligature. The corpus is shaped in 2 048-character chunks with one character of overlap, an
+order of magnitude below the cliff. **The general lesson is the one this page keeps re-learning:
+a framework call that answers plausibly at test scale and differently at real scale is not caught by
+reading it.**
+
+**The positive test needs no vendored font.** No ligature family is on a stock macOS — the first
+probe run "found" `Fira Code`, `JetBrains Mono`, `Iosevka`, `Cascadia Code`, `Victor Mono` and `Hack`
+substituting, and all six had silently resolved to `Helvetica`, which was the actual finding.
+`Helvetica` is on every macOS and fuses `f`+`i` under the default `liga`, which is the same `GSUB`
+substitution a programming family performs on `!=`. So the ligating case is tested against a stock
+face, the literal case against `Menlo`, and the feature round-trip against `Helvetica` under
+`-liga, -calt, -dlig`. `docs/68` §5.11 had scoped this batch as blocked on "a ligating face this
+machine does not have"; the machine had one.
+
+The measurement it costs: `FontStack::new` goes 0.07 ms → 1.46 ms (`Menlo`) or 2.77 ms
+(`Helvetica`), once per stack — at launch, on a settings write, on a move to a display of another
+scale. No timing assertion was added, per the rule that a threshold in a test reads machine load as
+a regression.

@@ -22,14 +22,43 @@
 //! into a few runs each, that is a couple of milliseconds a frame against a few hundred
 //! microseconds, on a 16 ms budget `docs/68` §6 already spends mostly on drawing.
 //!
-//! ## What the fast path gives up
+//! ## The fast path is legal only where it is measured to be
 //!
-//! Ligatures, deliberately. A programming ligature has to land on the cell grid to be *correct* in
-//! a terminal — `!=` occupies two columns whatever it draws as — and `CTLine` makes no such
-//! promise; it will happily answer one glyph whose advance is not two cells. Placing the ligature's
-//! single glyph at its first cell, which is what [`ShapedGlyph::cell`] documents, is the behaviour
-//! both paths already agree on, so the fast path is not losing a correct rendering, it is skipping
-//! a substitution neither path could honour without the grid's permission.
+//! `CTFontGetGlyphsForCharacters` reads a face's `cmap` and nothing else — no `GSUB`, so no
+//! ligature and no stylistic alternate. That is the right answer for `Menlo`, whose ASCII means
+//! exactly what its `cmap` says; it is the WRONG answer for a programming family, where `!=` is one
+//! glyph and `terminal.font-feature` is the setting that asked for it. So which answer applies is
+//! not assumed, it is [probed](substitutes_over_ascii) once per face at [`FontStack::new`]: shape
+//! every ordered pair of printable ASCII through `CTLine`, compare against the `cmap`, and record
+//! whether the two agree. A face that agrees keeps the fast path; a face that does not sends its
+//! ASCII through `CTLine` too, which is what its user chose by naming it.
+//!
+//! The probe wears the face's own descriptor, so it answers the CONFIGURED font rather than the
+//! raw one: a family whose `calt` is on by default probes as substituting, and the same family
+//! under `terminal.font-feature = "-calt -liga"` probes as literal and keeps the fast path. No
+//! feature name is parsed anywhere — the comparison is the whole test.
+//!
+//! **Measured** — release build, macOS 26, best of 30: [`FontStack::new`] goes from **0.07 ms** to
+//! **1.46 ms** for `Menlo` and **2.77 ms** for `Helvetica`, which is four cuts probed against the
+//! whole corpus. That is paid once per stack — at launch, and again on a settings write or a move
+//! to a display of a different scale — and it buys back the per-frame cost of shaping every ASCII
+//! run through `CTLine` on the families that do not need it.
+//!
+//! [`FontStack::new`]: crate::FontStack::new
+//!
+//! ## Where a ligature lands
+//!
+//! On its first cell. `CTRunGetStringIndices` reports the cluster's first character, [`cell_map`]
+//! turns that into a column, and [`Shaper::emit_run`] pins the cluster's first glyph to
+//! `cell_width * cell` — so `!=` draws from the left edge of the `!` column, and the ligature glyph
+//! of a monospace family is drawn two cells wide because that is how the family drew it. Nothing
+//! clips it: the rasteriser sizes each bitmap from `CTFontGetBoundingRectsForGlyphs` rounded OUT,
+//! and the painter's quad takes that bitmap's own width. The cell after it holds no glyph, which is
+//! correct — a ligature is one mark over several columns.
+//!
+//! The painter is what keeps this honest under a cursor or a selection: `Painter` breaks a run at
+//! the cursor cell and at every colour change, so a caret standing inside `!=` splits the pair into
+//! two runs and the two halves draw unligated, which is the behaviour every editor has.
 //!
 //! ## Positions come from the grid, offsets come from Core Text
 //!
@@ -114,14 +143,18 @@ impl Shaper {
 
     /// One glyph per cell, mapped in a single call and placed by the grid.
     ///
-    /// `false` means "I could not do this" and costs nothing — the guard is two comparisons before
-    /// any framework call. `run.text.len()` is a BYTE count, so it equals the cell count only when
-    /// every cell holds exactly one single-byte character; combined with `is_ascii`, that is the
-    /// whole precondition, and it rules out combining marks, wide characters and emoji without
-    /// having to look for them.
+    /// `false` means "I could not do this" and costs nothing — the guard is three comparisons
+    /// before any framework call. `run.text.len()` is a BYTE count, so it equals the cell count
+    /// only when every cell holds exactly one single-byte character; combined with `is_ascii`, that
+    /// is the whole precondition, and it rules out combining marks, wide characters and emoji
+    /// without having to look for them.
+    ///
+    /// [`Style::ascii_is_literal`] is the first of the three, and the only one that is not a fact
+    /// about this run: it is the face's answer to [`substitutes_over_ascii`], taken once at
+    /// construction. A face that ligates never reaches the `cmap` call below.
     fn shape_monospace(&mut self, run: &TextRun<'_>, style: Style, out: &mut Vec<ShapedGlyph>) -> bool {
         let cells = usize::from(run.cells);
-        if cells == 0 || run.text.len() != cells || !run.text.is_ascii() {
+        if !style.ascii_is_literal || cells == 0 || run.text.len() != cells || !run.text.is_ascii() {
             return false;
         }
         let Ok(count) = CFIndex::try_from(cells) else {
@@ -224,41 +257,7 @@ impl Shaper {
     fn line(&self, run: &TextRun<'_>, style: Style) -> Option<CFRetained<CTLine>> {
         let faces = self.faces.borrow();
         let face = faces.get(usize::from(style.face))?;
-        let text = CFString::from_str(run.text);
-
-        // SAFETY: framework rule. An `extern` static Core Text initialises when its image loads,
-        // which is before anything that could reach this has run — the Core Text calls around it
-        // are what force the load. Rust cannot see that, so the read is `unsafe`; the framework's
-        // contract is a non-null immutable `CFStringRef` for the process's whole life, which is
-        // exactly what `&'static CFString` claims.
-        #[expect(
-            unsafe_code,
-            reason = "the framework's key constant is an extern static; objc2 cannot generate it safe"
-        )]
-        let key = unsafe { kCTFontAttributeName };
-        let carrier = CFDictionary::<CFString, CTFont>::from_slices(&[key], &[&face.font]);
-
-        // SAFETY: framework rule. The Core Foundation CREATE rule — `CFAttributedStringCreate`
-        // answers a reference this caller owns. Both arguments are live `CFRetained`s for the whole
-        // call and neither is null; the `unsafe` is `objc2` refusing to certify the nullability and
-        // the dictionary's element types, which the line above just fixed.
-        #[expect(
-            unsafe_code,
-            reason = "a Create-rule return over a dictionary whose types this fn chose"
-        )]
-        let attributed = unsafe {
-            objc2_core_foundation::CFAttributedString::new(None, Some(&text), Some(carrier.as_opaque()))
-        }?;
-
-        // SAFETY: framework rule. The CREATE rule again — `CTLineCreateWithAttributedString`
-        // answers a reference this caller owns, which `CFRetained` releases. The attributed
-        // string is live for the whole call and Core Text copies what it needs out of it.
-        #[expect(
-            unsafe_code,
-            reason = "a Create-rule return; objc2 cannot know the caller owns it"
-        )]
-        let line = unsafe { CTLine::with_attributed_string(&attributed) };
-        Some(line)
+        line_for(&face.font, run.text)
     }
 
     /// The chain index of the face Core Text actually used for a run.
@@ -398,6 +397,201 @@ impl TextShaper for Shaper {
     }
 }
 
+/// The `CTLine` for `text`, shaped in exactly `font` — the face as configured, features and all.
+///
+/// Free rather than a method because the capability probe runs at [`FontStack::new`], before any
+/// [`Shaper`] exists, and it needs the same line the shaper would have built. Answering `None`
+/// rather than an empty line keeps "Core Text refused" distinguishable from "this text has no
+/// glyphs", which the probe reads as a reason to stay on the safe path.
+///
+/// [`FontStack::new`]: crate::FontStack::new
+fn line_for(font: &CTFont, text: &str) -> Option<CFRetained<CTLine>> {
+    let text = CFString::from_str(text);
+
+    // SAFETY: framework rule. An `extern` static Core Text initialises when its image loads, which
+    // is before anything that could reach this has run — the Core Text calls around it are what
+    // force the load. Rust cannot see that, so the read is `unsafe`; the framework's contract is a
+    // non-null immutable `CFStringRef` for the process's whole life, which is exactly what
+    // `&'static CFString` claims.
+    #[expect(
+        unsafe_code,
+        reason = "the framework's key constant is an extern static; objc2 cannot generate it safe"
+    )]
+    let key = unsafe { kCTFontAttributeName };
+    let carrier = CFDictionary::<CFString, CTFont>::from_slices(&[key], &[font]);
+
+    // SAFETY: framework rule. The Core Foundation CREATE rule — `CFAttributedStringCreate` answers
+    // a reference this caller owns. Both arguments are live for the whole call and neither is null;
+    // the `unsafe` is `objc2` refusing to certify the nullability and the dictionary's element
+    // types, which the line above just fixed.
+    #[expect(
+        unsafe_code,
+        reason = "a Create-rule return over a dictionary whose types this fn chose"
+    )]
+    let attributed = unsafe {
+        objc2_core_foundation::CFAttributedString::new(None, Some(&text), Some(carrier.as_opaque()))
+    }?;
+
+    // SAFETY: framework rule. The CREATE rule again — `CTLineCreateWithAttributedString` answers a
+    // reference this caller owns, which `CFRetained` releases. The attributed string is live for
+    // the whole call and Core Text copies what it needs out of it.
+    #[expect(
+        unsafe_code,
+        reason = "a Create-rule return; objc2 cannot know the caller owns it"
+    )]
+    let line = unsafe { CTLine::with_attributed_string(&attributed) };
+    Some(line)
+}
+
+/// Every glyph a line shaped to, in order, ignoring where they landed.
+///
+/// `false` for a line that answered nothing at all, which is the one case a caller cannot tell from
+/// an honest empty answer by looking at `out`.
+fn line_glyphs(line: &CTLine, out: &mut Vec<CGGlyph>) -> bool {
+    out.clear();
+
+    // SAFETY: framework rule. `CTLineGetGlyphRuns` is documented as GET, and `objc2`'s binding
+    // retains before handing the array over, so what arrives is owned either way and `CFRetained`
+    // releases it.
+    #[expect(
+        unsafe_code,
+        reason = "an array objc2 has already retained on this caller's behalf"
+    )]
+    let runs = unsafe { line.glyph_runs() };
+    // SAFETY: framework rule. Core Text documents this as "an array of CTRun objects"; C's
+    // `CFArrayRef` has nowhere to carry that. Nothing is dereferenced — the typed view only decides
+    // which `get` applies.
+    #[expect(
+        unsafe_code,
+        reason = "C's CFArrayRef carries no element type; the CTLine header is where it lives"
+    )]
+    let runs = unsafe { CFRetained::cast_unchecked::<CFArray<CTRun>>(runs) };
+
+    for slot in 0..runs.len() {
+        let Some(ct_run) = runs.get(slot) else {
+            return false;
+        };
+        // SAFETY: framework rule. GET-rule — a count read off a live run, by value.
+        #[expect(
+            unsafe_code,
+            reason = "a Get-rule scalar read; nothing is owned and nothing escapes"
+        )]
+        let count = unsafe { ct_run.glyph_count() };
+        let Ok(len) = usize::try_from(count) else {
+            return false;
+        };
+        let base = out.len();
+        out.resize(base + len, CGGlyph::MIN);
+        let Some(slots) = out.get_mut(base..) else {
+            return false;
+        };
+        let Some(slots) = NonNull::new(slots.as_mut_ptr()) else {
+            return false;
+        };
+        // SAFETY: framework rule. A GET-rule call writing through a slot this function owns: the
+        // `Vec` was just grown by the run's own glyph count, `slots` addresses exactly that tail,
+        // and `WHOLE` is Core Text's spelling for "the entire run", so the call cannot write past
+        // what was reserved. Nothing is retained and the pointer does not escape.
+        #[expect(
+            unsafe_code,
+            reason = "a Get-rule call writing through a slot this fn just reserved"
+        )]
+        unsafe {
+            ct_run.glyphs(WHOLE, slots);
+        }
+    }
+    !out.is_empty()
+}
+
+/// The printable ASCII alphabet, which is the whole of what the fast path claims to know.
+const PRINTABLE: core::ops::RangeInclusive<u8> = 0x20..=0x7E;
+
+/// How much of the probe's corpus goes through one `CTLine`.
+///
+/// **Measured**, macOS 26, `Helvetica`: `CTLine` applies `liga` to `"fi"` repeated 5 000 times —
+/// 10 000 characters — and STOPS applying it at 12 000. Somewhere between the two Core Text gives
+/// up on substitution for a line that long and hands back the `cmap`, which for a probe that
+/// compares the two is the worst possible failure: every face on the system reads as literal and
+/// nobody ever gets a ligature. 2 048 is an order of magnitude below the cliff and still only nine
+/// lines for the whole corpus, which is the trade this constant is making.
+const PROBE_CHUNK: usize = 2048;
+
+/// Whether this face answers anything other than its own `cmap` for plain ASCII.
+///
+/// This is the fact [`Shaper::shape_monospace`] rests on, and it is measured rather than assumed.
+/// The corpus is every ORDERED pair of printable ASCII characters, concatenated — 9 025 pairs, 18
+/// 050 characters, one `CTLine`. Concatenation is exhaustive without a de Bruijn construction and
+/// sound without one too: the pairs that straddle two chunks are themselves ASCII pairs, so a
+/// substitution found at a seam is still a substitution this face performs.
+///
+/// Both halves of the comparison matter. A different glyph COUNT is a ligature — several characters
+/// fused into one mark. The same count with different IDS is a stylistic alternate, `ss01` or a
+/// slashed zero, which the fast path would silently drop even though the user paid for it in
+/// `terminal.font-feature`.
+///
+/// `true` — "assume it substitutes" — is the answer to every failure, because that answer costs
+/// speed and the other one costs correctness. It is also the answer when the face cannot map some
+/// printable character at all: `CTLine` would find a fallback for it and the `cmap` path would
+/// have to decline anyway.
+///
+/// A ligature of THREE characters or more whose two-character prefix does not also substitute would
+/// be missed. That failure is soft in the only direction that matters — such a face renders
+/// unligated, exactly as it does today — and no shipping programming family is built that way;
+/// `===` exists because `==` does.
+pub(crate) fn substitutes_over_ascii(font: &CTFont) -> bool {
+    let alphabet = PRINTABLE.count();
+    let mut text = String::with_capacity(alphabet * alphabet * 2);
+    for first in PRINTABLE {
+        for second in PRINTABLE {
+            text.push(char::from(first));
+            text.push(char::from(second));
+        }
+    }
+
+    // Every character is one byte and one UTF-16 unit, so the three sequences below index alike.
+    let mut utf16: Vec<u16> = text.bytes().map(u16::from).collect();
+    let Ok(count) = CFIndex::try_from(utf16.len()) else {
+        return true;
+    };
+    let mut cmap = vec![CGGlyph::MIN; utf16.len()];
+    let (Some(characters), Some(glyphs)) =
+        (NonNull::new(utf16.as_mut_ptr()), NonNull::new(cmap.as_mut_ptr()))
+    else {
+        return true;
+    };
+    // SAFETY: framework rule. `CTFontGetGlyphsForCharacters` is GET-rule — it owns nothing and
+    // answers a bool. Both pointers address `Vec`s this function owns, each of length `count` and
+    // neither touched again until the call returns. This is the caller-owned-slot shape `docs/57`
+    // §2 blesses; the function does not keep either pointer.
+    #[expect(
+        unsafe_code,
+        reason = "a Get-rule call writing through two slots this fn owns"
+    )]
+    let mapped = unsafe { font.glyphs_for_characters(characters, glyphs, count) };
+    if !mapped {
+        return true;
+    }
+
+    let mut shaped = Vec::with_capacity(PROBE_CHUNK);
+    let mut start = 0_usize;
+    while start < text.len() {
+        let end = text.len().min(start + PROBE_CHUNK);
+        let (Some(chunk), Some(expected)) = (text.get(start..end), cmap.get(start..end)) else {
+            return true;
+        };
+        let Some(line) = line_for(font, chunk) else {
+            return true;
+        };
+        if !line_glyphs(&line, &mut shaped) || shaped != expected {
+            return true;
+        }
+        // One character of overlap, so the pair that straddles two chunks is still shaped by one of
+        // them. Without it a face could hide a ligature in the seam of every chunk but the first.
+        start = end.saturating_sub(1).max(start.saturating_add(1));
+    }
+    false
+}
+
 /// Which cell each UTF-16 offset of a run's text belongs to.
 ///
 /// [`TextRun`] hands over a run's TEXT and its CELL COUNT and nothing in between, so the boundaries
@@ -440,6 +634,7 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
+    use slopdesk_terminal::config::FontSpec;
     use slopdesk_termrender::glyph::{ShapedGlyph, TextRun, TextShaper};
 
     use crate::FontStack;
@@ -479,9 +674,76 @@ mod tests {
         }
     }
 
+    /// The probe's negative half, on the family this crate is measured against: `Menlo` puts
+    /// nothing between its `cmap` and its ASCII, so the fast path is legal and the guard says so.
+    #[test]
+    fn a_grid_family_takes_the_fast_path() {
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
+        let mut shaper = stack.shaper();
+        let style = shaper.style_of(&run("!=", 2));
+        assert!(style.ascii_is_literal);
+
+        let mut out = Vec::new();
+        assert!(shaper.shape_monospace(&run("!=", 2), style, &mut out));
+        assert_eq!(out.len(), 2, "two characters, two cells, two glyphs");
+    }
+
+    /// The probe's positive half, without a vendored fixture. No ligature family is on a stock
+    /// system, but `Helvetica` is, and it fuses `f`+`i` under the default `liga` — which is the
+    /// same `GSUB` substitution a programming family performs on `!=`, so it exercises the same
+    /// two decisions: the fast path declines, and the ligature arrives as ONE glyph on the FIRST
+    /// of the two cells.
+    #[test]
+    fn a_ligating_family_routes_its_ascii_through_core_text() {
+        let stack = FontStack::new(&spec_of("Helvetica", 13.0, 1.0), 2.0).unwrap();
+        let mut shaper = stack.shaper();
+        let style = shaper.style_of(&run("fi", 2));
+        assert!(!style.ascii_is_literal, "Helvetica substitutes over ASCII");
+
+        let mut declined = Vec::new();
+        assert!(
+            !shaper.shape_monospace(&run("fi", 2), style, &mut declined),
+            "and the fast path knows it"
+        );
+        assert!(declined.is_empty());
+
+        let mut out = Vec::new();
+        shaper.shape(&run("fi", 2), &mut out);
+        assert_eq!(out.len(), 1, "one ligature, not two letters");
+        let glyph = out.first().unwrap();
+        assert_eq!(glyph.cell, 0, "on the first cell it covers");
+        assert!((f64::from(glyph.x) - 0.0).abs() < 1e-3, "at that cell's origin");
+
+        // A pair the family does NOT fuse still shapes one glyph per cell down the same path, so
+        // the routing costs nothing but time.
+        out.clear();
+        shaper.shape(&run("xy", 2), &mut out);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out.last().unwrap().cell, 1);
+    }
+
+    /// The probe reads the CONFIGURED face, not the raw one — so a user who turns ligatures off in
+    /// `terminal.font-feature` gets the fast path back, on the very same family that lost it. This
+    /// is the reason no feature name is parsed anywhere: the setting is honoured by being measured.
+    #[test]
+    fn turning_ligatures_off_hands_the_fast_path_back() {
+        let mut spec = spec_of("Helvetica", 13.0, 1.0);
+        spec.features = FontSpec::features_of(&["-liga, -calt, -dlig".to_owned()]);
+        let stack = FontStack::new(&spec, 2.0).unwrap();
+        let mut shaper = stack.shaper();
+        let style = shaper.style_of(&run("fi", 2));
+        assert!(style.ascii_is_literal, "no substitution is left to miss");
+
+        let mut out = Vec::new();
+        shaper.shape(&run("fi", 2), &mut out);
+        assert_eq!(out.len(), 2, "two letters again");
+        assert_eq!(out.last().unwrap().cell, 1);
+    }
+
     /// The fast path is an OPTIMISATION, not a second implementation: it has to answer the glyph
     /// ids Core Text would have. If these ever diverge, the atlas holds two entries for one
-    /// character and only one of them is right.
+    /// character and only one of them is right. The probe is what makes this test's premise true
+    /// rather than hoped for — it is only asserted of a face the probe called literal.
     #[test]
     fn both_paths_agree_on_the_glyphs_for_ascii() {
         let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();

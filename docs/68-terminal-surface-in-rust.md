@@ -876,16 +876,27 @@ the feature row is `ghostty`'s to the letter — `feat`, `+feat`, `-feat`, `feat
 in a `~/.config/ghostty/config` should paste in here, and because it is also the CSS
 `font-feature-settings` grammar. `-calt, -liga, -dlig` is how ligatures go away.
 
-**⚠️ The feature row does not yet reach an ASCII cell, and this is the shaper's gap.** §5.1's fast
-path — `shape_monospace`, one `CTFontGetGlyphsForCharacters` over the run — reads the cmap, which maps
-a character to its default glyph and runs NO substitution table. Every feature is a `GSUB`/`GPOS`
-lookup, so on a run of plain ASCII `-calt` turns nothing off and `ss01=2` swaps nothing in; only a run
-that falls through to `CTLine` sees them. The settings half is what landed here and it is complete —
-the row parses, crosses whole, and rides the descriptor every face is cut from. What is missing is a
-face PROBE that notices the resolved face substitutes over ASCII and routes that face's runs the slow
-way; it lands with the ligature work, which needs the same probe, and the test that pins it needs a
-ligating face this machine does not have. Until then the honest claim is: features apply where
-Core Text shapes, which is not where the prompt is.
+**The feature row reaches an ASCII cell, and a face probe is what gets it there (2026-09-01).**
+§5.1's fast path — `shape_monospace`, one `CTFontGetGlyphsForCharacters` over the run — reads the
+cmap, which maps a character to its default glyph and runs NO substitution table. Every feature is a
+`GSUB`/`GPOS` lookup, so on a run of plain ASCII the cmap answer is simply wrong for any family that
+ligates. The fix is not to delete the fast path, whose 6× is measured, but to stop ASSUMING it
+applies: `substitutes_over_ascii` shapes every ordered pair of printable ASCII through `CTLine` once,
+at `FontStack::new`, compares the result against the cmap, and records the answer on `Style`. A face
+that agrees keeps the fast path; a face that substitutes sends its ASCII through `CTLine` too. The
+probe wears the face's own descriptor, so it answers the CONFIGURED font: the same family reads as
+substituting by default and as literal under `-calt, -liga, -dlig`, and the fast path comes back with
+it. **No feature name is parsed by the shaper** — the comparison is the whole test, which is why
+`ss01=2` and a `!=` ligature need no separate handling.
+
+*Measured*, release, macOS 26, best of 30: `FontStack::new` 0.07 ms → **1.46 ms** for `Menlo` and
+**2.77 ms** for `Helvetica` (four cuts, whole corpus), paid once per stack rather than per frame.
+Two traps the implementation pins: Core Text stops applying substitution to a `CTLine` somewhere
+between 10 000 and 12 000 characters and silently hands back the cmap, so the corpus is shaped in
+2 048-character chunks with one character of overlap — a single long line would have made every face
+on the system read as literal; and the positive test needs no vendored font, because `Helvetica` is
+on every macOS and fuses `f`+`i` under the default `liga`, which is the same `GSUB` substitution a
+programming family performs on `!=`.
 
 **Where each half is decided.** The TEXT is parsed in `slopdesk_terminal::config`, which reaches no
 framework and can test every spelling; `slopdesk-apple-text` is handed `(tag, value)` pairs and never

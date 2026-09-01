@@ -235,7 +235,15 @@ const WIDE: [Wide; 7] = [
         // two Create-rule returns, one Copy-rule return, and the extern statics holding Core Text's
         // attribute keys. The PARSING is not here: ghostty's feature syntax is read in
         // `slopdesk-terminal`, which reaches no framework.
-        cap: 901,
+        //
+        // 901 → 1001: the face probe that makes those features reach an ASCII cell.
+        // `substitutes_over_ascii` shapes every ordered pair of printable ASCII through `CTLine`
+        // once at `FontStack::new` and compares it against the cmap, so the shaper's fast path is
+        // gated on a measurement rather than an assumption. Two helpers came out of the shaper to
+        // serve it — `line_for`, which `Shaper::line` now delegates to, and `line_glyphs` — so one
+        // of the four new `unsafe` sites is a MOVE rather than an addition, and the other three are
+        // the same Get-rule shapes the crate already discharges. Three tests, none of them timing.
+        cap: 1001,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-metal",
