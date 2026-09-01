@@ -233,6 +233,42 @@ final class TerminalShellCompletionTests: XCTestCase {
         XCTAssertEqual(model.commandPrompt.candidates.count, 1, "the answer still had its line")
     }
 
+    /// Enter with a panel up is NOT a submit. Both views branch on `candidates` first and call
+    /// ``CommandPrompt/acceptCompletion()``, returning without ever reaching
+    /// ``TerminalViewModel/submitCommandPrompt()`` — so the accept is a question-ender in its own
+    /// right, and a reply landing after it would reopen a panel over a line the user just settled.
+    func testAnAnswerForAnAcceptedCandidateIsDropped() async {
+        let model = TerminalViewModel()
+        // The accepted line is itself a PREFIX of another entry, which is what makes the reply's
+        // `complete()` find something to reopen the panel with.
+        model.commandPrompt.recordHistory("ls -la --color=auto")
+        model.commandPrompt.recordHistory("ls -la")
+        model.commandPrompt.insert("ls")
+        model.shellCompletionSink = { _, _ in .groups(Data()) }
+
+        model.completeCommandPrompt(forward: true)
+        XCTAssertEqual(model.commandPrompt.candidates.count, 2, "the local candidates are up")
+        XCTAssertTrue(model.commandPrompt.acceptCompletion(), "Enter takes one, the way both views do")
+        XCTAssertEqual(model.commandPrompt.text, "ls -la", "the highlighted one")
+        await drainReply()
+
+        XCTAssertTrue(model.commandPrompt.candidates.isEmpty, "with no panel back over it")
+    }
+
+    /// ⌃R during the round trip. A search's rows ARE `candidates`, so a completion reply that merged
+    /// would drop shell candidates into a reverse search — a list of two different things.
+    func testAnAnswerDoesNotMergeIntoAnOpenReverseSearch() async {
+        let model = seeded()
+        model.shellCompletionSink = { _, _ in .groups(Data()) }
+
+        model.completeCommandPrompt(forward: true)
+        model.commandPrompt.beginSearch()
+        await drainReply()
+
+        XCTAssertTrue(model.commandPrompt.isSearching, "the search owns the panel")
+        XCTAssertEqual(model.commandPrompt.text, "ls", "and nothing was completed into the draft")
+    }
+
     /// Lets the `Task` the ask spawned run to completion. Yielding rather than sleeping: the sink
     /// answers immediately in every test that calls this, so there is nothing to wait OUT.
     private func drainReply() async {

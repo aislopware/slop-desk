@@ -447,20 +447,29 @@ public final class CommandPrompt {
     /// The last state read out of the door, refreshed by every call that can change it.
     private var state: SlopDeskPromptState
 
-    /// Which COMPLETION QUESTION the editor is on. Bumped by each of the three keys that end one —
-    /// Enter that runs the line (``submit()``), ⌃C that abandons it (``clear()``), Escape that puts
-    /// the panel away (``dismissCompletion()``) — and never by editing the line itself.
+    /// Which COMPLETION QUESTION the editor is on. Bumped by every door that ENDS one or REPLACES
+    /// it, and by nothing else — never by editing the line, which leaves the question standing.
     ///
     /// It exists for the asynchronous answers that outlive their question. A shell completion is
-    /// asked about a caret and lands 20–92 ms later (`docs/68` §11), and in that window the user can
-    /// end the question three different ways that the TEXT alone cannot report. Enter is the sharp
-    /// one: it empties the document, so an answer checking only the text would rank the whole
-    /// history against an empty prefix and hang a panel on the fresh prompt — where the next Enter
-    /// accepts a candidate instead of running what the user typed. Escape is the quiet one: a panel
-    /// that reappears sixty milliseconds after it was dismissed reads as a bug in any UI.
+    /// asked about a caret and lands 20–92 ms later (`docs/68` §11), and the user has that whole
+    /// window to move on in a way the TEXT alone cannot report:
     ///
-    /// Read rather than observed, and bumped HERE rather than at the six call sites in the two
-    /// views, so no caller has to remember to retire anything.
+    ///  * ``submit()`` that RUNS empties the document, so an answer checking only the text would
+    ///    rank the whole history against an empty prefix and hang a panel on the FRESH prompt —
+    ///    where the next Enter would accept a candidate instead of running what the user typed. A
+    ///    submit that only opened a row does NOT bump: that line is still here.
+    ///  * ``clear()`` is ⌃C, the line abandoned at the shell.
+    ///  * ``dismissCompletion()`` is ⎋. A panel that reappears sixty milliseconds after it was
+    ///    dismissed reads as a bug in any UI.
+    ///  * ``acceptCompletion()`` is the question ANSWERED — and it is the one the views reach on
+    ///    Enter while a panel is up, instead of ``submit()``.
+    ///  * ``beginSearch()``, ``acceptSearch()`` and ``cancelSearch()`` are ⌃R, which does not end
+    ///    the question so much as take the panel away from it: a search's rows ARE `candidates`, so
+    ///    a completion reply merging in would drop shell candidates into a reverse search.
+    ///
+    /// Read rather than observed, and bumped HERE rather than at the view call sites — two of which
+    /// reach `clear()` and `dismissCompletion()` without passing through the model at all — so no
+    /// key has to remember to retire anything.
     public private(set) var completionEpoch: UInt64 = 0
 
     public init() {
@@ -758,6 +767,7 @@ public final class CommandPrompt {
     /// Opens the ⌃R panel, which starts on the most recent commands rather than empty.
     public func beginSearch() {
         slopdesk_prompt_search_begin(handle)
+        completionEpoch &+= 1
         refresh()
     }
 
@@ -798,6 +808,7 @@ public final class CommandPrompt {
     @discardableResult
     public func acceptSearch() -> Bool {
         let taken = slopdesk_prompt_search_accept(handle)
+        completionEpoch &+= 1
         refresh()
         return taken
     }
@@ -805,6 +816,7 @@ public final class CommandPrompt {
     /// Closes the search and its panel, leaving the document as it was.
     public func cancelSearch() {
         slopdesk_prompt_search_cancel(handle)
+        completionEpoch &+= 1
         refresh()
     }
 
@@ -936,6 +948,9 @@ public final class CommandPrompt {
     @discardableResult
     public func acceptCompletion() -> Bool {
         let applied = slopdesk_prompt_accept_completion(handle)
+        // Only when it APPLIED. An accept with nothing highlighted changed nothing, so the question
+        // the user asked is still open and an answer still in flight still belongs to it.
+        if applied { completionEpoch &+= 1 }
         refresh()
         return applied
     }
