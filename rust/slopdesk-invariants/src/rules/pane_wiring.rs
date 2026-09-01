@@ -240,7 +240,7 @@ pub fn the_phone_key_path_is_rust(tree: &Tree) -> Report {
         Claim::Exists {
             path: PHONE_HOST,
             message: "TerminalLeafView.swift is gone — without it the phone's terminal cannot receive a \
-                      keystroke (docs/56 §16, docs/62 §2.4)",
+                      keystroke (docs/client-ui-split/inc-15-33 §increment 16, docs/62 §2.4)",
         },
         Claim::Lacks {
             path: PHONE_HOST,

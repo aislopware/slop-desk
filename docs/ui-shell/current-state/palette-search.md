@@ -23,7 +23,7 @@ Four structural changes post-date the survey and reshape the whole page:
   no longer exists anywhere in `Sources/`. The multi-source jump-to moved to `OpenQuicklyFilter`; the
   three `QueryFilter` cases are retained as the documented Warp taxonomy but no source answers them
   (`PaletteModel.swift:18-23`).
-- **The palette now derives ~45 rows from the binding registry.** `docs/56-client-ui-split.md:2818-2870`
+- **The palette now derives ~45 rows from the binding registry.** `docs/client-ui-split/inc-58-72.md` (increments 63–64)
   ("the palette listed 33 of 77, and only a phone could tell"): `ActionsPaletteSource` hand-writes 33
   rows and `registryRows` derives every remaining binding, so a phone with no hardware keyboard can still
   say every verb. Twenty-four hand-written rows became `.binding(_)` in the same change, and six

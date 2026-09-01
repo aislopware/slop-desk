@@ -1020,3 +1020,38 @@ extension in another file cannot see the class body's `private` members — so e
 different and worse bargain than the four cuts above, and both files are additionally pinned BY PATH in
 several `slopdesk-invariants` rules. They stay whole. If they grow, the answer is to move behaviour out
 of the type, not to spray its innards across files.
+
+**The fifth file was a DOC, and it was longer than any of the four.** `docs/56-client-ui-split.md`
+stood at 4 383 lines — the single longest tracked file in the tree after the four cuts above, longer
+than either Rust module that got split, and one that `docs/00`, `docs/30`, `docs/58`, `docs/62` and
+six `ui-shell` pages all send a reader to. §4 alone, the increment ledger, was 3 262 of those lines:
+82 entries, chronological, each self-contained. That is `DECISIONS.md`'s shape exactly, so it took
+`DECISIONS.md`'s treatment — five volumes under `docs/client-ui-split/`, none over 722 lines, no
+increment split across two, and §4 itself reduced to its own preamble plus a per-increment index.
+The argument the doc exists to make (§1 the measurement, §2 the layers, §3 the boundary, §3.5 the
+stages) and the two stage ledgers after §4 did NOT move: they are prose that has to be read in order,
+not a log that is read by lookup.
+
+The cut was placed at line 658 for a reason worth recording. **Nine of the ten `56-client-ui-split.md:NNN`
+citations in the tree point at lines 99–434 — above the ledger — so removing §4 leaves every one of
+them still correct.** Only `:2818-2870` pointed inside, and it is now a path to the volume that holds
+increments 63–64. That is the opposite outcome to the `DECISIONS.md` split on the same day, where 47
+citations had to be de-numbered, and the difference is not luck: a doc whose ARGUMENT is at the top
+and whose LOG is at the bottom can lose its log without moving a single line anybody cites. Prefer
+that shape when a doc starts to grow.
+
+Two `origin:` fields moved with the ledger — the same two an earlier ruling on this page
+re-pointed at `docs/56 §increment 38` and `§increment 64`, now at their volumes — and
+`origins-cite-live-sections` had to learn that `docs/` has subdirectories at all: it matched a
+cited name against direct children only, so the correct new provenance would have read as "no
+such document". The name is matched against the path relative to `docs/` now, and the numeric
+shorthand (`56` for `56-client-ui-split.md`) still spells a leaf, so `docs/46` cannot resolve
+into some nested `46-…` volume.
+
+The remaining survivors are named, so nobody re-surveys them: `claim.rs` (2 731) and
+`repo_invariants.rs` (2 370) in `slopdesk-invariants`, `capture.rs` (2 340), `apply.rs` (2 078),
+`tree_ops.rs` (2 061) and `docs/62` (2 037). All sit near 2 000, none near 4 000, and each is one
+subject — the ceiling this pass was defending against is a file an agent cannot afford to read at
+all, not a file that is merely long. No `file-length` ratchet was added: a line count is the one
+property a rule can measure without understanding, which is exactly why it would fire on the files
+that are honest and be silenced on the ones that are not.

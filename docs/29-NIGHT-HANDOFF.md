@@ -208,7 +208,7 @@ current custom encoder that bypasses libghostty):
   just threads `model.isCursorKeysApplication` through; routing via `surface.key()` stays the canonical
   end-state for the trio.
 - **#7 nav keys dropped** (Home/End/PageUp/PageDown/Insert/Fn/Delete-forward) — ✅ **FIXED headlessly
-  2026-08-18** (docs/56 §Increment 16). It was never a whitelist bug: keying a key's IDENTITY off what it
+  2026-08-18** (docs/client-ui-split/inc-15-33 §Increment 16). It was never a whitelist bug: keying a key's IDENTITY off what it
   COMMITTED cannot name a key that commits nothing. `slopdesk_workspace::phone_key` reads `UIKey.keyCode`
   — the USB HID usage — instead, so all nineteen are one table row each, and `SlopDeskClientUI.TerminalInputHost`
   is the responder that finally mounts.

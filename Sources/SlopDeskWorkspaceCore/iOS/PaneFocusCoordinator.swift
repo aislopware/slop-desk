@@ -32,7 +32,7 @@ import UIKit
 /// end of every reconcile — `WorkspaceStore.syncFocusCoordinator`).
 ///
 /// The producer is `SlopDeskPhoneUI.TerminalInputHostView`, which registers on attach and
-/// unregisters on dismantle (docs/56 §Increment 16). It was a seam with no producer for a long time
+/// unregisters on dismantle (docs/client-ui-split/inc-15-33 §Increment 16). It was a seam with no producer for a long time
 /// — the responder this was written against was the old client UI's, deleted whole in `2682df50`,
 /// and the arbitration plus its generation guard survived only because they are pure and
 /// macOS-testable. `focus(_:)` still runs harmlessly on a Mac, where it finds no host at all.

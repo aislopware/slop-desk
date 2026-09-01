@@ -509,6 +509,10 @@ fn cited_paths(tree: &Tree, docs: &[String], roots: &[String]) -> BTreeSet<Strin
 /// `docs/45 §5.3, docs/55 §8` switches documents halfway. A `§` with no `docs/` before it belongs
 /// to something this rule does not read (`CLAUDE.md §Rules`, a shell script's own numbering) and is
 /// dropped rather than attached to whatever document came later.
+///
+/// A `/` inside the name is part of it: `docs/` has SUBDIRECTORIES since the long-doc split, so
+/// `docs/client-ui-split/inc-34-49 §increment 38` names one document the same way `docs/56 §3`
+/// does.
 fn cited_sections(origin: &str) -> Vec<(String, String)> {
     let mut cited = Vec::new();
     let mut doc: Option<String> = None;
@@ -518,9 +522,9 @@ fn cited_sections(origin: &str) -> Vec<(String, String)> {
         if origin[index..].starts_with("docs/") {
             let rest = &origin[index + "docs/".len()..];
             let end = rest
-                .find(|c: char| !c.is_ascii_alphanumeric() && !"_.-".contains(c))
+                .find(|c: char| !c.is_ascii_alphanumeric() && !"_.-/".contains(c))
                 .unwrap_or(rest.len());
-            doc = Some(rest[..end].trim_end_matches('.').to_owned());
+            doc = Some(rest[..end].trim_end_matches(['.', '/']).to_owned());
             index += "docs/".len() + end;
             continue;
         }
@@ -646,14 +650,21 @@ pub fn every_cited_section_exists(tree: &Tree) -> Report {
     for origin in &origins {
         for (doc, section) in cited_sections(origin) {
             let named = tree.paths().find(|path| {
-                path.parent()
-                    .is_some_and(|parent| parent == std::path::Path::new("docs"))
-                    && path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| {
-                            name == doc || name.strip_prefix(&doc).is_some_and(|rest| rest.starts_with('-'))
-                        })
+                // The name is matched against the path RELATIVE to `docs/`, so a citation reaches a
+                // subdirectory (`client-ui-split/inc-34-49`) as readily as a top-level doc. The
+                // numeric shorthand — `56` for `56-client-ui-split.md` — still only spells the
+                // leaf, which is what keeps `docs/46` from resolving into some
+                // nested `46-…` volume.
+                let Ok(rest) = path.strip_prefix("docs") else {
+                    return false;
+                };
+                let Some(rest) = rest.to_str() else {
+                    return false;
+                };
+                let stem = rest.strip_suffix(".md").unwrap_or(rest);
+                rest == doc
+                    || stem == doc
+                    || stem.strip_prefix(&doc).is_some_and(|rest| rest.starts_with('-'))
             });
             let Some(named) = named else {
                 report.fail(format!(
@@ -827,6 +838,43 @@ mod tests {
             &registry("        Rule { name: \"x\", origin: \"docs/98 §the shape\", check: m::g },\n"),
         );
         assert!(every_cited_section_exists(&clean.tree()).is_clean());
+    }
+
+    /// A citation reaches into `docs/`'s SUBDIRECTORIES, which is where a split doc's volumes live.
+    ///
+    /// `docs/56`'s increment ledger became `docs/client-ui-split/inc-*.md`, and two rules cite an
+    /// increment by name. Before the split this scan only looked at direct children of `docs/`, so
+    /// the correct new provenance would have read as "no such document" — the rule agreeing with
+    /// drift in the one direction it exists to refuse.
+    #[test]
+    fn a_citation_reaches_a_doc_in_a_subdirectory() {
+        let fixture = Fixture::new("origin-nested-doc");
+        fixture.write("docs/99-padding.md", PADDING_DOC);
+        fixture.write(
+            "docs/split/vol-01.md",
+            "# a volume\n\n### Increment 38 — the verb\n",
+        );
+        fixture.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            &registry(
+                "        Rule { name: \"x\", origin: \"docs/split/vol-01 §increment 38\", check: m::g },\n",
+            ),
+        );
+        assert!(every_cited_section_exists(&fixture.tree()).is_clean());
+
+        let missing = Fixture::new("origin-nested-dangling");
+        missing.write("docs/99-padding.md", PADDING_DOC);
+        missing.write(
+            "docs/split/vol-01.md",
+            "# a volume\n\n### Increment 38 — the verb\n",
+        );
+        missing.write(
+            "rust/slopdesk-invariants/src/rules/mod.rs",
+            &registry(
+                "        Rule { name: \"x\", origin: \"docs/split/vol-01 §increment 39\", check: m::g },\n",
+            ),
+        );
+        assert!(!every_cited_section_exists(&missing.tree()).is_clean());
     }
 
     /// A provenance naming a document the tree does not have is red before any section is looked

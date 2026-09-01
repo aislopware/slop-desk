@@ -1553,12 +1553,12 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "palette-verb-platform",
-            origin: "docs/56 §increment 38",
+            origin: "docs/client-ui-split/inc-34-49 §increment 38",
             check: command_surface::a_palette_verb_names_its_platform_once,
         },
         Rule {
             name: "palette-reaches-bindings",
-            origin: "docs/56 §increment 64",
+            origin: "docs/client-ui-split/inc-58-72 §increment 64",
             check: command_surface::every_keybinding_is_reachable_from_the_palette,
         },
         Rule {
