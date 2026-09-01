@@ -570,7 +570,9 @@ Two prior questions it settles, each with the reason written where the code is:
   `atuin`'s, whose own docs ship a `enter = return-selection` rebinding for the people it surprises.
   `slopdesk-zshcomplete`'s header already states the tie-break this side of the app takes: "a
   missing candidate costs a completion, and a wrong one writes the user's command line for them".
-  A wrong one RUN is strictly worse than a wrong one written.
+  A wrong one RUN is strictly worse than a wrong one written. On a query that matched NOTHING it
+  still closes the session and reports that it wrote nothing: a key that visibly does nothing reads
+  as a wedged prompt, and an empty panel has already said everything it can.
 
 **It cost doors rather than adding them, because a ⌃R row and a completion candidate are the same
 record.** Text, what it inserts, the whole range it replaces, and the scalar positions the underline
@@ -581,6 +583,12 @@ gone; `slopdesk_prompt_search_back` (⌃S / ↑, one row up) is the one door tha
 what the panel is missing is not a way to READ the hit but a way to move through the ones on screen.
 `CommandEditor::complete` refuses outright while a session is up — the search owns that list, and
 both platforms recomplete on a redraw.
+
+The single exception is `search_matches`, one `size_t` on the state record, and it is exactly what
+the shared rows CANNOT carry: they carry what FITS. Two caps stand between the history and the
+screen — `complete::LIMIT` before the records cross, the band's six before they are drawn — so a
+count taken from the rows reports the nearer cap as if it were the answer, and the query row's
+`6 of N` is the one number a reader has no way to check.
 
 **It also wired a door that had been inert since the candidate records landed.** `positions` crossed
 from the first day and nothing drew it. On a prefix list that was survivable — the match is the head

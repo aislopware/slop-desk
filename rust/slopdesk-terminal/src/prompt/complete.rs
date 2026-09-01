@@ -339,6 +339,21 @@ impl<'a> HistoryProvider<'a> {
     }
 }
 
+/// What a ⌃R query found: the rows that fit, and how many there were.
+///
+/// The two are separate because they answer different questions and only one of them can be seen.
+/// `ranked` is capped so a thousand-entry history cannot cross the FFI on every keystroke;
+/// `matched` is the total, which the panel's own row prints precisely BECAUSE the panel cannot show
+/// it. A truncated list looks exactly like a complete one, so a count taken from `ranked.len()`
+/// would report the cap back to the user as if it were the answer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HistorySearch {
+    /// The best `limit` matches, best first.
+    pub ranked: Vec<Ranked>,
+    /// How many entries matched at all, `ranked.len()` or more.
+    pub matched: usize,
+}
+
 /// The ⌃R panel: every history entry `query` matches, best first, at most `limit` of them.
 ///
 /// **Not a [`CandidateProvider`], and not [`complete`] with one source.** Both of those are
@@ -371,7 +386,7 @@ pub fn search_history(
     query: &str,
     limit: usize,
     document_len: usize,
-) -> Vec<Ranked> {
+) -> HistorySearch {
     let mut ranked: Vec<Ranked> = history
         .entries()
         .iter()
@@ -390,8 +405,10 @@ pub fn search_history(
     // By the NEGATED score rather than `sort_by`, so the stable sort keeps the newest-first
     // order equal scores arrived in — which is the recency tie-break this function exists for.
     ranked.sort_by_key(|hit| -hit.score);
+    // Counted BEFORE the cut, which is the whole reason the count is carried separately.
+    let matched = ranked.len();
     ranked.truncate(limit);
-    ranked
+    HistorySearch { ranked, matched }
 }
 
 impl CandidateProvider for HistoryProvider<'_> {

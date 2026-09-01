@@ -373,6 +373,7 @@ typedef struct {
   bool     would_run;           /* Enter runs rather than continues */
   bool     walking_history;
   bool     searching;           /* the ⌃R panel's ROWS are candidate_count/selected_candidate */
+  size_t   search_matches;      /* what the ⌃R query matched, INCLUDING what did not fit; 0 idle */
   bool     can_undo;
   bool     can_redo;
   size_t   span_count;

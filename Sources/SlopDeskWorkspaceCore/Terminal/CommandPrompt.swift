@@ -569,6 +569,12 @@ public final class CommandPrompt {
         ffiAnswerText { slopdesk_prompt_search_query(handle, $0, $1) }
     }
 
+    /// How many history entries the ⌃R query matched — the ones that did not fit the panel too.
+    ///
+    /// NOT `candidates.count`: the list is capped before it crosses, so counting the rows would
+    /// report the cap as the total the moment a query matches more than fits. `0` with no search.
+    public var searchMatches: Int { Int(state.search_matches) }
+
     /// The history, oldest first — what a session save writes out.
     public var history: [String] {
         (0..<historyCount).map { index in
@@ -767,7 +773,11 @@ public final class CommandPrompt {
     }
 
     /// Puts the selected row on the command line and closes the search, WITHOUT running it —
-    /// `fish`'s pager rather than `atuin`'s Enter. `false` when nothing matched.
+    /// `fish`'s pager rather than `atuin`'s Enter.
+    ///
+    /// **Closes the search either way.** `false` means nothing matched and the document was left
+    /// alone, not that the session is still up: a query with no rows has nothing left to offer, and
+    /// a key that visibly does nothing reads as a wedged prompt.
     @discardableResult
     public func acceptSearch() -> Bool {
         let taken = slopdesk_prompt_search_accept(handle)

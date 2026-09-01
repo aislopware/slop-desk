@@ -318,7 +318,9 @@ enum TerminalPromptBand {
             // The query row, and the PANEL under it. This used to be the query row alone with the
             // one hit spliced into it, because the search only ever had one — the rows below are
             // that same answer with its neighbours restored, and they are the candidate list.
-            let matches = prompt.candidates.count
+            // The engine's count rather than `candidates.count`: the list is capped before it
+            // crosses the FFI, so the rows can only ever say how many FIT.
+            let matches = prompt.searchMatches
             drawRow(
                 searchRow(query: prompt.searchQuery, matches: matches, shown: candidateLimit),
                 ink: matches > 0 ? Slate.Native.Terminal.ink2 : Slate.Native.Terminal.err,
@@ -624,6 +626,9 @@ enum TerminalPromptBand {
     /// What it says instead is the one thing the panel CANNOT: how many matches did not fit. A
     /// truncated list looks identical to a complete one, and `fzf`'s own counter exists for that.
     /// Nothing is appended when they all fit, because a count of what you can see is noise.
+    ///
+    /// `matches` is ``CommandPrompt/searchMatches`` and never a row count — two caps stand between
+    /// the history and the screen, and a number taken from the rows reports the nearer one.
     ///
     /// A pure function so both findings stay pinned by a test rather than by another render.
     static func searchRow(query: String, matches: Int, shown: Int) -> String {

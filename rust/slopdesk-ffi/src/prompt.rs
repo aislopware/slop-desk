@@ -45,7 +45,7 @@ use slopdesk_terminal::prompt::keys::{
     ControlAction, EditAction, Key, KeyContext, Mods, control_action, edit_action, over_suggestion,
 };
 use slopdesk_terminal::prompt::syntax::{TokenKind, Unterminated};
-use slopdesk_terminal::prompt::{CommandEditor, Submission};
+use slopdesk_terminal::prompt::{CommandEditor, SearchSession, Submission};
 
 use crate::{
     SlopDeskByteSpan, TextArena, arena_text, borrow, deliver, lent, records_of, saturating_u32, spill,
@@ -427,10 +427,17 @@ pub struct SlopDeskPromptState {
     /// Whether a reverse search is open.
     ///
     /// Its ROWS are the candidate list — `candidate_count` and `selected_candidate` describe the
-    /// ⌃R panel while this is set, which is why there is no second count here. The `search_has_hit`
-    /// field this replaced answered a question the panel makes visible: an empty `candidate_count`
-    /// IS "nothing matched".
+    /// ⌃R panel while this is set. The `search_has_hit` field this replaced answered a question the
+    /// panel makes visible: an empty `candidate_count` IS "nothing matched".
     pub searching: bool,
+    /// How many history entries the ⌃R query matched, INCLUDING the ones that did not fit. `0` with
+    /// no session up.
+    ///
+    /// The one search number the candidate doors cannot carry, because they carry what fits: the
+    /// list is capped before it crosses, so `candidate_count` reports the cap and not the answer
+    /// once a query matches more than that. What the panel's query row prints, and the only reason
+    /// this field exists rather than a second list.
+    pub search_matches: usize,
     /// Whether there is an undo step to take.
     pub can_undo: bool,
     /// Whether there is a redo step to take.
@@ -463,6 +470,7 @@ impl SlopDeskPromptState {
         would_run: true,
         walking_history: false,
         searching: false,
+        search_matches: 0,
         can_undo: false,
         can_redo: false,
         span_count: 0,
@@ -485,6 +493,7 @@ impl SlopDeskPromptState {
             would_run: editor.would_run(),
             walking_history: editor.is_walking_history(),
             searching: editor.search().is_some(),
+            search_matches: editor.search().map_or(0, SearchSession::matched),
             can_undo: editor.undo_stack().can_undo(),
             can_redo: editor.undo_stack().can_redo(),
             span_count: editor.lexed().spans.len(),
@@ -2052,6 +2061,7 @@ mod tests {
         let state = unsafe { slopdesk_prompt_state(handle) };
         assert_eq!(state.candidate_count, 2, "`ls` is out");
         assert!(state.searching);
+        assert_eq!(state.search_matches, 2, "and the count agrees below the cap");
         // The rows cross through the CANDIDATE doors — the search has none of its own.
         assert_eq!(read_selected_row(handle), "cargo test");
         assert!(unsafe { slopdesk_prompt_search_again(handle) });
@@ -2061,7 +2071,9 @@ mod tests {
         assert_eq!(read_text(handle), "", "the buffer is untouched while searching");
         assert!(unsafe { slopdesk_prompt_search_accept(handle) });
         assert_eq!(read_text(handle), "cargo test");
-        assert!(!unsafe { slopdesk_prompt_state(handle) }.searching);
+        let state = unsafe { slopdesk_prompt_state(handle) };
+        assert!(!state.searching);
+        assert_eq!(state.search_matches, 0, "and the count goes with the session");
         unsafe { slopdesk_prompt_free(handle) };
     }
 

@@ -109,6 +109,29 @@ final class TerminalPromptBandTests: XCTestCase {
         )
     }
 
+    /// The count on the query row is what MATCHED, and the rows are not where it can come from.
+    ///
+    /// Two caps sit between the history and the screen — the engine's, before the records cross the
+    /// FFI, and the band's six — so `candidates.count` is the middle one and reads as a plausible
+    /// total right up until a query matches more than it. 60 entries is past the engine's, which is
+    /// the only place that shows.
+    func testTheCountIsWhatMatchedAndNotWhatCrossed() {
+        let prompt = CommandPrompt()
+        for index in 0..<60 { prompt.recordHistory("cargo test --lib \(index)") }
+        prompt.beginSearch()
+        prompt.searchType("cargo")
+        XCTAssertEqual(prompt.searchMatches, 60, "every entry matched")
+        XCTAssertLessThan(prompt.candidates.count, 60, "and the list crossed capped")
+        XCTAssertEqual(
+            TerminalPromptBand.searchRow(
+                query: "cargo",
+                matches: prompt.searchMatches,
+                shown: TerminalPromptBand.candidateLimit,
+            ),
+            "(reverse-i-search)`cargo'  6 of 60",
+        )
+    }
+
     /// The ⌃R row says the query and the one thing the panel under it CANNOT: what did not fit.
     ///
     /// It used to splice the single hit in, because the search only ever found one and the buffer

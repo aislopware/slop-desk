@@ -103,6 +103,7 @@ pub enum Submission {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SearchSession {
     query: String,
+    matched: usize,
 }
 
 impl SearchSession {
@@ -110,6 +111,16 @@ impl SearchSession {
     #[must_use]
     pub fn query(&self) -> &str {
         &self.query
+    }
+
+    /// How many history entries the query matched — including the ones the panel's cap cut.
+    ///
+    /// The one number the candidate list cannot carry, and so the one thing this type holds beyond
+    /// the query: [`CommandEditor::candidates`] holds what FITS, and a list truncated at
+    /// [`complete::LIMIT`] is indistinguishable from a complete one.
+    #[must_use]
+    pub const fn matched(&self) -> usize {
+        self.matched
     }
 }
 
@@ -499,8 +510,14 @@ impl CommandEditor {
         true
     }
 
-    /// Accepts the selected row into the buffer and closes the session. `false` with no session or
-    /// no rows, in which case the buffer is untouched.
+    /// Accepts the selected row into the buffer. **Closes the session either way**, and answers
+    /// whether the buffer changed — `false` also means it was left alone.
+    ///
+    /// Closing on an empty panel is deliberate. The alternative leaves Enter inert until the user
+    /// finds Esc, and a key that visibly does nothing reads as a wedged prompt; a query that
+    /// matched nothing has already told the user everything it can, so the useful thing left to
+    /// do with it is get out of the way and hand back the draft, untouched. It is also what the
+    /// single-hit search this replaced did, so the reversal changed the panel and not this.
     ///
     /// ⚠️ **IT DOES NOT RUN THE COMMAND**, and that is a decision rather than an omission. `fish`'s
     /// pager puts the entry on the command line for a second Enter; `atuin` runs it outright and
@@ -510,14 +527,14 @@ impl CommandEditor {
     /// RUN is strictly worse than a wrong one written. So `Run` stays the submit key's, pressed
     /// against a line the user can see.
     pub fn reverse_search_accept(&mut self) -> bool {
-        if self.search.is_none() {
+        if self.search.take().is_none() {
             return false;
         }
-        if !self.accept_completion() {
-            return false;
+        if self.accept_completion() {
+            return true;
         }
-        self.search = None;
-        true
+        self.dismiss_completion();
+        false
     }
 
     /// Closes a ⌃R session without touching the buffer, taking its panel with it.
@@ -529,12 +546,17 @@ impl CommandEditor {
     /// Re-ranks the open session's query into the candidate list. The one writer of that list while
     /// a search is up, which is the invariant [`SearchSession`] documents.
     fn research(&mut self) {
-        let Some(session) = self.search.as_ref() else {
+        // Taken and put back rather than borrowed, so the query can be read while the editor's own
+        // history is — and so the total lands on the session in the same statement it is computed.
+        let Some(mut session) = self.search.take() else {
             return;
         };
-        self.completion =
+        let found =
             complete::search_history(&self.history, &session.query, complete::LIMIT, self.buffer.len());
+        session.matched = found.matched;
+        self.completion = found.ranked;
         self.selected = 0;
+        self.search = Some(session);
     }
 
     // ------------------------------------------------------------------ completion
@@ -1050,6 +1072,50 @@ mod tests {
         assert!(!editor.reverse_search_again());
         assert!(!editor.reverse_search_back());
         assert!(!editor.reverse_search_accept());
+    }
+
+    /// Enter on a query that matched nothing gets OUT, and says it wrote nothing.
+    ///
+    /// The two halves are one decision (see [`CommandEditor::reverse_search_accept`]) and neither
+    /// is safe alone: a `true` here would have the platforms treat an untouched draft as an
+    /// accepted row, and leaving the session open would make Enter do nothing at all until the
+    /// user found Esc. Pinned because it is the branch a rewrite silently flips — it has no
+    /// visible output beyond the session going away.
+    #[test]
+    fn accepting_a_search_that_matched_nothing_still_closes_it() {
+        let mut editor = CommandEditor::new();
+        editor.insert_text("ls");
+        editor.submit();
+        editor.insert_text("draft");
+        editor.begin_reverse_search();
+        editor.reverse_search_type("zzz");
+        assert!(editor.candidates().is_empty(), "the query matched nothing");
+        assert!(!editor.reverse_search_accept(), "and so wrote nothing");
+        assert!(editor.search().is_none(), "but the session is gone");
+        assert_eq!(editor.text(), "draft", "with the draft handed back untouched");
+    }
+
+    /// The panel's count is what MATCHED, not what fits — the cap must not be reported as the
+    /// total.
+    ///
+    /// The one number a reader cannot check against the screen, so a `ranked.len()` here would read
+    /// as correct forever: every row it names is really there, and only the last two digits lie.
+    #[test]
+    fn the_search_counts_past_the_row_the_panel_stops_at() {
+        let mut editor = CommandEditor::new();
+        let total = super::complete::LIMIT + 7;
+        for index in 0..total {
+            editor.insert_text(&format!("cargo test --lib {index}"));
+            editor.submit();
+        }
+        editor.begin_reverse_search();
+        editor.reverse_search_type("cargo");
+        assert_eq!(
+            editor.candidates().len(),
+            super::complete::LIMIT,
+            "the list is capped"
+        );
+        assert_eq!(editor.search().unwrap().matched(), total, "the count is not");
     }
 
     #[test]
