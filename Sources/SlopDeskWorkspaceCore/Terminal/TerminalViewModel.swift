@@ -2636,6 +2636,25 @@ public final class TerminalViewModel {
         }
     }
 
+    /// Re-injects a captured command line VERBATIM into this pane's shell — the one re-run implementation
+    /// every caller shares (the block context menu's *Re-Run Command*, the store's re-run-last and the
+    /// Open-Quickly Command row).
+    ///
+    /// ``BlockReRunEncoder`` is the encoder and it is deliberately not `public`: it strips any trailing
+    /// CR/LF and appends exactly one `0x0A`, and it is NEVER ``SendKeysParser``, so a literal `"<Enter>"`
+    /// in a captured command cannot become a control byte. Exposing the verb rather than the encoder is
+    /// what keeps that rule from being re-spelled in another module.
+    ///
+    /// `false` when the text is empty or whitespace. ⚠️ A read-only pane still returns `true`: the bytes
+    /// are dropped at ``sendInput(_:)``, the single outbound seam, which is where the lock is enforced —
+    /// the menu greys the row separately so the affordance agrees with it.
+    @discardableResult
+    public func reRunCommand(_ text: String) -> Bool {
+        guard let bytes = BlockReRunEncoder.bytes(for: text) else { return false }
+        sendInput(bytes)
+        return true
+    }
+
     /// Requests block `index`'s RAW captured VT output bytes (wire type 15 → 29) — the colour-preserving
     /// sibling of ``copyBlockOutput(index:onResult:)`` for callers that render the SGR runs. `onResult` gets the
     /// raw bytes on success or `nil` when the block was evicted / unavailable / disconnected (so the caller

@@ -822,6 +822,49 @@ local terminal.
 number invented here would be a divergence from ghostty in the one place ghostty has real traffic to
 tune against. The question that mattered was whether APC buffering is unbounded. It is not.
 
+### 5.10 The per-block context menu, and why it is keyed by an ordinal (2026-09-01)
+
+Right-clicking inside a command block now offers that block's own verbs — Copy Command, Copy Output,
+Re-Run Command, Collapse/Expand, Bookmark — prepended above the standard menu, which is Warp's shape.
+The rules are `slopdesk_terminal::context_menu`'s `BlockItem`/`BlockContext`, the words and the
+enablement cross at `slopdesk_term_menu_block_items` / `_block_item` / `_block_enabled`, and both
+shells render the same table: an `NSMenu` section on the Mac, an inline `UIMenu` group on the phone.
+
+**The pane-global `Item::CopyOutput` stays.** It acts on the LATEST block because it is also the
+keyboard verb, and a keystroke has no pointer. Warp keeps both for the same reason.
+
+Three things about the shape are load-bearing:
+
+- **The menu stashes the prompt ORDINAL, never the layout index.** A menu stays open for seconds, and
+  output arriving meanwhile re-segments the block list — the layout is a positional vector and so is
+  the fold state. An index captured at build time can therefore fold or copy a block the user never
+  clicked. `slopdesk_term_surface_block_target` answers the ordinal (with `foldable`/`collapsed` in
+  the same crossing, so a right-click pays one call), and
+  `slopdesk_term_surface_toggle_block_collapsed_at_ordinal` resolves the index again at ACTION time.
+  Both spend `Surface::joined_ordinals`, factored out of `statuses` so the header's exit code and the
+  menu's aim cannot come to disagree about which block is which.
+- **It acts on the CLICKED pane's model.** `WorkspaceStore`'s `copyBlockOutputInActivePane` /
+  `reRunCommandInActivePane` resolve `activeTerminalModel`, and a right-click on macOS does not
+  necessarily focus the pane it lands in — those would copy from, or type into, a different pane than
+  the one under the pointer. They stay for the keyboard and palette callers that genuinely mean "the
+  focused pane"; the menu goes through `TerminalSurfaceDriver.run(_:ordinal:)`, which holds the
+  pane's own model.
+- **⚠️ Re-Run writes to the pty, so the read-only lock reaches it twice.** `TerminalViewModel`
+  `sendInput(_:)` drops the bytes at the single outbound seam — that is the enforcement — and the
+  menu greys the row, which is the affordance agreeing with it. An item that looked live and then
+  beeped would teach the user that the per-pane lock is advisory. `reRunCommand(_:)` is now the one
+  re-run implementation all three callers share, so `BlockReRunEncoder`'s verbatim-UTF-8 rule (never
+  `SendKeysParser`) is spelled once.
+
+A block the surface cannot NAME draws no section at all. The ordinal is the only handle the menu
+holds, so a zero one — a mid-stream attach the host could not count, or an alt-screen program with no
+prompt rows, where every slot in the join is `None` — leaves nothing for any verb to resolve at action
+time, the fold included, since the fold resolves an ordinal too. `blockTarget(at:)` refuses it there,
+one guard, rather than letting five rows draw of which four grey and the fifth would look live and do
+nothing. A block that IS named but whose record the client ring no longer holds is the other case, and
+that one keeps its fold: the clean command line and the ring index are both the record's, but the
+layout still knows where the block is.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`

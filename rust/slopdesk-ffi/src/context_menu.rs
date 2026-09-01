@@ -15,7 +15,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_terminal::context_menu::{self, Context, Item, LinkItem};
+use slopdesk_terminal::context_menu::{self, BlockContext, BlockItem, Context, Item, LinkItem};
 
 use crate::link_detect::kind_of;
 use crate::{deliver, push_text};
@@ -174,14 +174,93 @@ pub unsafe extern "C" fn slopdesk_term_link_item(
     unsafe { deliver(&blob, out, cap) }
 }
 
+/// The verbs the block section draws, in display order, as one byte each.
+///
+/// ```text
+/// verbs × [u8 block_item_index]
+/// ```
+///
+/// No context is asked for here, and that is deliberate: which verbs EXIST does not vary with the
+/// block, only which of them are live. A section that shrank would move the rows under the pointer
+/// between two right-clicks on neighbouring blocks.
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
+)]
+pub unsafe extern "C" fn slopdesk_term_menu_block_items(out: *mut c_uchar, cap: usize) -> usize {
+    let blob: Vec<u8> = context_menu::BLOCK_ITEMS
+        .iter()
+        .map(|item| item.index())
+        .collect();
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// One block verb's separator and its two words, in one delivery.
+///
+/// ```text
+/// [u8 separator_before]
+/// 2 × [u32 length][UTF-8 bytes]   // the title, then the symbol name
+/// ```
+///
+/// The CONTEXT crosses because two of the five verbs are toggles whose words read off the block's
+/// own state — *Collapse Block* against *Expand Block*. It is the same byte
+/// [`slopdesk_term_menu_block_enabled`] takes, so a caller that took one snapshot at right-click
+/// time answers both questions from it.
+///
+/// `0` is "there is no such verb".
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
+)]
+pub unsafe extern "C" fn slopdesk_term_menu_block_item(
+    index: u8,
+    context: u8,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let Some(item) = BlockItem::from_index(index) else {
+        return 0;
+    };
+    let context = BlockContext::from_bits(context);
+    let mut blob = vec![u8::from(item.separator_before())];
+    push_text(&mut blob, item.title(context));
+    push_text(&mut blob, item.symbol(context));
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// Whether block verb `index` is live in `context`.
+///
+/// `context` packs the seven gates low bit first: the block joined a host record, that command
+/// finished, the block can be folded, it is folded now, it is starred now, the pane is connected,
+/// the pane is read-only.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_term_menu_block_enabled(index: u8, context: u8) -> bool {
+    BlockItem::from_index(index).is_some_and(|item| item.is_enabled(BlockContext::from_bits(context)))
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 
-    use slopdesk_terminal::context_menu::{self, Context, Item, LinkItem};
+    use slopdesk_terminal::context_menu::{self, BlockContext, BlockItem, Context, Item, LinkItem};
 
     use super::{
-        slopdesk_term_link_item, slopdesk_term_link_items, slopdesk_term_menu_enabled,
+        slopdesk_term_link_item, slopdesk_term_link_items, slopdesk_term_menu_block_enabled,
+        slopdesk_term_menu_block_item, slopdesk_term_menu_block_items, slopdesk_term_menu_enabled,
         slopdesk_term_menu_item, slopdesk_term_menu_items, slopdesk_term_menu_words,
     };
     use crate::link_detect::kind_code;
@@ -276,6 +355,43 @@ mod tests {
         }
     }
 
+    /// The block section crosses in its drawn order, and every verb wears the words its STATE
+    /// picks — the whole 128-packing sweep, so a toggle that stopped reading its bit is a failure
+    /// rather than a stale label.
+    #[test]
+    fn every_block_verb_crosses_with_its_separator_and_the_words_its_state_picks() {
+        let blob = delivered(|out, cap| {
+            // SAFETY: `out` is a live local for the call.
+            unsafe { slopdesk_term_menu_block_items(out, cap) }
+        });
+        let indices: Vec<u8> = context_menu::BLOCK_ITEMS
+            .iter()
+            .map(|item| item.index())
+            .collect();
+        assert_eq!(blob, indices);
+        for item in BlockItem::ALL {
+            for bits in 0..128_u8 {
+                let context = BlockContext::from_bits(bits);
+                let blob = delivered(|out, cap| {
+                    // SAFETY: `out` is a live local for the call.
+                    unsafe { slopdesk_term_menu_block_item(item.index(), bits, out, cap) }
+                });
+                let (flag, rest) = blob
+                    .split_first()
+                    .map_or((0xFF, [].as_slice()), |(flag, rest)| (*flag, rest));
+                assert_eq!(flag == 1, item.separator_before(), "{item:?}");
+                let words = runs(rest, 2);
+                assert_eq!(words.first().map(String::as_str), Some(item.title(context)));
+                assert_eq!(words.get(1).map(String::as_str), Some(item.symbol(context)));
+                assert_eq!(
+                    slopdesk_term_menu_block_enabled(item.index(), bits),
+                    item.is_enabled(context),
+                    "{item:?} at {bits:#010b}",
+                );
+            }
+        }
+    }
+
     /// The kind constants and the item indices both refuse past their end.
     #[test]
     fn nothing_is_read_past_the_end() {
@@ -300,8 +416,15 @@ mod tests {
             unsafe { slopdesk_term_link_item(99, 4, out.as_mut_ptr(), out.len()) },
             0
         );
+        // SAFETY: `out` is a live local for the call.
+        assert_eq!(
+            unsafe { slopdesk_term_menu_block_item(99, 0, out.as_mut_ptr(), out.len()) },
+            0
+        );
         assert_eq!(out, [0xAA; 8], "no answer means nothing was written");
         assert!(!slopdesk_term_menu_enabled(99, 0b1111));
+        assert!(!slopdesk_term_menu_block_enabled(99, 0b111_1111));
         assert_eq!(LinkItem::ALL.len(), 4, "the corpus this gate walks");
+        assert_eq!(BlockItem::ALL.len(), 5, "and the block section's");
     }
 }

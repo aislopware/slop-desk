@@ -469,6 +469,22 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// The block under a point, or `nil`.
     func block(at point: CGPoint) -> Int? { surface?.block(at: point) }
 
+    /// The block under a point as a MENU target — the join key plus its two state bits — or `nil`.
+    func blockTarget(at point: CGPoint) -> TerminalRendererSurface.BlockTarget? {
+        surface?.blockTarget(at: point)
+    }
+
+    /// Folds or unfolds the block wearing `ordinal`, answering the state it left behind.
+    ///
+    /// ⚠️ Ordinal-keyed rather than positional because a menu outlives the layout it was built over —
+    /// see ``TerminalRendererSurface/toggleBlock(ordinal:)``.
+    @discardableResult
+    func toggleBlock(ordinal: UInt32) -> Bool {
+        let collapsed = surface?.toggleBlock(ordinal: ordinal) ?? false
+        onNeedsPresent?()
+        return collapsed
+    }
+
     /// Folds or unfolds one block, answering the state it left behind.
     @discardableResult
     func toggleBlock(_ index: Int) -> Bool {
@@ -844,6 +860,76 @@ extension TerminalSurfaceDriver {
              .find:
             return false
         }
+    }
+
+    /// The block under `point` and the right-click snapshot for it, or `nil` when no block is there.
+    ///
+    /// The one place the two halves meet: the SURFACE knows where the pointer landed, whether that
+    /// block can fold and whether it is folded; the MODEL knows whether it joined a host record, whether
+    /// that command finished and whether it is starred; the pane knows the transport and the lock. Both
+    /// shells ask this rather than assembling seven bits each, so their menus cannot come to disagree.
+    func blockMenu(at point: CGPoint) -> (ordinal: UInt32, context: TerminalContextMenu.BlockContext)? {
+        guard let target = blockTarget(at: point) else { return nil }
+        let record = block(target.ordinal)
+        return (target.ordinal, TerminalContextMenu.BlockContext(
+            joined: record != nil,
+            complete: record?.complete ?? false,
+            foldable: target.foldable,
+            collapsed: target.collapsed,
+            bookmarked: record.map { model?.blocks.isBookmarked($0.index) ?? false } ?? false,
+            paneConnected: model?.connectionStatus.isLive ?? false,
+            readOnly: model?.isReadOnly ?? false,
+        ))
+    }
+
+    /// Runs a BLOCK item against the block wearing `ordinal` — the one dispatcher both shells share,
+    /// exactly as ``run(_:)`` is for the pane-global items and ``LinkActionActuator`` is for a link.
+    ///
+    /// ⚠️ **This pane's model, never the store's active-pane convenience.** A right-click on macOS does
+    /// not necessarily focus the pane it lands in, so ``WorkspaceStore/copyBlockOutputInActivePane(index:onResult:)``
+    /// and its re-run sibling would copy from — or type into — a DIFFERENT pane than the one the user
+    /// aimed at. Those stay for the keyboard and palette callers that genuinely mean "the focused pane".
+    ///
+    /// ⚠️ **Re-Run writes to the pty**, so the read-only lock has to reach it. It is refused twice on
+    /// purpose: the menu greys the row (``TerminalContextMenu/isEnabled(_:context:)-block``) and
+    /// ``TerminalViewModel/sendInput(_:)`` drops the bytes at the single outbound seam. The seam is the
+    /// enforcement; the grey is the affordance agreeing with it.
+    ///
+    /// `false` means nothing was done — an ordinal no block wears, an empty command, or a verb whose
+    /// precondition went away between the menu opening and the click.
+    @discardableResult
+    func run(_ item: TerminalContextMenu.BlockItem, ordinal: UInt32) -> Bool {
+        switch item {
+        case .collapse:
+            // Ordinal-keyed: the fold vector is positional and the list re-segments while a menu is
+            // open, so the layout index is resolved on the far side at THIS moment, not at build time.
+            return toggleBlock(ordinal: ordinal)
+        case .copyCommand:
+            guard let block = block(ordinal), !block.commandText.isEmpty else { return false }
+            return copyToPasteboard(block.commandText)
+        case .copyOutput:
+            // ``run(_:)``'s `.copyOutput` reason, aimed: the output is the MODEL's to fetch (request
+            // type 15) and the reply is asynchronous and may be empty, which copies nothing rather
+            // than clearing the pasteboard. `true` means the request went out.
+            guard let model, let block = block(ordinal) else { return false }
+            model.copyBlockOutput(index: block.index) { [weak self] text in
+                guard let text, !text.isEmpty else { return }
+                _ = self?.copyToPasteboard(text)
+            }
+            return true
+        case .reRun:
+            guard let model, let block = block(ordinal) else { return false }
+            return model.reRunCommand(block.commandText)
+        case .bookmark:
+            guard let model, let block = block(ordinal) else { return false }
+            model.blocks.toggleBookmark(index: block.index)
+            return true
+        }
+    }
+
+    /// The pane's record for the block wearing `ordinal`, or `nil` when it joined none.
+    private func block(_ ordinal: UInt32) -> CommandBlock? {
+        model?.blocks.block(promptOrdinal: ordinal)
     }
 
     /// Copies the selection, honouring `selection-clear-on-copy`. `false` when nothing is selected.

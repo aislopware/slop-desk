@@ -59,6 +59,13 @@ final class MacTerminalRendererView: NSView {
     /// acts on the span under the CLICK rather than under wherever the pointer has since moved.
     private var pendingMenuLink: DetectedLink?
 
+    /// The BLOCK the open context menu was built over, and the snapshot its rows were greyed by.
+    ///
+    /// ⚠️ An ORDINAL, never the layout position it was hit-tested at: a menu stays open for seconds and
+    /// output arriving meanwhile re-segments the list, so a stashed index would fold or copy a block the
+    /// user never clicked. The verbs resolve the ordinal again when they fire.
+    private var pendingMenuBlock: (ordinal: UInt32, context: TerminalContextMenu.BlockContext)?
+
     /// What the input method is composing, or `nil` when it is not.
     ///
     /// Held here rather than asked of the surface because `NSTextInputClient` asks for it back —
@@ -1104,11 +1111,16 @@ final class MacTerminalRendererView: NSView {
 
     // MARK: - The context menu
 
-    /// The right-click menu: the link items for the span under the click, then the standard set.
+    /// The right-click menu: the link items for the span under the click, the items for the BLOCK it
+    /// landed in, then the standard set.
     ///
     /// Everything about WHICH items exist, in what order, with what words and which of them are
     /// enabled is ``TerminalContextMenu``'s — this builds `NSMenuItem`s over that answer and routes
-    /// each one back through ``TerminalSurfaceDriver/run(_:)``.
+    /// each one back through ``TerminalSurfaceDriver/run(_:)`` or its block sibling.
+    ///
+    /// Most specific first: a link is a span the pointer is ON, a block is the region it is IN, and the
+    /// standard set is the pane's. Both prepended sections are absent for a click that found neither,
+    /// which is most clicks — so the standard items keep their usual place under the pointer.
     ///
     /// ⚠️ `autoenablesItems` is turned OFF, and that is not a style choice. `NSMenu` defaults it ON,
     /// which RE-VALIDATES every item at display time and enables any whose target responds to the
@@ -1122,13 +1134,30 @@ final class MacTerminalRendererView: NSView {
         )
         let menu = NSMenu()
         menu.autoenablesItems = false
+        let point = convert(event.locationInWindow, from: nil)
 
-        pendingMenuLink = detectedLink(at: convert(event.locationInWindow, from: nil))
+        pendingMenuLink = detectedLink(at: point)
         if let link = pendingMenuLink {
             for item in TerminalContextMenu.linkItems(for: link.kind) {
                 menu.addItem(entry(
                     title: item.title(for: link.kind), symbol: item.symbol, tag: item.rawValue,
                     action: #selector(linkMenuAction(_:)), enabled: true,
+                ))
+            }
+            menu.addItem(.separator())
+        }
+
+        // The ORDINAL is stashed, never the layout position: this menu outlives the layout it was
+        // built over — output arriving while it is open re-segments the list — and the ordinal is the
+        // one key that survives that. `nil` = the click found no block, so no section is drawn.
+        pendingMenuBlock = driver.blockMenu(at: point)
+        if let block = pendingMenuBlock {
+            for item in TerminalContextMenu.blockItems {
+                if item.separatorBefore { menu.addItem(.separator()) }
+                menu.addItem(entry(
+                    title: item.title(for: block.context), symbol: item.symbol(for: block.context),
+                    tag: item.rawValue, action: #selector(blockMenuAction(_:)),
+                    enabled: TerminalContextMenu.isEnabled(item, context: block.context),
                 ))
             }
             menu.addItem(.separator())
@@ -1243,6 +1272,18 @@ final class MacTerminalRendererView: NSView {
             return
         }
         driver.run(.selectAll)
+    }
+
+    /// Runs a block item against the block the menu was built over, through the one shared dispatcher.
+    ///
+    /// The ORDINAL is what was stashed, so the verb resolves the block again at THIS moment — output
+    /// that arrived while the menu was open cannot make a fold land on the wrong one.
+    @objc
+    private func blockMenuAction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let item = TerminalContextMenu.BlockItem(rawValue: raw),
+              let ordinal = pendingMenuBlock?.ordinal else { return }
+        driver.run(item, ordinal: ordinal)
     }
 
     /// Runs a link item against the span the menu was built over, through the one shared actuator.

@@ -54,6 +54,13 @@ final class PhoneTerminalRendererView: UIView {
     /// and one slot suffices for its reason: a menu is modal per view.
     private var pendingMenuLink: DetectedLink?
 
+    /// The BLOCK the offered menu was pressed over, and the snapshot its rows were greyed by — the
+    /// Mac's `pendingMenuBlock`, resolved at the same release point ``pendingMenuLink`` is.
+    ///
+    /// ⚠️ An ORDINAL, never the layout position: a menu outlives the layout it was built over, since
+    /// output arriving meanwhile re-segments the list. The verbs resolve it again when they fire.
+    private var pendingMenuBlock: (ordinal: UInt32, context: TerminalContextMenu.BlockContext)?
+
     init?(model: TerminalViewModel, isFocused: Bool) {
         guard let driver = TerminalSurfaceDriver(
             family: TerminalConfigBroadcaster.shared.fontFamily,
@@ -258,6 +265,7 @@ final class PhoneTerminalRendererView: UIView {
             // old menu was offered on dies with it.
             editMenu?.dismissMenu()
             pendingMenuLink = nil
+            pendingMenuBlock = nil
             isSelecting = true
             isRectangularDrag = false
             driver.selectPress(
@@ -284,6 +292,7 @@ final class PhoneTerminalRendererView: UIView {
             // Resolved at the RELEASE point, which is the point the menu anchors to — the same reading
             // the Mac's `menu(for:)` takes at the location its menu opens at.
             pendingMenuLink = detectedLink(at: point)
+            pendingMenuBlock = driver.blockMenu(at: point)
             editMenu?.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
         }
     }
@@ -314,7 +323,9 @@ final class PhoneTerminalRendererView: UIView {
             paneConnected: model?.connectionStatus.isLive ?? false,
             hasCommandOutput: model?.blocks.latest?.complete ?? false,
         )
-        var groups: [[UIMenuElement]] = [linkActions(), []]
+        var groups: [[UIMenuElement]] = [linkActions()]
+        groups.append(contentsOf: blockActions())
+        groups.append([])
         for item in TerminalContextMenu.items {
             if item.separatorBefore { groups.append([]) }
             groups[groups.count - 1].append(action(for: item, context: context))
@@ -350,6 +361,30 @@ final class PhoneTerminalRendererView: UIView {
             default: driver.run(item)
             }
         }
+    }
+
+    /// The block items for ``pendingMenuBlock``, already split into groups at
+    /// ``TerminalContextMenu/BlockItem/separatorBefore`` — the Mac draws that rule as an
+    /// `NSMenuItem.separator()`, UIKit as a new inline group. Empty when the press landed on no block.
+    ///
+    /// Which verbs exist, what they say, which are live and what each DOES are all shared with the Mac
+    /// (``TerminalContextMenu/blockItems`` and ``TerminalSurfaceDriver/run(_:ordinal:)``), so the whole
+    /// of this half is the labels — ``linkActions()``'s shape, for its reason.
+    private func blockActions() -> [[UIMenuElement]] {
+        guard let block = pendingMenuBlock else { return [] }
+        var groups: [[UIMenuElement]] = [[]]
+        for item in TerminalContextMenu.blockItems {
+            if item.separatorBefore { groups.append([]) }
+            let enabled = TerminalContextMenu.isEnabled(item, context: block.context)
+            groups[groups.count - 1].append(UIAction(
+                title: item.title(for: block.context),
+                image: UIImage(systemName: item.symbol(for: block.context)),
+                attributes: enabled ? [] : .disabled,
+            ) { [weak self] _ in
+                self?.driver.run(item, ordinal: block.ordinal)
+            })
+        }
+        return groups.filter { !$0.isEmpty }
     }
 
     /// The link items for ``pendingMenuLink``, or nothing when the press landed on no link.

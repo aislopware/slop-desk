@@ -164,6 +164,32 @@ impl BlockRing {
         self.blocks.iter().find(|block| block.index == index)
     }
 
+    /// The block whose 1-based PROMPT-CYCLE ordinal is `ordinal`, or `None` when none has it.
+    ///
+    /// The ring is keyed by [`CommandBlock::index`]; the ordinal is the JOIN key the surface hands
+    /// back when a pointer lands in a laid-out block, so this is the one hop between the two — the
+    /// menu aims by ordinal and then acts by index.
+    ///
+    /// ⚠️ **Zero is refused rather than matched.** A host that attached mid-stream cannot count
+    /// prompts and stamps zero, so zero is not an ordinal at all — it is "unknown", and several
+    /// blocks can wear it. Matching it would let a click on one block act on another.
+    ///
+    /// Duplicates otherwise cannot happen from one shell, but a reattach can replay records over a
+    /// ring that already holds them, so the NEWEST index wins: it is the block still on screen. The
+    /// join's own accepted false positive — a dead shell's stale record confirming a wrong anchor —
+    /// rides through here unchanged; the caller that drops its block list on a fresh session is
+    /// what defends against it, exactly as it does for the header status.
+    #[must_use]
+    pub fn block_by_prompt_ordinal(&self, ordinal: u32) -> Option<&CommandBlock> {
+        if ordinal == 0 {
+            return None;
+        }
+        self.blocks
+            .iter()
+            .rev()
+            .find(|block| block.prompt_ordinal == ordinal)
+    }
+
     /// When `index` was FIRST seen, on whatever clock the caller passed to
     /// [`upsert`](Self::upsert).
     ///
@@ -611,6 +637,33 @@ mod tests {
         assert_eq!(sample.duration_label().as_deref(), Some("1.0s"));
         sample.duration_ms = Some(1349);
         assert_eq!(sample.duration_label().as_deref(), Some("1.3s"));
+    }
+
+    /// The ordinal→index hop the block context menu aims with.
+    #[test]
+    fn a_prompt_ordinal_finds_its_block_and_zero_finds_nothing() {
+        let ring = ring(&[block(0, None, true), block(1, None, true), block(2, None, true)]);
+        assert_eq!(ring.block_by_prompt_ordinal(2).map(|found| found.index), Some(1));
+        assert_eq!(ring.block_by_prompt_ordinal(9), None);
+        // ⚠️ Zero is "the host could not count prompts", which SEVERAL blocks can wear. Matching it
+        // would let a click on one act on another, so it matches none.
+        let mut unstamped = block(7, None, true);
+        unstamped.prompt_ordinal = 0;
+        let mut ring = ring;
+        ring.upsert(unstamped, 0);
+        assert_eq!(ring.block_by_prompt_ordinal(0), None);
+    }
+
+    /// A reattach can replay a record onto a ring that already holds that ordinal; the block still
+    /// ON SCREEN is the newer index, so that is the one a click resolves to.
+    #[test]
+    fn a_duplicated_ordinal_resolves_to_the_newest_index() {
+        let mut older = block(3, None, true);
+        older.prompt_ordinal = 5;
+        let mut newer = block(8, None, true);
+        newer.prompt_ordinal = 5;
+        let ring = ring(&[older, newer]);
+        assert_eq!(ring.block_by_prompt_ordinal(5).map(|found| found.index), Some(8));
     }
 
     #[test]

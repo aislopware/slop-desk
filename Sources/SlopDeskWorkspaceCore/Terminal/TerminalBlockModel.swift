@@ -366,6 +366,21 @@ public final class TerminalBlockModel {
         blocks.first { $0.index == index }
     }
 
+    /// The block whose 1-based PROMPT-CYCLE ordinal is `ordinal`, or `nil` when none has it.
+    ///
+    /// The one hop between the two keys a block wears. A right-click over the grid resolves to an
+    /// ORDINAL — the join key, which survives the output that re-flows the layout while the menu is
+    /// open — and everything that then ACTS on the block (the output request, the star) is keyed by the
+    /// ring ``CommandBlock/index``. The door owns the rule, not this side: `0` is "the host attached
+    /// mid-stream and could not count prompts", which several blocks can wear, so it resolves to
+    /// nothing rather than to whichever one is first; and a reattach that replayed a record over a ring
+    /// already holding that ordinal resolves to the NEWEST index, which is the block still on screen.
+    public func block(promptOrdinal ordinal: UInt32) -> CommandBlock? {
+        let index = slopdesk_block_store_index_of_prompt_ordinal(store, ordinal)
+        guard index >= 0, let index = UInt32(exactly: index) else { return nil }
+        return block(at: index)
+    }
+
     // MARK: Upsert (wire type 28 fold)
 
     /// Upserts a block from a `commandBlock` metadata update: a NEW index appends (kept index-ordered,

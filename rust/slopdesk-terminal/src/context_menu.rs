@@ -379,9 +379,224 @@ pub const fn link_items(kind: DetectedLinkKind) -> &'static [LinkItem] {
     }
 }
 
+/// A right-click item that acts on the ONE command block under the pointer.
+///
+/// Kept SEPARATE from [`Item`] for [`LinkItem`]'s reason and one more. [`Item::CopyOutput`] acts on
+/// the LATEST block, because it is also the keyboard verb and a keystroke has no pointer; these act
+/// on the block the click landed in, which is Warp's shape. Both stay: the pane-global one is the
+/// chord, this section is the aim.
+///
+/// The renderer prepends the section, with a separator, when [`BlockContext`] says the click hit a
+/// block at all — so nothing about the top-level list's order or enablement moves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BlockItem {
+    /// Copy the block's command LINE — the host-segmented text, never the rendered prompt.
+    CopyCommand,
+    /// Copy the block's captured OUTPUT, fetched on demand.
+    CopyOutput,
+    /// Re-inject the block's command line into the shell.
+    ReRun,
+    /// Fold the block down to its prompt, or unfold it.
+    Collapse,
+    /// Star the block, or un-star it.
+    Bookmark,
+}
+
+impl BlockItem {
+    /// Every block item, in discriminant order.
+    pub const ALL: [Self; 5] = [
+        Self::CopyCommand,
+        Self::CopyOutput,
+        Self::ReRun,
+        Self::Collapse,
+        Self::Bookmark,
+    ];
+
+    /// The block item at `index`, or `None` past the end.
+    #[must_use]
+    pub const fn from_index(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Self::CopyCommand),
+            1 => Some(Self::CopyOutput),
+            2 => Some(Self::ReRun),
+            3 => Some(Self::Collapse),
+            4 => Some(Self::Bookmark),
+            _ => None,
+        }
+    }
+
+    /// This item's place in [`ALL`](Self::ALL).
+    #[must_use]
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::CopyCommand => 0,
+            Self::CopyOutput => 1,
+            Self::ReRun => 2,
+            Self::Collapse => 3,
+            Self::Bookmark => 4,
+        }
+    }
+
+    /// The menu label, STATE-AWARE for the two items that toggle.
+    ///
+    /// Collapse and Bookmark are one item each rather than a pair, so a menu cannot draw both
+    /// halves of a toggle at once — [`LinkItem::title`]'s precedent, with the block's own state
+    /// as the parameter instead of a link kind.
+    #[must_use]
+    pub const fn title(self, context: BlockContext) -> &'static str {
+        match self {
+            Self::CopyCommand => "Copy Command",
+            Self::CopyOutput => "Copy Output",
+            Self::ReRun => "Re-Run Command",
+            Self::Collapse => {
+                if context.collapsed {
+                    "Expand Block"
+                } else {
+                    "Collapse Block"
+                }
+            },
+            Self::Bookmark => {
+                if context.bookmarked {
+                    "Remove Bookmark"
+                } else {
+                    "Bookmark Block"
+                }
+            },
+        }
+    }
+
+    /// The SF Symbol for the row, state-aware for the same two.
+    #[must_use]
+    pub const fn symbol(self, context: BlockContext) -> &'static str {
+        match self {
+            Self::CopyCommand => "doc.on.doc",
+            Self::CopyOutput => "text.alignleft",
+            Self::ReRun => "arrow.clockwise",
+            Self::Collapse => {
+                if context.collapsed {
+                    "chevron.down"
+                } else {
+                    "chevron.up"
+                }
+            },
+            Self::Bookmark => {
+                if context.bookmarked {
+                    "star.slash"
+                } else {
+                    "star"
+                }
+            },
+        }
+    }
+
+    /// Whether a thin SEPARATOR is drawn ABOVE this item, splitting what the block GIVES you from
+    /// what it does to the block.
+    #[must_use]
+    pub const fn separator_before(self) -> bool {
+        matches!(self, Self::Collapse)
+    }
+
+    /// Whether this item is live for `context`.
+    ///
+    /// - **Copy Command / Re-Run** need the JOIN: the clean command line is the host's record, and
+    ///   the rows on screen carry the PS1 with them. An unjoined block offers neither rather than
+    ///   offering a prompt string as if it were a command.
+    /// - **Copy Output** needs the join AND a finished command — the request tolerates an empty
+    ///   reply, but a block with nothing captured yet is an honest grey.
+    /// - **Re-Run** additionally needs a pane that will ACCEPT input. ⚠️ It writes to the pty, so
+    ///   read-only must gate it here: a menu that offered it would walk around the per-pane lock.
+    /// - **Collapse** needs a foldable block — an orphan whose command scrolled off has nothing
+    ///   left to fold to, and the layout refuses it anyway.
+    /// - **Bookmark** needs the join, because a star is stored against the RING index and an
+    ///   unjoined block has none.
+    #[must_use]
+    pub const fn is_enabled(self, context: BlockContext) -> bool {
+        match self {
+            Self::CopyCommand | Self::Bookmark => context.joined,
+            Self::CopyOutput => context.joined && context.complete,
+            Self::ReRun => context.joined && context.pane_connected && !context.read_only,
+            Self::Collapse => context.foldable,
+        }
+    }
+}
+
+/// What the pointer found under it, and what the pane will allow — the snapshot a right-click over
+/// a block takes.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "[`Context`]'s reason: this IS the snapshot, seven independent facts about one block and the \
+              pane holding it, each gating a different item. `bits` offers the packed form for the crossing"
+)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct BlockContext {
+    /// The block matched a host RECORD, so its command line and its ring index are both known.
+    pub joined: bool,
+    /// That record's command has finished, so there is output to ask for.
+    pub complete: bool,
+    /// The block has prompt rows of its own, so folding it leaves something behind.
+    pub foldable: bool,
+    /// It is folded RIGHT NOW — the toggle's label reads off this.
+    pub collapsed: bool,
+    /// It is starred right now — likewise.
+    pub bookmarked: bool,
+    /// The pane's PTY/transport is live.
+    pub pane_connected: bool,
+    /// The pane holds the read-only LOCK, which no menu may write around.
+    pub read_only: bool,
+}
+
+impl BlockContext {
+    /// The seven gates read out of one byte, LOW BIT FIRST in declaration order.
+    #[must_use]
+    pub const fn from_bits(bits: u8) -> Self {
+        Self {
+            joined: bits & 1 != 0,
+            complete: bits & 2 != 0,
+            foldable: bits & 4 != 0,
+            collapsed: bits & 8 != 0,
+            bookmarked: bits & 16 != 0,
+            pane_connected: bits & 32 != 0,
+            read_only: bits & 64 != 0,
+        }
+    }
+
+    /// The inverse of [`from_bits`](Self::from_bits).
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        let mut bits = 0_u8;
+        if self.joined {
+            bits |= 1;
+        }
+        if self.complete {
+            bits |= 2;
+        }
+        if self.foldable {
+            bits |= 4;
+        }
+        if self.collapsed {
+            bits |= 8;
+        }
+        if self.bookmarked {
+            bits |= 16;
+        }
+        if self.pane_connected {
+            bits |= 32;
+        }
+        if self.read_only {
+            bits |= 64;
+        }
+        bits
+    }
+}
+
+/// The block section's items, in display order.
+pub const BLOCK_ITEMS: [BlockItem; 5] = BlockItem::ALL;
+
 #[cfg(test)]
 mod tests {
-    use super::{Context, ITEMS, Item, LinkItem, PASTE_AS_ITEMS, link_items};
+    use super::{
+        BLOCK_ITEMS, BlockContext, BlockItem, Context, ITEMS, Item, LinkItem, PASTE_AS_ITEMS, link_items,
+    };
     use crate::link::DetectedLinkKind;
 
     #[test]
@@ -396,6 +611,128 @@ mod tests {
             assert_eq!(LinkItem::from_index(item.index()), Some(item));
         }
         assert_eq!(LinkItem::from_index(4), None);
+        for (position, item) in BlockItem::ALL.into_iter().enumerate() {
+            assert_eq!(usize::from(item.index()), position);
+            assert_eq!(BlockItem::from_index(item.index()), Some(item));
+        }
+        assert_eq!(BlockItem::from_index(5), None);
+    }
+
+    /// ⚠️ Re-Run WRITES to the pty, so the per-pane read-only lock has to reach it.
+    ///
+    /// The lock is enforced at the model's one outbound seam as well, and that is the real gate —
+    /// this is the affordance agreeing with it. An item that looked live and then beeped would
+    /// teach the user that the lock is advisory.
+    #[test]
+    fn a_read_only_pane_offers_no_re_run() {
+        let live = BlockContext {
+            joined: true,
+            pane_connected: true,
+            ..BlockContext::default()
+        };
+        assert!(BlockItem::ReRun.is_enabled(live));
+        assert!(!BlockItem::ReRun.is_enabled(BlockContext {
+            read_only: true,
+            ..live
+        }));
+        assert!(!BlockItem::ReRun.is_enabled(BlockContext {
+            pane_connected: false,
+            ..live
+        }));
+        // The three reading verbs do not care about either — a locked pane still copies.
+        for item in [BlockItem::CopyCommand, BlockItem::CopyOutput, BlockItem::Bookmark] {
+            assert_eq!(
+                item.is_enabled(live),
+                item.is_enabled(BlockContext {
+                    read_only: true,
+                    ..live
+                }),
+                "{item:?} gated on a lock it does not write through",
+            );
+        }
+    }
+
+    /// An UNJOINED block — no host record — offers only the fold, which is the layout's own.
+    #[test]
+    fn an_unjoined_block_offers_only_the_fold() {
+        let orphaned = BlockContext {
+            foldable: true,
+            complete: true,
+            pane_connected: true,
+            ..BlockContext::default()
+        };
+        assert!(BlockItem::Collapse.is_enabled(orphaned));
+        for item in [
+            BlockItem::CopyCommand,
+            BlockItem::CopyOutput,
+            BlockItem::ReRun,
+            BlockItem::Bookmark,
+        ] {
+            assert!(
+                !item.is_enabled(orphaned),
+                "{item:?} acts on a record that does not exist",
+            );
+        }
+        // And an ORPHAN — no prompt rows of its own — cannot even be folded.
+        assert!(!BlockItem::Collapse.is_enabled(BlockContext {
+            foldable: false,
+            ..orphaned
+        }));
+    }
+
+    /// Output can only be copied once the command finished.
+    #[test]
+    fn the_output_copy_waits_for_the_command_to_end() {
+        let running = BlockContext {
+            joined: true,
+            ..BlockContext::default()
+        };
+        assert!(!BlockItem::CopyOutput.is_enabled(running));
+        assert!(BlockItem::CopyOutput.is_enabled(BlockContext {
+            complete: true,
+            ..running
+        }));
+    }
+
+    /// The two toggles are ONE item each, and the state is what picks the words.
+    #[test]
+    fn the_toggles_read_their_state_rather_than_shipping_both_halves() {
+        let off = BlockContext::default();
+        let on = BlockContext {
+            collapsed: true,
+            bookmarked: true,
+            ..off
+        };
+        assert_eq!(BlockItem::Collapse.title(off), "Collapse Block");
+        assert_eq!(BlockItem::Collapse.title(on), "Expand Block");
+        assert_eq!(BlockItem::Bookmark.title(off), "Bookmark Block");
+        assert_eq!(BlockItem::Bookmark.title(on), "Remove Bookmark");
+        assert_ne!(BlockItem::Collapse.symbol(off), BlockItem::Collapse.symbol(on));
+        assert_ne!(BlockItem::Bookmark.symbol(off), BlockItem::Bookmark.symbol(on));
+        for item in BlockItem::ALL {
+            for context in [off, on] {
+                assert!(!item.title(context).is_empty());
+                assert!(!item.symbol(context).is_empty());
+            }
+        }
+    }
+
+    /// Every one of the 128 packings round-trips, and the section draws one rule inside itself.
+    #[test]
+    fn the_block_section_packs_and_groups() {
+        for bits in 0..128_u8 {
+            assert_eq!(BlockContext::from_bits(bits).bits(), bits);
+        }
+        assert_eq!(BLOCK_ITEMS, BlockItem::ALL, "the section is every case");
+        let cuts: Vec<BlockItem> = BLOCK_ITEMS
+            .into_iter()
+            .filter(|item| item.separator_before())
+            .collect();
+        assert_eq!(cuts, vec![BlockItem::Collapse]);
+        assert!(
+            !BLOCK_ITEMS.first().is_some_and(|item| item.separator_before()),
+            "no leading rule — the section already opens with one",
+        );
     }
 
     /// The top level is NOT every case, and the two lists together are.

@@ -216,6 +216,158 @@ public enum TerminalContextMenu {
             return (kind, Dictionary(uniqueKeysWithValues: table))
         })
 
+    // MARK: - Block items (right-click ON a command block)
+
+    /// A right-click item that acts on the ONE command block under the pointer — the Warp shape.
+    ///
+    /// Kept SEPARATE from ``Item`` for ``LinkItem``'s reason and one more. ``Item/copyOutput`` acts on the
+    /// LATEST block because it is also the keyboard verb and a keystroke has no pointer; these act on the
+    /// block the click landed in. Both stay: the pane-global one is the chord, this section is the aim.
+    /// The raw `String` tags the `NSMenuItem.representedObject`, as everywhere else in this face.
+    public enum BlockItem: String, CaseIterable, Sendable, Equatable {
+        /// Copy the block's command LINE — the host-segmented text, never the rendered prompt.
+        case copyCommand
+        /// Copy the block's captured OUTPUT (wire type 15 → 29), fetched on demand.
+        case copyOutput
+        /// Re-inject the block's command line into the shell (``BlockReRunEncoder``, verbatim + one `\n`).
+        case reRun
+        /// Fold the block down to its prompt, or unfold it.
+        case collapse
+        /// Star the block, or un-star it.
+        case bookmark
+
+        /// The verb's own index — the far side's discriminant order, which is `allCases`.
+        var index: UInt8 {
+            UInt8(Self.allCases.firstIndex(of: self) ?? 0)
+        }
+
+        static func at(_ index: UInt8) -> Self? {
+            allCases.indices.contains(Int(index)) ? allCases[Int(index)] : nil
+        }
+
+        /// The menu label, STATE-AWARE for the two verbs that toggle: *Collapse Block* against *Expand
+        /// Block*, *Bookmark Block* against *Remove Bookmark*. One item each rather than a pair, so a
+        /// menu cannot draw both halves of a toggle at once.
+        public func title(for context: BlockContext) -> String {
+            TerminalContextMenu.blockWords(context)[self]?.title ?? ""
+        }
+
+        /// SF Symbol for the row, state-aware for the same two (`star` against `star.slash`).
+        public func symbol(for context: BlockContext) -> String {
+            TerminalContextMenu.blockWords(context)[self]?.symbol ?? ""
+        }
+
+        /// Whether a thin SEPARATOR is drawn ABOVE this item, splitting what the block GIVES you from
+        /// what it does to the block. Independent of state, so any context answers it.
+        public var separatorBefore: Bool {
+            TerminalContextMenu.blockWords(BlockContext())[self]?.separatorBefore ?? false
+        }
+    }
+
+    /// What the pointer found under it, and what the pane will allow — the snapshot a right-click over a
+    /// block takes. Built from ``TerminalRendererSurface/BlockTarget`` plus the pane's own two facts.
+    public struct BlockContext: Equatable, Hashable, Sendable {
+        /// The block matched a host RECORD, so its command line and its ring index are both known.
+        public var joined: Bool
+        /// That record's command has finished, so there is output to ask for.
+        public var complete: Bool
+        /// The block has prompt rows of its own, so folding it leaves something behind.
+        public var foldable: Bool
+        /// It is folded RIGHT NOW — the toggle's label reads off this.
+        public var collapsed: Bool
+        /// It is starred right now — likewise.
+        public var bookmarked: Bool
+        /// The pane's PTY/transport is live.
+        public var paneConnected: Bool
+        /// ⚠️ The pane holds the read-only LOCK, which no menu may write around: Re-Run writes to the
+        /// pty, so it greys here as well as being refused at ``TerminalViewModel/sendInput(_:)``.
+        public var readOnly: Bool
+
+        public init(
+            joined: Bool = false,
+            complete: Bool = false,
+            foldable: Bool = false,
+            collapsed: Bool = false,
+            bookmarked: Bool = false,
+            paneConnected: Bool = false,
+            readOnly: Bool = false,
+        ) {
+            self.joined = joined
+            self.complete = complete
+            self.foldable = foldable
+            self.collapsed = collapsed
+            self.bookmarked = bookmarked
+            self.paneConnected = paneConnected
+            self.readOnly = readOnly
+        }
+
+        /// The seven gates in one byte, low bit first — the order the door declares.
+        var bits: UInt8 {
+            var bits: UInt8 = 0
+            if joined { bits |= 1 << 0 }
+            if complete { bits |= 1 << 1 }
+            if foldable { bits |= 1 << 2 }
+            if collapsed { bits |= 1 << 3 }
+            if bookmarked { bits |= 1 << 4 }
+            if paneConnected { bits |= 1 << 5 }
+            if readOnly { bits |= 1 << 6 }
+            return bits
+        }
+
+        /// The two bits the WORDS vary with, which is what the word cache is keyed by — the other five
+        /// change enablement only, and caching against them would be 128 tables for five answers.
+        var wordKey: Self {
+            Self(collapsed: collapsed, bookmarked: bookmarked)
+        }
+    }
+
+    /// The block section's items, in display order. The renderer prepends the section, with a
+    /// separator, when the click hit a block at all — which verbs EXIST never varies with the block,
+    /// only which of them are live, so the rows cannot move under the pointer between two right-clicks.
+    public static let blockItems: [BlockItem] = wsAnswerBytes { out, cap in
+        Int(slopdesk_term_menu_block_items(out, cap))
+    }.compactMap(BlockItem.at)
+
+    /// Every block verb's separator and two words at one toggle state.
+    private static func blockWords(
+        _ context: BlockContext,
+    ) -> [BlockItem: (separatorBefore: Bool, title: String, symbol: String)] {
+        blockWordTables[context.wordKey] ?? [:]
+    }
+
+    /// The four toggle states' tables, once per process — twenty crossings paid at launch against a
+    /// right-click that asks for every row's title and glyph each time it opens.
+    private static let blockWordTables:
+        [BlockContext: [BlockItem: (separatorBefore: Bool, title: String, symbol: String)]] =
+        Dictionary(uniqueKeysWithValues: [false, true].flatMap { collapsed in
+            [false, true].map { bookmarked -> (
+                BlockContext, [BlockItem: (separatorBefore: Bool, title: String, symbol: String)]
+            ) in
+                let key = BlockContext(collapsed: collapsed, bookmarked: bookmarked)
+                let table = BlockItem.allCases.compactMap { item -> (
+                    BlockItem, (separatorBefore: Bool, title: String, symbol: String)
+                )? in
+                    let blob = wsAnswerBytes { out, cap in
+                        Int(slopdesk_term_menu_block_item(item.index, key.bits, out, cap))
+                    }
+                    guard let separator = blob.first else { return nil }
+                    let text = wsRuns(Array(blob.dropFirst()), count: 2)
+                    return (item, (separator == 1, text[0], text[1]))
+                }
+                return (key, Dictionary(uniqueKeysWithValues: table))
+            }
+        })
+
+    /// Whether `item` is live for `context` — the testable rule:
+    /// - **Copy Command / Re-Run / Bookmark** need the JOIN (the clean command line and the ring index
+    ///   are the host's record; the rows on screen carry the PS1 with them).
+    /// - **Copy Output** needs the join AND a finished command.
+    /// - **Re-Run** additionally needs a connected pane that is NOT read-only — it writes to the pty.
+    /// - **Collapse** needs a foldable block; an orphan whose command scrolled off has nothing to fold to.
+    public static func isEnabled(_ item: BlockItem, context: BlockContext) -> Bool {
+        slopdesk_term_menu_block_enabled(item.index, context.bits)
+    }
+
     /// Whether `item` is enabled for `context` — the testable enablement rule:
     /// - **Copy / Cut** need a live selection.
     /// - **Paste / Paste as Keystrokes** need non-empty clipboard text.

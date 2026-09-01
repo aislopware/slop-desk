@@ -668,6 +668,36 @@ pub unsafe extern "C" fn slopdesk_block_store_first_seen(
         })
 }
 
+/// The RING INDEX of the block whose 1-based prompt ordinal is `ordinal`, or `-1` for none.
+///
+/// The one hop between the two keys a block wears: the surface hit-tests a pointer and answers an
+/// ORDINAL (the join key, stable while the layout under it re-flows), and everything that acts on a
+/// block — the output request, the star — is keyed by the ring INDEX. An ordinal of zero is "the
+/// host attached mid-stream and could not count prompts", which several blocks can wear, so it
+/// resolves to nothing rather than to whichever one happens to be first.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_block_store_index_of_prompt_ordinal(
+    handle: *mut SlopDeskBlockStore,
+    ordinal: u32,
+) -> i64 {
+    // SAFETY: the caller's obligation, as above.
+    let Some(store) = (unsafe { held(handle) }) else {
+        return -1;
+    };
+    store
+        .ring
+        .block_by_prompt_ordinal(ordinal)
+        .map_or(-1, |block| i64::from(block.index))
+}
+
 /// Writes the block INDICES matching `filter`, newest-first, and answers how many there are.
 ///
 /// Indices rather than rows because the caller already holds the projection and only needs to know
@@ -1001,9 +1031,10 @@ mod tests {
         slopdesk_block_adjacent_failed, slopdesk_block_duration_label, slopdesk_block_status,
         slopdesk_block_statuses, slopdesk_block_store_bookmarks, slopdesk_block_store_current_generation,
         slopdesk_block_store_filtered, slopdesk_block_store_first_seen, slopdesk_block_store_free,
-        slopdesk_block_store_is_bookmarked, slopdesk_block_store_is_pending, slopdesk_block_store_new,
-        slopdesk_block_store_project, slopdesk_block_store_request, slopdesk_block_store_reset,
-        slopdesk_block_store_resolve, slopdesk_block_store_set_bookmarks, slopdesk_block_store_take_stranded,
+        slopdesk_block_store_index_of_prompt_ordinal, slopdesk_block_store_is_bookmarked,
+        slopdesk_block_store_is_pending, slopdesk_block_store_new, slopdesk_block_store_project,
+        slopdesk_block_store_request, slopdesk_block_store_reset, slopdesk_block_store_resolve,
+        slopdesk_block_store_set_bookmarks, slopdesk_block_store_take_stranded,
         slopdesk_block_store_time_out, slopdesk_block_store_toggle_bookmark, slopdesk_block_store_upsert,
     };
 
@@ -1140,6 +1171,32 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// The ordinal→index hop the block context menu aims with, across the boundary.
+    ///
+    /// `fields` stamps `prompt_ordinal = index + 1`, so the two keys are one apart here and a door
+    /// that returned the wrong one could not pass by accident.
+    #[test]
+    fn a_prompt_ordinal_crosses_back_as_a_ring_index() {
+        let handle = unsafe { slopdesk_block_store_new() };
+        upsert(handle, 0, Some(0), true, 100);
+        upsert(handle, 1, Some(0), true, 101);
+        upsert(handle, 2, Some(0), true, 102);
+        // SAFETY: a live store for each call.
+        unsafe {
+            assert_eq!(slopdesk_block_store_index_of_prompt_ordinal(handle, 3), 2);
+            assert_eq!(slopdesk_block_store_index_of_prompt_ordinal(handle, 1), 0);
+            assert_eq!(slopdesk_block_store_index_of_prompt_ordinal(handle, 99), -1);
+            // Zero is "unknown", never a position.
+            assert_eq!(slopdesk_block_store_index_of_prompt_ordinal(handle, 0), -1);
+            // A null store answers "none" rather than reading through it.
+            assert_eq!(
+                slopdesk_block_store_index_of_prompt_ordinal(core::ptr::null_mut(), 1),
+                -1
+            );
+            slopdesk_block_store_free(handle);
+        }
     }
 
     #[test]

@@ -269,9 +269,8 @@ public extension WorkspaceStore {
     /// A no-op if there is no terminal / no block / the command is empty (``BlockReRunEncoder`` returns
     /// `nil`). NOT gated on completion — re-running a still-running command's text is fine.
     func reRunLastCommandInActivePane() {
-        guard let model = activeTerminalModel, let latest = model.blocks.latest,
-              let bytes = BlockReRunEncoder.bytes(for: latest.commandText) else { return }
-        model.sendInput(bytes)
+        guard let model = activeTerminalModel, let latest = model.blocks.latest else { return }
+        model.reRunCommand(latest.commandText)
     }
 
     /// Re-runs an EXPLICIT captured command `text` (the Open-Quickly **Current** filter's Command-row
@@ -284,8 +283,7 @@ public extension WorkspaceStore {
     /// encoder returns `nil`). No wire change — funnels through ``TerminalViewModel/sendInput(_:)`` like
     /// ordinary keystrokes.
     func reRunCommandInActivePane(_ text: String) {
-        guard let model = activeTerminalModel, let bytes = BlockReRunEncoder.bytes(for: text) else { return }
-        model.sendInput(bytes)
+        activeTerminalModel?.reRunCommand(text)
     }
 
     /// Copies the active pane's captured output for block `index` — the Command Navigator's per-row

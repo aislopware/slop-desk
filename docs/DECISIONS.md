@@ -19005,3 +19005,53 @@ hashing it rather than by trusting a release page. `adb` (37.0.1) is already ups
 - **Spawn → listening: 0.54 / 0.59 / 0.69 s** over three runs with a throwaway `HOME`
   (`slopdesk-ops measure-code-server 3`), against the ~0.4 s warm / ~1.2 s cold recorded when this
   chain was first timed. Inside the old envelope; the prewarm architecture above is unchanged.
+
+## The per-block context menu, and the two keys a block wears (2026-09-01)
+
+Right-clicking inside a command block now offers that block's own verbs — Copy Command, Copy Output,
+Re-Run Command, Collapse/Expand, Bookmark — prepended above the standard menu. It is Warp's shape and
+it closes the last Warp-parity gap the block work left: every model-layer piece already existed
+(per-index output requests, `rerun_bytes`, the bookmark set), and the menu was the missing door.
+
+**The pane-global "Copy Command Output" was NOT replaced.** It acts on the LATEST block because it is
+also the keyboard verb and a keystroke has no pointer; the new section acts on the block under the
+pointer. Warp keeps both, for that reason. `docs/68` §5.10 has the architecture.
+
+Three decisions inside it are worth keeping written down, because each looks like an implementation
+detail and is not:
+
+- **The menu is keyed by the prompt ORDINAL, never the layout index.** The layout is a positional
+  vector, the fold state is a parallel one, and output arriving while a menu is open re-segments both.
+  An index captured when the menu was built can fold or copy a block the user never clicked — a
+  silent wrong action, which is the failure class the block join is already built to avoid. So
+  `slopdesk_term_surface_block_target` answers the ordinal and
+  `_toggle_block_collapsed_at_ordinal` resolves the index again at action time. The alternative
+  considered — stash the index and document the race — was rejected: it costs about ten lines to do
+  it properly, next to code the change was touching anyway.
+- **It acts on the CLICKED pane's model, not on `WorkspaceStore`'s active-pane conveniences.** A
+  right-click on macOS does not necessarily focus the pane it lands in, so
+  `copyBlockOutputInActivePane` / `reRunCommandInActivePane` would have copied from — or typed into —
+  a different pane than the one aimed at. Those stay for the keyboard and palette callers that
+  genuinely mean "the focused pane".
+- **⚠️ Re-Run is gated by the read-only lock in two places, on purpose.** It writes to the pty.
+  `TerminalViewModel.sendInput(_:)` drops the bytes at the single outbound seam and that is the
+  enforcement; the menu greys the row so the affordance agrees with it. An item that looked live and
+  then beeped would teach the user that the per-pane lock is advisory. `reRunCommand(_:)` became the
+  one re-run implementation all three callers share while this was checked, so `BlockReRunEncoder`'s
+  verbatim-UTF-8 rule (strip trailing CR/LF, append exactly one `0x0A`, NEVER `SendKeysParser`) is
+  spelled once rather than at each call site.
+- **A block with no ordinal gets no section, rather than a section with one live row in it.** Keying
+  by the ordinal means an unnameable block — a mid-stream attach, or an alt-screen program with no
+  prompt rows — cannot be acted on at all, the fold included: the fold resolves an ordinal too. The
+  first cut let the section draw there with Collapse live, which would have been a row that greys
+  nothing, clicks fine and does nothing. `blockTarget(at:)` refuses a zero ordinal instead, at the
+  one seam both shells go through. A block that IS named but whose record the client ring has since
+  dropped is a different case and keeps its fold, which is why the enablement still reads `joined`.
+
+Also corrected in the same pass: `docs/ui-shell/current-state/terminal-features.md`'s **Cut** row
+claimed ⌘X's delete half "counts zero because the GUI passes `selectionEndsAtCursor: false`". That
+has been false since the door landed — `TerminalRendererSurface.selectionEndsAtCursor()` →
+`slopdesk_term_surface_selection_ends_at_cursor` → `Frame::selection_ends_at_cursor`, with tests, and
+both shells pass the real answer. Note 2 in the same file had already recorded the closure; the table
+rows had not caught up. The stale claim is the kind that survives an audit because the row reads as a
+measurement, so it is named here as well.

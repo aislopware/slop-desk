@@ -746,6 +746,36 @@ impl Surface {
         if self.records.is_empty() {
             return Vec::new();
         }
+        self.joined_ordinals(layout)
+            .into_iter()
+            .map(|ordinal| {
+                let ordinal = ordinal?;
+                let record = self.records.iter().find(|record| record.ordinal == ordinal)?;
+                Some(chrome::BlockStatus {
+                    exit_code: record.exit_code,
+                    duration_ms: record.duration_ms,
+                })
+            })
+            .collect()
+    }
+
+    /// Which host RECORD each laid-out block joined to, positionally against `layout`.
+    ///
+    /// The join itself, with the ordinal KEPT. [`statuses`](Self::statuses) throws it away and
+    /// keeps the outcome, because a header prints an exit code; a right-click needs the key
+    /// instead, so it can name the same block to the ring after the layout under it has
+    /// re-flowed. Two callers, one join — writing it twice is how they would come to disagree
+    /// about which block is which.
+    ///
+    /// Orphan blocks — no prompt rows, so no command of their own — are skipped before the join and
+    /// hold `None` after it, which is what keeps the ordinals counting over the blocks that have
+    /// prompts rather than over the rows on screen. An alt-screen program has no prompts at all, so
+    /// every slot is `None` and the block section offers nothing.
+    fn joined_ordinals(&self, layout: &BlockLayout) -> Vec<Option<u32>> {
+        let mut out = vec![None; layout.blocks.len()];
+        if self.records.is_empty() {
+            return out;
+        }
         let mut prompts: Vec<String> = Vec::new();
         let mut where_from: Vec<usize> = Vec::new();
         for (index, block) in layout.blocks.iter().enumerate() {
@@ -765,20 +795,30 @@ impl Surface {
                 }
             })
             .collect();
-
-        let mut out = vec![None; layout.blocks.len()];
         for (ordinal, index) in blockjoin::join(&borrowed, &records).into_iter().zip(where_from) {
-            let Some(ordinal) = ordinal else { continue };
-            let Some(record) = self.records.iter().find(|record| record.ordinal == ordinal) else {
-                continue;
-            };
-            let Some(slot) = out.get_mut(index) else { continue };
-            *slot = Some(chrome::BlockStatus {
-                exit_code: record.exit_code,
-                duration_ms: record.duration_ms,
-            });
+            if let Some(slot) = out.get_mut(index) {
+                *slot = ordinal;
+            }
         }
         out
+    }
+
+    /// Where the block wearing `ordinal` sits in the CURRENT layout, or `None` when none does.
+    ///
+    /// ⚠️ **Resolved at action time on purpose.** A menu stays open for seconds and the layout
+    /// indices move underneath it — output re-segments the list, and the fold vector is read
+    /// positionally — so a stashed index can fold a block the user never clicked. The ordinal does
+    /// not move, which is why it is what the pointer door answers and this is what spends it.
+    ///
+    /// Zero is not an ordinal: it is "the host attached mid-stream and could not count prompts", so
+    /// it names no block rather than the first unjoined one.
+    fn layout_index_of_ordinal(&self, ordinal: u32) -> Option<usize> {
+        if ordinal == 0 {
+            return None;
+        }
+        self.joined_ordinals(&self.layout)
+            .into_iter()
+            .position(|found| found == Some(ordinal))
     }
 
     /// The scrollbar thumb for everything that scrolls under this surface, in device pixels.
@@ -3199,6 +3239,110 @@ pub unsafe extern "C" fn slopdesk_term_surface_block_at_point(
     block_at(&surface.layout, |rect| surface.on_screen(rect), x, y)
         .and_then(|index| i64::try_from(index).ok())
         .unwrap_or(-1)
+}
+
+/// What a right-click found under it: the block, and what a menu may offer for it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlopDeskTerminalBlockTarget {
+    /// The point landed inside a laid-out block at all. `false` means no block section is drawn —
+    /// every other field is then meaningless.
+    pub hit: bool,
+    /// The block's 1-based PROMPT-CYCLE ordinal, or `0` when it joined no host record.
+    ///
+    /// The key everything acts by: the ring's index, the output request, the star and the fold are
+    /// all reached from it, and unlike a layout position it survives the output that arrives while
+    /// the menu is open.
+    pub ordinal: u32,
+    /// The block has prompt rows of its own, so folding it leaves something behind.
+    pub foldable: bool,
+    /// It is folded RIGHT NOW, which is what the fold verb's own label reads off.
+    pub collapsed: bool,
+}
+
+/// Which block a point lands in, and the block's own half of the menu context, in one crossing.
+///
+/// [`slopdesk_term_surface_block_at_point`] answers the LAYOUT position, which is what a click on a
+/// header spends immediately; this answers the JOIN key plus the two state bits a menu needs, which
+/// is what a right-click spends seconds later. Two doors rather than one because a hover and a menu
+/// want different halves of the same hit, and folding them would make the cheap one pay the join.
+///
+/// In POINTS, like every other pointer door.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_block_target(
+    handle: *mut SlopDeskTerminalSurface,
+    x: f64,
+    y: f64,
+) -> SlopDeskTerminalBlockTarget {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return SlopDeskTerminalBlockTarget::default();
+    };
+    let Some(index) = block_at(&surface.layout, |rect| surface.on_screen(rect), x, y) else {
+        return SlopDeskTerminalBlockTarget::default();
+    };
+    let Some(block) = surface.layout.blocks.get(index) else {
+        return SlopDeskTerminalBlockTarget::default();
+    };
+    SlopDeskTerminalBlockTarget {
+        hit: true,
+        ordinal: surface
+            .joined_ordinals(&surface.layout)
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or(0),
+        foldable: !block.span.is_orphan(),
+        collapsed: surface.collapsed.get(index).copied().unwrap_or(false),
+    }
+}
+
+/// Flips the fold of the block wearing `ordinal`, and answers its new state.
+///
+/// The ordinal-keyed sibling of [`slopdesk_term_surface_toggle_block_collapsed`], and the one a
+/// MENU uses. ⚠️ The fold vector is positional, so the layout index is resolved HERE rather than
+/// stashed when the menu was built: output arriving in between re-segments the list, and a stale
+/// index folds a block the user never clicked. `false` for an ordinal no block wears, or for one
+/// whose block cannot fold.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_toggle_block_collapsed_at_ordinal(
+    handle: *mut SlopDeskTerminalSurface,
+    ordinal: u32,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    let Some(index) = surface.layout_index_of_ordinal(ordinal) else {
+        return false;
+    };
+    // A joined block always has prompt rows, so it is never the orphan the positional door has to
+    // refuse — the fold is spelled out here rather than delegated because `held` has already handed
+    // out the one mutable borrow this surface gets.
+    let wanted = !surface.collapsed.get(index).copied().unwrap_or(false);
+    if index >= surface.collapsed.len() {
+        surface.collapsed.resize(index.saturating_add(1), false);
+    }
+    if let Some(slot) = surface.collapsed.get_mut(index) {
+        *slot = wanted;
+    }
+    wanted
 }
 
 /// Folds a block down to its prompt, or unfolds it. Answers what the block's state now is.

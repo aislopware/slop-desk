@@ -110,4 +110,72 @@ final class TerminalContextMenuTests: XCTestCase {
         XCTAssertFalse(TerminalContextMenu.isEnabled(.pasteEscaped, context: noClip))
         XCTAssertFalse(TerminalContextMenu.isEnabled(.pasteBracketed, context: noClip))
     }
+
+    // MARK: - The block section (right-click IN one command block)
+
+    func testBlockItemOrderAndGrouping() {
+        XCTAssertEqual(
+            TerminalContextMenu.blockItems,
+            [.copyCommand, .copyOutput, .reRun, .collapse, .bookmark],
+        )
+        // One rule inside the section, splitting what the block GIVES you from what it does to it.
+        XCTAssertEqual(TerminalContextMenu.blockItems.filter(\.separatorBefore), [.collapse])
+    }
+
+    /// ⚠️ Re-Run WRITES to the pty, so the per-pane read-only lock has to reach the affordance too —
+    /// `TerminalViewModel.sendInput(_:)` is the enforcement, this is it agreeing.
+    func testReRunGreysUnderTheReadOnlyLockAndOnADeadPane() {
+        let live = TerminalContextMenu.BlockContext(joined: true, paneConnected: true)
+        XCTAssertTrue(TerminalContextMenu.isEnabled(.reRun, context: live))
+        var locked = live
+        locked.readOnly = true
+        XCTAssertFalse(TerminalContextMenu.isEnabled(.reRun, context: locked))
+        var dead = live
+        dead.paneConnected = false
+        XCTAssertFalse(TerminalContextMenu.isEnabled(.reRun, context: dead))
+        // The reading verbs are indifferent to both — a locked pane still copies.
+        for item in [TerminalContextMenu.BlockItem.copyCommand, .bookmark] {
+            XCTAssertTrue(TerminalContextMenu.isEnabled(item, context: locked), "\(item)")
+        }
+    }
+
+    /// A block that joined no host record has no clean command line and no ring index, so it offers
+    /// only the fold — and an ORPHAN, whose command scrolled off, offers not even that.
+    func testAnUnjoinedBlockOffersOnlyTheFold() {
+        let unjoined = TerminalContextMenu.BlockContext(
+            complete: true, foldable: true, paneConnected: true,
+        )
+        XCTAssertTrue(TerminalContextMenu.isEnabled(.collapse, context: unjoined))
+        for item in [TerminalContextMenu.BlockItem.copyCommand, .copyOutput, .reRun, .bookmark] {
+            XCTAssertFalse(TerminalContextMenu.isEnabled(item, context: unjoined), "\(item)")
+        }
+        var orphan = unjoined
+        orphan.foldable = false
+        XCTAssertFalse(TerminalContextMenu.isEnabled(.collapse, context: orphan))
+    }
+
+    func testCopyBlockOutputWaitsForTheCommandToEnd() {
+        let running = TerminalContextMenu.BlockContext(joined: true)
+        XCTAssertFalse(TerminalContextMenu.isEnabled(.copyOutput, context: running))
+        var finished = running
+        finished.complete = true
+        XCTAssertTrue(TerminalContextMenu.isEnabled(.copyOutput, context: finished))
+    }
+
+    /// The two toggles are ONE item each — the state picks the words, so a menu can never draw both
+    /// halves of a toggle at once.
+    func testTheTogglesReadTheirStateRatherThanShippingBothHalves() {
+        let off = TerminalContextMenu.BlockContext()
+        let on = TerminalContextMenu.BlockContext(collapsed: true, bookmarked: true)
+        XCTAssertEqual(TerminalContextMenu.BlockItem.collapse.title(for: off), "Collapse Block")
+        XCTAssertEqual(TerminalContextMenu.BlockItem.collapse.title(for: on), "Expand Block")
+        XCTAssertEqual(TerminalContextMenu.BlockItem.bookmark.title(for: off), "Bookmark Block")
+        XCTAssertEqual(TerminalContextMenu.BlockItem.bookmark.title(for: on), "Remove Bookmark")
+        for item in TerminalContextMenu.blockItems {
+            for context in [off, on] {
+                XCTAssertFalse(item.title(for: context).isEmpty, "\(item)")
+                XCTAssertFalse(item.symbol(for: context).isEmpty, "\(item)")
+            }
+        }
+    }
 }

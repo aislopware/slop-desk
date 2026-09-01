@@ -839,6 +839,21 @@ final class TerminalRendererSurface {
         let following: Bool
     }
 
+    /// What a pointer found under it, for the right-click menu that acts on ONE block.
+    ///
+    /// Addressed by ``ordinal`` rather than by a position, and that is the whole point: a menu stays
+    /// open for seconds while output re-segments the list underneath it, so a stashed layout index
+    /// would act on a block the user never clicked. `0` is "this block joined no host record" — the
+    /// only reading of it, since a mid-stream attach cannot count prompts.
+    struct BlockTarget: Sendable, Equatable {
+        /// The block's 1-based prompt-cycle ordinal, or `0` when it joined no record.
+        let ordinal: UInt32
+        /// It has prompt rows of its own, so folding it leaves something behind.
+        let foldable: Bool
+        /// It is folded right now.
+        let collapsed: Bool
+    }
+
     /// Every block the last ``draw()`` placed. The index into this array is the index every other
     /// block call below takes.
     func blocks() -> [Block] {
@@ -888,6 +903,34 @@ final class TerminalRendererSurface {
         guard let handle else { return nil }
         let found = slopdesk_term_surface_block_at_point(handle, point.x, point.y)
         return found < 0 ? nil : Int(found)
+    }
+
+    /// What a right-click found under it: which block, and what a menu may offer for it.
+    ///
+    /// ``block(at:)`` answers the LAYOUT position, which a click on a header spends immediately; this
+    /// answers the JOIN key plus the two state bits a menu needs, which a right-click spends seconds
+    /// later. `nil` when the point landed in no block at all — no section is drawn then.
+    ///
+    /// ⚠️ A zero ordinal is `nil` too, and for the same reason: the ordinal is the only name a menu
+    /// has for this block, so a block that joined no record cannot be ACTED on at all — not even
+    /// folded, since the fold resolves the ordinal at action time as well. Answering the hit anyway
+    /// would draw a section whose every row is either greyed or, worse, live and inert.
+    func blockTarget(at point: CGPoint) -> BlockTarget? {
+        guard let handle else { return nil }
+        let found = slopdesk_term_surface_block_target(handle, point.x, point.y)
+        guard found.hit, found.ordinal != 0 else { return nil }
+        return BlockTarget(ordinal: found.ordinal, foldable: found.foldable, collapsed: found.collapsed)
+    }
+
+    /// Folds or unfolds the block wearing `ordinal`, answering the state it left behind.
+    ///
+    /// ⚠️ The ordinal-keyed sibling of ``toggleBlock(_:)``, and the one a MENU uses: the fold vector is
+    /// POSITIONAL, a menu stays open for seconds, and output arriving in between re-segments the list —
+    /// so the layout index is resolved on the far side at action time rather than stashed at build time.
+    @discardableResult
+    func toggleBlock(ordinal: UInt32) -> Bool {
+        guard let handle else { return false }
+        return slopdesk_term_surface_toggle_block_collapsed_at_ordinal(handle, ordinal)
     }
 
     /// Tells the surface what the host said about one command block, so its header can print it.

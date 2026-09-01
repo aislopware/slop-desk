@@ -3314,6 +3314,22 @@ SlopDeskTerminalBlockScroll slopdesk_term_surface_block_scroll(SlopDeskTerminalS
 /* The block under a point in surface POINTS, or -1 for none. */
 int64_t slopdesk_term_surface_block_at_point(SlopDeskTerminalSurface *handle, double x, double y);
 
+/* What a right-click found under it: which block, and what a menu may offer for it. `hit` false means
+ * the point landed in no block and every other field is meaningless. */
+typedef struct {
+  bool     hit;
+  uint32_t ordinal;   /* the 1-based PROMPT-CYCLE ordinal, or 0 when it joined no host record */
+  bool     foldable;  /* it has prompt rows of its own, so a fold leaves something behind      */
+  bool     collapsed; /* it is folded RIGHT NOW, which the fold verb's own label reads off     */
+} SlopDeskTerminalBlockTarget;
+
+/* _block_at_point answers the LAYOUT position, which a click on a header spends immediately; this
+ * answers the JOIN key plus the two state bits a menu needs, which a right-click spends seconds
+ * later. Two doors because a hover and a menu want different halves of the same hit, and folding
+ * them would make the cheap one pay the join. In POINTS, like every other pointer door. */
+SlopDeskTerminalBlockTarget slopdesk_term_surface_block_target(SlopDeskTerminalSurface *handle,
+                                                               double x, double y);
+
 /* What the furniture is drawn with. Colours are 0xAARRGGBB — the one place on this surface where the
  * high byte IS alpha, because a hover wash and a thumb are translucent by design where a cell's ink
  * never is. Lengths are POINTS and are scaled inside, so a display change costs the client nothing.
@@ -3352,6 +3368,12 @@ bool slopdesk_term_surface_set_hover(SlopDeskTerminalSurface *handle, double x, 
 void slopdesk_term_surface_set_block_collapsed(SlopDeskTerminalSurface *handle, size_t index,
                                                bool collapsed);
 bool slopdesk_term_surface_toggle_block_collapsed(SlopDeskTerminalSurface *handle, size_t index);
+/* The ordinal-keyed sibling, and the one a MENU uses: the fold vector is POSITIONAL, a menu stays
+ * open for seconds, and output arriving meanwhile re-segments the list — so the layout index is
+ * resolved HERE at action time rather than stashed when the menu was built. false for an ordinal no
+ * block wears. */
+bool slopdesk_term_surface_toggle_block_collapsed_at_ordinal(SlopDeskTerminalSurface *handle,
+                                                             uint32_t ordinal);
 void slopdesk_term_surface_expand_all_blocks(SlopDeskTerminalSurface *handle);
 
 /* The wheel and the trackpad, in POINTS, spending the block chrome before the scrollback. A
@@ -4849,6 +4871,12 @@ SlopDeskBlockCounts slopdesk_block_store_project(SlopDeskBlockStore *handle,
                                                  SlopDeskBlockRow *rows, size_t row_cap,
                                                  uint8_t *arena, size_t arena_cap);
 SlopDeskBlockFirstSeen slopdesk_block_store_first_seen(SlopDeskBlockStore *handle, uint32_t index);
+/* The RING INDEX of the block whose 1-based PROMPT ordinal is `ordinal`, or -1 for none — the one hop
+ * between the two keys a block wears. A pointer hit-test answers an ORDINAL (the join key, stable
+ * while the layout under it re-flows); everything that ACTS on a block is keyed by the ring index.
+ * Ordinal 0 is "the host attached mid-stream and could not count prompts", which several blocks can
+ * wear, so it resolves to nothing; a duplicate resolves to the NEWEST index, still on screen. */
+int64_t slopdesk_block_store_index_of_prompt_ordinal(SlopDeskBlockStore *handle, uint32_t ordinal);
 size_t slopdesk_block_store_filtered(SlopDeskBlockStore *handle, uint32_t filter,
                                      uint32_t *out, size_t cap);
 bool   slopdesk_block_store_is_bookmarked(SlopDeskBlockStore *handle, uint32_t index);
@@ -10099,6 +10127,36 @@ size_t slopdesk_term_link_items(uint32_t kind, uint8_t *out, size_t cap);
 // 2 runs: the title, then the symbol name. The title depends on the KIND — "Open Link" against a
 // URL is "Open File" against a path — which is why the kind crosses here too.
 size_t slopdesk_term_link_item(uint8_t index, uint32_t kind, uint8_t *out, size_t cap);
+
+// The BLOCK verbs — a right-click that landed IN one command block, which is Warp's shape. Kept apart
+// from the standard items for the link verbs' reason and one more: SLOPDESK_TERM_MENU_ITEM's copy of
+// the output acts on the LATEST block, because it is also the keyboard verb and a keystroke has no
+// pointer. Both stay — the pane-global one is the chord, this section is the aim.
+#define SLOPDESK_TERM_BLOCK_ITEM_COPY_COMMAND   0
+#define SLOPDESK_TERM_BLOCK_ITEM_COPY_OUTPUT    1
+#define SLOPDESK_TERM_BLOCK_ITEM_RE_RUN         2
+#define SLOPDESK_TERM_BLOCK_ITEM_COLLAPSE       3
+#define SLOPDESK_TERM_BLOCK_ITEM_BOOKMARK       4
+
+// The seven gates, low bit first. READ_ONLY is the one that must not be dropped: Re-Run WRITES to the
+// pty, so the per-pane lock reaches the affordance as well as the outbound seam.
+#define SLOPDESK_TERM_BLOCK_CONTEXT_JOINED          (1u << 0)
+#define SLOPDESK_TERM_BLOCK_CONTEXT_COMPLETE        (1u << 1)
+#define SLOPDESK_TERM_BLOCK_CONTEXT_FOLDABLE        (1u << 2)
+#define SLOPDESK_TERM_BLOCK_CONTEXT_COLLAPSED       (1u << 3)
+#define SLOPDESK_TERM_BLOCK_CONTEXT_BOOKMARKED      (1u << 4)
+#define SLOPDESK_TERM_BLOCK_CONTEXT_PANE_CONNECTED  (1u << 5)
+#define SLOPDESK_TERM_BLOCK_CONTEXT_READ_ONLY       (1u << 6)
+
+// verbs × `[u8 index]`, in display order. No context: which verbs EXIST never varies with the block,
+// only which are live — a section that shrank would move the rows under the pointer between two
+// right-clicks on neighbouring blocks.
+size_t slopdesk_term_menu_block_items(uint8_t *out, size_t cap);
+// `[u8 separator_before]` then 2 runs: the title, then the symbol name. The CONTEXT crosses because
+// two of the five are toggles whose words read off the block's own state — "Collapse Block" against
+// "Expand Block" — and it is the same byte _block_enabled takes.
+size_t slopdesk_term_menu_block_item(uint8_t index, uint8_t context, uint8_t *out, size_t cap);
+bool slopdesk_term_menu_block_enabled(uint8_t index, uint8_t context);
 
 // ---- The three toast factories ----------------------------------------------------------
 //
