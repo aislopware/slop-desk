@@ -223,6 +223,10 @@ extension SlopDeskMacApp {
         if !saved.isEmpty { window.setFrame(from: saved) }
         // Combine publishers (not block-based `addObserver`) — both notifications post on the main
         // thread, so the MainActor-formed sink closure needs no Sendable dance to read the window.
+        // The surviving reason to prefer Combine here, now that this is the tree's only import of it:
+        // an `AnyCancellable` UNREGISTERS on deinit, so associating it with the window is the whole
+        // teardown. A block-observer token does not — it would need a wrapper class whose `deinit`
+        // calls `removeObserver`, which is more code for the same lifetime.
         let cancellable = NotificationCenter.default
             .publisher(for: NSWindow.didEndLiveResizeNotification, object: window)
             .merge(with: NotificationCenter.default.publisher(for: NSWindow.didMoveNotification, object: window))

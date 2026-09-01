@@ -35,8 +35,9 @@ subcommand of `rust/slopdesk-devtools`'s release binary, which replaced nine she
 inputs and a runner is cold every time anyway. The terminal engine no longer has a job of its own:
 `docs/68-terminal-surface-in-rust.md` deleted the fork and the 40-minute Zig xcframework build with
 it, and `rust/slopdesk-vterm` now compiles as an ordinary cargo dependency inside that same step.
-⚠️ `.github/workflows/release.yml` still carries the old `libghostty` job — it has no sources left to
-build and is the next thing to delete from this pipeline. It is not optional in the weak sense: `Package.swift`
+The `libghostty` job went with it: `.github/workflows/release.yml` is ONE job again, and a comment
+where the job stood says what it was and why nothing replaced it. The FFI step is not optional in the
+weak sense: `Package.swift`
 declares a `binaryTarget` at the FFI path, so SwiftPM cannot resolve the graph without the file —
 a missing step there fails the release before it compiles a line. `slopdesk-invariants` ratchets the
 correspondence: every gitignored `binaryTarget` path must be produced by some step of this workflow.
@@ -573,8 +574,8 @@ and the suite fails with the verb named.
 ## Known-fragile: the libghostty job — RETIRED
 
 > **Superseded by `docs/68-terminal-surface-in-rust.md`, which deleted the fork, the recipe and this
-> job's reason to exist.** The `libghostty` job is still spelled in `.github/workflows/release.yml`
-> and now builds nothing. Kept below as the record of what a Zig-toolchain job costs a release
+> job's reason to exist.** The job is DELETED from `.github/workflows/release.yml`; a comment where
+> it stood records the swap. Kept below as the record of what a Zig-toolchain job costs a release
 > pipeline, because the next vendored compiler will present the same three faces.
 
 This was the part most likely to break, and it broke in CI in ways it did not break locally.

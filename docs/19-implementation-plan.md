@@ -1,6 +1,6 @@
 # 19 — Implementation plan & build log (autonomous build)
 
-> **Cumulative build log / handoff snapshot. Records work as of the build, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Cumulative build log / handoff snapshot. Records work as of the build, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 > **STATUS: CURRENT — orchestration anchor.** Spec/de-risk done ([18 §0]: Phase 0 PASS on 2 real machines). The **build → workflow** map + status, updated after every workflow. Philosophy: **cleanest codebase, best architecture, no fallback** (libghostty-only, no SwiftTerm).
 

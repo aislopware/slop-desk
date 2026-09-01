@@ -1219,7 +1219,7 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
    instead of guessing. That readout is what makes the policy debuggable on hardware.
    `TerminalLetterbox` (shrink-to-fit, never magnify; centred; degrades to full-bleed for every
    unknown) and `TerminalGridReadout` are pure values in `SlopDeskTerminal`, so the arithmetic and
-   the sentence carry unit tests the iOS-only SwiftUI path cannot.
+   the sentence carry unit tests a view layer cannot.
 
 Known, accepted cost: zellij's smallest-client-wins is a documented pain point (Discussion #5066). The
 iOS-passive default removes the worst case.

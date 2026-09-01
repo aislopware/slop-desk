@@ -605,7 +605,8 @@ public enum SettingsKey {
     }
 
     /// How the macOS Option key is treated (`controls.option-as-alt`), default ``OptionAsAlt/off``.
-    /// Emitted by the config builder as libghostty `macos-option-as-alt`.
+    /// The deleted config builder emitted this as libghostty `macos-option-as-alt`; the surface now
+    /// takes it directly, through `TerminalSurfaceDriver.applyOptionAsAlt()`.
     public static var optionAsAlt: OptionAsAlt {
         AppConfig.current.choice("controls.option-as-alt", OptionAsAlt.off)
     }

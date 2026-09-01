@@ -1013,7 +1013,7 @@ let package = Package(
         // that module compiles to NOTHING, and a `@testable import` of it yields an empty module: a
         // suite here could only ever be a set of files that either fail to compile or, once guarded to
         // match, assert nothing. Neither is a test. The phone's suite lives in the iOS bundle that can
-        // actually run it — `Apps/ClientApp-iOS/Tests/`, driven by `make check-ios-tests` on a booted
+        // actually run it — `Apps/ClientApp-iOS/Tests/`, driven by `just check-ios-tests` on a booted
         // simulator — and that is the ONLY place a phone view is exercised.
         //
         // This is the same trap increment 62 found the first time: normalising the guard silently

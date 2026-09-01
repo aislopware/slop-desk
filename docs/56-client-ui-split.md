@@ -1,5 +1,10 @@
-# 56 — The client UI splits in two: AppKit on macOS, SwiftUI on iOS
+# 56 — The client UI splits in two: AppKit on macOS, UIKit on iOS
 
+> ⚠️ **The iOS half of this doc's ruling was REVERSED.** The split itself stands — two targets, one
+> per framework — but the phone's framework is UIKit, not SwiftUI: `62-phone-uikit.md` measured that
+> and carried it out. SwiftUI is gone from the tree entirely (zero `import SwiftUI`). Read every
+> "SwiftUI on iOS" below as history of the intermediate state.
+>
 > Read with [`DESIGN.md`](../DESIGN.md) (the visual language, unchanged by this split) and
 > [`22-workspace-architecture.md`](22-workspace-architecture.md) (the store the two halves share).
 

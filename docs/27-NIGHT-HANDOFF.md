@@ -1,6 +1,6 @@
 # Night Handoff — 2026-06-05
 
-> **Historical session log (2026-06-05). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-05). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 Autonomous overnight session. Branch **`fix/terminal-render-connect-once`** (off `main`), **UNCOMMITTED**. Delivered via 10 sequential "ultracode" workflows, each **hardware-tested on the Mac Studio via cua-computer-use** (driven as a user — screenshots), with a root cause for every fix.
 

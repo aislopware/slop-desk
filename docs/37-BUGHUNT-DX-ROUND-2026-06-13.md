@@ -1,6 +1,6 @@
 # 37 — Bug-hunt + DX hardening round (2026-06-13, autonomous, continuation)
 
-> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 **Status: 9 backlog items + a self-review pass (3 fixes) shipped to `main`, one commit each, test-first; base `077acce` → HEAD `54f84f3`. Suite 2122 → 2137/0.** Continuation of the autonomous loop (after docs/36). Discovery workflow `w5k83m7d5` (8 readers) produced a ranked 15-item backlog; the highest-value, headlessly-verifiable items were implemented one-per-commit, each adversarially verified against the real code first. Review workflow `wb9t7om3n` (4 dimension reviewers + rejection-audit agent → adversarial verify) then scrutinised the whole diff and earned its keep three times (below).
 

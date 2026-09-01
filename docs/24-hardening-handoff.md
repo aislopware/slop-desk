@@ -1,6 +1,6 @@
 # 24 — Code-Hardening Pass Handoff
 
-> **Historical session log. Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log. Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 > **STATUS: CURRENT.** Autonomous code-hardening pass (2026-06-03), branch **`feat/slopdesk-code-hardening`** (15 commits over `main`). Resolved every deferred followup from [`23-workspace-ui-handoff.md`](23-workspace-ui-handoff.md), the video-host reconnect bug, the missing host-side inspector serving, flaky-test infra, and 12 adversarially-found bugs — all build- and unit-test-gated headlessly. The runtime/GUI/device verification gap is unchanged from docs/23 (same hardware checklist, fewer code-level unknowns). Architecture authority: [`22`](22-workspace-architecture.md); proven byte-pipeline/transport/video/inspector cores: [`21`](21-HANDOFF.md).
 

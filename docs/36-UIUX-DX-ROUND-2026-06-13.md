@@ -1,6 +1,6 @@
 # 36 — UI/UX + DX round (2026-06-13, autonomous)
 
-> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 **Status: 17 items + 1 self-review pass shipped to `main` (one commit each), test-first, suite 2071 → 2122/0.** Base `afdd1f9` → HEAD `c6ea64a`. A 9-agent research workflow surveyed every client UX/DX surface into a ranked 58-item backlog; the highest-value, headlessly-testable items shipped one-per-commit, each adversarially verified against the real code first. A 5-dimension review workflow then caught 4 defects (1 MED + 3 LOW, all in the new snippet/paste UI that SwiftUI presentation/focus tests can't catch), fixed in `c6ea64a`.
 

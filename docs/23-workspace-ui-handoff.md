@@ -1,6 +1,6 @@
 # 23 — Workspace UI Handoff (honest end-of-WF-build status)
 
-> **Historical session log. Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log. Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 > **STATUS: CURRENT.** Wake-up picture after the WORKSPACE UI build (WF2 pure domain → WF3 multi-session store → WF4 SwiftUI shell → WF5 pane content → WF6 keyboard/palette/compact/iOS-focus → WF7 adversarial review fixes). States what is COMPLETE + proven HEADLESSLY (build / iOS typecheck / unit tests) vs. only COMPILED + REVIEWED, plus build/run commands, the HW verification checklist, deferred followups, and caveats.
 >

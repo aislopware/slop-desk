@@ -1,6 +1,6 @@
 # 38 — Net-new DX features + tail hardening (2026-06-13, autonomous, continuation)
 
-> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 **Status: shipped to `main`. Base `ffc0d22` → HEAD `812c701`. Full suite 2137 → 2153/0.** Continuation of the autonomous loop (after docs/37). Two phases: a fresh-surface bug pass that **converged** (2 LOW hardening), then a feature-ideation pivot shipping **3 net-new DX features + a self-review pass (4 fixes)**. Orchestration: workflows do discovery/ideation/review (parallel, read-heavy); the main agent does the sequential edit→build→test→commit surgery + verify-the-verifier calls.
 

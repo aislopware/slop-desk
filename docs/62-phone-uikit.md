@@ -408,7 +408,7 @@ across panes" hazard that `SplitContainer.swift:170` states in a comment becomes
 
 The invariant this protects is **keep-all-mounted** (`SplitContainer.swift:1-12`,
 `MacSplitCanvasView.swift:3-9`): an inactive tab's subtree is never unmounted, because unmounting kills
-the libghostty surface and the return shows a soft-reset screen rebuilt from the lossy ring replay.
+the terminal surface and the return shows a soft-reset screen rebuilt from the lossy ring replay.
 SwiftUI states it as `.opacity(isActive ? 1 : 0)` + `.allowsHitTesting(isActive)` +
 `.accessibilityHidden(!isActive)` (`SplitContainer.swift:112-114`).
 
@@ -496,7 +496,7 @@ bounded row count that is correct: N rows cost N layout objects and no dequeue b
 may keep a live subview.
 
 So the rule is: **a reusable cell may not own an irreplaceable resource.** The split canvas is
-therefore never a collection view — its leaves own libghostty surfaces, `CAMetalLayer`s and pooled
+therefore never a collection view — its leaves own terminal surfaces, `CAMetalLayer`s and pooled
 `WKWebView`s, and `SplitContainer.swift:1-12` exists to say they are never torn down. The tab strip,
 the panel tab strip, the cheat sheet and the fact lines are `UIStackView`s. The seven surfaces above
 are collection views. Anything else is decided by counting its rows before it is written.
@@ -1208,7 +1208,7 @@ a slip:
    plan put them where the `App`'s `init` had them, which reads as the same moment and is not:
    `PhoneAppDelegate` builds the composition in its own `init`, and `PreferencesStore` asks the
    terminal-colour seam as it comes up. Installed after, the FIRST config a pane sees resolves
-   against an unfilled closure and the cells come up in libghostty's own palette until something
+   against an unfilled closure and the cells come up in the engine's own palette until something
    dirties the config — a wrong-colours-on-cold-launch bug with no error anywhere. The Mac shell has
    always installed both ahead of `ClientComposition(deviceClass:)`; keeping the order identical is
    what makes the two shells one launch sequence rather than two that happen to agree.
@@ -1412,7 +1412,7 @@ rather than easier to satisfy, and the answer when it fires is to hoist the shar
 `SlopDeskClientCore`, never to perturb one side until the window breaks.
 
 **Un-landable if:** keep-all-mounted cannot be held. Everything else in this stage is recoverable; a
-tab switch that tears down a libghostty surface is a product regression the user sees immediately, and
+tab switch that tears down a terminal surface is a product regression the user sees immediately, and
 it is the one thing to test by hand at every commit boundary.
 
 ### Stage F — the overlays

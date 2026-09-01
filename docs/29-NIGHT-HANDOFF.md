@@ -1,6 +1,6 @@
 # Night Handoff — 2026-06-06 (core TUI/keyboard/mouse/GUI audit + fix)
 
-> **Historical session log (2026-06-06). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-06). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 Autonomous overnight session. Branch **`fix/core-tui-keyboard-mouse-gui`** (off `main` @ b49ec37).
 **UNCOMMITTED** (per "don't commit unless asked"). Audit → fix → verify ultracode workflows, benchmarked

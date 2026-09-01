@@ -45,7 +45,13 @@ Most of Phase 0 ran on this machine (Apple M1 Max · macOS 26.5 · arm64 — the
 
 ## PATH 1 risks (shipped; no hardware needed to resolve)
 
-### C — libghostty threading (SOLVED)
+### C — libghostty threading (SOLVED — for an engine we no longer embed)
+
+> Every `ghostty_surface_*` symbol below belongs to the FORK's full surface, which is deleted
+> ([68](68-terminal-surface-in-rust.md)). Our own surface has its own contract — `slopdesk-ffi`'s
+> `terminal_surface` doors, whose lifetime rule is stated at `doors.rs` — so read this row as the
+> research that settled the QUESTION, not as the rule in force.
+
 - `ghostty_surface_feed_data` / `_refresh` / `_draw` **must run on the main thread** (confirmed via VVTerm source). Swift's `@MainActor` does **not** propagate to C symbols — ensure the call site is on main yourself.
 - **TCP receive loop** runs on a bg thread → before feeding: `await MainActor.run { terminal.feedData(data) }`.
 - **CVDisplayLink callback** fires on a bg thread → `DispatchQueue.main.async` before touching view state.

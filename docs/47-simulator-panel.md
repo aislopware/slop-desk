@@ -1,8 +1,11 @@
-# 47 — Simulators panel (the fourth path, and the foreign wire it speaks)
+# 47 — Simulators panel (not a fourth path, and the foreign wire it speaks)
 
 The right panel's **Simulators** tab mirrors one of the host's iOS Simulator devices and drives it —
-frames down, gestures up. It is drawn **natively** (SwiftUI + `AVSampleBufferDisplayLayer`), not in a
-web view.
+frames down, gestures up. It is drawn **natively** (AppKit / UIKit over
+`AVSampleBufferDisplayLayer`), not in a web view.
+
+It is **not** a fourth path — `docs/46` §Three paths states the rule and the reason: this is a
+foreign wire to a third-party process, sharing no socket, message set or codec with the three.
 
 Everything below the fold is **measured**, not read from a spec: `baguette` publishes no wire
 document, so the dialect was recorded off a live `baguette serve` on 2026-08-04 and the byte-level

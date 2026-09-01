@@ -1,6 +1,6 @@
 # Night Handoff — 2026-06-05 (session 2)
 
-> **Historical session log (2026-06-05). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-05). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 Autonomous bug-hunt + UX pass. Branch: **`main`**, **UNCOMMITTED**. Driven by an 8-finder "ultracode" bug-hunt workflow (each finding adversarially verified) + independent deep reading, then fixes with regression tests, then **hardware validation on the Mac Studio via cua-computer-use** (driven as a user — screenshots).
 

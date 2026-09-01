@@ -1,6 +1,6 @@
 # 33 — UI/UX + unique-features round (2026-06-12/13)
 
-> **Historical session log (2026-06-12/13). Records work as of that date, not current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-12/13). Records work as of that date, not current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 **Status: DONE — 25 features across 2 research rounds + 2 adversarial self-reviews, all shipped to `main` with headless tests. Full suite 1972/0. Several runtime FEELs are HW-pending (no 2-machine rig from automation).**
 

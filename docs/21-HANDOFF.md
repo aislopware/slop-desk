@@ -1,6 +1,6 @@
 # 21 — Handoff (honest end-of-autonomous-build status)
 
-> **Cumulative build log / handoff snapshot. Records work as of the build, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Cumulative build log / handoff snapshot. Records work as of the build, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 > **STATUS: CURRENT.** Truthful wake-up picture after the autonomous build of **SlopDesk**
 > (WF-1 … WF-9, consolidated in WF-10): what is COMPLETE + headlessly tested vs. COMPILED +

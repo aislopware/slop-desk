@@ -4,13 +4,13 @@
 
 ## 1. What it is
 
-> **Philosophy: commit to one good choice per problem.** One renderer (libghostty), one structured view (the read-only inspector), one Rust core that owns the wire. Where there is a real choice the design picks it and proves it, rather than shipping fallbacks. And one IMPLEMENTATION per rule: a thing written in both languages is a bug, not a safety net — see `CLAUDE.md`.
+> **Philosophy: commit to one good choice per problem.** One renderer (`slopdesk-termrender`, ours), one structured view (the read-only inspector), one Rust core that owns the wire. Where there is a real choice the design picks it and proves it, rather than shipping fallbacks. And one IMPLEMENTATION per rule: a thing written in both languages is a bug, not a safety net — see `CLAUDE.md`.
 
 A remote-coding app for Apple platforms (macOS host, macOS + iOS/iPadOS client); build floor macOS 26 / iOS 26, developed on Apple Silicon. Use-case: daily coding — running a shell and Claude Code on a remote machine and driving it from another device. Not game-streaming.
 
-**Rust is the default language and Swift is the UI.** Every rule, every codec and every effect on the system is Rust; what stays in Swift is SwiftUI and AppKit, and the two client shells are split along that line — `SlopDeskMacUI` (AppKit) and `SlopDeskPhoneUI` (SwiftUI) over a shared, draws-nothing `SlopDeskClientCore` ([56](56-client-ui-split.md)). The iOS app differs in LAYOUT only; every feature is present on both halves, and `rust/slopdesk-invariants` is what holds that rather than an audit.
+**Rust is the default language and Swift is the UI.** Every rule, every codec and every effect on the system is Rust; what stays in Swift is AppKit and UIKit — **no SwiftUI anywhere** — and the two client shells are split along that line: `SlopDeskMacUI` (AppKit, [56](56-client-ui-split.md)) and `SlopDeskPhoneUI` (UIKit, [62](62-phone-uikit.md)) over a shared, draws-nothing `SlopDeskClientCore`. The iOS app differs in LAYOUT only; every feature is present on both halves, and `rust/slopdesk-invariants` is what holds that rather than an audit.
 
-The client is a coding workspace: **Session → Tab → n-ary split panes**. A pane is either a **terminal** (host PTY → TCP → libghostty) or a **GUI window** (ScreenCaptureKit → HEVC → UDP). Both are first-class; transport is chosen per pane. (Docs 01–11 = GUI video design depth; free-floating canvas design is historical — [30](30-infinite-canvas.md).)
+The client is a coding workspace: **Session → Tab → n-ary split panes**. A pane is either a **terminal** (host PTY → TCP → `slopdesk-vterm`) or a **GUI window** (ScreenCaptureKit → HEVC → UDP). Both are first-class; transport is chosen per pane. (Docs 01–11 = GUI video design depth; free-floating canvas design is historical — [30](30-infinite-canvas.md).)
 
 ## 2. Architecture: two pane transports + a companion
 
@@ -29,14 +29,14 @@ The canvas holds panes; each streams over the transport its content needs (termi
         │ TCP          │ UDP             │ NWConn #2   (over a trusted private mesh, e.g. WireGuard)
 ┌───────▼──────────────▼─────────────────▼──────────────┐
 │  CLIENT (macOS / iOS / iPadOS) — session/tab/split workspace │
-│  libghostty surface (full TUI render) ← sends keys    │
+│  slopdesk-vterm surface (full TUI render) ← keys      │
 │  VTDecompression → Metal (GUI window video) ← input   │
-│  SwiftUI read-only views (tool cards / subagent /     │
+│  AppKit/UIKit read-only views (tool cards / subagent /│
 │      todos / workflow / CoT-placeholder)              │
 └───────────────────────────────────────────────────────┘
 ```
 
-- **Terminal panes** — full TUI fidelity, pixel-perfect text. Host PTY ([12], [02]) → plain TCP (on a trusted private network) → libghostty client renderer ([12 §renderer]).
+- **Terminal panes** — full TUI fidelity, pixel-perfect text. Host PTY ([12], [02]) → plain TCP (on a trusted private network) → our own client surface: `slopdesk-vterm` (grid + blocks, over `libghostty-vt`'s parse layer) drawn by `slopdesk-termrender` ([68](68-terminal-surface-in-rust.md)).
 - **GUI-window panes** — a single host window (VS Code, Xcode, a browser…). ScreenCaptureKit → VideoToolbox HEVC over plain UDP, with RS-FEC, ABR/congestion control, a client-side cursor, and LTR recovery; 60 fps with idle-skip. ([01], [02], [04], [09])
 - **Read-only inspector** (the differentiator) — a companion for content awkward to read in scrollback (subagent transcripts, tool I/O, todos, workflow). Data = tailing the Claude Code JSONL transcript → events over a second connection, which the client dials DIRECTLY: the tail, the fold and the replay window belong to `slopdesk-inspectord`, not hostd, so a session's history outlives a host restart ([54]). Read-only, so it avoids every cost of driving the agent. ([16])
 
@@ -58,7 +58,7 @@ Scripting is Rust as well — there is no shell or Python left in the repo's own
 | Encryption | **None at the app layer** — the mesh provides E2E encryption + node auth + per-port ACLs | [13] |
 | Terminal transport | **Plain TCP** (reliable; only buffering needed) | [13], [12] |
 | Video transport | Plain UDP (QUIC dropped — WireGuard already encrypts) | [03] |
-| Terminal renderer | **libghostty** full surface + **self-owned external-backend patch** (ref daiimus External.zig) | [12] |
+| Terminal renderer | **ours** — `slopdesk-termrender` over `slopdesk-vterm`, with `libghostty-vt` as the parse layer only (the full-surface + patched-Ghostty plan was reversed) | [12], [68] |
 | Host PTY | `openpty` + `posix_spawn(createSession)` (forkpty unsafe from Swift) | [12] |
 | Claude Code TERM | **`xterm-ghostty`** (kitty kbd + DEC2026; accept the paste risk #54700 + a fallback toggle) | [14] |
 | Claude Code fullscreen | `CLAUDE_CODE_NO_FLICKER=1` for the remote PTY | [14] |

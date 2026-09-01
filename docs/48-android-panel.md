@@ -1,7 +1,7 @@
 # 48 — Android panel (the second foreign wire, and the one relay that is not optional)
 
 The right panel's **Android** tab mirrors one of the host's Android devices — emulator or a phone on
-the desk — and drives it: frames down, touches and keys up. Drawn **natively** (SwiftUI +
+the desk — and drives it: frames down, touches and keys up. Drawn **natively** (AppKit / UIKit over
 `AVSampleBufferDisplayLayer`), like the Simulators tab and for the same reasons.
 
 Everything below the fold is **measured**, not read from a spec. `scrcpy` publishes no wire

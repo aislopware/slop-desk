@@ -159,7 +159,7 @@ final class TerminalViewModelBatchTests: XCTestCase {
     /// check-then-park had a LOST-WAKE window — `feedBackpressure` read `gateOpen == false`,
     /// the test's `release()` interleaved (resuming an EMPTY parked list), THEN the
     /// continuation was appended → parked forever → the whole xctest worker hung (the
-    /// intermittent 30-minute `make test --parallel` hang). The gate check and the park are
+    /// intermittent 30-minute `just test --parallel` hang). The gate check and the park are
     /// now one atomic section.
     ///
     /// `@unchecked` survives for ONE reason: ``TerminalSurface`` requires a mutable, non-`Sendable`

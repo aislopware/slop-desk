@@ -97,7 +97,7 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 25 | `notification` | host → client | control | `UInt16 titleLen` (BE) + `title` UTF-8 + remaining bytes = `body` UTF-8 — PRODUCER-gated: while the pane's agent status is hook-established (`ClaudePaneDetector.suppressesChildNotifications`) the host DROPS the sniffed OSC 9/777/99 at the FIFO filter (the agent's own terminal notification duplicates the type-27 edge the client already banners); a hook-free pane forwards unchanged |
 | 26 | `foregroundProcess` | host → client | control | remaining bytes = UTF-8 PTY foreground-process basename (coarse Claude-Code watch; `""` clears) |
 | 27 | `claudeStatus` | host → client | control | `UInt8 state` + `UInt8 kind` + `UInt16 labelLen` (BE) + `label` UTF-8 (rich Claude-Code hook status) |
-| 28 | `commandBlock` | host → client | control | `UInt32 index` + `UInt8 hasExit` + `Int32 exitCode` (BE, 0 if absent) + `UInt8 hasDuration` + `UInt32 durationMS` (BE, 0 if absent) + `UInt8 complete` + `UInt32 outputLen` (BE) + `UInt32 promptOrdinal` (BE; 1-based count of OSC-133 `A` prompt cycles at the block's start — counts EVERY cycle incl. blockless empty-Enter/Ctrl-C ones, matching libghostty's `.prompt` rows for `jump_to_prompt`; `0` = unknown) + `UInt16 cmdLen` (BE) + `commandText` UTF-8 (Warp-style Block metadata) |
+| 28 | `commandBlock` | host → client | control | `UInt32 index` + `UInt8 hasExit` + `Int32 exitCode` (BE, 0 if absent) + `UInt8 hasDuration` + `UInt32 durationMS` (BE, 0 if absent) + `UInt8 complete` + `UInt32 outputLen` (BE) + `UInt32 promptOrdinal` (BE; 1-based count of OSC-133 `A` prompt cycles at the block's start — counts EVERY cycle incl. blockless empty-Enter/Ctrl-C ones, matching the `.prompt` rows `slopdesk-vterm` stamps for `jump_to_prompt`; `0` = unknown) + `UInt16 cmdLen` (BE) + `commandText` UTF-8 (Warp-style Block metadata) |
 | 29 | `blockOutput` | host → client | control | `UInt32 index` + `UInt32 outputLen` (BE) + `output` bytes (RAW VT, not UTF-8) — reply to `requestBlockOutput` |
 | 17 | `workspaceRequest` | client → host | control | `UInt32 requestSeq` + `UInt8 verb` + `UInt32 payloadLen` (BE) + `payload` bytes (opaque) — the WORKSPACE-DOCUMENT request (docs/45 §5.2). Verb-multiplexed like type 16, so every future workspace verb costs ZERO type numbers: `0 subscribe · 1 ack · 2 presence · 3 intent`. An unknown verb is a `malformedBody` drop, never a trap. `SlopDeskProtocol` does not parse the payload — `WorkspaceStateCodec` (SlopDeskWorkspaceModel) does. Rides the `channelClass == 1` channel's CONTROL sub-channel |
 | 30 | `metadataResponse` | host → client | control | `UInt32 requestID` (BE) + `UInt8 status` + `UInt32 payloadLen` (BE) + `payload` bytes (opaque) — reply to `metadataRequest` (E4) |
@@ -134,12 +134,11 @@ never offers or falls back to another version.
     OSC string is that OSC's terminator and fires `title` (if OSC 0/2), **never** `bell` — the
     state machine distinguishes the two structurally.
 
-  The sniffer only observes (raw bytes reach the client unchanged — libghostty is the real
-  terminal) and is **streaming-safe**: a byte-at-a-time state machine that holds partial state
-  across read chunks, bounds the buffered OSC payload against an unterminated/hostile OSC, and
-  re-syncs on a stray `ESC` without swallowing the next introducer. The client surfaces both as
-  `SlopDeskClient.Event.title` / `.bell`. They ride the head-of-line-independent CONTROL channel
-  and are **not** sequenced/replayed.
+  The sniffer only observes (`slopdesk-vterm` is the real terminal) and is **streaming-safe**: a
+  byte-at-a-time state machine that holds partial state across read chunks, bounds the buffered
+  OSC payload against an unterminated/hostile OSC, and re-syncs on a stray `ESC` without swallowing
+  the next introducer. The client surfaces both as `SlopDeskClient.Event.title` / `.bell`. They ride
+  the head-of-line-independent CONTROL channel and are **not** sequenced/replayed.
 
 - **`foregroundProcess` (26) and `claudeStatus` (27) carry per-pane Claude-Code agent status**
   (host → client, CONTROL; W9, docs/41 §4 / docs/42). **Additive within wire version 1**: a peer
@@ -495,9 +494,9 @@ never offers or falls back to another version.
 
 The next free **client → host** CONTROL type byte is **18** (10–17 used). The next free
 **host → client** CONTROL type byte is **38** (20–37 used). (Byte 28 was once reserved for a W14 OSC-8
-hyperlink type, but W14 ships OSC-8 click-to-open via **libghostty's own hit-testing** —
-`GHOSTTY_ACTION_OPEN_URL` / `GHOSTTY_ACTION_MOUSE_OVER_LINK` — so no wire change was needed; 28 was
-later taken by the Warp-style `commandBlock`. See DECISIONS.md "W14 terminal parity".)
+hyperlink type, but W14 ships OSC-8 click-to-open from the client's own hit-testing over
+`slopdesk-vterm`'s grid — so no wire change was needed; 28 was later taken by the Warp-style
+`commandBlock`. See DECISIONS.md "W14 terminal parity".)
 
 > **These two numbers are prose and drift.** They read 17 / **36** until 2026-07-26, by which point
 > 36 was `agentSessionIntent`. Before minting a verb, verify against the type table in
@@ -670,7 +669,7 @@ capability — it is `output` frames like any other replay. See docs/DECISIONS.m
 
 **The render carries OSC 133 `A` (2026-08-09).** A rendered state transfer must reproduce the
 source's PROMPT ROWS, not only its text: `jump_to_prompt` — the one primitive under the command
-ladder's per-tick jump, the navigator's per-row jump and Jump-to-Failed — counts rows libghostty
+ladder's per-tick jump, the navigator's per-row jump and Jump-to-Failed — counts rows the engine
 stamped from an OSC-133 `A` mark, and `CommandBlock.promptOrdinal` is an index into exactly that
 count. The first snapshot renderer emitted content only, so a reattached pane arrived with a
 complete-looking scrollback and ZERO prompt rows and every jump silently landed nowhere

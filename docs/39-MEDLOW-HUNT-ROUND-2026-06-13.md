@@ -1,6 +1,6 @@
 # 39 — MED/LOW adversarial hunt + fixes (2026-06-13, autonomous, continuation)
 
-> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 **Status: shipped to `main`. Base `c600da6` → HEAD `68fffaf` (11 commits). Full suite 2153 → 2166/0.**
 

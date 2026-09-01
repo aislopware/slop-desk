@@ -8,7 +8,7 @@
 |--|--------------|----------------|
 | Content | shell, vim, tmux, Claude Code TUI | VS Code, Xcode, browser, other GUI apps |
 | Host | PTY (`openpty` + `posix_spawn`) → VT bytes | ScreenCaptureKit per-window → VideoToolbox HEVC |
-| Client | **libghostty** (pixel-perfect) | VT decode → Metal (4:2:0, soft text OK) |
+| Client | **`slopdesk-vterm` + `slopdesk-termrender`** (pixel-perfect) | VT decode → Metal (4:2:0, soft text OK) |
 | Input | bytes → PTY stdin | CGEvent / Accessibility inject |
 | Transport | TCP (data + control) | UDP + RS-FEC + ABR |
 | Idle bandwidth | ~0 | ~0 (`SCFrameStatus.idle` skip) |
@@ -32,13 +32,19 @@ Workspace chrome is a **Session → Tab → n-ary split tree** (not free-floatin
 | Sandbox | Host **non-sandboxed** (Developer ID); client can be MAS |
 | Transport | Plain TCP, dual data/control, `TCP_NODELAY`; **no** app-layer TLS ([13](13-network-transport.md)) |
 | Framing | Length-prefixed binary; SSH-style channel mux — [20](20-wire-protocol.md) |
-| Renderer | libghostty full surface + self-owned external-backend patch (ref daiimus External.zig) |
-| Keys | Always `ghostty_surface_key` (kitty/DECCKM); no hard-coded VT100 bypass |
-| Scrollback | Client-side (libghostty); server is a stateless relay + ET replay buffer |
+| Renderer | **ours** — `slopdesk-termrender` over `slopdesk-vterm`'s grid, with `libghostty-vt` as the parse layer only ([68](68-terminal-surface-in-rust.md)) |
+| Keys | Encoded by `slopdesk-vterm` (kitty/DECCKM); no hard-coded VT100 bypass |
+| Scrollback | Client-side (`slopdesk-vterm`'s journal); server is a stateless relay + ET replay buffer |
 | Reconnect | ET-style seq ring (64 MiB cap, 4 MiB offline gate pauses PTY drain); persistent PTY in hostd |
 | Prediction | **No** full Mosh predictor (opaque surface + alt-screen TUIs); optional glitch caret only ([17](17-native-feel-synthesis.md)) |
 
-**libghostty notes:** feed network bytes via `ghostty_surface_feed_data`; outbound via write-callback. Full surface, not vt+own-renderer. Patch rebased on pinned Ghostty SHA; build XCFramework with Zig. Alt-screen works; use action callbacks (COMMAND_FINISHED, PWD, …) — no client-side OSC parse of the full stream.
+**Engine notes (this row REVERSED — see [68](68-terminal-surface-in-rust.md)):** the old plan was
+libghostty's FULL surface, fed through `ghostty_surface_feed_data`, explicitly "not vt+own-renderer",
+with a patched Ghostty built as an XCFramework. That is exactly what we no longer do. `libghostty-vt`
+is taken as a C library from the org mirror and gives us the VT state machine; the grid, the
+scrollback journal, the command blocks, the prompt model and the renderer are ours, in Rust. The
+OSC/DCS handling that used to be "action callbacks, no client-side parse" is now our own parse,
+because the blocks and the prompt need it.
 
 Claude Code details: [14](14-claude-code-integration.md). Inspector: [16](16-readonly-inspector.md).
 

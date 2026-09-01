@@ -1,6 +1,13 @@
 # 17 — Best-solution synthesis: lowest latency + "real machine" feel (TUI & GUI per-window)
 
 > **STATUS: CURRENT.** Synthesized from 7 "families" of OSS + commercial solutions to lock the **best** design for the 2 paths, prioritizing (a) lowest latency and (b) the feel of **a local machine**. Corpus: [research/17-tui-gui-best-solution.json](research/17-tui-gui-best-solution.json). Decisions live in [DECISIONS.md](DECISIONS.md); this doc is the **why + mechanics**. Philosophy (see [00](00-overview.md)): **one good choice per problem** (one renderer, one structured view, one core).
+>
+> ⚠️ **One row of it was reversed: the RENDERER.** Everywhere below reads "libghostty external-IO",
+> "our own patch is a tracked dependency" and "own fork" — that fork is deleted. We take
+> `libghostty-vt` as a C library for the VT state machine and own the grid, the journal, the blocks
+> and the renderer (`slopdesk-termrender`); see [68](68-terminal-surface-in-rust.md). Everything
+> this doc says about LATENCY and the transport — `TCP_NODELAY`, dual channels, the ET-style replay
+> buffer, no Mosh predictor — is unaffected and still current.
 
 ## TL;DR (headline)
 

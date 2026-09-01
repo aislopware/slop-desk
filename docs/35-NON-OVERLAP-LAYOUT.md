@@ -1,6 +1,6 @@
 # 35 — Non-overlapping windows & groups (smart-layout QoL)
 
-> **Historical session log. Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log. Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 > **STATUS: SUPERSEDED / HISTORICAL.** Canvas-era QoL for free-floating panes. Canvas layout retired → Session→Tab→split ([30](30-infinite-canvas.md), [DECISIONS.md](DECISIONS.md)).
 

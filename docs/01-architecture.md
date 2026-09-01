@@ -2,7 +2,7 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** Shipped and co-equal with terminal panes; the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> A pane is either a **terminal** (host PTY → TCP → libghostty) or a **GUI window** (ScreenCaptureKit → HEVC → UDP) — co-equal transports. This doc is **GUI video-path design depth**; overall split → [12-coding-profile.md](12-coding-profile.md).
+> A pane is either a **terminal** (host PTY → TCP → `slopdesk-vterm`) or a **GUI window** (ScreenCaptureKit → HEVC → UDP) — co-equal transports. This doc is **GUI video-path design depth**; overall split → [12-coding-profile.md](12-coding-profile.md).
 
 ## 1. The big picture
 

@@ -1,6 +1,20 @@
 # 22 — Workspace UI Architecture (the SlopDesk multiplexer)
 
-> **STATUS: CURRENT architecture** for the client workspace shell (Session → Tab → n-ary split). Supersedes free-floating canvas ([30](30-infinite-canvas.md)). Some sections below still describe the pre-redesign tree/`LayoutSolver` era — prefer code + [ui-shell/current-state/](ui-shell/current-state/) when they disagree. Redesign plan: [42](42-implementation-plan.md).
+> **STATUS: the SHAPE is current, the PLAN is executed and partly superseded.** Session → Tab → n-ary
+> split is still the model, and it still supersedes the free-floating canvas ([30](30-infinite-canvas.md)).
+> But §7–§10 are a plan that was carried out and then re-architected three times since; read them as a
+> record, not as instructions. What actually changed:
+>
+> - **Every `Sources/SlopDeskPhoneUI/Workspace/…` path below is gone.** The domain lives in
+>   `SlopDeskWorkspaceModel`, the store in `SlopDeskWorkspaceCore`, and the store itself is now a
+>   projection of `rust/slopdesk-workspace` ([65](65-workspace-store-projection.md)) rather than the
+>   Swift owner sketched in §2.3.
+> - **Every "SwiftUI" here is stale.** The client is AppKit ([56](56-client-ui-split.md)) and UIKit
+>   ([62](62-phone-uikit.md)); there is no `import SwiftUI` in the tree.
+> - `ConnectionViewModel.swift`, `Sources/SlopDeskPhoneUI/iOS/` and `PaneLeafView` no longer exist;
+>   §0's test-seam argument was settled by the Rust projection, not by the layering it proposes.
+>
+> Prefer the code and [ui-shell/current-state/](ui-shell/current-state/) wherever they disagree.
 
 Floor: macOS 26 / iOS 26. Scope: application layer only — protocol/transport/video/inspector are owned elsewhere.
 

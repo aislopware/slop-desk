@@ -1,6 +1,6 @@
 # 25 — Overnight handoff (2026-06-04): mouse-delay fix, connection-mux foundation, resize foundation, audit
 
-> **Historical session log (2026-06-04). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-04). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) for current state; the docs it links are the maintained ones.**
 
 Branch: **`feat/video-overnight`** (off `main`, **not pushed**). All work committed; `main` untouched, stable fallback.
 

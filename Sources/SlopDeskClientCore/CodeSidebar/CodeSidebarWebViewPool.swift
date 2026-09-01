@@ -18,7 +18,7 @@
 // left because a platform gate inside a shared file is a file wearing two coats (docs/56 §3). iOS has
 // no such duel — no app-level event monitor, no menu bar, no shared field editor — so the phone
 // installs nothing and every keyboard line below costs one nil-check. The last gate, the MINT, went
-// to `CodeSidebarWebView.swift` for the same reason and by the same argument (docs/56 increment 43).
+// to `CodeSidebarPage.swift` for the same reason and by the same argument (docs/56 increment 43).
 //
 // THE SEAM IS TWO NARROW PROTOCOLS AND NEITHER NAMES A FRAMEWORK. ``CodeSidebarKeyboard`` is the duel
 // as the pool sees it (a project root, a page — the pool's own vocabulary, so the AppKit stays on the
@@ -186,7 +186,7 @@ package final class CodeSidebarWebViewPool {
         installWorkbenchDressing(on: configuration.userContentController)
         // Minting the page is the ONE thing about a warm page that is not one law — subclass-vs-plain,
         // chrome polarity, base-canvas kill: three decisions, three spellings, one meaning. It lives
-        // in `CodeSidebarWebView.swift`, which is already two per-platform halves, so the pool builds
+        // in `CodeSidebarPage.swift`, which is already two per-platform halves, so the pool builds
         // the configuration (which has no platform in it) and takes back a dressed page whose class
         // it never learns. That is the whole reason this file has no `#if` in it.
         let webView = CodeSidebarPageMint.page(projectRoot: projectRoot, configuration: configuration)

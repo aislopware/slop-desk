@@ -274,7 +274,8 @@ package final class ClientComposition {
             return false
         }
         // ⌘+/⌘-/⌘0 zoom the terminal via the SINGLE source of truth (`terminal.fontSize`) so the Settings
-        // "Size" stepper stays in sync (the zoom rebuilds the libghostty config + reflows the PTY grid —
+        // "Size" stepper stays in sync (the zoom re-metrics the surface through
+        // `slopdesk_term_surface_set_font` and reflows the PTY grid to the cols/rows it returns —
         // a font-SIZE change is correctly NOT grid-preserving).
         store.onFontSizeStep = { [weak preferences] step in
             switch step {

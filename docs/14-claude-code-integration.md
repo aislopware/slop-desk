@@ -3,6 +3,12 @@
 > Output of the research workflow (13 agents + adversarial verify). Use-case: running/controlling **Claude Code** (Anthropic CLI agent) over the terminal path (libghostty renderer). Full sources: [research/claude-code-warp-herdr-corpus.json](research/claude-code-warp-herdr-corpus.json).
 >
 > *As-of: Claude Code v2.1.x (2026-06). Claims tied to a version + undocumented flags → verify on the target CC version.*
+>
+> **This is RESEARCH, and two of its premises have since moved.** The renderer is no longer
+> "libghostty" as a whole — it is our own `slopdesk-vterm` over `libghostty-vt`'s parse layer, drawn
+> by `slopdesk-termrender` ([68](68-terminal-surface-in-rust.md)) — and the "SwiftUI input box"
+> option below was built, in AppKit/UIKit over a Rust prompt model, also in `68`. Every "SwiftUI"
+> here is the language of the research, not of the tree.
 
 ## TL;DR
 - **Hosting Claude Code:** native binary needing a real PTY + alt-screen. **Enable fullscreen** (`CLAUDE_CODE_NO_FLICKER=1`). PTY bridge forwards control sequences + kitty keyboard + SGR mouse + OSC 8/52/777 + bracketed paste **untouched**; set `COLORTERM=truecolor` + `TERM=xterm-ghostty`. ⚠️ Custom TERM → `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` mandatory (DEC 2026 bug). Image paste via OSC 5522 **does not work yet** (Ghostty parse-only) → don't ship it, document the limitation.

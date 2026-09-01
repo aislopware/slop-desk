@@ -1,6 +1,7 @@
 # 16 — Read-only Structured Inspector (companion to the TUI)
 
-> Direction: **Main = libghostty TUI** (full fidelity, all interaction through the TUI) + a **READ-ONLY inspector alongside it** (desktop + iOS) for things hard to read in scrollback: subagent content, full tool calls, CoT, todos, workflows. Source: `research/readonly-inspector-corpus.json`.
+> Direction: **Main = the terminal surface** — since [68](68-terminal-surface-in-rust.md) that is
+> `slopdesk-vterm` + `slopdesk-termrender`, not libghostty's own — (full fidelity, all interaction through the TUI) + a **READ-ONLY inspector alongside it** (desktop + iOS) for things hard to read in scrollback: subagent content, full tool calls, CoT, todos, workflows. Source: `research/readonly-inspector-corpus.json`.
 >
 > *As-of: Claude Code v2.1.x (2026-06). Claims tied to versions + undocumented flags → verify on the target CC version.*
 >
@@ -54,7 +55,7 @@ CC ≥ **v2.1.154** (released 2026-05-28, **research preview**). A **JS orchestr
 **Platform fit:** desktop = split view (TUI left, inspector right) · iOS = tab/bottom-sheet (timeline → drill-down), fully read-only.
 
 ## Effort & pitfalls
-**v1 effort ~5–7 weeks:** host tailer+hook listener+framing (~2–3w) · SwiftUI views (~2–3w) · subagent tree (+~1w).
+**v1 effort ~5–7 weeks (the research estimate; v1 has since shipped):** host tailer+hook listener+framing (~2–3w) · client views (~2–3w) · subagent tree (+~1w).
 **Pitfalls:** (1) transcript lags the TUI (JSONL flushes per turn) → PostToolUse hook for instant cards; (2) large outputs → truncate ~50KB + "show more"; (3) async sidechain ordering → sort-within-level; (4) silent workflows → detect via hooks; (5) SessionStart racing file creation → retry opening the file.
 
 ## Phasing

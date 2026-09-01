@@ -17,7 +17,7 @@ OWES the client after that fold — the type-26 basename edge, the type-27 dedup
 stickiness clock and its two absence suppressors, the block-class carry, the type-36 intent latch and
 the type-21 title ownership. It is the only thing anywhere that constructs a machine, and
 `ClaudePaneDetector` is the handle over it plus the `WireMessage` shapes, which is the one part that
-has to stay Swift. The Swift that remains is that, the case lists a SwiftUI `switch` needs, and the
+has to stay Swift. The Swift that remains is that, the case lists the AppKit/UIKit `switch` needs, and the
 marshalling; `docs/55` §6 draws that line and `rust/slopdesk-invariants` gates it. The split
 against `slopdesk-screend` (docs/52) is that **screend owns everything reading the BYTES and the
 agent crate owns everything reading the CLOCK**.

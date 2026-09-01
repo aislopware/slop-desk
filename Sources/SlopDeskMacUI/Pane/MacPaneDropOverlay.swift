@@ -13,7 +13,7 @@
 //
 // ⚠️ THE RUNG LOOKUPS ARE A PAIR, AND THE PAIR IS RATCHETED. `slopdesk-invariants` reads every case
 // of `DropZoneInk` and `DropZoneLabelInk` out of the enum and requires this file AND
-// `PaneDropOverlay.swift` to answer each one explicitly. A `default:` arm would compile and would
+// the phone's `PaneDropOverlayView.swift` to answer each one explicitly. A `default:` arm would compile and would
 // silently ink a newly-added rung as whatever the fallback happened to be, in one renderer only —
 // which is the exact drift the ratchet exists to make red. Both switches below are exhaustive by
 // hand.
