@@ -1664,6 +1664,29 @@ mod tests {
         assert!(!session.has_clipboard_writes());
     }
 
+    /// ⚠️ A program must not be able to read a title it wrote back into the pty's INPUT.
+    ///
+    /// `OSC 2` sets the window title and `CSI 21 t` asks for it. A terminal that answers the second
+    /// hands the first's payload back as if the user had typed it — so a title carrying a newline
+    /// is a line executed at the shell. Here that shell is on the REMOTE host and the program that
+    /// wrote the title is too, which is the whole reason this crate refuses every other door the
+    /// far side could use to reach the near one. ghostty ships the report disabled and says
+    /// why; this crate never turns it on, and the pin is here because a bindings bump that
+    /// flipped the default would otherwise be silent. The title itself stays readable — the
+    /// refusal is the REPORT, not the string, and the tab that shows it reads
+    /// [`VtSession::title`].
+    #[test]
+    fn a_program_cannot_read_its_own_title_back_into_the_pty() {
+        let mut session = session();
+        session.feed(b"\x1b]2;whoami\x07\x1b[21t");
+        assert_eq!(session.title().unwrap(), "whoami");
+        let mut replies = Vec::new();
+        assert!(
+            !session.take_pty_replies(&mut replies),
+            "the title report is a command-injection door and stays shut: {replies:?}"
+        );
+    }
+
     #[test]
     fn a_redundant_resize_is_a_no_op_and_a_real_one_reshapes() {
         let mut session = session();

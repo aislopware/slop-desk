@@ -18942,3 +18942,42 @@ whether or not anyone is watching, which is the whole point.
 ⚠️ Compression is HARDWIRED ON, with no setting. ghostty ships it on and recommends leaving it on;
 it changes storage and never contents, so there is no behaviour for a user to prefer — only a memory
 bill to pay or not pay. The setting-shaped knob here is the DEPTH, which already exists.
+
+### The title report stays shut, and the pin says why (2026-09-01)
+
+`libghostty-vt` exposes `set_title_report_enabled`, and the engine ships it OFF with its reason
+written into the binding: a program can SET a window title (`OSC 2`) and then ASK for it back
+(`CSI 21 t`), which puts a string the program chose into the pty's INPUT stream, where a newline in
+it is a line executed at the shell. Every terminal that ever answered that query has carried the
+same hole.
+
+This crate does not turn it on, and the difference from "we never called the setter" is a test:
+`a_program_cannot_read_its_own_title_back_into_the_pty` feeds both sequences and asserts the pty
+queue stays empty. The refusal has more weight here than in a local terminal — the program is on the
+REMOTE host and the shell it would be typing at is the user's own machine, which is the same
+argument that closed the kitty `t=f`/`t=t`/`t=s` transmission mediums. The title itself is
+untouched: `VtSession::title` still reads it and the tab still shows it. What is refused is the
+report, not the string.
+
+### Evaluated and NOT taken from the bindings, with the reason each (2026-09-01)
+
+Four `Terminal` doors were read in the same survey and deliberately left alone. Recording them so
+the next survey does not re-derive the same answers:
+
+- **`set_apc_max_bytes`** — the engine already carries a built-in cap on APC buffering, and the
+  binding documents `None` as "revert to the built-in defaults". Overriding it would mean this
+  crate inventing a number for a limit ghostty tunes against real kitty-graphics traffic; the core
+  follows ghostty, so the number stays ghostty's. It is not an unbounded buffer — that was the only
+  question worth asking.
+- **The snapshot module (`GHOSTSNP`)** — encodes a whole terminal, unfinished parser state and all,
+  which is exactly the shape a client ATTACHING mid-session wants instead of a byte replay. It stays
+  out because the format's own header says "version 1 is a work in progress and does not yet carry a
+  binary-compatibility guarantee", and this project's wire is golden-pinned: a format that may change
+  under us cannot cross it. Revisit when the format is declared stable — the shape is right, the
+  timing is not.
+- **The continuation APIs** — the same unfinished-parser bytes, exportable on their own. They are
+  tracking-OFF by default and their value is realized through the snapshot; taking them alone would
+  buy a retained buffer per pane for a consumer that does not exist yet.
+- **`set_default_mode`** — sets what a mode returns to after `RIS`. Every mode this app cares about
+  is one a program drives; a default we imposed would be a divergence from ghostty that no setting
+  asked for.

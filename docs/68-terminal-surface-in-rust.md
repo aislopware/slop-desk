@@ -801,6 +801,27 @@ one cancellable task, arms it after a feed only when nothing is armed, and re-ar
 back — no interval and no policy on the Swift side. ⚠️ A display-link tick was the tempting carrier
 and is wrong: it stops when the view leaves the window, which is exactly the pane worth compressing.
 
+### 5.9 The doors the far side does not get (2026-09-01)
+
+Three refusals now share one argument, and it is worth stating once rather than three times: **the
+program is on the REMOTE host and the terminal is on the user's own machine**, so any protocol
+feature that lets the pty reach back across that line is a different feature here than it is in a
+local terminal.
+
+- **Kitty's `t=f`/`t=t`/`t=s` transmission mediums** — a path the remote names is opened locally.
+  Closed in `graphics::seal_image_transmission`; only `t=d` (bytes in the APC) is accepted, §5.7.
+- **The window-title report (`CSI 21 t`)** — `OSC 2` sets a string, `CSI 21 t` reads it back into the
+  pty's INPUT, and a newline in it is a line executed at the shell. The engine ships the report OFF
+  and this crate never turns it on; `a_program_cannot_read_its_own_title_back_into_the_pty` is the
+  pin, because the default living in the bindings is exactly the kind of fact a version bump moves.
+  The title itself is read and displayed as before — the refusal is the REPORT.
+- **The Glyph Protocol** — refused for a different reason (nothing here can rasterize the outlines),
+  §5.7, and with a date on it.
+
+⚠️ `set_apc_max_bytes` is deliberately NOT called: the engine carries a built-in cap already, and a
+number invented here would be a divergence from ghostty in the one place ghostty has real traffic to
+tune against. The question that mattered was whether APC buffering is unbounded. It is not.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`
