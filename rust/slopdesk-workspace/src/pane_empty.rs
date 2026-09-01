@@ -2,7 +2,7 @@
 //!
 //! A reading of the CONNECTION rather than a fact about either drawing: "connected but no tabs" and
 //! "the link is down and the supervisor is redialing" are different sentences the user needs to
-//! hear, and a canvas rewritten in `AppKit` must say the same four things the `SwiftUI` one
+//! hear, and a canvas rewritten in `AppKit` must say the same four things the phone's `UIKit` one
 //! does.
 //!
 //! ## Four strings, no colour

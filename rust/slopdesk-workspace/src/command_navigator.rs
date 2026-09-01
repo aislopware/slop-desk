@@ -1,6 +1,6 @@
 //! The Command Navigator card's words and its two measurements.
 //!
-//! The navigator has two drawings — the phone's `SwiftUI` view and the Mac's `AppKit` one — and
+//! The navigator has two drawings — the phone's `UIKit` view and the Mac's `AppKit` one — and
 //! everything below is the part of that card which is neither: a placeholder, four zero-state
 //! sentences, three footer hints, the two help strings the row's affordances carry, and the card's
 //! own width and results ceiling. It sits here for the reason the palette's and find bar's numbers

@@ -3,7 +3,7 @@
 //!
 //! The island is drawn three ways — the navigator's foot (two lines on a bed), the titlebar band
 //! (one line, one control tall) and the phone's navigation toolbar (the link line alone, bedless).
-//! The first two are `AppKit` and the third is `SwiftUI`, so every decision the three share had to
+//! The first two are `AppKit` and the third is `UIKit`, so every decision the three share had to
 //! stop being a `static` on a `View`. This is where they went.
 //!
 //! ## Two channels, and no hue

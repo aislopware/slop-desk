@@ -134,7 +134,7 @@ pub fn compact_width(container: f64) -> f64 {
 /// How tall the ROWS stand: their true height, capped at the ceiling past which they scroll.
 ///
 /// The Mac asks a laid-out stack for its fitting size and takes the smaller of that and the
-/// ceiling. `SwiftUI` cannot be asked: a scroll view claims every point it is OFFERED along its
+/// ceiling. A scroll view cannot be asked: it claims every point it is OFFERED along its
 /// axis, so a two-row card left to the framework stands 70% of the screen tall with its two rows at
 /// the top. The sum is exact rather than an estimate — the row is a fixed-height object in both
 /// halves, which is what makes the list's rhythm a constant beat — so the caller passes that height

@@ -7,9 +7,9 @@
 //! `docs/55` §4b:
 //!
 //! * The two pointer gates are pure predicates and cross as arguments.
-//! * The pinch planner and the scroll-route pinner are STATEFUL, and their owner is a `SwiftUI`
-//!   view that the framework copies whenever it pleases. A handle they copied would be one
-//!   accumulator shared by two gestures, so the state crosses BY VALUE — a residual, a pin — and
+//! * The pinch planner and the scroll-route pinner are STATEFUL, and their owner is a gesture
+//!   recognizer the shell may attach more than once. A handle two of them shared would be one
+//!   accumulator serving two gestures, so the state crosses BY VALUE — a residual, a pin — and
 //!   every door answers the new state beside its verdict.
 //! * The zoom-reset denylist carries a runtime EXTENSION set, so it is a handle owned by a
 //!   process-lifetime namespace, exactly like the swipe-nav operating point.

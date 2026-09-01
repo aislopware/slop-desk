@@ -24,7 +24,7 @@
 /// ⚠️ The find bar and the global-search query bar render these pills IDENTICALLY — that is a
 /// locked invariant — and the labels and help strings live here so the two surfaces read them
 /// rather than agree on them. Three surfaces do, in fact: the Mac's results panel is `AppKit` and
-/// cannot see a `SwiftUI` view's call site at all.
+/// cannot see the phone's `UIKit` call site at all.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ModePill {
     /// Match the query's case exactly.

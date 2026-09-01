@@ -1,13 +1,13 @@
 //! What the pane/tab close confirmation SAYS.
 //!
 //! The confirmation itself is the platform's own modal on both platforms — an `NSAlert` sheet on
-//! the Mac, a `SwiftUI` `.alert` on the phone — and there is nothing to port about either. What
-//! there IS to keep in one place is the WORDING, because it is not a constant: it depends on which
-//! of the two parks is armed, on whether a configured policy actually gated the park (a park raised
-//! purely for the project-loss warning must not claim "a process is still running" over an idle
-//! shell), and on whether the close takes a project's last pane with it. Both can apply at once.
-//! Three branches and a join is exactly the amount of logic that drifts when two halves each carry
-//! it.
+//! the Mac, `PhoneCloseConfirmation`'s alert on the phone — and there is nothing to port about
+//! either. What there IS to keep in one place is the WORDING, because it is not a constant: it
+//! depends on which of the two parks is armed, on whether a configured policy actually gated the
+//! park (a park raised purely for the project-loss warning must not claim "a process is still
+//! running" over an idle shell), and on whether the close takes a project's last pane with it. Both
+//! can apply at once. Three branches and a join is exactly the amount of logic that drifts when two
+//! halves each carry it.
 
 /// Which unit a parked close is about.
 ///

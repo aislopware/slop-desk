@@ -12,7 +12,7 @@
 //! pane's own rect excluded) and the cross-window INSERT resolution (a satellite drag has no source
 //! pane in this tab to exclude). The answer-to-rects half is asked twice too, and this is the pair
 //! that actually forced the move: the preview is drawn by `SlopDeskMacUI` in `AppKit` and by
-//! `SlopDeskPhoneUI` in `SwiftUI`, from two files that had each written "pure rect math" over their
+//! `SlopDeskPhoneUI` in `UIKit`, from two files that had each written "pure rect math" over their
 //! own copy. Two frameworks re-deriving a slab's half by eye is how one half draws a promise the
 //! shared resolver never commits.
 //!

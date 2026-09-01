@@ -4,10 +4,10 @@
 //! readout, the iOS toolbar glyph, and both halves of the Peek & Reply card — so they can never
 //! disagree about the pane the user is watching longest.
 //!
-//! It is a reading rather than a drawing for the reason the design floor's native/`SwiftUI` split
-//! exists: a status has to become a GLYPH and an INK, the Mac resolves those to an `NSColor` and
-//! the phone to a `Color`, and the mapping from status to MEANING must be one value with two views
-//! rather than two agreements. What each half keeps is the ladder lookup — two spellings of one
+//! It is a reading rather than a drawing for the reason the design floor's two-shell split exists:
+//! a status has to become a GLYPH and an INK, the Mac resolves those to an `NSColor` and the phone
+//! to a `UIColor`, and the mapping from status to MEANING must be one value with two views rather
+//! than two agreements. What each half keeps is the ladder lookup — two spellings of one
 //! rung.
 //!
 //! This is not [`crate::badge`]. That one fuses four independent pane signals into the ONE slot a

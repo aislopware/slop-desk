@@ -146,7 +146,7 @@ pub fn zone_at(point: Point, size: Size) -> Option<DropZone> {
 /// Which rung of the one ink ladder a blob's wash is drawn from.
 ///
 /// Named, never coloured: this crate holds no design tokens, and each renderer resolves the rung
-/// through its own view of the ladder (`Slate.Status.ok` / `Slate.State.accent` in `SwiftUI`,
+/// through its own view of the ladder (`Slate.Status.ok` / `Slate.State.accent` on the phone,
 /// `Slate.Native.*` in `AppKit`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -314,7 +314,7 @@ pub fn marks(zone: DropZone, size: Size) -> Marks {
     let drawn = shape(zone, size);
     Marks {
         // `max` rather than a `<` ternary, per the float convention. A pane that has not been laid
-        // out yet answers proportionally, and a negative dimension makes SwiftUI log and `AppKit`
+        // out yet answers proportionally, and a negative dimension makes a view layer
         // draw garbage.
         blob: Size::new((drawn.radius_x * 2.0).max(0.0), (drawn.radius_y * 2.0).max(0.0)),
         label_center: label_center(zone, drawn, size),

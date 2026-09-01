@@ -7,7 +7,7 @@
 //! ## The siblings are still SOLVED, and that is the whole point
 //!
 //! The obvious zoom is "return the zoomed leaf and drop the rest". It is also the bug this module
-//! exists to prevent. A pane the renderer stops emitting is a pane `SwiftUI` unmounts, and
+//! exists to prevent. A pane the renderer stops emitting is a pane the shell unmounts, and
 //! unmounting one dismantles what is behind it — a libghostty surface, a live video stream — so
 //! un-zooming repaints from the lossy replay ring instead of revealing what was already there.
 //!

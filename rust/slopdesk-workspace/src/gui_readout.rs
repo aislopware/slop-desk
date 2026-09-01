@@ -3,7 +3,7 @@
 //! wears.
 //!
 //! All of it lived in `GuiPaneReadout`, a Swift enum one floor under two renderers — an `AppKit`
-//! canvas and a `SwiftUI` one. Nothing in it names a view type, and the rule the repo runs on says
+//! canvas and a `UIKit` one. Nothing in it names a view type, and the rule the repo runs on says
 //! that makes it Rust's: what is here is arithmetic over an `Option` and a sentence to put in front
 //! of somebody, which is the same shape [`crate::status_pill`] and [`crate::command_navigator`]
 //! already crossed for.

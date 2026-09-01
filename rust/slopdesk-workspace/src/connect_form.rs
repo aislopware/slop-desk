@@ -1,7 +1,7 @@
 //! The Connect-to-Host form's vocabulary, and its one non-obvious rule.
 //!
 //! The form is a FORM on both platforms, so it takes the platform's own modal on both: an `AppKit`
-//! sheet on the Mac, a `SwiftUI` `.sheet` on the phone. Neither owns a connection model — the near
+//! sheet on the Mac, a `UIKit` sheet on the phone. Neither owns a connection model — the near
 //! side already holds the editable fields, the parse and the `connect()` lifecycle — so what is
 //! left to share is the words, and one question asked when a connect completes: does this dismiss
 //! the card?

@@ -601,8 +601,8 @@ mod tests {
         assert_eq!(barred.label_ink, SLOPDESK_DROP_ZONE_LABEL_INK_TERTIARY);
     }
 
-    /// A pane mid-layout answers proportionally, and a negative dimension makes `SwiftUI` log and
-    /// `AppKit` draw garbage — so the clamp crosses rather than being written in two view bodies.
+    /// A pane mid-layout answers proportionally, and a negative dimension makes a view layer draw
+    /// garbage — so the clamp crosses rather than being written in two view bodies.
     #[test]
     fn a_pane_mid_layout_never_hands_a_renderer_a_negative_blob() {
         for code in [SLOPDESK_DROP_ZONE_NEW_TAB, SLOPDESK_DROP_ZONE_SPLIT_LEFT] {

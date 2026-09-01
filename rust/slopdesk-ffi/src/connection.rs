@@ -7,7 +7,7 @@
 //!
 //! Health, the LED, the three alarms, the retry gate and the trailing slot are a handful of numbers
 //! in and one code out. Nothing allocates and nothing goes through a buffer, so the readings the
-//! island recomputes on every pulse — three per second, in a `SwiftUI` body and an `AppKit`
+//! island recomputes on every pulse — three per second, inside an `AppKit` and a `UIKit`
 //! `layout()` — cost a call and no more.
 //!
 //! ## The words cross as GROUPS, for the reason `settings_options` states

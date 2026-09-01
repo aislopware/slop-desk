@@ -1,7 +1,7 @@
 //! What ONE navigator row's ink, weight and tooltip come to, and what its menu offers.
 //!
 //! Three surfaces render the same pane and may never disagree about it: the Mac's `AppKit`
-//! navigator, the phone's `SwiftUI` list row, and — for the title alone — the collapsed-sidebar tab
+//! navigator, the phone's `UIKit` list row, and — for the title alone — the collapsed-sidebar tab
 //! strip. The GATHERING of a row off the live store stays on the near side, which is where the
 //! store is; what is here is every answer that gathering then has to reach for.
 //!

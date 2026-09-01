@@ -12,11 +12,11 @@
 //! Four tabs carrying a mark and a word want more room than a panel dragged to its minimum has, so
 //! the strip gives the words up a rung at a time — every tab named, then only the selected one,
 //! then none — rather than truncating, because a tab reading `Simulat…` has stopped saying what it
-//! switches to while a mark alone still says it. `SwiftUI` could ask that question by building all
-//! three candidates and measuring them; that cost a NAMESPACE PER RUNG, because every candidate is
-//! built, so one namespace would put three copies of the travelling plate's geometry on screen at
-//! once. Said as arithmetic it is one answer, and both frameworks — and a test — can ask it without
-//! building anything.
+//! switches to while a mark alone still says it. A view layer could ask that question by building
+//! all three candidates and measuring them; that cost a NAMESPACE PER RUNG, because every candidate
+//! is built, so one namespace would put three copies of the travelling plate's geometry on screen
+//! at once. Said as arithmetic it is one answer, and both frameworks — and a test — can ask it
+//! without building anything.
 
 /// What a panel tab draws before its label.
 ///

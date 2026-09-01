@@ -908,8 +908,8 @@ pub unsafe extern "C" fn slopdesk_ws_tree_structurally_equal(
 //
 // `tree_ops::rebuild` builds the tree; the workspace-level `apply_layout` around it does not cross,
 // because it takes and answers a whole `TreeWorkspace` — sessions, tabs, titles, specs — and that
-// document is what SwiftUI diffs. What crosses is the leaf ORDER in and the tree out, which is the
-// only part of a re-tile that is a decision.
+// document is what the shells diff. What crosses is the leaf ORDER in and the tree out, which is
+// the only part of a re-tile that is a decision.
 
 /// A caller's pool of pre-minted identities, handed out in order.
 ///

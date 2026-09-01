@@ -90,7 +90,7 @@ impl TabBadge {
 
     /// The state's WORD — the row title's accessibility value, the roll-up's spoken label.
     ///
-    /// Three surfaces read it — the Mac's `AppKit` rows, the phone's `SwiftUI` rows and the
+    /// Three surfaces read it — the Mac's `AppKit` rows, the phone's `UIKit` rows and the
     /// collapsed-sidebar strip — and a word spelled twice is a state `VoiceOver` reads two ways on
     /// two devices. The colours are NOT here: a role resolves to an ink in the design floor.
     #[must_use]

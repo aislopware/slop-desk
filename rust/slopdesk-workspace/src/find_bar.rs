@@ -10,7 +10,7 @@
 //! `docs/56` §3 names a platform branch in a view file a smell: it says the numbers belong to the
 //! platform, when what they belong to is the POINTER. A finger wants a 34pt plate and a 200pt field
 //! whether it is on a phone or on an iPad; a mouse wants the chrome ladder's 24 and 130 whether the
-//! Mac is drawing `AppKit` or the simulator is drawing `SwiftUI`. So the rungs are asked for BY
+//! Mac is drawing `AppKit` or the simulator panel is drawing `UIKit`. So the rungs are asked for BY
 //! NAME here, and each renderer picks the one its input device earns.
 //!
 //! ⚠️ **One number is restated and it is deliberate.** [`POINTER`]'s plate and icon size are the

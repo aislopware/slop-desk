@@ -68,7 +68,7 @@
 //! ## And what the two panels SAY
 //!
 //! [`android`] and [`simulator`] are the fourth, and the one place the "answers, not identities"
-//! rule above is deliberately not the whole story. Each panel is drawn by TWO renderers — `SwiftUI`
+//! rule above is deliberately not the whole story. Each panel is drawn by TWO renderers — `UIKit`
 //! on the phone, `AppKit` on the Mac — so its copy, its verb tables and its silhouettes had one
 //! speller by accident and now have one on purpose. They are two modules and not one for the
 //! reason each header states: the surfaces look alike and share not one byte of protocol.

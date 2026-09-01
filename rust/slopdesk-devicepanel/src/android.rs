@@ -111,7 +111,7 @@ impl StageReading {
 
 /// The eight things the stage's toolbar can ask of a device.
 ///
-/// A row IDENTITY on both halves — `SwiftUI`'s `ForEach(_:id:)` and the `AppKit` half's plate table
+/// A row IDENTITY on both halves — the phone's list identity and the `AppKit` half's plate table
 /// both key on the action rather than on the whole verb, so that a help string changing cannot
 /// rebuild a control the pointer is inside.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -8,8 +8,8 @@
 //! and they share every input. Two doors would cross the same five facts twice and give a caller a
 //! way to pair a headline about a pane with a body about a tab.
 //!
-//! The confirmation ITSELF stays on the near side: it is an `NSAlert` sheet on the Mac and a
-//! `SwiftUI` `.alert` on the phone, and there is nothing to port about either.
+//! The confirmation ITSELF stays on the near side: it is an `NSAlert` sheet on the Mac and
+//! `PhoneCloseConfirmation`'s alert on the phone, and there is nothing to port about either.
 
 use core::ffi::c_uchar;
 

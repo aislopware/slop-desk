@@ -3,10 +3,10 @@
 //! ## What crosses, and what deliberately does not
 //! The Swift side keeps `AgentKind`, `ClaudeStatus`, `AgentScreenState` and friends as native
 //! enums, and that is NOT the second implementation this repo forbids. They carry no
-//! rules — a `switch` in a `SwiftUI` view needs a Swift enum, and marshalling one through C would
-//! buy nothing. What moved is every function that DECIDES: which agent a name names, whether a
-//! chunk holds a keystroke, whether a title was agent-written, when a screen verdict may be
-//! published, and the 900-line state machine that folds all of it into one status.
+//! rules — a `switch` in an `AppKit` or `UIKit` view needs a Swift enum, and marshalling one
+//! through C would buy nothing. What moved is every function that DECIDES: which agent a name
+//! names, whether a chunk holds a keystroke, whether a title was agent-written, when a screen
+//! verdict may be published, and the 900-line state machine that folds all of it into one status.
 //!
 //! The vocabularies are therefore a CONTRACT between the two languages, pinned by
 //! `rust/slopdesk-invariants` the way every other cross-language constant here is: the
