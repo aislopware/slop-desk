@@ -3,7 +3,7 @@
 // ## What left this file
 //
 // Three more enums lived here — ligature mode, the bold/italic face modes and the anti-aliasing
-// blend — each mapping a stored token to a libghostty `key = value` line. Nothing emits that text
+// blend — each mapping a stored token to a the deleted config builder's `key = value` line. Nothing emits that text
 // any more (docs/68), and the renderer that replaced the fork actuates none of the three, so each
 // was a row a user could set to watch nothing happen. They went with their config rows rather than
 // staying as settings that lie; a ligature mode comes back the day the shaper can honour one, in
@@ -15,7 +15,7 @@
 
 // MARK: - LineHeightMode (`line-height`)
 
-/// Cell-height mode (`line-height`, four values). Maps to libghostty `adjust-cell-height` (a
+/// Cell-height mode (`line-height`, four values). Maps to the deleted config builder's `adjust-cell-height` (a
 /// percentage relative to the natural cell height). ``default`` emits NO line (the theme/font decides).
 public enum LineHeightMode: Codable, Sendable, Equatable {
     /// Use whatever the theme/font defines (the default) → NO `adjust-cell-height` line.

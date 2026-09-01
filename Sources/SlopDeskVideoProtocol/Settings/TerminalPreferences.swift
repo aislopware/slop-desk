@@ -175,7 +175,7 @@ public struct TerminalPreferences: Sendable, Equatable {
     /// family, and every one of those reads a scalar. ``fontSpec(size:)`` is where the two halves
     /// are joined, once, on the way to the door.
     public var faces: TerminalFaceRows
-    /// Font point size (libghostty `font-size`).
+    /// Font point size (the deleted config builder's `font-size`).
     public var fontSize: Double
     /// Terminal background colour (`terminal.background`, 6-hex). Defaults to the profile's own
     /// `face`, so the terminal surface matches the glass even before the resolved theme lands.
@@ -188,8 +188,8 @@ public struct TerminalPreferences: Sendable, Equatable {
     /// Terminal foreground / text colour (`terminal.foreground`, 6-hex). See ``background``.
     public var foreground: String
 
-    /// Cursor style (libghostty `cursor-style`). Four silhouettes; `block_hollow` is a native
-    /// libghostty cursor style (`terminal/cursor.zig`) and the raw values are the libghostty config
+    /// Cursor style (the deleted config builder's `cursor-style`). Four silhouettes; `block_hollow` is a native
+    /// the upstream ghostty cursor style (`terminal/cursor.zig`) and the raw values are the libghostty config
     /// tokens 1:1.
     ///
     /// What each style is CALLED is not here. It was — a `displayName` reading "Block (hollow)" —
@@ -245,23 +245,23 @@ public struct TerminalPreferences: Sendable, Equatable {
 
     /// Terminal cursor style.
     public var cursorStyle: CursorStyle
-    /// Cursor blink behaviour (libghostty `cursor-style-blink`), default ``CursorBlink/default`` (defer to
+    /// Cursor blink behaviour (the deleted config builder's `cursor-style-blink`), default ``CursorBlink/default`` (defer to
     /// DEC mode 12).
     public var cursorBlink: CursorBlink
-    /// Scrollback buffer size in lines (libghostty `scrollback-limit`, rows).
+    /// Scrollback buffer size in lines (the deleted config builder's `scrollback-limit`, rows).
     public var scrollbackLines: Int
 
     // Cursor color / text-under / opacity / animation render prefs (Appearance → Cursor). These
     // are render prefs with real defaults — applied live exactly like `cursorStyle` / `cursorBlink` — NOT
     // env overrides, so they never reach the EnvConfig overlay. Empty colour strings mean "follow the
     // theme" (the builder skips an empty `cursor-color` / `cursor-text` line — the "unset honoured" rule).
-    /// Cursor body colour (libghostty `cursor-color`, 6-hex). Empty = follow the foreground automatically
+    /// Cursor body colour (the deleted config builder's `cursor-color`, 6-hex). Empty = follow the foreground automatically
     /// ("Default"); a non-empty value pins the caret colour.
     public var cursorColor: String
-    /// Glyph colour rendered UNDER the cursor (libghostty `cursor-text`, 6-hex). Empty = follow the
+    /// Glyph colour rendered UNDER the cursor (the deleted config builder's `cursor-text`, 6-hex). Empty = follow the
     /// background automatically ("Default").
     public var cursorTextColor: String
-    /// Cursor body opacity (libghostty `cursor-opacity`, `0.0`…`1.0`), default `1.0` (fully opaque).
+    /// Cursor body opacity (the deleted config builder's `cursor-opacity`, `0.0`…`1.0`), default `1.0` (fully opaque).
     public var cursorOpacity: Double
 
     /// Cell-height mode (`line-height`), default ``LineHeightMode/default`` (no `adjust-cell-height`

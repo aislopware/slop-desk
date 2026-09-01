@@ -308,7 +308,7 @@ public enum RightClickAction: Sendable, CaseIterable, RawRepresentable, Codable 
 }
 
 /// Whether ⇧+click / ⇧+drag bypasses a program's mouse capture to make a native selection ("Allow Shift
-/// with Mouse Click", libghostty `mouse-shift-capture`).
+/// with Mouse Click", the deleted config builder's `mouse-shift-capture`).
 ///
 /// - ``disabled``: never bypass (program always captures).
 /// - ``enabled``: ⇧ bypasses capture for that one gesture (the default).
@@ -370,8 +370,8 @@ public enum MouseShiftCapture: Sendable, CaseIterable, RawRepresentable, Codable
 /// `macos-option-as-alt`, default ``off``). The client renders with libghostty-vt, so key→byte encoding
 /// happens in the local surface — a real, reachable knob the builder emits.
 ///
-/// - ``off``: Option composes accented characters (¡, é, ©…) as normal — libghostty `false`.
-/// - ``both``: BOTH Option keys send Alt/Meta (Esc-prefixed) sequences — libghostty `true`.
+/// - ``off``: Option composes accented characters (¡, é, ©…) as normal — the deleted config builder's `false`.
+/// - ``both``: BOTH Option keys send Alt/Meta (Esc-prefixed) sequences — the deleted config builder's `true`.
 /// - ``left`` / ``right``: only the named Option key sends Alt/Meta; the other still composes.
 ///
 /// The tokens are slopdesk's own (`both` persists as `both`, not `true`).

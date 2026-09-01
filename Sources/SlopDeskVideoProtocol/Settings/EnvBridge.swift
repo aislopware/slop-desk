@@ -63,7 +63,7 @@ public enum EnvBridge {
     /// without a decimal point (`60.0` → `"60"`), matching what a user types and what `Double(_:)` /
     /// `Int(_:)` parse back at the read site.
     ///
-    /// The rule is the far side's, and it is the SAME rule the libghostty config text writes its own
+    /// The rule is the far side's, and it is the SAME rule the deleted config builder's text writers its own
     /// numbers by — one spelling, asked at two limits, and neither limit is a number this side types.
     static func formatDouble(_ v: Double) -> String {
         lentText { out, cap in slopdesk_settings_env_number_text(v, out, cap) }
