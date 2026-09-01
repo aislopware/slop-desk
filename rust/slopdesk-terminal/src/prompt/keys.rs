@@ -169,8 +169,26 @@ pub enum EditAction {
     Redo,
     /// ⌃R — open a reverse search, or step it.
     Search,
+    /// → / `End` / ⌃E / ⌘→ over a live autosuggestion — take the whole thing.
+    AcceptSuggestion,
+    /// ⌥→ over a live autosuggestion — take one word of it.
+    AcceptSuggestionWord,
     /// A `⌃` letter [`control_action`] says is not the editor's.
     Control(ControlAction),
+}
+
+/// What the editor's own state contributes to a key's meaning.
+///
+/// A struct rather than two `bool` parameters, because they are the same type and nothing but a
+/// name would stop a call site from swapping them — the failure being a `⌃D` that closes the shell
+/// on a line the user had already typed into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KeyContext {
+    /// The document is empty, which is what makes `⌃D` an end-of-file rather than a delete.
+    pub buffer_empty: bool,
+    /// An autosuggestion is showing past the caret, which turns every FORWARD motion into an
+    /// accept — see [`over_suggestion`].
+    pub has_suggestion: bool,
 }
 
 /// The editing verb one press names at an armed prompt, or `None` when the press is TEXT.
@@ -185,10 +203,13 @@ pub enum EditAction {
 /// ones this editor claims are exactly the ones a text field claims. The named keys are last, where
 /// a `readline` would have them.
 ///
-/// `buffer_empty` is [`control_action`]'s, and reaches it unchanged.
+/// [`KeyContext::buffer_empty`] is [`control_action`]'s, and reaches it unchanged.
+///
+/// The autosuggestion is folded in LAST, over whatever the three tables answered, because it is not
+/// a key rule at all — see [`over_suggestion`].
 #[must_use]
-pub fn edit_action(key: Key, mods: Mods, buffer_empty: bool) -> Option<EditAction> {
-    if mods.control
+pub fn edit_action(key: Key, mods: Mods, context: KeyContext) -> Option<EditAction> {
+    let named = if mods.control
         && !mods.command
         && let Key::Char(letter) = key
     {
@@ -197,15 +218,54 @@ pub fn edit_action(key: Key, mods: Mods, buffer_empty: bool) -> Option<EditActio
         if letter == b'r' {
             return Some(EditAction::Search);
         }
-        return match control_action(letter, buffer_empty) {
+        match control_action(letter, context.buffer_empty) {
             ControlAction::Editor => control_motion(letter, mods.shift),
             action => Some(EditAction::Control(action)),
-        };
+        }
+    } else if mods.command && !mods.control && !mods.option {
+        command_action(key, mods.shift)
+    } else {
+        named_action(key, mods)
+    }?;
+    if context.has_suggestion
+        && let Some(accept) = over_suggestion(named)
+    {
+        return Some(accept);
     }
-    if mods.command && !mods.control && !mods.option {
-        return command_action(key, mods.shift);
+    Some(named)
+}
+
+/// What a motion becomes while a ghost is showing past the caret, or `None` for one that is
+/// unaffected.
+///
+/// **One translation after the three tables rather than a `has_suggestion` term inside each**, and
+/// that is the whole design: "→ accepts the suggestion" is not a fact about `→`. It is a fact about
+/// FORWARD — every key that would walk the caret towards the end of a line it is already at ends up
+/// here, so `→`, `End`, `⌃E` and `⌘→` all accept without any of the three tables being told the
+/// ghost exists, and a fourth spelling added later inherits the behaviour for free.
+///
+/// Only NON-EXTENDING motions: ⇧→ is a selection gesture, and a selection is one of the five states
+/// [`crate::prompt::CommandEditor::suggestion`] refuses to propose over anyway. Backward motions
+/// are untouched — the ghost sits ahead of the caret, so walking away from it is not an accept.
+///
+/// A word-forward motion (⌥→) takes one word, which is `fish`'s partial accept and the reason this
+/// answers two verbs rather than one.
+#[must_use]
+pub const fn over_suggestion(action: EditAction) -> Option<EditAction> {
+    let EditAction::Move {
+        motion,
+        extend: false,
+    } = action
+    else {
+        return None;
+    };
+    match motion {
+        Motion::Word(Direction::Forward) => Some(EditAction::AcceptSuggestionWord),
+        Motion::Grapheme(Direction::Forward)
+        | Motion::LineEdge(Direction::Forward)
+        | Motion::DocEdge(Direction::Forward) => Some(EditAction::AcceptSuggestion),
+        _ => None,
     }
-    named_action(key, mods)
 }
 
 /// The `readline` verbs a `⌃` letter names once [`control_action`] has left it to the editor.
@@ -318,7 +378,9 @@ fn named_action(key: Key, mods: Mods) -> Option<EditAction> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlAction, Direction, EditAction, Key, Mods, Motion, control_action, edit_action};
+    use super::{
+        ControlAction, Direction, EditAction, Key, KeyContext, Mods, Motion, control_action, edit_action,
+    };
 
     /// No modifier at all — the state a bare press arrives in.
     const NONE: Mods = Mods {
@@ -337,6 +399,22 @@ mod tests {
     };
     const SHIFT: Mods = Mods { shift: true, ..NONE };
     const OPTION: Mods = Mods { option: true, ..NONE };
+
+    /// Mid-line, nothing proposed — the state almost every chord is read in.
+    const TYPING: KeyContext = KeyContext {
+        buffer_empty: false,
+        has_suggestion: false,
+    };
+    /// An empty document, which `⌃D` alone reads.
+    const ON_EMPTY: KeyContext = KeyContext {
+        buffer_empty: true,
+        has_suggestion: false,
+    };
+    /// A ghost showing past the caret.
+    const SUGGESTED: KeyContext = KeyContext {
+        buffer_empty: false,
+        has_suggestion: true,
+    };
 
     #[test]
     fn ctrl_c_abandons_the_line_at_the_shell() {
@@ -375,11 +453,65 @@ mod tests {
         );
     }
 
+    /// Every forward motion becomes the accept, whichever key spelled it — the point of translating
+    /// once after the tables rather than naming `→` in them.
+    #[test]
+    fn every_forward_motion_accepts_the_suggestion() {
+        for (key, mods) in [
+            (Key::Right, NONE),
+            (Key::End, NONE),
+            (Key::Char(b'e'), CTRL),
+            (Key::Right, CMD),
+            (Key::Down, CMD),
+        ] {
+            assert_eq!(
+                edit_action(key, mods, SUGGESTED),
+                Some(EditAction::AcceptSuggestion),
+                "{key:?} {mods:?}"
+            );
+        }
+        assert_eq!(
+            edit_action(Key::Right, OPTION, SUGGESTED),
+            Some(EditAction::AcceptSuggestionWord),
+            "⌥→ takes one word"
+        );
+    }
+
+    /// The three ways a press keeps its ordinary meaning while a ghost is up.
+    #[test]
+    fn a_backward_or_extending_press_leaves_the_ghost_alone() {
+        // Backward: the ghost is ahead of the caret, so walking away from it accepts nothing.
+        assert_eq!(
+            edit_action(Key::Left, NONE, SUGGESTED),
+            Some(EditAction::Move {
+                motion: Motion::Grapheme(Direction::Backward),
+                extend: false,
+            })
+        );
+        // ⇧→ is a selection gesture and stays one.
+        let shift_right = Mods { shift: true, ..NONE };
+        assert_eq!(
+            edit_action(Key::Right, shift_right, SUGGESTED),
+            Some(EditAction::Move {
+                motion: Motion::Grapheme(Direction::Forward),
+                extend: true,
+            })
+        );
+        // And with no suggestion the same key is the plain motion it always was.
+        assert_eq!(
+            edit_action(Key::Right, NONE, TYPING),
+            Some(EditAction::Move {
+                motion: Motion::Grapheme(Direction::Forward),
+                extend: false,
+            })
+        );
+    }
+
     #[test]
     fn a_plain_letter_is_text_and_names_no_verb() {
-        assert_eq!(edit_action(Key::Char(b'a'), NONE, false), None);
+        assert_eq!(edit_action(Key::Char(b'a'), NONE, TYPING), None);
         assert_eq!(
-            edit_action(Key::Char(0), NONE, false),
+            edit_action(Key::Char(0), NONE, TYPING),
             None,
             "a Vietnamese letter is text, and text never resolves to a verb"
         );
@@ -393,7 +525,7 @@ mod tests {
             (b'l', ControlAction::Forward),
         ] {
             assert_eq!(
-                edit_action(Key::Char(letter), CTRL, false),
+                edit_action(Key::Char(letter), CTRL, TYPING),
                 Some(EditAction::Control(expected)),
                 "{letter}"
             );
@@ -404,11 +536,11 @@ mod tests {
     #[test]
     fn ctrl_d_stays_eof_on_an_empty_line_through_the_resolver() {
         assert_eq!(
-            edit_action(Key::Char(b'd'), CTRL, true),
+            edit_action(Key::Char(b'd'), CTRL, ON_EMPTY),
             Some(EditAction::Control(ControlAction::Forward)),
         );
         assert_eq!(
-            edit_action(Key::Char(b'd'), CTRL, false),
+            edit_action(Key::Char(b'd'), CTRL, TYPING),
             Some(EditAction::Delete(Motion::Grapheme(Direction::Forward))),
         );
     }
@@ -416,17 +548,20 @@ mod tests {
     #[test]
     fn the_readline_verbs_are_the_editors() {
         assert_eq!(
-            edit_action(Key::Char(b'a'), CTRL, false),
+            edit_action(Key::Char(b'a'), CTRL, TYPING),
             Some(EditAction::Move {
                 motion: Motion::LineEdge(Direction::Backward),
                 extend: false,
             }),
         );
         assert_eq!(
-            edit_action(Key::Char(b'w'), CTRL, false),
+            edit_action(Key::Char(b'w'), CTRL, TYPING),
             Some(EditAction::Delete(Motion::Word(Direction::Backward))),
         );
-        assert_eq!(edit_action(Key::Char(b'y'), CTRL, false), Some(EditAction::Paste));
+        assert_eq!(
+            edit_action(Key::Char(b'y'), CTRL, TYPING),
+            Some(EditAction::Paste)
+        );
     }
 
     /// ⌃R is asked before [`control_action`], which would otherwise call it the editor's and lose
@@ -434,7 +569,7 @@ mod tests {
     #[test]
     fn ctrl_r_opens_the_reverse_search() {
         assert_eq!(
-            edit_action(Key::Char(b'r'), CTRL, false),
+            edit_action(Key::Char(b'r'), CTRL, TYPING),
             Some(EditAction::Search)
         );
         assert_eq!(control_action(b'r', false), ControlAction::Editor);
@@ -443,12 +578,12 @@ mod tests {
     #[test]
     fn the_four_editing_chords_are_the_ones_a_text_field_claims() {
         assert_eq!(
-            edit_action(Key::Char(b'a'), CMD, false),
+            edit_action(Key::Char(b'a'), CMD, TYPING),
             Some(EditAction::SelectAll)
         );
-        assert_eq!(edit_action(Key::Char(b'c'), CMD, false), Some(EditAction::Copy));
-        assert_eq!(edit_action(Key::Char(b'x'), CMD, false), Some(EditAction::Cut));
-        assert_eq!(edit_action(Key::Char(b'v'), CMD, false), Some(EditAction::Paste));
+        assert_eq!(edit_action(Key::Char(b'c'), CMD, TYPING), Some(EditAction::Copy));
+        assert_eq!(edit_action(Key::Char(b'x'), CMD, TYPING), Some(EditAction::Cut));
+        assert_eq!(edit_action(Key::Char(b'v'), CMD, TYPING), Some(EditAction::Paste));
     }
 
     #[test]
@@ -458,14 +593,14 @@ mod tests {
             shift: true,
             ..NONE
         };
-        assert_eq!(edit_action(Key::Char(b'z'), CMD, false), Some(EditAction::Undo));
+        assert_eq!(edit_action(Key::Char(b'z'), CMD, TYPING), Some(EditAction::Undo));
         assert_eq!(
-            edit_action(Key::Char(b'z'), shifted, false),
+            edit_action(Key::Char(b'z'), shifted, TYPING),
             Some(EditAction::Redo)
         );
-        assert_eq!(edit_action(Key::Char(b'y'), CMD, false), Some(EditAction::Redo));
+        assert_eq!(edit_action(Key::Char(b'y'), CMD, TYPING), Some(EditAction::Redo));
         assert_eq!(
-            edit_action(Key::Char(b'y'), shifted, false),
+            edit_action(Key::Char(b'y'), shifted, TYPING),
             Some(EditAction::Redo),
             "⌘Y ignores shift on both platforms or it is two chords"
         );
@@ -474,21 +609,21 @@ mod tests {
     #[test]
     fn option_widens_an_arrow_to_a_word() {
         assert_eq!(
-            edit_action(Key::Left, NONE, false),
+            edit_action(Key::Left, NONE, TYPING),
             Some(EditAction::Move {
                 motion: Motion::Grapheme(Direction::Backward),
                 extend: false,
             }),
         );
         assert_eq!(
-            edit_action(Key::Left, OPTION, false),
+            edit_action(Key::Left, OPTION, TYPING),
             Some(EditAction::Move {
                 motion: Motion::Word(Direction::Backward),
                 extend: false,
             }),
         );
         assert_eq!(
-            edit_action(Key::Backspace, OPTION, false),
+            edit_action(Key::Backspace, OPTION, TYPING),
             Some(EditAction::Delete(Motion::Word(Direction::Backward))),
         );
     }
@@ -497,12 +632,15 @@ mod tests {
     #[test]
     fn shift_turns_a_history_walk_into_a_selection() {
         assert_eq!(
-            edit_action(Key::Up, NONE, false),
+            edit_action(Key::Up, NONE, TYPING),
             Some(EditAction::HistoryPrevious)
         );
-        assert_eq!(edit_action(Key::Down, NONE, false), Some(EditAction::HistoryNext));
         assert_eq!(
-            edit_action(Key::Up, SHIFT, false),
+            edit_action(Key::Down, NONE, TYPING),
+            Some(EditAction::HistoryNext)
+        );
+        assert_eq!(
+            edit_action(Key::Up, SHIFT, TYPING),
             Some(EditAction::Move {
                 motion: Motion::Line(Direction::Backward),
                 extend: true,
@@ -513,14 +651,14 @@ mod tests {
     #[test]
     fn the_command_arrows_reach_both_edges() {
         assert_eq!(
-            edit_action(Key::Left, CMD, false),
+            edit_action(Key::Left, CMD, TYPING),
             Some(EditAction::Move {
                 motion: Motion::LineEdge(Direction::Backward),
                 extend: false,
             }),
         );
         assert_eq!(
-            edit_action(Key::Up, CMD, false),
+            edit_action(Key::Up, CMD, TYPING),
             Some(EditAction::Move {
                 motion: Motion::DocEdge(Direction::Backward),
                 extend: false,
@@ -533,24 +671,24 @@ mod tests {
     #[test]
     fn the_pages_belong_to_the_viewport() {
         assert_eq!(
-            edit_action(Key::PageUp, NONE, false),
+            edit_action(Key::PageUp, NONE, TYPING),
             Some(EditAction::ScrollPages(-1))
         );
         assert_eq!(
-            edit_action(Key::PageDown, NONE, false),
+            edit_action(Key::PageDown, NONE, TYPING),
             Some(EditAction::ScrollPages(1))
         );
     }
 
     #[test]
     fn return_runs_it_and_the_two_openers_add_a_line() {
-        assert_eq!(edit_action(Key::Return, NONE, false), Some(EditAction::Submit));
+        assert_eq!(edit_action(Key::Return, NONE, TYPING), Some(EditAction::Submit));
         assert_eq!(
-            edit_action(Key::Return, OPTION, false),
+            edit_action(Key::Return, OPTION, TYPING),
             Some(EditAction::InsertNewline),
         );
         assert_eq!(
-            edit_action(Key::Return, SHIFT, false),
+            edit_action(Key::Return, SHIFT, TYPING),
             Some(EditAction::InsertNewline)
         );
     }
@@ -558,13 +696,13 @@ mod tests {
     #[test]
     fn tab_completes_and_shift_tab_walks_back() {
         assert_eq!(
-            edit_action(Key::Tab, NONE, false),
+            edit_action(Key::Tab, NONE, TYPING),
             Some(EditAction::CompleteForward)
         );
         assert_eq!(
-            edit_action(Key::Tab, SHIFT, false),
+            edit_action(Key::Tab, SHIFT, TYPING),
             Some(EditAction::CompleteBackward)
         );
-        assert_eq!(edit_action(Key::Escape, NONE, false), Some(EditAction::Cancel));
+        assert_eq!(edit_action(Key::Escape, NONE, TYPING), Some(EditAction::Cancel));
     }
 }

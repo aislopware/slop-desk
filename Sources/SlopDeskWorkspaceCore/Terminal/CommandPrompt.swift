@@ -169,6 +169,10 @@ public enum PromptKeyAction: Sendable, Equatable {
     case forward
     /// The shell's AND it abandons the line: send the byte, then clear the editor.
     case forwardAndClear
+    /// Take the whole autosuggestion into the document — any forward motion over a live ghost.
+    case acceptSuggestion
+    /// Take one word of it — ⌥→ over a live ghost.
+    case acceptSuggestionWord
 
     /// The verb one press names, decided in Rust.
     ///
@@ -184,6 +188,7 @@ public enum PromptKeyAction: Sendable, Equatable {
         option: Bool = false,
         command: Bool = false,
         bufferEmpty: Bool,
+        hasSuggestion: Bool = false,
     ) -> Self {
         var mods: UInt8 = 0
         if shift { mods |= UInt8(SLOPDESK_PROMPT_MOD_SHIFT) }
@@ -191,7 +196,9 @@ public enum PromptKeyAction: Sendable, Equatable {
         if option { mods |= UInt8(SLOPDESK_PROMPT_MOD_OPTION) }
         if command { mods |= UInt8(SLOPDESK_PROMPT_MOD_COMMAND) }
         let wire = key.wire
-        return of(slopdesk_prompt_key_action(wire.key, wire.letter, mods, bufferEmpty))
+        return of(slopdesk_prompt_key_action(
+            wire.key, wire.letter, mods, bufferEmpty, hasSuggestion,
+        ))
     }
 
     /// The case one answered record names. An unknown `kind` reads as ``none``, which is TEXT — the
@@ -219,6 +226,8 @@ public enum PromptKeyAction: Sendable, Equatable {
         case SLOPDESK_PROMPT_ACTION_SEARCH: return .search
         case SLOPDESK_PROMPT_ACTION_FORWARD: return .forward
         case SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR: return .forwardAndClear
+        case SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION: return .acceptSuggestion
+        case SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION_WORD: return .acceptSuggestionWord
         default: return .none
         }
     }
@@ -498,6 +507,59 @@ public final class CommandPrompt {
     public var spans: [PromptSpan] {
         let records = ffiAnswerRecords(SlopDeskPromptSpan.self) { slopdesk_prompt_spans(handle, $0, $1) }
         return records.map { PromptSpan(start: Int($0.start), end: Int($0.end), kind: PromptToken.of($0.kind)) }
+    }
+
+    /// What the newest matching history entry would ADD past the caret, or `nil` for no ghost.
+    ///
+    /// The band draws it dim at the caret and ``acceptSuggestion()`` takes it. `nil` covers the five
+    /// states Rust suppresses on — a ⌃R session, an open candidate list, a selection, a caret away
+    /// from the end, and a multi-line document — so the view asks one question and never a second
+    /// one about whether the ghost is appropriate here.
+    ///
+    /// The length is read off the state so the common answer — nothing to propose — costs no
+    /// second crossing.
+    public var suggestion: String? {
+        guard state.suggestion_len > 0 else { return nil }
+        let rest = ffiAnswerText { slopdesk_prompt_suggestion(handle, $0, $1) }
+        return rest.isEmpty ? nil : rest
+    }
+
+    /// Takes the whole suggestion — any forward motion at the end of the line. `false` when there
+    /// was none, which is what makes the caller fall through to the motion the key otherwise means.
+    @discardableResult
+    public func acceptSuggestion() -> Bool {
+        let taken = slopdesk_prompt_accept_suggestion(handle)
+        if taken { refresh() }
+        return taken
+    }
+
+    /// Takes one word of it — ⌥→. `false` under ``acceptSuggestion()``'s rule and for its reason.
+    @discardableResult
+    public func acceptSuggestionWord() -> Bool {
+        let taken = slopdesk_prompt_accept_suggestion_word(handle)
+        if taken { refresh() }
+        return taken
+    }
+
+    /// Takes whatever `motion` would take of the suggestion, or `false` for a motion the ghost does
+    /// not claim — so the caller falls through to moving the caret.
+    ///
+    /// ⚠️ **For the MAC, which never sees a key.** AppKit's binding table turns the press into a
+    /// selector and ``MacTerminalRendererView`` turns that into a ``PromptMotion``, so the question
+    /// "does this accept" arrives one step further along than it does on the phone — where
+    /// ``PromptKeyAction/of(_:shift:control:option:command:bufferEmpty:hasSuggestion:)`` answers it
+    /// from the key. Both go through the same Rust rule, which is why `⌃F` and a `DefaultKeyBinding`
+    /// entry the user invented behave like `→`.
+    ///
+    /// Only for a NON-EXTENDING motion: ⇧→ is a selection gesture, and the caller decides that
+    /// before asking.
+    @discardableResult
+    public func acceptSuggestion(over motion: PromptMotion) -> Bool {
+        switch UInt32(slopdesk_prompt_suggestion_accept_for_motion(motion.index)) {
+        case SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION: acceptSuggestion()
+        case SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION_WORD: acceptSuggestionWord()
+        default: false
+        }
     }
 
     /// The reverse-search query. Empty when no search is open.

@@ -586,6 +586,37 @@ band after an edit the host did not make; `scrollPages(_:)` sends PageUp to the 
 where the caret is and in which view. All four default to no-ops or `nil`, which is true of every
 host that answers `nil` for `promptView`.
 
+**The inline autosuggestion, 2026-09-01** — the second of the two things a `zsh` user installs a
+plugin for (the first, syntax highlighting, shipped with the band). The prior art was read before it
+was written and two of its rulings are taken verbatim. `zsh-autosuggestions` ships three strategies
+and defaults to `history` (the most recent entry that extends the line); `CommandHistory::suggestion`
+is that one, and its `completion` strategy would be a second reading of `prompt::complete`, which
+already draws its own inline preview — so the band's ghost is the completion candidate when a list is
+open and the history suggestion when it is not, never both. `fish` puts the accept on the input
+FUNCTION rather than on a key — "`forward-char`: move one character to the right; or if at the end of
+the commandline, accept a single char from the current autosuggestion" — which is why
+`prompt::keys::over_suggestion` translates a **`Motion`, not a keystroke**: `→`, `End`, `⌃E`, `⌃F`,
+`⌘→` and whatever the user bound in their own `DefaultKeyBinding.dict` all inherit the accept without
+one of them being named anywhere, and ⌥→ takes a word.
+
+Five things suppress it, and a history WALK is deliberately not one of them: a ⌃R search is open, the
+candidate list is open, there is a selection, the caret is not at the end, or the line has a newline.
+
+⚠️ Two traps, both paid for. The accept goes through `replace_range` and NOT `insert_text` — typed
+insertions COALESCE into the burst (`prompt::undo`), so an accept spelled as an insertion merged into
+the typing that summoned it and the ⌘Z that should have taken back thirteen borrowed characters
+emptied the line instead; a test pins it. And the length guard runs BEFORE the byte comparison, which
+is why there is no `ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE` to configure or to get wrong: an entry shorter
+than the line loses on one `usize` compare, so a 10 MB paste costs one comparison per entry rather
+than one per byte.
+
+The two platforms ask the same Rust rule from different distances. The phone gets the verb from
+`slopdesk_prompt_key_action`, which grew a `has_suggestion` flag beside `buffer_empty` (they cross as
+one `KeyContext`). The Mac never sees a key, so it asks one step further along, in motions:
+`slopdesk_prompt_suggestion_accept_for_motion` answers "does this motion claim the ghost" and
+`MacTerminalRendererView` falls through to moving the caret when it does not. There is no Swift list
+of forward keys on either side.
+
 The INLINE preedit CLOSED 2026-09-01 with that conformance (§5.1 item 8) — the band draws the
 composition it is handed, the grid draws the ones the editor does not own, and never both. What was
 never broken and is worth restating: typing Vietnamese and Chinese at this prompt worked before it,

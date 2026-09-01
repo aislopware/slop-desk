@@ -1437,6 +1437,7 @@ final class TerminalInputHostView: UIView, UIKeyInput {
             PhoneKey.promptKey(press),
             shift: press.shift, control: press.control, option: press.option, command: press.command,
             bufferEmpty: prompt.text.isEmpty,
+            hasSuggestion: prompt.suggestion != nil,
         )
         switch action {
         case .none:
@@ -1495,6 +1496,10 @@ final class TerminalInputHostView: UIView, UIKeyInput {
             if let text = prompt.cut() { ClientPasteboard.write(text) }
         case .undo: _ = prompt.undo()
         case .redo: _ = prompt.redo()
+        // Already decided: the key table only names these two while a ghost is up, so there is
+        // nothing to re-check and no motion to fall back to — the accept cannot answer `false` here.
+        case .acceptSuggestion: prompt.acceptSuggestion()
+        case .acceptSuggestionWord: prompt.acceptSuggestionWord()
         case .search: _ = prompt.isSearching ? prompt.searchAgain() : { prompt.beginSearch()
                 return true
             }()

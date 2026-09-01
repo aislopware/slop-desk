@@ -256,6 +256,11 @@ enum TerminalPromptBand {
     static func ghost(_ prompt: CommandPrompt) -> String? {
         let candidates = prompt.candidates
         let selected = prompt.selectedCandidate
+        // With no list up, the ghost is the HISTORY autosuggestion instead — the same ink at the
+        // same baseline, because it answers the same question ("what would this line become") from
+        // the other source. They can never both be live: ``CommandPrompt/suggestion`` is `nil`
+        // whenever candidates are open, so the fall-through is an alternative and not a priority.
+        guard !candidates.isEmpty else { return prompt.suggestion }
         guard selected >= 0, selected < candidates.count else { return nil }
         let candidate = candidates[selected]
         // The replacement range is in BYTES, because that is the unit the engine edits in; the

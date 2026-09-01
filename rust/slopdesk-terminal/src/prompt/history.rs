@@ -21,6 +21,25 @@
 //! shorter than what they typed. This is `zsh`'s `history-beginning-search-backward`, and the
 //! difference from plain ↑ is exactly the one people notice when a shell does not have it.
 //!
+//! ## The autosuggestion is a FOURTH reading of the same store, and it holds no state
+//!
+//! The prior art was read before this was written, and two of its decisions are taken verbatim.
+//! `zsh-autosuggestions` offers three strategies — `history` (the most recent match), `completion`
+//! (what tab-completion would say) and `match_prev_cmd` — and ships `history` as the default;
+//! [`CommandHistory::suggestion`] is that one, and the `completion` strategy would be a second
+//! reading of [`crate::prompt::complete`], which already draws its own inline preview. `fish` puts
+//! the accept on the INPUT FUNCTION rather than on the key — "`forward-char`: move one character to
+//! the right; or if at the end of the commandline, accept" — which is exactly why
+//! [`crate::prompt::keys::over_suggestion`] translates a MOTION and not a keystroke, and why `→`,
+//! `End`, `⌃E` and `⌘→` all accept without any of them being named.
+//!
+//! [`CommandHistory::suggestion`] is what `zsh-autosuggestions` and `fish` draw past the caret, and
+//! it is a plain function of (store, line) rather than a session like the two above it. That is the
+//! whole reason it can be shown *unasked*: there is nothing to start, nothing to abandon, and no
+//! position for an edit to invalidate — every keystroke simply asks again. A stateful suggestion
+//! would have to be reset from every editing path, which is exactly the bug [`HistoryWalk`] exists
+//! to contain, and there is no reason to pay it twice.
+//!
 //! ## ⌃R is a SUBSTRING match, and deliberately not the fuzzy matcher
 //!
 //! Completion ranks with fzf (see [`crate::prompt::complete`]); reverse search does not. ⌃R is
@@ -127,6 +146,68 @@ impl CommandHistory {
     pub fn clear(&mut self) {
         self.entries.clear();
     }
+
+    /// What the newest command starting with `line` would ADD to it — the autosuggestion.
+    ///
+    /// `zsh-autosuggestions`' and `fish`'s default strategy, and the reason it is a PREFIX match
+    /// while ⌃R is a substring one and completion is fuzzy: this suggestion is shown *inline, at
+    /// the caret, unasked*, so it has to be the one continuation the user could have predicted.
+    /// A fuzzy hit rewrites what they already typed, and a substring hit puts text before the
+    /// caret; either would make every keystroke move ink the user did not ask to move.
+    ///
+    /// Three refusals, each of which would otherwise draw a ghost that says nothing:
+    ///  * an empty `line` — every entry matches, so the ghost would be "the last command you ran",
+    ///    parked over an empty prompt that the user has not started;
+    ///  * an entry EQUAL to `line` — there is nothing left to add, and `↹` on it inserts nothing;
+    ///  * no match at all.
+    ///
+    /// Newest-first, so re-running a command promotes its own suggestion — the same
+    /// most-recent-wins rule [`CommandHistory::record`] applies, read from the other end.
+    ///
+    /// The split is a char boundary by construction: `starts_with` matched, so `line.len()` is
+    /// exactly where the matched prefix ends.
+    ///
+    /// ⚠️ **The length guard is FIRST, and that is what makes this affordable on a huge buffer.**
+    /// `zsh-autosuggestions` needs a `ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE` knob (recommended 20) to
+    /// stay out of the way of a long line; this needs none, because an entry shorter than
+    /// `line` is rejected on a `usize` comparison and never reaches the byte-for-byte
+    /// `starts_with`. A 10 MB paste therefore costs one comparison per entry rather than one
+    /// per byte, which is why there is no maximum here to configure or to get wrong.
+    #[must_use]
+    pub fn suggestion(&self, line: &str) -> Option<&str> {
+        if line.is_empty() {
+            return None;
+        }
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| entry.len() > line.len() && entry.starts_with(line))
+            .and_then(|entry| entry.get(line.len()..))
+    }
+}
+
+/// How much of `suggestion` one "accept a word" takes — its leading whitespace and the run after
+/// it.
+///
+/// `fish`'s ⌥→, and the reason the whitespace goes WITH the word rather than before it: accepting a
+/// word from ` --release --locked` has to land `` --release`` and leave the caret ready for the
+/// next one, so the space that separates them belongs to the word being taken, not to the one
+/// after.
+///
+/// A suggestion that is nothing but whitespace is taken whole — there is no word after it to stop
+/// at, and answering zero would make the key dead on input that has something to give.
+#[must_use]
+pub fn suggestion_word_len(suggestion: &str) -> usize {
+    let after_space = suggestion
+        .char_indices()
+        .find(|(_, ch)| !ch.is_whitespace())
+        .map_or(suggestion.len(), |(at, _)| at);
+    let rest = suggestion.get(after_space..).unwrap_or("");
+    let word = rest
+        .char_indices()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map_or(rest.len(), |(at, _)| at);
+    after_space.saturating_add(word)
 }
 
 /// What one step of the up/down walk answers.
@@ -374,7 +455,7 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::{CommandHistory, HistoryWalk, Recalled, ReverseSearch, find_smart_case};
+    use super::{CommandHistory, HistoryWalk, Recalled, ReverseSearch, find_smart_case, suggestion_word_len};
 
     fn seeded(commands: &[&str]) -> CommandHistory {
         let mut history = CommandHistory::new();
@@ -382,6 +463,57 @@ mod tests {
             history.record(command);
         }
         history
+    }
+
+    #[test]
+    fn the_suggestion_is_the_newest_completion_of_what_is_typed() {
+        let history = seeded(&["cargo build --release", "ls -la", "cargo test --lib"]);
+        assert_eq!(history.suggestion("car"), Some("go test --lib"), "newest wins");
+        assert_eq!(history.suggestion("cargo b"), Some("uild --release"));
+        assert_eq!(history.suggestion("ls"), Some(" -la"));
+        assert_eq!(history.suggestion("git"), None, "no entry starts that way");
+    }
+
+    /// The three refusals, each of which would draw a ghost that says nothing.
+    #[test]
+    fn a_suggestion_is_refused_when_it_would_add_nothing() {
+        let history = seeded(&["ls -la"]);
+        assert_eq!(
+            history.suggestion(""),
+            None,
+            "an empty line is not a prefix worth matching"
+        );
+        assert_eq!(
+            history.suggestion("ls -la"),
+            None,
+            "an exact hit has nothing left to add"
+        );
+        assert!(CommandHistory::new().suggestion("ls").is_none());
+    }
+
+    /// The split is taken at `line.len()`, so a multi-byte prefix must not cut a scalar.
+    #[test]
+    fn a_multibyte_prefix_splits_on_a_boundary() {
+        let history = seeded(&["echo 'ước lượng'"]);
+        assert_eq!(history.suggestion("echo 'ước"), Some(" lượng'"));
+    }
+
+    /// `zsh-autosuggestions` needs a buffer-size knob to survive this; the length guard is the
+    /// knob.
+    #[test]
+    fn a_ten_megabyte_line_is_one_comparison_per_entry_not_one_per_byte() {
+        let history = seeded(&["ls -la", "cargo test", "git status"]);
+        let line = "x".repeat(10 * 1024 * 1024);
+        assert_eq!(history.suggestion(&line), None);
+    }
+
+    #[test]
+    fn one_word_of_a_suggestion_takes_the_space_in_front_of_it() {
+        assert_eq!(suggestion_word_len(" --release --locked"), " --release".len());
+        assert_eq!(suggestion_word_len("test --lib"), "test".len());
+        // Nothing but whitespace is taken whole rather than answering a dead zero.
+        assert_eq!(suggestion_word_len("   "), 3);
+        assert_eq!(suggestion_word_len(""), 0);
     }
 
     #[test]

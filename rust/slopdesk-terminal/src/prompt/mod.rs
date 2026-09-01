@@ -6,7 +6,8 @@
 //! `slopdesk-termrender` lays out blocks with variable heights, and a block's header is a native
 //! view. This module is what puts a real editor in front of them: multi-line text, a grapheme
 //! cursor, UAX #29 words, selection, undo with coalescing, history with prefix search and ⌃R, fuzzy
-//! completion, and shell-aware highlighting.
+//! completion, shell-aware highlighting, and the inline autosuggestion a `zsh` user installs a
+//! plugin for.
 //!
 //! ## What this owns, and what it refuses to own
 //!
@@ -66,7 +67,9 @@ pub mod undo;
 
 use crate::prompt::buffer::{Motion, TextBuffer};
 use crate::prompt::complete::{CandidateProvider, HistoryProvider, Ranked};
-use crate::prompt::history::{CommandHistory, HistoryWalk, Recalled, ReverseSearch, SearchHit};
+use crate::prompt::history::{
+    CommandHistory, HistoryWalk, Recalled, ReverseSearch, SearchHit, suggestion_word_len,
+};
 use crate::prompt::syntax::{Lexed, Unterminated, lex};
 use crate::prompt::undo::{EditKind, UndoStack};
 
@@ -566,6 +569,88 @@ impl CommandEditor {
         self.selected = 0;
     }
 
+    // ------------------------------------------------------------------ suggestion
+
+    /// What the newest matching history entry would ADD past the caret — the inline autosuggestion.
+    ///
+    /// `zsh-autosuggestions` in one method, and unlike that plugin it costs the shell nothing: the
+    /// history is already here, so this is a prefix scan over at most
+    /// [`history::CAPACITY`] strings and no state at all — see the module header for why holding a
+    /// position would only give every editing path something new to forget to reset.
+    ///
+    /// **Five suppressions, and every one of them is a case where the ghost would be a lie about
+    /// where the text would go.** The ghost is drawn AT the caret and accepted by appending, so it
+    /// is only ever truthful when appending is what an accept would do:
+    ///  * a ⌃R session is up — that row is already showing a history entry, and a second one
+    ///    proposed from the line underneath it would be two answers to one question;
+    ///  * a candidate list is open — its own inline preview owns the caret, and the two ghosts
+    ///    would overprint;
+    ///  * something is selected — an accept would replace it, not extend it;
+    ///  * the caret is not at the end of the document — the text would land mid-line, in front of
+    ///    bytes the ghost was drawn after;
+    ///  * the document has more than one line — the suggestion is a whole-COMMAND affordance, and
+    ///    matching a multi-line document against a single-line history entry can only ever fail
+    ///    once the newline is typed, so refusing early is the honest version of the same answer.
+    ///
+    /// ⚠️ A history WALK is not on that list, and deliberately: ↑ puts a real entry in the buffer,
+    /// and [`CommandHistory::suggestion`] refuses an exact hit, so the walk suppresses itself for
+    /// the entry it landed on. Where it does not — an older entry that EXTENDS the recalled one —
+    /// the ghost is exactly as true as it is at any other caret, and hiding it would make ↑ turn a
+    /// working affordance off for no reason a reader could see.
+    #[must_use]
+    pub fn suggestion(&self) -> Option<&str> {
+        if self.search.is_some() || !self.completion.is_empty() || self.buffer.selection().is_some() {
+            return None;
+        }
+        let text = self.buffer.text();
+        if self.buffer.cursor() != text.len() || text.contains('\n') {
+            return None;
+        }
+        self.history.suggestion(text)
+    }
+
+    /// Takes the whole suggestion into the document — `→` / `⌃E` / `End` at the end of the line.
+    ///
+    /// `false` when there is nothing to accept, which is what makes the key fall THROUGH to its
+    /// ordinary motion at both call sites. That boolean is the whole reason this is one Rust method
+    /// rather than a rule each platform writes for itself: the Mac reaches the prompt through
+    /// `AppKit` selectors and the phone through [`keys::edit_action`], so a predicate spelled in
+    /// Swift would be spelled twice, and `→` would come to mean two things.
+    ///
+    /// ⚠️ Goes through [`CommandEditor::replace_range`] — the completion accept's own door — and
+    /// NOT through [`CommandEditor::insert_text`], which is what this was written as first. Typed
+    /// insertions COALESCE (see [`crate::prompt::undo`]), so an accept spelled that way merged into
+    /// the burst the user typed to summon it, and the ⌘Z that should have taken back thirteen
+    /// borrowed characters emptied the line instead. A suggestion accepted by reflex has to be
+    /// exactly as cheap to reject, which means it is its own step.
+    pub fn accept_suggestion(&mut self) -> bool {
+        let Some(rest) = self.suggestion().map(str::to_owned) else {
+            return false;
+        };
+        let at = self.buffer.cursor();
+        self.replace_range(at..at, &rest);
+        true
+    }
+
+    /// Takes one word of the suggestion — `⌥→`, `fish`'s partial accept.
+    ///
+    /// The word is [`suggestion_word_len`]'s, so the space in front of it comes too and the caret
+    /// lands ready for the next press. `false` for nothing to accept, under
+    /// [`CommandEditor::accept_suggestion`]'s rule and for its reason.
+    pub fn accept_suggestion_word(&mut self) -> bool {
+        let Some(word) = self
+            .suggestion()
+            .and_then(|rest| rest.get(..suggestion_word_len(rest)))
+            .filter(|word| !word.is_empty())
+            .map(str::to_owned)
+        else {
+            return false;
+        };
+        let at = self.buffer.cursor();
+        self.replace_range(at..at, &word);
+        true
+    }
+
     // ------------------------------------------------------------------ submit
 
     /// The submit key.
@@ -687,6 +772,93 @@ mod tests {
         editor.insert_text(" --amend");
         let spans = &editor.lexed().spans;
         assert_eq!(spans[spans.len() - 1].kind, TokenKind::Flag);
+    }
+
+    /// A seeded editor whose history holds `commands`, newest last.
+    fn recalling(commands: &[&str]) -> CommandEditor {
+        let mut history = crate::prompt::history::CommandHistory::new();
+        for command in commands {
+            history.record(command);
+        }
+        CommandEditor::with_history(history)
+    }
+
+    #[test]
+    fn the_suggestion_appears_as_you_type_and_the_accept_is_one_undo_step() {
+        let mut editor = recalling(&["cargo test --lib"]);
+        assert_eq!(editor.suggestion(), None, "nothing typed, nothing proposed");
+        editor.insert_text("car");
+        assert_eq!(editor.suggestion(), Some("go test --lib"));
+        assert!(editor.accept_suggestion());
+        assert_eq!(editor.text(), "cargo test --lib");
+        assert_eq!(
+            editor.suggestion(),
+            None,
+            "the exact entry has nothing left to add"
+        );
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "car", "one ⌘Z takes back a reflex accept");
+    }
+
+    #[test]
+    fn one_word_of_the_suggestion_lands_at_a_time() {
+        let mut editor = recalling(&["cargo test --lib --release"]);
+        editor.insert_text("cargo");
+        assert!(editor.accept_suggestion_word());
+        assert_eq!(editor.text(), "cargo test");
+        assert!(editor.accept_suggestion_word());
+        assert_eq!(editor.text(), "cargo test --lib");
+    }
+
+    /// The four states where the ghost would be drawn somewhere an accept would not write.
+    #[test]
+    fn the_suggestion_stands_down_wherever_an_accept_would_not_append() {
+        let mut editor = recalling(&["cargo test --lib"]);
+        editor.insert_text("cargo");
+        assert!(
+            editor.suggestion().is_some(),
+            "the baseline this test moves away from"
+        );
+
+        // The caret away from the end: the text would land in front of bytes the ghost sits after.
+        editor.move_to(Motion::LineEdge(Backward));
+        assert_eq!(editor.suggestion(), None);
+        assert!(!editor.accept_suggestion(), "and the key falls through");
+        editor.move_to(Motion::LineEdge(Forward));
+
+        // A selection: an accept would replace it rather than extend it.
+        editor.select_all();
+        assert_eq!(editor.suggestion(), None);
+        editor.move_to(Motion::LineEdge(Forward));
+
+        // A second line: the suggestion is a whole-COMMAND affordance.
+        editor.insert_newline();
+        assert_eq!(editor.suggestion(), None);
+        assert!(editor.undo());
+
+        // ⌃R owns the history row while it is up.
+        editor.begin_reverse_search();
+        assert_eq!(editor.suggestion(), None);
+        editor.reverse_search_cancel();
+        assert!(editor.suggestion().is_some(), "and comes back when ⌃R closes");
+    }
+
+    /// The completion list's own inline preview owns the caret; two ghosts would overprint.
+    #[test]
+    fn an_open_candidate_list_takes_the_ghost_back() {
+        let mut editor = recalling(&["cargo test --lib"]);
+        editor.insert_text("car");
+        assert!(editor.suggestion().is_some());
+        let entries = [PathEntry {
+            name: "cargo-thing".to_owned(),
+            directory: false,
+        }];
+        let paths = PathProvider::new("", &entries);
+        let providers: [&dyn CandidateProvider; 1] = [&paths];
+        assert!(editor.complete(&providers, 6) > 0, "the list is genuinely open");
+        assert_eq!(editor.suggestion(), None);
+        editor.dismiss_completion();
+        assert!(editor.suggestion().is_some());
     }
 
     #[test]

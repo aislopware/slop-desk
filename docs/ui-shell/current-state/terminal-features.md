@@ -225,7 +225,7 @@ genuinely absent or unwired.
 | **Hint-mode** (URL / path hints, keyboard nav) | done — unchanged, lines drifted +~50 | `HintLabelAssigner.swift`: `slopdesk_hint_scan` still at line 215 (the one citation that didn't drift). `TerminalViewModel.swift`: `beginHint` `:1646` (was 1596), `handleHintKey` `:1710` (was 1660), `confirmHintTarget` `:1734` (was 1684), `cancelHintMode` `:1741` (was 1691). `TerminalHintActuator.swift` confirmed at `Sources/SlopDeskClientCore/Pane/`. `MacHintModeOverlay.swift` confirmed; phone file is `HintModeOverlayView.swift` (not `HintModeOverlay.swift`). ⚠️ **The OSC 8 ceiling CLOSED 2026-09-01.** An authored link whose display text is not itself a URL is hintable now: `HintLabelAssigner.targets` takes an `authored:` list off the new `TerminalViewportSnapshotting.authoredLinkRuns()`, and `slopdesk_rowscan::hint::targets` accepts those runs BEFORE it detects anything, so the per-row overlap rule that was already there drops a detector's guess laid over a declared link. The scan could never have found them — a declared link's display text is whatever the program wrote — so the fix was an input, not a better pattern. Their columns cross untouched: they are the ENGINE's cells, and re-deriving them with `text_cells` from a display text that stands for something else would move the badge off the link. |
 | **Read-only mode** (block input to the PTY) | done — client-side, unchanged, lines drifted +~42-43 | `TerminalViewModel.isReadOnly` `:1392` (was 1350), `enterReadOnly()` `:1453` (was 1410), `exitReadOnly()` `:1460` (was 1417), `onReadOnlyChanged` `:1409`. `WorkspaceStore+ReadOnly.swift` confirmed present. `MacPaneStatusPills.swift` confirmed; phone file is `PaneStatusPillsView.swift` (not `PaneStatusPills.swift`). |
 | **Vi-mode** (libghostty NATIVE vi-mode) | n/a — the old comparison has no subject any more | `ghostty_action_readonly_e`/`GHOSTTY_ACTION_READONLY` belonged to the deleted embedder's whole C-callback/action system. `libghostty-vt` has no action/callback concept for vi-mode or readonly at all — it is a pull-only Rust library. There is nothing left to compare "declared and never called" against. slopdesk's own copy-mode engine (`rust/slopdesk-terminal/src/vimotion.rs`, reached from the modal branch in `MacTerminalRendererView.keyDown:186-191`) is the current vi-flavoured feature — see Copy-mode and Vi visual-char selection above — and it is not a port of libghostty's anything. |
-| **Autocomplete** (shell completion overlay) | **built** — this row was stale | Ranked completion is `rust/slopdesk-terminal/src/prompt/complete.rs` (subcommands, flags, paths, directories, variables, history), driven by `CommandEditor::complete` and stepped by `select_next_candidate`/`select_previous_candidate`, accepted by `accept_completion`. It crosses on the prompt handle (`slopdesk_prompt_complete`, `_candidates`, `_candidate_arena`, `_candidate_positions`, `_accept_completion`, `_dismiss_completion`) and is wired on BOTH platforms — `MacTerminalRendererView.swift:586-619`, `TerminalLeafView.swift:1483-1566`. The panel is drawn by `TerminalPromptBand.drawAccessory` (six rows, detail column, matched-scalar underline, selection in `accent`), the inline GHOST by `TerminalPromptBand.ghost`. What is genuinely not built is the **Fig-style bundled spec DB** — the providers are the ones the host can answer from itself. |
+| **Autocomplete** (shell completion overlay) | **built** — this row was stale | Ranked completion is `rust/slopdesk-terminal/src/prompt/complete.rs` (subcommands, flags, paths, directories, variables, history), driven by `CommandEditor::complete` and stepped by `select_next_candidate`/`select_previous_candidate`, accepted by `accept_completion`. It crosses on the prompt handle (`slopdesk_prompt_complete`, `_candidates`, `_candidate_arena`, `_candidate_positions`, `_accept_completion`, `_dismiss_completion`) and is wired on BOTH platforms — `MacTerminalRendererView.swift:586-619`, `TerminalLeafView.swift:1483-1566`. The panel is drawn by `TerminalPromptBand.drawAccessory` (six rows, detail column, matched-scalar underline, selection in `accent`), the inline GHOST by `TerminalPromptBand.ghost`. ⚠️ That ghost has a SECOND source since 2026-09-01: with no list open it prints the **history autosuggestion** instead — `zsh-autosuggestions`' default `history` strategy, in-house. `CommandHistory::suggestion` is a plain function of (store, line) and holds no state, which is why it can be shown unasked; `CommandEditor::suggestion` suppresses it on five conditions (⌃R open, candidates open, a selection, caret not at the end, a newline in the line) but NOT during a history walk. The accept follows `fish`'s rule — it belongs to the input FUNCTION, not to a key — so `prompt::keys::over_suggestion` translates a `Motion`: `→`/`End`/`⌃E`/`⌃F`/`⌘→` take the whole suggestion, ⌥→ takes a word, and a `DefaultKeyBinding.dict` entry the user invented inherits it. The Mac asks in motions (`slopdesk_prompt_suggestion_accept_for_motion`, because AppKit hands it a selector and never a key), the phone in keys (`slopdesk_prompt_key_action`'s new `has_suggestion` flag); the rule itself is Rust's on both. ⚠️ The accept goes through `replace_range`, never `insert_text` — typed insertions coalesce, so an insert-spelled accept merged into the burst that summoned it and one ⌘Z emptied the line. What is genuinely not built is the **Fig-style bundled spec DB** — the providers are the ones the host can answer from itself. |
 
 ---
 
@@ -320,9 +320,14 @@ and §10, which this pass FOUND rather than inherited.
    fired between a programmatic selection and the next present sees the older geometry and refuses —
    which deletes nothing and degrades to a copy, the safe direction of the two.
 
-3. **OSC 8 hyperlinks have no handling at all**, mouse or keyboard — a strictly larger gap than the
-   prior "not hintable" ceiling, because the mouse-side hover/click path the fork provided has no
-   replacement either (see the Hyperlinks matrix row; this supersedes the old §2 below).
+3. ~~**OSC 8 hyperlinks have no handling at all**~~ — **CLOSED 2026-08-31, and this entry was STALE
+   from the day it was written**: it contradicted its own matrix row. The engine half arrived with
+   `744e80ab` (`CellFlags::HYPERLINK`, `VtSession::hyperlink_at`); what was actually missing was a
+   caller, and `TerminalSurfaceDriver.link(at:cwd:slop:)` is it, serving the Mac's ⌘-hover and
+   context menu and the phone's long press from one ranking. The keyboard half followed on
+   2026-09-01 — `HintLabelAssigner.targets` takes an `authored:` list, so a declared link whose
+   display text is not a URL is hintable. ⚠️ The lesson is the audit's, not the code's: a gap
+   asserted in prose that the same document's matrix denies is a re-run that never happened.
 
 4. ~~**In-surface search highlights are still a second engine from the find bar's counter/nav**~~ —
    **CLOSED.** All four modes moved into `slopdesk-vterm`'s `Matcher`, the bar reads its count and
@@ -330,8 +335,12 @@ and §10, which this pass FOUND rather than inherited.
    is deleted rather than bypassed. What remains is ⇧⌘F's snapshot scan, which is a different
    question over a different address space — see `docs/68` §5.2.
 
-5. **Mouse pressure / force-click is dropped with no `DECISIONS.md` record**, unlike every other
-   deliberate drop in this rewrite (OSC-22 pointer shape, OSC-52 read) which got one.
+5. ~~**Mouse pressure / force-click is dropped with no `DECISIONS.md` record**~~ — **CLOSED
+   2026-09-01: there was a record, under another name.** The trackpad gesture audit struck it by
+   name ("❌ Rotate, force-click/pressure, Quick Look: dropped"), and that ruling covers this pane
+   too — a terminal has no second reading of a pressure event to make, since no escape sequence
+   carries stage-2 force and no program could receive one. The FEATURE gap is real; the
+   documentation gap was the audit looking for a heading rather than the sentence.
 
 6. **CLOSED 2026-09-01 — ⌘C / ⌘X / ⌘V / ⌘A were dead in the terminal pane**, and this audit had
    called all four done for three passes because it traced the CONTEXT MENU's route and stopped

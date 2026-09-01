@@ -556,7 +556,14 @@ final class MacTerminalRendererView: NSView {
         }
         if Self.promptWalksHistory(selector), walkPromptHistory(prompt, selector: selector) { return }
         if let motion = Self.promptMotion(selector) {
-            if Self.promptExtendsSelection(selector) { prompt.extend(motion) } else { prompt.move(motion) }
+            let extends = Self.promptExtendsSelection(selector)
+            // A forward motion at the end of the line takes the autosuggestion instead of walking
+            // past it — fish's rule, where the accept belongs to the input FUNCTION rather than to
+            // one key, so `→`, `End`, `⌃F`, `⌘→` and whatever the user bound in
+            // `DefaultKeyBinding.dict` all inherit it. Which motions claim the ghost is Rust's
+            // answer, not a list here. Never while extending: ⇧→ is a selection gesture.
+            if !extends, prompt.acceptSuggestion(over: motion) { return }
+            if extends { prompt.extend(motion) } else { prompt.move(motion) }
             return
         }
         if let motion = Self.promptDeletion(selector) {

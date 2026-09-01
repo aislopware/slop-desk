@@ -93,6 +93,12 @@ pub fn command_prompt(tree: &Tree) -> Report {
                 "slopdesk_prompt_undo",
                 "slopdesk_prompt_complete",
                 "slopdesk_prompt_submit",
+                // The autosuggestion, ratcheted because it is the one faculty a view could quietly
+                // stop drawing without anything else breaking: nothing depends on the ghost, so a
+                // face that dropped the read would leave a green tree and a prompt that had lost a
+                // feature.
+                "slopdesk_prompt_suggestion",
+                "slopdesk_prompt_accept_suggestion",
             ],
             message: "Sources/SlopDeskWorkspaceCore/Terminal/CommandPrompt.swift no longer calls {entry} — \
                       the prompt's editor is rust/slopdesk-terminal's",

@@ -41,7 +41,9 @@ use slopdesk_terminal::prompt::complete::{
     Candidate, CandidateKind, CandidateProvider, CommandProvider, CommandSpec, PathEntry, PathProvider,
     ShellGroup, ShellProvider, ShellSuggestion, VariableProvider,
 };
-use slopdesk_terminal::prompt::keys::{ControlAction, EditAction, Key, Mods, control_action, edit_action};
+use slopdesk_terminal::prompt::keys::{
+    ControlAction, EditAction, Key, KeyContext, Mods, control_action, edit_action, over_suggestion,
+};
 use slopdesk_terminal::prompt::syntax::{TokenKind, Unterminated};
 use slopdesk_terminal::prompt::{CommandEditor, Submission};
 
@@ -197,6 +199,10 @@ pub const SLOPDESK_PROMPT_ACTION_SEARCH: u8 = 17;
 pub const SLOPDESK_PROMPT_ACTION_FORWARD: u8 = 18;
 /// The shell's AND it abandons the line: send the byte, then clear the editor.
 pub const SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR: u8 = 19;
+/// Take the whole autosuggestion into the document — a forward motion over a live ghost.
+pub const SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION: u8 = 20;
+/// Take one word of it — ⌥→ over a live ghost.
+pub const SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION_WORD: u8 = 21;
 
 /// The press names a character rather than a named key — read `letter`.
 pub const SLOPDESK_PROMPT_KEY_CHAR: u8 = 0;
@@ -272,8 +278,8 @@ pub struct SlopDeskPromptKeyAction {
 /// ASCII letter; `0` for anything non-ASCII, which is text and names no verb.
 ///
 /// A free function for [`slopdesk_prompt_control_action`]'s reason: it asks nothing of the editor
-/// except whether its buffer is empty, which the caller already holds out of
-/// [`SlopDeskPromptState`].
+/// except the two bits of state a key's meaning turns on, and the caller already holds both out of
+/// [`SlopDeskPromptState`] — `buffer_empty` for `⌃D`, `has_suggestion` for every forward motion.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -284,6 +290,7 @@ pub extern "C" fn slopdesk_prompt_key_action(
     letter: u8,
     mods: u8,
     buffer_empty: bool,
+    has_suggestion: bool,
 ) -> SlopDeskPromptKeyAction {
     let named = match key {
         SLOPDESK_PROMPT_KEY_LEFT => Key::Left,
@@ -309,7 +316,11 @@ pub extern "C" fn slopdesk_prompt_key_action(
         option: mods & SLOPDESK_PROMPT_MOD_OPTION != 0,
         command: mods & SLOPDESK_PROMPT_MOD_COMMAND != 0,
     };
-    let Some(action) = edit_action(named, mods, buffer_empty) else {
+    let context = KeyContext {
+        buffer_empty,
+        has_suggestion,
+    };
+    let Some(action) = edit_action(named, mods, context) else {
         return SlopDeskPromptKeyAction::default();
     };
     let plain = |kind| {
@@ -357,6 +368,8 @@ pub extern "C" fn slopdesk_prompt_key_action(
         EditAction::Undo => plain(SLOPDESK_PROMPT_ACTION_UNDO),
         EditAction::Redo => plain(SLOPDESK_PROMPT_ACTION_REDO),
         EditAction::Search => plain(SLOPDESK_PROMPT_ACTION_SEARCH),
+        EditAction::AcceptSuggestion => plain(SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION),
+        EditAction::AcceptSuggestionWord => plain(SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION_WORD),
         EditAction::Control(ControlAction::Forward) => plain(SLOPDESK_PROMPT_ACTION_FORWARD),
         EditAction::Control(ControlAction::ForwardAndClear) => {
             plain(SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR)
@@ -427,6 +440,12 @@ pub struct SlopDeskPromptState {
     pub selected_candidate: usize,
     /// How many entries the history holds.
     pub history_count: usize,
+    /// How many bytes [`slopdesk_prompt_suggestion`] would answer. `0` means no ghost is showing.
+    ///
+    /// A LENGTH rather than a `bool`, so the one read serves both callers: the band draws the
+    /// suggestion and the key table asks only whether there is one, and a second door answering the
+    /// same question could be read a keystroke apart from this one.
+    pub suggestion_len: usize,
 }
 
 impl SlopDeskPromptState {
@@ -448,6 +467,7 @@ impl SlopDeskPromptState {
         candidate_count: 0,
         selected_candidate: 0,
         history_count: 0,
+        suggestion_len: 0,
     };
 
     /// Reads the editor's current state out.
@@ -471,6 +491,7 @@ impl SlopDeskPromptState {
             candidate_count: editor.candidates().len(),
             selected_candidate: editor.selected_candidate(),
             history_count: editor.history().len(),
+            suggestion_len: editor.suggestion().map_or(0, str::len),
         }
     }
 }
@@ -1670,6 +1691,108 @@ pub unsafe extern "C" fn slopdesk_prompt_accept_completion(handle: *mut SlopDesk
         return false;
     };
     state.editor.accept_completion()
+}
+
+/// Which accept a non-extending MOTION becomes while a ghost is live — the Mac's half of the rule.
+///
+/// Answers [`SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION`],
+/// [`SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION_WORD`], or [`SLOPDESK_PROMPT_ACTION_NONE`] for a
+/// motion the ghost does not claim.
+///
+/// ⚠️ **This exists so the two platforms do not each own a list of forward keys.** The phone gets
+/// the accept out of [`slopdesk_prompt_key_action`] because `UIKit` hands it a key; the Mac never
+/// sees a key at all — `AppKit`'s binding table has already turned the press into a selector, which
+/// `MacTerminalRendererView` has already turned into a motion — so it asks the same question one
+/// step further along. Both answers come out of `keys::over_suggestion`, which is what makes
+/// `⌃F`, `→`, `End`, `⌘→` and a user's own `DefaultKeyBinding.dict` entry behave alike.
+///
+/// A free function: it reads no editor state, and whether there is a suggestion to take is
+/// [`slopdesk_prompt_accept_suggestion`]'s own answer.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub const extern "C" fn slopdesk_prompt_suggestion_accept_for_motion(motion: u8) -> u8 {
+    let action = EditAction::Move {
+        motion: motion_of(motion),
+        extend: false,
+    };
+    match over_suggestion(action) {
+        Some(EditAction::AcceptSuggestion) => SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION,
+        Some(EditAction::AcceptSuggestionWord) => SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION_WORD,
+        _ => SLOPDESK_PROMPT_ACTION_NONE,
+    }
+}
+
+/// Copies the inline autosuggestion out — what the newest matching history entry would ADD past
+/// the caret — answering its length either way. `0` means there is nothing to propose.
+///
+/// A READ, asked once per frame beside the spans, which is why it is a copy rather than a
+/// subscription: the answer is a prefix scan over the history the editor already holds, and a
+/// caller that cached it would have to be told about every keystroke, every ⌃R and every
+/// completion — the five states [`CommandEditor::suggestion`] suppresses on.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation and `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_suggestion(
+    handle: *mut SlopDeskPrompt,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, as above.
+    let Some(state) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let rest = state.editor.suggestion().unwrap_or("");
+    // SAFETY: `out` is null or writable for `cap` bytes by the caller's obligation.
+    unsafe { deliver(rest.as_bytes(), out, cap) }
+}
+
+/// Takes the whole suggestion into the document — `→` / `⌃E` / `End` at the end of the line.
+///
+/// ⚠️ **The `false` is the point of the door.** Both shells call this BEFORE the motion those keys
+/// otherwise carry and fall through on `false`, so "is there a suggestion to accept" is decided
+/// once, in Rust, rather than once per platform — the Mac reaches the prompt through `AppKit`
+/// selectors and the phone through `slopdesk_prompt_key_action`, and a predicate spelled on the
+/// Swift side would be spelled twice.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_accept_suggestion(handle: *mut SlopDeskPrompt) -> bool {
+    // SAFETY: the caller's obligation, as above.
+    let Some(state) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    state.editor.accept_suggestion()
+}
+
+/// Takes one word of the suggestion — `⌥→`. `false` under the whole-accept's rule, for its reason.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_accept_suggestion_word(handle: *mut SlopDeskPrompt) -> bool {
+    // SAFETY: the caller's obligation, as above.
+    let Some(state) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    state.editor.accept_suggestion_word()
 }
 
 /// Drops the candidate list.

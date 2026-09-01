@@ -337,6 +337,8 @@ uint8_t slopdesk_prompt_control_action(uint8_t letter, bool buffer_empty);
 #define SLOPDESK_PROMPT_ACTION_SEARCH 17u
 #define SLOPDESK_PROMPT_ACTION_FORWARD 18u
 #define SLOPDESK_PROMPT_ACTION_FORWARD_AND_CLEAR 19u
+#define SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION 20u
+#define SLOPDESK_PROMPT_ACTION_ACCEPT_SUGGESTION_WORD 21u
 
 typedef struct {
   uint8_t kind;                 /* SLOPDESK_PROMPT_ACTION_*  */
@@ -349,7 +351,15 @@ typedef struct {
  * a selector, so that view maps SELECTORS. UIKit has no counterpart, so the phone names its keys
  * here rather than keeping a Swift table of decisions Rust already owns. */
 SlopDeskPromptKeyAction slopdesk_prompt_key_action(
-    uint8_t key, uint8_t letter, uint8_t mods, bool buffer_empty);
+    uint8_t key, uint8_t letter, uint8_t mods, bool buffer_empty, bool has_suggestion);
+
+/* Which accept a non-extending MOTION becomes while a ghost is live — _ACCEPT_SUGGESTION,
+ * _ACCEPT_SUGGESTION_WORD, or _NONE for a motion the ghost does not claim. The MAC's half of the
+ * same rule: it never sees a key, because AppKit already turned the press into a selector and the
+ * view turned that into a motion, so it asks one step further along. Both answers come out of one
+ * function in Rust, which is what makes ->, End, ^F, cmd-> and a user's own DefaultKeyBinding.dict
+ * entry behave alike. */
+uint8_t slopdesk_prompt_suggestion_accept_for_motion(uint8_t motion);
 
 /* Everything a view binds, in ONE record — so a keystroke cannot interleave between two reads and
  * pair a cursor from before it with a selection from after. Offsets are BYTES into _text. */
@@ -370,6 +380,7 @@ typedef struct {
   size_t   candidate_count;
   size_t   selected_candidate;
   size_t   history_count;
+  size_t   suggestion_len;      /* bytes _suggestion would answer; 0 = no ghost */
 } SlopDeskPromptState;
 
 /* One coloured run, as a byte range into _text. */
@@ -478,6 +489,16 @@ void   slopdesk_prompt_select_next_candidate(SlopDeskPrompt *handle);
 void   slopdesk_prompt_select_previous_candidate(SlopDeskPrompt *handle);
 bool   slopdesk_prompt_accept_completion(SlopDeskPrompt *handle);
 void   slopdesk_prompt_dismiss_completion(SlopDeskPrompt *handle);
+
+/* The inline autosuggestion: what the newest matching history entry would ADD past the caret, and
+ * the two accepts. zsh-autosuggestions' `history` strategy, with fish's rule that the accept
+ * belongs to the forward MOTION rather than to one key. _suggestion answers 0 in the five states
+ * the editor suppresses on (a running search, an open candidate list, a selection, a caret away
+ * from the end, a multi-line document), and the accepts answer false in the same five — which is
+ * what lets a caller try the accept first and fall through to the motion the key otherwise means. */
+size_t slopdesk_prompt_suggestion(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
+bool   slopdesk_prompt_accept_suggestion(SlopDeskPrompt *handle);
+bool   slopdesk_prompt_accept_suggestion_word(SlopDeskPrompt *handle);
 
 /* Enter. Answers SLOPDESK_PROMPT_SUBMISSION_RUN when the document is closed — it is then emptied,
  * recorded in the history, and readable once through _take_submitted — or _CONTINUED when an open
