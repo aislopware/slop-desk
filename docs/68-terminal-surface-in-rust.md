@@ -698,6 +698,64 @@ One live defect fell out of writing it, on the same seam and not in the new code
 inserted into the LINE instead of the query — the Mac has had that fork since the band landed. Fixed
 in the same change.
 
+**The band takes the POINTER, 2026-09-02** — click to place the caret, drag to select, double-click
+for a word, triple-click for the line, and a click on a candidate row picks it. Until this the band
+answered no gesture at all: `MacTerminalPromptView` overrode `hitTest(_:) -> nil` and
+`PhoneTerminalPromptView` set `isUserInteractionEnabled = false`, which made a text editor nobody
+could click into — a hole the size of the feature, in the surface the goal names as `warp`-class.
+
+⚠️ **That reverses a line this section wrote, and it is worth being exact about which one.** "The
+band takes **no keyboard focus**" stands, unchanged: `acceptsFirstResponder` is still `false` and the
+renderer is still the pane's one first responder, so the focus region the tab owns is as undivided as
+it was. Being the HIT VIEW and being the RESPONDER are different mechanisms, and only the second was
+ever ruled on. The `hitTest -> nil` was not a decision — `git log -S` puts it in the mount commit
+with the comment "a click anywhere in the band goes to the pane, not here", i.e. it was a way of not
+thinking about focus. What replaces it is a `focusPane` closure called FIRST on every press, which is
+what the discarded hit test used to do by accident.
+
+Four things are decided in Rust, so the two shells cannot drift:
+
+- **What a unit is.** `SLOPDESK_PROMPT_GRANULARITY_CARET`/`_WORD`/`_LINE`, one
+  `slopdesk_prompt_pointer_select(anchor, head, granularity)` door in place of the `_set_cursor` and
+  `_set_selection` pair (both of which had zero Swift callers — unwired doors waiting for exactly
+  this). Each END is expanded to its own unit and the union taken, which is what keeps the pressed
+  word whole when a drag goes back past it, and `Caret`'s unit is the empty range so a click is a
+  drag of length nought through the same arithmetic. The shells contribute only the gesture→unit
+  mapping, through one `PromptGranularity(clickCount:)`.
+- **A word is the SHELL's word, not UAX #29's** — the one place this beats a general-purpose text
+  field. Double-clicking `--oneline` takes the flag rather than the `oneline` half of it,
+  `~/src/main.rs` is one path, and `"two words"` is one quoted argument. The lex that already
+  colours those runs answers, so there is no "word characters" preference of the kind `Terminal.app`
+  makes people configure. UAX #29 is the fallback for offsets no word covers: whitespace, an
+  operator, and prose under `TuiCompose`, where there is no shell syntax to respect.
+- **A click in the DOCUMENT cancels an open ⌃R** — `fish`'s rule, since editing the command line
+  closes the pager. The document under a search is the DRAFT, so a caret placed in it with the panel
+  still up would point at text the next Enter was going to replace; `reverse_search_cancel` hands the
+  draft back untouched, so the click costs the search and nothing else.
+- **A row click never routes through the document door.** `after_navigation` dismisses the candidate
+  list, so a click that touched `pointer_select` on its way to a row would dismiss the rows it was
+  picking from. `slopdesk_prompt_select_candidate(index)` is its own door and leaves the list alone;
+  it needs no fork on `searching` because a ⌃R session's rows ARE the candidate list, and only the
+  ACCEPT is two doors — which the `searching` flag on the state record already chooses between.
+
+`TerminalPromptBand.hit(_:metrics:at:)` is the inverse of `draw`'s row walk and lives beside it for
+that reason, with `byteOffset(_:metrics:at:)` total over the whole plane because that is what a DRAG
+asks — the pointer leaves the band on any upward selection, and a clamp is the only answer that keeps
+the selection growing instead of sticking. The x measurement is `CTLineGetStringIndexForPosition`
+against the very `CTLine` that was drawn, so a click cannot disagree with the caret about a kern.
+`utf8Offset` is the missing half of the UTF-8↔UTF-16 seam and rounds back off a surrogate pair rather
+than splitting a scalar.
+
+⚠️ **A gesture is refused outright while an input method is composing**, on both shells. The marked
+run lives at the caret and is not in the document, so moving the caret out from under it strands it,
+and committing it from a band would mean that view reaching into the renderer's input context. That
+is a rule, not a gap.
+
+Two smaller consequences of taking the mouse: the Mac band answers an I-beam cursor rect over the
+DOCUMENT rows only (the accessory rows are a list to click at, not text to place a caret in), and it
+forwards `menu(for:)` to the pane — taking the mouse would otherwise take the pane's context menu
+away with it.
+
 ### 5.5 OSC 8 hyperlinks
 
 The engine carries them and we now read them. `CellFlags::HYPERLINK` marks every cell of a link's

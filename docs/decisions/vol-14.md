@@ -1197,3 +1197,80 @@ The one rule that asks about the include list itself reads the file off disk, wh
 `Tree::read`'s stated purpose. And a part the umbrella names that the walk cannot find is an I/O
 error rather than a violation: a header read with a hole in it makes every rule below silently
 vacuous, which is worse than a red.
+
+## The prompt band takes the POINTER, and `hitTest -> nil` is reversed (2026-09-02)
+
+The band shipped as a text editor nobody could click into. `MacTerminalPromptView` overrode
+`hitTest(_:) -> NSView? { nil }` with the comment "a click anywhere in the band goes to the pane, not
+here", and `PhoneTerminalPromptView` set `isUserInteractionEnabled = false` — so there was no
+click-to-place-caret, no drag-select, no double-click word, and no way to pick a candidate row with
+the pointer already resting on it. For the surface the standing goal names as `warp`-class, that is a
+hole the size of the feature.
+
+### It reverses a behaviour, not a decision — and the decision it looks like still stands
+
+The decision above reads "**The prompt view takes no keyboard focus.** `MacTerminalRendererView`
+stays the pane's one first responder… A second responder inside the pane would divide the focus
+region the TAB owns." Every word of that survives: `acceptsFirstResponder` is still `false`, the
+renderer is still the pane's one responder, and AppKit cannot make the band one no matter where the
+pointer lands. **Being the hit view and being the first responder are different mechanisms**, and
+only the second was ever ruled on.
+
+The `hitTest -> nil` itself was never ruled on at all. `git log -S` puts it in `30b396d1`, the mount
+commit, which is what a line looks like when it falls out of not wanting to think about focus yet.
+What replaces it is a `focusPane` closure called FIRST on every press — load-bearing, because
+discarding the hit test without it would silently stop a band click from focusing the pane, which is
+the one thing the old line did do.
+
+### Four rules go in Rust, because two shells would spell them twice
+
+- **The gesture→unit mapping is the shell's; the unit is Rust's.** AppKit counts an
+  `NSEvent.clickCount` and the phone fires a tap recogniser, so each names a
+  `SLOPDESK_PROMPT_GRANULARITY_CARET`/`_WORD`/`_LINE` through one `PromptGranularity(clickCount:)`.
+  `slopdesk_prompt_pointer_select(anchor, head, granularity)` replaces the `_set_cursor` and
+  `_set_selection` pair outright — both had zero Swift callers, unwired doors waiting for this — and
+  expands each END to its own unit before taking the union, which is what keeps the pressed word
+  whole when a drag runs back past it. `Caret`'s unit is the empty range, so a click is a drag of
+  length nought through the same arithmetic and needs no branch.
+- **A word is the SHELL's word, not UAX #29's.** This is the one place the prompt should beat a
+  general-purpose text field, and the machinery was already there: the lex that colours `--oneline`
+  as a flag knows where the flag starts and ends. So a double-click takes `--oneline` and not the
+  `oneline` half of it, `~/src/main.rs` and not five segments, `"two words"` and not `two`. No "word
+  characters" preference of the kind `Terminal.app` makes people configure. UAX #29 stays the
+  fallback for offsets no word covers — whitespace, an operator, and prose under `TuiCompose`, where
+  there is no shell syntax to respect.
+- **A click in the document CANCELS an open ⌃R.** `fish`'s rule: editing the command line closes the
+  pager. The document under a search is the DRAFT, so a caret placed in it with the panel still up
+  would point at text the next Enter was about to replace. `reverse_search_cancel` hands the draft
+  back untouched, so the click costs the search and nothing else.
+- **A row click never routes through the document door.** `after_navigation` dismisses the candidate
+  list, so a click that touched `pointer_select` on its way to a row would dismiss the rows it was
+  picking from. `slopdesk_prompt_select_candidate(index)` is separate and leaves the list alone. It
+  needs no `searching` fork, because a ⌃R session's rows ARE the candidate list; only the ACCEPT is
+  two doors, chosen by the flag the state record already carries.
+
+### A row click ACCEPTS, and a composing gesture is refused
+
+Picking and accepting are one gesture with a pointer where they are two keys with a keyboard: a
+click that only highlighted would leave the user reaching for Enter with the pointer already on the
+answer. A ⌃R row goes onto the line without running — the pager rule this volume already took — and a
+completion row is applied over the range it declared.
+
+While an input method is composing, every pointer gesture is refused on both shells. The marked run
+lives at the caret and is not in the document, so moving the caret out from under it strands it, and
+committing it from the band would mean that view reaching into the renderer's input context. Stated
+as a rule in `TerminalPromptBand.hit`, so the next reader does not read it as an oversight.
+
+### The hit test is the draw's inverse and lives beside it
+
+`TerminalPromptBand.hit(_:metrics:at:)` walks the rows in `draw`'s own order because any disagreement
+is a click that picks the row above the one under the pointer, and no screenshot says which of the
+two is wrong. `byteOffset(_:metrics:at:)` is total over the whole plane — a drag leaves the band on
+any upward selection, and clamping is the only answer that keeps the selection growing instead of
+sticking. The x measurement runs `CTLineGetStringIndexForPosition` against the very `CTLine` that was
+drawn, so a click cannot disagree with the caret about a kern or a ligature.
+
+Two consequences of taking the mouse, both paid rather than deferred: the Mac band answers an I-beam
+cursor rect over the DOCUMENT rows only, since the accessory rows are a list to click at rather than
+text to place a caret in; and it forwards `menu(for:)` to the pane, because taking the mouse would
+otherwise take the pane's context menu away with it.

@@ -81,6 +81,43 @@ pub enum Motion {
     DocEdge(Direction),
 }
 
+/// What a pointer gesture selects a whole one of.
+///
+/// Named by the UNIT rather than by the click count, because the two platforms count differently —
+/// `AppKit` hands over an `NSEvent.clickCount` and a phone sends a double-tap recogniser — and the
+/// mapping from a gesture to a unit is the shell's business.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Granularity {
+    /// The exact offset — a single click, or the drag that follows it.
+    #[default]
+    Caret,
+    /// The word under the offset — a double-click.
+    Word,
+    /// The whole logical line, without its newline — a triple-click.
+    Line,
+}
+
+impl Granularity {
+    /// The range this granularity would select if the pointer stopped at `offset`, judged from the
+    /// TEXT alone.
+    ///
+    /// ⚠️ This is the FALLBACK, not the whole rule:
+    /// [`crate::prompt::CommandEditor::pointer_select`] consults the lex first, because on a
+    /// command line the useful unit is the shell word — double-clicking `--oneline` should take
+    /// the flag and not the `oneline` half of it, and double-clicking inside `"two words"`
+    /// should take the quoted argument. This answers for every offset the lex has no word at:
+    /// whitespace, an operator, and prose under
+    /// [`crate::inputbox::InputAffordance::TuiCompose`].
+    #[must_use]
+    pub fn unit(self, text: &str, offset: usize) -> Range<usize> {
+        match self {
+            Self::Caret => offset..offset,
+            Self::Word => word_range(text, offset),
+            Self::Line => line_start(text, offset)..line_end(text, offset),
+        }
+    }
+}
+
 /// A caret position expressed the way a renderer needs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LineColumn {
@@ -487,6 +524,36 @@ fn offset_at_column(text: &str, start: usize, column: usize) -> usize {
 /// extra steps.
 fn is_wordish(segment: &str) -> bool {
     segment.chars().any(char::is_alphanumeric)
+}
+
+/// The bounds of the UAX #29 segment holding `offset` — what a double-click selects.
+///
+/// A different question from [`word_target`]'s, and deliberately not built on it. A word MOTION
+/// skips punctuation, because ⌥→ crossing `-->` in one press is what a text field does; a
+/// double-click ON `-->` selects `-->`, because the user pointed at it. So this takes the segment
+/// containing the offset whatever it is made of, and only the WINDOWING is shared.
+///
+/// At a line's end no segment contains the offset, and the answer is the segment that ENDS there —
+/// double-clicking past the last word selects the last word rather than nothing.
+fn word_range(text: &str, offset: usize) -> Range<usize> {
+    let at = snap(text, offset);
+    let start = line_start(text, at);
+    let end = line_end(text, at);
+    let from = snap(text, at.saturating_sub(WORD_WINDOW).max(start));
+    let to = snap(text, at.saturating_add(WORD_WINDOW).min(end));
+    let window = text.get(from..to).unwrap_or("");
+    let mut before = at..at;
+    for (offset, segment) in window.split_word_bound_indices() {
+        let segment_start = from.saturating_add(offset);
+        let segment_end = segment_start.saturating_add(segment.len());
+        if segment_start <= at && at < segment_end {
+            return segment_start..segment_end;
+        }
+        if segment_end <= at {
+            before = segment_start..segment_end;
+        }
+    }
+    before
 }
 
 /// The landing of a word motion. See the module header for why it is confined to one line.

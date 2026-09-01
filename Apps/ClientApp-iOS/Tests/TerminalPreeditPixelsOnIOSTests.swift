@@ -96,6 +96,7 @@ final class TerminalPreeditPixelsOnIOSTests: XCTestCase {
         prompt.insert("ls")
         let view = PhoneTerminalPromptView(
             prompt: prompt, armed: { true }, composition: { composition },
+            focusPane: {}, promptEdited: {},
         )
         let height = view.fittingHeight
         XCTAssertGreaterThan(height, 0, "an armed band with a draft in it has a height")
@@ -187,7 +188,9 @@ final class TerminalSearchPanelPixelsOnIOSTests: XCTestCase {
         if !query.isEmpty { prompt.searchType(query) }
         XCTAssertTrue(prompt.isSearching)
         XCTAssertFalse(prompt.candidates.isEmpty, "the fixture matched nothing to draw")
-        let view = PhoneTerminalPromptView(prompt: prompt, armed: { true }, composition: { nil })
+        let view = PhoneTerminalPromptView(
+            prompt: prompt, armed: { true }, composition: { nil }, focusPane: {}, promptEdited: {},
+        )
         let height = view.fittingHeight
         let image = HostedRaster.image(view, width: width, height: height)
         let bitmap = try XCTUnwrap(Bitmap(image), "the rig photographed something with no backing")

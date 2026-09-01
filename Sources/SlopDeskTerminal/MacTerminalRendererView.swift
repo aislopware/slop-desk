@@ -1563,6 +1563,15 @@ extension MacTerminalRendererView: @MainActor TerminalSurfaceHosting {
             prompt: model.commandPrompt,
             armed: { [weak self] in self?.model?.commandPromptArmed ?? false },
             composition: { [weak self] in self?.markedComposition },
+            // A click in the band gives the KEYBOARD to this view, which is the pane's one
+            // responder — the band takes the mouse and never the focus. Same door
+            // ``setPaneFocused(_:)`` uses, so a click and a tab-switch land the responder identically.
+            focusPane: { [weak self] in
+                guard let self, window?.firstResponder !== self else { return }
+                window?.makeFirstResponder(self)
+            },
+            promptEdited: { [weak self] in self?.promptDidChange?() },
+            paneMenu: { [weak self] event in self?.menu(for: event) },
         )
         promptBand = band
         // Repaint, then ask the host's shell about any command word on the line it has not ruled on

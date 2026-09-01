@@ -66,7 +66,9 @@ pub mod syntax;
 pub mod undo;
 pub mod validity;
 
-use crate::prompt::buffer::{Motion, TextBuffer};
+use core::ops::Range;
+
+use crate::prompt::buffer::{Granularity, Motion, TextBuffer};
 use crate::prompt::complete::{CandidateProvider, HistoryProvider, Ranked};
 use crate::prompt::history::{CommandHistory, HistoryWalk, Recalled, suggestion_word_len};
 use crate::prompt::syntax::{Lexed, SyntaxSpan, Unterminated, lex};
@@ -205,7 +207,7 @@ impl CommandEditor {
 
     /// The selected byte range, or `None`.
     #[must_use]
-    pub const fn selection(&self) -> Option<core::ops::Range<usize>> {
+    pub const fn selection(&self) -> Option<Range<usize>> {
         self.buffer.selection()
     }
 
@@ -353,7 +355,7 @@ impl CommandEditor {
 
     /// Replaces a byte range outright — the door a completion acceptance and a spelling correction
     /// both go through. One undo step.
-    pub fn replace_range(&mut self, range: core::ops::Range<usize>, text: &str) {
+    pub fn replace_range(&mut self, range: Range<usize>, text: &str) {
         let edit = self.buffer.replace_range(range, text);
         self.after_user_edit(edit, EditKind::Paste);
     }
@@ -385,16 +387,62 @@ impl CommandEditor {
         self.after_navigation();
     }
 
-    /// Puts the caret at a byte offset, snapped to a grapheme boundary. A click.
-    pub fn set_cursor(&mut self, offset: usize) {
-        self.buffer.set_cursor(offset);
+    /// Places the caret or selects a run from a pointer gesture — a click, a drag, a double- or
+    /// triple-click, all through one door.
+    ///
+    /// ⚠️ **A pointer landing in the document CANCELS an open ⌃R session.** That is `fish`'s rule —
+    /// touching the command line closes the pager — and it is the only coherent one here: the
+    /// document under an open search is the DRAFT, not the row the user is reading, so a caret
+    /// placed in it while the panel stayed up would point at text the next Enter was going to
+    /// replace. [`CommandEditor::reverse_search_cancel`] hands the draft back untouched, so the
+    /// click costs the search and nothing else.
+    ///
+    /// The candidate list goes the same way every other navigation takes it — see
+    /// [`CommandEditor::after_navigation`], whose replacement ranges were computed for the old
+    /// caret. A click on a candidate ROW must therefore never come through here; that is
+    /// [`CommandEditor::select_candidate`], which leaves the list alone.
+    pub fn pointer_select(&mut self, anchor: usize, head: usize, granularity: Granularity) {
+        self.reverse_search_cancel();
+        let anchor = buffer::snap(self.buffer.text(), anchor);
+        let head = buffer::snap(self.buffer.text(), head);
+        // Each end is expanded to its OWN unit and the union taken, which is what makes dragging
+        // back past the press keep the pressed word whole rather than shrinking it to the byte
+        // under the pointer. `Caret`'s unit is the empty range, so a click needs no special case:
+        // it is a drag of length nought through the same arithmetic.
+        let from = self.unit(anchor, granularity);
+        let to = self.unit(head, granularity);
+        let (anchor, head) = if head >= anchor {
+            (from.start.min(to.start), to.end.max(from.end))
+        } else {
+            (from.end.max(to.end), to.start.min(from.start))
+        };
+        self.buffer.set_selection(anchor, head);
         self.after_navigation();
     }
 
-    /// Selects a byte range. A drag, or a double-click's word.
-    pub fn set_selection(&mut self, anchor: usize, head: usize) {
-        self.buffer.set_selection(anchor, head);
-        self.after_navigation();
+    /// What a `granularity` gesture at `offset` selects a whole one of.
+    ///
+    /// ⚠️ **A word is the SHELL's word, not UAX #29's**, and that is the one place this prompt
+    /// should beat a general-purpose text field. On a command line the thing the user pointed at is
+    /// the argument: `--oneline` is a flag and not `--` plus `oneline`, `~/src/main.rs` is a path
+    /// and not five segments, and `"two words"` is one quoted argument. The lex that colours those
+    /// runs already knows where each one starts and ends, so a double-click asks IT — no second
+    /// definition of a word, and no "word characters" preference of the kind `Terminal.app` makes
+    /// people configure.
+    ///
+    /// [`buffer::Granularity::unit`] answers for every offset the lex has no word at: whitespace,
+    /// an operator, and prose under [`crate::inputbox::InputAffordance::TuiCompose`], where UAX #29
+    /// is the right rule because there is no shell syntax to respect.
+    fn unit(&self, offset: usize, granularity: Granularity) -> Range<usize> {
+        if let Some(word) = self
+            .lexed
+            .words
+            .iter()
+            .find(|word| granularity == Granularity::Word && word.start <= offset && offset < word.end)
+        {
+            return word.range();
+        }
+        granularity.unit(self.buffer.text(), offset)
     }
 
     /// Selects everything.
@@ -654,6 +702,22 @@ impl CommandEditor {
         };
     }
 
+    /// Highlights the candidate at `index` — a click on a row. `false` when there is no such row.
+    ///
+    /// One method for both panels, with no fork on whether a ⌃R session is up, because there is one
+    /// list: [`CommandEditor::research`] writes `self.completion` while a search is open exactly as
+    /// [`CommandEditor::complete`] writes it while one is not, and `self.selected` indexes
+    /// whichever wrote it. What differs is only what ACCEPTING does, which is already two doors
+    /// ([`CommandEditor::accept_completion`] and [`CommandEditor::reverse_search_accept`]) chosen
+    /// by the same `searching` flag the state record already carries to the view.
+    pub const fn select_candidate(&mut self, index: usize) -> bool {
+        if index >= self.completion.len() {
+            return false;
+        }
+        self.selected = index;
+        true
+    }
+
     /// Applies the highlighted candidate over the range it declared. `false` with no candidates.
     pub fn accept_completion(&mut self) -> bool {
         let Some(chosen) = self
@@ -813,7 +877,7 @@ mod tests {
 
     use super::{CommandEditor, Submission};
     use crate::prompt::buffer::Direction::{Backward, Forward};
-    use crate::prompt::buffer::Motion;
+    use crate::prompt::buffer::{Granularity, Motion};
     use crate::prompt::complete::{CandidateProvider, PathEntry, PathProvider};
     use crate::prompt::syntax::{TokenKind, Unterminated};
 
@@ -977,7 +1041,7 @@ mod tests {
         assert!(editor.redo());
         assert_eq!(editor.text(), "hello");
 
-        editor.set_cursor(0);
+        editor.pointer_select(0, 0, Granularity::Caret);
         editor.insert_text("X");
         assert!(editor.undo());
         assert_eq!(editor.text(), "hello", "only the second burst went");
@@ -1298,7 +1362,7 @@ mod tests {
     #[test]
     fn selection_survives_a_copy_and_is_consumed_by_a_cut() {
         let mut editor = typed("hello world");
-        editor.set_selection(6, 11);
+        editor.pointer_select(6, 11, Granularity::Caret);
         assert_eq!(editor.copy().as_deref(), Some("world"));
         assert_eq!(editor.text(), "hello world", "copy changes nothing");
         assert_eq!(editor.cut().as_deref(), Some("world"));
@@ -1312,7 +1376,7 @@ mod tests {
     #[test]
     fn typing_over_a_selection_replaces_it_in_one_step() {
         let mut editor = typed("hello world");
-        editor.set_selection(0, 5);
+        editor.pointer_select(0, 5, Granularity::Caret);
         editor.insert_text("bye");
         assert_eq!(editor.text(), "bye world");
         assert!(editor.undo());
@@ -1343,6 +1407,123 @@ mod tests {
         assert_eq!(editor.lexed().words.len(), 2);
         assert!(editor.undo());
         assert_eq!(editor.text(), "echo ");
+    }
+
+    #[test]
+    fn a_double_click_takes_the_shell_word_and_not_the_unicode_segment() {
+        // ⌥→ from `--` crosses it in one press and UAX #29 splits it into two `-` segments. The lex
+        // says it is one flag, so a double-click takes the flag.
+        let mut editor = typed("git log --oneline");
+        editor.pointer_select(9, 9, Granularity::Word);
+        assert_eq!(editor.selection(), Some(8..17), "`--oneline` whole");
+
+        editor.pointer_select(5, 5, Granularity::Word);
+        assert_eq!(editor.selection(), Some(4..7), "and `log` is still just `log`");
+    }
+
+    #[test]
+    fn a_double_click_inside_a_quoted_argument_takes_the_argument() {
+        let mut editor = typed("echo \"two words\"");
+        editor.pointer_select(10, 10, Granularity::Word);
+        assert_eq!(
+            editor.selection(),
+            Some(5..16),
+            "the quotes are part of the argument the lexer found"
+        );
+    }
+
+    #[test]
+    fn a_double_click_off_any_word_falls_back_to_the_unicode_rule() {
+        let mut editor = typed("echo hi");
+        // The space between the two words is in neither of them.
+        editor.pointer_select(4, 4, Granularity::Word);
+        assert_eq!(editor.selection(), Some(4..5), "the whitespace run itself");
+    }
+
+    #[test]
+    fn a_triple_click_takes_the_logical_line_without_its_newline() {
+        let mut editor = CommandEditor::new();
+        editor.paste("first\nsecond\nthird");
+        editor.pointer_select(8, 8, Granularity::Line);
+        assert_eq!(editor.selection(), Some(6..12), "`second` alone");
+    }
+
+    #[test]
+    fn dragging_back_past_the_press_keeps_the_pressed_words_far_edge() {
+        let mut editor = typed("alpha beta gamma");
+        // Press in `beta`, drag left into `alpha`: both whole, caret leading on the left.
+        editor.pointer_select(8, 2, Granularity::Word);
+        assert_eq!(editor.selection(), Some(0..10), "`alpha beta`");
+        assert_eq!(editor.cursor(), 0, "the head led the drag");
+    }
+
+    #[test]
+    fn a_caret_gesture_is_a_drag_of_length_nought_through_the_same_door() {
+        let mut editor = typed("hello world");
+        editor.pointer_select(3, 3, Granularity::Caret);
+        assert_eq!(editor.selection(), None, "a click places the caret");
+        assert_eq!(editor.cursor(), 3);
+        editor.pointer_select(3, 8, Granularity::Caret);
+        assert_eq!(
+            editor.selection(),
+            Some(3..8),
+            "a drag selects exactly what it crossed"
+        );
+    }
+
+    #[test]
+    fn a_pointer_offset_inside_a_cluster_snaps_rather_than_splitting_it() {
+        let mut editor = CommandEditor::new();
+        editor.paste("ae\u{301}b");
+        editor.pointer_select(2, 2, Granularity::Caret);
+        assert_eq!(editor.cursor(), 1, "back to the cluster's start");
+        editor.pointer_select(0, 99, Granularity::Caret);
+        assert_eq!(editor.cursor(), editor.text().len(), "and past the end clamps");
+    }
+
+    #[test]
+    fn a_click_in_the_document_closes_an_open_search_and_hands_the_draft_back() {
+        let mut editor = CommandEditor::new();
+        editor.insert_text("echo hi");
+        editor.submit();
+        editor.insert_text("draft text");
+        editor.begin_reverse_search();
+        editor.reverse_search_type("echo");
+        assert!(editor.search().is_some(), "the panel is up");
+        assert!(!editor.candidates().is_empty(), "with a row in it");
+
+        editor.pointer_select(6, 6, Granularity::Caret);
+
+        assert!(
+            editor.search().is_none(),
+            "clicking the line closes the pager, as in fish"
+        );
+        assert!(editor.candidates().is_empty(), "and takes its rows with it");
+        assert_eq!(editor.text(), "draft text", "the draft is handed back untouched");
+        assert_eq!(editor.cursor(), 6, "and the caret is where the click landed");
+    }
+
+    #[test]
+    fn a_click_on_a_row_picks_it_without_dismissing_the_list_the_click_came_from() {
+        let mut editor = CommandEditor::new();
+        for command in ["cargo build", "cargo test"] {
+            editor.insert_text(command);
+            editor.submit();
+        }
+        editor.insert_text("cargo");
+        let rows = editor.complete(&[], 10);
+        assert!(rows >= 2, "two history entries share the prefix");
+
+        assert!(editor.select_candidate(1), "the second row is clickable");
+        assert_eq!(editor.selected_candidate(), 1);
+        assert_eq!(
+            editor.candidates().len(),
+            rows,
+            "and the list it came from is still up"
+        );
+
+        assert!(!editor.select_candidate(rows), "one past the end is not a row");
+        assert_eq!(editor.selected_candidate(), 1, "and a miss moves nothing");
     }
 
     #[test]

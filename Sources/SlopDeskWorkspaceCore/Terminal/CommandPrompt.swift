@@ -65,6 +65,42 @@ public enum PromptMotion: Sendable, Equatable {
     }
 }
 
+/// What a pointer gesture selects a whole one of.
+///
+/// Named by the UNIT rather than by the click count, because the two shells count differently — an
+/// `NSEvent.clickCount` on the Mac, a double-tap recogniser on the phone — and mapping a gesture to
+/// a unit is the shell's job. What a unit IS belongs to Rust, so a double-click and ⌥⇧→ cannot
+/// disagree about where a word ends.
+public enum PromptGranularity: Sendable, Equatable {
+    /// The exact offset — a single click, or the drag that follows it.
+    case caret
+    /// The word under the offset — a double-click. The SHELL's word: `--oneline` is one, and so is
+    /// a whole `"quoted argument"`.
+    case word
+    /// The whole logical line, without its newline — a triple-click.
+    case line
+
+    /// The `SLOPDESK_PROMPT_GRANULARITY_*` index the door reads.
+    var index: UInt8 {
+        switch self {
+        case .caret: UInt8(SLOPDESK_PROMPT_GRANULARITY_CARET)
+        case .word: UInt8(SLOPDESK_PROMPT_GRANULARITY_WORD)
+        case .line: UInt8(SLOPDESK_PROMPT_GRANULARITY_LINE)
+        }
+    }
+
+    /// The unit an AppKit `clickCount` names. Three and up all mean the line, the way every macOS
+    /// text view treats a quadruple-click.
+    public init(clickCount: Int) {
+        self =
+            switch clickCount {
+            case ..<2: .caret
+            case 2: .word
+            default: .line
+            }
+    }
+}
+
 /// A key named without a hardware position — characters plus the handful of keys a character cannot
 /// express.
 ///
@@ -693,15 +729,18 @@ public final class CommandPrompt {
         refresh()
     }
 
-    /// Puts the caret at a byte offset, collapsing any selection — the click.
-    public func setCursor(_ offset: Int) {
-        slopdesk_prompt_set_cursor(handle, offset)
-        refresh()
-    }
-
-    /// Sets both selection ends at once — the drag, and the only way to say which end is the head.
-    public func setSelection(anchor: Int, head: Int) {
-        slopdesk_prompt_set_selection(handle, anchor, head)
+    /// Places the caret or selects a run from a pointer gesture — click, drag, double-click and
+    /// triple-click, all one door.
+    ///
+    /// `anchor` is the byte the press landed on and `head` the byte under the pointer now, so a
+    /// click is the two equal. Each end is expanded to its own unit and the union taken, which is
+    /// what keeps the pressed word whole when a drag goes back past it.
+    ///
+    /// ⚠️ **This is the DOCUMENT's door and it cancels an open ⌃R session** — `fish`'s rule, since
+    /// the document under a search is the draft rather than the row being read. A click on a
+    /// candidate row is ``selectCandidate(_:)`` and must not come through here.
+    public func pointerSelect(anchor: Int, head: Int, granularity: PromptGranularity) {
+        slopdesk_prompt_pointer_select(handle, anchor, head, granularity.index)
         refresh()
     }
 
@@ -982,6 +1021,19 @@ public final class CommandPrompt {
     public func selectPreviousCandidate() {
         slopdesk_prompt_select_previous_candidate(handle)
         refresh()
+    }
+
+    /// Highlights the row at `index` — a click on the panel, whichever panel is up. `false` when
+    /// there is no such row, which is what a hit test against a list that has since shrunk lands on.
+    ///
+    /// It does not ACCEPT: the caller follows with ``acceptCompletion()`` or ``acceptSearch()`` by
+    /// the ``isSearching`` flag it already reads, because those two are different acts and
+    /// the click is the same one.
+    @discardableResult
+    public func selectCandidate(_ index: Int) -> Bool {
+        let picked = slopdesk_prompt_select_candidate(handle, index)
+        if picked { refresh() }
+        return picked
     }
 
     /// Applies the highlighted candidate. `false` with no candidates.

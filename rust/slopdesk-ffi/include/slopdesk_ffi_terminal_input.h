@@ -247,6 +247,14 @@ typedef struct SlopDeskPrompt SlopDeskPrompt;
 #define SLOPDESK_PROMPT_MOTION_DOC_START 8u
 #define SLOPDESK_PROMPT_MOTION_DOC_END 9u
 
+/* What a pointer gesture selects a whole one of, for _pointer_select. Named by the UNIT and not by
+ * the click count: AppKit hands over an NSEvent.clickCount and the phone sends a double-tap
+ * recogniser, so the gesture→unit mapping is the shell's and the unit itself is Rust's. An unknown
+ * value places a caret rather than dropping the gesture. */
+#define SLOPDESK_PROMPT_GRANULARITY_CARET 0u
+#define SLOPDESK_PROMPT_GRANULARITY_WORD 1u
+#define SLOPDESK_PROMPT_GRANULARITY_LINE 2u
+
 /* What to paint a run as. About ROLE rather than syntax class: `main.rs` and `--verbose` are both
  * bare words to the shell, and painting them differently is the point of a rich prompt. */
 #define SLOPDESK_PROMPT_TOKEN_COMMAND_NAME 0u
@@ -438,9 +446,20 @@ void   slopdesk_prompt_clear(SlopDeskPrompt *handle);
 /* The caret and the selection. _move collapses a selection, _extend grows one. */
 void   slopdesk_prompt_move(SlopDeskPrompt *handle, uint8_t motion);
 void   slopdesk_prompt_extend(SlopDeskPrompt *handle, uint8_t motion);
-void   slopdesk_prompt_set_cursor(SlopDeskPrompt *handle, size_t offset);
-void   slopdesk_prompt_set_selection(SlopDeskPrompt *handle, size_t anchor, size_t head);
 void   slopdesk_prompt_select_all(SlopDeskPrompt *handle);
+/* Every pointer gesture, through one door: `anchor` is where the press landed, `head` is where the
+ * pointer is now, so a click is the two equal. Each end is expanded to its own unit and the union
+ * taken, which is what keeps the pressed word whole when the drag goes back past it.
+ *
+ * ⚠️ A word is the SHELL's word and not UAX #29's: double-clicking `--oneline` takes the flag, and
+ * double-clicking inside `"two words"` takes the quoted argument. The lex that colours those runs
+ * decides, so there is no "word characters" preference to configure.
+ *
+ * ⚠️ This is the DOCUMENT's door and CANCELS an open ⌃R session — fish's rule, since the document
+ * under a search is the draft rather than the row being read. A click on a candidate ROW is
+ * _select_candidate below and must not come through here. */
+void   slopdesk_prompt_pointer_select(SlopDeskPrompt *handle, size_t anchor, size_t head,
+                                      uint8_t granularity);
 
 /* Copy and cut PARK the text and answer its byte length; _take_clipboard reads it under §4. Two
  * doors because the near side puts it on NSPasteboard, and a length of 0 means there was no
@@ -504,6 +523,11 @@ size_t slopdesk_prompt_candidate_positions(SlopDeskPrompt *handle, uint32_t *out
 
 void   slopdesk_prompt_select_next_candidate(SlopDeskPrompt *handle);
 void   slopdesk_prompt_select_previous_candidate(SlopDeskPrompt *handle);
+/* Highlights a row by index — a click on the panel, whichever panel it is. One door for both
+ * because there is one list: a ⌃R session's rows ARE the candidate list. It does not accept; the
+ * caller follows with _accept_completion or _search_accept by the `searching` flag it already
+ * reads. False when there is no such row, which is what a stale hit test lands on. */
+bool   slopdesk_prompt_select_candidate(SlopDeskPrompt *handle, size_t index);
 bool   slopdesk_prompt_accept_completion(SlopDeskPrompt *handle);
 void   slopdesk_prompt_dismiss_completion(SlopDeskPrompt *handle);
 

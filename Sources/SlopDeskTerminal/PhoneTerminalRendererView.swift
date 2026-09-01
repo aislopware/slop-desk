@@ -494,6 +494,10 @@ extension PhoneTerminalRendererView: @MainActor TerminalSurfaceHosting {
             prompt: model.commandPrompt,
             armed: { [weak self] in self?.model?.commandPromptArmed ?? false },
             composition: { [weak self] in self?.composition },
+            // The same REQUEST ``handleTap(_:)`` makes, for the same reason: claiming first responder
+            // from a gesture is the second mover the leaf's `setFocused(_:)` forbids.
+            focusPane: { [weak self] in self?.model?.onRequestFocus?() },
+            promptEdited: { [weak self] in self?.promptDidChange() },
         )
         band = made
         return made

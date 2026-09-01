@@ -1,3 +1,4 @@
+import CoreText
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskTerminal
@@ -199,7 +200,8 @@ final class TerminalPromptGhostTests: XCTestCase {
         let prompt = seeded("git com")
         XCTAssertGreaterThan(prompt.complete(), 0)
         XCTAssertNotNil(TerminalPromptBand.ghost(prompt))
-        prompt.setCursor(prompt.cursor - 1)
+        let back = prompt.cursor - 1
+        prompt.pointerSelect(anchor: back, head: back, granularity: .caret)
         XCTAssertTrue(prompt.candidates.isEmpty, "the engine dropped the list the caret invalidated")
         XCTAssertNil(TerminalPromptBand.ghost(prompt))
     }
@@ -216,5 +218,160 @@ final class TerminalPromptGhostTests: XCTestCase {
         prompt.addCommand(name: "git", subcommands: ["commit", "checkout"], flags: ["--amend"])
         prompt.insert(text)
         return prompt
+    }
+}
+
+/// Where a pointer landed — the inverse of the row walk `draw` lays out, and the arithmetic every
+/// click, drag, double-click and row pick goes through.
+///
+/// Pinning it with numbers rather than with a render is the point: the SAME two functions place the
+/// caret and read a click back, so a disagreement between them is a click that selects the row above
+/// the one under the pointer, and no screenshot says which of the two is wrong.
+@MainActor
+final class TerminalPromptHitTests: XCTestCase {
+    /// A byte offset survives the trip out to a pixel and back — the property the whole pointer path
+    /// rests on, since the caret is placed by the forward direction and clicked by the inverse.
+    ///
+    /// Vietnamese and an emoji rather than ASCII, because the conversion is the seam: a click that
+    /// went out through `utf16Offset` and came back through a byte count would land two columns off
+    /// per `ế`, and on the wrong half of a surrogate pair for the emoji.
+    func testAClickLandsOnTheByteTheCaretWasDrawnAt() {
+        let metrics = bandMetrics()
+        for text in ["git commit", "xin chào thế giới", "echo 🙂 ok"] {
+            let prompt = CommandPrompt()
+            prompt.insert(text)
+            for byte in text.utf8.indices.map({ text.utf8.distance(from: text.utf8.startIndex, to: $0) }) {
+                prompt.pointerSelect(anchor: byte, head: byte, granularity: .caret)
+                guard let origin = TerminalPromptBand.caretOrigin(
+                    prompt, metrics: metrics, from: TerminalPromptBand.inset.height,
+                ) else {
+                    XCTFail("every caret in a one-line document is on that line")
+                    continue
+                }
+                let point = CGPoint(x: origin.x, y: origin.y - metrics.ascent + 1)
+                // Against the caret the editor SETTLED on, not the byte asked for: a byte inside a
+                // cluster snaps back on the way in, so `à`'s continuation byte is the caret at `à`
+                // and a click on the drawn bar has to answer that one. Asserting the request instead
+                // would be asserting that the snap did not happen.
+                XCTAssertEqual(
+                    TerminalPromptBand.hit(prompt, metrics: metrics, at: point), .text(prompt.cursor),
+                    "byte \(byte) of `\(text)`",
+                )
+            }
+        }
+    }
+
+    /// A press inside the `❯ ` mark, or off the left edge entirely, is the line's start rather than a
+    /// negative offset — `CTLineGetStringIndexForPosition` answers `kCFNotFound` for the second.
+    func testTheLeadingMarkIsNotPartOfTheDocument() {
+        let metrics = bandMetrics()
+        let prompt = CommandPrompt()
+        prompt.insert("ls -la")
+        let y = TerminalPromptBand.inset.height + 1
+        XCTAssertEqual(TerminalPromptBand.hit(prompt, metrics: metrics, at: CGPoint(x: 0, y: y)), .text(0))
+        XCTAssertEqual(
+            TerminalPromptBand.hit(prompt, metrics: metrics, at: CGPoint(x: -400, y: y)), .text(0),
+        )
+    }
+
+    /// The row walk is `draw`'s: document rows first, then the accessory, and a point above the band
+    /// clamps into the first row rather than answering nothing.
+    ///
+    /// The clamp is what a DRAG needs — the pointer leaves the band's top on any upward selection —
+    /// and it is why ``TerminalPromptBand/byteOffset(_:metrics:at:)`` is total over the whole plane.
+    func testTheRowWalkMatchesTheDrawingOrder() {
+        let metrics = bandMetrics()
+        let prompt = CommandPrompt()
+        prompt.insert("one")
+        prompt.insertNewline()
+        prompt.insert("two")
+        XCTAssertEqual(TerminalPromptBand.documentRows(prompt), 2)
+
+        let top = TerminalPromptBand.inset.height
+        XCTAssertEqual(
+            TerminalPromptBand.hit(prompt, metrics: metrics, at: CGPoint(x: 0, y: top - 99)), .text(0),
+            "above the band is still the first row",
+        )
+        XCTAssertEqual(
+            TerminalPromptBand.hit(prompt, metrics: metrics, at: CGPoint(x: 0, y: top + 1)), .text(0),
+        )
+        XCTAssertEqual(
+            TerminalPromptBand.hit(prompt, metrics: metrics, at: CGPoint(x: 0, y: top + metrics.lineHeight + 1)),
+            .text(4),
+            "the second logical line starts past the newline",
+        )
+    }
+
+    /// A ⌃R session spends its first accessory row on the query, so every candidate row is one lower
+    /// than it would be under a completion list. Getting that off by one picks the row above the one
+    /// the user pointed at.
+    func testTheSearchQueryRowIsNotACandidate() {
+        let metrics = bandMetrics()
+        let prompt = CommandPrompt()
+        for command in ["cargo test", "cargo build"] { prompt.recordHistory(command) }
+        prompt.beginSearch()
+        prompt.searchType("cargo")
+        XCTAssertEqual(prompt.candidates.count, 2)
+
+        // One document row, then the query row, then the two matches.
+        let row = { (index: Int) in
+            CGPoint(x: 20, y: TerminalPromptBand.inset.height + CGFloat(index) * metrics.lineHeight + 1)
+        }
+        XCTAssertEqual(TerminalPromptBand.hit(prompt, metrics: metrics, at: row(1)), .inert, "the query")
+        XCTAssertEqual(TerminalPromptBand.hit(prompt, metrics: metrics, at: row(2)), .candidate(0))
+        XCTAssertEqual(TerminalPromptBand.hit(prompt, metrics: metrics, at: row(3)), .candidate(1))
+        XCTAssertEqual(TerminalPromptBand.hit(prompt, metrics: metrics, at: row(4)), .inert, "past the list")
+    }
+
+    /// Without a search the panel starts at the accessory's first row, and the "unclosed" hint that
+    /// occupies the same row is never a candidate.
+    func testACompletionPanelStartsAtTheFirstAccessoryRow() {
+        let metrics = bandMetrics()
+        let prompt = seeded("git com")
+        XCTAssertGreaterThan(prompt.complete(), 0)
+        let row = { (index: Int) in
+            CGPoint(x: 20, y: TerminalPromptBand.inset.height + CGFloat(index) * metrics.lineHeight + 1)
+        }
+        XCTAssertEqual(TerminalPromptBand.hit(prompt, metrics: metrics, at: row(1)), .candidate(0))
+
+        let open = CommandPrompt()
+        open.insert("echo \"unclosed")
+        XCTAssertEqual(TerminalPromptBand.accessoryRows(open), 1, "the hint takes a row")
+        XCTAssertEqual(
+            TerminalPromptBand.hit(open, metrics: metrics, at: row(1)), .inert,
+            "which is a label and not a row to pick",
+        )
+    }
+
+    /// The UTF-16→UTF-8 direction, on its own: the inverse of `utf16Offset` at every boundary, with a
+    /// unit inside a surrogate pair rounding back to the pair's start rather than splitting a scalar.
+    func testUtf8OffsetInvertsUtf16Offset() {
+        for text in ["git commit", "Tiếng Việt", "a🙂b"] {
+            for byte in 0...text.utf8.count where String.Index(
+                text.utf8.index(text.utf8.startIndex, offsetBy: byte), within: text,
+            ) != nil {
+                let unit = TerminalPromptBand.utf16Offset(text, utf8: byte)
+                XCTAssertEqual(TerminalPromptBand.utf8Offset(text, utf16: unit), byte, "`\(text)` at \(byte)")
+            }
+        }
+        XCTAssertEqual(TerminalPromptBand.utf8Offset("a🙂b", utf16: 2), 1, "inside the pair, rounded back")
+        XCTAssertEqual(TerminalPromptBand.utf8Offset("a🙂b", utf16: 99), 6, "past the end clamps")
+    }
+
+    /// A prompt holding `text`, with one command seeded so completion is deterministic and needs no
+    /// filesystem.
+    private func seeded(_ text: String) -> CommandPrompt {
+        let prompt = CommandPrompt()
+        prompt.addCommand(name: "git", subcommands: ["commit", "checkout"], flags: ["--amend"])
+        prompt.insert(text)
+        return prompt
+    }
+
+    /// Metrics with round numbers, so a row test says which row it means instead of depending on
+    /// whatever face this machine resolved.
+    private func bandMetrics() -> TerminalPromptBand.Metrics {
+        let font = CTFontCreateUIFontForLanguage(.userFixedPitch, 12, nil)
+            ?? CTFontCreateWithName("Menlo" as CFString, 12, nil)
+        return TerminalPromptBand.Metrics(font: font, ascent: 10, lineHeight: 20)
     }
 }

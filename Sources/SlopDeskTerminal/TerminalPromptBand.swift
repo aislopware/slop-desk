@@ -177,6 +177,70 @@ enum TerminalPromptBand {
         )
     }
 
+    // MARK: - Hit testing
+
+    /// What sits under a point in the band.
+    enum Hit: Equatable {
+        /// The document, at this byte offset into it.
+        case text(Int)
+        /// A row of the candidate panel, by index into ``CommandPrompt/candidates``.
+        case candidate(Int)
+        /// A row that answers no gesture: the ⌃R query line, the "unclosed" hint, the padding.
+        case inert
+    }
+
+    /// What a press at `point` landed on, in the band's own coordinates.
+    ///
+    /// The inverse of ``draw(_:composition:metrics:in:into:)``'s row walk, and it has to stay that
+    /// way: the rows are laid out ONCE, from ``documentRows(_:)`` and ``accessoryRows(_:)``, so any
+    /// disagreement here is a click that picks the row above the one under the pointer.
+    ///
+    /// ⚠️ A press ABOVE the first row reads as the first row rather than as nothing, because a drag
+    /// that leaves the band's top must keep extending the selection instead of freezing — see
+    /// ``byteOffset(_:metrics:at:)``, which is total over the whole plane for that reason.
+    ///
+    /// ⚠️ **Callers refuse a gesture while an input method is composing.** A marked run lives at the
+    /// caret and is not in the document, so moving the caret out from under it would strand it; the
+    /// shell would have to reach into its own input context to commit, which is machinery a pointer
+    /// pass does not need. That is a RULE, not a gap.
+    static func hit(_ prompt: CommandPrompt, metrics: Metrics, at point: CGPoint) -> Hit {
+        let rows = documentRows(prompt)
+        let row = Int(floor((point.y - inset.height) / metrics.lineHeight))
+        guard row >= rows else { return .text(byteOffset(prompt, metrics: metrics, at: point)) }
+        // The accessory's rows in `drawAccessory`'s own order: a ⌃R session spends its first row on
+        // the query and puts the panel under it, and without one the panel starts at the top. The
+        // "unclosed" hint occupies the same row and is never a candidate, which the count below
+        // rejects on its own since that branch draws no candidates at all.
+        let accessory = row - rows
+        let candidate = prompt.isSearching ? accessory - 1 : accessory
+        guard candidate >= 0, candidate < min(prompt.candidates.count, candidateLimit) else { return .inert }
+        return .candidate(candidate)
+    }
+
+    /// The byte offset of the document position nearest `point`.
+    ///
+    /// Total over the whole plane — every point answers some offset — because this is what a DRAG
+    /// asks, and a drag runs wherever the pointer goes: off the top, off the bottom, past the right
+    /// edge of a short line, and out over the candidate panel. Clamping is the only answer that
+    /// keeps the selection growing under the pointer instead of sticking.
+    ///
+    /// The x measurement is `CTLineGetStringIndexForPosition` against the very `CTLine` that was
+    /// drawn, so a click cannot disagree with the caret about a kern or a ligature the way a
+    /// re-measurement would. A position inside the leading `❯ ` mark — or off the left edge, which
+    /// answers `kCFNotFound` — is the line's start rather than a negative offset.
+    static func byteOffset(_ prompt: CommandPrompt, metrics: Metrics, at point: CGPoint) -> Int {
+        let text = prompt.text
+        let lines = wrap(text)
+        // `wrap` always appends a final range, so `lines` is never empty and the clamp is total.
+        let index = min(max(Int(floor((point.y - inset.height) / metrics.lineHeight)), 0), lines.count - 1)
+        let line = lines[index]
+        let body = slice(text, line) ?? ""
+        let ct = ctLine(prompt, for: line, in: text, metrics: metrics, isFirst: index == 0)
+        let unit = CTLineGetStringIndexForPosition(ct, CGPoint(x: point.x - inset.width, y: 0))
+        guard unit >= markWidth else { return line.lowerBound }
+        return line.lowerBound + utf8Offset(body, utf16: min(Int(unit) - markWidth, body.utf16.count))
+    }
+
     // MARK: - Drawing
 
     /// The whole band, into a context whose y grows DOWNWARD — which both `NSView.isFlipped` and
@@ -606,6 +670,28 @@ enum TerminalPromptBand {
         guard byte > 0 else { return 0 }
         guard byte < bytes.count else { return text.utf16.count }
         return bytes.index(bytes.startIndex, offsetBy: byte).utf16Offset(in: text)
+    }
+
+    /// The UTF-8 offset one UTF-16 offset names — ``utf16Offset(_:utf8:)`` backwards, and what every
+    /// position Core Text reports has to come back through.
+    ///
+    /// A unit landing INSIDE a surrogate pair — which a click on the trailing half of an emoji
+    /// produces — rounds back to the pair's start rather than answering a byte offset that splits a
+    /// scalar. Rust snaps to a grapheme boundary again on arrival, so this only has to be a valid
+    /// character boundary, not a valid cluster one.
+    static func utf8Offset(_ text: String, utf16 unit: Int) -> Int {
+        guard unit > 0 else { return 0 }
+        let units = text.utf16
+        guard unit < units.count else { return text.utf8.count }
+        var at = unit
+        while at > 0 {
+            let position = units.index(units.startIndex, offsetBy: at)
+            if let index = String.Index(position, within: text) {
+                return text.utf8.distance(from: text.startIndex, to: index)
+            }
+            at -= 1
+        }
+        return 0
     }
 
     /// The x offset of one byte position inside a drawn DOCUMENT line, prompt mark included.

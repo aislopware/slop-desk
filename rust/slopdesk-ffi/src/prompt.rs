@@ -36,7 +36,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_terminal::prompt::buffer::{Direction, Motion};
+use slopdesk_terminal::prompt::buffer::{Direction, Granularity, Motion};
 use slopdesk_terminal::prompt::complete::{
     Candidate, CandidateKind, CandidateProvider, CommandProvider, CommandSpec, PathEntry, PathProvider,
     ShellGroup, ShellProvider, ShellSuggestion, VariableProvider,
@@ -71,6 +71,13 @@ pub const SLOPDESK_PROMPT_MOTION_LINE_DOWN: u8 = 7;
 pub const SLOPDESK_PROMPT_MOTION_DOC_START: u8 = 8;
 /// To the end of the whole document.
 pub const SLOPDESK_PROMPT_MOTION_DOC_END: u8 = 9;
+
+/// A pointer gesture that selects the exact offset — a single click, or the drag after it.
+pub const SLOPDESK_PROMPT_GRANULARITY_CARET: u8 = 0;
+/// A pointer gesture that selects whole words — a double-click.
+pub const SLOPDESK_PROMPT_GRANULARITY_WORD: u8 = 1;
+/// A pointer gesture that selects whole logical lines — a triple-click.
+pub const SLOPDESK_PROMPT_GRANULARITY_LINE: u8 = 2;
 
 /// The first word of a command.
 pub const SLOPDESK_PROMPT_TOKEN_COMMAND_NAME: u32 = 0;
@@ -694,6 +701,19 @@ const fn motion_of(index: u8) -> Motion {
     }
 }
 
+/// The [`Granularity`] a wire byte names, falling to [`Granularity::Caret`] for anything else.
+///
+/// Same total rule as [`motion_of`]: an unknown value places a caret rather than dropping the
+/// gesture, so a newer shell sending a granularity this build has not heard of still moves the
+/// caret to where the user pointed.
+const fn granularity_of(index: u8) -> Granularity {
+    match index {
+        SLOPDESK_PROMPT_GRANULARITY_WORD => Granularity::Word,
+        SLOPDESK_PROMPT_GRANULARITY_LINE => Granularity::Line,
+        _ => Granularity::Caret,
+    }
+}
+
 /// Turns a caller's handle pointer into a reference for the duration of one call.
 ///
 /// # Safety
@@ -1056,7 +1076,17 @@ pub unsafe extern "C" fn slopdesk_prompt_extend(handle: *mut SlopDeskPrompt, mot
     }
 }
 
-/// Puts the caret at a byte offset, collapsing any selection — the click.
+/// Places the caret or selects a run from a pointer gesture — click, drag, double-click,
+/// triple-click, all one door.
+///
+/// `anchor` is where the press landed and `head` is where the pointer is NOW, so a click is the two
+/// equal. `granularity` is [`SLOPDESK_PROMPT_GRANULARITY_CARET`], `_WORD` or `_LINE`; anything else
+/// reads as `_CARET`, because a shell that grew a fourth gesture should place a caret rather than
+/// refuse the click.
+///
+/// ⚠️ **This is the DOCUMENT's door and cancels an open ⌃R session** — see
+/// [`slopdesk_terminal::prompt::CommandEditor::pointer_select`]. A click on a candidate ROW is
+/// [`slopdesk_prompt_select_candidate`] and must not come through here.
 ///
 /// # Safety
 /// `handle` must satisfy [`held`]'s obligation.
@@ -1065,31 +1095,37 @@ pub unsafe extern "C" fn slopdesk_prompt_extend(handle: *mut SlopDeskPrompt, mot
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_prompt_set_cursor(handle: *mut SlopDeskPrompt, offset: usize) {
-    // SAFETY: the caller's obligation, as above.
-    if let Some(state) = unsafe { held(handle) } {
-        state.editor.set_cursor(offset);
-    }
-}
-
-/// Sets both selection ends at once — the drag, and the only way to say which end is the head.
-///
-/// # Safety
-/// `handle` must satisfy [`held`]'s obligation.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_prompt_set_selection(
+pub unsafe extern "C" fn slopdesk_prompt_pointer_select(
     handle: *mut SlopDeskPrompt,
     anchor: usize,
     head: usize,
+    granularity: u8,
 ) {
     // SAFETY: the caller's obligation, as above.
     if let Some(state) = unsafe { held(handle) } {
-        state.editor.set_selection(anchor, head);
+        state
+            .editor
+            .pointer_select(anchor, head, granularity_of(granularity));
     }
+}
+
+/// Highlights the candidate at `index` — a click on a row of either panel. `false` when there is no
+/// such row, which is what a stale hit test lands on.
+///
+/// It does NOT accept: the caller follows with [`slopdesk_prompt_accept_completion`] or
+/// [`slopdesk_prompt_search_accept`] by the `searching` flag it already reads, because those two
+/// are different acts and the row click is the same one.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_select_candidate(handle: *mut SlopDeskPrompt, index: usize) -> bool {
+    // SAFETY: the caller's obligation, as above.
+    unsafe { held(handle) }.is_some_and(|state| state.editor.select_candidate(index))
 }
 
 /// Selects the whole document.
