@@ -70,6 +70,10 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// Whether the replay's leftovers have been thrown away yet — see ``bind(to:)``.
     private var hasDiscardedReplay = false
 
+    /// The pending scrollback-compression step, or `nil` when none is armed — see
+    /// ``scheduleCompression(after:)``.
+    private var compression: Task<Void, Never>?
+
     /// Opens a surface, or answers `nil` when this machine cannot draw one.
     ///
     /// The refusal is latched by ``TerminalRendererSurface`` rather than retried: a machine with no
@@ -146,6 +150,10 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     func close() {
         if surface != nil { model?.detachSurface(self) }
         onWrite = nil
+        // Before the handle goes: a step that woke after the close would call a freed surface, and
+        // the `surface` guard inside it is only half the answer — the task also holds the pane.
+        compression?.cancel()
+        compression = nil
         surface?.close()
         surface = nil
     }
@@ -155,6 +163,7 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     func feed(_ bytes: Data) {
         surface?.feed(bytes)
         drain()
+        armCompression()
         onNeedsPresent?()
     }
 
@@ -169,7 +178,39 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
             surface.feed(chunk)
         }
         drain()
+        armCompression()
         onNeedsPresent?()
+    }
+
+    // MARK: - Idle scrollback compression
+
+    /// Arms one compression pass, unless one is already pending.
+    ///
+    /// ⚠️ **Armed once per QUIET period, not once per feed.** A flood re-entering this every chunk
+    /// would rebuild the timer thousands of times a second and never let it fire; leaving the
+    /// pending one alone costs one engine call every quarter second, which then finds the scrollback
+    /// still moving and postpones itself. Deciding that on this side would need a copy of the
+    /// engine's activity token, and there is exactly one — see `slopdesk_vterm::compression`.
+    private func armCompression() {
+        guard compression == nil else { return }
+        scheduleCompression(after: TerminalRendererSurface.compressionIdleDelay)
+    }
+
+    /// Sleeps `delay`, takes one bounded compression step, and re-arms at whatever it asked for.
+    ///
+    /// The whole policy lives on the Rust side: this holds a delay it was given and a task it can
+    /// cancel. A `nil` step means the pass is finished, so nothing is re-armed and the next feed is
+    /// what starts the next one.
+    private func scheduleCompression(after delay: Duration) {
+        compression?.cancel()
+        compression = Task { [weak self] in
+            // Weak across the sleep — a parked compression timer must not extend a closed pane.
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            compression = nil
+            guard let next = surface?.compressStep() else { return }
+            scheduleCompression(after: next)
+        }
     }
 
     func setSize(cols: UInt16, rows: UInt16) {

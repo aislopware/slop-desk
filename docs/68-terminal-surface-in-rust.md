@@ -779,6 +779,28 @@ the same reason — the engine's default assumes an embedder that draws. Unlike 
 that is OWED work: it returns when the bindings expose the glossary and the renderer can rasterize a
 transmitted outline. `docs/DECISIONS.md` carries the argument.
 
+### 5.8 Scrollback: the depth the settings promise, and what makes it affordable (2026-09-01)
+
+`slopdesk_term_surface_set_scrollback` takes LINES because that is what a user states, and the door
+was added to replace a 256-byte-per-line estimate into ghostty's byte-only `scrollback-limit`. It was
+still not what a user got. The engine keeps TWO caps — bytes and lines — and prunes at whichever is
+reached first, and its byte cap ships at 10 000 bytes, which is one page. MEASURED at 80 columns with
+the shipped factory default of 10 000 lines: **1065 rows kept**, against **9930** once the byte cap
+is cleared. `VtSession::set_scrollback_rows` clears it, and dropped the `Option` that let a caller
+ask for the engine's default rather than state a depth. Two tests pin it — the ratio, and the
+structural fact that no byte cap is left underneath — because a bindings bump is exactly the event
+that would restore the default without anything failing.
+
+Deeper history is what makes ghostty's **idle scrollback compression** worth taking, so it landed in
+the same pass. The engine compresses fully historical pages and restores them transparently on the
+next read; ghostty's own configuration puts text-heavy history at 10–30% of its uncompressed page
+memory. `slopdesk_vterm::compression` holds ghostty's two intervals (250 ms of quiet before a pass,
+1 ms between the bounded steps of one already running) and the engine's activity token;
+`VtSession::compress_step` answers the caller a delay in milliseconds. `TerminalSurfaceDriver` owns
+one cancellable task, arms it after a feed only when nothing is armed, and re-arms at whatever came
+back — no interval and no policy on the Swift side. ⚠️ A display-link tick was the tempting carrier
+and is wrong: it stops when the view leaves the window, which is exactly the pane worth compressing.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`

@@ -55,6 +55,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod compression;
 pub mod events;
 pub mod find;
 pub mod frame;
@@ -67,6 +68,7 @@ pub mod search;
 pub mod selection;
 pub mod session;
 
+pub use compression::CompressionStep;
 pub use events::{ClipboardTarget, ClipboardWrite};
 pub use frame::{
     CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameColors, FrameCursor, FrameDirty, FrameRow,

@@ -2949,8 +2949,24 @@ void slopdesk_term_surface_set_option_as_alt(SlopDeskTerminalSurface *handle, ui
  *
  * Rows and not bytes, which is the whole reason this door replaced a config string: the engine's own
  * limit is a row count, so a user asking for 10 000 lines now gets 10 000 rather than whatever a
- * 256-byte-per-line estimate happened to buy them. */
+ * 256-byte-per-line estimate happened to buy them. The engine's SECOND cap, on bytes, is cleared
+ * here — left standing it pruned a 10 000-line request down to 1065 rows. */
 void slopdesk_term_surface_set_scrollback(SlopDeskTerminalSurface *handle, int64_t lines);
+
+/* The quiet a scrollback must hold before a compression pass is worth starting, in milliseconds.
+ *
+ * Here so the caller's timer carries no number of its own: this is what it arms after a feed, and
+ * every delay after that is what `slopdesk_term_surface_compress_step` answered. */
+int64_t slopdesk_term_surface_compression_idle_ms(void);
+
+/* Compresses a bounded slice of the retained scrollback; answers the milliseconds until the next
+ * call, or a negative when there is nothing left to do.
+ *
+ * The caller owns one one-shot timer and no policy: arm it 250 ms after a feed, call this when it
+ * fires, re-arm at whatever came back, stop on a negative. A compressed page decompresses the
+ * moment anything reads it, so nothing else on this side changes. Same thread as every other door
+ * on the handle — the engine requires compression to be serialized with reads and writes. */
+int64_t slopdesk_term_surface_compress_step(SlopDeskTerminalSurface *handle);
 
 /* The caret shape until a program asks for another: 0 block, 1 bar, 2 underline, 3 hollow block.
  * Anything else restores the engine's default.

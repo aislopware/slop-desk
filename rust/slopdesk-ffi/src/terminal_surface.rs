@@ -1506,6 +1506,10 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_option_as_alt(
 /// asking for 10 000 lines got somewhere between 5 000 and 40 000 depending on how wide their
 /// output happened to be.
 ///
+/// ⚠️ Saying so was not enough to make it true — the engine's SECOND cap, on bytes, was still
+/// pruning underneath this one and a 10 000-line request kept 1065 rows. `set_scrollback_rows`
+/// clears it; the numbers are in its doc.
+///
 /// # Safety
 /// [`held`]'s.
 #[unsafe(no_mangle)]
@@ -1523,7 +1527,58 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_scrollback(
     };
     // `try_from` fails only for a negative, which is the same request as zero: keep nothing.
     let rows = usize::try_from(lines).unwrap_or(0);
-    let _ = surface.session.set_scrollback_rows(Some(rows));
+    let _ = surface.session.set_scrollback_rows(rows);
+}
+
+/// The quiet a scrollback must hold before a compression pass is worth starting, in milliseconds.
+///
+/// Here so that the caller's timer carries no number of its own: this is the delay it arms after a
+/// feed, and every delay after that is what [`slopdesk_term_surface_compress_step`] answered.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_term_surface_compression_idle_ms() -> i64 {
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "a quarter second in milliseconds is a small positive constant"
+    )]
+    {
+        slopdesk_vterm::compression::IDLE_INTERVAL_MS as i64
+    }
+}
+
+/// Compresses a bounded slice of the retained scrollback and answers the milliseconds to wait
+/// before calling again, or a negative when there is nothing left to do.
+///
+/// ⚠️ **The delay is Rust's answer, not the caller's policy.** The caller owns a one-shot timer and
+/// nothing else: arm it 250 ms after a feed, call this when it fires, re-arm at whatever this
+/// returns, stop when it goes negative. Both intervals are ghostty's, and they live beside the code
+/// that knows what a step costs — see `slopdesk_vterm::compression`.
+///
+/// Cheap to call too often and wrong to call from another thread: a step that finds the scrollback
+/// still moving does no work, but the engine requires compression to be serialized with every other
+/// use of the terminal, which on this side means the same thread every other door is called from.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_compress_step(handle: *mut SlopDeskTerminalSurface) -> i64 {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return -1;
+    };
+    surface
+        .session
+        .compress_step()
+        .delay_ms()
+        .and_then(|ms| i64::try_from(ms).ok())
+        .unwrap_or(-1)
 }
 
 /// The shape the caret wears until a program asks for another: `0` block, `1` bar, `2` underline,

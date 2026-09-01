@@ -293,6 +293,25 @@ final class TerminalRendererSurface {
         slopdesk_term_surface_set_scrollback(handle, Int64(clamping: lines))
     }
 
+    /// The quiet a scrollback must hold before compressing it is worth starting.
+    ///
+    /// Read from the engine side rather than written here, so this file holds no number the Rust
+    /// half would have to be kept in step with.
+    static var compressionIdleDelay: Duration {
+        .milliseconds(slopdesk_term_surface_compression_idle_ms())
+    }
+
+    /// Compresses a bounded slice of the retained scrollback; answers how long to wait before the
+    /// next call, or `nil` when there is nothing left to do.
+    ///
+    /// The delay is the ENGINE side's answer rather than this side's policy — see
+    /// ``TerminalSurfaceDriver/scheduleCompression()``, which owns the one timer and no numbers.
+    func compressStep() -> Duration? {
+        guard let handle else { return nil }
+        let ms = slopdesk_term_surface_compress_step(handle)
+        return ms < 0 ? nil : .milliseconds(ms)
+    }
+
     /// The caret's shape until a program asks for another one.
     ///
     /// A DEFAULT, which is the whole reason a user is allowed to set it: `DECSCUSR` from a running

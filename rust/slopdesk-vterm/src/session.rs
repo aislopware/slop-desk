@@ -39,7 +39,9 @@ use libghostty_vt::kitty::graphics::PlacementIterator;
 use libghostty_vt::render::{CellIterator, Dirty, RenderState, RowIterator};
 use libghostty_vt::screen::{CellContentTag, CellWide};
 use libghostty_vt::style::{Style, StyleColor};
-use libghostty_vt::terminal::{ClipboardLocation, CursorStyle, Mode, ScrollViewport, Terminal};
+use libghostty_vt::terminal::{
+    ClipboardLocation, CompressionActivity, CursorStyle, Mode, ScrollViewport, Terminal,
+};
 
 use crate::events::{self, ClipboardTarget, ClipboardWrite, EventSink};
 use crate::frame::{
@@ -200,6 +202,10 @@ pub struct VtSession {
     pub(crate) trim_selection: bool,
     /// The surface's focus and the mode that asks to hear about it. See [`FocusState`].
     focus: FocusState,
+    /// The engine's compression-activity token as of the last step. `pub(crate)` for
+    /// [`crate::compression`] alone, which is the only thing that may compare or move it — a second
+    /// reader would decide "the scrollback moved" from a token this one had already consumed.
+    pub(crate) compression_activity: Option<CompressionActivity>,
     /// The kitty-graphics placement iterator, reused across frames.
     ///
     /// `pub(crate)` for [`crate::graphics`] alone, which needs it mutably while the terminal beside
@@ -291,6 +297,7 @@ impl VtSession {
             events,
             trim_selection: true,
             focus: FocusState::default(),
+            compression_activity: None,
             placements: PlacementIterator::new()?,
         };
         // Two facts about images, stated at construction because both are refusals: the two file
@@ -814,12 +821,22 @@ impl VtSession {
         Ok(self.terminal.scrollback_rows()?)
     }
 
-    /// Caps the scrollback, in rows. `None` restores the engine's default.
+    /// Caps the scrollback at `rows` rows. Zero keeps no history at all.
+    ///
+    /// ⚠️ **The BYTE limit is cleared here, and without that this door is a lie.** The engine
+    /// carries two independent caps — bytes and lines — and prunes at whichever is reached first.
+    /// Its byte cap ships at 10 000, so a session that set lines alone kept one page of history
+    /// however many lines it asked for: MEASURED, at 80 columns, 10 000 lines requested and
+    /// **1065** kept, against **9930** once the byte cap is gone. Lines are what this crate's
+    /// caller states and lines are therefore what bounds the memory; a byte cap underneath them
+    /// can only take history the user was promised. Clearing it costs nothing at the parser — a
+    /// 20 000-line feed measured 11.2 s either way, to three digits.
     ///
     /// # Errors
     /// The engine's own error.
-    pub fn set_scrollback_rows(&mut self, rows: Option<usize>) -> Result<()> {
-        self.terminal.set_scrollback_max_lines(rows)?;
+    pub fn set_scrollback_rows(&mut self, rows: usize) -> Result<()> {
+        self.terminal.set_scrollback_max_lines(Some(rows))?;
+        self.terminal.set_scrollback_max_bytes(None)?;
         Ok(())
     }
 
@@ -1788,5 +1805,46 @@ mod tests {
         session.feed(b"b");
         session.render().unwrap();
         assert!(session.frame().revision > first);
+    }
+
+    /// The number the user configures is a promise, and the engine's byte cap used to break it —
+    /// see [`VtSession::set_scrollback_rows`].
+    ///
+    /// The shipped depth, because that is the number the measurement was taken at: 10 000 lines
+    /// kept 1065 rows with the byte cap standing. Short rows and one feed keep it cheap — the
+    /// engine costs by the byte, and what this asks about is rows.
+    #[test]
+    fn the_configured_depth_is_the_depth_the_session_keeps() {
+        use std::fmt::Write as _;
+
+        // 80 columns on purpose, NOT the shared helper's 20: the byte cap buys a fixed number of
+        // BYTES, so the rows it affords scale with how narrow the grid is. At 20 columns one page
+        // holds more rows than this assertion asks for and the bug would slip through green.
+        let mut session = VtSession::new(80, 24, 8, 16).unwrap();
+        session.set_scrollback_rows(10_000).unwrap();
+        let mut output = String::new();
+        for line in 0..20_000 {
+            let _ = writeln!(output, "{line}\r");
+        }
+        session.feed(output.as_bytes());
+        let kept = session.scrollback_rows().unwrap();
+        assert!(
+            kept > 5_000,
+            "asked for 10 000 lines and kept {kept}: a byte cap is pruning underneath the line one"
+        );
+    }
+
+    /// The structural half of the door, so a bindings bump that re-introduces a byte default cannot
+    /// pass by keeping the ROW count plausible.
+    #[test]
+    fn setting_a_depth_leaves_no_byte_cap_underneath_it() {
+        let mut session = session();
+        session.set_scrollback_rows(10_000).unwrap();
+        assert_eq!(session.terminal.scrollback_max_lines().unwrap(), Some(10_000));
+        assert_eq!(
+            session.terminal.scrollback_max_bytes().unwrap(),
+            None,
+            "a byte cap can only take back history the line cap promised"
+        );
     }
 }

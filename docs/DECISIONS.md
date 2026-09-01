@@ -18897,3 +18897,48 @@ user to click away and back. Answering that means being asked from inside a feed
 session holds the flag. ⚠️ One honest difference remains and is written at the function: our
 granularity is the FEED rather than the escape sequence, so a `1004l` and a `1004h` in the same
 write cancel instead of reporting. Closing it needs a mode-change push the C ABI does not have.
+
+**The survey's third pass found the shipped scrollback was a tenth of what the settings promised.**
+`slopdesk_term_surface_set_scrollback` takes LINES, and its own doc said why — the door exists
+because the path before it estimated 256 bytes per line to reach ghostty's byte-only
+`scrollback-limit`, so "10 000 lines" bought somewhere between 5 000 and 40 000. Saying lines was not
+enough to make lines true. The engine carries TWO caps, on bytes and on lines, and prunes at
+whichever is reached first; its byte cap ships at 10 000 bytes, which is one page. MEASURED, at 80
+columns with the shipped factory default of 10 000 lines: **1065 rows kept**, against **9930** with
+the byte cap cleared. Every user of this terminal has had roughly a thousand lines of history while
+the settings file said ten thousand, and nothing failed — the number was simply never checked against
+the engine that enforced it.
+
+`VtSession::set_scrollback_rows` now clears the byte cap whenever a line cap is set, and its
+signature lost the `Option` that let a caller ask for the engine's default instead of stating a
+depth. Lines bound the memory because lines are what the caller states; a byte cap underneath them
+can only take back history the user was promised. Clearing it costs nothing on the parser — a
+20 000-line feed measured 11.2 s in a debug build with the cap and 11.2 s without, to three digits —
+and `the_configured_depth_is_the_depth_the_session_keeps` pins the ratio so the next bindings bump
+cannot quietly restore it.
+
+**Deeper history is what makes ghostty's idle compression worth taking, so it arrived in the same
+pass.** The engine compresses fully historical pages — behind the viewport, drawn by nothing — and
+restores them transparently the instant a scan, a search or a scroll reads one; ghostty's own
+configuration puts text-heavy history at 10–30% of its uncompressed page memory. It is opt-in in the
+sense that somebody has to call it, and the caller is the one who knows whether the user is watching
+a `yes` flood or has walked away.
+
+The split is ghostty's and so are the numbers: `renderer/Thread.zig`'s `Compression` postpones a
+one-shot timer on every wake, 250 ms of quiet before a pass and 1 ms between the bounded steps of one
+already running. What is OURS is where the policy lives. `slopdesk_vterm::compression` holds both
+intervals and the engine's activity token, and `VtSession::compress_step` answers the caller with a
+delay in milliseconds — so `TerminalSurfaceDriver` owns one cancellable task, arms it after a feed
+only when nothing is armed, and re-arms at whatever came back until the answer is "nothing left".
+The Swift half carries no interval of its own, and the token comparison stays on the side that can
+tell "a historical page changed" apart from "a full-screen program repainted itself", which a feed
+count cannot.
+
+⚠️ **Not the display link, and that was the tempting shape.** A per-frame tick is already running and
+already costs nothing extra — but it stops when the view leaves the window, which is exactly the pane
+worth compressing: the background tab still taking output that nobody is looking at. A timer runs
+whether or not anyone is watching, which is the whole point.
+
+⚠️ Compression is HARDWIRED ON, with no setting. ghostty ships it on and recommends leaving it on;
+it changes storage and never contents, so there is no behaviour for a user to prefer — only a memory
+bill to pay or not pay. The setting-shaped knob here is the DEPTH, which already exists.
