@@ -340,6 +340,23 @@ pub struct FrameRow {
     pub wrapped: bool,
     /// Whether the row changed since the last frame the renderer drew.
     pub dirty: bool,
+    /// The kitty unicode-placeholder runs this row's cells spell out.
+    ///
+    /// Decoded during the fill rather than by a second pass, because the information is in the RAW
+    /// style colours and the grapheme's diacritics — neither of which survives into a
+    /// [`FrameCell`], whose foreground is already resolved to literal RGB and whose text is the
+    /// cluster the renderer draws. Reading them a second time would mean a second walk of the
+    /// whole viewport with the engine handle in hand.
+    ///
+    /// Cached PER ROW, which is what makes it correct under the dirty-row skip above: a row that is
+    /// clean keeps its cells, so it keeps the runs those cells spelled, and only a row that refills
+    /// re-decodes. Empty for every row of every session that has never seen an image, which is
+    /// almost all of them — the `Vec` allocates nothing until something is pushed.
+    ///
+    /// `pub` like every other field here, and for the same reason: a frame is plain data all the
+    /// way down. A run is meaningless without the placement it names, and [`crate::graphics`] is
+    /// where the two meet — but nothing downstream is stopped from looking.
+    pub placeholders: Vec<crate::placeholder::PlaceholderRun>,
 }
 
 impl FrameRow {
@@ -354,6 +371,7 @@ impl FrameRow {
         self.text.clear();
         self.cells.clear();
         self.selection = None;
+        self.placeholders.clear();
     }
 
     /// Appends one cell, interning its text into the row arena.

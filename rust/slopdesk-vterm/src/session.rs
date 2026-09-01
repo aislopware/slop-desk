@@ -160,13 +160,19 @@ pub struct VtSession {
     /// The find bar's needle, hits and cursor. `pub(crate)` for [`crate::find`] alone, for the
     /// reason `selecting` is: the current hit and the terminal's one selection must move together.
     pub(crate) find: crate::find::FindState,
-    frame: Frame,
+    /// `pub(crate)` for [`crate::graphics`] alone, which reads the placeholder runs this scan
+    /// decoded while the terminal beside it is borrowed — the kitty unicode-placeholder form puts a
+    /// virtual placement's POSITION in the cells, so the join happens there and the data is here.
+    pub(crate) frame: Frame,
     /// `pub(crate)` for [`crate::selection`]'s pixel→cell clamp, for the reason `terminal` is.
     pub(crate) cols: u16,
     /// `pub(crate)` for [`crate::selection`]'s pixel→cell clamp, for the reason `terminal` is.
     pub(crate) rows: u16,
-    cell_width_px: u32,
-    cell_height_px: u32,
+    /// `pub(crate)` for [`crate::graphics`], which needs the cell's device-pixel size to fit a
+    /// virtually placed image into the grid its placement declared.
+    pub(crate) cell_width_px: u32,
+    /// `pub(crate)` for [`crate::graphics`], for the reason above.
+    pub(crate) cell_height_px: u32,
     /// The surface's pixel geometry, as the last `set_surface_geometry` gave it.
     geometry: SurfaceGeometry,
     revision: u64,
@@ -207,6 +213,12 @@ struct CellScratch {
     scalars: Vec<char>,
     /// The same cluster as UTF-8, which is what a row arena stores.
     text: String,
+    /// The kitty placeholder run being accumulated across the current row's cells.
+    ///
+    /// Lives here rather than in the row loop because [`fill_cell`] is what sees a cell's raw style
+    /// and its diacritics, and a run spans cells. Reset by [`crate::placeholder::RunScan::finish`]
+    /// at the end of every row, so it never leaks a run into the next one.
+    run: crate::placeholder::RunScan,
 }
 
 impl fmt::Debug for VtSession {
@@ -867,6 +879,11 @@ impl VtSession {
                 fill_cell(cell, target, &frame.colors, selection, x, scratch)?;
                 x = x.saturating_add(1);
             }
+            // A run that reached the last cell of the row ends there — a placeholder run is one row
+            // by construction, so nothing carries over and the accumulator is empty again.
+            if let Some(run) = scratch.run.finish() {
+                target.placeholders.push(run);
+            }
             // The engine's per-row flag is cleared here rather than after the draw: the damage now
             // lives in `FrameRow::dirty`, which the renderer clears when it has actually drawn.
             row.set_dirty(false)?;
@@ -941,12 +958,38 @@ fn fill_cell(
     // the START of the string it is handed, so appending cell after cell into one row arena would
     // leave only the last cell's text. Reading scalars into a reused scratch costs one extra copy
     // of at most a handful of `char`s and cannot lose a cell.
+    // The cluster is read whenever the cell HAS one, and no longer only when it is also going to be
+    // drawn: a kitty placeholder must be decoded under SGR 8 as well, since it is a positioning
+    // mark rather than text and hiding an image is not what SGR 8 means. A spacer is the one
+    // exception and it is a real saving — every wide character has one, and a spacer can never
+    // carry a placeholder, which is narrow by definition.
     scratch.text.clear();
-    if raw.has_text()? && !style.invisible && !flags.hides_glyph() {
+    scratch.scalars.clear();
+    if raw.has_text()? && !flags.hides_glyph() {
         let len = cell.graphemes_len()?;
-        scratch.scalars.clear();
         scratch.scalars.resize(len, '\0');
         cell.graphemes_buf(&mut scratch.scalars)?;
+    }
+
+    // The kitty unicode-placeholder scan, fed the RAW style colours because that is where the
+    // protocol hides the image and placement ids — [`crate::placeholder`] says why. It runs before
+    // the text decision below and off the same scalars, so a viewport with no placeholder in it
+    // pays one comparison per cell and nothing else.
+    if let Some(run) = scratch
+        .run
+        .cell(x, &scratch.scalars, style.fg_color, style.underline_color)
+    {
+        target.placeholders.push(run);
+    }
+
+    // A placeholder cell draws NO glyph. `U+10EEEE` is private-use and no font has it, so a cell
+    // that kept its text would put a `.notdef` box in every cell of every virtually-placed image.
+    // ghostty substitutes a space in its shaper; writing nothing is the same picture with one fewer
+    // glyph. Unconditional — not gated on whether images are enabled — because the codepoint is a
+    // positioning mark either way, and a terminal with images off should show a blank row rather
+    // than a row of boxes.
+    let placeholder = scratch.scalars.first() == Some(&crate::placeholder::PLACEHOLDER);
+    if !placeholder && !style.invisible {
         scratch.text.extend(scratch.scalars.iter());
     }
 

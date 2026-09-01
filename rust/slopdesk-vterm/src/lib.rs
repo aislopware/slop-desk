@@ -21,6 +21,9 @@
 //!   for the same reason. Also the two refusals every terminal here makes about images: the file
 //!   and shared-memory transmission mediums are closed, because in this app the terminal is the
 //!   CLIENT and a path a remote program names would resolve on the user's own machine.
+//! - [`placeholder`] — kitty's unicode-placeholder form, where an image is positioned by CELLS
+//!   rather than by its placement. A decoded run rides on the row that spelled it; [`graphics`] is
+//!   where a run and the placement it names meet and become an [`ImagePlacement`].
 //! - [`input`] — a keystroke and a pointer gesture, encoded to the bytes the far side expects,
 //!   through the engine's own encoders so the kitty protocol and mouse formats are not re-derived.
 //! - [`keycode`] — the one table between an `AppKit` `NSEvent.keyCode` and a key the engine names.
@@ -58,6 +61,7 @@ pub mod frame;
 pub mod graphics;
 pub mod input;
 pub mod keycode;
+pub mod placeholder;
 pub mod screen;
 pub mod search;
 pub mod selection;
@@ -71,6 +75,7 @@ pub use frame::{
 pub use graphics::{ImageMeta, ImagePixels, ImagePlacement};
 pub use input::{Key, KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt};
 pub use keycode::key_from_macos_keycode;
+pub use placeholder::PlaceholderRun;
 pub use screen::{LogicalLineText, ScreenMatch, SelectionAdjust, ViewportInfo};
 pub use search::{Match, Matcher, SearchQuery, search_rows};
 pub use selection::{Autoscroll, ClickLadder, CopyFormat, Granularity, SurfacePoint};

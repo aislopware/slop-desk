@@ -18794,3 +18794,58 @@ by the image's own edge and the placement would draw at full size in the wrong p
 at all. The clip therefore checks finiteness FIRST and explicitly. The test that pins it exists
 because the first version of that function claimed the intersections would reject a NaN, and they
 did not.
+
+## The core follows ghostty, the app layer takes the best of everyone (2026-09-01)
+
+The user's ruling, and it settles a class of question rather than one question: **for the terminal's
+CORE — parsing, grid semantics, protocol arithmetic, anywhere a specification is underdetermined —
+do what ghostty `main` does.** Not because copying is easier, but because the programs on the far end
+of the pty were tested against ghostty and kitty, and because ghostty's author has spent longer in
+this problem than this project will. Agreeing with the terminal the ecosystem calibrates against is
+worth more than any answer of our own, and "our answer is defensible" is not a reason to differ.
+
+**Above that line the rule inverts.** Blocks, the prompt band, layout, navigation — everything a user
+would call a feature — is ours to take from wherever it is best: Warp's blocks and editor-like input,
+kitty's protocols, rio, VS Code's terminal, `otty.sh`. The two halves meet at `slopdesk-vterm`'s
+boundary. The engine wrapper does not innovate; nothing above it is constrained by what ghostty
+happens to draw. A Warp-class surface over a ghostty-faithful core is the whole shape of the product,
+and neither half is allowed to leak into the other.
+
+**Sixel is STRUCK, and iTerm2's OSC 1337 with it.** Both were carried in
+`docs/ui-shell/current-state/terminal-features.md` as "**gap** — decoder only", which was an
+accounting error the moment the render half landed: the render half is not what is missing, and
+naming them gaps implied a debt. They are NON-GOALS. ghostty `main` supports neither, so by the rule
+above neither is ours to add. Sixel in particular is a 1987 palette-indexed bitmap with no alpha and
+no way to say where it belongs; every program that emits it emits kitty graphics when the terminal
+advertises them. Adding either would mean a decoder we alone maintain, a second path through the
+image store, and a second class of security question about payloads the far end chose — for pictures
+the kitty path already draws. Do not re-open.
+
+**What the rule bought immediately: kitty's VIRTUAL placements, ported rather than derived.** The
+`U=1` unicode-placeholder form is the one shape of the graphics protocol §5.7 had declined, on the
+grounds that the engine reports no viewport position for such a placement. That was true and was the
+wrong conclusion: the position is not missing, it is in the CELLS — the image id in each placeholder
+cell's foreground colour, the placement id in its underline colour, the fragment's row and column as
+combining diacritics on `U+10EEEE` itself. `libghostty-vt` exposes every one of those and no iterator
+over them, because walking cells is the embedder's job. So `rust/slopdesk-vterm/src/placeholder.rs`
+walks them, during the frame fill that already reads the raw style and the grapheme — a second pass
+would have needed the engine handle again — and caches each row's runs ON THE ROW, which is what
+makes it correct under the dirty-row skip: a clean row keeps its cells, so it keeps the runs those
+cells spelled.
+
+The aspect fit is `graphics_unicode.zig` at the pinned `22d13172`, function for function. The
+protocol says an image is "scaled to fit" its grid and says nothing further; whether the leftover is
+centred or flushed, and whether a fragment inside the blank band draws nothing or draws the nearest
+row of pixels, are the terminal's to decide. Deriving our own would put an off-by-a-pixel seam
+between adjacent fragments of one image — which is exactly what a tiled image is made of. The
+placeholder cell draws no glyph, unconditionally and not gated on whether images are enabled:
+`U+10EEEE` is private-use, no font has it, and a cell that kept its text would put a `.notdef` box in
+every cell of every virtually placed image.
+
+**The protocol's `X=`/`Y=` cell offsets were being dropped, and nothing would have shown it.** They
+are sub-cell nudges a program uses to line an image up with something drawn beside it, and the same
+two numbers carry the blank band an aspect fit leaves over. Ignoring them is invisible in any
+screenshot of a single image and wrong in every one of a tiled image, by a fraction of a row per
+tile. `ImagePlacement` carries them now and `place` adds them as separate terms — never folded into
+the multiply, per `CLAUDE.md`'s bit-exactness rule, because these land in the same vertex buffer as
+the layout's numbers.

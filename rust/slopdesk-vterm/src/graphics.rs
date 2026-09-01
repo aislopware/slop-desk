@@ -6,7 +6,13 @@
 //! the unicode-placeholder form — and keeps the result in a storage the terminal owns. What it
 //! never does is draw, because it "leaves pixel-pushing to the host application". So the storage is
 //! a set of questions, and this module is where they are asked and where the answers become
-//! something `slopdesk-termrender` can place without ever touching the engine. That is the same
+//! something `slopdesk-termrender` can place without ever touching the engine.
+//!
+//! One of those answers is not in the storage at all. A VIRTUAL placement — the `U=1`
+//! unicode-placeholder form — is positioned by the GRID rather than by itself, so the engine
+//! reports no position for one and [`crate::placeholder`] reads it out of the cells during the
+//! frame scan. [`VtSession::placements`] is where the two meet, and it is the only reason this
+//! module knows the frame exists. That is the same
 //! bargain [`crate::frame`] strikes for cells, and it is struck twice for the same reason:
 //! everything downstream reads plain data, and only this crate holds a handle.
 //!
@@ -28,7 +34,7 @@
 //!
 //! ## Why a placement is copied out rather than iterated in place
 //!
-//! An [`ImagePlacement`] is eleven integers. The alternative — handing the renderer a live
+//! An [`ImagePlacement`] is fifteen integers. The alternative — handing the renderer a live
 //! [`PlacementIteration`] — would put an engine handle in the paint pass, which is the one thing
 //! `lib.rs`'s "the engine never escapes" guarantee forbids, and it would make the borrow of the
 //! terminal outlive a frame that also wants to ask the engine other questions. Copying a screenful
@@ -145,6 +151,15 @@ pub struct ImagePlacement {
     pub source_width: u32,
     /// Source rectangle height in pixels.
     pub source_height: u32,
+    /// Pixels in from the left edge of the anchor cell before the image starts.
+    ///
+    /// The protocol's `X=`, and for a virtual placement the horizontal band the aspect fit left
+    /// over. Sub-cell, always: a program uses it to line an image up with something drawn beside
+    /// it, and dropping it slides the picture by up to a cell.
+    pub cell_offset_x: u32,
+    /// Pixels down from the top edge of the anchor row before the image starts. The protocol's
+    /// `Y=`.
+    pub cell_offset_y: u32,
 }
 
 /// The PNG decoder the engine calls when a transmission names `f=100`.
@@ -331,14 +346,7 @@ impl VtSession {
     /// One image's identity and age, without copying a pixel.
     #[must_use]
     pub fn image_meta(&self, id: u32) -> Option<ImageMeta> {
-        let graphics = self.graphics()?;
-        let image = graphics.image(id)?;
-        Some(ImageMeta {
-            id,
-            generation: image.generation().ok()?,
-            width: image.width().ok()?,
-            height: image.height().ok()?,
-        })
+        meta_of(&self.graphics()?, id)
     }
 
     /// One image's pixels, widened to RGBA8.
@@ -350,13 +358,8 @@ impl VtSession {
     #[must_use]
     pub fn image_pixels(&self, id: u32) -> Option<ImagePixels> {
         let graphics = self.graphics()?;
+        let meta = meta_of(&graphics, id)?;
         let image = graphics.image(id)?;
-        let meta = ImageMeta {
-            id,
-            generation: image.generation().ok()?,
-            width: image.width().ok()?,
-            height: image.height().ok()?,
-        };
         let data = image.data().ok()??;
         Some(ImagePixels {
             meta,
@@ -369,18 +372,35 @@ impl VtSession {
     /// `out` is cleared first and its allocation kept, so the steady state of a pane with an image
     /// on screen allocates nothing per frame.
     ///
-    /// A VIRTUAL placement — the unicode-placeholder form, where the image is positioned by
-    /// placeholder characters in the grid rather than by the placement itself — reports no viewport
-    /// position and is skipped. It is skipped rather than approximated because the position it
-    /// would need lives in the CELLS, and inventing one puts an image somewhere the program did not
-    /// ask for; `docs/68` §5.7 records it as the one shape of the protocol this renderer declines.
+    /// ## The two kinds, and why the second needs the frame
+    ///
+    /// An ORDINARY placement carries its own screen position and the engine answers where it landed
+    /// — that is the first loop, and it is all most programs use.
+    ///
+    /// A VIRTUAL placement carries none. It declares a size and nothing else, and the program then
+    /// writes `U+10EEEE` into the cells the image should cover, encoding which image and which
+    /// fragment in each cell's colours and diacritics. So the engine's answer for one is "no
+    /// position", and the position has to be read out of the GRID — which [`crate::frame`]'s scan
+    /// already did, into [`crate::frame::FrameRow::placeholders`]. The second loop is that join:
+    /// every decoded run, matched to the placement whose grid it belongs to, turned into the same
+    /// flat [`ImagePlacement`] the renderer draws either way. See [`crate::placeholder`] for the
+    /// protocol and for whose arithmetic the fit is.
+    ///
+    /// The frame must therefore be CURRENT — `render` before `placements`, which is the order the
+    /// surface's paint already has. A stale frame places a virtually-positioned image where it was
+    /// last frame, which is the same staleness the text beside it would have.
     pub fn placements(&mut self, out: &mut Vec<ImagePlacement>) {
         out.clear();
         // Destructured rather than taken through `&mut self`, because the iteration borrows the
         // ITERATOR mutably and the TERMINAL immutably at the same time, and a method on `self`
         // cannot express that they are different fields.
         let Self {
-            terminal, placements, ..
+            terminal,
+            placements,
+            frame,
+            cell_width_px,
+            cell_height_px,
+            ..
         } = self;
         let Ok(graphics) = terminal.kitty_graphics() else {
             return;
@@ -389,10 +409,31 @@ impl VtSession {
             return;
         };
 
+        // The grid each virtual placement declared, which is the only thing the engine knows about
+        // one. Never allocates for a session that has no virtual placement — which is every session
+        // that uses `icat`, `timg` or any of the ordinary image programs — because a `Vec` that is
+        // never pushed to never asks for memory.
+        let mut virtual_grids: Vec<VirtualGrid> = Vec::new();
         while let Some(placement) = iteration.next() {
-            let Ok(image_id) = placement.image_id() else {
+            let (Ok(image_id), Ok(placement_id), Ok(is_virtual)) = (
+                placement.image_id(),
+                placement.placement_id(),
+                placement.is_virtual(),
+            ) else {
                 continue;
             };
+            if is_virtual {
+                let (Ok(columns), Ok(rows)) = (placement.columns(), placement.rows()) else {
+                    continue;
+                };
+                virtual_grids.push(VirtualGrid {
+                    image_id,
+                    placement_id,
+                    columns,
+                    rows,
+                });
+                continue;
+            }
             let Some(image) = graphics.image(image_id) else {
                 continue;
             };
@@ -402,7 +443,7 @@ impl VtSession {
             if !info.viewport_visible {
                 continue;
             }
-            let (Ok(placement_id), Ok(z)) = (placement.placement_id(), placement.z()) else {
+            let Ok(z) = placement.z() else {
                 continue;
             };
             out.push(ImagePlacement {
@@ -419,13 +460,121 @@ impl VtSession {
                 source_y: info.source_y,
                 source_width: info.source_width,
                 source_height: info.source_height,
+                // The protocol's `X=`/`Y=`, which the render info does not carry.
+                cell_offset_x: placement.x_offset().unwrap_or(0),
+                cell_offset_y: placement.y_offset().unwrap_or(0),
             });
         }
+
+        if virtual_grids.is_empty() {
+            return;
+        }
+        expand_placeholders(
+            &graphics,
+            frame,
+            &virtual_grids,
+            *cell_width_px,
+            *cell_height_px,
+            out,
+        );
     }
 
     /// The active screen's image storage, if the engine will hand it over.
     fn graphics(&self) -> Option<Graphics<'_>> {
         self.terminal.kitty_graphics().ok()
+    }
+}
+
+/// One virtual placement's declared grid, which is everything the engine knows about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VirtualGrid {
+    /// Which image it places.
+    image_id: u32,
+    /// Which placement of it, or zero when the program named none.
+    placement_id: u32,
+    /// Columns the program asked for, or zero for "as many as the image's own size takes".
+    columns: u32,
+    /// Rows the program asked for, or zero for the same reason.
+    rows: u32,
+}
+
+/// One image's identity and age, read straight off a storage handle.
+fn meta_of(graphics: &Graphics<'_>, id: u32) -> Option<ImageMeta> {
+    let image = graphics.image(id)?;
+    Some(ImageMeta {
+        id,
+        generation: image.generation().ok()?,
+        width: image.width().ok()?,
+        height: image.height().ok()?,
+    })
+}
+
+/// Turns every placeholder run the frame decoded into a placement, and appends them to `out`.
+///
+/// The `z` is `-1` for all of them, matching ghostty: a virtual placement has no z of its own, and
+/// `-1` is the band behind the text and in front of the cell background — which is what a program
+/// tiling an image behind its own output expects, and what every image drawn this way gets.
+///
+/// A run whose image is not stored, whose placement went away between the frame scan and here, or
+/// whose fragment falls entirely inside the blank band the aspect fit left over is dropped. All
+/// three are ordinary: the first is a transmission still arriving, the second a placement deleted a
+/// frame ago, and the third the corner cells of a wide image in a tall grid.
+fn expand_placeholders(
+    graphics: &Graphics<'_>,
+    frame: &crate::frame::Frame,
+    virtual_grids: &[VirtualGrid],
+    cell_width_px: u32,
+    cell_height_px: u32,
+    out: &mut Vec<ImagePlacement>,
+) {
+    for (y, row) in frame.rows.iter().enumerate() {
+        if row.placeholders.is_empty() {
+            continue;
+        }
+        let Ok(viewport_row) = i32::try_from(y) else {
+            continue;
+        };
+        for run in &row.placeholders {
+            // A run that named a placement id wants that exact one; a run that named none takes the
+            // first virtual placement of its image, which is the protocol's rule and the reason the
+            // id is optional at all.
+            let Some(grid) = virtual_grids.iter().find(|grid| {
+                grid.image_id == run.image_id
+                    && (run.placement_id == 0 || grid.placement_id == run.placement_id)
+            }) else {
+                continue;
+            };
+            let Some(meta) = meta_of(graphics, run.image_id) else {
+                continue;
+            };
+            let Some(geometry) = crate::placeholder::geometry(
+                *run,
+                meta,
+                grid.columns,
+                grid.rows,
+                cell_width_px,
+                cell_height_px,
+            ) else {
+                continue;
+            };
+            out.push(ImagePlacement {
+                image_id: run.image_id,
+                placement_id: grid.placement_id,
+                z: -1,
+                col: i32::from(run.start_col),
+                row: viewport_row,
+                width_px: geometry.dest_width,
+                height_px: geometry.dest_height,
+                cols: run.width,
+                rows: 1,
+                source_x: geometry.source_x,
+                source_y: geometry.source_y,
+                source_width: geometry.source_width,
+                source_height: geometry.source_height,
+                cell_offset_x: geometry.offset_x,
+                cell_offset_y: geometry.offset_y,
+            });
+        }
     }
 }
 
@@ -510,6 +659,148 @@ mod tests {
     }
 
     #[test]
+    fn a_placement_carries_the_offsets_that_move_it_inside_its_anchor_cell() {
+        // `X=`/`Y=` are the protocol's sub-cell nudge, and the render info does not carry them —
+        // they come off the placement itself. Without this the accessors could answer zero forever
+        // and every other test would still pass, because nothing else in the engine reads them.
+        let mut session = session();
+        let pixels: Vec<u8> = (0..4).flat_map(|_| [1_u8, 2, 3]).collect();
+        let payload = base64::engine::general_purpose::STANDARD.encode(&pixels);
+        session.feed(
+            format!("\x1b_Ga=T,f=24,s=2,v=2,i=1,X=3,Y=5;{payload}\x1b\\")
+                .into_bytes()
+                .as_slice(),
+        );
+
+        let mut placements = Vec::new();
+        session.placements(&mut placements);
+        let placement = placements.first().copied().unwrap();
+        assert_eq!(
+            (placement.cell_offset_x, placement.cell_offset_y),
+            (3, 5),
+            "the offsets survive the flattening the renderer reads"
+        );
+    }
+
+    /// One `a=T,U=1` APC: transmit, and declare a VIRTUAL placement over a `cols × rows` grid.
+    fn transmit_virtual(width: u32, height: u32, cols: u32, rows: u32) -> Vec<u8> {
+        let pixels: Vec<u8> = (0..width * height).flat_map(|_| [9_u8, 9, 9]).collect();
+        let payload = base64::engine::general_purpose::STANDARD.encode(&pixels);
+        format!("\x1b_Ga=T,f=24,s={width},v={height},i=1,U=1,c={cols},r={rows};{payload}\x1b\\").into_bytes()
+    }
+
+    /// The bytes a program writes to put fragment `row`/`col` of image 1 in the cell under the
+    /// cursor.
+    ///
+    /// The id in the foreground colour and the fragment in two diacritics — the whole encoding, in
+    /// the spelling `icat --unicode-placeholder` emits.
+    fn placeholder_cell(row: usize, col: usize) -> String {
+        let marks: String = [row, col]
+            .into_iter()
+            .filter_map(crate::placeholder::diacritic_at)
+            .collect();
+        format!("\x1b[38;2;0;0;1m\u{10EEEE}{marks}")
+    }
+
+    #[test]
+    fn a_virtual_placement_is_positioned_by_the_cells_and_not_by_itself() {
+        // The end-to-end pin for the unicode-placeholder form, and the one that catches the join
+        // going quiet: the engine stores a placement with NO position, the frame scan decodes the
+        // runs out of the grid, and `placements` puts the two together. Every link is invisible on
+        // its own — a virtual placement the engine reports is unplaceable, and a decoded run with
+        // no placement to match names a grid nobody declared.
+        //
+        // A 16×32 image over a 2×2 grid of 8×16 cells is exactly the grid's shape, so each row is
+        // half the image at full width and there is no band to complicate the numbers.
+        let mut session = session();
+        session.feed(&transmit_virtual(16, 32, 2, 2));
+        for row in 0..2_usize {
+            session.feed(format!("\x1b[{};1H", row + 1).as_bytes());
+            session.feed(placeholder_cell(row, 0).as_bytes());
+            session.feed(placeholder_cell(row, 1).as_bytes());
+        }
+        session.render().unwrap();
+
+        let mut placements = Vec::new();
+        session.placements(&mut placements);
+        assert_eq!(
+            placements.len(),
+            2,
+            "two rows of placeholders are two runs, not four cells and not one strip"
+        );
+
+        let top = placements.first().copied().unwrap();
+        assert_eq!((top.image_id, top.col, top.row), (1, 0, 0));
+        assert_eq!(
+            top.z, -1,
+            "a virtual placement draws behind the text and in front of the background"
+        );
+        assert_eq!(
+            (top.cols, top.rows),
+            (2, 1),
+            "a run is one row wide by construction"
+        );
+        assert_eq!((top.width_px, top.height_px), (16, 16));
+        assert_eq!((top.source_y, top.source_height), (0, 16));
+
+        let bottom = placements.get(1).copied().unwrap();
+        assert_eq!(bottom.row, 1);
+        assert_eq!(
+            (bottom.source_y, bottom.source_height),
+            (16, 16),
+            "the second row drew the first half of the image again"
+        );
+    }
+
+    #[test]
+    fn a_placeholder_cell_carries_no_text_for_a_font_to_draw() {
+        // `U+10EEEE` is private-use and no font has it, so a placeholder that survived into the
+        // frame's text arena would put a `.notdef` box in every cell of every virtually placed
+        // image — over the image itself. Blanked on the CODEPOINT rather than on whether images are
+        // on, which is why this asserts on a session with the storage limit at zero too.
+        let mut session = VtSession::new(20, 10, 8, 16).unwrap();
+        session.feed(placeholder_cell(0, 0).as_bytes());
+        session.feed(b"x");
+        session.render().unwrap();
+
+        let row = session.frame().rows.first().unwrap();
+        let first = row.cells.first().copied().unwrap();
+        assert_eq!(
+            row.cell_text(first),
+            "",
+            "the placeholder reached the renderer as a glyph"
+        );
+        let second = row.cells.get(1).copied().unwrap();
+        assert_eq!(row.cell_text(second), "x", "the cell after it lost its text");
+    }
+
+    #[test]
+    fn a_run_survives_a_frame_in_which_its_row_is_clean() {
+        // The one hazard the per-row cache creates and the reason the runs live on the row: the
+        // frame scan SKIPS a row the engine reports clean, so a placeholder decoded into a scratch
+        // that reset per frame would vanish the moment the row stopped changing — an image that
+        // appears for one frame and then disappears while its cells are still on screen.
+        let mut session = session();
+        session.feed(&transmit_virtual(16, 32, 2, 2));
+        session.feed(placeholder_cell(0, 0).as_bytes());
+        session.feed(placeholder_cell(0, 1).as_bytes());
+        session.render().unwrap();
+
+        let mut placements = Vec::new();
+        session.placements(&mut placements);
+        assert_eq!(placements.len(), 1);
+
+        // A second render with nothing fed. Row zero is clean now, so it is not refilled.
+        session.render().unwrap();
+        session.placements(&mut placements);
+        assert_eq!(
+            placements.len(),
+            1,
+            "the run was lost the moment its row stopped changing"
+        );
+    }
+
+    #[test]
     fn nothing_is_stored_until_a_storage_limit_says_so() {
         // The engine's own switch, and the reason `terminal.images` needs no second flag anywhere.
         // A terminal at the default limit parses the transmission and has nowhere to put it, which
@@ -561,6 +852,8 @@ mod tests {
             source_y: 0,
             source_width: 0,
             source_height: 0,
+            cell_offset_x: 0,
+            cell_offset_y: 0,
         }];
         session.placements(&mut placements);
         assert!(

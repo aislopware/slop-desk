@@ -697,13 +697,36 @@ the bet "owning the grid" was placed on.
    overlays stay LAST so a cursor and a selection survive over a picture. One instance array visited
    three times rather than three arrays: `DrawList::image_runs` is what says where each band starts,
    and `drawPrimitives(…, baseInstance:)` is Metal's own way to draw a slice.
-5. **A VIRTUAL placement is skipped rather than approximated.** The protocol has a second way to
-   position an image: `U=1` places nothing itself and lets unicode PLACEHOLDER characters in the grid
-   say where the image goes, cell by cell, so that a scrolling pager can move it for free. The engine
-   reports such a placement with no viewport position, because the position lives in the CELLS.
-   Inventing one would put an image somewhere the program did not ask for, so `placements` drops it —
-   the one shape of the protocol this renderer declines. Supporting it is a cell-scan in the frame
-   pass, not a change to anything here.
+5. **A VIRTUAL placement is read out of the CELLS, with ghostty's arithmetic to the digit.** The
+   protocol has a second way to position an image: `U=1` places nothing itself and lets unicode
+   PLACEHOLDER characters (`U+10EEEE`) in the grid say where the image goes, cell by cell, so a
+   scrolling pager moves it for free. The engine parses and stores such a placement but reports no
+   viewport position for it, because there is none to report — which image, which fragment of it, and
+   where the run starts are encoded in each cell's foreground colour, underline colour and combining
+   diacritics. So the scan has to be ours, and it is: `slopdesk-vterm/src/placeholder.rs` decodes runs
+   during the frame fill, where the RAW style colours and the cluster's diacritics are already in
+   hand, and caches them on the row — which is what makes it correct under the dirty-row skip, since a
+   clean row keeps its cells and therefore keeps the runs those cells spelled. `graphics.rs` then
+   joins each run to the placement whose grid it names.
+
+   The **aspect fit is ported from ghostty rather than derived**, function for function from
+   `src/terminal/kitty/graphics_unicode.zig` at the pinned `22d13172`. The protocol says an image is
+   "scaled to fit" its grid and stops there; every real difference — whether the leftover is centred
+   or flushed, whether a fragment falling inside the blank band draws nothing or draws the nearest row
+   of pixels — is the terminal's own decision, and every program that emits these sequences was tested
+   against kitty and ghostty. Deriving our own would put an off-by-a-pixel seam between adjacent
+   fragments of one image, which is what a tiled image is made of. The placeholder cell itself draws
+   no glyph, unconditionally: `U+10EEEE` is private-use, no font has it, and a cell that kept its text
+   would put a `.notdef` box in every cell of every virtually placed image.
+
+**The rule the fifth decision is an instance of.** *The core follows ghostty; the app layer is
+ours.* Parsing, grid semantics, protocol arithmetic and every place where a specification is
+underdetermined take ghostty `main`'s answer, because the programs on the far end of the pty were
+tested against it and because its author has spent longer in this problem than we will. Blocks,
+prompts, layout and everything a user would call a feature are ours to take from wherever they are
+best — kitty, Warp, rio, VS Code's terminal, `otty.sh`. The two halves meet at
+`slopdesk-vterm`'s boundary: the engine wrapper does not innovate, and nothing above it is
+constrained by what ghostty happens to draw. `docs/DECISIONS.md` carries this as a standing rule.
 
 **What it costs a frame with no images**, which is every ordinary frame: one `u64` comparison.
 `Surface::place_images` returns on `graphics_generation() == 0` before it touches the store or the
@@ -719,17 +742,29 @@ and placements (and installs the PNG decoder the bindings publish a hook for —
 resampled and a glyph never is. `terminal.images` is the row; the engine keeps its storage when it is
 off, so the toggle is live in both directions.
 
-**How it is verified without pixels.** Four links, each pinned where it lives: the engine test feeds a
+**How it is verified without pixels.** Six links, each pinned where it lives: the engine test feeds a
 real `a=T` APC and asserts the placement's `width_px`/`height_px`/`cols`/`rows`, because a zero in any
-of them would be dropped as a zero-area quad and draw nothing while every other test passed;
-`image.rs` pins the block-relative arithmetic, the crop and the three bands; `quad.rs` pins the run
-batching; and `tests/device.rs` builds a real `Renderer`, which compiles `shaders.metal` through the
-Metal front end and builds all three pipeline states — so a typo in `image_fragment` is a test failure
-rather than a black pane.
+of them would be dropped as a zero-area quad and draw nothing while every other test passed; a second
+engine test feeds a real `U=1` placement AND the placeholder cells that position it, and asserts the
+two runs that come back — the join is invisible from either side alone, since a virtual placement on
+its own is unplaceable and a decoded run on its own names a grid nobody declared; `placeholder.rs`
+pins the diacritic table's sortedness (a binary search over an unsorted table answers `Err` for
+entries that ARE there, silently misplacing a fragment), the run-continuation rule in both its
+abbreviated and fully spelled spellings, and the band arithmetic on a wide image where the numbers are
+hand-checkable; `image.rs` pins the block-relative arithmetic, the crop, the cell offsets and the
+three bands; `quad.rs` pins the run batching; and `tests/device.rs` builds a real `Renderer`, which
+compiles `shaders.metal` through the Metal front end and builds all three pipeline states — so a typo
+in `image_fragment` is a test failure rather than a black pane.
 
-**Still open:** iTerm2's inline-image protocol (OSC 1337) and Sixel. Both are transmission formats
-that would land in the same store and draw through the same pass, so neither needs a second renderer
-— they need a decoder each, and the engine does not parse them today.
+**Sixel and iTerm2 (OSC 1337) are NON-GOALS, not gaps.** Both are transmission formats that would
+land in the same store and draw through the same pass, so neither needs a second renderer — each
+needs a decoder, and the engine does not parse them. That is exactly the point: ghostty `main` does
+not support them either, and per the rule above the core does what ghostty does. Sixel in particular
+is a 1987 format that carries a palette-indexed bitmap with no alpha and no way to say where it
+belongs, and every program that emits it emits kitty graphics when the terminal advertises them.
+Adding either would mean a decoder we maintain alone, a second path through the store, and a second
+class of security question about payloads the far end chose — for pictures the kitty path already
+draws. Do not re-open.
 
 ## 6. Measured
 

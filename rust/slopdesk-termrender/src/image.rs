@@ -296,8 +296,18 @@ pub fn place(
         // exactly the rows that scrolled off. Reconstructing it this way rather than clamping the
         // destination is what lets one intersection handle the scroll and the block edge together.
         let rows_above = f64::from(anchor) - f64::from(placement.row);
-        let top = style.content_origin_y + content_y - metrics.cell_height * rows_above;
-        let left = metrics.origin_x + block.body.x + metrics.cell_width * f64::from(placement.col);
+        // The cell offsets are the protocol's `X=`/`Y=` — a sub-cell nudge a program uses to line
+        // an image up with something drawn beside it — and for a virtually placed image they are
+        // the blank band the aspect fit left over. Added as separate terms, never folded into the
+        // multiply, per `CLAUDE.md`'s bit-exactness rule: these numbers land in the same vertex
+        // buffer as `layout.rs`'s, and a fused multiply-add here would drift an image's edge off
+        // the cell it was placed to align with.
+        let top = style.content_origin_y + content_y - metrics.cell_height * rows_above
+            + f64::from(placement.cell_offset_y);
+        let left = metrics.origin_x
+            + block.body.x
+            + metrics.cell_width * f64::from(placement.col)
+            + f64::from(placement.cell_offset_x);
 
         let full = Placed {
             dest: Rect {
@@ -441,6 +451,8 @@ mod tests {
             source_y: 0,
             source_width: 100,
             source_height: 100,
+            cell_offset_x: 0,
+            cell_offset_y: 0,
         }
     }
 
@@ -487,6 +499,42 @@ mod tests {
             "an unclipped image samples all of itself"
         );
         assert_eq!(list.image_runs.len(), 1);
+    }
+
+    #[test]
+    fn the_cell_offsets_move_the_image_inside_its_anchor_cell() {
+        // The protocol's `X=`/`Y=`, and the same two numbers a virtually placed image uses to carry
+        // the blank band its aspect fit left over. Sub-cell by construction, which is exactly why
+        // ignoring them is invisible in a screenshot and wrong in every one: an image nudged to
+        // line up with a box-drawing character beside it lands a few pixels off, and a
+        // tiled image lands a fraction of a row off on every tile.
+        let mut placements = vec![ImagePlacement {
+            cell_offset_x: 4,
+            cell_offset_y: 7,
+            ..placement(2, 3)
+        }];
+        let mut list = DrawList::new();
+        place(
+            &mut placements,
+            &flat_layout(),
+            &style(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 200.0,
+            },
+            &store(),
+            &mut list,
+        );
+
+        let instance = list.images.first().copied().unwrap();
+        assert!((f64::from(instance.x) - (CELL_W * 3.0 + 4.0)).abs() < 1e-6);
+        assert!((f64::from(instance.y) - (CELL_H * 2.0 + 7.0)).abs() < 1e-6);
+        assert!(
+            uv_eq(instance.uv, [0.0, 0.0, 1.0, 1.0]),
+            "an offset moves the destination and must not crop the source"
+        );
     }
 
     #[test]
