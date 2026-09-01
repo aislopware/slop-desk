@@ -94,6 +94,12 @@ editing at the time. Two rows moved while it was being written: Config File turn
 platform fact rather than a gap, and the literal-byte keybinding gap was being closed as it was
 recorded. Re-check a GAP row before planning against it.
 
+**Both GAP-verdict rows are now closed (2026-09-02)** — the literal-byte/`unbind:` row and the sidebar
+`#N` readout. What is left below is platform FACT, except the tab strip, whose verdict is still "needs a
+phone answer": it is an open question of what the phone's shape should BE, not a port waiting to be
+written. The re-check warning above stays because the practice is what caught these two, not because a
+GAP row is outstanding.
+
 | Feature | Why | Verdict |
 |---|---|---|
 | Dock progress / error tint (`DockProgressController`) | iOS has no Dock | platform fact |
@@ -105,8 +111,8 @@ recorded. Re-check a GAP row before planning against it.
 | Horizontal titlebar tab strip (`MacTabStrip`) | AppKit titlebar band | needs a phone answer |
 | Settings ▸ Advanced ▸ CONFIG FILE (path row, Open Config File, Reload Config) | gated `Platform::Mac` by the settings layout table, reason stated at `Sources/SlopDeskClientCore/Settings/SettingsConfigFile.swift:4-5` — "`~/.config` is a path iOS has none of" | platform fact (corrected 2026-08-22 — first filed as a GAP) |
 | Settings ▸ Advanced ▸ raw `SLOPDESK_*` editor, and the Video host-flag group | gated `Platform::Mac` as data; they edit flags the phone's device never reads (`SettingsSheet.swift:22-24`) | platform fact |
-| `text:` / `csi:` / `esc:` literal-byte keybindings, and general `unbind:` | — | **GAP, being closed.** At `HEAD` this is macOS-only: `textBinding(for:)` / `isUnbound(_:)` are read by `WorkspaceKeyDispatcher.swift:368,376` and iOS honours `unbind:` for exactly one chord (⌃⇥). A fix is **in the working tree, uncommitted** — `Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift:359-368` now answers `textBinding` on the pane rung, and its own docstring states the defect: "the config file is shared between the two shells, so `keybind = cmd+shift+h=text:hello` typed on a Mac and typed on the phone were one line producing two behaviours — bytes there, silence here." Re-check before citing this row |
-| Sidebar `#N` shortcut number | — | **GAP** — `SidebarRowReading.shortcutHint` is produced in SHARED code (`Sources/SlopDeskClientCore/Rail/SidebarRowReading.swift:62,220`) and consumed by `MacSidebarRow` only; no `SlopDeskPhoneUI` file reads it. ⌘1…⌘9 fires on an iPad with a hardware keyboard, but nothing on screen says which pane is which number. The ⌘-HOLD trigger is a platform fact (no ⌘ on a touch-only device); the missing readout is not |
+| `text:` / `csi:` / `esc:` literal-byte keybindings, and general `unbind:` | — | **CLOSED — both halves, verified 2026-09-02.** The literal-byte rung is `TerminalLeafView.swift`'s `swallowsAsWorkspaceChord(_:)`, which answers `WorkspaceBindingRegistry.textBinding(for:)` on the PANE's rung ahead of the interceptor — bytes are terminal input, so they belong to the pane holding the keyboard. `unbind:` is honoured GENERALLY, and in shared code rather than per-shell: `WorkspaceStore+Keybinding.swift`'s interceptor factory refuses an unbound chord before it reaches the action table, which is the one resolve both the phone's rungs and the Mac's pane surface share, so an unbound ⌘D falls through to the PTY on both. ⚠️ The file this row named (`SlopDeskPhoneUI/Pane/TerminalInputHost.swift`) no longer exists |
+| Sidebar `#N` shortcut number | — | **CLOSED — verified 2026-09-02.** `NavigatorRowCell.swift:315` reads `reading.shortcutHint`, so the phone prints the number the shared code was already producing. ⌘1…⌘9 on an iPad with a hardware keyboard now says which pane is which; the ⌘-HOLD trigger remains a platform fact |
 
 ## D. Intentional exclusions (per the user's directive + the remote model)
 
