@@ -200,7 +200,9 @@ never offers or falls back to another version.
     font prefs into the shared workbench settings), plus `21` ensureSimulatorServer
     (**side-effecting** — lazily spawns/reports the shared simulator server behind the right
     panel's Simulators tab), `22` ensureAndroidBridge (**side-effecting** — lazily starts/reports
-    the shared Android bridge behind the right panel's Android tab). `payload` is the
+    the shared Android bridge behind the right panel's Android tab), and `23` shellComplete
+    (a **pure read** returning what the user's OWN shell completion would offer at a caret —
+    zsh only, `docs/68` §14). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`/
@@ -209,7 +211,10 @@ never offers or falls back to another version.
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
     path** for `openPath`/`revealPath`/`ensureCodeServer` (`openInCodeServer` additionally allows
     `~`-anchored and a trailing `:line[:col]`), and the `MetadataCodec` clipboard encodings
-    for `setClipboard`/`readClipboard` (below).
+    for `setClipboard`/`readClipboard` (below), and `[u32 cursor][utf8 buffer]` for `shellComplete`
+    — the caret is a CHARACTER index, not a byte one, because the shell's own caret is measured in
+    characters; the working directory is NOT in the payload, it comes from the pane exactly as
+    `gitStatus`'s does.
   - **`openPath` (9) / `revealPath` (10) are the ONLY side-effecting verbs** (E10 — the ⌘click /
     ⌘⇧click link actions; the file lives on the host Mac, not the client). The host opens the path in its
     default app / Finder (`NSWorkspace.open`) or reveals it in Finder

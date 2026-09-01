@@ -772,6 +772,26 @@ public final class CommandPrompt {
         }
     }
 
+    /// Replaces the shell-completion source with one ``MetadataVerb/shellComplete`` answer, as its
+    /// RAW response payload.
+    ///
+    /// The payload rather than records, and that is the whole point of the door: the answer is
+    /// already a wire body, so it is decoded once, in Rust, beside every other candidate source.
+    /// Spanning three levels of nesting into an arena here would be a second framing for a shape
+    /// `slopdesk_wire` already frames, and a Swift decoder in front of it a second reader.
+    ///
+    /// Empty CLEARS the source. That is the right answer to both "the shell had nothing" and "the
+    /// reply did not decode": a stale list under a new caret is worse than no list.
+    public func setShellCandidates(_ payload: Data) {
+        payload.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            slopdesk_prompt_set_shell_candidates(
+                handle,
+                bytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                bytes.count,
+            )
+        }
+    }
+
     /// Empties the command/subcommand/flag table.
     public func clearCommands() { addCommand(name: "", subcommands: [], flags: []) }
 

@@ -1227,6 +1227,162 @@ pub fn decode_code_font_spec(data: &[u8]) -> Result<CodeFontSpec> {
     })
 }
 
+// ---------------------------------------------------------------------------------------------- //
+// ShellComplete — verb 23
+// ---------------------------------------------------------------------------------------------- //
+
+/// One group's fixed part: two string lengths and a candidate count.
+pub const SHELL_GROUP_FIXED_BYTES: usize = 6;
+
+/// One candidate's fixed part: two string lengths and the flags byte.
+pub const SHELL_CANDIDATE_FIXED_BYTES: usize = 5;
+
+/// The candidate carries its own shell quoting and is inserted verbatim — zsh's `compadd -Q`.
+const SHELL_FLAG_VERBATIM: u8 = 1 << 0;
+
+/// The candidate has a description. Separate from its emptiness because "the completion function
+/// offered none" and "it offered an empty one" are different facts, and only the first should
+/// suppress the list's second column.
+const SHELL_FLAG_HAS_DETAIL: u8 = 1 << 1;
+
+/// One thing the user's own shell completion would insert.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellCandidate {
+    /// The literal that replaces its group's prefix and suffix, affixes already composed in.
+    pub text: String,
+    /// The right-hand column — a flag's summary, a subcommand's one-line help. Meaningless unless
+    /// `has_detail`.
+    pub detail: String,
+    /// Whether `detail` means anything.
+    pub has_detail: bool,
+    /// Whether the text is already quoted and must be inserted as-is. Quoting it a second time
+    /// would put the escapes on the user's command line.
+    pub verbatim: bool,
+}
+
+/// One `compadd` call's candidates, and the text they replace.
+///
+/// The group carries the text rather than an offset because the answer is asynchronous: the user is
+/// typing through the round trip, and an offset computed against the buffer the host was asked
+/// about would land somewhere else in the buffer that is now on screen. A prefix is
+/// self-describing, so the client re-derives the range against its LIVE document and offers nothing
+/// when it no longer matches.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellCompletionGroup {
+    /// The text BEFORE the caret that accepting one of these replaces.
+    pub prefix: String,
+    /// The text AFTER the caret that it replaces. Empty at a normal caret.
+    pub suffix: String,
+    /// What the call offered.
+    pub candidates: Vec<ShellCandidate>,
+}
+
+/// Encodes a shell-completion REQUEST: `[u32 cursor][utf8 buffer]`.
+///
+/// `cursor` is a CHARACTER index, not a byte one, because the shell's own caret is measured in
+/// characters and the host hands it straight to the shell. It is the only unit boundary in the
+/// whole verb; every other quantity that crosses is a string. The working directory is NOT here —
+/// it comes from the pane, exactly as `gitStatus`'s does, which is what keeps the request from
+/// naming a host path at all.
+#[must_use]
+pub fn encode_shell_complete_request(cursor: u32, buffer: &str) -> Vec<u8> {
+    let mut out = ByteWriter::with_capacity(4 + buffer.len());
+    encode_shell_complete_request_into(&mut out, cursor, buffer);
+    out.into_vec()
+}
+
+/// Writes a shell-completion request into `out`. See [`encode_shell_complete_request`].
+pub fn encode_shell_complete_request_into(out: &mut ByteWriter<'_>, cursor: u32, buffer: &str) {
+    out.put_u32(cursor);
+    // Unprefixed: the request payload's own envelope length frames it, and the buffer is everything
+    // that follows the caret field.
+    out.put_bytes(buffer.as_bytes());
+}
+
+/// Decodes a shell-completion request.
+///
+/// # Errors
+/// [`WireError::Truncated`] on a body too short to hold the caret,
+/// [`WireError::MalformedBody`] on a non-UTF-8 buffer.
+pub fn decode_shell_complete_request(data: &[u8]) -> Result<(u32, String)> {
+    let mut reader = ByteReader::new(data);
+    let cursor = reader.read_u32()?;
+    Ok((cursor, reader.remaining_str("shellComplete.buffer")?))
+}
+
+/// Encodes a shell-completion answer.
+///
+/// Layout: `[u16 groupCount]` then per group `[str prefix][str suffix][u16 candidateCount]` and per
+/// candidate `[str text][str detail][u8 flags]`.
+#[must_use]
+pub fn encode_shell_complete(groups: &[ShellCompletionGroup]) -> Vec<u8> {
+    let mut out = ByteWriter::with_capacity(2 + groups.len() * SHELL_GROUP_FIXED_BYTES);
+    encode_shell_complete_into(&mut out, groups);
+    out.into_vec()
+}
+
+/// Writes a shell-completion answer into `out`. See [`encode_shell_complete`].
+pub fn encode_shell_complete_into(out: &mut ByteWriter<'_>, groups: &[ShellCompletionGroup]) {
+    let group_count = clamped_count(groups.len());
+    out.put_u16(count_field(group_count));
+    for group in groups.iter().take(group_count) {
+        out.put_length_prefixed_str(&group.prefix);
+        out.put_length_prefixed_str(&group.suffix);
+        let count = clamped_count(group.candidates.len());
+        out.put_u16(count_field(count));
+        for candidate in group.candidates.iter().take(count) {
+            out.put_length_prefixed_str(&candidate.text);
+            out.put_length_prefixed_str(&candidate.detail);
+            let mut flags = 0_u8;
+            if candidate.verbatim {
+                flags |= SHELL_FLAG_VERBATIM;
+            }
+            if candidate.has_detail {
+                flags |= SHELL_FLAG_HAS_DETAIL;
+            }
+            out.put_u8(flags);
+        }
+    }
+}
+
+/// Decodes a shell-completion answer.
+///
+/// # Errors
+/// [`WireError::Truncated`] on a short body or an over-declared count,
+/// [`WireError::MalformedBody`] on non-UTF-8 text.
+pub fn decode_shell_complete(data: &[u8]) -> Result<Vec<ShellCompletionGroup>> {
+    let mut reader = ByteReader::new(data);
+    let group_count = usize::from(reader.read_u16()?);
+    let group_count = checked_count(&reader, group_count, SHELL_GROUP_FIXED_BYTES)?;
+    let mut groups = Vec::with_capacity(group_count);
+    for _ in 0..group_count {
+        let prefix = reader.read_length_prefixed_str("shellComplete.prefix")?;
+        let suffix = reader.read_length_prefixed_str("shellComplete.suffix")?;
+        let count = usize::from(reader.read_u16()?);
+        let count = checked_count(&reader, count, SHELL_CANDIDATE_FIXED_BYTES)?;
+        let mut candidates = Vec::with_capacity(count);
+        for _ in 0..count {
+            let text = reader.read_length_prefixed_str("shellComplete.text")?;
+            let detail = reader.read_length_prefixed_str("shellComplete.detail")?;
+            // Read as a MASK rather than compared to a value: an unknown future bit leaves the two
+            // this build knows intact instead of turning the whole flags byte into a rejection.
+            let flags = reader.read_u8()?;
+            candidates.push(ShellCandidate {
+                text,
+                detail,
+                has_detail: flags & SHELL_FLAG_HAS_DETAIL != 0,
+                verbatim: flags & SHELL_FLAG_VERBATIM != 0,
+            });
+        }
+        groups.push(ShellCompletionGroup {
+            prefix,
+            suffix,
+            candidates,
+        });
+    }
+    Ok(groups)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -1239,14 +1395,16 @@ mod tests {
         AgentHookStatus, AgentKind, AgentSessionInfo, CLIPBOARD_BASELINE_PROBE, ClipboardClip, ClipboardKind,
         CodeFontSpec, CodeOpenDisposition, DISK_FREE_UNKNOWN, DirEntry, GitFileChange, GitStatusPayload,
         HostVitals, MAX_CLIPBOARD_CONTENT_BYTES, MemoryPressure, PortInfo, PortProtocol, ProcessInfo,
-        ServiceEndpoint, ServiceState, WireError, decode_agent_hook_status, decode_agent_session_list,
-        decode_clipboard_read_request, decode_clipboard_read_response, decode_clipboard_set,
-        decode_code_font_spec, decode_code_open_disposition, decode_dir_listing, decode_git_status,
-        decode_host_vitals, decode_port_list, decode_process_list, decode_service_endpoint,
-        encode_agent_hook_status, encode_agent_session_list, encode_clipboard_read_request,
-        encode_clipboard_read_response, encode_clipboard_set, encode_code_font_spec,
-        encode_code_open_disposition, encode_dir_listing, encode_git_status, encode_host_vitals,
-        encode_port_list, encode_process_list, encode_service_endpoint,
+        ServiceEndpoint, ServiceState, ShellCandidate, ShellCompletionGroup, WireError,
+        decode_agent_hook_status, decode_agent_session_list, decode_clipboard_read_request,
+        decode_clipboard_read_response, decode_clipboard_set, decode_code_font_spec,
+        decode_code_open_disposition, decode_dir_listing, decode_git_status, decode_host_vitals,
+        decode_port_list, decode_process_list, decode_service_endpoint, decode_shell_complete,
+        decode_shell_complete_request, encode_agent_hook_status, encode_agent_session_list,
+        encode_clipboard_read_request, encode_clipboard_read_response, encode_clipboard_set,
+        encode_code_font_spec, encode_code_open_disposition, encode_dir_listing, encode_git_status,
+        encode_host_vitals, encode_port_list, encode_process_list, encode_service_endpoint,
+        encode_shell_complete, encode_shell_complete_request,
     };
 
     #[test]
@@ -1667,5 +1825,112 @@ mod tests {
         // The inclusive bounds are on the accepted side.
         assert!(decode_code_font_spec(&bad("Mono", 4.0, 0.5)).is_ok());
         assert!(decode_code_font_spec(&bad("Mono", 128.0, 4.0)).is_ok());
+    }
+
+    /// The caret is CHARACTERS and the buffer is the rest of the body — a multi-byte line is where
+    /// a byte-index caret would put the shell's caret in the wrong word, and a buffer with a `\0`
+    /// or a newline in it is a command line a user can genuinely type.
+    #[test]
+    fn a_completion_request_round_trips_a_character_caret_over_a_multi_byte_line() {
+        for (cursor, buffer) in [
+            (0_u32, ""),
+            (3, "git"),
+            (7, "echo \u{e9}\u{e9} th\u{e9}"),
+            (2, "a\nb"),
+            (1, "\u{1f600}x"),
+        ] {
+            let body = encode_shell_complete_request(cursor, buffer);
+            assert_eq!(
+                decode_shell_complete_request(&body),
+                Ok((cursor, buffer.to_owned()))
+            );
+        }
+        assert!(matches!(
+            decode_shell_complete_request(&[0, 0, 0]),
+            Err(WireError::Truncated)
+        ));
+        // The buffer is a command line and a command line is text. Non-UTF-8 is a peer fault, not a
+        // filename to repair.
+        assert!(matches!(
+            decode_shell_complete_request(&[0, 0, 0, 1, 0xFF]),
+            Err(WireError::MalformedBody(_))
+        ));
+    }
+
+    /// The two flag bits carry the two facts a re-derivation on the far side would get wrong: that
+    /// a candidate is already quoted, and that it has no description as opposed to an empty one.
+    #[test]
+    fn a_completion_answer_round_trips_both_flag_bits_and_the_empty_detail() {
+        let groups = vec![
+            ShellCompletionGroup {
+                prefix: "com".to_owned(),
+                suffix: String::new(),
+                candidates: vec![ShellCandidate {
+                    text: "commit".to_owned(),
+                    detail: "record changes to the repository".to_owned(),
+                    has_detail: true,
+                    verbatim: false,
+                }],
+            },
+            ShellCompletionGroup {
+                prefix: "rust/slopdesk-w".to_owned(),
+                suffix: "ire".to_owned(),
+                candidates: vec![
+                    ShellCandidate {
+                        text: "rust/slopdesk-wire".to_owned(),
+                        detail: String::new(),
+                        has_detail: false,
+                        verbatim: true,
+                    },
+                    // An empty description that WAS offered — the case a `detail.is_empty()` test
+                    // on the far side would silently turn into "no description".
+                    ShellCandidate {
+                        text: "rust/slopdesk-workspace".to_owned(),
+                        detail: String::new(),
+                        has_detail: true,
+                        verbatim: true,
+                    },
+                ],
+            },
+        ];
+        let body = encode_shell_complete(&groups);
+        assert_eq!(decode_shell_complete(&body), Ok(groups));
+        assert_eq!(decode_shell_complete(&encode_shell_complete(&[])), Ok(Vec::new()));
+    }
+
+    /// Count-before-alloc, on both counts. A declared group or candidate count the body cannot hold
+    /// must cost nothing rather than reserve for it.
+    #[test]
+    fn an_over_declared_completion_count_is_refused_before_it_allocates() {
+        assert!(matches!(
+            decode_shell_complete(&[0xFF, 0xFF, 0]),
+            Err(WireError::Truncated)
+        ));
+        // One well-formed group header, then a candidate count nothing backs.
+        assert!(matches!(
+            decode_shell_complete(&[0, 1, 0, 0, 0, 0, 0xFF, 0xFF]),
+            Err(WireError::Truncated)
+        ));
+    }
+
+    /// A bit this build does not know must leave the two it does intact. The alternative — reading
+    /// the flags byte as a value — would make one future bit drop every candidate in the answer.
+    #[test]
+    fn an_unknown_flag_bit_leaves_the_known_ones_readable() {
+        let mut body = encode_shell_complete(&[ShellCompletionGroup {
+            prefix: "c".to_owned(),
+            suffix: String::new(),
+            candidates: vec![ShellCandidate {
+                text: "commit".to_owned(),
+                detail: String::new(),
+                has_detail: false,
+                verbatim: true,
+            }],
+        }]);
+        let last = body.len() - 1;
+        body[last] |= 0b1000_0000;
+        let decoded = decode_shell_complete(&body).unwrap();
+        assert!(decoded[0].candidates[0].verbatim);
+        assert!(!decoded[0].candidates[0].has_detail);
     }
 }

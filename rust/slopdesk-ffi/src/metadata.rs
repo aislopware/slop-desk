@@ -30,11 +30,11 @@ use slopdesk_wire::metadata::{
     decode_clipboard_read_response_leaving_content, decode_code_open_disposition, decode_dir_listing,
     decode_git_status, decode_host_vitals, decode_port_list, decode_process_list, decode_service_endpoint,
     encode_clipboard_read_request_into, encode_clipboard_set_into, encode_code_font_spec_into,
-    fold_status_codes,
+    encode_shell_complete_request_into, fold_status_codes,
 };
 
 use crate::wire_message::{WIRE_DECODE_AGAIN, WIRE_DECODE_OK, verdict};
-use crate::{TextArena, arena_span, arena_text, borrow, deliver, lend};
+use crate::{TextArena, arena_span, arena_text, borrow, deliver, lend, lent};
 
 /// A text field, as an `(offset, length)` pair into the call's arena.
 #[repr(C)]
@@ -528,6 +528,36 @@ pub unsafe extern "C" fn slopdesk_metadata_encode_clipboard_read_request(
     unsafe {
         lend(out, cap, |writer| {
             encode_clipboard_read_request_into(writer, last_seen_change_count);
+        })
+    }
+}
+
+/// Encodes a shell-completion REQUEST: the caret in CHARACTERS, then the command line.
+///
+/// The caret is a character index and not a byte one because it is handed to a SHELL, whose own
+/// caret is measured in characters. That is the one unit boundary in the whole verb; the working
+/// directory is not here at all — it comes from the pane, exactly as `gitStatus`'s does.
+///
+/// # Safety
+/// `(buffer, buffer_len)` must describe live memory and `out` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_metadata_encode_shell_complete_request(
+    cursor: u32,
+    buffer: *const c_uchar,
+    buffer_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the pair is live for the call or null, which borrows as empty.
+    let line = unsafe { lent(buffer, buffer_len) };
+    // SAFETY: the caller's obligation is `lend`'s.
+    unsafe {
+        lend(out, cap, |writer| {
+            encode_shell_complete_request_into(writer, cursor, line);
         })
     }
 }

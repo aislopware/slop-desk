@@ -151,7 +151,8 @@ pub const fn performer(verb: u8) -> Performer {
         | MetadataVerb::ListAgentSessions
         | MetadataVerb::ReadAgentSession
         | MetadataVerb::HostInfo
-        | MetadataVerb::HostVitals => Performer::Builder,
+        | MetadataVerb::HostVitals
+        | MetadataVerb::ShellComplete => Performer::Builder,
     }
 }
 
@@ -252,7 +253,7 @@ mod tests {
     #[test]
     fn an_unserved_byte_goes_where_the_unsupported_answer_already_lives() {
         assert_eq!(performer(0), Performer::Builder);
-        assert_eq!(performer(23), Performer::Builder);
+        assert_eq!(performer(24), Performer::Builder);
         assert_eq!(performer(u8::MAX), Performer::Builder);
     }
 

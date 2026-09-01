@@ -568,6 +568,7 @@ dependencies = [
  "slopdesk-terminal",
  "slopdesk-wire",
  "slopdesk-workspace",
+ "slopdesk-zshcomplete",
 ]
 
 [[package]]
@@ -736,6 +737,14 @@ dependencies = [
  "slopdesk-terminal",
  "slopdesk-tree",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "slopdesk-zshcomplete"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "slopdesk-posix",
 ]
 
 [[package]]

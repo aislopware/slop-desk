@@ -58,9 +58,11 @@ use slopdesk_probe::path_confine::{self, Shape};
 use slopdesk_wire::MetadataStatus;
 use slopdesk_wire::metadata::MetadataVerb;
 use slopdesk_wire::metadata::codec::{
-    AgentSessionInfo, DirEntry, GitStatusPayload, HostVitals, encode_agent_session_list, encode_dir_listing,
-    encode_git_status, encode_host_vitals,
+    AgentSessionInfo, DirEntry, GitStatusPayload, HostVitals, ShellCandidate, ShellCompletionGroup,
+    decode_shell_complete_request, encode_agent_session_list, encode_dir_listing, encode_git_status,
+    encode_host_vitals, encode_shell_complete,
 };
+use slopdesk_zshcomplete::Answer;
 
 /// The directory-listing entry cap.
 ///
@@ -136,6 +138,21 @@ pub trait HostQuerying: Send + Sync + core::fmt::Debug {
     /// so the first call only primes a baseline — or a refused syscall. Either way the verb replies
     /// `error` and the client keeps whatever it last had.
     fn host_vitals(&self) -> Option<HostVitals>;
+
+    /// What the user's OWN shell completion would offer for `buffer` with the caret `cursor`
+    /// CHARACTERS in, run as if the shell sat in `cwd`.
+    ///
+    /// Three answers, not two, and the third is the point: `Some(groups)` is an answer (possibly
+    /// empty — a caret with genuinely nothing to complete); `None` is "not yet", which a client
+    /// retries; and the shell being one this build cannot bridge to is neither, so it is a
+    /// [`MetadataStatus::NotFound`] the verb produces from `shell_bridged` instead. A client that
+    /// could not tell "not yet" from "never" would either poll for ever or give up on a shell that
+    /// was about to answer.
+    fn shell_complete(&self, cwd: &str, buffer: &str, cursor: u32) -> Option<Vec<ShellCompletionGroup>>;
+
+    /// Whether this host has a shell the completion bridge can drive at all. `false` makes verb 23
+    /// answer `notFound` — a PERMANENT no, distinct from the transient one above.
+    fn shell_bridged(&self) -> bool;
 }
 
 /// The metadata performer: this reducer for its ten verbs, a delegate for the rest.
@@ -323,6 +340,7 @@ impl MetadataPerformer for HostMetadata {
             MetadataVerb::ListAgentSessions => self.list_agent_sessions(pane, request.payload),
             MetadataVerb::ReadAgentSession => self.read_agent_session(request.payload),
             MetadataVerb::HostInfo | MetadataVerb::HostVitals => self.host_verb(verb),
+            MetadataVerb::ShellComplete => self.shell_complete(pane, request.payload),
             // Unreachable in production: every verb below is claimed by a named performer and the
             // routing table sends it there before this call. Reaching one is a ROUTING bug, and the
             // answer is a refusal rather than a best effort — this reducer must never perform a
@@ -340,6 +358,32 @@ impl MetadataPerformer for HostMetadata {
             | MetadataVerb::EnsureSimulatorServer
             | MetadataVerb::EnsureAndroidBridge => MetadataAnswer::failed(),
         }
+    }
+}
+
+impl HostMetadata {
+    /// Verb 23: the caret and the command line in, the user's own shell's candidates out.
+    ///
+    /// The working directory comes from the PANE and never from the payload, exactly as
+    /// `gitStatus`'s does. That is what keeps the request from naming a host path at all, so there
+    /// is no confinement question here to get wrong — the completion runs where the pane already
+    /// is, which is also the only place its answers would be correct.
+    fn shell_complete(&self, pane: PaneHandles, payload: &[u8]) -> MetadataAnswer {
+        if !self.query.shell_bridged() {
+            return not_found();
+        }
+        let Ok((cursor, buffer)) = decode_shell_complete_request(payload) else {
+            return MetadataAnswer::failed();
+        };
+        let cwd = match self.rooted(pane) {
+            Ok(cwd) => cwd,
+            Err(refusal) => return refusal,
+        };
+        self.query
+            .shell_complete(&cwd, &buffer, cursor)
+            .map_or_else(MetadataAnswer::failed, |groups| {
+                MetadataAnswer::ok(encode_shell_complete(&groups))
+            })
     }
 }
 
@@ -372,6 +416,10 @@ const fn not_found() -> MetadataAnswer {
 #[derive(Debug)]
 pub struct HostQueries {
     home: String,
+    /// The bridge onto the user's own zsh completion. Held across calls for the same reason the
+    /// sampler is: it owns a WARM captive shell, and one rebuilt per request would pay the several
+    /// seconds a real `~/.zshrc` costs on every keystroke and never answer anything.
+    shell: slopdesk_zshcomplete::ZshComplete,
     vitals: Mutex<slopdesk_panecensus::vitals::Sampler>,
     /// The monotonic origin the sampler's window is measured from. An `Instant` rather than a wall
     /// clock because the window is a DURATION and a wall clock can step backwards over it.
@@ -384,6 +432,7 @@ impl HostQueries {
     pub fn new(home: String) -> Self {
         Self {
             home,
+            shell: slopdesk_zshcomplete::ZshComplete::from_environment(),
             vitals: Mutex::new(slopdesk_panecensus::vitals::Sampler::new()),
             started: Instant::now(),
         }
@@ -463,6 +512,42 @@ impl HostQuerying for HostQueries {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .sample(&self.home, elapsed)
+    }
+
+    fn shell_complete(&self, cwd: &str, buffer: &str, cursor: u32) -> Option<Vec<ShellCompletionGroup>> {
+        match self.shell.complete(cwd, buffer, cursor) {
+            Answer::Groups(groups) => Some(groups.iter().map(wire_group).collect()),
+            Answer::NotReady | Answer::NotZsh => None,
+        }
+    }
+
+    fn shell_bridged(&self) -> bool {
+        self.shell.bridged()
+    }
+}
+
+/// One captured group as the wire's record.
+///
+/// Two record types for one shape, and deliberately: `slopdesk-zshcomplete`'s is what a SHELL
+/// reported, `slopdesk-wire`'s is what crosses a socket, and collapsing them would put the
+/// completion crate — which forks a process and holds a pty — into the dependency graph of every
+/// peer that merely decodes a payload. `list_directory` already makes the same trade one verb up.
+fn wire_group(group: &slopdesk_zshcomplete::CandidateGroup) -> ShellCompletionGroup {
+    ShellCompletionGroup {
+        prefix: group.prefix.clone(),
+        suffix: group.suffix.clone(),
+        candidates: group
+            .candidates
+            .iter()
+            .map(|candidate| {
+                ShellCandidate {
+                    text: candidate.text.clone(),
+                    detail: candidate.detail.clone().unwrap_or_default(),
+                    has_detail: candidate.detail.is_some(),
+                    verbatim: candidate.verbatim,
+                }
+            })
+            .collect(),
     }
 }
 

@@ -4034,6 +4034,15 @@ void   slopdesk_prompt_add_command(SlopDeskPrompt *handle, const uint8_t *name, 
                                    const SlopDeskByteSpan *flags, size_t flag_count,
                                    const uint8_t *arena, size_t arena_len);
 
+/* The fourth source, and the only one that is not a list the client already holds: what the USER's
+ * OWN shell completion would offer, as verb 23's raw response payload. The bytes go straight
+ * through — they are already a wire body, and spanning three levels of nesting into the arena above
+ * would invent a second framing for a shape `slopdesk-wire` already frames. The answer is
+ * asynchronous, so the local sources rank on their own until it lands and this door merges it in; a
+ * body that will not decode CLEARS the source rather than leaving a stale list under a new caret. */
+void   slopdesk_prompt_set_shell_candidates(SlopDeskPrompt *handle, const uint8_t *payload,
+                                            size_t payload_len);
+
 /* Ranks the word under the caret, answering how many candidates there are (at most `limit`). The
  * three readers below are one answer in three deliveries and must be read together. */
 size_t slopdesk_prompt_complete(SlopDeskPrompt *handle, size_t limit);
@@ -7259,6 +7268,16 @@ size_t slopdesk_metadata_encode_clipboard_set(const SlopDeskMetadataClip *clip,
 
 size_t slopdesk_metadata_encode_clipboard_read_request(int64_t last_seen_change_count,
                                                        unsigned char *out, size_t cap);
+
+/* Verb 23's request: `[u32 cursor][utf8 buffer]`. The caret is CHARACTERS, not bytes — it is handed
+ * to a shell, whose own caret is measured in characters. The working directory is deliberately NOT
+ * here; it comes from the pane, exactly as `gitStatus`'s does, so the request names no host path.
+ * There is no matching RESPONSE decoder: those bytes go straight into
+ * `slopdesk_prompt_set_shell_candidates`, which reads them beside every other candidate source. */
+size_t slopdesk_metadata_encode_shell_complete_request(uint32_t cursor,
+                                                       const unsigned char *buffer,
+                                                       size_t buffer_len, unsigned char *out,
+                                                       size_t cap);
 
 uint32_t slopdesk_metadata_decode_clipboard_read_response(const unsigned char *payload,
                                                           size_t payload_len, int64_t *count_out,

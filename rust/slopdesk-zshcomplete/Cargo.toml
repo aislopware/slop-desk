@@ -1,0 +1,114 @@
+# `slopdesk-zshcomplete` — the bridge onto zsh's OWN completion system.
+#
+# ## Why it exists
+# The rich prompt needs to know what the shell would complete. Every other terminal that has tried
+# this has answered by REPLACING the shell's completion with a spec database of its own, which means
+# a user's installed completions — their plugin manager's, their company's internal tools', the ones
+# a package dropped in `site-functions` — stop working the moment they type in the new prompt. That
+# trade was refused for this app. So this crate does the other thing: it runs the user's completion,
+# unmodified, and reads what it produces.
+#
+# ## Why it is a crate of its own
+# It is the one place in the tree that owns a child process it also has to keep WARM. That is a
+# lifecycle, not a query: a shell to spawn, a readiness marker to wait for, a deadline per request,
+# a strike count, and a respawn. None of it belongs in `slopdesk-terminal`, which does no IO by
+# contract and would stop being testable without one; none of it belongs in `slopdesk-hostserver`,
+# whose whole job is composition. And the half that is pure — the record reader — is worth having
+# behind a boundary that cannot reach a file even by accident.
+#
+# ## Its own `[workspace]`, for the reason its siblings have one
+# `rust/Cargo.toml`'s members are the fork-per-event programs and share a startup-tuned
+# `opt-level = "z"`. This crate lives inside hostd. The cost is the usual one: `cargo -p` from the
+# root cannot reach it, and its gate is `cd rust/slopdesk-zshcomplete && cargo test`.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-zshcomplete"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "the host's bridge onto the user's own zsh completion system"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_zshcomplete"
+path = "src/lib.rs"
+
+[dependencies]
+# `openpty` + `fork` + `execve` behind ONE safe door. `zle` exists only on a terminal, so the
+# captive shell needs a real pty and not a pipe — and because `spawn_pty` is safe, this crate keeps
+# `forbid(unsafe_code)` while owning a forked child.
+slopdesk-posix = { path = "../slopdesk-posix" }
+
+# `kill` and `waitpid` for the teardown. hostd outlives every completion shell it starts, so an
+# unreaped one would be a zombie for the machine's whole uptime — the reap is not optional here the
+# way it is in a program that exits.
+nix = { version = "0.31", features = ["process", "signal"] }
+
+# In hostd, on a metadata verb the user is waiting on a keystroke behind.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The maximal-strict set every sibling carries, copied rather than inherited for the same reason
+# they copy it: inheriting means membership, and membership means sharing a profile.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason: both want `f64::mul_add`, the fused multiply-add `CLAUDE.md` forbids.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

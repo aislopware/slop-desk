@@ -24,7 +24,9 @@ import SlopDeskArena
 /// suites checking it worked, which is residue rather than a face, so it went the way
 /// ``WireMessage``'s encoder went in the same stage. Three encoders survive
 /// (``encodeClipboardSet(_:)``, ``encodeClipboardReadRequest(lastSeenChangeCount:)``,
-/// ``encodeCodeFontSpec(_:)``) because those three verbs carry a structured REQUEST.
+/// ``encodeCodeFontSpec(_:)``) because those three verbs carry a structured REQUEST — four now,
+/// with ``encodeShellCompleteRequest(cursor:buffer:)``, whose RESPONSE deliberately has no decoder
+/// here: it is handed to the prompt door whole.
 ///
 /// **How a payload crosses.** A record — a LIST of them where the payload is a list — plus one
 /// ARENA holding every text field, each named by an `(offset, length)` pair into it. The same shape
@@ -404,6 +406,27 @@ public enum MetadataCodec {
         clip.lent { flat, content, contentLength in
             sized { out, cap in
                 slopdesk_metadata_encode_clipboard_set(flat, content, contentLength, out, cap)
+            }
+        }
+    }
+
+    /// Encodes a ``MetadataVerb/shellComplete`` request payload: the caret in CHARACTERS, then the
+    /// command line. Characters and not bytes because the far side hands it to a shell, whose own
+    /// caret is measured in characters — the ONE unit boundary in the verb, and the reason the
+    /// conversion happens here where the `String` still knows its own `count`.
+    ///
+    /// There is no matching decoder, and there is not meant to be: the RESPONSE goes straight into
+    /// `slopdesk_prompt_set_shell_candidates`, which decodes it in Rust beside every other candidate
+    /// source. A Swift decode here would be a second reader of a payload `slopdesk_wire` already
+    /// reads.
+    public static func encodeShellCompleteRequest(cursor: Int, buffer: String) -> Data {
+        let line = Array(buffer.utf8)
+        let caret = UInt32(clamping: cursor)
+        return line.withUnsafeBufferPointer { text in
+            sized { out, cap in
+                slopdesk_metadata_encode_shell_complete_request(
+                    caret, text.baseAddress, text.count, out, cap,
+                )
             }
         }
     }

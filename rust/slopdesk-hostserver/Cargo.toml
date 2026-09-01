@@ -128,6 +128,12 @@ slopdesk-workspace = { path = "../slopdesk-workspace" }
 # that has just closed ends the whole host.
 slopdesk-posix = { path = "../slopdesk-posix" }
 
+# Verb 23's whole body: a warm captive zsh, the `compadd` capture inside it, and the reader for what
+# it reports. Reached from here rather than from `slopdesk-probe` because it is not a fork-and-read
+# — it owns a process that must stay ALIVE between requests, which is a lifecycle only a daemon's
+# composition root can hold.
+slopdesk-zshcomplete = { path = "../slopdesk-zshcomplete" }
+
 # The one notation this crate cannot spell for itself: sixteen bytes as canonical UUID text, and
 # back. Every ctl verb names a pane by that text and the tables name it by the bytes.
 slopdesk-ids = { path = "../slopdesk-ids" }

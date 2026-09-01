@@ -301,6 +301,28 @@ public final class MetadataClient {
         return status == .ok
     }
 
+    /// What the user's OWN shell completion would offer at `cursor` (CHARACTERS) in `buffer`
+    /// (``MetadataVerb/shellComplete``), as the RAW response payload.
+    ///
+    /// Raw on purpose: the caller hands these bytes straight to
+    /// `slopdesk_prompt_set_shell_candidates`, which decodes them in Rust beside every other
+    /// candidate source. Decoding here would put a second reader in front of a payload
+    /// `slopdesk_wire` already reads, and would then have to re-encode it to hand it over.
+    ///
+    /// `nil` covers BOTH the transient miss (`.error` — the captive shell is still warming, or this
+    /// request outran its deadline) and the permanent one (`.notFound` — this host's shell is not
+    /// zsh). The caller keeps whatever local candidates it has either way, and only a caller that
+    /// wants to STOP asking has to tell them apart — which is why the host keeps them as two
+    /// statuses rather than folding both into one refusal.
+    public func shellComplete(cursor: Int, buffer: String) async -> Data? {
+        let (status, payload) = await request(
+            .shellComplete,
+            payload: MetadataCodec.encodeShellCompleteRequest(cursor: cursor, buffer: buffer),
+        )
+        guard status == .ok else { return nil }
+        return payload
+    }
+
     // MARK: Core round-trip
 
     /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed.

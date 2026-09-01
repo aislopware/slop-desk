@@ -39,7 +39,7 @@ use core::ffi::c_uchar;
 use slopdesk_terminal::prompt::buffer::{Direction, Motion};
 use slopdesk_terminal::prompt::complete::{
     Candidate, CandidateKind, CandidateProvider, CommandProvider, CommandSpec, PathEntry, PathProvider,
-    VariableProvider,
+    ShellGroup, ShellProvider, ShellSuggestion, VariableProvider,
 };
 use slopdesk_terminal::prompt::keys::{ControlAction, EditAction, Key, Mods, control_action, edit_action};
 use slopdesk_terminal::prompt::syntax::{TokenKind, Unterminated};
@@ -527,6 +527,10 @@ pub struct SlopDeskPrompt {
     path_entries: Vec<PathEntry>,
     variables: Vec<String>,
     commands: Vec<CommandSpec>,
+    /// The last answer from the user's own shell. Held across keystrokes like every other source
+    /// here, and for one extra reason: it arrives LATE, so between asking and answering the local
+    /// sources are the whole list and the shell's candidates simply join it when they land.
+    shell: Vec<ShellGroup>,
     /// What the last copy or cut yielded. Held until the next one.
     clipboard: Vec<u8>,
     /// What the last submit took. Empty when it continued instead.
@@ -539,7 +543,11 @@ impl SlopDeskPrompt {
         let paths = PathProvider::new(&self.path_base, &self.path_entries);
         let variables = VariableProvider::new(&self.variables);
         let commands = CommandProvider::new(&self.commands);
-        let sources: [&dyn CandidateProvider; 3] = [&paths, &variables, &commands];
+        // Cloned rather than borrowed because the provider owns its groups, and the clone is one
+        // shell answer — bounded by `slopdesk-zshcomplete`'s own cap, and paid once per completion
+        // rather than once per keystroke.
+        let shell = ShellProvider::new(self.shell.clone());
+        let sources: [&dyn CandidateProvider; 4] = [&paths, &variables, &commands, &shell];
         self.editor.complete(&sources, limit)
     }
 
@@ -1404,6 +1412,60 @@ pub unsafe extern "C" fn slopdesk_prompt_set_variables(
     state.variables = spans
         .iter()
         .map(|span| arena_text(bytes, span.offset, span.length))
+        .collect();
+}
+
+/// Replaces the shell-completion source with one verb-23 answer, as its RAW response payload.
+///
+/// The payload rather than an arena of records, and that is the whole design of this door: the
+/// answer is already a wire body, and the alternative — spanning three levels of nesting into a
+/// flat arena — would invent a second framing for a shape `slopdesk-wire` already frames. So the
+/// caller hands the bytes straight through and the decode stays where every other metadata decode
+/// in this app is. A body this door cannot decode CLEARS the source rather than keeping the
+/// previous answer, because a stale list under a new caret is the one thing worse than none.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation, and `(payload, payload_len)` must describe live
+/// memory for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_set_shell_candidates(
+    handle: *mut SlopDeskPrompt,
+    payload: *const c_uchar,
+    payload_len: usize,
+) {
+    // SAFETY: the caller's obligation, as above.
+    let Some(state) = (unsafe { held(handle) }) else {
+        return;
+    };
+    // SAFETY: the pair is live for the call or null, which borrows as empty.
+    let body = unsafe { borrow(payload, payload_len) };
+    state.shell = slopdesk_wire::metadata::codec::decode_shell_complete(body)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|group| {
+            ShellGroup {
+                prefix: group.prefix,
+                suffix: group.suffix,
+                suggestions: group
+                    .candidates
+                    .into_iter()
+                    .map(|candidate| {
+                        ShellSuggestion {
+                            text: candidate.text,
+                            // The flag is what carries "there is no description" — an empty string
+                            // that WAS offered is a different fact, and reading emptiness instead
+                            // would silently drop one.
+                            detail: candidate.has_detail.then_some(candidate.detail),
+                            verbatim: candidate.verbatim,
+                        }
+                    })
+                    .collect(),
+            }
+        })
         .collect();
 }
 

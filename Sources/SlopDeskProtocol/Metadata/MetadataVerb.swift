@@ -208,6 +208,20 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// identical (lazy, host-global, never-wait, poll-until-ready) and that is what this payload
     /// describes; nothing in it claims the far side is HTTP.
     case ensureAndroidBridge = 22
+    /// **Pure read.** What the user's OWN shell completion would offer at a caret. Request payload:
+    /// `[u32 cursor][utf8 buffer]` — the caret is a CHARACTER index, because it is handed to a shell
+    /// whose own caret is measured in characters. The working directory is deliberately absent: it
+    /// comes from the pane, exactly as ``gitStatus``'s does, so the request names no host path and
+    /// there is no confinement question. Response: a shell-completion answer, which the client hands
+    /// STRAIGHT to `slopdesk_prompt_set_shell_candidates` without decoding — the bytes are already a
+    /// wire body and this side holds no opinion about them.
+    ///
+    /// Three statuses, and the third is load-bearing: `.ok` + groups (possibly empty — a caret with
+    /// nothing to complete), `.error` for "the shell is not warm yet / missed its deadline" (ask
+    /// again on the next keystroke), and `.notFound` for "this host's shell is not zsh" (PERMANENT
+    /// — stop asking). A client that could not tell the last two apart would either poll for ever or
+    /// abandon a shell that was about to answer. zsh only, by decision — see `docs/68` §11.
+    case shellComplete = 23
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

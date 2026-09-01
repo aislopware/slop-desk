@@ -515,6 +515,117 @@ impl CandidateProvider for VariableProvider<'_> {
     }
 }
 
+// MARK: - The user's own shell
+
+/// One thing the user's own shell completion would insert.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellSuggestion {
+    /// The literal that would replace its group's prefix and suffix, affixes already composed in.
+    pub text: String,
+    /// The right-hand column the completion function offered, if it offered one.
+    pub detail: Option<String>,
+    /// Whether the text already carries its own shell quoting.
+    pub verbatim: bool,
+}
+
+/// One `compadd` call's worth of suggestions, and the text they replace.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellGroup {
+    /// The text BEFORE the caret that accepting one of these replaces.
+    pub prefix: String,
+    /// The text AFTER the caret that it replaces.
+    pub suffix: String,
+    /// What the call offered.
+    pub suggestions: Vec<ShellSuggestion>,
+}
+
+/// The candidates the user's OWN shell reported, seeded by whoever ran the round trip.
+///
+/// This crate does no IO by contract, and the shell bridge is the most IO a source in this app has:
+/// a captive interactive zsh, a pty, a deadline. So the split is the same one every other source
+/// here makes — the caller does the asking, this ranks the answer — except that the answer arrives
+/// LATE, after the keystroke that provoked it. That is what the group's `prefix` is for.
+///
+/// ## Staleness is checked, never assumed
+/// A group is offered only when the live document still ENDS in the prefix the shell answered
+/// about. A round trip is tens of milliseconds and a fast typist moves in that window, so the
+/// alternative — trusting an offset the host computed against a buffer that has since changed —
+/// deletes characters the user typed after asking. Skipping the group instead costs one stale
+/// list, which the next keystroke replaces anyway.
+#[derive(Debug, Default)]
+pub struct ShellProvider {
+    groups: Vec<ShellGroup>,
+}
+
+impl ShellProvider {
+    /// Ranks `groups`, which is one shell answer.
+    #[must_use]
+    pub const fn new(groups: Vec<ShellGroup>) -> Self {
+        Self { groups }
+    }
+
+    /// What kind of thing the shell reported, read off its SHAPE.
+    ///
+    /// zsh does not label its matches — a completion function's answers are strings, and the
+    /// function that produced them knows what they are but does not say. The shape is what is left,
+    /// and it decides only the icon and the tie-break between two equal scores, never what gets
+    /// inserted. Guessing wrong costs a wrong glyph.
+    fn kind_of(text: &str) -> CandidateKind {
+        if text.starts_with('-') {
+            CandidateKind::Flag
+        } else if text.ends_with('/') {
+            CandidateKind::Directory
+        } else if text.contains('/') {
+            CandidateKind::Path
+        } else {
+            CandidateKind::Subcommand
+        }
+    }
+}
+
+impl CandidateProvider for ShellProvider {
+    fn candidates(&self, request: &CompletionRequest<'_>) -> Vec<Candidate> {
+        let before = request.text.get(..request.cursor).unwrap_or("");
+        let after = request.text.get(request.cursor..).unwrap_or("");
+        let mut out = Vec::new();
+        for group in &self.groups {
+            // The staleness gate. An empty prefix matches every document, which is correct: it is
+            // what a caret at a word boundary reports, and there is nothing there to have changed.
+            if !before.ends_with(&group.prefix) {
+                continue;
+            }
+            let start = request.cursor.saturating_sub(group.prefix.len());
+            // The suffix is honoured only when it is actually still there. zsh reports it as the
+            // text an accept would swallow, and swallowing text the document no longer has would
+            // eat whatever moved into its place.
+            let end = if after.starts_with(&group.suffix) {
+                request.cursor.saturating_add(group.suffix.len())
+            } else {
+                request.cursor
+            };
+            for suggestion in &group.suggestions {
+                // `-Q` says the shell would insert this verbatim, and it says so for a BARE caret —
+                // that is the context a completion function writes its escapes for. Inside a quote
+                // the replacement range starts at the opening quote, so the candidate has to carry
+                // one, and this crate's quoter is the only thing that knows which.
+                let insert = if suggestion.verbatim && request.quoting == Quoting::None {
+                    suggestion.text.clone()
+                } else {
+                    request.quoting.wrap(&suggestion.text)
+                };
+                out.push(Candidate {
+                    kind: Self::kind_of(&suggestion.text),
+                    text: suggestion.text.clone(),
+                    insert,
+                    detail: suggestion.detail.clone(),
+                    replace: start..end,
+                });
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -525,7 +636,7 @@ mod tests {
 
     use super::{
         CandidateKind, CandidateProvider, CommandProvider, CommandSpec, HistoryProvider, PathEntry,
-        PathProvider, VariableProvider, complete,
+        PathProvider, ShellGroup, ShellProvider, ShellSuggestion, VariableProvider, complete,
     };
     use crate::prompt::history::CommandHistory;
 
@@ -811,5 +922,105 @@ mod tests {
         let names = strings(&["HOME"]);
         let found = complete("echo $H", 9_999, &[&VariableProvider::new(&names)], 10);
         assert!(found.iter().all(|hit| hit.candidate.replace.end <= 7));
+    }
+
+    /// One suggestion, spelled the way the shell reported it.
+    fn suggestion(text: &str, verbatim: bool) -> ShellSuggestion {
+        ShellSuggestion {
+            text: String::from(text),
+            detail: None,
+            verbatim,
+        }
+    }
+
+    /// The whole reason the group carries a PREFIX rather than an offset. The answer is late by
+    /// construction, and the document it describes may no longer be the one on screen — offering
+    /// against a stale range would delete the characters typed while waiting.
+    #[test]
+    fn a_shell_answer_for_a_document_that_has_moved_on_offers_nothing() {
+        let groups = vec![ShellGroup {
+            prefix: String::from("com"),
+            suffix: String::new(),
+            suggestions: vec![suggestion("commit", false)],
+        }];
+        let provider = ShellProvider::new(groups);
+        // Still true of the live document: offered, and against the range the prefix names.
+        let ranked = complete("git com", 7, &[&provider], 8);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].candidate.text, "commit");
+        assert_eq!(ranked[0].candidate.replace, 4..7);
+        // The user typed on. The prefix no longer describes the caret, so the group is dropped
+        // rather than applied to a range that would swallow `commi`.
+        assert!(complete("git commi", 9, &[&provider], 8).is_empty());
+    }
+
+    /// `-Q` is the shell saying the text already carries its escaping FOR A BARE CARET. Inside a
+    /// quote the replacement covers the opening one, so the candidate has to carry a quote back —
+    /// and this crate's quoter is the only thing that knows which quote that is.
+    #[test]
+    fn a_verbatim_suggestion_goes_in_untouched_at_a_bare_caret_and_is_requoted_inside_one() {
+        let bare = ShellProvider::new(vec![ShellGroup {
+            prefix: String::from("a"),
+            suffix: String::new(),
+            suggestions: vec![suggestion("a\\ b", true)],
+        }]);
+        let ranked = complete("ls a", 4, &[&bare], 8);
+        assert_eq!(ranked[0].candidate.insert, "a\\ b");
+
+        let quoted = ShellProvider::new(vec![ShellGroup {
+            prefix: String::from("'a"),
+            suffix: String::new(),
+            suggestions: vec![suggestion("a b", true)],
+        }]);
+        let ranked = complete("ls 'a", 5, &[&quoted], 8);
+        assert_eq!(ranked[0].candidate.insert, "'a b'");
+    }
+
+    /// The suffix is what an accept would swallow AFTER the caret, and it is honoured only while it
+    /// is still there — otherwise the accept eats whatever moved into its place.
+    #[test]
+    fn a_suffix_that_is_no_longer_at_the_caret_is_not_swallowed() {
+        let provider = ShellProvider::new(vec![ShellGroup {
+            prefix: String::from("sl"),
+            suffix: String::from("ing"),
+            suggestions: vec![suggestion("sliding", false)],
+        }]);
+        let ranked = complete("sling", 2, &[&provider], 8);
+        assert_eq!(ranked[0].candidate.replace, 0..5);
+        // The tail changed under it: the replacement stops at the caret rather than reaching past.
+        let ranked = complete("slate", 2, &[&provider], 8);
+        assert_eq!(ranked[0].candidate.replace, 0..2);
+    }
+
+    /// zsh does not label its matches, so the icon is read off the shape. It decides the glyph and
+    /// the tie-break and never what gets inserted.
+    #[test]
+    fn a_suggestions_kind_is_read_off_its_shape() {
+        let provider = ShellProvider::new(vec![ShellGroup {
+            prefix: String::new(),
+            suffix: String::new(),
+            suggestions: vec![
+                suggestion("--color", false),
+                suggestion("src/", false),
+                suggestion("src/main.rs", false),
+                suggestion("commit", false),
+            ],
+        }]);
+        let request = complete("", 0, &[&provider], 8);
+        let kinds: Vec<CandidateKind> = ["--color", "src/", "src/main.rs", "commit"]
+            .into_iter()
+            .map(|text| {
+                request
+                    .iter()
+                    .find(|ranked| ranked.candidate.text == text)
+                    .map_or(CandidateKind::History, |ranked| ranked.candidate.kind)
+            })
+            .collect();
+        assert_eq!(kinds, [
+            CandidateKind::Flag,
+            CandidateKind::Directory,
+            CandidateKind::Path,
+            CandidateKind::Subcommand
+        ]);
     }
 }

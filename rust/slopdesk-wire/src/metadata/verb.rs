@@ -17,7 +17,9 @@
 /// `~/.claude/settings.json`, pasteboard or a lazily-spawned child, and answer with only a status
 /// byte (or a tiny state payload) — no host file CONTENTS cross the wire for those, which is why
 /// they need no cwd confinement. Verbs 13, 14, 16 and 17 are pure reads that are host-global rather
-/// than pane-scoped.
+/// than pane-scoped. Verb 23 is a pure read of the pane's cwd that runs in a HOST-GLOBAL captive
+/// shell: what it answers is a function of the request and that cwd, and the shell it runs in
+/// belongs to the host rather than to any pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum MetadataVerb {
@@ -66,11 +68,14 @@ pub enum MetadataVerb {
     EnsureSimulatorServer = 21,
     /// **Side-effecting.** Ensure the host's Android bridge; answers a service endpoint.
     EnsureAndroidBridge = 22,
+    /// **Pure read.** What the user's OWN shell completion would offer at a caret. Request: the
+    /// caret's character index and the command line. Response: a shell-completion answer.
+    ShellComplete = 23,
 }
 
 impl MetadataVerb {
     /// Every verb this build routes, in wire order.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Processes,
         Self::Ports,
         Self::Cwd,
@@ -93,6 +98,7 @@ impl MetadataVerb {
         Self::SyncCodeFont,
         Self::EnsureSimulatorServer,
         Self::EnsureAndroidBridge,
+        Self::ShellComplete,
     ];
 
     /// The verb for `byte`, or `None` when this build serves nothing under it.
@@ -125,6 +131,7 @@ impl MetadataVerb {
             20 => Some(Self::SyncCodeFont),
             21 => Some(Self::EnsureSimulatorServer),
             22 => Some(Self::EnsureAndroidBridge),
+            23 => Some(Self::ShellComplete),
             _ => None,
         }
     }
@@ -202,7 +209,7 @@ mod tests {
 
     #[test]
     fn a_verb_this_build_does_not_serve_is_none_rather_than_a_guess() {
-        for byte in [0_u8, 23, 200, 0xFF] {
+        for byte in [0_u8, 24, 200, 0xFF] {
             assert_eq!(MetadataVerb::from_byte(byte), None);
         }
     }

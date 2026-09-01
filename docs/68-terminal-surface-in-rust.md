@@ -913,3 +913,80 @@ they decide what the artifact is compiled from and no path edge reaches them:
 `ThirdParty/tools/tools.lock` (the engine commit) and `rust/.cargo/config.toml` (the
 `GHOSTTY_SOURCE_DIR` that selects the tree). Bump either and today's stamp stays warm over an
 xcframework built from different Zig sources — the exact silence the gate exists to end.
+
+## 11. The shell-completion bridge — verb 23, zsh only
+
+Every other terminal that has built a rich prompt input answered "what would the shell complete
+here?" with a **spec database of its own**: a curated set of descriptions for a few hundred
+commands, shipped in the app. That is why each of them also silently breaks the completions its
+users actually installed — the plugin manager's, the company's internal CLI's, the ones a package
+dropped into `site-functions`. The user refused that trade by name: *"Tôi không muốn đạp đổ shell
+completion như thằng warp."* So this half does the other thing — it **runs the user's own
+completion, unmodified, and reads what it produces**.
+
+### Why it cannot be done by reading anything
+
+zsh's completions are not data. A completion function is program text that runs inside `zle`,
+reaches for the shell's own dynamic scope, and reports what it found by CALLING `compadd` — whose
+`-a`/`-k`/`-d` flags name **arrays that exist only in that function's frame at that instant**. There
+is no file to parse and no process to query. An index built ahead of time is not a smaller version
+of this; it is a different, worse answer.
+
+So the bridge is a **captive interactive zsh** with `compadd` overridden to report and fall through.
+The split falls at the first newline:
+
+| Layer | Where | What it decides |
+| --- | --- | --- |
+| capture | `slopdesk-zshcomplete::setup` (a Rust `const`, not a script) | nothing — it reports what zsh decided, as flat lines |
+| reader | `slopdesk-zshcomplete::parse` | pure; records → candidates + the text they replace |
+| lifecycle | `slopdesk-zshcomplete::session` | one warm shell per host, file in, file out, deadline, respawn |
+| verb | `MetadataVerb::ShellComplete = 23` → `Performer::Builder` | `[u32 cursor][utf8 buffer]` in, groups out |
+| ranking | `slopdesk_terminal::prompt::complete::ShellProvider` | ranks the answer beside the local sources |
+
+### Five decisions worth not re-litigating
+
+1. **One warm shell per HOST, never per pane, and never the pane's own.** `CLAUDE.md`'s superd rule
+   is the hard constraint — a second reader on a pane PTY steals bytes rather than observing them.
+   The drive widget takes the working directory as a per-request argument and `cd`s to it, so a pane
+   contributes nothing a request cannot carry.
+2. **The answer carries a PREFIX, not an offset.** The round trip is 11–92 ms and the user types
+   through it. An offset computed against the buffer the host was asked about would land somewhere
+   else in the buffer now on screen and delete characters typed since. `ShellProvider` re-derives
+   the range against the LIVE document and offers nothing when the prefix no longer matches.
+3. **Every ambiguity resolves one-sidedly.** An unknown `compadd` flag makes the call report
+   NOTHING; `-U` matches — which zsh never compared against the line — are dropped rather than
+   offered against an invented range; `compadd` ALWAYS reaches the builtin so its caller reads the
+   real status. A missing candidate costs a completion; a wrong one writes the user's command line
+   for them.
+4. **Three answers, not two.** `ok` + groups (possibly empty), `error` for "not warm yet / missed
+   the deadline" (transient — ask again), and `notFound` for "this host's shell is not zsh"
+   (permanent — stop asking). A client that could not tell the last two apart would either poll for
+   ever or abandon a shell that was about to answer.
+5. **The zsh text is a `const`, not a file.** `docs/60` deleted this tree's shell scripts because
+   each was LOGIC in a second language. This is the opposite: a protocol adapter for zsh, in the
+   only language zsh runs, with exactly one caller. As a file it would be sourceable, editable and
+   greppable as "a shell script we still have"; as a constant it cannot be edited without a rebuild,
+   and its record format is pinned by `parse`'s tests on the other side of the same crate. It is
+   written to the session's temp dir and `source`d only because a pty in canonical mode truncates an
+   input line at `MAX_CANON` (~1024 bytes).
+
+### Measured, against a real `~/.zshrc`
+
+| request | result |
+| --- | --- |
+| warm-up (once, on a thread) | 3.9 s — the user's own plugins, and the whole point is that they run unchanged |
+| `git com` | 1 candidate + "record changes to the repository", 92 ms cold / 20–25 ms warm |
+| `cd rust/slopdesk-w` | 2, hidden prefix `rust/` composed into the insert, 21 ms |
+| `git --git-dir=ru` | `IPREFIX=--git-dir=`, `PREFIX=ru` — an exact range the client's own lexer would not find, 24 ms |
+| `ls --` | 68 candidates, 26 ms |
+| `git checkout ` | 27 refs, 62 ms |
+
+The 400 ms deadline is ~4× the worst observed answer. It is a latency budget, not a correctness one:
+the local sources answer instantly either way, and the shell's candidates merge in when they land.
+
+### Scope
+
+**zsh only**, by the user's own sequencing: *"cứ hoàn thiện zsh đi đã, sau này mở rộng sang shell
+khác sau."* `docs/DECISIONS.md`'s item (6) ⛔ still stands for bash and fish, and this does not
+weaken it — bash's `complete -F` and fish's `complete` report through entirely different mechanisms,
+so either would be a second capture half, not a flag on this one.

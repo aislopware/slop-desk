@@ -24,8 +24,9 @@ use slopdesk_muxsession::metadata_admission::{Performer, performer};
 use slopdesk_wire::MetadataStatus;
 use slopdesk_wire::metadata::MetadataVerb;
 use slopdesk_wire::metadata::codec::{
-    AgentSessionInfo, DirEntry, GitStatusPayload, HostVitals, decode_agent_session_list, decode_dir_listing,
-    decode_git_status, decode_host_vitals,
+    AgentSessionInfo, DirEntry, GitStatusPayload, HostVitals, ShellCandidate, ShellCompletionGroup,
+    decode_agent_session_list, decode_dir_listing, decode_git_status, decode_host_vitals,
+    decode_shell_complete, encode_shell_complete_request,
 };
 
 // MARK: - The door a test holds
@@ -47,6 +48,8 @@ struct Fake {
     transcript: Option<Vec<u8>>,
     host_name: Option<String>,
     vitals: Option<HostVitals>,
+    completion: Option<Vec<ShellCompletionGroup>>,
+    bridged: bool,
 }
 
 impl Fake {
@@ -79,6 +82,17 @@ impl Fake {
                 pressure_byte: 0,
                 disk_free_mib: Some(1024),
             }),
+            completion: Some(vec![ShellCompletionGroup {
+                prefix: String::from("com"),
+                suffix: String::new(),
+                candidates: vec![ShellCandidate {
+                    text: String::from("commit"),
+                    detail: String::from("record changes"),
+                    has_detail: true,
+                    verbatim: false,
+                }],
+            }]),
+            bridged: true,
         }
     }
 
@@ -136,6 +150,15 @@ impl HostQuerying for Fake {
 
     fn host_vitals(&self) -> Option<HostVitals> {
         self.vitals
+    }
+
+    fn shell_complete(&self, cwd: &str, buffer: &str, cursor: u32) -> Option<Vec<ShellCompletionGroup>> {
+        self.note(&format!("shell_complete({cwd}, {buffer}, {cursor})"));
+        self.completion.clone()
+    }
+
+    fn shell_bridged(&self) -> bool {
+        self.bridged
     }
 }
 
@@ -595,4 +618,118 @@ fn a_vitals_reading_that_is_not_ready_yet_is_an_error_and_not_a_miss() {
     let vitals = decode_host_vitals(&answer.payload).expect("the reducer encodes what the codec decodes");
     assert_eq!(vitals.cpu_percent, 7);
     assert_eq!(vitals.disk_free_mib, Some(1024));
+}
+
+// MARK: - ShellComplete
+
+/// The working directory comes from the PANE and never from the payload, which is what keeps the
+/// request from naming a host path and leaves no confinement question to get wrong. The caret and
+/// the buffer come from the payload, and they arrive at the door unaltered.
+#[test]
+fn a_completion_request_is_answered_in_the_panes_own_directory() {
+    let wired = Wired::over(Fake::answering());
+    let answer = wired.ask(
+        MetadataVerb::ShellComplete,
+        &encode_shell_complete_request(3, "git com"),
+    );
+    assert_eq!(status_of(&answer), MetadataStatus::Ok);
+    assert!(
+        wired
+            .asked()
+            .contains(&String::from("shell_complete(/repo, git com, 3)"))
+    );
+    let groups = decode_shell_complete(&answer.payload).expect("the reducer encodes what the codec decodes");
+    assert_eq!(groups.len(), 1);
+    let group = groups
+        .first()
+        .expect("the answer carries the one group the fake reported");
+    assert_eq!(group.prefix, "com");
+    let candidate = group
+        .candidates
+        .first()
+        .expect("the group carries the one candidate the fake reported");
+    assert_eq!(candidate.text, "commit");
+    assert!(candidate.has_detail);
+}
+
+/// The three answers this verb has to keep apart. A host with no zsh to bridge to is a PERMANENT
+/// `notFound` — a client stops asking. A shell that is merely still warming up is an `error` — the
+/// client asks again on the next keystroke. Collapsing the two would either poll a shell that will
+/// never exist or abandon one that was about to answer.
+#[test]
+fn a_shell_that_will_never_answer_is_a_miss_and_one_that_is_not_warm_yet_is_an_error() {
+    let unbridged = Wired::over(Fake {
+        bridged: false,
+        ..Fake::answering()
+    });
+    let answer = unbridged.ask(MetadataVerb::ShellComplete, &encode_shell_complete_request(0, ""));
+    assert_eq!(status_of(&answer), MetadataStatus::NotFound);
+    assert!(answer.payload.is_empty());
+    // And the door was never even asked: a host with no bridge does not spawn one per keystroke.
+    assert!(
+        !unbridged
+            .asked()
+            .iter()
+            .any(|call| call.starts_with("shell_complete"))
+    );
+
+    let warming = Wired::over(Fake {
+        completion: None,
+        ..Fake::answering()
+    });
+    assert_eq!(
+        status_of(&warming.ask(MetadataVerb::ShellComplete, &encode_shell_complete_request(0, ""))),
+        MetadataStatus::Error
+    );
+}
+
+/// A caret with genuinely nothing to complete is an EMPTY answer, not a failure — the client
+/// renders "no shell candidates" rather than keeping the previous word's list on screen.
+#[test]
+fn a_caret_with_nothing_to_complete_is_an_empty_answer_and_not_a_refusal() {
+    let wired = Wired::over(Fake {
+        completion: Some(Vec::new()),
+        ..Fake::answering()
+    });
+    let answer = wired.ask(MetadataVerb::ShellComplete, &encode_shell_complete_request(0, ""));
+    assert_eq!(status_of(&answer), MetadataStatus::Ok);
+    assert_eq!(decode_shell_complete(&answer.payload), Ok(Vec::new()));
+}
+
+/// A payload too short to hold the caret is a peer fault, and it must not reach the shell: the
+/// alternative is completing a buffer the request never sent.
+#[test]
+fn a_malformed_completion_payload_never_reaches_the_shell() {
+    let wired = Wired::over(Fake::answering());
+    let answer = wired.ask(MetadataVerb::ShellComplete, b"ab");
+    assert_eq!(status_of(&answer), MetadataStatus::Error);
+    assert!(
+        !wired
+            .asked()
+            .iter()
+            .any(|call| call.starts_with("shell_complete"))
+    );
+}
+
+/// A pane whose cwd cannot be read has nowhere to run the completion, and a completion run in the
+/// WRONG directory answers with confident nonsense — the paths of some other pane.
+#[test]
+fn a_pane_with_no_working_directory_completes_nothing_rather_than_completing_elsewhere() {
+    let rootless = Wired::over(Fake {
+        cwd: None,
+        ..Fake::answering()
+    });
+    assert_eq!(
+        status_of(&rootless.ask(
+            MetadataVerb::ShellComplete,
+            &encode_shell_complete_request(0, "ls ")
+        )),
+        MetadataStatus::Error
+    );
+    assert!(
+        !rootless
+            .asked()
+            .iter()
+            .any(|call| call.starts_with("shell_complete"))
+    );
 }
