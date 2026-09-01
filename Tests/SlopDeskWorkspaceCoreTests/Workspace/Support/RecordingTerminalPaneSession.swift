@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskWorkspaceModel
+import Synchronization
 @testable import SlopDeskWorkspaceCore
 
 // MARK: - RecordingSurfaceActions (a headless TerminalSurface that records performBindingAction)
@@ -10,12 +11,20 @@ import SlopDeskWorkspaceModel
 /// (which hangs without a window server — the hang-safety rule). It never touches VideoToolbox / Metal /
 /// SCStream / a real terminal; it is a pure in-memory recorder.
 ///
-/// NON-isolated so it satisfies the nonisolated `TerminalSurface` /
-/// `TerminalSurfaceActions` protocols; an `NSLock` guards the recorded actions (`@unchecked Sendable`),
-/// though the tests only touch it from the main actor.
+/// NON-isolated so it satisfies the nonisolated `TerminalSurface` / `TerminalSurfaceActions`
+/// protocols; a `Mutex` guards the recorded calls, though the tests only touch it from the main
+/// actor. `@unchecked Sendable` survives for the STAGING vars — `onWrite`, `selectionText`,
+/// `scrollbackText` — which a test writes before it hands the recorder over, not concurrently.
 final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @unchecked Sendable {
-    private let lock = NSLock()
-    private var recorded: [String] = []
+    /// Everything a call RECORDS, in one hold — actions, find calls and the scrollback tally are
+    /// read back together by the assertions and so are one fact.
+    private struct Recorded {
+        var actions: [String] = []
+        var finds: [FindCall] = []
+        var scrollbackCalls = 0
+    }
+
+    private let recorded = Mutex(Recorded())
     var onWrite: ((Data) -> Void)?
 
     /// Drives ``readSelection``/``hasSelection`` so a copy-mode test can stage a mouse-made selection
@@ -26,32 +35,18 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
     /// entry lands on its own screen row — the shape of a grid nothing wrapped in.
     var scrollbackText: [String] = []
 
-    private var scrollbackCalls = 0
-
     /// Every ``find(_:caseSensitive:wholeWord:isRegex:)`` in call order.
-    private(set) var finds: [FindCall] = []
+    var finds: [FindCall] { recorded.withLock { $0.finds } }
 
     /// How many times ``scrollbackLines()`` was called — the assertion surface for the E5 perf fix
     /// (the cross-seam scrollback mirror must be gathered ONCE per overlay-open, not once per keystroke).
-    var scrollbackLinesCallCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return scrollbackCalls
-    }
+    var scrollbackLinesCallCount: Int { recorded.withLock { $0.scrollbackCalls } }
 
     /// Every `performBindingAction` argument, in call order — the assertion surface for jump routing.
-    var actions: [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recorded
-    }
+    var actions: [String] { recorded.withLock { $0.actions } }
 
     /// Clears the recorded actions (so a test can assert a SECOND route's actions in isolation).
-    func resetActions() {
-        lock.lock()
-        defer { lock.unlock() }
-        recorded.removeAll()
-    }
+    func resetActions() { recorded.withLock { $0.actions.removeAll() } }
 
     // TerminalSurface (inert — the block ops never feed bytes through here).
     func feed(_: Data) {}
@@ -63,16 +58,12 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
     func readSelection() -> String? { selectionText }
     @discardableResult
     func performBindingAction(_ action: String) -> Bool {
-        lock.lock()
-        recorded.append(action)
-        lock.unlock()
+        recorded.withLock { $0.actions.append(action) }
         return true
     }
 
     func scrollbackLines() -> [TerminalScrollbackLine] {
-        lock.lock()
-        scrollbackCalls += 1
-        lock.unlock()
+        recorded.withLock { $0.scrollbackCalls += 1 }
         return scrollbackText.enumerated().map { row, text in
             TerminalScrollbackLine(text: text, firstRow: row, lastRow: row)
         }
@@ -82,9 +73,14 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
     // `slopdesk-vterm`'s and has its own tests there — a recorder that searched would be a second
     // engine rebuilt inside the test target, which `CLAUDE.md` bans by name.
     func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int {
-        lock.lock()
-        finds.append(FindCall(query: query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex))
-        lock.unlock()
+        recorded.withLock {
+            $0.finds.append(FindCall(
+                query: query,
+                caseSensitive: caseSensitive,
+                wholeWord: wholeWord,
+                isRegex: isRegex,
+            ))
+        }
         return 0
     }
 
@@ -112,8 +108,12 @@ struct FindCall: Equatable {
 final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, TerminalSelectionControl,
     @unchecked Sendable
 {
-    private let lock = NSLock()
-    private var recorded: [String] = []
+    private struct Recorded {
+        var actions: [String] = []
+        var finds: [FindCall] = []
+    }
+
+    private let recorded = Mutex(Recorded())
     var onWrite: ((Data) -> Void)?
 
     /// The staged viewport truth `viewportInfo()` returns (`nil` = the readback fails → legacy path).
@@ -143,19 +143,11 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
     private(set) var clearSelectionCount = 0
 
     /// Every ``find(_:caseSensitive:wholeWord:isRegex:)`` in call order.
-    private(set) var finds: [FindCall] = []
+    var finds: [FindCall] { recorded.withLock { $0.finds } }
 
-    var actions: [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recorded
-    }
+    var actions: [String] { recorded.withLock { $0.actions } }
 
-    func resetActions() {
-        lock.lock()
-        defer { lock.unlock() }
-        recorded.removeAll()
-    }
+    func resetActions() { recorded.withLock { $0.actions.removeAll() } }
 
     // TerminalSurface (inert).
     func feed(_: Data) {}
@@ -167,9 +159,7 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
     func readSelection() -> String? { selectionText }
     @discardableResult
     func performBindingAction(_ action: String) -> Bool {
-        lock.lock()
-        recorded.append(action)
-        lock.unlock()
+        recorded.withLock { $0.actions.append(action) }
         return true
     }
 
@@ -181,9 +171,14 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
 
     /// Records and finds nothing, for the same reason ``RecordingSurfaceActions`` does.
     func find(_ query: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) -> Int {
-        lock.lock()
-        finds.append(FindCall(query: query, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex))
-        lock.unlock()
+        recorded.withLock {
+            $0.finds.append(FindCall(
+                query: query,
+                caseSensitive: caseSensitive,
+                wholeWord: wholeWord,
+                isRegex: isRegex,
+            ))
+        }
         return 0
     }
 

@@ -3,6 +3,7 @@ import SlopDeskClient
 import SlopDeskProtocol
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
+import Synchronization
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -36,43 +37,37 @@ final class LaunchDialHoldTests: XCTestCase {
     /// `AsyncThrowingStream` is consumed by the run that iterates it: a re-subscribe that reused the
     /// previous pipe would deliver to nobody, and the host-switch tests are entirely about what the
     /// SECOND subscription sees.
-    private final class PipeBox: @unchecked Sendable {
-        private let lock = NSLock()
-        /// The first end is minted up front, so a test can play the host before the run loop has got
-        /// as far as calling `open`.
-        private var pipes: [PipeChannel] = [PipeChannel()]
-        private var handedOut = 0
+    private final class PipeBox: Sendable {
+        private struct Ends {
+            /// The first end is minted up front, so a test can play the host before the run loop has
+            /// got as far as calling `open`.
+            var pipes: [PipeChannel] = [PipeChannel()]
+            var handedOut = 0
+        }
+
+        private let ends = Mutex(Ends())
 
         /// Hands the next subscription its own control end.
         func open() -> PipeChannel {
-            lock.lock()
-            defer { lock.unlock() }
-            handedOut += 1
-            if handedOut > pipes.count { pipes.append(PipeChannel()) }
-            return pipes[handedOut - 1]
+            ends.withLock { e in
+                e.handedOut += 1
+                if e.handedOut > e.pipes.count { e.pipes.append(PipeChannel()) }
+                return e.pipes[e.handedOut - 1]
+            }
         }
 
         /// The end the newest subscription talks through.
-        var current: PipeChannel {
-            lock.lock()
-            defer { lock.unlock() }
-            return pipes[max(handedOut - 1, 0)]
-        }
+        var current: PipeChannel { ends.withLock { $0.pipes[max($0.handedOut - 1, 0)] } }
 
         /// How many subscriptions have been opened — 2 once a re-subscribe has landed.
-        var openCount: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return handedOut
-        }
+        var openCount: Int { ends.withLock { $0.handedOut } }
     }
 
     /// The workspace channel's control end, held by the test so it can play the host.
-    private final class PipeChannel: MessageChannel, @unchecked Sendable {
+    private final class PipeChannel: MessageChannel, Sendable {
         let inbound: AsyncThrowingStream<WireMessage, Error>
         private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-        private let lock = NSLock()
-        private var sent: [WireMessage] = []
+        private let sent = Mutex<[WireMessage]>([])
 
         init() {
             (inbound, continuation) = AsyncThrowingStream.makeStream(of: WireMessage.self)
@@ -83,16 +78,12 @@ final class LaunchDialHoldTests: XCTestCase {
         /// failing-write cases.
         func send(_ message: WireMessage) async {
             await Task.yield()
-            // A synchronous helper: `NSLock` is unavailable from an async context, and holding one
-            // across a suspension is the mistake that ban exists to catch.
+            // A synchronous helper: `withLock` is non-async by design, and holding a lock across a
+            // suspension is the mistake that design exists to prevent.
             record(message)
         }
 
-        private func record(_ message: WireMessage) {
-            lock.lock()
-            sent.append(message)
-            lock.unlock()
-        }
+        private func record(_ message: WireMessage) { sent.withLock { $0.append(message) } }
 
         func deliver(_ message: WireMessage) { continuation.yield(message) }
 
@@ -106,10 +97,7 @@ final class LaunchDialHoldTests: XCTestCase {
 
         /// Every intent this client has put on the wire, read back.
         var intents: [WorkspaceFixtureBytes.Intent] {
-            lock.lock()
-            let messages = sent
-            lock.unlock()
-            return messages.compactMap {
+            sent.withLock { $0 }.compactMap {
                 guard case let .workspaceRequest(_, verb, payload) = $0,
                       verb == WorkspaceRequestVerb.intent.rawValue else { return nil }
                 return WorkspaceFixtureBytes.readIntent(payload)
@@ -118,21 +106,12 @@ final class LaunchDialHoldTests: XCTestCase {
     }
 
     /// A verdict that can be supplied after a waiter has already suspended on it.
-    private final class VerdictBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var resolved: Bool?
+    private final class VerdictBox: Sendable {
+        private let resolved = Mutex<Bool?>(nil)
 
-        func set(_ accepted: Bool) {
-            lock.lock()
-            resolved = accepted
-            lock.unlock()
-        }
+        func set(_ accepted: Bool) { resolved.withLock { $0 = accepted } }
 
-        private func peek() -> Bool? {
-            lock.lock()
-            defer { lock.unlock() }
-            return resolved
-        }
+        private func peek() -> Bool? { resolved.withLock { $0 } }
 
         var value: Bool {
             get async {

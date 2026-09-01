@@ -1,5 +1,6 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import SlopDeskVideoProtocol
+import Synchronization
 import XCTest
 @testable import SlopDeskVideoClient
 
@@ -12,27 +13,34 @@ import XCTest
 @MainActor
 final class VideoConnectionRegistryTests: XCTestCase {
     /// In-memory ``VideoMuxClientFlowing``: records lane registrations + sends, never opens a socket.
-    private final class FakeFlow: VideoMuxClientFlowing, @unchecked Sendable {
-        let lock = NSLock()
-        private(set) var startCount = 0
-        private(set) var closeCount = 0
-        private(set) var lanes: Set<UInt32> = []
-        private(set) var sends: [(VideoChannel, UInt32)] = []
-        func startIfNeeded() { lock.withLock { startCount += 1 } }
+    private final class FakeFlow: VideoMuxClientFlowing, Sendable {
+        private struct Log {
+            var startCount = 0
+            var closeCount = 0
+            var lanes: Set<UInt32> = []
+            var sends: [(VideoChannel, UInt32)] = []
+        }
+
+        private let log = Mutex(Log())
+        var startCount: Int { log.withLock { $0.startCount } }
+        var closeCount: Int { log.withLock { $0.closeCount } }
+        var lanes: Set<UInt32> { log.withLock { $0.lanes } }
+        var sends: [(VideoChannel, UInt32)] { log.withLock { $0.sends } }
+        func startIfNeeded() { log.withLock { $0.startCount += 1 } }
         func registerLane(
             channelID: UInt32,
             onMedia _: @Sendable (VideoChannel, Data) -> Void,
             onCursor _: @Sendable (Data) -> Void,
         ) {
-            lock.withLock { _ = lanes.insert(channelID) }
+            log.withLock { _ = $0.lanes.insert(channelID) }
         }
 
-        func unregisterLane(channelID: UInt32) { lock.withLock { _ = lanes.remove(channelID) } }
-        func send(_: Data, on channel: VideoChannel, channelID: UInt32) { lock.withLock { sends.append((
-            channel,
-            channelID,
-        )) } }
-        func close() { lock.withLock { closeCount += 1 } }
+        func unregisterLane(channelID: UInt32) { log.withLock { _ = $0.lanes.remove(channelID) } }
+        func send(_: Data, on channel: VideoChannel, channelID: UInt32) {
+            log.withLock { $0.sends.append((channel, channelID)) }
+        }
+
+        func close() { log.withLock { $0.closeCount += 1 } }
     }
 
     private func makeRegistry(_ track: @escaping (FakeFlow) -> Void = { _ in }) -> VideoConnectionRegistry {

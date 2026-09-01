@@ -2,6 +2,7 @@ import Foundation
 import SlopDeskProtocol
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
+import Synchronization
 @testable import SlopDeskClient
 
 /// The ONE test double every suite in this target drives a ``SlopDeskClient`` with.
@@ -16,6 +17,11 @@ import SlopDeskWorkspaceModel
 /// It is a `final class` with a lock rather than an actor because ``PaneDriving`` is SYNCHRONOUS by
 /// design — the shipping driver blocks a thread on a mailbox — and an actor cannot conform to a
 /// synchronous protocol without every method becoming a hop the real one does not have.
+///
+/// The lock is an `NSLock` and not a `Mutex`, alone in this target: it sits beside two
+/// `NSCondition`s that gate the parked dials, and a condition variable is a WAIT — a scoped
+/// `withLock` has no way to express one. Splitting the state across both spellings would put half
+/// the driver's fields where the conditions cannot reach them.
 final class FakePaneDriver: PaneDriving, @unchecked Sendable {
     /// What ``connect(host:port:handshakeTimeout:)`` and ``resume(handshakeTimeout:)`` do.
     enum Dial: Sendable {
@@ -356,11 +362,17 @@ final class FakePaneDriver: PaneDriving, @unchecked Sendable {
 /// and `configure` is where a suite states what kind of driver it wants before the session gets it.
 final class PaneDriverRecorder: @unchecked Sendable {
     /// Applied to each driver before it is handed out. Set it BEFORE the first dial.
+    ///
+    /// The one reason this recorder is still `@unchecked`: a suite writes it before the first dial,
+    /// not concurrently with one. Everything the dials themselves touch is inside the `Mutex`.
     var configure: (@Sendable (FakePaneDriver) -> Void)?
 
-    private let lock = NSLock()
-    private var made: [FakePaneDriver] = []
-    private var started = 0
+    private struct Log {
+        var made: [FakePaneDriver] = []
+        var started = 0
+    }
+
+    private let log = Mutex(Log())
     private let gated: Bool
 
     /// - Parameter gated: every minted driver parks its dial until ``releaseAll()``, and each park is
@@ -372,25 +384,13 @@ final class PaneDriverRecorder: @unchecked Sendable {
     }
 
     /// How many drivers were minted, which is how many dials were attempted.
-    var count: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return made.count
-    }
+    var count: Int { log.withLock { $0.made.count } }
 
     /// How many gated dials have reached their park.
-    var startedDials: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return started
-    }
+    var startedDials: Int { log.withLock { $0.started } }
 
     /// Every driver in mint order.
-    var drivers: [FakePaneDriver] {
-        lock.lock()
-        defer { lock.unlock() }
-        return made
-    }
+    var drivers: [FakePaneDriver] { log.withLock { $0.made } }
 
     /// The most recent driver, or `nil` before the first dial.
     var last: FakePaneDriver? { drivers.last }
@@ -410,16 +410,11 @@ final class PaneDriverRecorder: @unchecked Sendable {
         if gated {
             driver.dial = .gated
             driver.onDialStarted = { [weak self] in
-                guard let self else { return }
-                lock.lock()
-                started += 1
-                lock.unlock()
+                self?.log.withLock { $0.started += 1 }
             }
         }
         configure?(driver)
-        lock.lock()
-        made.append(driver)
-        lock.unlock()
+        log.withLock { $0.made.append(driver) }
         return driver
     }
 
@@ -444,34 +439,29 @@ final class PaneDriverRecorder: @unchecked Sendable {
 /// Those suites assert on WHICH pane opened a channel and how many times — "the fan-out reached
 /// the evicted pane", "nothing dialled the reaped one" — so the order of ids is the evidence and
 /// the live driver per pane is how the host is played against it.
-final class PaneDialLedger: @unchecked Sendable {
-    private let lock = NSLock()
-    private var ids: [PaneID] = []
-    private var live: [PaneID: FakePaneDriver] = [:]
+final class PaneDialLedger: Sendable {
+    private struct Ledger {
+        var ids: [PaneID] = []
+        var live: [PaneID: FakePaneDriver] = [:]
+    }
+
+    private let ledger = Mutex(Ledger())
 
     /// Every dial, in order, as the pane that made it.
-    var dialled: [PaneID] {
-        lock.lock()
-        defer { lock.unlock() }
-        return ids
-    }
+    var dialled: [PaneID] { ledger.withLock { $0.ids } }
 
     /// How many channels `pane` has opened over the whole run.
     func count(_ pane: PaneID) -> Int { dialled.filter { $0 == pane }.count }
 
     /// The driver behind `pane`'s CURRENT channel.
-    func driver(for pane: PaneID) -> FakePaneDriver? {
-        lock.lock()
-        defer { lock.unlock() }
-        return live[pane]
-    }
+    func driver(for pane: PaneID) -> FakePaneDriver? { ledger.withLock { $0.live[pane] } }
 
     func make(for pane: PaneID) -> FakePaneDriver {
         let driver = FakePaneDriver()
-        lock.lock()
-        ids.append(pane)
-        live[pane] = driver
-        lock.unlock()
+        ledger.withLock {
+            $0.ids.append(pane)
+            $0.live[pane] = driver
+        }
         return driver
     }
 }

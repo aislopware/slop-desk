@@ -1,5 +1,6 @@
 import CoreVideo
 import SlopDeskVideoProtocol
+import Synchronization
 import XCTest
 @testable import SlopDeskVideoClient
 
@@ -11,29 +12,17 @@ import XCTest
 /// frames, (c) a real frame resets it. The GPU application of the offset is the GUI-only / HW step.
 final class FramePacerReprojectionTests: XCTestCase {
     /// Records every (offset, present) the pacer applies, plus how many renderCallback presents fire.
-    private final class Sink: @unchecked Sendable {
-        private let lock = NSLock()
-        private var offsets: [SIMD2<Float>] = []
-        private var presents = 0
-        func noteOffset(_ o: SIMD2<Float>) { lock.lock()
-            offsets.append(o)
-            lock.unlock()
+    private final class Sink: Sendable {
+        private struct Log {
+            var offsets: [SIMD2<Float>] = []
+            var presents = 0
         }
 
-        func notePresent() { lock.lock()
-            presents += 1
-            lock.unlock()
-        }
-
-        var appliedOffsets: [SIMD2<Float>] { lock.lock()
-            defer { lock.unlock() }
-            return offsets
-        }
-
-        var presentCount: Int { lock.lock()
-            defer { lock.unlock() }
-            return presents
-        }
+        private let log = Mutex(Log())
+        func noteOffset(_ o: SIMD2<Float>) { log.withLock { $0.offsets.append(o) } }
+        func notePresent() { log.withLock { $0.presents += 1 } }
+        var appliedOffsets: [SIMD2<Float>] { log.withLock { $0.offsets } }
+        var presentCount: Int { log.withLock { $0.presents } }
     }
 
     private func makePixelBuffer() throws -> CVPixelBuffer {

@@ -1,4 +1,5 @@
 import CoreVideo
+import Synchronization
 import XCTest
 @testable import SlopDeskVideoClient
 @testable import SlopDeskVideoProtocol
@@ -149,16 +150,8 @@ final class StreamCadenceClientTests: XCTestCase {
 
 /// Lock-boxed present counter — the render callback is `@Sendable` (the RenderCounter pattern
 /// from FramePacerTests).
-private final class PresentCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = 0
-    func bump() { lock.lock()
-        value += 1
-        lock.unlock()
-    }
-
-    var count: Int { lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
+private final class PresentCounter: Sendable {
+    private let value = Mutex(0)
+    func bump() { value.withLock { $0 += 1 } }
+    var count: Int { value.withLock { $0 } }
 }

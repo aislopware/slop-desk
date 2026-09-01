@@ -1,4 +1,5 @@
 import CoreVideo
+import Synchronization
 import XCTest
 @testable import SlopDeskVideoClient
 
@@ -145,16 +146,8 @@ final class FramePacerTests: XCTestCase {
 
 /// Thread-safe render counter (the pacer's `@Sendable` render callback forbids
 /// capturing a mutable local).
-private final class RenderCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = 0
-    func bump() { lock.lock()
-        value += 1
-        lock.unlock()
-    }
-
-    var count: Int { lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
+private final class RenderCounter: Sendable {
+    private let value = Mutex(0)
+    func bump() { value.withLock { $0 += 1 } }
+    var count: Int { value.withLock { $0 } }
 }

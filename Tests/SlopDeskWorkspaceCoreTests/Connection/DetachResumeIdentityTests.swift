@@ -3,6 +3,7 @@ import SlopDeskClient
 import SlopDeskProtocol
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
+import Synchronization
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -166,22 +167,15 @@ final class DetachResumeIdentityTests: XCTestCase {
 /// driver escapes to any other thread, so nothing on this side can see it again afterwards. What
 /// this pins is that the factory got the right one, synchronously, which is the half of the
 /// contract Swift still owns.
-private final class SeedRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var seeds: [SlopDeskClient.ResumeSeed?] = []
+private final class SeedRecorder: Sendable {
+    private let seeds = Mutex<[SlopDeskClient.ResumeSeed?]>([])
 
     /// The seed the FIRST call was handed — double-optional on purpose: the outer `nil` means the
     /// factory was never called at all, the inner one means it was called with no seed.
-    var first: (SlopDeskClient.ResumeSeed?)? {
-        lock.lock()
-        defer { lock.unlock() }
-        return seeds.first
-    }
+    var first: (SlopDeskClient.ResumeSeed?)? { seeds.withLock { $0.first } }
 
     func record(_ seed: SlopDeskClient.ResumeSeed?) -> SlopDeskClient {
-        lock.lock()
-        seeds.append(seed)
-        lock.unlock()
+        seeds.withLock { $0.append(seed) }
         return SlopDeskClient(driver: FakePaneDriver.inert("the seed tests never reach a host"))
     }
 }

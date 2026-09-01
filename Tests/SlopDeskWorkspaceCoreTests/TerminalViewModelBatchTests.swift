@@ -1,3 +1,4 @@
+import Synchronization
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -160,45 +161,43 @@ final class TerminalViewModelBatchTests: XCTestCase {
     /// continuation was appended → parked forever → the whole xctest worker hung (the
     /// intermittent 30-minute `make test --parallel` hang). The gate check and the park are
     /// now one atomic section.
+    ///
+    /// `@unchecked` survives for ONE reason: ``TerminalSurface`` requires a mutable, non-`Sendable`
+    /// `onWrite` closure. Everything the two executors actually share is inside the `Mutex`.
     private final class BackpressureSurface: TerminalSurface, FeedBackpressuring, @unchecked Sendable {
-        private let lock = NSLock()
-        private var _writes: [Data] = []
-        private var _flushes = 0
-        private var _backpressureCalls = 0
-        private var parked: [CheckedContinuation<Void, Never>] = []
-        private var gateOpen = false
-
-        var writes: [Data] { lock.lock()
-            defer { lock.unlock() }
-            return _writes
+        private struct Gate {
+            var writes: [Data] = []
+            var flushes = 0
+            var backpressureCalls = 0
+            var parked: [CheckedContinuation<Void, Never>] = []
+            var isOpen = false
         }
 
-        var flushes: Int { lock.lock()
-            defer { lock.unlock() }
-            return _flushes
+        private let gate = Mutex(Gate())
+
+        var writes: [Data] { gate.withLock { $0.writes } }
+        var flushes: Int { gate.withLock { $0.flushes } }
+        var backpressureCalls: Int { gate.withLock { $0.backpressureCalls } }
+
+        func clearWrites() {
+            gate.withLock {
+                $0.writes.removeAll()
+                $0.flushes = 0
+            }
         }
 
-        var backpressureCalls: Int { lock.lock()
-            defer { lock.unlock() }
-            return _backpressureCalls
+        func feed(_ bytes: Data) {
+            gate.withLock {
+                $0.writes.append(bytes)
+                $0.flushes += 1
+            }
         }
 
-        func clearWrites() { lock.lock()
-            _writes.removeAll()
-            _flushes = 0
-            lock.unlock()
-        }
-
-        func feed(_ bytes: Data) { lock.lock()
-            _writes.append(bytes)
-            _flushes += 1
-            lock.unlock()
-        }
-
-        func feedBatch(_ chunks: ArraySlice<Data>) { lock.lock()
-            _writes.append(contentsOf: chunks)
-            _flushes += 1
-            lock.unlock()
+        func feedBatch(_ chunks: ArraySlice<Data>) {
+            gate.withLock {
+                $0.writes.append(contentsOf: chunks)
+                $0.flushes += 1
+            }
         }
 
         func setSize(cols _: UInt16, rows _: UInt16) {}
@@ -207,24 +206,23 @@ final class TerminalViewModelBatchTests: XCTestCase {
 
         func feedBackpressure() async {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                lock.lock()
-                _backpressureCalls += 1
-                if gateOpen {
-                    lock.unlock()
-                    continuation.resume()
-                    return
+                let passThrough = gate.withLock { g -> Bool in
+                    g.backpressureCalls += 1
+                    if g.isOpen { return true }
+                    g.parked.append(continuation)
+                    return false
                 }
-                parked.append(continuation)
-                lock.unlock()
+                if passThrough { continuation.resume() }
             }
         }
 
         func release() {
-            lock.lock()
-            gateOpen = true
-            let toResume = parked
-            parked.removeAll()
-            lock.unlock()
+            let toResume = gate.withLock { g -> [CheckedContinuation<Void, Never>] in
+                g.isOpen = true
+                let parked = g.parked
+                g.parked.removeAll()
+                return parked
+            }
             for continuation in toResume { continuation.resume() }
         }
     }

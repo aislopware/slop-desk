@@ -1,4 +1,5 @@
 import CoreVideo
+import Synchronization
 import XCTest
 @testable import SlopDeskVideoClient
 
@@ -65,18 +66,15 @@ final class FramePacerPresentOnArrivalTests: XCTestCase {
     /// render callback must fire from the main-actor hop alone (the test never calls
     /// tick()/frameForVSync()), and it must present THAT frame.
     func testArrivalPresentsWithoutWaitingForVSync() {
-        final class RenderBox: @unchecked Sendable {
-            private let lock = NSLock()
-            private var frames: [CVImageBuffer] = []
-            func note(_ f: CVImageBuffer) { lock.lock()
-                frames.append(f)
-                lock.unlock()
-            }
+        final class RenderBox: Sendable {
+            // A `CVImageBuffer` is not `Sendable`, so it cannot cross into the mutex's region on its
+            // own. The wrapper carries it there unchecked — sound because the buffer is only ever
+            // compared by identity, never read.
+            private struct Held: @unchecked Sendable { let frame: CVImageBuffer }
 
-            var last: CVImageBuffer? { lock.lock()
-                defer { lock.unlock() }
-                return frames.last
-            }
+            private let frames = Mutex<[Held]>([])
+            func note(_ f: CVImageBuffer) { frames.withLock { $0.append(Held(frame: f)) } }
+            var last: CVImageBuffer? { frames.withLock { $0.last }?.frame }
         }
         let box = RenderBox()
         let rendered = expectation(description: "render fired from the arrival hop")
@@ -93,18 +91,10 @@ final class FramePacerPresentOnArrivalTests: XCTestCase {
     /// Negatives: disabled (SLOPDESK_PRESENT_ON_ARRIVAL=0) or depth ≥ 2 never fire the arrival
     /// hop — presentation stays vsync-paced. Run-loop spin proves no hop was scheduled.
     func testNoArrivalPresentWhenDisabledOrDeeper() {
-        final class Flag: @unchecked Sendable {
-            private let lock = NSLock()
-            private var v = false
-            func set() { lock.lock()
-                v = true
-                lock.unlock()
-            }
-
-            var isSet: Bool { lock.lock()
-                defer { lock.unlock() }
-                return v
-            }
+        final class Flag: Sendable {
+            private let v = Mutex(false)
+            func set() { v.withLock { $0 = true } }
+            var isSet: Bool { v.withLock { $0 } }
         }
         let disabledFlag = Flag()
         let disabled = FramePacer(targetDepth: 1, presentOnArrival: false, renderCallback: { _ in disabledFlag.set() })

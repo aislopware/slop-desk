@@ -1,6 +1,7 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import Foundation
 import SlopDeskVideoProtocol
+import Synchronization
 import XCTest
 @testable import SlopDeskVideoClient
 
@@ -8,11 +9,10 @@ import XCTest
 /// periodic-send gate reads), and defaults optimistic before a flow is bound.
 final class VideoMuxTransportViabilityTests: XCTestCase {
     /// In-memory ``VideoMuxClientFlowing`` with a settable path verdict — no socket.
-    private final class FakeFlow: VideoMuxClientFlowing, @unchecked Sendable {
-        private let lock = NSLock()
-        private var viable = true
-        var isSendPathViable: Bool { lock.withLock { viable } }
-        func setViable(_ value: Bool) { lock.withLock { viable = value } }
+    private final class FakeFlow: VideoMuxClientFlowing, Sendable {
+        private let viable = Mutex(true)
+        var isSendPathViable: Bool { viable.withLock { $0 } }
+        func setViable(_ value: Bool) { viable.withLock { $0 = value } }
         func startIfNeeded() {}
         func registerLane(
             channelID _: UInt32,

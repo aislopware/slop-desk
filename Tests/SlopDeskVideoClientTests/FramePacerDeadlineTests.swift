@@ -1,3 +1,4 @@
+import Synchronization
 import XCTest
 @testable import SlopDeskVideoClient
 
@@ -97,20 +98,11 @@ final class FramePacerDeadlineTests: XCTestCase {
 
     func testDeadlineModeEndToEndThroughTicks() throws {
         // Behavioral: frames submitted with jitter present at EVEN spacing through tick().
-        final class Times: @unchecked Sendable {
-            private let lock = NSLock()
-            private var v: [Double] = []
-            func add(_ t: Double) { lock.lock()
-                v.append(t)
-                lock.unlock()
-            }
-
-            var all: [Double] { lock.lock()
-                defer { lock.unlock() }
-                return v
-            }
+        final class Times: Sendable {
+            private let v = Mutex<[Double]>([])
+            func add(_ t: Double) { v.withLock { $0.append(t) } }
+            var all: [Double] { v.withLock { $0 } }
         }
-        _ = Times()
         var pb: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &pb)
         let rendered = Times()

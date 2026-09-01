@@ -2,6 +2,7 @@ import Foundation
 import SlopDeskProtocol
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
+import Synchronization
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -17,12 +18,15 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
     /// One direction of a channel pair. Sends land in a lock-guarded log; `deliver` pushes an
     /// inbound message at the client.
-    private final class PipeChannel: MessageChannel, @unchecked Sendable {
+    private final class PipeChannel: MessageChannel, Sendable {
         let inbound: AsyncThrowingStream<WireMessage, Error>
         private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-        private let lock = NSLock()
-        private var sent: [WireMessage] = []
-        private var failSends = false
+        private struct Log {
+            var sent: [WireMessage] = []
+            var failSends = false
+        }
+
+        private let log = Mutex(Log())
         private let intentGate = IntentWriteGate()
 
         init() {
@@ -32,8 +36,8 @@ final class WorkspaceChannelClientTests: XCTestCase {
         func send(_ message: WireMessage) async throws {
             await intentGate.waitIfHeld(message)
             await Task.yield()
-            // A synchronous helper that RETURNS the verdict: `NSLock` is unavailable from an async
-            // context, and holding one across a suspension is the mistake that ban exists to catch.
+            // A synchronous helper that RETURNS the verdict: `withLock` is non-async by design, and
+            // holding a lock across a suspension is the mistake that design exists to prevent.
             guard record(message) else { throw SlopDeskTransportError.notConnected("test channel closed") }
         }
 
@@ -44,11 +48,11 @@ final class WorkspaceChannelClientTests: XCTestCase {
         func releaseHeldIntentWrite() { intentGate.open() }
 
         private func record(_ message: WireMessage) -> Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            guard !failSends else { return false }
-            sent.append(message)
-            return true
+            log.withLock { l in
+                guard !l.failSends else { return false }
+                l.sent.append(message)
+                return true
+            }
         }
 
         func deliver(_ message: WireMessage) { continuation.yield(message) }
@@ -56,17 +60,9 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         /// Makes every subsequent `send` throw WITHOUT ending the inbound stream — a mux write error
         /// on a channel the client still believes is live.
-        func failSubsequentSends() {
-            lock.lock()
-            failSends = true
-            lock.unlock()
-        }
+        func failSubsequentSends() { log.withLock { $0.failSends = true } }
 
-        var sentMessages: [WireMessage] {
-            lock.lock()
-            defer { lock.unlock() }
-            return sent
-        }
+        var sentMessages: [WireMessage] { log.withLock { $0.sent } }
 
         /// Every type-17 request, decoded to `(verb, payload)`.
         var requests: [(verb: UInt8, payload: Data)] {
@@ -134,21 +130,12 @@ final class WorkspaceChannelClientTests: XCTestCase {
     }
 
     /// A verdict that can be supplied AFTER a waiter has already suspended on it.
-    private final class VerdictBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var resolved: Bool?
+    private final class VerdictBox: Sendable {
+        private let resolved = Mutex<Bool?>(nil)
 
-        func set(_ accepted: Bool) {
-            lock.lock()
-            resolved = accepted
-            lock.unlock()
-        }
+        func set(_ accepted: Bool) { resolved.withLock { $0 = accepted } }
 
-        private func peek() -> Bool? {
-            lock.lock()
-            defer { lock.unlock() }
-            return resolved
-        }
+        private func peek() -> Bool? { resolved.withLock { $0 } }
 
         /// Honours cancellation, as the production awaiter does: a caller that races this against a
         /// clock cancels the loser, and a poll loop that swallowed cancellation would spin instead —
@@ -166,40 +153,31 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
     /// Holds the first intent write until the test lets it go. Everything else — the subscribe, the
     /// acks — passes straight through, so only the ordering under test is affected.
-    private final class IntentWriteGate: @unchecked Sendable {
-        private let lock = NSLock()
-        private var armed = false
-        private var claimed = false
-        private var opened = false
-
-        func arm() {
-            lock.lock()
-            armed = true
-            lock.unlock()
+    private final class IntentWriteGate: Sendable {
+        private struct State {
+            var armed = false
+            var claimed = false
+            var opened = false
         }
 
-        func open() {
-            lock.lock()
-            opened = true
-            lock.unlock()
-        }
+        private let state = Mutex(State())
+
+        func arm() { state.withLock { $0.armed = true } }
+
+        func open() { state.withLock { $0.opened = true } }
 
         /// True exactly once, for the first intent write after ``arm()``.
         private func claim(_ message: WireMessage) -> Bool {
             guard case let .workspaceRequest(_, verb, _) = message,
                   verb == WorkspaceRequestVerb.intent.rawValue else { return false }
-            lock.lock()
-            defer { lock.unlock() }
-            guard armed, !claimed else { return false }
-            claimed = true
-            return true
+            return state.withLock { s in
+                guard s.armed, !s.claimed else { return false }
+                s.claimed = true
+                return true
+            }
         }
 
-        private var isOpen: Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            return opened
-        }
+        private var isOpen: Bool { state.withLock { $0.opened } }
 
         func waitIfHeld(_ message: WireMessage) async {
             guard claim(message) else { return }
@@ -208,20 +186,10 @@ final class WorkspaceChannelClientTests: XCTestCase {
     }
 
     private final class Box<Value>: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: Value
-        init(_ initial: Value) { stored = initial }
-        var value: Value {
-            lock.lock()
-            defer { lock.unlock() }
-            return stored
-        }
-
-        func mutate(_ body: (inout Value) -> Void) {
-            lock.lock()
-            body(&stored)
-            lock.unlock()
-        }
+        private let stored: Mutex<Value>
+        init(_ initial: sending Value) { stored = Mutex(initial) }
+        var value: Value { stored.withLock { $0 } }
+        func mutate(_ body: (inout Value) -> Void) { stored.withLock { body(&$0) } }
     }
 
     // MARK: - Helpers

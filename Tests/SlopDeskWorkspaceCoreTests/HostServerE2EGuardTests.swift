@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import XCTest
 
 /// Headless, HostServer-FREE proof that ITEM #10's CI-safety mechanism actually works.
@@ -78,17 +79,9 @@ final class HostServerE2EGuardTests: XCTestCase {
     }
 
     /// Thread-safe counter the async teardown blocks increment.
-    private final class TeardownCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var n = 0
-        var value: Int { lock.lock()
-            defer { lock.unlock() }
-            return n
-        }
-
-        func markAsyncWorkDone() { lock.lock()
-            n += 1
-            lock.unlock()
-        }
+    private final class TeardownCounter: Sendable {
+        private let n = Mutex(0)
+        var value: Int { n.withLock { $0 } }
+        func markAsyncWorkDone() { n.withLock { $0 += 1 } }
     }
 }

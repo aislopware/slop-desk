@@ -1,3 +1,4 @@
+import Synchronization
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -6,20 +7,11 @@ import XCTest
 /// on release. The whole point of the scheduler seam is making this assertable to the exact ms.
 final class KeyRepeaterTests: XCTestCase {
     /// A thread-safe sink for the keys the repeater fired.
-    private final class Sink: @unchecked Sendable {
-        private let lock = NSLock()
-        private var values: [String] = []
-        func append(_ s: String) { lock.lock()
-            values.append(s)
-            lock.unlock()
-        }
-
-        var all: [String] { lock.lock()
-            defer { lock.unlock() }
-            return values
-        }
-
-        var count: Int { all.count }
+    private final class Sink: Sendable {
+        private let values = Mutex<[String]>([])
+        func append(_ s: String) { values.withLock { $0.append(s) } }
+        var all: [String] { values.withLock { $0 } }
+        var count: Int { values.withLock { $0.count } }
     }
 
     func testImmediateFireOnKeyDown() {

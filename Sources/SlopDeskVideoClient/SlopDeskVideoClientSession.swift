@@ -6,6 +6,7 @@ import ImageIO
 import OSLog
 import QuartzCore
 import SlopDeskVideoProtocol
+import Synchronization
 
 /// A ~2 Hz CLIENT-LOCAL aggregate of the ~50 ms network-telemetry windows — the pane's live
 /// stats mirror. The 50 ms wire report to the host is untouched; this is a second, slower
@@ -2282,7 +2283,7 @@ public actor SlopDeskVideoClientSession {
 /// Lock-protected FIFO of inbound datagrams (media + cursor) feeding the client session's single
 /// batch-drain consumer. Same discipline as the host's `InboundQueue` / `EncodedFrameQueue`: the
 /// transport's serial receive queue appends synchronously (arrival order carried end-to-end), the
-/// consumer drains the whole backlog per coalesced wakeup. `@unchecked Sendable` + NSLock.
+/// consumer drains the whole backlog per coalesced wakeup.
 ///
 /// BYTE-BUDGETED: the queue is fed at wire rate ahead of the session actor;
 /// if the consumer is starved (whole-process pressure) the backlog must stop growing at the
@@ -2290,8 +2291,12 @@ public actor SlopDeskVideoClientSession {
 /// datagram is exactly a wire loss of that datagram, which the reassembler / FEC / NACK / decode
 /// gate already handle; the next 120 Hz cursor update supersedes a shed one. Drops are counted
 /// for the debug surface.
-final class ClientInboundQueue: @unchecked Sendable {
-    enum Item {
+///
+/// The conformance is CHECKED: the backlog, its byte count and the shed counters are one fact and
+/// live in one `Mutex`, which is `Sendable` whatever it guards because `withLock` is the only way
+/// in. "Append without taking the lock" is not a mistake this shape can make.
+final class ClientInboundQueue: Sendable {
+    enum Item: Sendable {
         case media(VideoChannel, Data)
         case cursor(Data)
 
@@ -2303,13 +2308,16 @@ final class ClientInboundQueue: @unchecked Sendable {
         }
     }
 
-    private let lock = NSLock()
-    private var items: [Item] = []
-    /// Payload bytes currently queued (each slice pins its ≤ MTU-sized parent datagram, so
-    /// payload bytes track real retention within a small constant factor).
-    private var queuedBytes = 0
-    private var droppedItems = 0
-    private var droppedBytes = 0
+    private struct Backlog {
+        var items: [Item] = []
+        /// Payload bytes currently queued (each slice pins its ≤ MTU-sized parent datagram, so
+        /// payload bytes track real retention within a small constant factor).
+        var queuedBytes = 0
+        var droppedItems = 0
+        var droppedBytes = 0
+    }
+
+    private let backlog = Mutex(Backlog())
     /// Backlog byte budget. At streaming wire rate (~1–4 MB/s) the default 8 MiB is seconds of
     /// backlog — the healthy consumer drains in ms, so only genuine starvation ever hits it.
     private let byteBudget: Int
@@ -2322,33 +2330,31 @@ final class ClientInboundQueue: @unchecked Sendable {
     /// Called on the transport's serial receive queue; O(1), never blocks.
     func append(_ item: Item) {
         let size = item.byteCount
-        lock.lock()
-        defer { lock.unlock() }
-        guard queuedBytes + size <= byteBudget else {
-            droppedItems += 1
-            droppedBytes += size
-            return
+        backlog.withLock { b in
+            guard b.queuedBytes + size <= byteBudget else {
+                b.droppedItems += 1
+                b.droppedBytes += size
+                return
+            }
+            b.queuedBytes += size
+            b.items.append(item)
         }
-        queuedBytes += size
-        items.append(item)
     }
 
     /// Atomically take and clear the whole backlog (arrival order). An empty result means a
     /// coalesced wakeup whose datagrams an earlier drain already consumed.
     func drainAll() -> [Item] {
-        lock.lock()
-        defer { lock.unlock() }
-        let out = items
-        items = []
-        queuedBytes = 0
-        return out
+        backlog.withLock { b in
+            let out = b.items
+            b.items = []
+            b.queuedBytes = 0
+            return out
+        }
     }
 
     /// Cumulative overload-shed counters (monotonic; the consumer reports deltas).
     func droppedTotals() -> (items: Int, bytes: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (droppedItems, droppedBytes)
+        backlog.withLock { ($0.droppedItems, $0.droppedBytes) }
     }
 }
 #endif
