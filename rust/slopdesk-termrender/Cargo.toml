@@ -66,6 +66,10 @@ try_err = "deny"
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
 #   the fused multiply-add `CLAUDE.md` forbids. This crate is the most geometry-dense in the tree,
 #   so it is also the one where following that advice would do the most damage.
+# - `redundant_pub_crate` (nursery): a straight conflict with the denied `unreachable_pub` above —
+#   one wants `pub(crate)` on a private module's items, the other wants `pub`. Kept DENIED and
+#   expected per module in `src/sprite/`, which is the only place the pair meets, so a future
+#   module that genuinely has a redundant `pub(crate)` is still caught.
 multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

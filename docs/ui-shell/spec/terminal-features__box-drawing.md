@@ -74,22 +74,39 @@ No keybindings are specific to box drawing.
 
 ## Implementation notes
 
-SlopDesk uses libghostty (behind a `TerminalSurface` seam / `SlopDeskTerminal` + `TerminalRenderingView`) for terminal rendering.
+**Rewritten 2026-09-02 — every paragraph below used to describe libghostty as the renderer.** It is
+not one any more: the engine is `rust/slopdesk-vterm` and the renderer is `rust/slopdesk-termrender`,
+both ours, so the ceiling this section recorded ("would require a ghostty patch") went with the fork.
+The sprite face is `rust/slopdesk-termrender/src/sprite/`.
 
-1. **Analytical box-drawing — mostly free via libghostty.** libghostty already renders box-drawing analytically/pixel-perfect (Ghostty's own feature). Comparison screenshots confirm sharp corners, clean lines — but WITHOUT the stem-extension. SlopDesk inherits this quality for free.
+1. **Analytical box-drawing — ours, not inherited.** `sprite/box_drawing.rs` covers U+2500…257F,
+   ported from Ghostty's `box.zig` (MIT) including `linesChar`'s junction arithmetic, the arcs and
+   the dash divisions. The freeness the old note claimed left with the fork; what replaced it is a
+   `Canvas` over alpha8 (`sprite/canvas.rs`) with a nonzero-winding polygon filler and a stroker,
+   which is the same technique Ghostty uses and the reason a corner is sharp.
 
-2. **Arrow/triangle stem joining — NOT available via libghostty.** This distinguishing feature is not a Ghostty feature; it needs custom analytical glyph composition on top of the renderer. Options:
-   - Patch libghostty (C/Zig) to add join logic — upstream work, breaks the "don't patch ghostty" boundary; OR
-   - Post-process the rendered surface — impractical for a live terminal; OR
-   - Intercept the character grid before rasterization and substitute extended glyphs — needs a custom font with pre-joined variants or a custom rendering layer.
-   **Status:** Not implemented. Ship with libghostty's box-drawing (Ghostty-equivalent) until the join is built; note in Settings that "Join arrows & triangles to box-drawing rules" has no effect until then.
+2. **Arrow/triangle stem joining — built.** `sprite/arrow.rs`, and it is OURS rather than a port:
+   Ghostty draws no arrows or triangles as sprites at all. U+2190…2193 and U+25B2/B6/BC/C0 are drawn
+   here ONLY when a box rule actually arrives at one of the cell's four edges — `sprite::faces` asks
+   each neighbour whether it runs a rule to the shared boundary, and `paint.rs`'s `join_mask` reads
+   across rows as well as within one, so `│` stacked over `↓` joins. An empty mask draws nothing and
+   the character falls through to the font, which is what keeps `→` in a sentence a typeface's arrow.
 
-3. **Braille and Powerline glyphs.** Handled analytically by libghostty. No work needed.
+3. **Braille and Powerline glyphs.** `sprite/braille.rs` (U+2800…28FF, including the six-stage dot
+   fitting) and `sprite/powerline.rs` (U+E0B0…E0BF, E0D2, E0D4). Both ported. The Powerline module's
+   header records why a private-use range is drawn at all: a separator must bleed to the cell edge or
+   a hairline of background shows through the prompt, and no font can promise that.
 
-4. **Block elements.** Rendered analytically by libghostty. Covered.
+4. **Block elements.** `sprite/block_elements.rs`, U+2580…259F.
 
-5. **Config key exposure.** The setting can't wire to any libghostty behavior since libghostty doesn't implement it. Once slopdesk adds its glyph-join layer, add the setting to `PreferencesStore` via the `Defaults` product (as established in the codebase). Default stays `true` per spec; a no-op stub until the join logic exists.
+5. **Config key exposure.** `terminal.arrow-box-drawing-join`, default ON, in
+   `rust/slopdesk-settings/src/config/table.rs`. It reaches `PaintStyle::arrow_box_drawing_join`
+   through `slopdesk_term_surface_set_arrow_box_drawing_join` and `SettingsKey`. It is no longer a
+   stub, and it is the ONLY sprite family a setting reaches — the other four are drawn from the cell
+   whatever the config says, because a font's box rule is fitted to the font's own advance and gaps
+   against its neighbour. That is a bug, not a preference.
 
-6. **Remote display path.** slopdesk streams video frames of the terminal surface over UDP (PATH 2), so any analytical rendering libghostty does server-side on the macOS host is preserved pixel-for-pixel (VT HEVC @ sufficient QP). Stem-joining, if implemented, is also server-side and equally preserved.
+6. **Remote display path.** Unchanged in kind: the surface is rendered on the macOS host and streamed
+   as video, so the sprites are preserved pixel-for-pixel at sufficient QP.
 
 7. **iOS client.** Receives the same video stream; no platform-specific rendering difference.

@@ -207,6 +207,15 @@ void slopdesk_term_surface_set_cursor_opacity(SlopDeskTerminalSurface *handle, d
  * names would resolve on the user's own laptop — a refusal, not a preference. */
 void slopdesk_term_surface_set_images(SlopDeskTerminalSurface *handle, bool enabled);
 
+/* Whether an arrow that a box rule runs into is drawn with a stem continuing that rule.
+ *
+ * The one sprite family a setting reaches. Box drawing, block elements, Braille and Powerline are
+ * drawn from the cell's own dimensions whatever this says, because a font fits those to its own
+ * advance and they gap against their neighbours — the bug the family exists to fix, not a
+ * preference. An arrow is different: one in prose is a CHARACTER, and the join condition already
+ * leaves that case to the typeface. */
+void slopdesk_term_surface_set_arrow_box_drawing_join(SlopDeskTerminalSurface *handle, bool enabled);
+
 /* The colour the glyph under a filled caret takes, packed 0x00RRGGBB. `present` false keeps the
  * cell's own background, which is the reading that is always legible.
  *

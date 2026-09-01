@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 
 use crate::atlas::{Atlas, AtlasFormat, AtlasRegion, MIN_ATLAS_SIZE};
+use crate::sprite::SpriteKey;
 
 /// How many horizontal subpixel phases a glyph is rasterised at.
 ///
@@ -226,7 +227,23 @@ impl CachedGlyph {
 pub struct GlyphCache {
     alpha: Atlas,
     color: Atlas,
-    entries: HashMap<GlyphKey, Option<CachedGlyph>>,
+    entries: HashMap<CacheKey, Option<CachedGlyph>>,
+}
+
+/// What a cached bitmap is keyed by.
+///
+/// One map and not two, which is the point: a sprite is always [`AtlasFormat::Alpha8`], so it lives
+/// in the same atlas as text and is invalidated by the same growth. Holding sprites in a second map
+/// would mean [`GlyphCache::insert`]'s retain-by-format had to be written twice, and the second
+/// copy is exactly the one that gets forgotten — leaving every sprite region pointing into a
+/// generation of the alpha atlas that no longer exists, silently, the first time a font glyph made
+/// it grow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum CacheKey {
+    /// A glyph the font drew.
+    Glyph(GlyphKey),
+    /// A glyph [`crate::sprite`] drew.
+    Sprite(SpriteKey),
 }
 
 impl Default for GlyphCache {
@@ -298,16 +315,39 @@ impl GlyphCache {
     /// draw — which is what [`crate::paint`] does — needs nothing, because the map is rebuilt in
     /// the same pass.
     pub fn get(&mut self, key: GlyphKey, rasterizer: &mut impl GlyphRasterizer) -> Option<CachedGlyph> {
+        let key = CacheKey::Glyph(key);
         if let Some(held) = self.entries.get(&key) {
             return *held;
         }
-        let entry = self.insert(key, rasterizer);
+        let CacheKey::Glyph(glyph) = key else {
+            return None;
+        };
+        let entry = rasterizer
+            .rasterize(glyph)
+            .and_then(|raster| self.insert(&raster));
         self.entries.insert(key, entry);
         entry
     }
 
-    fn insert(&mut self, key: GlyphKey, rasterizer: &mut impl GlyphRasterizer) -> Option<CachedGlyph> {
-        let raster = rasterizer.rasterize(key)?;
+    /// The cached bitmap for a sprite, drawing it on a miss.
+    ///
+    /// Same contract as [`Self::get`] — one growth and one retry, a remembered `None` — and the
+    /// same atlas, because a sprite is coverage exactly like text is. No rasteriser:
+    /// [`crate::sprite`] needs no font, which is the whole reason those glyphs are drawn there.
+    pub fn sprite(&mut self, key: SpriteKey) -> Option<CachedGlyph> {
+        let key = CacheKey::Sprite(key);
+        if let Some(held) = self.entries.get(&key) {
+            return *held;
+        }
+        let CacheKey::Sprite(glyph) = key else {
+            return None;
+        };
+        let entry = crate::sprite::render(glyph).and_then(|raster| self.insert(&raster));
+        self.entries.insert(key, entry);
+        entry
+    }
+
+    fn insert(&mut self, raster: &RasterGlyph) -> Option<CachedGlyph> {
         let atlas = match raster.format {
             AtlasFormat::Alpha8 => &mut self.alpha,
             AtlasFormat::Bgra8 => &mut self.color,
@@ -384,6 +424,7 @@ mod tests {
         CachedGlyph, GlyphCache, GlyphKey, GlyphRasterizer, RasterGlyph, SUBPIXEL_PHASES, Synthetic,
     };
     use crate::atlas::AtlasFormat;
+    use crate::sprite::{JoinMask, SpriteKey};
 
     /// A rasteriser that draws every glyph as a solid square, and counts how often it was asked.
     #[derive(Debug)]
@@ -497,6 +538,95 @@ mod tests {
             );
         }
         assert!(cache.alpha_atlas().size() > before, "the atlas never grew");
+    }
+
+    #[test]
+    fn a_sprite_is_cached_once_and_shares_the_text_atlas() {
+        let mut cache = GlyphCache::new();
+        let key = SpriteKey::new('─', 10, 20, 2, JoinMask::NONE).unwrap();
+
+        let first = cache.sprite(key).unwrap();
+        let second = cache.sprite(key).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.format,
+            AtlasFormat::Alpha8,
+            "a sprite is coverage, like text"
+        );
+        assert_eq!(cache.len(), 1);
+        assert_eq!(
+            (first.region.width, first.region.height),
+            (10, 20),
+            "a sprite is exactly its cell"
+        );
+    }
+
+    #[test]
+    fn a_sprite_and_a_glyph_never_collide_in_the_map() {
+        let mut cache = GlyphCache::new();
+        let mut raster = Counting::new(8);
+        let sprite = SpriteKey::new('─', 10, 20, 2, JoinMask::NONE).unwrap();
+
+        let glyph = cache.get(key(0x2500), &mut raster).unwrap();
+        let drawn = cache.sprite(sprite).unwrap();
+
+        assert_ne!(glyph.region, drawn.region, "two entries, two regions");
+        assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn a_sprite_the_cell_cannot_hold_is_remembered_as_refused() {
+        let mut cache = GlyphCache::new();
+        let key = SpriteKey::new('─', 0, 20, 2, JoinMask::NONE).unwrap();
+        assert_eq!(cache.sprite(key), None);
+        assert_eq!(cache.sprite(key), None);
+        assert_eq!(
+            cache.len(),
+            1,
+            "the refusal is cached, not re-attempted per frame"
+        );
+    }
+
+    #[test]
+    fn growing_the_alpha_atlas_for_a_glyph_also_drops_the_sprites_in_it() {
+        // The invalidation that a second, separate sprite map would have got wrong: growth restarts
+        // the alpha atlas's shelves, so EVERY region it ever handed out is dead — the sprite
+        // regions included. Handing a stale one back would sample generation N−1 and draw
+        // garbage.
+        let mut cache = GlyphCache::new();
+        let mut text = Counting::new(96);
+        let sprite = SpriteKey::new('█', 10, 20, 2, JoinMask::NONE).unwrap();
+
+        let before = cache.sprite(sprite).unwrap();
+        let generation = cache.alpha_atlas().generation();
+        for glyph in 1000..1200 {
+            let _ = cache.get(key(glyph), &mut text);
+        }
+        assert_ne!(
+            cache.alpha_atlas().generation(),
+            generation,
+            "the alpha atlas never grew"
+        );
+
+        let after = cache.sprite(sprite).unwrap();
+        assert_ne!(
+            after.region, before.region,
+            "the sprite kept a region from a dead generation of the atlas"
+        );
+    }
+
+    #[test]
+    fn clearing_throws_the_sprites_away_too() {
+        // What a font or size change calls. A sprite's key carries the CELL size, which changes
+        // with the font, so keeping them would be keeping bitmaps drawn for a grid that no
+        // longer exists.
+        let mut cache = GlyphCache::new();
+        let key = SpriteKey::new('┼', 10, 20, 2, JoinMask::NONE).unwrap();
+        assert!(cache.sprite(key).is_some());
+        assert_eq!(cache.len(), 1);
+        cache.clear();
+        assert!(cache.is_empty());
     }
 
     #[test]

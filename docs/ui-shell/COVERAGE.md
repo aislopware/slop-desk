@@ -163,8 +163,13 @@ a reason, and the reason is the condition for bringing it back.
 | Recipe scrollback capture | moot; Recipes deleted 2026-07-03 (§B) |
 | Vi motion set (h/l, w/b/e, 0/$/^, visual anchor-swap `o`) | ceiling **LIFTED** 2026-07-14 once the fork exposed `ghostty_surface_set_selection` — these are real motions now. The table is `TerminalViewModel.handleCopyModeKey(_:)` (`Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:769-885`): count digits, `h j k l`, `0 ^ $`, `w b e`, `⌃d ⌃u`, `⌃f ⌃b`, `g G`, `[ ]`, `v V ⌃v o`, `f`, `/ ?`, `n N`, `y Y`, `q`. **`H`/`M`/`L` and Mark Mode are NOT in it** — settled 2026-08-22, they do not exist |
 
-Genuinely still a ceiling: **box-drawing arrow/triangle stem-joining** (deferred, never built — that row
-made no existence claim).
+⚠️ **box-drawing arrow/triangle stem-joining is BUILT** — 2026-09-02, and this paragraph called it a
+standing ceiling until then. Same falsification as the hyperlink one below: the reason on record was
+"not a libghostty feature; would require a ghostty patch", which stopped being a constraint the moment
+the fork left. `rust/slopdesk-termrender/src/sprite/arrow.rs` draws it, `paint.rs`'s `join_mask` decides
+when, and `terminal.arrow-box-drawing-join` (default ON) turns it off. The whole sprite face came with
+it — box drawing, block elements, Braille and Powerline are drawn from the cell now rather than asked
+of the font. See GAP-ANALYSIS J8/J9 and `docs/68` §5.14.
 
 ⚠️ **OSC-8 hyperlink runs ARE Hint/Jump targets** — this paragraph claimed otherwise until 2026-09-02, on a
 reason the fork's exit falsified. "The C ABI exposes no per-cell hyperlink read" was true of the fork; the

@@ -661,6 +661,7 @@ mod tests {
             blink_visible: true,
             cursor_opacity: 1.0,
             cursor_text: None,
+            arrow_box_drawing_join: true,
         }
     }
 

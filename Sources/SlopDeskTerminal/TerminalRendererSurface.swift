@@ -358,6 +358,12 @@ final class TerminalRendererSurface {
         slopdesk_term_surface_set_images(handle, enabled)
     }
 
+    /// Whether an arrow a box rule runs into is drawn with a stem continuing that rule.
+    func setArrowBoxDrawingJoin(_ enabled: Bool) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_arrow_box_drawing_join(handle, enabled)
+    }
+
     /// The colour the glyph under a filled caret takes. `nil` keeps the cell's own background.
     func setCursorTextColor(_ rgb: UInt32?) {
         guard let handle else { return }

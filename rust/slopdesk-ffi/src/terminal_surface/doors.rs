@@ -877,6 +877,33 @@ pub const unsafe extern "C" fn slopdesk_term_surface_set_images(
     surface.images_enabled = enabled;
 }
 
+/// `terminal.arrow-box-drawing-join`: whether an arrow a box rule runs into grows a stem.
+///
+/// The one sprite family that a setting reaches. The other four are drawn from the cell whatever
+/// this says, because a font's box rule, block or Braille dot is fitted to the font's own advance
+/// and gaps against its neighbour — that is the bug the family exists to fix, not a preference. An
+/// arrow is different: `\u{2192}` in prose is a CHARACTER, and the join condition already leaves
+/// that case to the typeface. Off is for the reader who does not want the joined form in a diagram
+/// either.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_term_surface_set_arrow_box_drawing_join(
+    handle: *mut SlopDeskTerminalSurface,
+    enabled: bool,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.arrow_box_drawing_join = enabled;
+}
+
 /// The three scroll knobs, as one delivery: `controls.scroll-past-last-line`,
 /// `controls.scroll-past-first-line` and `controls.smooth-scroll`.
 ///

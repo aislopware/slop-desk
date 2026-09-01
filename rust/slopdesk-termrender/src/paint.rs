@@ -38,6 +38,7 @@ use crate::block::BlockLayout;
 use crate::glyph::{GlyphCache, GlyphKey, GlyphRasterizer, ShapedGlyph, TextRun, TextShaper};
 use crate::layout::CellGeometry;
 use crate::quad::{DrawList, GlyphInstance, RectInstance, RectStyle, Rgba, px};
+use crate::sprite::{self, CellEdge, JoinMask, SpriteKey};
 
 /// How a selection recolours the cells under it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +90,15 @@ pub struct PaintStyle {
     /// contrasts with the caret drawn in that cell's foreground. A theme that names a colour is
     /// asserting it knows better, which is a claim only a theme can make.
     pub cursor_text: Option<Rgba>,
+    /// Whether an arrow that a box rule runs into is drawn with a stem continuing that rule.
+    ///
+    /// Only the arrows are conditional; the other four sprite families are unconditional and no
+    /// setting reaches them, because a font's `█` is wrong in a way nobody wants back. An arrow is
+    /// different: `→` in prose is a CHARACTER, and someone whose typeface draws a nicer one is
+    /// entitled to it. The condition already keeps prose out — a standalone arrow has an empty mask
+    /// and falls through — so this flag is for the reader who does not want the joined form even in
+    /// a diagram.
+    pub arrow_box_drawing_join: bool,
 }
 
 /// Text an input method is still composing, drawn at the cursor and not yet in the grid.
@@ -346,6 +356,7 @@ impl Painter {
         decoration_pass(row, top, geometry, style, &selected, out);
         self.text_pass(
             row,
+            row_index,
             top,
             geometry,
             frame,
@@ -454,6 +465,7 @@ impl Painter {
     fn text_pass(
         &mut self,
         row: &FrameRow,
+        row_index: u16,
         top: f64,
         geometry: &CellGeometry,
         frame: &Frame,
@@ -477,14 +489,27 @@ impl Painter {
             }
 
             let key = text_key(cell, col, frame, style, selected, inverting_cursor_col);
+
+            // The sprite intercept sits HERE and not earlier: `paints_text` has already answered
+            // blink and the hidden attribute, and `text_key` has already folded in the selection
+            // and the cursor's inversion. A sprite that skipped both would keep drawing through
+            // the dark half of a blink and stay the wrong colour under the caret.
+            if let Some(placed) = placed_sprite(row, cell, col, row_index, top, geometry, frame, style) {
+                emit_sprite(placed, key.color, cache, out);
+                col = col.saturating_add(1);
+                continue;
+            }
+
             let start = col;
             let mut end = col.saturating_add(1);
-            // A run stops at the cursor cell so its glyph can be recoloured on its own, and at any
-            // cell that changes the font or has nothing to shape.
+            // A run stops at the cursor cell so its glyph can be recoloured on its own, at any cell
+            // that changes the font or has nothing to shape, and at a sprite — which is not text
+            // and must not be handed to the shaper as though it were.
             while let Some(next) = row.cells.get(end as usize).copied() {
                 if inverting_cursor_col == Some(end)
                     || !paints_text(row, next, style)
                     || text_key(next, end, frame, style, selected, inverting_cursor_col) != key
+                    || placed_sprite(row, next, end, row_index, top, geometry, frame, style).is_some()
                 {
                     break;
                 }
@@ -690,6 +715,144 @@ fn text_key(
     }
 }
 
+/// A sprite that has been keyed and placed, ready to rasterise and emit.
+#[derive(Debug, Clone, Copy)]
+struct PlacedSprite {
+    /// What to draw, at what size.
+    key: SpriteKey,
+    /// The snapped left edge in device pixels.
+    x: f64,
+    /// The snapped top edge in device pixels.
+    y: f64,
+}
+
+/// The sprite a cell draws instead of a glyph, or `None` when the cell is ordinary text.
+///
+/// Placement comes from the CELL and not from the baseline, which is the whole point of the family:
+/// a sprite carries no bearing and fills the snapped cell box exactly, so a column of `│` is one
+/// unbroken rule however the row heights fall. Shaping the same character would place it against a
+/// baseline that moves with the font's ascent.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cell, where it sits, the grid it sits in and the frame around it — each read once"
+)]
+fn placed_sprite(
+    row: &FrameRow,
+    cell: FrameCell,
+    col: u16,
+    row_index: u16,
+    top: f64,
+    geometry: &CellGeometry,
+    frame: &Frame,
+    style: &PaintStyle,
+) -> Option<PlacedSprite> {
+    let glyph = cell_char(row, cell)?;
+    // The cheap test first: all but five ranges are decided by the codepoint alone, and every other
+    // cell in a frame is ordinary text that must not pay for a neighbour lookup.
+    if !sprite::covers_unconditionally(glyph as u32) && !sprite::is_joinable(glyph) {
+        return None;
+    }
+
+    let bounds = geometry.cell(top, col);
+    let (x, width) = sprite::snap(bounds.x, bounds.x + bounds.width)?;
+    let (y, height) = sprite::snap(top, top + geometry.metrics.cell_height)?;
+
+    let join = if style.arrow_box_drawing_join && sprite::is_joinable(glyph) {
+        join_mask(frame, row_index, col)
+    } else {
+        JoinMask::NONE
+    };
+    let key = SpriteKey::new(glyph, width, height, line_weight(geometry), join)?;
+    Some(PlacedSprite { key, x, y })
+}
+
+/// Rasterises a placed sprite and pushes it at the cell's own corner.
+fn emit_sprite(placed: PlacedSprite, color: Rgba, cache: &mut GlyphCache, out: &mut DrawList) {
+    let Some(glyph) = cache.sprite(placed.key) else {
+        return;
+    };
+    if glyph.is_blank() {
+        return;
+    }
+    // Always the alpha atlas: a sprite is coverage, and the colour is the cell's foreground with
+    // the selection and the cursor already folded in by `text_key`.
+    let uv = cache.alpha_atlas().uv(glyph.region);
+    out.push_glyph(GlyphInstance {
+        x: px(placed.x),
+        y: px(placed.y),
+        width: px(f64::from(glyph.region.width)),
+        height: px(f64::from(glyph.region.height)),
+        uv,
+        color,
+        color_atlas: 0,
+    });
+}
+
+/// The cell's single character, or `None` for anything a sprite cannot be.
+///
+/// A sprite is one codepoint by definition, so a cluster with a combining mark, a variation
+/// selector or a ZWJ sequence is not one — `→\u{FE0F}` is an emoji presentation request and belongs
+/// to the font. An empty cell answers `None` too, though `paints_text` has already excluded it.
+fn cell_char(row: &FrameRow, cell: FrameCell) -> Option<char> {
+    let mut chars = row.cell_text(cell).chars();
+    let first = chars.next()?;
+    chars.next().is_none().then_some(first)
+}
+
+/// Which of the four neighbours runs a box rule into this cell.
+///
+/// Reads across rows as well as within one, which is why the pass carries `row_index`: `│` above a
+/// `↓` is the case the whole feature exists for, and a within-row-only mask would miss both
+/// vertical arms. A neighbour off the edge of the frame simply does not join.
+fn join_mask(frame: &Frame, row_index: u16, col: u16) -> JoinMask {
+    let neighbour = |row: u16, col: u16| -> Option<char> {
+        let row = frame.row(row)?;
+        let cell = row.cells.get(col as usize).copied()?;
+        cell_char(row, cell)
+    };
+    let facing = |edge: CellEdge, at: Option<(u16, u16)>| -> bool {
+        at.and_then(|(row, col)| neighbour(row, col))
+            .is_some_and(|glyph| sprite::faces(glyph, edge))
+    };
+
+    let up = row_index.checked_sub(1).map(|row| (row, col));
+    let down = row_index.checked_add(1).map(|row| (row, col));
+    let left = col.checked_sub(1).map(|col| (row_index, col));
+    let right = col.checked_add(1).map(|col| (row_index, col));
+
+    let mut mask = JoinMask::NONE;
+    for (edge, at) in [
+        (CellEdge::Up, up),
+        (CellEdge::Down, down),
+        (CellEdge::Left, left),
+        (CellEdge::Right, right),
+    ] {
+        if facing(edge, at) {
+            mask = mask.with(edge);
+        }
+    }
+    mask
+}
+
+/// The base line weight a sprite draws its rules at, in whole device pixels.
+///
+/// The underline's thickness, because that is the one weight the font already publishes that was
+/// chosen to sit alongside its glyphs at this size — Ghostty's `box_thickness` is the same number
+/// by the same argument. Never zero: every family divides by it.
+fn line_weight(geometry: &CellGeometry) -> u16 {
+    let thickness = geometry.font.underline_thickness;
+    if !thickness.is_finite() {
+        return 1;
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "bounded to 1.0..=u16::MAX and integral by the round"
+    )]
+    let weight = f64::min(f64::max(thickness.round(), 1.0), f64::from(u16::MAX)) as u16;
+    weight
+}
+
 /// The contiguous slice of the row's arena that `cols` covers.
 ///
 /// `None` when the run has no text — the arena is in column order, so the slice runs from the first
@@ -842,6 +1005,7 @@ mod tests {
             blink_visible: true,
             cursor_opacity: 1.0,
             cursor_text: None,
+            arrow_box_drawing_join: true,
         }
     }
 
@@ -1244,6 +1408,185 @@ mod tests {
             ..style()
         });
         assert!(dark.overlays.is_empty());
+    }
+
+    /// One row per string, all `Output`, so a sprite can read the cell above and below it.
+    fn frame_of_rows(rows: &[&str]) -> Frame {
+        let mut frame = Frame::new();
+        for text in rows {
+            let single = frame_of(text, |_| {});
+            frame.cols = frame.cols.max(single.cols);
+            frame.rows.extend(single.rows);
+        }
+        frame
+    }
+
+    /// The glyph instances that came from the sprite face: a sprite fills its cell exactly, and the
+    /// fake rasteriser draws text as an 8×8 square, so the size alone separates them.
+    fn sprites(list: &DrawList) -> Vec<crate::quad::GlyphInstance> {
+        list.glyphs
+            .iter()
+            .filter(|glyph| glyph.width > 8.0 || glyph.height > 8.0)
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_box_rule_is_drawn_here_and_never_reaches_the_shaper() {
+        // The whole reason the intercept sits inside the walk rather than beside it: `─` must not
+        // be shaped, AND it must break the run around it so `a` and `b` are still shaped
+        // separately.
+        let frame = frame_of("a─b", |_| {});
+        let (list, shaper) = paint(&frame, &style());
+
+        assert_eq!(shaper.runs, vec!["a".to_owned(), "b".to_owned()]);
+        let drawn = sprites(&list);
+        assert_eq!(drawn.len(), 1, "one sprite for one rule");
+        assert!((drawn[0].x - 10.0).abs() < 1e-6, "at its own cell's left edge");
+        assert!(
+            (drawn[0].y - 0.0).abs() < 1e-6,
+            "at the cell's top, not against a baseline"
+        );
+        assert!((drawn[0].width - 10.0).abs() < 1e-6);
+        assert!((drawn[0].height - 20.0).abs() < 1e-6);
+        assert_eq!(
+            drawn[0].color_atlas, 0,
+            "coverage, tinted by the cell's foreground"
+        );
+    }
+
+    #[test]
+    fn a_run_of_rules_tiles_with_no_seam_and_no_overlap() {
+        let frame = frame_of("────", |_| {});
+        let (list, shaper) = paint(&frame, &style());
+
+        assert!(shaper.runs.is_empty(), "nothing here is text");
+        let drawn = sprites(&list);
+        assert_eq!(drawn.len(), 4);
+        for pair in drawn.windows(2) {
+            let (Some(left), Some(right)) = (pair.first(), pair.get(1)) else {
+                continue;
+            };
+            assert!(
+                (left.x + left.width - right.x).abs() < 1e-6,
+                "cell {} ends at {}, the next starts at {}",
+                left.x,
+                left.x + left.width,
+                right.x
+            );
+        }
+    }
+
+    #[test]
+    fn a_standalone_arrow_keeps_the_typefaces_own() {
+        // `→` in prose is a character. Nothing joins it, so it falls through to the shaper.
+        let frame = frame_of("a → b", |_| {});
+        let (list, shaper) = paint(&frame, &style());
+
+        assert!(sprites(&list).is_empty(), "no sprite for a lone arrow");
+        assert!(
+            shaper.runs.iter().any(|run| run.contains('→')),
+            "the font drew it"
+        );
+    }
+
+    #[test]
+    fn an_arrow_a_rule_runs_into_is_drawn_here_instead() {
+        let frame = frame_of("──→", |_| {});
+        let (list, shaper) = paint(&frame, &style());
+
+        assert_eq!(sprites(&list).len(), 3, "two rules and the arrow they run into");
+        assert!(shaper.runs.is_empty(), "the arrow left the font");
+    }
+
+    #[test]
+    fn the_join_reads_the_row_above_as_well_as_the_one_beside() {
+        // The case `row_index` is threaded for. A `│` stacked over a `↓` is a vertical join, and a
+        // pass that could only see within its own row would miss both vertical arms.
+        let frame = frame_of_rows(&["│", "↓"]);
+        let (list, shaper) = paint(&frame, &style());
+
+        assert_eq!(sprites(&list).len(), 2, "the rule and the arrow under it");
+        assert!(shaper.runs.is_empty());
+    }
+
+    #[test]
+    fn an_arrow_beside_something_that_is_not_a_rule_stays_with_the_font() {
+        // A block element is not a rule: joining a stem to the middle of a solid bar is the wrong
+        // picture, so `faces` answers false and the arrow falls through.
+        let frame = frame_of("█→", |_| {});
+        let (list, shaper) = paint(&frame, &style());
+
+        assert_eq!(sprites(&list).len(), 1, "only the block");
+        assert!(shaper.runs.iter().any(|run| run.contains('→')));
+    }
+
+    #[test]
+    fn turning_the_join_off_returns_the_arrow_to_the_font_and_leaves_the_rules() {
+        let frame = frame_of("──→", |_| {});
+        let style = PaintStyle {
+            arrow_box_drawing_join: false,
+            ..style()
+        };
+        let (list, shaper) = paint(&frame, &style);
+
+        assert_eq!(sprites(&list).len(), 2, "the rules are unconditional");
+        assert!(shaper.runs.iter().any(|run| run.contains('→')));
+    }
+
+    #[test]
+    fn a_blinking_rule_disappears_on_the_dark_half_of_the_cycle() {
+        // Why the intercept sits AFTER `paints_text`: a sprite that skipped it would keep drawing
+        // through the dark half, and a blinking table would have a rule that never blinked.
+        let frame = frame_of("─", |cell| cell.flags = CellFlags::BLINK);
+        let style = PaintStyle {
+            blink_visible: false,
+            ..style()
+        };
+        let (list, _) = paint(&frame, &style);
+
+        assert!(sprites(&list).is_empty());
+    }
+
+    #[test]
+    fn a_rule_under_the_block_cursor_takes_the_cursor_text_colour() {
+        // Why the intercept sits AFTER `text_key`: the colour is the one the cell resolved to,
+        // selection and caret inversion included, not the cell's raw foreground.
+        let magenta = Rgba::opaque(200, 30, 200);
+        let mut frame = frame_of("─", |_| {});
+        frame.cursor = Some(FrameCursor {
+            x: 0,
+            y: 0,
+            shape: CursorShape::Block,
+            color: Rgb::WHITE,
+            blinking: false,
+            at_wide_tail: false,
+            password_input: false,
+        });
+        let style = PaintStyle {
+            cursor_text: Some(magenta),
+            ..style()
+        };
+        let (list, _) = paint(&frame, &style);
+
+        let drawn = sprites(&list);
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].color, magenta);
+    }
+
+    #[test]
+    fn an_emoji_presentation_arrow_is_a_character_and_not_a_sprite() {
+        // `→\u{FE0F}` asks for the emoji form. A sprite is one codepoint by definition, so the
+        // cluster goes to the font even with a rule beside it.
+        let mut frame = frame_of("─→", |_| {});
+        let cell = frame.rows[0].cells[1];
+        let start = cell.text.offset as usize + cell.text.len as usize;
+        frame.rows[0].text.insert(start, '\u{FE0F}');
+        frame.rows[0].cells[1].text.len += 3;
+        let (list, shaper) = paint(&frame, &style());
+
+        assert_eq!(sprites(&list).len(), 1, "only the rule");
+        assert!(shaper.runs.iter().any(|run| run.contains('→')));
     }
 
     #[test]

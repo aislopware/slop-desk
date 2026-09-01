@@ -168,6 +168,13 @@ struct Surface {
     /// The engine keeps its storage either way, so this gates the RENDER and nothing else: turning
     /// it back on redraws whatever is still on screen without asking a program to retransmit.
     images_enabled: bool,
+    /// Whether an arrow a box rule runs into is drawn with a stem —
+    /// `terminal.arrow-box-drawing-join`.
+    ///
+    /// Reaches the paint pass and nothing else. Only the ARROWS are conditional; box drawing, block
+    /// elements, Braille and Powerline are drawn from the cell unconditionally, because a font's
+    /// version of those is wrong in a way nobody wants back.
+    arrow_box_drawing_join: bool,
     /// The device, the queue, the layer and the pipelines.
     renderer: Renderer,
     /// The drawable's size in device pixels, and the scale it was derived at.
@@ -381,6 +388,7 @@ impl Surface {
             // terminal that silently discards what a program drew is the surprising one; `docs/68`
             // §5.7 argues it.
             images_enabled: true,
+            arrow_box_drawing_join: true,
             renderer,
             geometry,
             scroll_y: 0.0,
@@ -596,6 +604,7 @@ impl Surface {
             blink_visible: self.blink_visible,
             cursor_opacity: self.cursor_opacity,
             cursor_text: self.cursor_text,
+            arrow_box_drawing_join: self.arrow_box_drawing_join,
         };
 
         // The paint pass and the draw are separated by nothing but this line, and that is the

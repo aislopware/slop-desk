@@ -1255,6 +1255,63 @@ the two vocabularies are `slopdesk_terminal::controls`' and cross through
 `controls.scroll-multiplier`, which is spent on a delta before it reaches the surface, these are read
 again by the per-frame settle, which no gesture is present for.
 
+### 5.14 The sprite face — the glyphs a font must NOT supply (2026-09-02)
+
+Box drawing, block elements, Braille and Powerline separators are not text. They are TILES: each is a
+picture of part of a rectangle, and the only thing that makes a row of them read as a table, a bar or
+a prompt is that adjacent cells agree on where the ink stops. A font cannot make that promise — its
+`─` is drawn for its own em square, its `│` centres on its own stem axis, its `█` is fitted to an
+advance that rounds independently of the cell. Every terminal that renders these from a font ships
+with the same three bug reports, and every good one draws them itself instead.
+
+`rust/slopdesk-termrender/src/sprite/` is that face. Five modules over one `Canvas`: `box_drawing`
+(U+2500…257F), `block_elements` (U+2580…259F), `braille` (U+2800…28FF) and `powerline`
+(U+E0B0…E0BF, E0D2, E0D4) are ported from Ghostty's `src/font/sprite/draw/` (MIT), and `arrow`
+(U+2190…2193, U+25B2/B6/BC/C0) is ours — Ghostty draws no arrows or triangles as sprites at all.
+
+**The ceiling here was fork-shaped, and it went with the fork.** `docs/ui-shell/GAP-ANALYSIS.md` J9
+recorded the stem join as *"not a libghostty feature; would require a ghostty patch"* and J8 recorded
+the other four as *"done — libghostty (Ghostty quality)"*. Both readings died the same day: the second
+was a capability we were RENTING and lost, the first a constraint that stopped existing. This section
+is the settlement of both — the analytic quality is ours to rebuild, and the join is ours to add.
+
+**Nonzero winding is load-bearing, and it decides how polygons are wound.** A stroke is emitted as one
+quad per segment plus a disc at every interior vertex, and those OVERLAP by construction. Under
+even-odd the overlap cancels and every stroke grows a hole at its joins, so the filler is nonzero —
+which then obliges every polygon to be wound the SAME way. A segment quad `(p0+n, p1+n, p1-n, p0-n)`
+is negatively wound whatever direction the segment runs, so `disc` runs its angle DECREASING to match.
+`a_self_overlapping_stroke_has_no_hole_at_its_join` is the pin.
+
+**Snapping is the whole answer to a fractional cell.** A fitted font size or a 1.5× scale produces a
+non-integer advance, and a sprite rasterised at a rounded average would gap or double-ink at exactly
+the joins this face exists to close. `sprite::snap` rounds each cell's OWN start and end, so cell *n*'s
+snapped end IS cell *n+1*'s snapped start — seamless by construction, and at most two distinct widths
+across a whole grid, so keying the cache on the snapped size costs nothing.
+
+**One cache map, not two.** Sprites are always `AtlasFormat::Alpha8`, so they live in the same atlas
+as text and must be invalidated by the same growth. `GlyphCache::entries` is keyed by a private
+`CacheKey` enum rather than split into two maps, precisely so the retain-by-format logic that survives
+a grow exists once — `growing_the_alpha_atlas_for_a_glyph_also_drops_the_sprites_in_it` is the pin.
+
+**The arrows are conditional, and that condition is the design.** `→` in prose is a CHARACTER and the
+typeface's is the right one; `───→` in a diagram wants a stem that continues the rule. So `paint.rs`'s
+`join_mask` asks the four neighbours — across rows as well as within one, which is why the pass carries
+`row_index` — and `sprite::faces` answers whether each runs a box rule to the shared boundary. An empty
+mask makes `SpriteKey::new` answer `None` and the character falls through to the shaper. A block
+element is deliberately not a rule: a stem into the middle of a solid bar is the wrong picture.
+
+**The intercept sits after `paints_text` and after `text_key`, inside the walk.** After the first
+because a blinking table must have a rule that blinks; after the second because the colour is what the
+cell resolved to, with the selection and the caret's inversion already folded in. Inside the walk, and
+also breaking the run scan, because a `→` in the middle of a text run would otherwise be shaped. A
+sprite is placed at the SNAPPED cell corner and not against a baseline — it carries no bearing and
+fills its cell exactly, which is what makes a column of `│` one unbroken rule.
+
+**One setting, and only for the arrows.** `terminal.arrow-box-drawing-join`, default ON, crosses
+through `slopdesk_term_surface_set_arrow_box_drawing_join` to `PaintStyle::arrow_box_drawing_join`.
+The other four families have no setting and will not get one: a font's box rule gapping against its
+neighbour is a bug, not a preference, and nobody wants it back.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`

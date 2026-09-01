@@ -456,6 +456,17 @@ public enum SettingsKey {
     /// carrying it on the preferences broadcaster would be a second spelling of one fact.
     public static var terminalImagesEnabled: Bool { AppConfig.current.flag("terminal.images") }
 
+    /// Draw an arrow a box rule runs into with a stem continuing that rule
+    /// (`terminal.arrow-box-drawing-join`), default ON.
+    ///
+    /// Reaches the arrows and nothing else. Box drawing, block elements, Braille and Powerline are
+    /// drawn from the cell whatever this says — a font fits those to its own advance and they gap
+    /// against their neighbours, which is a bug rather than a preference. Read live, for the reason
+    /// its neighbours here are.
+    public static var terminalArrowBoxDrawingJoinEnabled: Bool {
+        AppConfig.current.flag("terminal.arrow-box-drawing-join")
+    }
+
     /// Strip trailing whitespace from each copied line (`controls.trim-trailing-spaces`), default ON.
     public static var trimTrailingSpacesOnCopyEnabled: Bool {
         AppConfig.current.flag("controls.trim-trailing-spaces")

@@ -780,6 +780,11 @@ pub const KEYS: &[Key] = &[
         doc: "Draw inline images (kitty graphics). Off hides them; the terminal still stores them.",
     },
     Key {
+        path: "terminal.arrow-box-drawing-join",
+        kind: Kind::Flag { default: Some(true) },
+        doc: "Draw an arrow a box rule runs into with a stem continuing that rule.",
+    },
+    Key {
         path: "terminal.scrollback-limit",
         kind: Kind::Int {
             default: Some(slopdesk_terminal::config::FACTORY_SCROLLBACK_LINES),

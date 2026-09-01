@@ -213,8 +213,8 @@ Feature matrix: slopdesk's UI-shell design spec (UI + behavior) vs. the current 
 | J5 | Nerd Font PUA glyphs + custom fallback | **partial** — libghostty embeds; fallback setting missing | add `font-family-fallback` setting | 4 |
 | J6 | Synthetic bold/italic, underline/blink render modes | **partial** — libghostty supports; settings missing | add Appearance→Text mode settings | 4 |
 | J7 | East-Asian-Ambiguous block width | **partial** — coarse libghostty option only | add coarse "widen ambiguous" toggle (document fidelity gap) | 5 |
-| J8 | Box-drawing/block/braille/powerline analytical render | **done** — libghostty (Ghostty quality) | none | — |
-| J9 | Arrow/triangle stem-join to box rules | **na-remote** — not a libghostty feature; would require a ghostty patch | omit; settings stub default-on no-op (document) | 5 |
+| J8 | Box-drawing/block/braille/powerline analytical render | **done** (2026-09-02) — OURS now, `rust/slopdesk-termrender/src/sprite/`. The four unconditional families are ported from Ghostty's `src/font/sprite/draw/` (MIT) over our own `Canvas`; the old "libghostty, for free" reading died with the fork | none | — |
+| J9 | Arrow/triangle stem-join to box rules | **done** (2026-09-02) — `sprite/arrow.rs`, ours: Ghostty draws no arrow sprites at all. Drawn only when `paint.rs`'s `join_mask` finds a rule at one of the four edges (it reads across rows, so `│` over `↓` joins); an empty mask falls through to the font. Setting `terminal.arrow-box-drawing-join`, default ON, is wired end to end. ⚠️ The old reason here — "would require a ghostty patch" — was a FORK-shaped ceiling and is void | none | — |
 | J10 | Inline images (OSC 1337 / Kitty graphics) | **done** — libghostty renders host-emitted protocol; client is pixel consumer | none | — |
 | J11 | Sixel graphics | **done** — libghostty renders if emitted | none | — |
 

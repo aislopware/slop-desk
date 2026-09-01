@@ -32,6 +32,8 @@
 //! - [`pin`] — the head of the block you are inside, kept on screen while its output scrolls.
 //! - [`image`] — inline images: the CPU-side pixel cache, and where a kitty placement lands once
 //!   [`block`] rather than a multiplication decides where a row is.
+//! - [`sprite`] — the glyphs a font must NOT supply: box drawing, block elements, Braille,
+//!   Powerline, and arrows that meet a rule. Drawn from the cell's dimensions so they tile.
 //!
 //! ## Units
 //!
@@ -51,6 +53,7 @@ pub mod layout;
 pub mod paint;
 pub mod pin;
 pub mod quad;
+pub mod sprite;
 
 pub use atlas::{Atlas, AtlasFormat, AtlasRegion};
 pub use block::{
@@ -76,3 +79,4 @@ pub use paint::{PaintStyle, Painter, Preedit, SelectionColors};
 pub use quad::{
     DrawList, GlyphInstance, ImageInstance, ImageLayer, ImageRun, Mark, RectInstance, RectStyle, Rgba,
 };
+pub use sprite::{CellEdge, JoinMask, SpriteKey};

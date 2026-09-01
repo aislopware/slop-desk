@@ -564,6 +564,11 @@
           "type": "boolean",
           "default": true
         },
+        "arrow-box-drawing-join": {
+          "description": "Draw an arrow a box rule runs into with a stem continuing that rule.",
+          "type": "boolean",
+          "default": true
+        },
         "scrollback-limit": {
           "description": "How many lines are kept above the viewport for scrollback.",
           "type": "integer",
