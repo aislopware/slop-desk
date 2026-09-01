@@ -43,8 +43,9 @@ pub struct MonotonicClock;
 
 impl Clock for MonotonicClock {
     fn now_nanos(&self) -> u64 {
-        static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        u64::try_from(ORIGIN.get_or_init(std::time::Instant::now).elapsed().as_nanos()).unwrap_or(u64::MAX)
+        static ORIGIN: std::sync::LazyLock<std::time::Instant> =
+            std::sync::LazyLock::new(std::time::Instant::now);
+        u64::try_from(ORIGIN.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
 
     fn sleep_nanos(&self, nanos: u64) {

@@ -100,8 +100,8 @@ enum State {
 pub fn local_hostnames() -> Vec<String> {
     /// Asked of the OS once per process. The answer cannot change under a running daemon in any way
     /// that matters here, and this is called on every spawn and every subscribe.
-    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    NAMES.get_or_init(compute_local_hostnames).clone()
+    static NAMES: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(compute_local_hostnames);
+    NAMES.clone()
 }
 
 fn compute_local_hostnames() -> Vec<String> {

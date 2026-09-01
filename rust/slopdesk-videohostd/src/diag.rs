@@ -20,13 +20,23 @@
 //! the moment an operator most needs them separated.
 
 use std::io::Write as _;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 /// The name to fall back to when `argv[0]` says nothing usable.
 const FALLBACK: &str = "slopdesk-videohostd";
 
 /// The resolved prefix, computed once. Read from every thread that logs, which is most of them.
-static PROGRAM: OnceLock<String> = OnceLock::new();
+static PROGRAM: LazyLock<String> = LazyLock::new(|| {
+    std::env::args_os()
+        .next()
+        .as_ref()
+        .map(std::path::Path::new)
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(FALLBACK)
+        .to_owned()
+});
 
 /// The basename this process was invoked under.
 ///
@@ -34,17 +44,7 @@ static PROGRAM: OnceLock<String> = OnceLock::new();
 /// diagnostic from a path that runs before `main` has arranged anything still comes out labelled.
 #[must_use]
 pub fn program() -> &'static str {
-    PROGRAM.get_or_init(|| {
-        std::env::args_os()
-            .next()
-            .as_ref()
-            .map(std::path::Path::new)
-            .and_then(std::path::Path::file_name)
-            .and_then(std::ffi::OsStr::to_str)
-            .filter(|name| !name.is_empty())
-            .unwrap_or(FALLBACK)
-            .to_owned()
-    })
+    &PROGRAM
 }
 
 /// One diagnostic line on stderr.

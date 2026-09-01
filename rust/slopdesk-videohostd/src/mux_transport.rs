@@ -706,8 +706,9 @@ fn payload_is_list_request(channel: VideoChannel, payload: &[u8]) -> bool {
 /// another thread's, and three threads run through here. The gate is read once — this is on the
 /// per-datagram path, where an environment lookup is not.
 fn note(message: &str) {
-    static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !DEBUG.get_or_init(|| std::env::var_os("SLOPDESK_VIDEO_DEBUG").is_some()) {
+    static DEBUG: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("SLOPDESK_VIDEO_DEBUG").is_some());
+    if !*DEBUG {
         return;
     }
     drop(std::io::stderr().write_all(format!("slopdesk-videohostd: {message}\n").as_bytes()));

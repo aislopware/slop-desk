@@ -75,6 +75,11 @@ const VM_NEEDED_WORDS: usize = {
 /// difference between a port leak per poll and none. The value is a plain integer name, so a
 /// `OnceLock` over it is sound and needs no destructor: the right lives as long as the process,
 /// which is exactly how long this crate intends to hold it.
+///
+/// It stays a `OnceLock` and NOT a `LazyLock` — tried 2026-09-02, reverted. The two `#[expect]`s
+/// below sit on the `get_or_init` STATEMENT, and a `LazyLock` moves the call into the static's
+/// initialiser, where a statement attribute cannot reach it: the `unsafe` lands outside the
+/// exemption and both expectations read as unfulfilled.
 fn host_port() -> libc::mach_port_t {
     use std::sync::OnceLock;
     static PORT: OnceLock<libc::mach_port_t> = OnceLock::new();

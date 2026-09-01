@@ -57,7 +57,7 @@
 //! assertion, which are the two halves worth keeping, are the same two this module asks.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{LazyLock, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use slopdesk_apple_power::{SleepAssertion, SleepKind};
@@ -130,8 +130,8 @@ impl HostDisplayWake {
     /// [`Self::release`].
     #[must_use]
     pub fn shared() -> &'static Self {
-        static SHARED: OnceLock<HostDisplayWake> = OnceLock::new();
-        SHARED.get_or_init(Self::new)
+        static SHARED: LazyLock<HostDisplayWake> = LazyLock::new(HostDisplayWake::new);
+        &SHARED
     }
 
     /// One more streaming desktop session. The first holder raises the assertion.

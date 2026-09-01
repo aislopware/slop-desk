@@ -8,7 +8,7 @@
 //! empty means, which is the one thing the shell never made anybody write down.
 
 use std::collections::BTreeSet;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 
@@ -27,9 +27,9 @@ pub fn cached(pattern: &str) -> &'static Regex {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    static CACHE: OnceLock<Mutex<HashMap<String, &'static Regex>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    static CACHE: LazyLock<Mutex<HashMap<String, &'static Regex>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut guard = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(compiled) = guard.get(pattern) {
         return compiled;
     }
@@ -63,8 +63,8 @@ pub fn intern(value: String) -> &'static str {
     use std::collections::HashSet;
     use std::sync::Mutex;
 
-    static CACHE: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashSet::new()));
+    static CACHE: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+    let cache = &CACHE;
     let mut guard = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(held) = guard.get(value.as_str()) {
         return held;

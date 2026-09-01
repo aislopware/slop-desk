@@ -27,7 +27,7 @@
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -75,8 +75,8 @@ type Listener = Arc<dyn Fn() + Send + Sync + 'static>;
 /// `usize` rather than a pointer so that "never followed" is a promise the compiler keeps rather
 /// than one this file has to.
 fn live() -> &'static Mutex<HashMap<usize, Listener>> {
-    static LIVE: OnceLock<Mutex<HashMap<usize, Listener>>> = OnceLock::new();
-    LIVE.get_or_init(|| Mutex::new(HashMap::new()))
+    static LIVE: LazyLock<Mutex<HashMap<usize, Listener>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    &LIVE
 }
 
 /// One observer handle's registry key.

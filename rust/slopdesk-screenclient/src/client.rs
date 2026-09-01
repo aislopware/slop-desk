@@ -28,7 +28,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use slopdesk_screenwire::{
@@ -146,8 +146,8 @@ impl Default for ScreenClient {
 /// callers, and each holding its own socket would be forty threads parked in screend.
 #[must_use]
 pub fn shared() -> &'static ScreenClient {
-    static SHARED: OnceLock<ScreenClient> = OnceLock::new();
-    SHARED.get_or_init(ScreenClient::new)
+    static SHARED: LazyLock<ScreenClient> = LazyLock::new(ScreenClient::new);
+    &SHARED
 }
 
 impl ScreenClient {

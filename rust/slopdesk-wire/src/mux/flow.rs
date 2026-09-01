@@ -10,7 +10,7 @@
 //! rather than trapping. `usize` would make the negative cases unrepresentable and move the guard
 //! to the caller — where it would be written once per call site instead of once here.
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 /// Halves a non-negative byte count.
 ///
@@ -59,8 +59,9 @@ impl MuxFlowControl {
     /// on the first flood.
     #[must_use]
     pub fn initial_window_bytes() -> i64 {
-        static VALUE: OnceLock<i64> = OnceLock::new();
-        *VALUE.get_or_init(|| env_int("SLOPDESK_MUX_WINDOW", 64 * 1024, 16 * 1024, 16 * 1024 * 1024))
+        static VALUE: LazyLock<i64> =
+            LazyLock::new(|| env_int("SLOPDESK_MUX_WINDOW", 64 * 1024, 16 * 1024, 16 * 1024 * 1024));
+        *VALUE
     }
 
     /// Split cap for client→host input frames (paste), in bytes.
@@ -90,8 +91,9 @@ impl MuxFlowControl {
     /// Host-local, with no protocol interaction, so `SLOPDESK_MUX_HOST_QUEUE` is unilaterally safe.
     #[must_use]
     pub fn host_queue_capacity_bytes() -> i64 {
-        static VALUE: OnceLock<i64> = OnceLock::new();
-        *VALUE.get_or_init(|| env_int("SLOPDESK_MUX_HOST_QUEUE", 64 * 1024, 8 * 1024, 8 * 1024 * 1024))
+        static VALUE: LazyLock<i64> =
+            LazyLock::new(|| env_int("SLOPDESK_MUX_HOST_QUEUE", 64 * 1024, 8 * 1024, 8 * 1024 * 1024));
+        *VALUE
     }
 
     /// The DETACHED-mode replacement for
@@ -106,15 +108,15 @@ impl MuxFlowControl {
     /// Host-local, so `SLOPDESK_MUX_DETACHED_QUEUE` is unilaterally safe.
     #[must_use]
     pub fn detached_host_queue_capacity_bytes() -> i64 {
-        static VALUE: OnceLock<i64> = OnceLock::new();
-        *VALUE.get_or_init(|| {
+        static VALUE: LazyLock<i64> = LazyLock::new(|| {
             env_int(
                 "SLOPDESK_MUX_DETACHED_QUEUE",
                 64 * 1024 * 1024,
                 64 * 1024,
                 1024 * 1024 * 1024,
             )
-        })
+        });
+        *VALUE
     }
 
     /// Cap on a MERGED host output frame (drain-side coalescing), in bytes (32 KiB).
@@ -127,8 +129,9 @@ impl MuxFlowControl {
     /// alone is NOT a safe frame bound.
     #[must_use]
     pub fn host_merge_cap_bytes() -> i64 {
-        static VALUE: OnceLock<i64> = OnceLock::new();
-        *VALUE.get_or_init(|| env_int("SLOPDESK_MUX_MERGE_CAP", 32 * 1024, 4 * 1024, 128 * 1024))
+        static VALUE: LazyLock<i64> =
+            LazyLock::new(|| env_int("SLOPDESK_MUX_MERGE_CAP", 32 * 1024, 4 * 1024, 128 * 1024));
+        *VALUE
     }
 
     /// The PROVABLY-SAFE payload cap for host output frames — the single place the credit progress

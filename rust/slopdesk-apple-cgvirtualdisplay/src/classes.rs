@@ -13,7 +13,7 @@
     reason = "conflicts with the denied `unreachable_pub`"
 )]
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use objc2::runtime::AnyClass;
 
@@ -50,11 +50,11 @@ impl Classes {
 
 /// The one resolution, cached for the process lifetime — including a cached FAILURE, so an OS
 /// without the area pays four `objc_getClass` calls once rather than on every mint.
-static CLASSES: OnceLock<Option<Classes>> = OnceLock::new();
+static CLASSES: LazyLock<Option<Classes>> = LazyLock::new(Classes::resolve);
 
 /// The resolved classes, or `None` on an OS that no longer has all four.
 pub(crate) fn classes() -> Option<Classes> {
-    *CLASSES.get_or_init(Classes::resolve)
+    *CLASSES
 }
 
 /// Whether this process can create a virtual display at all.
@@ -83,8 +83,8 @@ mod tests {
     use super::{classes, private_classes_available, skipped};
 
     /// The cache is a cache: a second ask must not re-enter the runtime and must not hand back a
-    /// different class object. If `OnceLock` were dropped for a plain call, two mints could build a
-    /// descriptor from one resolution and a display from another.
+    /// different class object. If the `LazyLock` were dropped for a plain call, two mints could
+    /// build a descriptor from one resolution and a display from another.
     #[test]
     fn resolving_the_classes_twice_returns_the_same_pointers() {
         let (Some(first), Some(second)) = (classes(), classes()) else {

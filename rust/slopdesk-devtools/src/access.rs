@@ -26,7 +26,7 @@
 //! It is a line scanner, not a parser, which is sound here because the tree is SwiftFormat-clean:
 //! declarations start their line. The compiler is the oracle either way — run `swift build` after.
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 
@@ -76,29 +76,29 @@ const STATEMENT_KEYWORDS: [&str; 9] = [
 /// a type, or the members inside it stop being annotated. Whether a declaration is already
 /// annotated is answered by looking at the captured prefix, not by failing to parse it.
 fn declaration() -> &'static Regex {
-    static HELD: OnceLock<Regex> = OnceLock::new();
-    HELD.get_or_init(|| {
+    static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!(
             r"^(?P<indent>\s*)(?P<prefix>(?:{ATTRIBUTE}|{MODIFIERS}\s+|{ACCESS}\s+)*)(?P<keyword>[a-z]+)\b"
         ))
         .expect("the declaration pattern is a literal in this file")
-    })
+    });
+    &HELD
 }
 
 /// Whether a captured prefix already carries an access modifier.
 fn access_in_prefix() -> &'static Regex {
-    static HELD: OnceLock<Regex> = OnceLock::new();
-    HELD.get_or_init(|| {
+    static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!(r"(?:^|\s){ACCESS}\s")).expect("the access pattern is a literal in this file")
-    })
+    });
+    &HELD
 }
 
 /// An `extension` prefix that already hands its access down to every member.
 fn hoisting_prefix() -> &'static Regex {
-    static HELD: OnceLock<Regex> = OnceLock::new();
-    HELD.get_or_init(|| {
+    static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:^|\s)(?:open|public|package)\s").expect("the hoist pattern is a literal in this file")
-    })
+    });
+    &HELD
 }
 
 /// Drop string literals and a trailing line comment so brace counting is honest.
@@ -288,24 +288,24 @@ pub fn transform(text: &str) -> (String, usize) {
 
 /// A raised `rawValue` and the type it holds.
 fn rawvalue() -> &'static Regex {
-    static HELD: OnceLock<Regex> = OnceLock::new();
-    HELD.get_or_init(|| {
+    static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?m)^(?P<indent>[ \t]*)package let rawValue: (?P<type>[A-Za-z_][A-Za-z0-9_.<>, ]*)[ \t]*$",
         )
         .expect("the rawValue pattern is a literal in this file")
-    })
+    });
+    &HELD
 }
 
 /// A raised struct head that conforms to one of the two protocols with a synthesised initializer.
 fn optionset_head() -> &'static Regex {
-    static HELD: OnceLock<Regex> = OnceLock::new();
-    HELD.get_or_init(|| {
+    static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?m)^[ \t]*package (?:final )?struct [A-Za-z_][A-Za-z0-9_]*[^\n{]*:\s*[^\n{]*\b(?:OptionSet|RawRepresentable)\b",
         )
         .expect("the OptionSet head pattern is a literal in this file")
-    })
+    });
+    &HELD
 }
 
 /// How far past a stored property to look for an initializer that is already written out.

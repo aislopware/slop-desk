@@ -3,7 +3,7 @@
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use dispatch2::{DispatchQueue, DispatchRetained};
 use objc2_core_foundation::{CFArray, CFString};
@@ -31,8 +31,8 @@ type Listener = Arc<dyn Fn() + Send + Sync + 'static>;
 /// a pointer that is followed: `usize` rather than `*const _` in the type so that is not a promise
 /// this file has to keep, it is one the compiler keeps.
 fn live() -> &'static Mutex<HashMap<usize, Listener>> {
-    static LIVE: OnceLock<Mutex<HashMap<usize, Listener>>> = OnceLock::new();
-    LIVE.get_or_init(|| Mutex::new(HashMap::new()))
+    static LIVE: LazyLock<Mutex<HashMap<usize, Listener>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    &LIVE
 }
 
 /// A recursive `FSEvents` subscription to one directory, torn down when it drops.
