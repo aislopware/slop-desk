@@ -1817,6 +1817,11 @@ pub fn registry() -> Vec<Rule> {
             check: gate_health::every_ffi_door_is_opened_or_declared_deliberate,
         },
         Rule {
+            name: "ffi-header-parts-are-included",
+            origin: "docs/55 §3",
+            check: gate_health::every_ffi_header_part_is_included_by_the_umbrella,
+        },
+        Rule {
             name: "exemptions-are-alive",
             origin: "CLAUDE.md — the ratchet",
             check: gate_health::every_exemption_names_a_path_the_tree_has,

@@ -511,6 +511,7 @@ impl Tree {
                 files.insert(relative, Source::new(text, style));
             }
         }
+        splice_quoted_includes(&mut files)?;
         Ok(Self {
             root: root.to_path_buf(),
             files,
@@ -560,6 +561,82 @@ impl Tree {
     pub fn read(&self, path: &str) -> std::io::Result<String> {
         fs::read_to_string(self.root.join(path))
     }
+}
+
+/// A header that `#include "…"`s its siblings is held as the TRANSLATION UNIT, parts spliced in.
+///
+/// `rust/slopdesk-ffi/include/slopdesk_ffi.h` is the one such file in the tree and the reason this
+/// exists: it was 12 344 lines, it is sixteen parts behind an umbrella now, and eight rules across
+/// six modules name that umbrella's path to ask what the FFI declares. Every one of them is asking
+/// about the header the compiler assembles, not about the include list — so the splice happens
+/// here, once, and no rule and no break-test fixture has to know the file was ever divided. A
+/// fixture that writes the umbrella with no `#include "…"` in it gets exactly what it wrote back.
+///
+/// The parts stay in the map under their own paths as well, deliberately: a generic ban that sweeps
+/// every `.h` under `rust/` must still see them. Nothing in this crate COUNTS occurrences across
+/// files, so the doubling is free — and the alternative, hiding the parts, would move real code out
+/// from under every rule that never names the header at all.
+///
+/// A quoted include naming a file the walk did not find is a hard error rather than a line left
+/// alone: that is a rule reading a header with a hole in it, which is the silently-vacuous failure
+/// this whole crate is written against. One level, no recursion — nothing else in the tree quotes
+/// an include, and a part that started including a part would be a nesting the umbrella exists to
+/// prevent.
+///
+/// Line numbering does not survive, and no rule reading this file reports one: what they report is
+/// a door NAME that is present or missing. A rule that wanted `header:line:` would have to read the
+/// part directly, which is what the parts being in the map keeps possible.
+fn splice_quoted_includes(files: &mut BTreeMap<PathBuf, Source>) -> std::io::Result<()> {
+    let umbrellas: Vec<PathBuf> = files
+        .iter()
+        .filter(|(path, source)| {
+            path.extension().and_then(|ext| ext.to_str()) == Some("h")
+                && source.text.lines().any(|line| quoted_include(line).is_some())
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in umbrellas {
+        let directory = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        let mut spliced = String::with_capacity(files[&path].text.len());
+        for line in files[&path].text.lines() {
+            let Some(name) = quoted_include(line) else {
+                spliced.push_str(line);
+                spliced.push('\n');
+                continue;
+            };
+            let target = directory.join(name);
+            let Some(part) = files.get(&target) else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "{} includes {}, which the walk did not find — every rule that reads that header \
+                         would go quietly vacuous",
+                        path.display(),
+                        target.display()
+                    ),
+                ));
+            };
+            spliced.push_str(&part.text);
+        }
+        let style = files[&path].style;
+        files.insert(path, Source::new(spliced, style));
+    }
+    Ok(())
+}
+
+/// The file name of a `#include "…"`, or `None` for anything else — a `#include <…>` included.
+///
+/// Shared with `rules::gate_health`, which reads the umbrella's include list off DISK to ask the
+/// question this function's caller cannot: whether a part file exists that the list forgot. Two
+/// readers of one grammar, so the grammar is written once.
+pub(crate) fn quoted_include(line: &str) -> Option<&str> {
+    line.trim_start()
+        .strip_prefix("#include")?
+        .trim_start()
+        .strip_prefix('"')?
+        .split('"')
+        .next()
+        .filter(|name| !name.is_empty())
 }
 
 fn walk(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Source>) -> std::io::Result<()> {
@@ -781,6 +858,45 @@ mod tests {
             checked > 1000,
             "the walk found only {checked} slash-commented sources — it is not reaching the tree"
         );
+    }
+
+    /// One entry per path, and asking for the umbrella hands back what the compiler assembles.
+    ///
+    /// The rule this protects is every rule that names `slopdesk_ffi.h`: none of them knows the
+    /// file is sixteen parts now, and none of them should have to.
+    #[test]
+    fn an_umbrella_header_is_held_as_the_translation_unit_and_its_parts_stay_visible() {
+        let mut files = std::collections::BTreeMap::new();
+        for (path, text) in [
+            ("inc/u.h", "#ifndef U\n#include \"p.h\"\n#endif\n"),
+            ("inc/p.h", "size_t slopdesk_door(void);\n"),
+        ] {
+            files.insert(
+                std::path::PathBuf::from(path),
+                Source::new(text.to_owned(), CommentStyle::Slashes(Lang::C)),
+            );
+        }
+        super::splice_quoted_includes(&mut files).unwrap();
+        let umbrella = &files[std::path::Path::new("inc/u.h")].text;
+        assert!(umbrella.contains("slopdesk_door") && umbrella.contains("#ifndef U"));
+        assert!(files.contains_key(std::path::Path::new("inc/p.h")));
+    }
+
+    /// A part the umbrella names and the walk cannot find is a header with a HOLE in it, and every
+    /// rule reading it would pass by seeing nothing. That is the one failure this crate cannot
+    /// afford, so it stops the load rather than the rule.
+    #[test]
+    fn a_part_the_umbrella_names_and_the_tree_does_not_hold_fails_the_load() {
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            std::path::PathBuf::from("inc/u.h"),
+            Source::new(
+                "#include \"gone.h\"\n#include <stdint.h>\n".to_owned(),
+                CommentStyle::Slashes(Lang::C),
+            ),
+        );
+        let error = super::splice_quoted_includes(&mut files).unwrap_err();
+        assert!(error.to_string().contains("inc/gone.h"), "{error}");
     }
 
     /// The view is computed once. Rules ask for it in parallel, so the second asker must get the

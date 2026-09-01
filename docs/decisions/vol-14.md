@@ -1156,3 +1156,44 @@ The alternative considered and dropped was carrying a hyperlink ID per cell in t
 would let one walk split runs with no engine call. `libghostty-vt` exposes `has_hyperlink` and
 `hyperlink_uri` and no id, so it would mean a URI string per cell per frame — the allocation
 `CellFlags::HYPERLINK` exists to avoid.
+
+## The FFI header is sixteen parts behind one umbrella (2026-09-01)
+
+`rust/slopdesk-ffi/include/slopdesk_ffi.h` was 12 344 lines. Nothing was wrong with it as C — it is
+hand-written for the reason its own preamble gives, and the gate that keeps it honest never cared
+how long it was. What it cost was READING: a person or a tool that wanted one door's signature
+opened all of them, and every agent session that touched the FFI boundary paid the whole file.
+
+So the declarations are sixteen `slopdesk_ffi_<area>.h` parts now, each a CONTIGUOUS slice of what
+the file already was, split at banners it already had. `slopdesk_ffi.h` keeps the guard, the
+preamble and an ordered include list; `module.modulemap` still names it and nothing else, so Swift
+sees one module and a `#include "slopdesk_ffi.h"` from C still resolves. The move was verified
+byte-for-byte: strip each part's guard and `extern "C"` wrapper, concatenate in include order, and
+the result is the old body exactly.
+
+### Both readers FOLLOW the include list; neither globs the directory
+
+Two things read the header as text — `slopdesk-devtools`' FFI gate, which checks the
+declared/exported symbol bijection per slice, and `slopdesk-invariants`' `Tree`, which eight rules
+across six modules ask for by path. Both expand the umbrella's `#include "…"` lines.
+
+Globbing `include/*.h` would have been fewer lines and is the wrong failure direction. A part
+dropped from the include list is a part Swift cannot see; globbed, its doors keep counting as
+declared and the bijection passes a slice the app cannot link. Followed, the same drop makes those
+doors undeclared and `just ffi` fails. `lint-invariants`' `ffi-header-parts-are-included` closes the
+gap from the other side, naming the orphaned part in the second the rules run rather than after a
+three-slice build.
+
+### The splice lives in `Tree::load`, so no rule knows the file was divided
+
+Every rule that names the header is asking about the TRANSLATION UNIT, not the include list, so the
+tree hands it the parts spliced in. Nothing else changed: not one of the eight rules, and not one
+break-test fixture — a fixture that writes an umbrella with no includes in it gets back what it
+wrote. The parts stay in the map under their own paths as well, because a generic ban that sweeps
+every `.h` under `rust/` must still see them; nothing in that crate counts occurrences across files,
+so the double appearance is free.
+
+The one rule that asks about the include list itself reads the file off disk, which is
+`Tree::read`'s stated purpose. And a part the umbrella names that the walk cannot find is an I/O
+error rather than a violation: a header read with a hole in it makes every rule below silently
+vacuous, which is worse than a red.

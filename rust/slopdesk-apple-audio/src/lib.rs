@@ -40,8 +40,8 @@
 //! Only the HOST encodes, and only the host has a capture tap to read a sample buffer out of — so
 //! [`Encoder`] and [`read_stereo`] are macOS-only. Every CLIENT decodes, on both slices, so
 //! [`Decoder`] is not gated. This is `slopdesk-apple-vt`'s shape exactly, and for the same reason:
-//! an iOS build links the half it uses and `slopdesk_ffi.h` declares each door in the matching
-//! region.
+//! an iOS build links the half it uses and the FFI header declares each door in the matching
+//! part — `slopdesk_ffi_macos.h` for the encoder, `slopdesk_ffi_reading.h` for the decoder.
 
 #![cfg_attr(
     not(any(target_os = "macos", target_os = "ios")),

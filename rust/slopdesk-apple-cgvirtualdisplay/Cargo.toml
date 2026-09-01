@@ -31,7 +31,7 @@
 #
 # ## macOS ONLY, and how that is kept true
 # `slopdesk-ffi` links this behind `[target.'cfg(target_os = "macos")'.dependencies]`, its doors are
-# declared inside `slopdesk_ffi.h`'s `MACOS-ONLY BEGIN/END` region, and `slopdesk-gate ffi`
+# declared inside `slopdesk_ffi_macos.h`'s `MACOS-ONLY BEGIN/END` region, and `slopdesk-gate ffi`
 # requires those symbols PRESENT on the macOS slice and ABSENT on both iOS slices.
 [workspace]
 resolver = "3"

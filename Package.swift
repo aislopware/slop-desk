@@ -24,7 +24,7 @@ import PackageDescription
 // removes the code itself — and `scripts/check-supervisor.sh` fails a new `CSlopDeskFFI` dependent
 // that forgets them, which is the failure a person would otherwise meet as a wall of `_iconv`.
 //
-// macOS only: the iOS slices have no libgit2 in them at all (`slopdesk_ffi.h`'s `TARGET_OS_OSX`
+// macOS only: the iOS slices have no libgit2 in them at all (`slopdesk_ffi_macos.h`'s `TARGET_OS_OSX`
 // region, and the `cfg` behind it).
 // AppKit joins them for the same reason and by the same mechanism. `slopdesk-apple-cursor` reads the
 // displayed cursor and renders its PNG, and the one thing in that path the linker has to resolve is

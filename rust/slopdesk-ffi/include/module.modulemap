@@ -1,5 +1,11 @@
 // CSlopDeskFFI — the Clang module that lets Swift see `slopdesk_ffi.h`.
 //
+// ONE header, deliberately, even though the doors are sixteen `slopdesk_ffi_*.h` parts: the umbrella
+// includes them in order, so clang assembles the same translation unit it always did, and there is
+// exactly one name Swift can import. An `umbrella "."` over the directory would make every part its
+// own top-level declaration and let a part that fell out of the include list keep working here while
+// a `#include "slopdesk_ffi.h"` from C lost it.
+//
 // This module IS inside the `swift build` graph, and that is the whole point. The
 // one-implementation rule says a ported module's Swift original is deleted in the same change, and
 // a Rust implementation that `swift test` cannot reach would leave the Swift version alive as the

@@ -527,7 +527,7 @@ encoding existed to get wrong. Adoption ran the other way through a fourth, stag
 `input_clear`, `input_push` per message, then `adopt_snapshot_replay`.
 
 It is recorded rather than prescribed because `docs/63` §G.5 retired the replay doors and no
-surviving handle has slots: `grep result_ include/slopdesk_ffi.h` answers nothing. That is the right
+surviving handle has slots: `grep result_ include/*.h` answers nothing. That is the right
 outcome for a convention rather than a loss. The pressure that produced it — an answer far larger
 than any one caller wants at once — is what a handle is *for*, and if it recurs the shape is here to
 copy; what a doc must not do is prescribe a pattern with no instance, because the next reader cannot
@@ -1262,9 +1262,13 @@ now one function with the Swift test's own case pinned to it.
 1. Write the logic in a domain crate. It stays `forbid(unsafe_code)`.
 2. Add the wrapper to `rust/slopdesk-ffi/src/lib.rs` — marshalling only — with a test that calls
    it through the raw pointers the way Swift does.
-3. Declare it in `include/slopdesk_ffi.h`. Nothing else to list: `slopdesk-gate ffi` reads
-   `REQUIRED_SYMBOLS` out of the header and checks every slice carries them, so a header that
-   drifts from the library fails at `just ffi` rather than at app link.
+3. Declare it in the `include/slopdesk_ffi_*.h` part that owns the surface it serves — the doors are
+   sixteen part headers behind the `include/slopdesk_ffi.h` umbrella, which is the only one
+   `module.modulemap` names and the only one Swift includes. Nothing else to list: `slopdesk-gate
+   ffi` follows the umbrella's `#include` lines, reads `REQUIRED_SYMBOLS` out of what they assemble
+   and checks every slice carries them, so a header that drifts from the library fails at `just ffi`
+   rather than at app link. A NEW part has to be added to the umbrella's include list, and
+   `lint-invariants`' `ffi-header-parts-are-included` is what says so by name if it is not.
 4. If the domain crate is new to the shim, give it a `path = "../…"` edge — that is what puts it in
    the stamp's closure (§3).
 5. Write the Swift wrapper, **delete the Swift implementation it replaces**, and leave that

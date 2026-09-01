@@ -23,6 +23,8 @@ use crate::tree::Tree;
 
 /// The header every door is declared in — the artifact Swift links against.
 const HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
+/// Where that header and its parts live.
+const HEADER_DIR: &str = "rust/slopdesk-ffi/include/";
 /// This crate's own sources — where an exemption spelled as a `const` is declared.
 const CRATE_SRC: &str = "rust/slopdesk-invariants/src/";
 /// The gate runners' own module list, and the census above it.
@@ -127,6 +129,63 @@ pub fn every_ffi_door_is_opened_or_declared_deliberate(tree: &Tree) -> Report {
             stale.join(", ")
         ));
     }
+    report
+}
+
+/// Every `slopdesk_ffi_*.h` part is named by the umbrella that Swift actually includes.
+///
+/// `module.modulemap` declares ONE header, and a part the umbrella does not `#include` is a file
+/// full of declarations no compiler ever reads. The doors in it still exist — the shim exports
+/// them, `slopdesk-gate ffi`'s bijection then reports them as exported-and-undeclared, and `just
+/// ffi` fails — so the artifact cannot ship half-assembled. What that failure does NOT say is which
+/// of sixteen parts fell out of the list, and it costs a three-slice build to hear it at all. This
+/// says it by name, in the second the rules run.
+///
+/// The other direction — the umbrella naming a part the tree does not have — is
+/// [`crate::tree::Tree::load`]'s, and it is an error rather than a violation there: a header read
+/// with a hole in it makes every rule below silently vacuous, which is worse than a red.
+///
+/// Read off DISK rather than out of the tree, and that is the whole subtlety: the tree holds this
+/// path as the TRANSLATION UNIT, parts spliced in, precisely so that no other rule has to know the
+/// file was divided. The include list is gone by then. This is the one rule asking about the list
+/// itself, so it is the one rule that reads the file the way it is written.
+#[must_use]
+pub fn every_ffi_header_part_is_included_by_the_umbrella(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let Ok(umbrella) = tree.read(HEADER) else {
+        report.fail(format!(
+            "{HEADER} cannot be read — it is the module header, and `module.modulemap` names no other"
+        ));
+        return report;
+    };
+    let included: BTreeSet<&str> = umbrella.lines().filter_map(crate::tree::quoted_include).collect();
+
+    let mut parts = 0_usize;
+    let mut orphans: Vec<String> = Vec::new();
+    for (path, _) in tree.under(HEADER_DIR) {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if !name.starts_with("slopdesk_ffi_") || !name.ends_with(".h") {
+            continue;
+        }
+        parts += 1;
+        if !included.contains(name.as_ref()) {
+            orphans.push(name.into_owned());
+        }
+    }
+    if parts == 0 {
+        report.fail(format!(
+            "{HEADER_DIR} holds no slopdesk_ffi_*.h part — the header split moved and this rule is blind"
+        ));
+        return report;
+    }
+    report.fail_if(
+        !orphans.is_empty(),
+        format!(
+            "{HEADER} does not include {} — a part the umbrella does not name is declarations no compiler \
+             reads, and Swift loses every door in it",
+            orphans.join(", ")
+        ),
+    );
     report
 }
 
@@ -498,8 +557,8 @@ mod tests {
 
     use super::{
         every_exemption_names_a_path_the_tree_has, every_ffi_door_is_opened_or_declared_deliberate,
-        every_fixture_name_is_spelled_once, every_rule_written_is_registered,
-        the_gate_census_names_every_gate,
+        every_ffi_header_part_is_included_by_the_umbrella, every_fixture_name_is_spelled_once,
+        every_rule_written_is_registered, the_gate_census_names_every_gate,
     };
     use crate::tests::Fixture;
 
@@ -702,6 +761,66 @@ mod tests {
         );
         opened.write("Sources/A/Call.swift", "let w = slopdesk_ws_min_weight()\n");
         assert!(every_ffi_door_is_opened_or_declared_deliberate(&opened.tree()).is_clean());
+    }
+
+    /// A part file the umbrella forgot is declarations no compiler reads.
+    ///
+    /// The green half writes the same two files with the include present, which is also what proves
+    /// the rule is reading the list off disk rather than out of the spliced tree — a tree read
+    /// would find the include line gone in BOTH fixtures and pass either way.
+    #[test]
+    fn a_header_part_the_umbrella_does_not_include_is_red() {
+        let orphaned = Fixture::new("ffi-header-part-orphan");
+        orphaned.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi.h",
+            "#include \"slopdesk_ffi_text.h\"\n",
+        );
+        orphaned.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi_text.h",
+            "void slopdesk_ws_min_weight(void);\n",
+        );
+        orphaned.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi_chrome.h",
+            "void slopdesk_ghost_door(void);\n",
+        );
+        let report = every_ffi_header_part_is_included_by_the_umbrella(&orphaned.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|line| line.contains("slopdesk_ffi_chrome.h")),
+            "the orphaned part has to be named, not just counted: {report:?}"
+        );
+
+        let listed = Fixture::new("ffi-header-part-listed");
+        listed.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi.h",
+            "#include \"slopdesk_ffi_text.h\"\n#include \"slopdesk_ffi_chrome.h\"\n",
+        );
+        listed.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi_text.h",
+            "void slopdesk_ws_min_weight(void);\n",
+        );
+        listed.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi_chrome.h",
+            "void slopdesk_ghost_door(void);\n",
+        );
+        assert!(every_ffi_header_part_is_included_by_the_umbrella(&listed.tree()).is_clean());
+    }
+
+    /// An include directory with no parts at all is a blind rule, not a green one.
+    #[test]
+    fn a_header_with_no_parts_left_reports_itself_blind() {
+        let fixture = Fixture::new("ffi-header-part-blind");
+        fixture.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi.h",
+            "void slopdesk_ws_min_weight(void);\n",
+        );
+        let report = every_ffi_header_part_is_included_by_the_umbrella(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|line| line.contains("blind")),
+            "a split that moved has to say so rather than pass: {report:?}"
+        );
     }
 
     /// A COMMENT on either side is not a door and not a call.

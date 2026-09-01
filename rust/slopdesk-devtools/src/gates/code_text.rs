@@ -26,9 +26,9 @@
 //! Swift and Rust block comments NEST, so `/* /* */ */` is one comment; C's do not, so the same
 //! text ends at the first `*/` and the trailing `*/` is code. Stripping C with the nesting rule
 //! would eat that code — the forbidden direction — so nesting is per-dialect rather than shared. C
-//! is here because `rust/slopdesk-ffi/include/slopdesk_ffi.h` is a large, heavily commented file in
-//! the app stamp; it is HAND-WRITTEN, not generated (cbindgen was rejected — `docs/55` §"cbindgen
-//! would have to run somewhere"), so nothing regenerates it behind a doc edit.
+//! is here because `rust/slopdesk-ffi/include/` is seventeen large, heavily commented headers in
+//! the app stamp; they are HAND-WRITTEN, not generated (cbindgen was rejected — `docs/55`
+//! §"cbindgen would have to run somewhere"), so nothing regenerates them behind a doc edit.
 //!
 //! Swift has no character literal, so `'` is ordinary punctuation there. C does, and `'"'` would
 //! otherwise open a string that never closes. Rust has BOTH a character literal and a lifetime

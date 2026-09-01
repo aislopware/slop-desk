@@ -55,7 +55,10 @@ use super::{code_text, stamp};
 /// The shim crate, whose path dependencies decide what the artifact is built from.
 const SHIM: &str = "slopdesk-ffi";
 
-/// The header every door is declared in.
+/// The umbrella every door is declared behind.
+///
+/// The doors themselves live in sixteen `slopdesk_ffi_*.h` parts this file `#include`s, and
+/// [`read_header`] is what turns that back into the one text the checks below read.
 const HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
 
 /// Where the assembled framework and its stamp live.
@@ -138,6 +141,46 @@ pub fn macos_only_symbols(header: &str) -> BTreeSet<String> {
         }
     }
     declared_symbols(&region)
+}
+
+/// The header as the compiler assembles it: the umbrella with every `#include "…"` spliced in.
+///
+/// [`declared_symbols`] and [`macos_only_symbols`] read TEXT, and the text they have to read is the
+/// translation unit rather than the sixteen-line include list the umbrella became. Following the
+/// `#include` lines rather than globbing `include/*.h` is the load-bearing half: a part dropped
+/// from the umbrella is a part Swift cannot see, and a glob would keep counting its doors as
+/// declared while the app lost them. Read this way, the same drop makes those doors NOT declared,
+/// so the bijection in [`verdict`] fails the build — the direction a missing door has to fail in.
+///
+/// One level, no recursion, and a part is not allowed to include a part: the umbrella is the entry
+/// point precisely so that the include order is one list a reader can hold.
+///
+/// # Errors
+/// When the umbrella cannot be read, or names a part that is not a file.
+fn read_header(root: &Path) -> Result<String, String> {
+    let umbrella = fs::read_to_string(root.join(HEADER)).map_err(|error| format!("{HEADER}: {error}"))?;
+    let mut text = String::with_capacity(umbrella.len());
+    for line in umbrella.lines() {
+        let Some(name) = line
+            .trim_start()
+            .strip_prefix("#include")
+            .map(str::trim_start)
+            .and_then(|rest| rest.strip_prefix('"'))
+            .and_then(|rest| rest.split('"').next())
+            .filter(|name| !name.is_empty())
+        else {
+            text.push_str(line);
+            text.push('\n');
+            continue;
+        };
+        let part = resolve_relative(HEADER, name).ok_or_else(|| {
+            format!("build-ffi: FAIL — {HEADER} includes {name}, which escapes the repository")
+        })?;
+        text.push_str(&fs::read_to_string(root.join(&part)).map_err(|error| {
+            format!("build-ffi: FAIL — {HEADER} includes {part}, which cannot be read: {error}")
+        })?);
+    }
+    Ok(text)
 }
 
 /// Every `slopdesk_*` symbol an `nm --print-armap` dump names, with its leading underscore.
@@ -471,7 +514,7 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     }
 
     preflight(root)?;
-    let header = fs::read_to_string(root.join(HEADER)).map_err(|error| format!("{HEADER}: {error}"))?;
+    let header = read_header(root)?;
     let declared = declared_symbols(&header);
     if declared.is_empty() {
         return Err("build-ffi: FAIL — slopdesk_ffi.h declares nothing — did the header move?".to_owned());
@@ -828,7 +871,7 @@ mod tests {
 
     use super::{
         SHIM_LOCK, current_stamp, declared_symbols, exported_symbols, included_paths, input_crates,
-        macos_only_symbols, path_dependencies, stamp_inputs, verdict,
+        macos_only_symbols, path_dependencies, read_header, stamp_inputs, verdict,
     };
 
     fn set(names: &[&str]) -> BTreeSet<String> {
@@ -1003,6 +1046,49 @@ regex = "1"
             before,
             "the header's markers are this gate's own configuration"
         );
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    /// The umbrella's parts are read, and a part left out of its include list takes its doors with
+    /// it.
+    ///
+    /// The second half is the whole reason this follows `#include` lines instead of globbing
+    /// `include/*.h`. Globbed, an orphaned part's doors would still count as declared while Swift
+    /// could not see one of them, and the bijection would pass a slice the app cannot link.
+    /// Followed, the same orphan makes those doors NOT declared — which is the direction that
+    /// fails `just ffi`.
+    #[test]
+    fn a_part_the_umbrella_includes_is_read_and_one_it_forgets_is_not() {
+        let root = std::env::temp_dir().join(format!("slopdesk-ffi-parts-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&root);
+        let include = root.join("rust/slopdesk-ffi/include");
+        fs::create_dir_all(&include).unwrap();
+        fs::write(
+            include.join("slopdesk_ffi.h"),
+            "#ifndef SLOPDESK_FFI_H\n#include <stdint.h>\n#include \"slopdesk_ffi_text.h\"\n#endif\n",
+        )
+        .unwrap();
+        fs::write(
+            include.join("slopdesk_ffi_text.h"),
+            "// MACOS-ONLY BEGIN\nsize_t slopdesk_included_door(void);\n// MACOS-ONLY END\n",
+        )
+        .unwrap();
+        fs::write(
+            include.join("slopdesk_ffi_orphan.h"),
+            "size_t slopdesk_orphaned_door(void);\n",
+        )
+        .unwrap();
+
+        let header = read_header(&root).unwrap();
+        let declared = declared_symbols(&header);
+        assert!(declared.contains("_slopdesk_included_door"));
+        assert!(!declared.contains("_slopdesk_orphaned_door"));
+        // And the markers still land, which they only do because the region survived the splice
+        // whole — a part that split one would take the macOS bijection down with it.
+        assert!(macos_only_symbols(&header).contains("_slopdesk_included_door"));
+
+        fs::write(include.join("slopdesk_ffi.h"), "#include \"gone.h\"\n").unwrap();
+        assert!(read_header(&root).unwrap_err().contains("gone.h"));
         let _ignored = fs::remove_dir_all(&root);
     }
 
