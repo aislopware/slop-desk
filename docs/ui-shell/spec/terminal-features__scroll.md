@@ -1,13 +1,20 @@
 # Scroll
 
-> ⚠️ **SCROLL PAST FIRST/LAST LINE WAS NEVER BUILT.** No setting, no clamp, no enum — the whole
-> feature has zero occurrences: `grep -rIn -i scrollpast Sources rust/slopdesk-*/src` returns nothing.
-> The screenshots and `.mp4` clips referenced below are otty-era reference captures of the target
-> behaviour, not recordings of slopdesk. The "Implementation notes" at the foot of the page are a
-> design sketch that was never taken up.
+> ⚠️ **THIS PAGE'S BANNER USED TO SAY "NEVER BUILT". THAT WAS FALSE HISTORY, and the feature is
+> live again as of 2026-09-02.** The three knobs shipped, were REMOVED 2026-07-30 for want of a
+> renderer that could actuate them (`COVERAGE.md` §B and §F record the wave and the condition), and
+> came back once `docs/68` made the viewport ours. The old grep that "proved" they never existed ran
+> over `Sources` and `rust/slopdesk-*/src` at a moment when there was genuinely nothing to find —
+> which is why a grep is not a history.
 >
-> The rest of the page — scrollback limit, smooth scroll, scroll multiplier, alternate-screen
-> behaviour — is live.
+> What is live now: `controls.scroll-past-last-line`, `controls.scroll-past-first-line` and
+> `controls.smooth-scroll` in `config.toml` — NOT in a GUI, which is the one place this page's
+> "Config keys" table below still describes another product (`docs/58`: there is no settings GUI).
+> The arithmetic is `slopdesk_termrender::layout::scroll_bounds` and the snap is
+> `BlockLayout::nearest_row_top`; `docs/68` §5.13 is the argument.
+>
+> The screenshots and `.mp4` clips referenced below remain otty-era reference captures of the target
+> behaviour, not recordings of slopdesk.
 
 ## Summary
 
@@ -36,7 +43,10 @@ Scrollback and scroll-gesture handling. Configured entirely in the GUI (Settings
 
 ## Config keys
 
-All in **Settings → Controls → Scroll**. GUI-only; no config-file keys.
+⚠️ **These are `config.toml` keys under `[controls]`, not GUI rows** — there is no settings GUI
+(`docs/58`). The labels below are the vocabulary; the spellings are `scroll-past-last-line`,
+`scroll-past-first-line` and `smooth-scroll`, and their tokens are kebab-cased
+(`last-line-with-content`, `first-line-in-middle`, …).
 
 | Key (UI label) | Default | Effect |
 |---|---|---|

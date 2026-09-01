@@ -20,6 +20,7 @@
 //! never a `<` ternary. The cases below are pinned by hand-computed numbers, and a fused
 //! multiply-add moves the last bit of one of them without failing anything else.
 
+use slopdesk_terminal::controls::{Overscroll, ScrollPastFirst, ScrollPastLast};
 use slopdesk_terminal::geometry::{CellMetrics, Rect, rect};
 use slopdesk_vterm::{ColumnSpan, CursorShape, FrameCursor, UnderlineStyle};
 
@@ -413,6 +414,118 @@ pub fn scrollbar(content: f64, viewport: f64, offset: f64, track: f64, min_heigh
     })
 }
 
+/// Everything the two overscroll policies measure against, in CONTENT pixels.
+///
+/// Content pixels and not rows for [`scrollbar`]'s reason: the block list spends chrome between the
+/// rows, so the y of the tenth row is the layout's answer and not `10 × cell_height`. Every field
+/// here is read off a layout that has already been built, which is why this is a value and not a
+/// borrow of one — the two callers hold it at different moments (a wheel event, and a frame).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ScrollAnchors {
+    /// Everything laid out, gaps included — [`crate::block::BlockLayout::content_height`].
+    pub content_height: f64,
+    /// The visible height, insets already taken off.
+    pub viewport_height: f64,
+    /// One row's height, which is the unit the blank overscroll is measured in.
+    pub cell_height: f64,
+    /// The content y of the bottom-most row holding any text.
+    pub last_content_y: f64,
+    /// The content y of the cursor's row.
+    pub cursor_y: f64,
+    /// Whether the ENGINE is showing its oldest retained row. Overscrolling above content that
+    /// still has scrollback over it would open a blank gap where history is, so the top policy
+    /// only engages here.
+    pub at_scrollback_top: bool,
+    /// Whether the engine is showing its newest row — the same argument at the other end, where
+    /// the gap would hide output that has already arrived.
+    pub at_scrollback_bottom: bool,
+    /// Whether a full-screen program owns the grid. Both policies are suppressed there: a TUI
+    /// draws to its own bottom edge, and floating that edge off the viewport is vandalism of the
+    /// same kind a block header drawn across `vim` would be.
+    pub alternate: bool,
+}
+
+/// The closed range `scroll_y` may take, in content pixels.
+///
+/// `min` is at or below zero and `max` at or above the plain clamp, so a caller that ignores both
+/// policies still gets today's behaviour out of this type rather than a special case.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollBounds {
+    /// The most negative offset allowed — zero unless the top policy opened a gap.
+    pub min: f64,
+    /// The largest offset allowed.
+    pub max: f64,
+}
+
+impl ScrollBounds {
+    /// `y` brought inside these bounds.
+    ///
+    /// [`f64::max`]/[`f64::min`] and not [`f64::clamp`], which is `CLAUDE.md`'s rule and also the
+    /// only spelling that is TOTAL here: `clamp` panics on an inverted range and propagates a NaN,
+    /// where this chain answers [`ScrollBounds::min`] for a NaN and [`ScrollBounds::max`] for a
+    /// range that came out inverted. Neither answer is reachable from a live surface; both are
+    /// answers rather than faults.
+    #[must_use]
+    pub const fn clamp(self, y: f64) -> f64 {
+        f64::min(f64::max(y, self.min), self.max)
+    }
+}
+
+/// How far the viewport may scroll, given the content under it and the two overscroll policies.
+///
+/// The rule each mode states is an ANCHOR — "this row, at that place in the viewport" — and the
+/// offset that satisfies it is `anchor_y - place`. Writing it that way rather than as a count of
+/// blank rows is what makes one setting read the same on a tall pane and a short one.
+///
+/// Both policies are floors on the plain clamp, never ceilings: `max` can only grow past
+/// `content_height - viewport_height` and `min` can only fall below zero. A pane too short to hold
+/// its own anchor therefore degrades to today's clamp instead of inverting the range.
+#[must_use]
+pub fn scroll_bounds(anchors: ScrollAnchors, overscroll: Overscroll) -> ScrollBounds {
+    let Overscroll {
+        past_last,
+        past_first,
+        smooth: _,
+    } = overscroll;
+    let plain = f64::max(anchors.content_height - anchors.viewport_height, 0.0);
+    if anchors.alternate {
+        return ScrollBounds { min: 0.0, max: plain };
+    }
+    // The middle placements share one length: where a row's TOP goes when the row is centred.
+    let centred = f64::max((anchors.viewport_height - anchors.cell_height) / 2.0, 0.0);
+    let bottom = f64::max(anchors.viewport_height - anchors.cell_height, 0.0);
+
+    let max = if anchors.at_scrollback_bottom {
+        match past_last {
+            ScrollPastLast::Disabled => plain,
+            ScrollPastLast::LastLineWithContent => f64::max(plain, anchors.last_content_y),
+            ScrollPastLast::LastLineInMiddle => f64::max(plain, anchors.last_content_y - centred),
+            ScrollPastLast::CursorLine => f64::max(plain, anchors.cursor_y),
+        }
+    } else {
+        plain
+    };
+
+    let min = if anchors.at_scrollback_top {
+        // The oldest row is at content y zero by construction — the layout starts there — so these
+        // two are the placement alone, negated.
+        match past_first.resolved(past_last) {
+            ScrollPastFirst::Disabled | ScrollPastFirst::SameAsLast => 0.0,
+            ScrollPastFirst::FirstLineWithContent => -bottom,
+            ScrollPastFirst::FirstLineInMiddle => -centred,
+        }
+    } else {
+        0.0
+    };
+
+    // A NaN anywhere upstream lands here as a collapsed range rather than as an inverted one, which
+    // is what keeps `clamp` total: `min(max(y, min), max)` with `min > max` answers `max`.
+    ScrollBounds {
+        min: f64::min(min, 0.0),
+        max: f64::max(max, min),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -423,7 +536,10 @@ mod tests {
     use slopdesk_terminal::geometry::CellMetrics;
     use slopdesk_vterm::{ColumnSpan, CursorShape, FrameCursor, Rgb, UnderlineStyle};
 
-    use super::{CellGeometry, FontMetrics, Insets, grid_size, scrollbar};
+    use super::{
+        CellGeometry, FontMetrics, Insets, Overscroll, ScrollAnchors, ScrollPastFirst, ScrollPastLast,
+        grid_size, scroll_bounds, scrollbar,
+    };
     use crate::quad::RectStyle;
 
     fn geometry() -> CellGeometry {
@@ -617,5 +733,188 @@ mod tests {
         let thumb = scrollbar(2_000_000.0, 500.0, 0.0, 8.0, 20.0).unwrap();
         assert!(thumb.height <= 8.0);
         assert!(thumb.height > 0.0);
+    }
+
+    // ---- overscroll ----------------------------------------------------------------------------
+
+    /// Exact arithmetic on whole pixels — see [`scrollbar`]'s tests, which assert the same way.
+    fn is(had: f64, want: f64) {
+        assert!((had - want).abs() < f64::EPSILON, "had {had}, wanted {want}");
+    }
+
+    /// A 500-pixel viewport of 20-pixel rows over 2 000 pixels of content, sitting at both ends of
+    /// its scrollback — the shape every case below varies one field of.
+    fn anchors() -> ScrollAnchors {
+        ScrollAnchors {
+            content_height: 2_000.0,
+            viewport_height: 500.0,
+            cell_height: 20.0,
+            // The last text row, twenty pixels of blank tail below it.
+            last_content_y: 1_960.0,
+            cursor_y: 1_980.0,
+            at_scrollback_top: true,
+            at_scrollback_bottom: true,
+            alternate: false,
+        }
+    }
+
+    fn policy(past_last: ScrollPastLast, past_first: ScrollPastFirst) -> Overscroll {
+        Overscroll {
+            past_last,
+            past_first,
+            smooth: true,
+        }
+    }
+
+    #[test]
+    fn both_policies_off_is_the_plain_clamp() {
+        let bounds = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::Disabled, ScrollPastFirst::Disabled),
+        );
+        is(bounds.min, 0.0);
+        is(bounds.max, 1_500.0);
+    }
+
+    #[test]
+    fn the_last_text_row_lands_at_the_viewport_top() {
+        let bounds = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::LastLineWithContent, ScrollPastFirst::Disabled),
+        );
+        // Scrolled fully, the row at content y 1 960 sits at viewport y 0.
+        is(bounds.max, 1_960.0);
+    }
+
+    #[test]
+    fn the_cursor_row_is_a_different_anchor_than_the_last_text_row() {
+        let content = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::LastLineWithContent, ScrollPastFirst::Disabled),
+        );
+        let cursor = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::CursorLine, ScrollPastFirst::Disabled),
+        );
+        // The blank line a shell leaves under its prompt is exactly the difference, and the whole
+        // reason both modes exist.
+        is(cursor.max - content.max, 20.0);
+    }
+
+    #[test]
+    fn the_middle_placement_is_half_a_viewport_short_of_the_top_one() {
+        let top = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::LastLineWithContent, ScrollPastFirst::Disabled),
+        );
+        let middle = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::LastLineInMiddle, ScrollPastFirst::Disabled),
+        );
+        is(top.max - middle.max, (500.0 - 20.0) / 2.0);
+    }
+
+    #[test]
+    fn the_top_policy_opens_a_gap_above_the_oldest_row() {
+        let bounds = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::Disabled, ScrollPastFirst::FirstLineWithContent),
+        );
+        // The oldest row is at content y zero, so pushing it to the last row slot is the whole
+        // viewport less one row, negated.
+        is(bounds.min, -480.0);
+        // The bottom end is untouched by the top policy.
+        is(bounds.max, 1_500.0);
+    }
+
+    #[test]
+    fn same_as_last_quotes_the_other_end() {
+        let mirrored = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::LastLineInMiddle, ScrollPastFirst::SameAsLast),
+        );
+        let spelled = scroll_bounds(
+            anchors(),
+            policy(
+                ScrollPastLast::LastLineInMiddle,
+                ScrollPastFirst::FirstLineInMiddle,
+            ),
+        );
+        is(mirrored.min, spelled.min);
+    }
+
+    #[test]
+    fn the_cursor_mode_mirrors_onto_the_content_anchor() {
+        // There is no cursor at the top of the scrollback to anchor on, so the mirror lands on the
+        // only thing up there: the oldest row, which has content by definition.
+        assert_eq!(
+            ScrollPastLast::CursorLine.mirrored(),
+            ScrollPastFirst::FirstLineWithContent
+        );
+    }
+
+    #[test]
+    fn a_full_screen_program_gets_neither_policy() {
+        let mut anchors = anchors();
+        anchors.alternate = true;
+        let bounds = scroll_bounds(
+            anchors,
+            policy(ScrollPastLast::CursorLine, ScrollPastFirst::FirstLineWithContent),
+        );
+        is(bounds.min, 0.0);
+        is(bounds.max, 1_500.0);
+    }
+
+    #[test]
+    fn each_end_is_suppressed_while_the_engine_still_has_scrollback_that_way() {
+        let mut anchors = anchors();
+        anchors.at_scrollback_top = false;
+        anchors.at_scrollback_bottom = false;
+        let bounds = scroll_bounds(
+            anchors,
+            policy(ScrollPastLast::CursorLine, ScrollPastFirst::FirstLineWithContent),
+        );
+        // A gap here would be blank where history is, and would hide output that has arrived.
+        is(bounds.min, 0.0);
+        is(bounds.max, 1_500.0);
+    }
+
+    #[test]
+    fn a_pane_too_short_for_its_own_anchor_degrades_to_the_plain_clamp() {
+        let anchors = ScrollAnchors {
+            content_height: 2_000.0,
+            viewport_height: 20.0,
+            cell_height: 20.0,
+            last_content_y: 1_960.0,
+            cursor_y: 1_980.0,
+            at_scrollback_top: true,
+            at_scrollback_bottom: true,
+            alternate: false,
+        };
+        let bounds = scroll_bounds(
+            anchors,
+            policy(
+                ScrollPastLast::LastLineWithContent,
+                ScrollPastFirst::FirstLineWithContent,
+            ),
+        );
+        // One row tall: "the last row at the top" and "the last row at the bottom" are the same
+        // place, so neither policy can open anything, and the range never inverts.
+        is(bounds.min, 0.0);
+        is(bounds.max, 1_980.0);
+        assert!(bounds.max >= bounds.min);
+    }
+
+    #[test]
+    fn the_clamp_fences_a_nan_rather_than_propagating_it() {
+        let bounds = scroll_bounds(
+            anchors(),
+            policy(ScrollPastLast::Disabled, ScrollPastFirst::Disabled),
+        );
+        // `f64::max` takes the non-NaN operand, so a NaN falls out at the bottom of the range
+        // rather than travelling into a scroll offset.
+        is(bounds.clamp(f64::NAN), 0.0);
+        is(bounds.clamp(-5_000.0), 0.0);
+        is(bounds.clamp(5_000.0), 1_500.0);
     }
 }

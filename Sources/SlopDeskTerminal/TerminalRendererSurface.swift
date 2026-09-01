@@ -1004,9 +1004,25 @@ final class TerminalRendererSurface {
     /// negative, because that request counts engine rows and this one counts the gesture. Apart from
     /// it for that reason: a gesture is continuous and the chrome is measured in pixels, so
     /// quantising to rows here would make a flick skip the headers it is scrolling past.
-    func scrollPoints(_ delta: Double) {
+    /// `phase` says where the gesture is in its life, which is what decides when the row snap under
+    /// `controls.smooth-scroll` is owed. A zero delta is NOT a no-op at ``TerminalScrollPhase/ended``
+    /// — fingers lifting after a scroll that stopped on a fraction of a row is exactly when the snap
+    /// comes due, and that event carries no delta.
+    func scrollPoints(_ delta: Double, phase: TerminalScrollPhase = .discrete) {
         guard let handle else { return }
-        slopdesk_term_surface_scroll_points(handle, delta)
+        slopdesk_term_surface_scroll_points(handle, delta, phase.code)
+    }
+
+    /// The two overscroll policies and the smooth-scroll flag, in one delivery.
+    ///
+    /// Held on the surface rather than passed per event, unlike the scroll multiplier: the multiplier
+    /// is spent on a delta before it ever gets here, where these three are read again by the
+    /// per-frame settle, which no gesture is present for.
+    func setOverscroll(pastLast: ScrollPastLast, pastFirst: ScrollPastFirst, smooth: Bool) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_overscroll(
+            handle, UInt8(pastLast.index), UInt8(pastFirst.index), smooth,
+        )
     }
 
     /// One block's prompt rows as RENDERED, soft wraps rejoined — what a header prints.

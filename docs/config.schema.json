@@ -234,6 +234,23 @@
           "maximum": 10,
           "default": 1
         },
+        "scroll-past-last-line": {
+          "description": "Which row floats to the top when the viewport scrolls past the newest line.",
+          "type": "string",
+          "enum": ["disabled", "last-line-with-content", "last-line-in-middle", "cursor-line"],
+          "default": "disabled"
+        },
+        "scroll-past-first-line": {
+          "description": "Which row sinks from the top when the viewport scrolls past the oldest line.",
+          "type": "string",
+          "enum": ["disabled", "same-as-last", "first-line-with-content", "first-line-in-middle"],
+          "default": "disabled"
+        },
+        "smooth-scroll": {
+          "description": "Let a live scroll rest between two rows, snapping to one when it settles.",
+          "type": "boolean",
+          "default": true
+        },
         "clear-selection-on-typing": {
           "description": "Clear the selection as soon as a key is typed.",
           "type": "boolean",

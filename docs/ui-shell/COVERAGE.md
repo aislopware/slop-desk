@@ -29,7 +29,7 @@ re-ran the audit, so it kept asserting shipped features that had been deleted:
 |---|---|---|
 | **Feature prune** | 2026-07-02 / 07-03 | Details/Inspector panel · web pane · multi-session switcher · Composer + Prompt Queue + Send-to-Chat + Fork + agent input footer · Recipes + Snippets · floating panes · theme editor/import · workspace export/import |
 | **Re-scopes** | 2026-07-10 / 07-22 | sidebar grouping+sort options · per-pane status bar · tab drag-reorder · `PaneKind.remoteGUI` (remote-window mode) |
-| **Settings shipped ahead of their renderer** | 2026-07-30 | Scroll-Past-First/Last-Line and Smooth Scroll, with `ScrollPastPolicy` — see §F |
+| **Settings shipped ahead of their renderer** | 2026-07-30 | Scroll-Past-First/Last-Line and Smooth Scroll, with `ScrollPastPolicy`. ⚠️ **All three came BACK 2026-09-02** once the renderer was ours — see §F |
 | **ONE APPEARANCE** | 2026-08-08 | the theme picker itself, the built-in catalogue, the dual light/dark slots, per-theme font scopes, the `theme` config key |
 | **The canvas is deleted** | 2026-08-17 | the second layout model and everything downstream: `Canvas*`, `PaneGroup`, the canvas `Workspace`, `CompactLayoutResolver`, `CommandInterpreter`, the `liveModel` switch, ~40 store members, 22 suites, 27 FFI doors — plus layout save/restore (⌘S), which was canvas-only |
 
@@ -149,17 +149,24 @@ a reason, and the reason is the condition for bringing it back.
 
 | Old ceiling row | Now |
 |---|---|
-| Scroll-Past-Last/First-Line rendering | **REMOVED 2026-07-30**, not absent. They shipped ahead of a renderer that could actuate them; `ScrollPastPolicy` was deleted with them. The reason and the condition for return were recorded at `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2161-2165`: "the fork exposes no row-snap hook and no overscroll-margin API … Add the settings back with the viewport hook that actuates them, not before." **That file went with the fork (`docs/68-terminal-surface-in-rust.md`) — `git show` recovers the comment, and the condition it names is now satisfiable: `docs/68` §5.1 item 9 puts scrollbar and viewport geometry in this repo, so the hook that was missing is one we write** |
+| Scroll-Past-Last/First-Line rendering | **REBUILT 2026-09-02**, on the hook the removal named. They shipped ahead of a renderer that could actuate them and were removed 2026-07-30 with `ScrollPastPolicy`, on a condition recorded at `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2161-2165`: "the fork exposes no row-snap hook and no overscroll-margin API … Add the settings back with the viewport hook that actuates them, not before." §5.1's block layout put `Surface::scroll_y` and `PlacedBlock::row_y` in this repo, which IS that hook. The settings are `controls.scroll-past-last-line` / `controls.scroll-past-first-line`; the arithmetic is `slopdesk_termrender::layout::scroll_bounds`. See `docs/68` §5.13 |
 | Backspace-Deletes-Selection | no `backspaceDeletesSelection` key anywhere — **superseded**, not merely dropped: Cut (⌘X) is the shipped verb (`Sources/SlopDeskWorkspaceCore/Terminal/CutSelectionPolicy.swift`) |
-| Smooth-Scroll OFF (row-snap) | **REMOVED 2026-07-30** with scroll-past, same commit and same reason — `smoothScroll` OFF rendered exactly like ON |
+| Smooth-Scroll OFF (row-snap) | **REBUILT 2026-09-02** with scroll-past, same pass and same hook. It was removed 2026-07-30 because `smoothScroll` OFF rendered exactly like ON; `controls.smooth-scroll` now means "snap every step" against ON's "snap once the momentum is over", so the two settle alike and differ kinetically — `BlockLayout::nearest_row_top` is the snap |
 | Cursor Animation Smooth | no animation field on `TerminalPreferences` |
 | Title-Report toggle (XTWINOPS) | does not exist. The toggle that DOES ship is `controls.titleShellControlled` — "may the shell SET the title" — which is a different privilege |
 | Recipe scrollback capture | moot; Recipes deleted 2026-07-03 (§B) |
 | Vi motion set (h/l, w/b/e, 0/$/^, visual anchor-swap `o`) | ceiling **LIFTED** 2026-07-14 once the fork exposed `ghostty_surface_set_selection` — these are real motions now. The table is `TerminalViewModel.handleCopyModeKey(_:)` (`Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:769-885`): count digits, `h j k l`, `0 ^ $`, `w b e`, `⌃d ⌃u`, `⌃f ⌃b`, `g G`, `[ ]`, `v V ⌃v o`, `f`, `/ ?`, `n N`, `y Y`, `q`. **`H`/`M`/`L` and Mark Mode are NOT in it** — settled 2026-08-22, they do not exist |
 
-Genuinely still ceilings: **OSC-8 hyperlink runs are not Hint/Jump targets** (the C ABI exposes no per-cell
-hyperlink read) and **box-drawing arrow/triangle stem-joining** (deferred, never built — that row made no
-existence claim).
+Genuinely still a ceiling: **box-drawing arrow/triangle stem-joining** (deferred, never built — that row
+made no existence claim).
+
+⚠️ **OSC-8 hyperlink runs ARE Hint/Jump targets** — this paragraph claimed otherwise until 2026-09-02, on a
+reason the fork's exit falsified. "The C ABI exposes no per-cell hyperlink read" was true of the fork; the
+engine is `slopdesk-vterm` now and `Frame::hyperlink_spans` / `Screen::hyperlink_runs` are ours, so
+`slopdesk_term_surface_hyperlink_runs` reads the URI and `slopdesk_hint_scan` takes the runs as a fourth
+input beside `rows`/`schemes`/`patterns`. They are handed in rather than scanned for, and are exempt from
+`max_scan_columns`: an authored link's display text is not what it points at, so a regex over the row
+would miss `click here` entirely and re-clustering it would move the badge off the link.
 
 ---
 

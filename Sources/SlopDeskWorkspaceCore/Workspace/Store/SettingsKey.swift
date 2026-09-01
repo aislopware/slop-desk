@@ -477,6 +477,25 @@ public enum SettingsKey {
     /// The scroll-wheel delta multiplier (`controls.scroll-multiplier`), default 1.
     public static var scrollMultiplierValue: Double { AppConfig.current.double("controls.scroll-multiplier") }
 
+    /// How far past the newest line the viewport may travel (`controls.scroll-past-last-line`),
+    /// default ``ScrollPastLast/disabled``.
+    public static var scrollPastLast: ScrollPastLast {
+        AppConfig.current.choice("controls.scroll-past-last-line", ScrollPastLast.disabled)
+    }
+
+    /// How far past the oldest retained line it may travel (`controls.scroll-past-first-line`),
+    /// default ``ScrollPastFirst/disabled``.
+    public static var scrollPastFirst: ScrollPastFirst {
+        AppConfig.current.choice("controls.scroll-past-first-line", ScrollPastFirst.disabled)
+    }
+
+    /// Whether a live scroll may rest between two rows (`controls.smooth-scroll`), default ON.
+    ///
+    /// Off does not mean "no snap" — it means snap on EVERY step rather than only once the gesture
+    /// and its momentum are over, so the glyphs settle row-aligned either way and the difference is
+    /// purely kinetic.
+    public static var smoothScrollEnabled: Bool { AppConfig.current.flag("controls.smooth-scroll") }
+
     /// Clear the selection when the user types (`controls.clear-selection-on-typing`), default ON.
     public static var clearSelectionOnTypingEnabled: Bool {
         AppConfig.current.flag("controls.clear-selection-on-typing")

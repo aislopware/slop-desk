@@ -18,8 +18,8 @@
 use core::ffi::c_uchar;
 
 use slopdesk_terminal::controls::{
-    ClipboardAccess, MouseShiftCapture, OptionAsAlt, RightClickAction, SchemeDetection,
-    resolved_clipboard_gates,
+    ClipboardAccess, MouseShiftCapture, OptionAsAlt, RightClickAction, SchemeDetection, ScrollPastFirst,
+    ScrollPastLast, resolved_clipboard_gates,
 };
 use slopdesk_terminal::link_action::{CmdClick, CmdShiftClick};
 
@@ -289,6 +289,66 @@ pub unsafe extern "C" fn slopdesk_terminal_scheme_detection_from_token(
     // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
     let token = String::from_utf8_lossy(unsafe { borrow(token, len) });
     code_of!(SchemeDetection, SchemeDetection::from_token(&token))
+}
+
+/// The two overscroll tables, in one delivery: past-LAST's four, then past-FIRST's four.
+///
+/// ```text
+/// 8 × [u32 length][UTF-8 bytes]
+/// ```
+///
+/// One delivery for the link-click pair's reason: they are one setting with two ends, neither is
+/// read without the other, and `same-as-last` makes the second literally quote the first.
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
+)]
+pub unsafe extern "C" fn slopdesk_terminal_scroll_past_tokens(out: *mut c_uchar, cap: usize) -> usize {
+    let mut blob = Vec::new();
+    table!(blob, ScrollPastLast, token);
+    table!(blob, ScrollPastFirst, token);
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// The past-LAST mode a stored token names, repaired when this build cannot read it.
+///
+/// # Safety
+/// `(token, len)` must be null, or describe `len` live bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_terminal_scroll_past_last_from_token(
+    token: *const c_uchar,
+    len: usize,
+) -> u8 {
+    // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
+    let token = String::from_utf8_lossy(unsafe { borrow(token, len) });
+    code_of!(ScrollPastLast, ScrollPastLast::from_token(&token))
+}
+
+/// The past-FIRST mode a stored token names, repaired when this build cannot read it.
+///
+/// # Safety
+/// `(token, len)` must be null, or describe `len` live bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_terminal_scroll_past_first_from_token(
+    token: *const c_uchar,
+    len: usize,
+) -> u8 {
+    // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
+    let token = String::from_utf8_lossy(unsafe { borrow(token, len) });
+    code_of!(ScrollPastFirst, ScrollPastFirst::from_token(&token))
 }
 
 /// The two link-click tables, in one delivery: ⌘-click's three, then ⌘⇧-click's two.

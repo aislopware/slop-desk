@@ -68,7 +68,10 @@ pub use glyph::{
 pub use image::{
     BELOW_BACKGROUND_Z, ImageMeta, ImagePixels, ImagePlacement, ImageStore, StoredImage, layer_of, place,
 };
-pub use layout::{CellGeometry, FontMetrics, Insets, Thumb, Underline, grid_size, scrollbar};
+pub use layout::{
+    CellGeometry, FontMetrics, Insets, ScrollAnchors, ScrollBounds, Thumb, Underline, grid_size,
+    scroll_bounds, scrollbar,
+};
 pub use paint::{PaintStyle, Painter, Preedit, SelectionColors};
 pub use quad::{
     DrawList, GlyphInstance, ImageInstance, ImageLayer, ImageRun, Mark, RectInstance, RectStyle, Rgba,

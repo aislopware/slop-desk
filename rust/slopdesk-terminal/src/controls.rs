@@ -296,6 +296,198 @@ impl SchemeDetection {
     }
 }
 
+/// How far past the NEWEST line the viewport may travel, and what it anchors on when it does.
+///
+/// Every mode but [`ScrollPastLast::Disabled`] names a row and a place to put it, rather than a
+/// number of blank rows: "one screenful of overscroll" reads differently on a tall pane and a short
+/// one, where "the last line with content sits at the top" reads the same on both. The anchor is
+/// resolved against the laid-out content in `slopdesk_termrender::layout::scroll_bounds` — the
+/// crate that has the rects; this enum is only the vocabulary and the projection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollPastLast {
+    /// Clamp at the bottom of the content, which is where every terminal stops by default.
+    #[default]
+    Disabled,
+    /// The bottom-most row holding text ends up at the top of the viewport.
+    LastLineWithContent,
+    /// That same row ends up centred.
+    LastLineInMiddle,
+    /// The CURSOR's row ends up at the top, even when it is blank — which is the difference from
+    /// [`ScrollPastLast::LastLineWithContent`], and the whole reason both exist: a shell that
+    /// prints a trailing blank line puts the two anchors on different rows.
+    CursorLine,
+}
+
+impl ScrollPastLast {
+    /// Every mode, in token order.
+    pub const ALL: [Self; 4] = [
+        Self::Disabled,
+        Self::LastLineWithContent,
+        Self::LastLineInMiddle,
+        Self::CursorLine,
+    ];
+
+    /// The mode a stored token names, repairing an unrecognised one to
+    /// [`ScrollPastLast::Disabled`].
+    #[must_use]
+    pub fn from_token(token: &str) -> Self {
+        match token {
+            "last-line-with-content" => Self::LastLineWithContent,
+            "last-line-in-middle" => Self::LastLineInMiddle,
+            "cursor-line" => Self::CursorLine,
+            _ => Self::Disabled,
+        }
+    }
+
+    /// The stored token.
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::LastLineWithContent => "last-line-with-content",
+            Self::LastLineInMiddle => "last-line-in-middle",
+            Self::CursorLine => "cursor-line",
+        }
+    }
+
+    /// The mode at the OTHER end that mirrors this one, for [`ScrollPastFirst::SameAsLast`].
+    ///
+    /// [`ScrollPastLast::CursorLine`] mirrors onto
+    /// [`ScrollPastFirst::FirstLineWithContent`] because there is no cursor at the top of the
+    /// scrollback to anchor on — the oldest retained row is the only thing up there, and it is by
+    /// definition a row with content.
+    #[must_use]
+    pub const fn mirrored(self) -> ScrollPastFirst {
+        match self {
+            Self::Disabled => ScrollPastFirst::Disabled,
+            Self::LastLineInMiddle => ScrollPastFirst::FirstLineInMiddle,
+            Self::LastLineWithContent | Self::CursorLine => ScrollPastFirst::FirstLineWithContent,
+        }
+    }
+}
+
+/// How far past the OLDEST retained line the viewport may travel.
+///
+/// The mirror of [`ScrollPastLast`], with one extra stop: most people want the two ends to behave
+/// alike, and [`ScrollPastFirst::SameAsLast`] lets them say so once rather than keep two knobs in
+/// step by hand.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollPastFirst {
+    /// Clamp at the top of the scrollback.
+    #[default]
+    Disabled,
+    /// Whatever [`ScrollPastLast`] says, [`ScrollPastLast::mirrored`] onto this end.
+    SameAsLast,
+    /// The oldest retained row ends up at the BOTTOM of the viewport.
+    FirstLineWithContent,
+    /// That same row ends up centred.
+    FirstLineInMiddle,
+}
+
+impl ScrollPastFirst {
+    /// Every mode, in token order.
+    pub const ALL: [Self; 4] = [
+        Self::Disabled,
+        Self::SameAsLast,
+        Self::FirstLineWithContent,
+        Self::FirstLineInMiddle,
+    ];
+
+    /// The mode a stored token names, repairing an unrecognised one to
+    /// [`ScrollPastFirst::Disabled`].
+    #[must_use]
+    pub fn from_token(token: &str) -> Self {
+        match token {
+            "same-as-last" => Self::SameAsLast,
+            "first-line-with-content" => Self::FirstLineWithContent,
+            "first-line-in-middle" => Self::FirstLineInMiddle,
+            _ => Self::Disabled,
+        }
+    }
+
+    /// The stored token.
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::SameAsLast => "same-as-last",
+            Self::FirstLineWithContent => "first-line-with-content",
+            Self::FirstLineInMiddle => "first-line-in-middle",
+        }
+    }
+
+    /// This mode with [`ScrollPastFirst::SameAsLast`] already resolved against `last`.
+    ///
+    /// Resolving here rather than at the two call sites is what keeps the alias from being a case
+    /// every reader of this enum has to remember: past this call there are three stops, not four.
+    #[must_use]
+    pub const fn resolved(self, last: ScrollPastLast) -> Self {
+        match self {
+            Self::SameAsLast => last.mirrored(),
+            other => other,
+        }
+    }
+}
+
+/// The three scroll knobs that travel together: both overscroll ends, and whether a gesture is
+/// allowed to rest between two rows.
+///
+/// One value rather than three arguments because no caller wants a subset — the bounds need both
+/// ends, and the settle needs the bounds plus `smooth`. [`Overscroll::default`] is today's
+/// behaviour exactly: clamp at both ends, pixel-smooth in the hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Overscroll {
+    /// How far past the newest line the viewport may travel.
+    pub past_last: ScrollPastLast,
+    /// How far past the oldest retained line it may travel.
+    pub past_first: ScrollPastFirst,
+    /// Whether a scroll may rest between two rows while the gesture is live. Off quantises every
+    /// step; on quantises only once the gesture and its momentum are over, so the glyphs settle
+    /// pixel-aligned either way and the difference is purely kinetic.
+    pub smooth: bool,
+}
+
+impl Default for Overscroll {
+    fn default() -> Self {
+        Self {
+            past_last: ScrollPastLast::Disabled,
+            past_first: ScrollPastFirst::Disabled,
+            smooth: true,
+        }
+    }
+}
+
+/// Where a pointer scroll is in its life, which is what decides when a row snap is owed.
+///
+/// The snap waits for MOMENTUM to finish rather than for the fingers to lift: a trackpad fling
+/// keeps delivering deltas after the gesture ends, and snapping at the lift would fight every one
+/// of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollPhase {
+    /// A discrete wheel notch, or any source that reports no phase at all. Settles immediately —
+    /// there is no gesture to wait for.
+    #[default]
+    Discrete,
+    /// The fingers are down, or the fling is still throwing deltas.
+    Live,
+    /// The gesture and its momentum are both over.
+    Ended,
+}
+
+impl ScrollPhase {
+    /// Every phase, in code order — the order the C door's `uint8_t` counts in.
+    pub const ALL: [Self; 3] = [Self::Discrete, Self::Live, Self::Ended];
+
+    /// Whether a scroll ending in this phase owes a snap to the nearest row, under `smooth`.
+    ///
+    /// With smooth scrolling OFF every step snaps, which is what makes the motion read as whole-row
+    /// jumping; with it ON only the last one does.
+    #[must_use]
+    pub const fn settles(self, smooth: bool) -> bool {
+        !smooth || !matches!(self, Self::Live)
+    }
+}
+
 /// The stored spelling of the two link-click settings, whose BEHAVIOUR enums already live in
 /// [`crate::link_action`]. The tokens hang off them here so the vocabulary that hits disk sits with
 /// the other six, and so a repair reads the same as every other repair in the pane.
@@ -372,7 +564,7 @@ pub const fn resolved_clipboard_gates(
 mod tests {
     use super::{
         ClipboardAccess, CmdClick, CmdShiftClick, MouseShiftCapture, OptionAsAlt, RightClickAction,
-        SchemeDetection, resolved_clipboard_gates,
+        SchemeDetection, ScrollPastFirst, ScrollPastLast, ScrollPhase, resolved_clipboard_gates,
     };
     use crate::link::LinkSchemePolicy;
 
@@ -403,6 +595,37 @@ mod tests {
         round_trip!(SchemeDetection);
         round_trip!(CmdClick);
         round_trip!(CmdShiftClick);
+        round_trip!(ScrollPastLast);
+        round_trip!(ScrollPastFirst);
+    }
+
+    /// The alias is resolved ONCE, so every reader past that call sees three stops and not four.
+    #[test]
+    fn same_as_last_resolves_to_the_other_end_and_never_to_itself() {
+        for last in ScrollPastLast::ALL {
+            let resolved = ScrollPastFirst::SameAsLast.resolved(last);
+            assert_eq!(resolved, last.mirrored(), "{last:?}");
+            assert_ne!(resolved, ScrollPastFirst::SameAsLast, "{last:?}");
+        }
+        // Every other stop is its own answer, whatever the far end says.
+        for first in [
+            ScrollPastFirst::Disabled,
+            ScrollPastFirst::FirstLineWithContent,
+            ScrollPastFirst::FirstLineInMiddle,
+        ] {
+            assert_eq!(first.resolved(ScrollPastLast::CursorLine), first);
+        }
+    }
+
+    /// Off means "snap every step", not "never snap" — the glyphs settle row-aligned either way.
+    #[test]
+    fn a_live_step_settles_only_with_smooth_scrolling_off() {
+        assert!(!ScrollPhase::Live.settles(true));
+        assert!(ScrollPhase::Live.settles(false));
+        for phase in [ScrollPhase::Discrete, ScrollPhase::Ended] {
+            assert!(phase.settles(true), "{phase:?}");
+            assert!(phase.settles(false), "{phase:?}");
+        }
     }
 
     /// Untrusted input never traps and never lands somewhere permissive by accident.

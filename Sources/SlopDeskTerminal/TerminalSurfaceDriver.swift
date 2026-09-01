@@ -387,6 +387,11 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         // itself. `copy-on-select` and its neighbours are read the same way, where they are used.
         surface?.setTrimTrailing(SettingsKey.trimTrailingSpacesOnCopyEnabled)
         surface?.setImages(SettingsKey.terminalImagesEnabled)
+        surface?.setOverscroll(
+            pastLast: SettingsKey.scrollPastLast,
+            pastFirst: SettingsKey.scrollPastFirst,
+            smooth: SettingsKey.smoothScrollEnabled,
+        )
         onNeedsPresent?()
     }
 
@@ -434,8 +439,8 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// first would skip past the headers it is scrolling through. What the chrome cannot absorb
     /// spills into the engine as whole rows, so the far end of the gesture is the same scroll the
     /// row door performs.
-    func scrollPoints(_ delta: Double) {
-        surface?.scrollPoints(delta)
+    func scrollPoints(_ delta: Double, phase: TerminalScrollPhase = .discrete) {
+        surface?.scrollPoints(delta, phase: phase)
         // BOTH ends have to be at the bottom. A flick the block list absorbed on its own leaves the
         // engine's viewport untouched — still at the last row — while the reader is looking at
         // older output, and asking only the engine would hide the jump-to-bottom affordance exactly

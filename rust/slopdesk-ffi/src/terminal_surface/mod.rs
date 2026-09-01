@@ -71,13 +71,16 @@ use blocks::{OrphanPrompt, SlopDeskTerminalChromeStyle, carry_orphan, settled_sc
 use slopdesk_apple_metal::Renderer;
 use slopdesk_apple_text::{FontStack, Rasterizer, Shaper};
 use slopdesk_terminal::config::FontSpec;
+use slopdesk_terminal::controls::Overscroll;
 use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_termrender::{
     BlockLayout, BlockSpan, CellGeometry, Chrome, ChromeFrame, DrawList, GlyphCache, ImagePlacement,
-    ImageStore, Insets, LayoutMode, PaintStyle, Painter, PlacedBlock, Preedit, Rgba, SelectionColors, Thumb,
-    Viewport, blockjoin, chrome, grid_size, lay_out, pin, place, scrollbar, segment,
+    ImageStore, Insets, LayoutMode, PaintStyle, Painter, PlacedBlock, Preedit, Rgba, ScrollAnchors,
+    SelectionColors, Thumb, Viewport, blockjoin, chrome, grid_size, lay_out, pin, place, scroll_bounds,
+    scrollbar, segment,
 };
 use slopdesk_vterm::input::SurfaceGeometry;
+use slopdesk_vterm::screen::ViewportInfo;
 use slopdesk_vterm::{Frame, VtSession};
 
 /// The gutter, header and gap a command block is drawn with, in POINTS.
@@ -184,6 +187,17 @@ struct Surface {
     /// chasing it. An upward scroll drops the pin, and reaching the bottom again — or any
     /// [`Scroll::Bottom`] — takes it back.
     follow_bottom: bool,
+    /// How far PAST the content's bottom the pin sits, in device pixels — always zero unless
+    /// `controls.scroll-past-last-line` opened a gap and the user scrolled into it.
+    ///
+    /// Held rather than recomputed because the pin has to preserve what the user chose: pinning to
+    /// the plain bottom would snap the gap shut on the next frame, and pinning to the overscroll
+    /// MAXIMUM would force the gap fully open the moment anyone reached the bottom at all.
+    follow_gap: f64,
+    /// The two overscroll policies and whether a scroll is quantised to rows, as
+    /// `controls.scroll-past-last-line`, `controls.scroll-past-first-line` and
+    /// `controls.smooth-scroll` last said.
+    overscroll: Overscroll,
     /// Which blocks the user folded, indexed the way [`lay_out`] reads it — positionally, so a
     /// short slice means "not collapsed" for the rest.
     collapsed: Vec<bool>,
@@ -371,6 +385,8 @@ impl Surface {
             geometry,
             scroll_y: 0.0,
             follow_bottom: true,
+            follow_gap: 0.0,
+            overscroll: Overscroll::default(),
             collapsed: Vec::new(),
             layout: BlockLayout::default(),
             orphan: None,
@@ -555,7 +571,7 @@ impl Surface {
         // `measure` helper beside `lay_out` would be a rule that could drift from the rects it
         // predicts. The pass is O(blocks) over at most a screenful, and only runs when the clamp
         // actually moved something.
-        let settled = self.settle_scroll(layout.content_height, viewport_height);
+        let settled = self.settle_scroll(&layout, layout.content_height, viewport_height);
         if settled {
             layout = lay_out(&spans, &self.collapsed, chrome, cell_height, Viewport {
                 scroll_y: self.scroll_y,
@@ -930,11 +946,67 @@ impl Surface {
         )
     }
 
+    /// Everything the overscroll policies measure against, off the layout the last draw built.
+    ///
+    /// `content_height` and `viewport_height` are arguments rather than fields because the one
+    /// caller inside [`Self::draw`] has a layout NEWER than `self.layout` — the whole point of the
+    /// second pass is that the first one's height is what the clamp is about. Between frames the
+    /// two doors pass `self.layout.content_height` and get the same answer.
+    ///
+    /// The anchors are the LAST TEXT ROW and the CURSOR ROW, both looked up through the placement
+    /// rather than multiplied out of a row index: the chrome sits between the rows, so
+    /// `row × cell_height` is the wrong y for every row below the first header.
+    fn scroll_anchors(
+        &self,
+        layout: &BlockLayout,
+        content_height: f64,
+        viewport_height: f64,
+    ) -> ScrollAnchors {
+        let cell_height = self.font.cell_height();
+        let frame = self.session.frame();
+        let row_y = |row: u16| {
+            layout
+                .block_at_row(row)
+                .and_then(|block| block.row_y(row, cell_height))
+        };
+        // Walked from the bottom because the answer is the LAST one, and a blank tail is common:
+        // most shells leave the row under the cursor empty, and several leave more than one.
+        let last_content_y = (0..frame.row_count())
+            .rev()
+            .find(|&row| frame.row(row).is_some_and(|line| !line.text.trim().is_empty()))
+            .and_then(row_y)
+            .unwrap_or(0.0);
+        let cursor_y = frame
+            .cursor
+            .and_then(|cursor| row_y(cursor.y))
+            .unwrap_or(last_content_y);
+        let info = self.session.viewport_info().ok();
+        ScrollAnchors {
+            content_height,
+            viewport_height,
+            cell_height,
+            last_content_y,
+            cursor_y,
+            // No engine answer is read as BOTH edges: a surface whose viewport cannot be asked
+            // about has no scrollback to hide either way, and refusing both policies there would
+            // turn an unreadable engine into a silently dead setting.
+            at_scrollback_top: info.is_none_or(|info| info.viewport_top_row == 0),
+            at_scrollback_bottom: info.is_none_or(ViewportInfo::is_at_bottom),
+            alternate: self.session.is_alternate_screen().unwrap_or(false),
+        }
+    }
+
     /// Clamps [`Self::scroll_y`] into the range this content allows, honouring the bottom pin.
     ///
     /// Answers whether it moved, which is the only reason a caller would lay out again.
-    fn settle_scroll(&mut self, content_height: f64, viewport_height: f64) -> bool {
-        let wanted = settled_scroll(self.scroll_y, content_height, viewport_height, self.follow_bottom);
+    fn settle_scroll(&mut self, layout: &BlockLayout, content_height: f64, viewport_height: f64) -> bool {
+        let anchors = self.scroll_anchors(layout, content_height, viewport_height);
+        let wanted = settled_scroll(
+            self.scroll_y,
+            scroll_bounds(anchors, self.overscroll),
+            self.follow_bottom.then_some(self.follow_gap),
+            anchors.content_height - anchors.viewport_height,
+        );
         // An exact comparison IS the question — "is this a different number than the one the layout
         // was built with" — not a measurement whose last bits are noise. A tolerance here would
         // re-lay-out for a scroll nobody made, or skip one the user did.

@@ -237,6 +237,12 @@ final class PhoneTerminalRendererView: UIView {
         switch gesture.state {
         case .began:
             gesture.setTranslation(.zero, in: self)
+        case .ended,
+             .cancelled,
+             .failed:
+            // A zero delta, on purpose: the lift is what owes the row snap under
+            // `controls.smooth-scroll`, and there is no travel left to carry it.
+            driver.scrollPoints(0, phase: TerminalScrollPhase(state: gesture.state))
         case .changed:
             // POINTS, not rows: the block list's chrome is spent before the scrollback, and a
             // finger dragging through a header should move by what it travelled rather than
@@ -247,7 +253,7 @@ final class PhoneTerminalRendererView: UIView {
             let travelled = gesture.translation(in: self).y
             gesture.setTranslation(.zero, in: self)
             guard travelled != 0 else { return }
-            driver.scrollPoints(travelled)
+            driver.scrollPoints(travelled, phase: TerminalScrollPhase(state: gesture.state))
         default:
             break
         }

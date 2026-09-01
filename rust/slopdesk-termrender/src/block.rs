@@ -241,6 +241,54 @@ impl BlockLayout {
     pub fn visible(&self) -> impl Iterator<Item = &PlacedBlock> {
         self.blocks.iter().filter(|block| block.is_visible())
     }
+
+    /// The row top nearest `y`, which is where a scroll settles with smooth scrolling off.
+    ///
+    /// Rows are not at multiples of `cell_height` in a block layout — the chrome sits between them
+    /// — so a snap has to ask the placement rather than round. Inside the content this walks
+    /// the placed rows; OUTSIDE it, in the blank the overscroll policies open, it rounds to a
+    /// whole cell from the nearest edge, because that blank IS made of rows and quantising it
+    /// any other way would leave a partial one against the viewport edge.
+    ///
+    /// A layout with no rows at all answers `y` unchanged: there is no boundary to prefer, and
+    /// moving the offset would be inventing one.
+    #[must_use]
+    pub fn nearest_row_top(&self, y: f64, cell_height: f64) -> f64 {
+        if !cell_height.is_finite() || cell_height <= 0.0 || !y.is_finite() {
+            return y;
+        }
+        let mut nearest: Option<f64> = None;
+        let mut first: Option<f64> = None;
+        let mut last: Option<f64> = None;
+        for block in &self.blocks {
+            for row in block.span.rows.start..block.span.rows.end {
+                let Some(top) = block.row_y(row, cell_height) else {
+                    continue;
+                };
+                if nearest.is_none_or(|best: f64| (top - y).abs() < (best - y).abs()) {
+                    nearest = Some(top);
+                }
+                first = Some(first.map_or(top, |edge| f64::min(edge, top)));
+                last = Some(last.map_or(top, |edge| f64::max(edge, top)));
+            }
+        }
+        let (Some(nearest), Some(first), Some(last)) = (nearest, first, last) else {
+            return y;
+        };
+        // Beyond the outermost row, keep counting in whole cells from that edge. Snapping back to
+        // the edge row instead would collapse the whole overscroll gap on the first settle, which
+        // is a detent nobody asked for. INSIDE the content the walk's answer already stands — the
+        // chrome between two blocks is wider than a cell, and rounding across it would land on a
+        // pixel that is no row's top.
+        let edge = if y < first {
+            first
+        } else if y > last {
+            last
+        } else {
+            return nearest;
+        };
+        edge + ((y - edge) / cell_height).round() * cell_height
+    }
 }
 
 /// The window a layout is virtualised against.
@@ -449,7 +497,7 @@ mod tests {
 
     use slopdesk_vterm::{Frame, FrameRow, RowSemantic};
 
-    use super::{Chrome, LayoutMode, RowRange, Viewport, lay_out, segment};
+    use super::{BlockLayout, Chrome, LayoutMode, RowRange, Viewport, lay_out, segment};
 
     fn frame(semantics: &[RowSemantic]) -> Frame {
         Frame {
@@ -630,5 +678,54 @@ mod tests {
         assert_eq!(layout.block_at_row(1).unwrap().span.rows.start, 0);
         assert_eq!(layout.block_at_row(3).unwrap().span.rows.start, 2);
         assert!(layout.block_at_row(9).is_none());
+    }
+
+    // ---- the row snap --------------------------------------------------------------------------
+
+    /// Exact arithmetic on whole pixels, asserted the way this file's neighbours do — an epsilon
+    /// here is the clippy-shaped spelling of `==`, not a tolerance anyone needs.
+    fn is(had: f64, want: f64) {
+        assert!((had - want).abs() < f64::EPSILON, "had {had}, wanted {want}");
+    }
+
+    /// Two blocks of one prompt and one output row each, 20-pixel rows under a 24-pixel header and
+    /// an 8-pixel gap. Row tops: 24, 44 · 96, 116.
+    fn snappable() -> BlockLayout {
+        let spans = segment(&frame(&[PROMPT, OUT, PROMPT, OUT]), LayoutMode::Blocks);
+        lay_out(&spans, &[], CHROME, 20.0, viewport(500.0))
+    }
+
+    #[test]
+    fn a_snap_lands_on_a_row_and_not_on_a_multiple_of_the_cell() {
+        let layout = snappable();
+        // 100 is five whole cells and is NO row's top: the header and the gap above it are 32
+        // pixels the rounding knows nothing about.
+        is(layout.nearest_row_top(100.0, 20.0), 96.0);
+        is(layout.nearest_row_top(46.0, 20.0), 44.0);
+    }
+
+    #[test]
+    fn a_snap_inside_the_chrome_prefers_the_nearer_row_rather_than_rounding_across_it() {
+        let layout = snappable();
+        // 70 sits in the 32-pixel gutter between rows 44 and 96 — nearer the row above.
+        is(layout.nearest_row_top(70.0, 20.0), 44.0);
+        is(layout.nearest_row_top(80.0, 20.0), 96.0);
+    }
+
+    #[test]
+    fn the_overscroll_blank_is_still_counted_in_whole_rows() {
+        let layout = snappable();
+        // Below the last row top the blank IS made of rows, so the count continues from that edge
+        // rather than collapsing back onto it.
+        is(layout.nearest_row_top(178.0, 20.0), 176.0);
+        // And above the first, where the offsets are negative.
+        is(layout.nearest_row_top(-38.0, 20.0), -36.0);
+    }
+
+    #[test]
+    fn a_layout_with_no_rows_leaves_the_offset_alone() {
+        is(BlockLayout::default().nearest_row_top(37.0, 20.0), 37.0);
+        is(snappable().nearest_row_top(37.0, 0.0), 37.0);
+        assert!(snappable().nearest_row_top(f64::NAN, 20.0).is_nan());
     }
 }

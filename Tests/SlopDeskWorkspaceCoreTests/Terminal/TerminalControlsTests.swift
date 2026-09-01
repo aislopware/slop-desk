@@ -29,6 +29,39 @@ final class TerminalControlsTests: XCTestCase {
             ["disabled", "enabled", "always", "never"],
         )
         XCTAssertEqual(OptionAsAlt.allCases.map(\.rawValue), ["off", "both", "left", "right"])
+        XCTAssertEqual(
+            ScrollPastLast.allCases.map(\.rawValue),
+            ["disabled", "last-line-with-content", "last-line-in-middle", "cursor-line"],
+        )
+        XCTAssertEqual(
+            ScrollPastFirst.allCases.map(\.rawValue),
+            ["disabled", "same-as-last", "first-line-with-content", "first-line-in-middle"],
+        )
+    }
+
+    /// ⚠️ THE TRAP THIS TEST EXISTS FOR. The two overscroll vocabularies share ONE delivery — four
+    /// runs each, past-LAST first — so ``ScrollPastFirst``'s `rawValue` reads at an OFFSET into it.
+    /// An off-by-four there is silent: every token is still a real token, just the wrong end's, and
+    /// `same-as-last` would come back spelled `cursor-line`.
+    func testTheTwoOverscrollVocabulariesDoNotReadEachOthersHalfOfTheDelivery() {
+        for last in ScrollPastLast.allCases {
+            XCTAssertEqual(ScrollPastLast(rawValue: last.rawValue), last, "\(last)")
+        }
+        for first in ScrollPastFirst.allCases {
+            XCTAssertEqual(ScrollPastFirst(rawValue: first.rawValue), first, "\(first)")
+        }
+        // `disabled` is the one token both ends spell, and it is the only one they may share.
+        let shared = Set(ScrollPastLast.allCases.map(\.rawValue))
+            .intersection(ScrollPastFirst.allCases.map(\.rawValue))
+        XCTAssertEqual(shared, ["disabled"])
+    }
+
+    /// The codes ``TerminalRendererSurface/setOverscroll(pastLast:pastFirst:smooth:)`` sends are each
+    /// case's place in the far side's own `ALL` order, and both vocabularies count from zero — the
+    /// shared delivery does NOT offset the second one's code the way it offsets its token.
+    func testTheOverscrollCodesCountFromZeroAtBothEnds() {
+        XCTAssertEqual(ScrollPastLast.allCases.map(\.index), [0, 1, 2, 3])
+        XCTAssertEqual(ScrollPastFirst.allCases.map(\.index), [0, 1, 2, 3])
     }
 
     /// Each enum's non-failable `init(rawValue:)` maps a known token to its case and repairs an unknown
@@ -42,6 +75,11 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(MouseShiftCapture(rawValue: "nope"), .enabled)
         XCTAssertEqual(OptionAsAlt(rawValue: "both"), .both)
         XCTAssertEqual(OptionAsAlt(rawValue: "garbage"), .off)
+        XCTAssertEqual(ScrollPastLast(rawValue: "cursor-line"), .cursorLine)
+        XCTAssertEqual(ScrollPastLast(rawValue: "garbage"), .disabled)
+        XCTAssertEqual(ScrollPastFirst(rawValue: "same-as-last"), .sameAsLast)
+        // A token from the OTHER end is not a token at this one, and repairs rather than crossing.
+        XCTAssertEqual(ScrollPastFirst(rawValue: "cursor-line"), .disabled)
     }
 
     /// `MouseShiftCapture.extendsSelection` is the binary projection a caller that only wants ON/OFF reads.

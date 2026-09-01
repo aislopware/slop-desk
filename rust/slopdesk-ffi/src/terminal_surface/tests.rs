@@ -3,6 +3,7 @@
 //! ⚠️ NO TEST HERE OPENS A SURFACE, and that is the hang-safety rule rather than an omission —
 //! the reason is stated in full where the door tests begin.
 
+use slopdesk_termrender::ScrollBounds;
 use slopdesk_vterm::{Mods, Rgb};
 
 use super::blocks::{num_to_i32, settled_scroll, spill_rows};
@@ -50,33 +51,74 @@ fn a_flick_past_the_top_keeps_going_older_in_the_engine() {
     assert_eq!(spill_rows(f64::NAN, 14.0), 0);
 }
 
+/// The plain clamp `content_height - viewport_height` allows, as `ScrollBounds`.
+///
+/// Every case below but the last two runs with both overscroll policies off, which is the default
+/// and the shape this function had before they existed.
+fn clamped(content_height: f64, viewport_height: f64) -> ScrollBounds {
+    ScrollBounds {
+        min: 0.0,
+        max: f64::max(content_height - viewport_height, 0.0),
+    }
+}
+
 #[test]
 fn a_list_that_fits_has_nowhere_to_scroll() {
-    is(settled_scroll(0.0, 400.0, 900.0, false), 0.0);
+    is(settled_scroll(0.0, clamped(400.0, 900.0), None, -500.0), 0.0);
     // Following a list shorter than its viewport still means the top.
-    is(settled_scroll(0.0, 400.0, 900.0, true), 0.0);
+    is(settled_scroll(0.0, clamped(400.0, 900.0), Some(0.0), -500.0), 0.0);
 }
 
 #[test]
 fn the_chrome_overflow_is_exactly_what_can_be_scrolled() {
     // Nine hundred pixels of drawable holding a thousand of blocks: the hundred the headers and
     // gaps added is the whole scroll range, and the grid keeps every row it was sized for.
-    is(settled_scroll(0.0, 1000.0, 900.0, true), 100.0);
-    is(settled_scroll(40.0, 1000.0, 900.0, false), 40.0);
+    is(
+        settled_scroll(0.0, clamped(1000.0, 900.0), Some(0.0), 100.0),
+        100.0,
+    );
+    is(settled_scroll(40.0, clamped(1000.0, 900.0), None, 100.0), 40.0);
 }
 
 #[test]
 fn an_offset_past_the_end_is_clamped_rather_than_kept() {
     // What a collapse does: the list shrinks under a scroll that was valid a frame ago.
-    is(settled_scroll(500.0, 1000.0, 900.0, false), 100.0);
-    is(settled_scroll(-20.0, 1000.0, 900.0, false), 0.0);
+    is(settled_scroll(500.0, clamped(1000.0, 900.0), None, 100.0), 100.0);
+    is(settled_scroll(-20.0, clamped(1000.0, 900.0), None, 100.0), 0.0);
 }
 
 #[test]
 fn the_pin_moves_the_offset_as_the_list_grows() {
-    let after_one_command = settled_scroll(100.0, 1000.0, 900.0, true);
+    let after_one_command = settled_scroll(100.0, clamped(1000.0, 900.0), Some(0.0), 100.0);
     // New output stays on screen without the user chasing it.
-    is(settled_scroll(after_one_command, 1200.0, 900.0, true), 300.0);
+    is(
+        settled_scroll(after_one_command, clamped(1200.0, 900.0), Some(0.0), 300.0),
+        300.0,
+    );
+}
+
+#[test]
+fn a_gap_opened_on_purpose_survives_the_output_that_arrives_under_it() {
+    // `scroll-past-last-line` at work: the user scrolled 60 pixels past the content's bottom, so
+    // the pin is at `limit + 60` — and stays there as the list grows. Pinning to the plain limit
+    // would snap the gap shut on the next frame; pinning to the overscroll MAXIMUM would force it
+    // fully open for anyone who merely reached the bottom.
+    let bounds = ScrollBounds { min: 0.0, max: 400.0 };
+    is(settled_scroll(160.0, bounds, Some(60.0), 100.0), 160.0);
+    is(settled_scroll(160.0, bounds, Some(60.0), 300.0), 360.0);
+    // And the gap can never push past what the policy actually allows.
+    is(settled_scroll(160.0, bounds, Some(60.0), 380.0), 400.0);
+}
+
+#[test]
+fn the_top_policy_lets_the_offset_go_negative() {
+    let bounds = ScrollBounds {
+        min: -480.0,
+        max: 100.0,
+    };
+    is(settled_scroll(-200.0, bounds, None, 100.0), -200.0);
+    // Still fenced at its own end, which is what makes the gap a bounded one.
+    is(settled_scroll(-900.0, bounds, None, 100.0), -480.0);
 }
 
 #[test]

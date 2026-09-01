@@ -1201,6 +1201,60 @@ everything past it against drawable space.
 clears to, for the reason the preedit bed is; its hairline is the divider the block list already
 draws; its status is the label ink. `SlopDeskTerminalChromeStyle` is unchanged.
 
+### 5.13 Overscroll and the row snap — the ceiling that lifted with the fork (2026-09-02)
+
+`docs/ui-shell/COVERAGE.md` §F carried three rows in one entry: Scroll-Past-Last-Line,
+Scroll-Past-First-Line and Smooth-Scroll's row snap, all **removed 2026-07-30** with the
+`ScrollPastPolicy` that computed them, and all with the same recorded reason — *"the fork exposes no
+row-snap hook and no overscroll-margin API … Add the settings back with the viewport hook that
+actuates them, not before."* The condition names a hook we now WRITE: §5.1's block layout put
+`Surface::scroll_y`, `BlockLayout::content_height` and `PlacedBlock::row_y` in this repo, so the
+viewport is ours in device pixels, and the anchors the modes name are lookups rather than
+approximations.
+
+**Every mode is an anchor, never a count of blank rows.** "One screenful of overscroll" reads
+differently on a tall pane and a short one; "the last line with content sits at the top" reads the
+same on both. So `slopdesk_termrender::layout::scroll_bounds` resolves `anchor_y - placement` and
+takes the result as a FLOOR on the plain clamp — a pane too short to hold its own anchor degrades to
+today's behaviour instead of inverting its range. `ScrollPastLast::CursorLine` and
+`LastLineWithContent` are two anchors and not one because a shell that prints a trailing blank line
+puts them on different rows, which is the only thing that distinguishes them.
+
+**Three suppressions, all in Rust, all for the same reason: a gap must not lie about what is
+underneath it.** The alternate screen gets neither policy — a full-screen program draws to its own
+bottom edge, the same argument `Chrome::NONE` makes about headers. And each end is suppressed while
+the ENGINE still has scrollback that way: overscrolling above content that has history over it would
+open blank where the history is, and below content that has output under it would hide output that
+already arrived. `ViewportInfo::is_at_bottom` and `viewport_top_row == 0` are the two questions.
+
+**The pin remembers the GAP rather than the position.** `follow_bottom` is still "keep me at the
+bottom", but with a gap open there are three candidate meanings and only one is right: pinning to the
+plain limit snaps the gap shut on the next frame, pinning to `ScrollBounds::max` forces it fully open
+for anyone who merely reached the bottom, and pinning to `limit + gap` keeps what the user chose as
+output arrives under it. `Surface::follow_gap` holds it; with the policy off it is always zero and
+`settled_scroll` is byte-for-byte what it was.
+
+**Smooth scroll OFF is not "no snap" — it is "snap every step".** Both settings land row-aligned at
+rest and differ only kinetically, which is why one `ScrollPhase::settles(smooth)` answers both. The
+snap waits for MOMENTUM, not for the fingers: a trackpad fling keeps delivering deltas after the lift
+and a snap taken there would be undone by every one of them. `TerminalScrollPhase` folds AppKit's two
+phase words and UIKit's one state into the one question the far side asks, and a ZERO delta is
+deliberately not a no-op at `ended` — that event is the snap's only carrier.
+
+**The snap asks the layout, never the arithmetic.** Rows are not at multiples of the cell height
+under a block layout, so `BlockLayout::nearest_row_top` walks the placed rows; only OUTSIDE the
+outermost row — in the blank an overscroll opened, which really is made of rows — does it round in
+whole cells from that edge. Rounding across the chrome instead would land on a pixel that is no row's
+top, and collapsing back to the edge row would shut the gap on the first settle.
+
+**Three settings, one crossing shape.** `controls.scroll-past-last-line`,
+`controls.scroll-past-first-line` and `controls.smooth-scroll` join the table in `docs/58`'s file;
+the two vocabularies are `slopdesk_terminal::controls`' and cross through
+`slopdesk_terminal_scroll_past_tokens` the way the other seven do, so the tokens are spelled once.
+`slopdesk_term_surface_set_overscroll` HOLDS them rather than taking them per event — unlike
+`controls.scroll-multiplier`, which is spent on a delta before it reaches the surface, these are read
+again by the per-frame settle, which no gesture is present for.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`

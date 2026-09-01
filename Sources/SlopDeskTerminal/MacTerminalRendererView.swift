@@ -1108,8 +1108,12 @@ final class MacTerminalRendererView: NSView {
         // sign already carried through, so one flick keeps one direction across the seam.
         let lineHeight = event.hasPreciseScrollingDeltas ? 1 : Double(driver.cellMetrics()?.cellHeight ?? 0)
         let travelled = Double(event.scrollingDeltaY) * lineHeight * SettingsKey.scrollMultiplierValue
-        guard travelled != 0 else { return }
-        driver.scrollPoints(travelled)
+        // A ZERO delta still goes through when the phase settles: the event that says the fling is
+        // over carries no travel, and it is the one that owes the row snap under
+        // `controls.smooth-scroll`.
+        let phase = TerminalScrollPhase(gesture: event.phase, momentum: event.momentumPhase)
+        guard travelled != 0 || phase == .ended else { return }
+        driver.scrollPoints(travelled, phase: phase)
     }
 
     /// The I-beam over the terminal, which is what says the text can be selected.

@@ -579,11 +579,51 @@ bool slopdesk_term_surface_toggle_block_collapsed_at_ordinal(SlopDeskTerminalSur
                                                              uint32_t ordinal);
 void slopdesk_term_surface_expand_all_blocks(SlopDeskTerminalSurface *handle);
 
+/* Where a pointer scroll is in its life. A source with no phase to report — a wheel notch, a
+ * keyboard verb — passes DISCRETE and settles on every event; LIVE is fingers-down or a fling still
+ * throwing deltas; ENDED is the gesture AND its momentum both over, which is when the row snap
+ * under controls.smooth-scroll comes due. Waiting for momentum rather than for the lift is the
+ * whole reason there are three: snapping at the lift would fight every remaining delta. */
+#define SLOPDESK_TERM_SCROLL_PHASE_DISCRETE 0
+#define SLOPDESK_TERM_SCROLL_PHASE_LIVE     1
+#define SLOPDESK_TERM_SCROLL_PHASE_ENDED    2
+
 /* The wheel and the trackpad, in POINTS, spending the block chrome before the scrollback. A
  * positive delta reveals OLDER output — the same direction slopdesk_term_surface_scroll spells
  * negative, because that door counts engine rows and this one counts the gesture. What the chrome
- * cannot absorb spills into the engine as whole rows. */
-void slopdesk_term_surface_scroll_points(SlopDeskTerminalSurface *handle, double delta);
+ * cannot absorb spills into the engine as whole rows.
+ *
+ * A zero delta is NOT a no-op when `phase` settles: fingers lifting after a scroll that stopped on
+ * a fraction of a row is exactly when the snap is owed, and that event carries no delta. */
+void slopdesk_term_surface_scroll_points(SlopDeskTerminalSurface *handle, double delta,
+                                         uint8_t phase);
+
+/* How far past each end of the content the viewport may travel, and whether it may rest between two
+ * rows while a gesture is live — controls.scroll-past-last-line, controls.scroll-past-first-line and
+ * controls.smooth-scroll, as one delivery.
+ *
+ * HELD rather than passed per event, unlike controls.scroll-multiplier: the multiplier is spent on a
+ * delta before it reaches this surface, where these three are read again by the per-frame settle,
+ * which no gesture is present for.
+ *
+ * Both policies are INDICES into their own vocabulary and an index past the end repairs to that
+ * vocabulary's default, which is `disabled` for both. Every mode names a ROW and a place to put it
+ * rather than a count of blank rows, so one setting reads the same on a tall pane and a short one.
+ * Both are suppressed on the alternate screen — a full-screen program draws to its own bottom edge
+ * — and each is suppressed at its own end while the ENGINE still has scrollback that way, or the gap
+ * would be blank where history is. */
+#define SLOPDESK_SCROLL_PAST_LAST_DISABLED               0
+#define SLOPDESK_SCROLL_PAST_LAST_LAST_LINE_WITH_CONTENT 1
+#define SLOPDESK_SCROLL_PAST_LAST_LAST_LINE_IN_MIDDLE    2
+#define SLOPDESK_SCROLL_PAST_LAST_CURSOR_LINE            3
+
+#define SLOPDESK_SCROLL_PAST_FIRST_DISABLED                 0
+#define SLOPDESK_SCROLL_PAST_FIRST_SAME_AS_LAST             1
+#define SLOPDESK_SCROLL_PAST_FIRST_FIRST_LINE_WITH_CONTENT  2
+#define SLOPDESK_SCROLL_PAST_FIRST_FIRST_LINE_IN_MIDDLE     3
+
+void slopdesk_term_surface_set_overscroll(SlopDeskTerminalSurface *handle, uint8_t past_last,
+                                          uint8_t past_first, bool smooth);
 
 /* One command-block record from the host (wire type 28), so the block's HEADER can print its exit
  * code and duration once the rows have scrolled back. Upserted by `ordinal` — a block arrives once

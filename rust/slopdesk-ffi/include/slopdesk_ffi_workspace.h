@@ -1601,6 +1601,13 @@ uint8_t slopdesk_terminal_scheme_detection_from_token(const uint8_t *token, size
 size_t  slopdesk_terminal_link_click_tokens(uint8_t *out, size_t cap);
 uint8_t slopdesk_terminal_cmd_click_from_token(const uint8_t *token, size_t len);
 uint8_t slopdesk_terminal_cmd_shift_click_from_token(const uint8_t *token, size_t len);
+// 8 runs: scroll-past-LAST's four, then scroll-past-FIRST's four. One delivery for the link-click
+// pair's reason — one setting with two ends, neither read without the other, and `same-as-last`
+// makes the second literally quote the first. The codes are what
+// slopdesk_term_surface_set_overscroll takes.
+size_t  slopdesk_terminal_scroll_past_tokens(uint8_t *out, size_t cap);
+uint8_t slopdesk_terminal_scroll_past_last_from_token(const uint8_t *token, size_t len);
+uint8_t slopdesk_terminal_scroll_past_first_from_token(const uint8_t *token, size_t len);
 
 #ifdef __cplusplus
 }

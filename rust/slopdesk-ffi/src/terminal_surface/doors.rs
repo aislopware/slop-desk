@@ -7,6 +7,7 @@
 use core::ffi::{c_uchar, c_void};
 
 use slopdesk_terminal::config::FontSpec;
+use slopdesk_terminal::controls::{Overscroll, ScrollPastFirst, ScrollPastLast};
 use slopdesk_termrender::{Rgba, SelectionColors};
 use slopdesk_vterm::{
     CursorShape, KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll,
@@ -874,6 +875,48 @@ pub const unsafe extern "C" fn slopdesk_term_surface_set_images(
         return;
     };
     surface.images_enabled = enabled;
+}
+
+/// The three scroll knobs, as one delivery: `controls.scroll-past-last-line`,
+/// `controls.scroll-past-first-line` and `controls.smooth-scroll`.
+///
+/// A door rather than three arguments on every wheel event, unlike `controls.scroll-multiplier`
+/// beside it: the multiplier is applied to a delta before it ever reaches the surface, where these
+/// three are read again by the per-frame SETTLE, which no gesture is present for. A setting the
+/// draw path needs has to be held.
+///
+/// Both policies arrive as indices into their own vocabulary, `SLOPDESK_SCROLL_PAST_*`; an index
+/// past the end is repaired to the vocabulary's own default, which is `disabled` for both — the
+/// same total rule every other code-taking door on this surface follows.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_set_overscroll(
+    handle: *mut SlopDeskTerminalSurface,
+    past_last: u8,
+    past_first: u8,
+    smooth: bool,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.overscroll = Overscroll {
+        past_last: ScrollPastLast::ALL
+            .get(past_last as usize)
+            .copied()
+            .unwrap_or_default(),
+        past_first: ScrollPastFirst::ALL
+            .get(past_first as usize)
+            .copied()
+            .unwrap_or_default(),
+        smooth,
+    };
 }
 
 /// The colour the glyph under a filled caret takes, packed `0x00RRGGBB`. `present` false keeps the

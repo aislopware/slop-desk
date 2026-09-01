@@ -8,8 +8,9 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_terminal::controls::ScrollPhase;
 use slopdesk_terminal::link::authored;
-use slopdesk_termrender::ChromeStyle;
+use slopdesk_termrender::{ChromeStyle, ScrollBounds, scroll_bounds};
 use slopdesk_vterm::{CellFlags, RowSemantic, Scroll, VtSession, text_cells};
 
 use super::doors::argb;
@@ -525,6 +526,10 @@ pub unsafe extern "C" fn slopdesk_term_surface_expand_all_blocks(handle: *mut Sl
 ///
 /// Positive `delta` scrolls toward older output, matching a natural-direction wheel.
 ///
+/// `phase` is a `SLOPDESK_TERM_SCROLL_PHASE_*` code — where the gesture is in its life, which is
+/// what decides when the row snap under `controls.smooth-scroll` is owed. A source with no phase to
+/// report passes `DISCRETE` and settles on every event.
+///
 /// # Safety
 /// [`held`]'s obligation.
 #[unsafe(no_mangle)]
@@ -535,17 +540,23 @@ pub unsafe extern "C" fn slopdesk_term_surface_expand_all_blocks(handle: *mut Sl
 pub unsafe extern "C" fn slopdesk_term_surface_scroll_points(
     handle: *mut SlopDeskTerminalSurface,
     delta: f64,
+    phase: u8,
 ) {
     // SAFETY: the caller's obligation, restated above.
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
-    if !delta.is_finite() || delta == 0.0 {
+    let phase = ScrollPhase::ALL.get(phase as usize).copied().unwrap_or_default();
+    // A phase-only event still has to settle: the fingers lifting after a scroll that ended exactly
+    // on a fraction of a row is precisely when the snap is owed, and it carries no delta.
+    if !delta.is_finite() || (delta == 0.0 && !phase.settles(surface.overscroll.smooth)) {
         return;
     }
     let insets = surface.insets();
     let viewport_height = surface.geometry.height - insets.top - insets.bottom;
-    let limit = f64::max(surface.layout.content_height - viewport_height, 0.0);
+    let anchors = surface.scroll_anchors(&surface.layout, surface.layout.content_height, viewport_height);
+    let bounds = scroll_bounds(anchors, surface.overscroll);
+    let plain_limit = f64::max(anchors.content_height - viewport_height, 0.0);
     // Into the layout's unit, which is the atlas's: the gesture arrives in points because every
     // other pointer door takes points.
     let delta = delta
@@ -557,16 +568,22 @@ pub unsafe extern "C" fn slopdesk_term_surface_scroll_points(
     // Up is toward the top of the list, which is `scroll_y` DECREASING — so a positive delta,
     // which means "show me older output", spends the offset downward first.
     let wanted = surface.scroll_y - delta;
-    let clamped = f64::min(f64::max(wanted, 0.0), limit);
+    let mut clamped = bounds.clamp(wanted);
+    if phase.settles(surface.overscroll.smooth) {
+        clamped = bounds.clamp(surface.layout.nearest_row_top(clamped, anchors.cell_height));
+    }
     let spill_px = wanted - clamped;
     surface.scroll_y = clamped;
-    surface.follow_bottom = clamped >= limit;
+    // The pin is taken at the CONTENT's bottom, not at the overscroll maximum, so opening a gap on
+    // purpose keeps following live output with the gap intact — and the gap is remembered rather
+    // than recomputed, for the reason `Surface::follow_gap` states.
+    surface.follow_bottom = clamped >= plain_limit;
+    surface.follow_gap = f64::max(clamped - plain_limit, 0.0);
 
     // What the chrome could not absorb becomes engine rows. Whole rows only: the engine's viewport
     // has no sub-row position, and rounding here rather than accumulating a remainder is what keeps
     // one flick from drifting the two scrolls apart.
-    let cell_height = surface.font.cell_height();
-    let rows = spill_rows(spill_px, cell_height);
+    let rows = spill_rows(spill_px, anchors.cell_height);
     if rows != 0 {
         surface.session.scroll(Scroll::Delta(rows));
     }
@@ -1033,17 +1050,25 @@ pub unsafe extern "C" fn slopdesk_term_surface_caret_rect(
     unsafe { spill(&[rect.x, rect.y, rect.width, rect.height], out, 4) == 4 }
 }
 
-/// Where the block list's scroll belongs, given how tall it turned out and whether it is pinned.
+/// Where the block list's scroll belongs, given the range it may take and whether it is pinned.
 ///
 /// A free function rather than a method because it is the whole rule — the clamp AND the pin — and
 /// the surface it would sit on cannot be built without a Metal device, which is the one thing the
 /// tests in this file may not take.
-pub(super) fn settled_scroll(current: f64, content_height: f64, viewport_height: f64, follow: bool) -> f64 {
-    let limit = f64::max(content_height - viewport_height, 0.0);
-    if follow {
-        return limit;
-    }
-    f64::min(f64::max(current, 0.0), limit)
+///
+/// `pinned_gap` is `Some(gap)` when the list is following its bottom, and the gap is how far past
+/// the content's true bottom the user left it. Following pins to `plain_limit + gap` rather than to
+/// [`ScrollBounds::max`], and that distinction is the entire behaviour of `scroll-past-last-line`
+/// under live output: pinning to the maximum would force the gap fully open for anyone who merely
+/// reached the bottom, and pinning to the limit would snap it shut for anyone who opened it on
+/// purpose.
+pub(super) fn settled_scroll(
+    current: f64,
+    bounds: ScrollBounds,
+    pinned_gap: Option<f64>,
+    plain_limit: f64,
+) -> f64 {
+    bounds.clamp(pinned_gap.map_or(current, |gap| f64::max(plain_limit, 0.0) + gap))
 }
 
 /// The prompt line of the block the viewport's top row is inside, when it is older than the frame.

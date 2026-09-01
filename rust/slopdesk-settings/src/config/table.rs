@@ -27,7 +27,8 @@
 //! second spelling would be a settings file that accepts a word the terminal has never heard of.
 
 use slopdesk_terminal::controls::{
-    ClipboardAccess, MouseShiftCapture, OptionAsAlt, RightClickAction, SchemeDetection,
+    ClipboardAccess, MouseShiftCapture, OptionAsAlt, RightClickAction, SchemeDetection, ScrollPastFirst,
+    ScrollPastLast,
 };
 use slopdesk_terminal::link_action::{CmdClick, CmdShiftClick};
 
@@ -149,6 +150,22 @@ const CMD_SHIFT_CLICK: &[&str] = &[
 
 /// Which schemes are detected at all.
 const LINK_SCHEMES: &[&str] = &[SchemeDetection::All.token(), SchemeDetection::Custom.token()];
+
+/// Which row floats to the top past the newest line.
+const SCROLL_PAST_LAST: &[&str] = &[
+    ScrollPastLast::Disabled.token(),
+    ScrollPastLast::LastLineWithContent.token(),
+    ScrollPastLast::LastLineInMiddle.token(),
+    ScrollPastLast::CursorLine.token(),
+];
+
+/// Which row sinks from the top past the oldest line.
+const SCROLL_PAST_FIRST: &[&str] = &[
+    ScrollPastFirst::Disabled.token(),
+    ScrollPastFirst::SameAsLast.token(),
+    ScrollPastFirst::FirstLineWithContent.token(),
+    ScrollPastFirst::FirstLineInMiddle.token(),
+];
 
 /// When a close is confirmed. The tab row is this list's first two: closing ONE tab can never lose
 /// more than one, so the third stop would be a policy that never fires.
@@ -399,6 +416,27 @@ pub const KEYS: &[Key] = &[
             max: 10.0,
         },
         doc: "Multiplier applied to every scroll delta the terminal receives.",
+    },
+    Key {
+        path: "controls.scroll-past-last-line",
+        kind: Kind::Choice {
+            default: Some(ScrollPastLast::Disabled.token()),
+            options: SCROLL_PAST_LAST,
+        },
+        doc: "Which row floats to the top when the viewport scrolls past the newest line.",
+    },
+    Key {
+        path: "controls.scroll-past-first-line",
+        kind: Kind::Choice {
+            default: Some(ScrollPastFirst::Disabled.token()),
+            options: SCROLL_PAST_FIRST,
+        },
+        doc: "Which row sinks from the top when the viewport scrolls past the oldest line.",
+    },
+    Key {
+        path: "controls.smooth-scroll",
+        kind: Kind::Flag { default: Some(true) },
+        doc: "Let a live scroll rest between two rows, snapping to one when it settles.",
     },
     Key {
         path: "controls.clear-selection-on-typing",

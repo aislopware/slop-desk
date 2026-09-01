@@ -56,6 +56,13 @@ private enum ControlTokens {
         Int(slopdesk_terminal_link_click_tokens(out, cap))
     }
 
+    /// Scroll-past-LAST's four, then scroll-past-FIRST's four — one delivery, for the link pair's
+    /// reason: one setting with two ends, and ``ScrollPastFirst/sameAsLast`` makes the second quote
+    /// the first outright.
+    static let scrollPast: [String] = runs(8) { out, cap in
+        Int(slopdesk_terminal_scroll_past_tokens(out, cap))
+    }
+
     private static func runs(_ count: Int, _ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> [String] {
         wsRuns(wsAnswerBytes(door), count: count)
     }
@@ -138,6 +145,105 @@ public enum ClipboardAccess: Sendable, CaseIterable, RawRepresentable, Codable {
         case .allow: 0
         case .deny: 1
         case .ask: 2
+        }
+    }
+}
+
+/// How far past the NEWEST line the viewport may scroll, and what it anchors on
+/// (`controls.scroll-past-last-line`).
+///
+/// - ``disabled``: clamp at the bottom of the content, which is the default and what every
+///   terminal does out of the box.
+/// - ``lastLineWithContent``: the bottom-most row holding text floats to the TOP of the viewport.
+/// - ``lastLineInMiddle``: that same row floats to the middle.
+/// - ``cursorLine``: the CURSOR's row floats to the top even when it is blank — which is the whole
+///   difference from ``lastLineWithContent``, since a shell that prints a trailing blank line puts
+///   the two anchors on different rows.
+///
+/// The anchor is resolved in Rust against the laid-out content, because the block chrome sits
+/// between the rows and only the layout knows where a row ended up. ``init(rawValue:)`` is
+/// validate-then-repair to ``disabled``.
+public enum ScrollPastLast: Sendable, CaseIterable, RawRepresentable, Codable {
+    case disabled
+    case lastLineWithContent
+    case lastLineInMiddle
+    case cursorLine
+
+    public var rawValue: String { ControlTokens.scrollPast[index] }
+
+    /// Validate-then-repair to ``disabled``, never trapping; non-failable for the `Defaults` bridge.
+    public init(rawValue: String) {
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_scroll_past_last_from_token(token, len)
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    /// The code `slopdesk_term_surface_set_overscroll` takes — this case's place in the far side's
+    /// own `ALL` order. `public` unlike its neighbours' because the surface that reads it lives in
+    /// another module.
+    public var index: Int {
+        switch self {
+        case .disabled: 0
+        case .lastLineWithContent: 1
+        case .lastLineInMiddle: 2
+        case .cursorLine: 3
+        }
+    }
+}
+
+/// How far past the OLDEST retained line the viewport may scroll
+/// (`controls.scroll-past-first-line`).
+///
+/// - ``disabled``: clamp at the top of the scrollback.
+/// - ``sameAsLast``: whatever ``ScrollPastLast`` says, mirrored onto this end — most people want
+///   both ends alike and should not have to keep two knobs in step by hand.
+/// - ``firstLineWithContent``: the oldest retained row sinks to the BOTTOM of the viewport.
+/// - ``firstLineInMiddle``: that same row sinks to the middle.
+///
+/// ``sameAsLast`` is resolved in Rust, so past that resolution there are three stops and not four.
+/// ``init(rawValue:)`` is validate-then-repair to ``disabled``.
+public enum ScrollPastFirst: Sendable, CaseIterable, RawRepresentable, Codable {
+    case disabled
+    case sameAsLast
+    case firstLineWithContent
+    case firstLineInMiddle
+
+    /// Offset by ``ScrollPastLast``'s four, which share the one delivery.
+    public var rawValue: String { ControlTokens.scrollPast[ScrollPastLast.allCases.count + index] }
+
+    /// Validate-then-repair to ``disabled``, never trapping; non-failable for the `Defaults` bridge.
+    public init(rawValue: String) {
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_scroll_past_first_from_token(token, len)
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    /// This case's place in the far side's own `ALL` order — ``ScrollPastLast/index``'s twin, and
+    /// `public` for the same reason.
+    public var index: Int {
+        switch self {
+        case .disabled: 0
+        case .sameAsLast: 1
+        case .firstLineWithContent: 2
+        case .firstLineInMiddle: 3
         }
     }
 }
