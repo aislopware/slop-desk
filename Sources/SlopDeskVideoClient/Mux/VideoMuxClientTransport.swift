@@ -1,6 +1,7 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import Foundation
 import SlopDeskVideoProtocol
+import Synchronization
 
 /// A per-pane ``VideoClientTransport`` backed by ONE channelID lane on a SHARED video
 /// flow — the channelID-stamping facade vended to ``SlopDeskVideoClientSession``. This is
@@ -14,9 +15,9 @@ import SlopDeskVideoProtocol
 /// lane's `channelID`; `stop` releases the lane (refcount--), tearing the shared flow down only
 /// when this was the last pane on the host.
 ///
-/// `@unchecked Sendable`: it holds immutable bindings + delegates all shared mutable state
-/// to the (`@MainActor`) registry and the internally-locked shared flow.
-public final class VideoMuxClientTransport: VideoClientTransport, @unchecked Sendable {
+/// `Sendable`, and CHECKED: every binding is immutable, and the one piece of mutable state — which
+/// lane of the shared flow this transport holds — lives in a `Mutex`.
+public final class VideoMuxClientTransport: VideoClientTransport, Sendable {
     private let host: String
     private let mediaPort: UInt16
     private let cursorPort: UInt16
@@ -25,9 +26,14 @@ public final class VideoMuxClientTransport: VideoClientTransport, @unchecked Sen
     /// Release this lane (refcount--, tear down the shared flow on 0) — hops to the registry.
     private let release: @Sendable (_ channelID: UInt32) async -> Void
 
-    private let stateLock = NSLock()
-    private var flow: VideoMuxClientFlowing?
-    private var channelID: UInt32?
+    /// The acquired lane: the shared flow and the id inside it. One value because they are
+    /// acquired and released together — a flow without its channelID addresses nothing.
+    private struct Lane {
+        var flow: VideoMuxClientFlowing?
+        var channelID: UInt32?
+    }
+
+    private let lane = Mutex(Lane())
 
     @preconcurrency
     public init(
@@ -50,34 +56,28 @@ public final class VideoMuxClientTransport: VideoClientTransport, @unchecked Sen
         onCursor: @escaping @Sendable (Data) -> Void,
     ) async {
         let acquisition = await acquire()
-        stateLock.withLock {
-            flow = acquisition.flow
-            channelID = acquisition.channelID
-        }
+        lane.withLock { $0 = Lane(flow: acquisition.flow, channelID: acquisition.channelID) }
         // Wire this lane's inbound sinks (the shared flow demuxes host→client datagrams by channelID
         // and calls only this lane's sink) + prime the cursor side-channel for the lane.
         acquisition.flow.registerLane(channelID: acquisition.channelID, onMedia: onMedia, onCursor: onCursor)
     }
 
     public func send(_ datagram: Data, on channel: VideoChannel) {
-        let (f, id): (VideoMuxClientFlowing?, UInt32?) = stateLock.withLock { (flow, channelID) }
-        guard let f, let id else { return }
-        f.send(datagram, on: channel, channelID: id)
+        let (flow, id) = lane.withLock { ($0.flow, $0.channelID) }
+        guard let flow, let id else { return }
+        flow.send(datagram, on: channel, channelID: id)
     }
 
     /// The shared flow's media-path viability (dead-path gate for the session's periodic
     /// senders). Optimistic `true` before `start` / after `stop` — sends are no-ops then anyway.
     public var sendPathViable: Bool {
-        let f: VideoMuxClientFlowing? = stateLock.withLock { flow }
-        return f?.isSendPathViable ?? true
+        lane.withLock { $0.flow }?.isSendPathViable ?? true
     }
 
     public func stop() async {
-        let id: UInt32? = stateLock.withLock {
-            let captured = channelID
-            flow = nil
-            channelID = nil
-            return captured
+        let id: UInt32? = lane.withLock { lane in
+            defer { lane = Lane() }
+            return lane.channelID
         }
         guard let id else { return }
         await release(id)

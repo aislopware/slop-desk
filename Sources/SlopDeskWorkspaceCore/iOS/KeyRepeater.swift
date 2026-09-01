@@ -37,12 +37,16 @@
 // `keyDown`/`keyUp`/`stop` come from the main thread (`pressesBegan`/`pressesEnded`) while the
 // production `DispatchRepeatScheduler` fires its callbacks on a background serial queue. The latch
 // lives behind the crate's own lock, so the handle here is one of the declared two-thread handles;
-// `heldKey`/`timer` are the Swift-side mirror and keep the `NSLock` they always had. `onFire` and
+// `heldKey`/`timer` are the Swift-side mirror and live in a `Mutex`. `onFire` and
 // `scheduler.schedule(...)` still run OUTSIDE that lock, so a scheduler that fires synchronously —
 // or an `onFire` that calls back in — cannot deadlock.
+//
+// The class stays `@unchecked Sendable` for ONE reason after that conversion: `latch` is an
+// `OpaquePointer`. The mirror needs no exemption of its own any more.
 
 import CSlopDeskFFI
 import Foundation
+import Synchronization
 
 public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     /// The cadence (doc 17 §2.5: initial 350ms, then 50ms / 20Hz).
@@ -69,11 +73,15 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     /// The latch, its generation counter and the cadence — the crate's, behind its own lock.
     private let latch: OpaquePointer
 
-    /// Guards the Swift-side mirror: the typed key the crate cannot hold, and the armed timer it
-    /// does not own.
-    private let lock = NSLock()
-    private var heldKey: Key?
-    private var timer: RepeatSchedulerHandle?
+    /// The Swift-side mirror: the typed key the crate cannot hold, and the armed timer it does not
+    /// own. One value, because every reader wants both or neither — a held key with no timer is a
+    /// repeat that stopped, and a timer with no key is one nobody can name.
+    private struct Mirror {
+        var heldKey: Key?
+        var timer: RepeatSchedulerHandle?
+    }
+
+    private let mirror = Mutex(Mirror())
 
     @preconcurrency
     public init(
@@ -96,11 +104,7 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     public var isRepeating: Bool { slopdesk_key_repeat_is_held(latch) }
 
     /// The key currently held, if any.
-    public var currentKey: Key? {
-        lock.lock()
-        defer { lock.unlock() }
-        return heldKey
-    }
+    public var currentKey: Key? { mirror.withLock { $0.heldKey } }
 
     /// A physical key went down: fire it once now, then schedule the repeat ramp.
     ///
@@ -119,11 +123,10 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
         // to be one. The generation it names never moves, so the copy IS the whole value.
         let generation = latched
 
-        lock.lock()
-        let old = timer
-        timer = nil
-        heldKey = key
-        lock.unlock()
+        let old = mirror.withLock { mirror -> RepeatSchedulerHandle? in
+            defer { mirror = Mirror(heldKey: key, timer: nil) }
+            return mirror.timer
+        }
 
         // Cancel + emit OUTSIDE the lock (cancel / onFire may re-enter).
         old?.cancel()
@@ -159,10 +162,7 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
         // The three verdicts are ASKED for, never transcribed: a `0`/`1`/`2` spelled here would be a
         // second copy of the crate's own enum, and the copy is what drifts.
         guard verdict != UInt8(SLOPDESK_KEY_REPEAT_STALE) else { return } // the latch moved; let this timer go.
-        lock.lock()
-        let key = heldKey
-        lock.unlock()
-        guard let key else { return }
+        guard let key = mirror.withLock({ $0.heldKey }) else { return }
         onFire(key)
         guard verdict == UInt8(SLOPDESK_KEY_REPEAT_FIRE_AND_ARM) else { return }
         let armed = scheduler.scheduleRepeating(every: .milliseconds(Int(everyMS))) { [weak self] in
@@ -183,23 +183,20 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     /// release either arrives first (the generation is stale → cancel here) or waits and collects
     /// exactly this handle.
     private func adopt(_ armed: RepeatSchedulerHandle, generation: UInt64) {
-        lock.lock()
-        guard slopdesk_key_repeat_is_current(latch, generation) else {
-            lock.unlock()
-            armed.cancel()
-            return
+        let adopted = mirror.withLock { mirror -> Bool in
+            guard slopdesk_key_repeat_is_current(latch, generation) else { return false }
+            mirror.timer = armed
+            return true
         }
-        timer = armed
-        lock.unlock()
+        if !adopted { armed.cancel() }
     }
 
     /// Drops the mirror and cancels the armed timer, outside the lock.
     private func clearTimer() {
-        lock.lock()
-        let old = timer
-        timer = nil
-        heldKey = nil
-        lock.unlock()
+        let old = mirror.withLock { mirror -> RepeatSchedulerHandle? in
+            defer { mirror = Mirror() }
+            return mirror.timer
+        }
         old?.cancel()
     }
 
@@ -214,10 +211,10 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     }
 
     deinit {
-        lock.lock()
-        let old = timer
-        timer = nil
-        lock.unlock()
+        let old = mirror.withLock { mirror -> RepeatSchedulerHandle? in
+            defer { mirror.timer = nil }
+            return mirror.timer
+        }
         old?.cancel()
         slopdesk_key_repeat_free(latch)
     }
@@ -249,7 +246,9 @@ public protocol RepeatScheduler: Sendable {
 /// GCD-backed ``RepeatScheduler``. The doc-17 §2.5 mandate is "`DispatchSourceTimer`": each
 /// scheduled item is a one-shot / repeating `DispatchSourceTimer` on a serial queue, so the
 /// repeat fires on a consistent thread the embedder can hop to the main actor from.
-public final class DispatchRepeatScheduler: RepeatScheduler, @unchecked Sendable {
+///
+/// It holds one immutable `DispatchQueue` and nothing else, so the `Sendable` is CHECKED.
+public final class DispatchRepeatScheduler: RepeatScheduler, Sendable {
     private let queue: DispatchQueue
 
     public init(queue: DispatchQueue = DispatchQueue(label: "slopdesk.keyrepeat", qos: .userInteractive)) {
@@ -280,24 +279,23 @@ public final class DispatchRepeatScheduler: RepeatScheduler, @unchecked Sendable
     }
 }
 
-/// `@unchecked Sendable` over two fields with two different reasons, which is why it is spelled out:
-/// `timer` is a `DispatchSourceTimer`, and GCD's own contract is that a source may be cancelled from
-/// any thread, so it needs no help from here; `cancelled` is the only Swift state and every touch of
-/// it is under `lock`, which is also what makes a second `cancel()` a no-op rather than a race
-/// between two callers reading the flag at once.
+/// `@unchecked Sendable` for ONE field now: `timer` is a `DispatchSourceTimer`, and GCD's own
+/// contract is that a source may be cancelled from any thread, so it needs no help from here — but
+/// the type carries no `Sendable` mark saying so. `cancelled` is the only Swift state and it is a
+/// `Mutex`, which is also what makes a second `cancel()` a no-op rather than a race between two
+/// callers reading the flag at once.
 private final class DispatchTimerHandle: RepeatSchedulerHandle, @unchecked Sendable {
     private let timer: DispatchSourceTimer
-    private let lock = NSLock()
-    private var cancelled = false
+    private let cancelled = Mutex(false)
 
     init(timer: DispatchSourceTimer) { self.timer = timer }
 
     func cancel() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !cancelled else { return }
-        cancelled = true
-        timer.cancel()
+        let first = cancelled.withLock { was -> Bool in
+            defer { was = true }
+            return !was
+        }
+        if first { timer.cancel() }
     }
 }
 

@@ -24,6 +24,7 @@
 import Foundation
 import Network
 import SlopDeskNet
+import Synchronization
 
 /// Pure derivation of the loopback ports the proxy tries to claim. Stable across launches —
 /// Swift's `Hasher` is process-seeded, so this is hand-rolled FNV-1a.
@@ -62,7 +63,19 @@ package enum CodeSidebarProxyPorts {
 /// features, file reads, saves, search, SCM), exactly the traffic Nagle coalesces into a
 /// delayed-ACK stall. This relay sat on default parameters — Nagle ENABLED on both hops — while
 /// every other TCP path in the app disabled it.
+/// `@unchecked Sendable` for ONE reason after the target moved into a `Mutex`: `NWListener` carries
+/// no `Sendable` mark. Network's own contract is that a listener is safe to hold and cancel from any
+/// queue — this one is only ever handed its accept queue and then read — but that contract is not
+/// spelled in the type, so it has to be asserted here.
 package final class CodeSidebarLoopbackProxy: @unchecked Sendable {
+    /// Where the mesh side dials. One value rather than two fields, because a retarget must move
+    /// host and port together — a relay that dialled the new host on the old port would connect to
+    /// whatever else answers there.
+    private struct Target {
+        var host: String
+        var port: UInt16
+    }
+
     package let localPort: UInt16
     private let listener: NWListener
     /// Accepts only. Each relayed pair gets its OWN queue (see ``relay(_:)``) so one project's
@@ -71,15 +84,12 @@ package final class CodeSidebarLoopbackProxy: @unchecked Sendable {
     /// the cold-boot path (workbench.js alone is ~3.8 MB compressed, alongside the nls bundle, the
     /// stylesheet, icon fonts and the extension-host websocket).
     private let acceptQueue = DispatchQueue(label: "slopdesk.code-proxy.accept")
-    private let lock = NSLock()
-    private var targetHost: String
-    private var targetPort: UInt16
+    private let target: Mutex<Target>
 
     private init(listener: NWListener, localPort: UInt16, targetHost: String, targetPort: UInt16) {
         self.listener = listener
         self.localPort = localPort
-        self.targetHost = targetHost
-        self.targetPort = targetPort
+        target = Mutex(Target(host: targetHost, port: targetPort))
     }
 
     /// Binds `127.0.0.1:<localPort>` and resolves once the listener is READY (or nil on failure —
@@ -133,16 +143,11 @@ package final class CodeSidebarLoopbackProxy: @unchecked Sendable {
     package static func outboundParameters() -> NWParameters { TransportParameters.makeTCP() }
 
     package func retarget(host: String, port: UInt16) {
-        lock.lock()
-        defer { lock.unlock() }
-        targetHost = host
-        targetPort = port
+        target.withLock { $0 = Target(host: host, port: port) }
     }
 
     private var currentTarget: (host: String, port: UInt16) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (targetHost, targetPort)
+        target.withLock { ($0.host, $0.port) }
     }
 
     /// One accepted local connection: dial the current target, then pump bytes both ways until
@@ -187,14 +192,13 @@ package final class CodeSidebarLoopbackProxy: @unchecked Sendable {
     }
 
     /// Resume-at-most-once guard for the listener continuation (state callbacks can keep firing).
-    private final class ResumeOnce: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
+    private final class ResumeOnce: Sendable {
+        private let done = Mutex(false)
         package func resume(_ body: () -> Void) {
-            lock.lock()
-            let first = !done
-            done = true
-            lock.unlock()
+            let first = done.withLock { was -> Bool in
+                defer { was = true }
+                return !was
+            }
             if first { body() }
         }
     }

@@ -2,6 +2,7 @@
 import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
+import Synchronization
 
 /// One-shot client-side window DISCOVERY for the Remote Window picker (docs/31): asks the host "what
 /// windows can I stream?" and returns the answer, so the UI can list them instead of making the user type
@@ -61,7 +62,7 @@ public enum VideoWindowDiscovery {
     /// Written once for both, because the two differ only in which message they send and which one
     /// answers it — the lane discipline, the resend schedule and the empty-is-an-answer rule are the
     /// same discovery said twice.
-    private static func discover<Element>(
+    private static func discover<Element: Sendable>(
         host: String,
         mediaPort: UInt16,
         cursorPort: UInt16,
@@ -132,13 +133,32 @@ public enum VideoWindowDiscovery {
 /// awaiting discovery call. Generic over the record type so every list-shaped discovery
 /// (`WindowSummary`, `RemoteDisplaySummary`) reuses it. The single waiter is resolved EXACTLY once
 /// — by the first `deliver(_:)` or by `finish()` on timeout — so the `CheckedContinuation` never leaks.
-final class ReplyBox<Element>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var result: [Element]?
-    private var cont: CheckedContinuation<[Element]?, Never>?
-    private var resolved = false
+///
+/// `Element: Sendable` is required rather than assumed: the records cross from the flow's receive
+/// queue to the awaiting task, which is a `sending` hand-off the compiler checks at the `Mutex`
+/// boundary. Both shipping records (`WindowSummary`, `RemoteDisplaySummary`) already are.
+final class ReplyBox<Element: Sendable>: Sendable {
+    /// The three fields are one fact — what the box holds, who is parked on it, and whether the
+    /// single answer has been given — so they live in one `Mutex` and are never read apart. That is
+    /// what makes the conformance above CHECKED: a `Mutex` is `Sendable` whatever it guards, since
+    /// `withLock` is the only way in.
+    private struct Waiter {
+        var result: [Element]?
+        var cont: CheckedContinuation<[Element]?, Never>?
+        var resolved = false
+    }
 
-    var hasReply: Bool { lock.withLock { result != nil } }
+    /// What a lock-held decision hands back to the caller to run OUTSIDE the lock: a
+    /// continuation must never be resumed while the box is held, because the awaiting task can
+    /// resume on this very thread and call straight back in.
+    private enum Step {
+        case nothing
+        case resume(CheckedContinuation<[Element]?, Never>?, [Element]?)
+    }
+
+    private let waiter = Mutex(Waiter())
+
+    var hasReply: Bool { waiter.withLock { $0.result != nil } }
 
     /// A reply arrived (may be called more than once under UDP duplication — only the first sticks).
     ///
@@ -146,19 +166,15 @@ final class ReplyBox<Element>: @unchecked Sendable {
     /// deadline is dropped rather than recorded: the caller was already handed the empty answer and
     /// a second one it can never read is not an improvement on none.
     func deliver(_ records: [Element]) {
-        lock.lock()
-        guard !resolved else { lock.unlock()
-            return
+        let step = waiter.withLock { w -> Step in
+            guard !w.resolved else { return .nothing }
+            if w.result == nil { w.result = records }
+            guard let c = w.cont else { return .nothing }
+            w.resolved = true
+            w.cont = nil
+            return .resume(c, w.result)
         }
-        if result == nil { result = records }
-        guard let c = cont else { lock.unlock()
-            return
-        }
-        resolved = true
-        cont = nil
-        let r = result
-        lock.unlock()
-        c.resume(returning: r)
+        if case let .resume(c, r) = step { c?.resume(returning: r) }
     }
 
     /// Timeout: resolve the waiter with whatever we have (possibly `nil`). No-op once resolved.
@@ -169,31 +185,27 @@ final class ReplyBox<Element>: @unchecked Sendable {
     /// waiter that arrives afterwards sees neither a result nor a resolution, and the picker hangs
     /// on a discovery that already gave up.
     func finish() {
-        lock.lock()
-        guard !resolved else { lock.unlock()
-            return
+        let step = waiter.withLock { w -> Step in
+            guard !w.resolved else { return .nothing }
+            w.resolved = true
+            defer { w.cont = nil }
+            return .resume(w.cont, w.result)
         }
-        resolved = true
-        let waiter = cont
-        cont = nil
-        let r = result
-        lock.unlock()
-        waiter?.resume(returning: r)
+        if case let .resume(c, r) = step { c?.resume(returning: r) }
     }
 
     /// Awaits the first reply (or `finish()`). Returns immediately if already resolved/delivered.
     func firstReply() async -> [Element]? {
         await withCheckedContinuation { (c: CheckedContinuation<[Element]?, Never>) in
-            lock.lock()
-            if resolved || result != nil {
-                resolved = true
-                let r = result
-                lock.unlock()
-                c.resume(returning: r)
-                return
+            let step = waiter.withLock { w -> Step in
+                guard w.resolved || w.result != nil else {
+                    w.cont = c
+                    return .nothing
+                }
+                w.resolved = true
+                return .resume(c, w.result)
             }
-            cont = c
-            lock.unlock()
+            if case let .resume(c, r) = step { c?.resume(returning: r) }
         }
     }
 }

@@ -64,7 +64,7 @@ final class PhoneTerminalRendererView: UIView {
     init?(model: TerminalViewModel, isFocused: Bool) {
         guard let driver = TerminalSurfaceDriver(
             font: TerminalConfigBroadcaster.shared.font,
-            scale: Double(UIScreen.main.scale),
+            scale: Double(UITraitCollection.current.displayScale),
             size: CGSize(width: 390, height: 600),
         ) else {
             return nil
@@ -113,7 +113,7 @@ final class PhoneTerminalRendererView: UIView {
         CATransaction.setDisableActions(true)
         hostedLayer?.frame = bounds
         CATransaction.commit()
-        driver.setGeometry(size: bounds.size, scale: window?.screen.scale ?? UIScreen.main.scale)
+        driver.setGeometry(size: bounds.size, scale: renderScale)
     }
 
     override func didMoveToWindow() {
@@ -122,8 +122,18 @@ final class PhoneTerminalRendererView: UIView {
             stopDisplayLink()
         } else {
             startDisplayLink()
-            driver.setGeometry(size: bounds.size, scale: window?.screen.scale ?? UIScreen.main.scale)
+            driver.setGeometry(size: bounds.size, scale: renderScale)
         }
+    }
+
+    /// The backing-store scale to rasterise at.
+    ///
+    /// The WINDOW's screen first — an iPad on an external display is not the built-in one, and the
+    /// glyphs have to be cut for the panel they land on. `traitCollection.displayScale` is the
+    /// fallback rather than `UIScreen.main`, which is deprecated and, on a multi-scene app, names
+    /// a screen this view may not be on at all.
+    private var renderScale: CGFloat {
+        window?.screen.scale ?? traitCollection.displayScale
     }
 
     // MARK: - The display link

@@ -3,6 +3,7 @@ import Defaults
 import Foundation
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
+import Synchronization
 
 // `SettingsKey`: the one place the app asks what a setting is.
 //
@@ -71,10 +72,10 @@ public enum SettingsKey {
     /// exit and the gate's own trap removes it from the shell.
     static func removeSuiteAtExit(named name: String) {
         installSuiteRemovalHook()
-        suiteRemovalLock.lock()
-        defer { suiteRemovalLock.unlock() }
-        guard !pendingSuiteRemovals.contains(name) else { return }
-        pendingSuiteRemovals.append(name)
+        suiteRemoval.withLock { state in
+            guard !state.pending.contains(name) else { return }
+            state.pending.append(name)
+        }
     }
 
     /// `atexit` is LIFO, so the sweep has to be registered EARLY to run LATE — after whatever
@@ -82,14 +83,14 @@ public enum SettingsKey {
     /// sweep just unlinked. ``store`` calls this first thing, which in a test process is the first
     /// state read; a caller that beats it there installs the hook itself.
     private static func installSuiteRemovalHook() {
-        suiteRemovalLock.lock()
-        defer { suiteRemovalLock.unlock() }
-        guard !suiteRemovalHookInstalled else { return }
-        suiteRemovalHookInstalled = true
+        let install = suiteRemoval.withLock { state -> Bool in
+            guard !state.hookInstalled else { return false }
+            state.hookInstalled = true
+            return true
+        }
+        guard install else { return }
         atexit {
-            suiteRemovalLock.lock()
-            let names = pendingSuiteRemovals
-            suiteRemovalLock.unlock()
+            let names = suiteRemoval.withLock { $0.pending }
             for name in names { Self.removeSuite(named: name) }
         }
     }
@@ -671,13 +672,17 @@ public enum SettingsKey {
     }
 }
 
-/// The suites ``SettingsKey/removeSuiteAtExit(named:)`` takes away on the way out, and the lock over
-/// them. File-scope for the same reason as everything else here: the `atexit` hook is a
-/// non-capturing C function pointer and can reach nothing but a global.
-/// `nonisolated(unsafe)`: every access goes through `suiteRemovalLock`.
-private nonisolated(unsafe) var pendingSuiteRemovals: [String] = []
-private nonisolated(unsafe) var suiteRemovalHookInstalled = false
-private let suiteRemovalLock = NSLock()
+/// The suites ``SettingsKey/removeSuiteAtExit(named:)`` takes away on the way out, and whether the
+/// hook that takes them is installed. File-scope for the same reason as everything else here: the
+/// `atexit` hook is a non-capturing C function pointer and can reach nothing but a global. One
+/// `Mutex` over both rather than two `nonisolated(unsafe) var`s beside a lock — the guard is then
+/// the declaration, not a convention a later reader has to be told about.
+private struct SuiteRemoval {
+    var pending: [String] = []
+    var hookInstalled = false
+}
+
+private let suiteRemoval = Mutex(SuiteRemoval())
 
 /// Non-nil exactly when running under XCTest — file-scope (not a `SettingsKey` member) so the
 /// non-capturing `atexit` C hook inside ``SettingsKey/store`` can reference it as a global.

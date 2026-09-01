@@ -21,27 +21,24 @@
 
 import CSlopDeskFFI
 import Foundation
+import Synchronization
 
 /// Where a device socket's events land, and the gate that stops them.
 ///
 /// A `final class` rather than a closure because the door's `context` must be a raw pointer valid on
-/// any thread until `_free` RETURNS, and only a retained object is that. The lock covers the one
-/// publication — the sink is installed at init and cleared at silence — rather than a hot path.
-package final class DeviceSocketSink: @unchecked Sendable {
-    private let lock = NSLock()
-    private var deliver: (@MainActor (UInt32, Data) -> Void)?
+/// any thread until `_free` RETURNS, and only a retained object is that. The `Mutex` covers the one
+/// publication — the sink is installed at init and cleared at silence — rather than a hot path, and
+/// it is what makes the `Sendable` here CHECKED: the sink is the class's only mutable state.
+package final class DeviceSocketSink: Sendable {
+    private let deliver: Mutex<(@MainActor (UInt32, Data) -> Void)?>
 
     /// `deliver` is called on the main actor, in the order the socket produced the events.
     package init(_ deliver: @escaping @MainActor (UInt32, Data) -> Void) {
-        self.deliver = deliver
+        self.deliver = Mutex(deliver)
     }
 
     /// Drop everything from here on, including hops already queued.
-    package func silence() {
-        lock.lock()
-        defer { lock.unlock() }
-        deliver = nil
-    }
+    package func silence() { deliver.withLock { $0 = nil } }
 
     /// One event, from the socket's thread. See the file header on why this queue and not a `Task`.
     ///
@@ -50,11 +47,7 @@ package final class DeviceSocketSink: @unchecked Sendable {
     /// name inside one module.
     func say(_ kind: UInt32, _ payload: Data) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            lock.lock()
-            let sink = deliver
-            lock.unlock()
-            guard let sink else { return }
+            guard let self, let sink = deliver.withLock({ $0 }) else { return }
             MainActor.assumeIsolated { sink(kind, payload) }
         }
     }

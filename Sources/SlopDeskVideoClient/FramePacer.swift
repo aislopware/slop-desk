@@ -68,6 +68,12 @@ public final class FramePacer: @unchecked Sendable {
     /// half through the overlay would light half the family off one `[env]` line.
     private static let dbgEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private let renderCallback: RenderCallback
+    /// An `NSLock` and NOT a `Mutex`, alone in this module after the 2026-09-02 sweep, for a reason
+    /// the shape gives: the tick path takes it, releases it MID-FUNCTION to hop to the main actor
+    /// for the present, and re-takes it — three separate spans that a scoped `withLock` cannot
+    /// express without splitting the state machine the spans share. `@unchecked Sendable` would
+    /// stay here regardless (the render callback and the held `CVImageBuffer`s are neither `Mutex`
+    /// state nor `Sendable`), so the conversion would buy churn on the one measured hot path.
     private let lock = NSLock()
     /// The whole presentation state machine — the jitter buffer, the priming latch, the underflow
     /// run, the live depth — as one value folded through `rust/slopdesk-video`'s `present_queue`,

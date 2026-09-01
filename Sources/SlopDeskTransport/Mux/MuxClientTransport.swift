@@ -1,14 +1,15 @@
 import CSlopDeskFFI
 import Foundation
 import SlopDeskProtocol
+import Synchronization
 
 /// Where the two callbacks land. Retained by the Rust handle for its whole life.
 ///
 /// A `final class` and not the actor, because `context` must be a raw pointer valid on any
 /// thread until `slopdesk_mux_transport_free` returns, and an actor reference is neither. Every
-/// field is either immutable or a continuation, which is `Sendable` and safe to yield to from
-/// any thread — so nothing here needs a lock.
-private final class Inbox: @unchecked Sendable {
+/// field is either immutable, a continuation — `Sendable`, and safe to yield to from any thread —
+/// or a `Mutex`, so the conformance is CHECKED.
+private final class Inbox: Sendable {
     let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
     /// The reason the HOST gave for closing this channel, written once by the ended callback.
     /// `nil` while live, and `nil` afterwards for an end that was not a peer close — a link
@@ -20,20 +21,11 @@ private final class Inbox: @unchecked Sendable {
     /// It lives HERE rather than on the actor because `WorkspaceChannelClient.Handle` is built
     /// synchronously on the main actor and needs it — and it is immutable in every sense that
     /// matters, being written before the transport is handed to anybody.
-    private let idLock = NSLock()
-    private var id: UInt32 = 0
+    private let id = Mutex<UInt32>(0)
 
-    var channelID: UInt32 {
-        idLock.lock()
-        defer { idLock.unlock() }
-        return id
-    }
+    var channelID: UInt32 { id.withLock { $0 } }
 
-    func setChannelID(_ value: UInt32) {
-        idLock.lock()
-        defer { idLock.unlock() }
-        id = value
-    }
+    func setChannelID(_ value: UInt32) { id.withLock { $0 = value } }
 
     init(_ continuation: AsyncThrowingStream<WireMessage, Error>.Continuation) {
         self.continuation = continuation
@@ -74,23 +66,15 @@ private final class Held: @unchecked Sendable {
 
 /// One `MuxCloseReason?`, written by a Rust thread and read by the actor.
 ///
-/// `NSLock` rather than an atomic because the value is read once per channel, at the end, and a
-/// lock is the spelling that does not need a `Sendable` escape hatch of its own.
-private final class CloseReasonBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: MuxCloseReason?
+/// A `Mutex` rather than an atomic because the value is read once per channel, at the end, and it
+/// is the spelling that needs no `Sendable` escape hatch of its own — a `Mutex` is `Sendable`
+/// whatever it holds, so the box below is a CHECKED conformance, not an asserted one.
+private final class CloseReasonBox: Sendable {
+    private let value = Mutex<MuxCloseReason?>(nil)
 
-    var reason: MuxCloseReason? {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
+    var reason: MuxCloseReason? { value.withLock { $0 } }
 
-    func set(_ reason: MuxCloseReason?) {
-        lock.lock()
-        defer { lock.unlock() }
-        value = reason
-    }
+    func set(_ reason: MuxCloseReason?) { value.withLock { $0 = reason } }
 }
 
 /// One channel of the per-host shared mux, as the WORKSPACE DOCUMENT's transport.

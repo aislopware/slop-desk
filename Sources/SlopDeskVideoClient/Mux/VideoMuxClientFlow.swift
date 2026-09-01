@@ -2,6 +2,7 @@ import CSlopDeskFFI
 import Foundation
 import OSLog
 import SlopDeskVideoProtocol
+import Synchronization
 
 /// The CLIENT half of the shared UDP flow, as a handle on `slopdesk_videolink`.
 ///
@@ -28,8 +29,9 @@ import SlopDeskVideoProtocol
 /// therefore ENDS the flow (`slopdesk_video_flow_close`) and leaves the handle valid, and every door
 /// call after it is a refusal rather than a race.
 ///
-/// `@unchecked Sendable` via the `NSLock` guarding the handle.
-public final class VideoMuxClientFlow: @unchecked Sendable {
+/// `Sendable`, and CHECKED: the handle is the only mutable state and it lives in a `Mutex`, whose
+/// own `Sendable` does not depend on the `OpaquePointer` it holds.
+public final class VideoMuxClientFlow: Sendable {
     private static func mediaSocket(for channel: VideoChannel) -> Bool { channel != .cursor }
 
     private let log = Logger(subsystem: "slopdesk.video.client", category: "VideoMuxClientFlow")
@@ -37,8 +39,7 @@ public final class VideoMuxClientFlow: @unchecked Sendable {
     private let mediaPort: UInt16
     private let cursorPort: UInt16
 
-    private let lock = NSLock()
-    private var handle: OpaquePointer?
+    private let handle = Mutex<OpaquePointer?>(nil)
 
     public init(host: String, mediaPort: UInt16, cursorPort: UInt16) {
         self.host = host
@@ -47,19 +48,20 @@ public final class VideoMuxClientFlow: @unchecked Sendable {
     }
 
     deinit {
-        if let handle { slopdesk_video_flow_free(handle) }
+        if let flow = handle.withLock({ $0 }) { slopdesk_video_flow_free(flow) }
     }
 
     /// Opens the shared media + cursor sockets ONCE (idempotent). Subsequent lane opens reuse them;
     /// only the registry's last-channel release tears them down.
     public func startIfNeeded() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard handle == nil else { return }
-        handle = Array(host.utf8).withUnsafeBufferPointer {
-            slopdesk_video_flow_open($0.baseAddress, $0.count, mediaPort, cursorPort)
+        let opened: Bool = handle.withLock { handle in
+            guard handle == nil else { return true }
+            handle = Array(host.utf8).withUnsafeBufferPointer {
+                slopdesk_video_flow_open($0.baseAddress, $0.count, mediaPort, cursorPort)
+            }
+            return handle != nil
         }
-        if handle == nil {
+        if !opened {
             // A bring-up failure is answered HERE, which is the point of the port: the next lane
             // open retries rather than the pane waiting on a state that never settles.
             //
@@ -80,10 +82,7 @@ public final class VideoMuxClientFlow: @unchecked Sendable {
         onCursor: @escaping @Sendable (Data) -> Void,
     ) {
         startIfNeeded()
-        lock.lock()
-        let flow = handle
-        lock.unlock()
-        guard let flow else { return }
+        guard let flow = handle.withLock({ $0 }) else { return }
         // Retained here, released by `onRelease` below — the one lifetime rule the door states, and
         // the reason a release callback exists at all: unregistering a lane cannot join the reader
         // that still serves the flow's other lanes.
@@ -101,10 +100,7 @@ public final class VideoMuxClientFlow: @unchecked Sendable {
     }
 
     public func unregisterLane(channelID: UInt32) {
-        lock.lock()
-        let flow = handle
-        lock.unlock()
-        guard let flow else { return }
+        guard let flow = handle.withLock({ $0 }) else { return }
         slopdesk_video_flow_unregister_lane(flow, channelID)
     }
 
@@ -115,17 +111,11 @@ public final class VideoMuxClientFlow: @unchecked Sendable {
     /// stops handing the kernel datagrams that cannot leave; sparse best-effort sends (input, hello,
     /// recovery) are not gated.
     public var isSendPathViable: Bool {
-        lock.lock()
-        let flow = handle
-        lock.unlock()
-        return slopdesk_video_flow_send_path_viable(flow)
+        slopdesk_video_flow_send_path_viable(handle.withLock { $0 })
     }
 
     public func send(_ datagram: Data, on channel: VideoChannel, channelID: UInt32) {
-        lock.lock()
-        let flow = handle
-        lock.unlock()
-        guard let flow else { return }
+        guard let flow = handle.withLock({ $0 }) else { return }
         // A `.cursor` send is the lane's flow (re-)prime: it rides the CURSOR socket with the
         // channelID-only framing (no tag), so the host (re-)stamps this lane's cursor reply flow.
         // The session re-primes with every hello and each keepalive tick because the cursor socket
@@ -145,11 +135,9 @@ public final class VideoMuxClientFlow: @unchecked Sendable {
 
     /// Ends the flow. The handle stays live until `deinit` — see the type's header for why.
     public func close() {
-        lock.lock()
-        let flow = handle
-        lock.unlock()
-        // Outside the lock: the close joins both readers, and a callback still in flight takes no
-        // lock of ours but a re-entrant `close` from one would.
+        // Read the handle out, then close OUTSIDE the lock: the close joins both readers, and a
+        // callback still in flight takes no lock of ours but a re-entrant `close` from one would.
+        let flow = handle.withLock { $0 }
         if let flow { slopdesk_video_flow_close(flow) }
     }
 }

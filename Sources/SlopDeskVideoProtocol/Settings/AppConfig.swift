@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import Synchronization
 
 // MARK: - AppConfig (every setting the app runs on, resolved once)
 
@@ -229,24 +230,20 @@ public extension AppConfig {
 
     /// The configuration this process is running on.
     ///
-    /// Loaded on first read and held until ``reload()``. `nonisolated(unsafe)` with a lock rather
-    /// than an actor: every consumer is a synchronous accessor on a hot path (the notification
-    /// gates, the badge gates, the terminal builder), and a lock around a struct copy is cheaper
-    /// than the hop an actor would cost each of them.
+    /// Loaded on first read and held until ``reload()``. A `Mutex` rather than an actor: every
+    /// consumer is a synchronous accessor on a hot path (the notification gates, the badge gates,
+    /// the terminal builder), and a lock around a struct copy is cheaper than the hop an actor
+    /// would cost each of them.
     static var current: AppConfig {
         get {
-            lock.lock()
-            defer { lock.unlock() }
-            if let loaded { return loaded }
-            let fresh = load(path: resolvedPath())
-            loaded = fresh
-            return fresh
+            loaded.withLock { held in
+                if let held { return held }
+                let fresh = load(path: resolvedPath())
+                held = fresh
+                return fresh
+            }
         }
-        set {
-            lock.lock()
-            defer { lock.unlock() }
-            loaded = newValue
-        }
+        set { loaded.withLock { $0 = newValue } }
     }
 
     /// Re-read the file and publish it as ``current``, answering what was read.
@@ -371,7 +368,8 @@ public extension AppConfig {
     }
 }
 
-/// The held configuration and the lock over it. File-private state on an `enum` extension is not
-/// expressible, so both live here.
-private nonisolated(unsafe) var loaded: AppConfig?
-private let lock = NSLock()
+/// The held configuration. File-private state on an `enum` extension is not expressible, so it
+/// lives here. A `Mutex` rather than a `nonisolated(unsafe) var` beside a lock: the value and the
+/// lock over it are the same declaration, so there is no unguarded spelling of the variable for a
+/// later reader to reach for.
+private let loaded = Mutex<AppConfig?>(nil)

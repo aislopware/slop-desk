@@ -2,6 +2,7 @@ import CSlopDeskFFI
 import Foundation
 import SlopDeskProtocol
 import SlopDeskTransport
+import Synchronization
 
 /// What one pane's session driver can be asked to do, and nothing about how it does it.
 ///
@@ -77,33 +78,29 @@ public enum PaneDialOutcome: Sendable, Equatable {
 ///
 /// The sinks are installed once, before the driver can dial, and read from the callback threads
 /// afterwards; the lock covers that one publication rather than a hot path.
-private final class PaneSinks: @unchecked Sendable {
-    private let lock = NSLock()
-    private var events: (@Sendable (SlopDeskClient.Event) -> Void)?
-    private var wake: (@Sendable () -> Void)?
+private final class PaneSinks: Sendable {
+    private struct Sinks {
+        var events: (@Sendable (SlopDeskClient.Event) -> Void)?
+        var wake: (@Sendable () -> Void)?
+    }
+
+    private let sinks = Mutex(Sinks())
 
     func install(
         events: @escaping @Sendable (SlopDeskClient.Event) -> Void,
         wake: @escaping @Sendable () -> Void,
     ) {
-        lock.lock()
-        defer { lock.unlock() }
-        self.events = events
-        self.wake = wake
+        sinks.withLock { $0 = Sinks(events: events, wake: wake) }
     }
 
+    /// Both readers COPY the sink out and call it unlocked: a sink runs arbitrary embedder code
+    /// and must not be able to re-enter the publication it was read from.
     func emit(_ event: SlopDeskClient.Event) {
-        lock.lock()
-        let sink = events
-        lock.unlock()
-        sink?(event)
+        sinks.withLock { $0.events }?(event)
     }
 
     func woke() {
-        lock.lock()
-        let sink = wake
-        lock.unlock()
-        sink?()
+        sinks.withLock { $0.wake }?()
     }
 }
 

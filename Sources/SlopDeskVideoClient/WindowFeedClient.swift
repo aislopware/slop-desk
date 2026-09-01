@@ -1,6 +1,7 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import Foundation
 import SlopDeskVideoProtocol
+import Synchronization
 
 /// One host answer on the window-feed lane (docs/45): either "you're current" or a fully assembled
 /// snapshot. Arrives in response to a renewal AND — Phase 2 — as an unsolicited push on a
@@ -92,38 +93,36 @@ public final class WindowFeedChannel {
 /// lock, and complete answers hop to the MainActor callback. Long-lived (unlike the one-shot
 /// discovery `ReplyBox`) — pushes keep arriving for the lane's whole lifetime; `invalidate()` stops
 /// forwarding after `close()` so a late datagram can't call into a torn-down feed.
-private final class WindowFeedPushBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var assembler = WindowFeedAssembler()
-    private var onAnswer: (@MainActor (WindowFeedAnswer) -> Void)?
+private final class WindowFeedPushBox: Sendable {
+    /// The half-assembled snapshot and the sink that will receive it are one fact — an invalidated
+    /// box must not fold either — so they share the `Mutex` that makes this a CHECKED `Sendable`.
+    private struct Feed {
+        var assembler = WindowFeedAssembler()
+        var onAnswer: (@MainActor (WindowFeedAnswer) -> Void)?
+    }
+
+    private let feed: Mutex<Feed>
 
     init(onAnswer: @escaping @MainActor (WindowFeedAnswer) -> Void) {
-        self.onAnswer = onAnswer
+        feed = Mutex(Feed(onAnswer: onAnswer))
     }
 
     func deliver(_ answer: WindowFeedAnswer) {
-        lock.lock()
-        let sink = onAnswer
-        lock.unlock()
-        guard let sink else { return }
+        guard let sink = feed.withLock({ $0.onAnswer }) else { return }
         Task { @MainActor in sink(answer) }
     }
 
     func fold(generation: UInt32, chunkIndex: UInt8, chunkCount: UInt8, records: [HostWindowRecord]) {
-        lock.lock()
-        let complete = assembler.fold(
-            generation: generation, chunkIndex: chunkIndex, chunkCount: chunkCount, records: records,
-        )
-        lock.unlock()
+        let complete = feed.withLock {
+            $0.assembler.fold(
+                generation: generation, chunkIndex: chunkIndex, chunkCount: chunkCount, records: records,
+            )
+        }
         if let complete {
             deliver(.snapshot(generation: complete.generation, records: complete.records))
         }
     }
 
-    func invalidate() {
-        lock.lock()
-        onAnswer = nil
-        lock.unlock()
-    }
+    func invalidate() { feed.withLock { $0.onAnswer = nil } }
 }
 #endif

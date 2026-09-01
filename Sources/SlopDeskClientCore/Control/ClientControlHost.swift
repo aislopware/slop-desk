@@ -29,10 +29,13 @@ import Darwin
 import Foundation
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
+import Synchronization
 
 /// Binds the client control socket and answers it out of the live GUI stores.
 ///
-/// `@unchecked Sendable`: the handle is guarded by an `NSLock`, and the backend is only ever touched
+/// `@unchecked Sendable`, and the two reasons are NOT the listener handle — that lives in a `Mutex`
+/// and needs no help. It is `onLog`, a `var` the app sets before ``start()``, and the backend, which
+/// is only ever touched
 /// inside a main-actor hop (see `BackendBox`, file-scope below).
 public final class ClientControlHost: @unchecked Sendable {
     /// The resolved socket path this host binds — the `SLOPDESK_CLIENT_SOCKET` override, else the
@@ -44,8 +47,10 @@ public final class ClientControlHost: @unchecked Sendable {
     public var onLog: (@Sendable (String) -> Void)?
 
     private let backendBox: BackendBox
-    private let lock = NSLock()
-    private var server: OpaquePointer?
+    /// The bound listener, `nil` until ``start()`` and again after ``stop()``. The `Mutex` is what
+    /// makes both idempotent: the test and the assignment are one hold, so two callers cannot both
+    /// see `nil` and bind the same path twice.
+    private let server = Mutex<OpaquePointer?>(nil)
 
     /// - Parameters:
     ///   - backend: the live-store adapter every verb is answered out of.
@@ -95,30 +100,31 @@ public final class ClientControlHost: @unchecked Sendable {
     /// needs. Throws when the listener could not bind — a path past `sun_path`, or a container this
     /// user cannot write.
     public func start() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        if server != nil { return }
+        try server.withLock { server in
+            guard server == nil else { return }
 
-        // The retain is PERMANENT on the success path, and the door says why: freeing the handle
-        // cannot join a connection thread parked inside the callback, so there is no moment at which
-        // this side can prove nobody is still reading the pointer. One object, once, for a socket
-        // whose lifetime is the app's — the alternative is a release racing a live callback.
-        let retained = Unmanaged.passRetained(backendBox)
-        let bytes = Array(socketPath.utf8)
-        let opened = bytes.withUnsafeBufferPointer { buffer in
-            slopdesk_client_ctl_serve(buffer.baseAddress, buffer.count, retained.toOpaque(), runRequest)
-        }
-        guard let opened else {
-            // Nothing was started and no callback can ever run, so this one IS balanced.
-            retained.release()
-            throw ClientControlSocketError.bindFailed(socketPath)
-        }
-        server = opened
+            // The retain is PERMANENT on the success path, and the door says why: freeing the
+            // handle cannot join a connection thread parked inside the callback, so there is no
+            // moment at which this side can prove nobody is still reading the pointer. One object,
+            // once, for a socket whose lifetime is the app's — the alternative is a release racing
+            // a live callback.
+            let retained = Unmanaged.passRetained(backendBox)
+            let bytes = Array(socketPath.utf8)
+            let opened = bytes.withUnsafeBufferPointer { buffer in
+                slopdesk_client_ctl_serve(buffer.baseAddress, buffer.count, retained.toOpaque(), runRequest)
+            }
+            guard let opened else {
+                // Nothing was started and no callback can ever run, so this one IS balanced.
+                retained.release()
+                throw ClientControlSocketError.bindFailed(socketPath)
+            }
+            server = opened
 
-        // Publish the resolved path so a child the app spawns inherits it. Best-effort: a separately
-        // launched CLI resolves the same default through the same door.
-        setenv("SLOPDESK_CLIENT_SOCKET", socketPath, 1)
-        onLog?("client-control socket listening at \(socketPath)")
+            // Publish the resolved path so a child the app spawns inherits it. Best-effort: a
+            // separately launched CLI resolves the same default through the same door.
+            setenv("SLOPDESK_CLIENT_SOCKET", socketPath, 1)
+            onLog?("client-control socket listening at \(socketPath)")
+        }
     }
 
     /// Stops the listener and unlinks the socket file. Idempotent, and NON-BLOCKING by design.
@@ -128,11 +134,10 @@ public final class ClientControlHost: @unchecked Sendable {
     /// waiting would be the one deadlock the hop is shaped to avoid. The box the callback reaches
     /// through is therefore never released — see ``start()``.
     public func stop() {
-        lock.lock()
-        let opened = server
-        server = nil
-        lock.unlock()
-
+        let opened = server.withLock { server -> OpaquePointer? in
+            defer { server = nil }
+            return server
+        }
         guard let opened else { return }
         slopdesk_client_ctl_free(opened)
     }

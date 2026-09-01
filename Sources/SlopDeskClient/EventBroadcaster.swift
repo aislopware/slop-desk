@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// A multicast ("tee") for ``SlopDeskClient/Event``: fans ONE upstream event source out to
 /// N independent `AsyncStream<Element>` subscribers, each of which sees **every** event.
@@ -20,13 +21,18 @@ import Foundation
 ///   events from that point on — there is no backlog to catch up on. Subscribe before driving
 ///   the events you want to observe.
 /// - **Unbounded buffering per child**, so a slow consumer never drops events.
-/// - **Sendable:** all mutable state is guarded by an `NSLock`; safe to `yield`/`subscribe`
-///   from any isolation domain (the actor yields; `nonisolated` accessors subscribe).
-final class EventBroadcaster<Element: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var children: [Int: AsyncStream<Element>.Continuation] = [:]
-    private var nextID = 0
-    private var finished = false
+/// - **Sendable:** every mutable field lives inside the one `Mutex`, so the conformance is
+///   CHECKED rather than asserted — safe to `yield`/`subscribe` from any isolation domain
+///   (the actor yields; `nonisolated` accessors subscribe). The three fields travel together
+///   because they are one fact: which children are live, and whether the roster is closed.
+final class EventBroadcaster<Element: Sendable>: Sendable {
+    private struct Roster {
+        var children: [Int: AsyncStream<Element>.Continuation] = [:]
+        var nextID = 0
+        var finished = false
+    }
+
+    private let roster = Mutex(Roster())
 
     init() {}
 
@@ -35,45 +41,42 @@ final class EventBroadcaster<Element: Sendable>: @unchecked Sendable {
     /// immediately finished (empty).
     func subscribe() -> AsyncStream<Element> {
         AsyncStream(bufferingPolicy: .unbounded) { continuation in
-            lock.lock()
-            if finished {
-                lock.unlock()
+            let id: Int? = roster.withLock { roster in
+                guard !roster.finished else { return nil }
+                defer { roster.nextID += 1 }
+                roster.children[roster.nextID] = continuation
+                return roster.nextID
+            }
+            guard let id else {
                 continuation.finish()
                 return
             }
-            let id = nextID
-            nextID += 1
-            children[id] = continuation
-            lock.unlock()
 
             continuation.onTermination = { [weak self] _ in
                 guard let self else { return }
-                lock.lock()
-                children[id] = nil
-                lock.unlock()
+                roster.withLock { $0.children[id] = nil }
             }
         }
     }
 
     /// Delivers `element` to every live child subscriber.
+    ///
+    /// The children are COPIED out and yielded to outside the lock: a child's consumer can
+    /// resume synchronously on this thread and call straight back into ``subscribe()``.
     func yield(_ element: Element) {
-        lock.lock()
-        let conts = Array(children.values)
-        lock.unlock()
+        let conts = roster.withLock { Array($0.children.values) }
         for cont in conts { cont.yield(element) }
     }
 
     /// Finishes every live child and rejects further subscriptions (they get an empty
     /// finished stream). Idempotent.
     func finish() {
-        lock.lock()
-        guard !finished else { lock.unlock()
-            return
+        let conts: [AsyncStream<Element>.Continuation] = roster.withLock { roster in
+            guard !roster.finished else { return [] }
+            roster.finished = true
+            defer { roster.children.removeAll() }
+            return Array(roster.children.values)
         }
-        finished = true
-        let conts = Array(children.values)
-        children.removeAll()
-        lock.unlock()
         for cont in conts { cont.finish() }
     }
 }
