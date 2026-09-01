@@ -180,9 +180,19 @@ fmt-shell:
 # EVERY workspace, matching `lint-rust` — the daemons each have their own (see the note there), and a
 # formatter that skips what the linter checks means `just fmt && just lint` fails on its own output.
 
+# The fan-out is `lint-rust`'s, for `lint-rust`'s reason and one more. Seventy-six `cargo fmt`
+# invocations one after another were ~90 s of the inner loop on a ten-core machine — measured, on a
+# tree rustfmt then changed nothing in. Each workspace owns its own `target/`, so there is no build
+# lock to contend on, and rustfmt WRITES only inside the workspace it was pointed at, so two
+# concurrent invocations cannot reach the same file.
+#
+# Output is buffered per workspace and printed only on failure, so a red format run reads as one
+# crate's report rather than seventy-six interleaved ones; xargs exits non-zero when any did.
+
 # Format Rust (latest nightly rustfmt — rust/rustfmt.toml uses unstable options)
 fmt-rust:
-    @for ws in {{RUST_WORKSPACES}}; do (cd $ws && cargo +nightly fmt --all) || exit 1; done
+    @printf '%s\n' {{RUST_WORKSPACES}} | xargs -P 8 -I{} sh -c \
+      'cd {} || exit 1; out=$(cargo +nightly fmt --all 2>&1) || { printf "── {} ──\n%s\n" "$out" >&2; exit 1; }'
 
 # ---------------------------------------------------------------------------- #
 # Autofix (writes) — formatting + every safe lint autocorrect
