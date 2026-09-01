@@ -59,10 +59,11 @@ use slopdesk_wire::MetadataStatus;
 use slopdesk_wire::metadata::MetadataVerb;
 use slopdesk_wire::metadata::codec::{
     AgentSessionInfo, DirEntry, GitStatusPayload, HostVitals, ShellCandidate, ShellCompletionGroup,
-    decode_shell_complete_request, encode_agent_session_list, encode_dir_listing, encode_git_status,
-    encode_host_vitals, encode_shell_complete,
+    WhenceKind, WhenceVerdict, decode_shell_complete_request, decode_whence_request,
+    encode_agent_session_list, encode_dir_listing, encode_git_status, encode_host_vitals,
+    encode_shell_complete, encode_whence,
 };
-use slopdesk_zshcomplete::Answer;
+use slopdesk_zshcomplete::{Answer, Verdicts, WordKind};
 
 /// The directory-listing entry cap.
 ///
@@ -150,9 +151,16 @@ pub trait HostQuerying: Send + Sync + core::fmt::Debug {
     /// was about to answer.
     fn shell_complete(&self, cwd: &str, buffer: &str, cursor: u32) -> Option<Vec<ShellCompletionGroup>>;
 
-    /// Whether this host has a shell the completion bridge can drive at all. `false` makes verb 23
-    /// answer `notFound` — a PERMANENT no, distinct from the transient one above.
+    /// Whether this host has a shell the completion bridge can drive at all. `false` makes verbs 23
+    /// and 24 answer `notFound` — a PERMANENT no, distinct from the transient one above.
     fn shell_bridged(&self) -> bool;
+
+    /// What the user's OWN shell says each of `words` IS, asked as if the shell sat in `cwd`.
+    ///
+    /// The same three answers as [`HostQuerying::shell_complete`], for the same reason and through
+    /// the same `shell_bridged` door. It never starts the bridge: a colour that arrives seconds
+    /// later is worth nothing, so `None` is the honest answer while the shell is warming.
+    fn whence_words(&self, cwd: &str, words: &[String]) -> Option<Vec<WhenceVerdict>>;
 }
 
 /// The metadata performer: this reducer for its ten verbs, a delegate for the rest.
@@ -341,6 +349,7 @@ impl MetadataPerformer for HostMetadata {
             MetadataVerb::ReadAgentSession => self.read_agent_session(request.payload),
             MetadataVerb::HostInfo | MetadataVerb::HostVitals => self.host_verb(verb),
             MetadataVerb::ShellComplete => self.shell_complete(pane, request.payload),
+            MetadataVerb::WhenceWords => self.whence_words(pane, request.payload),
             // Unreachable in production: every verb below is claimed by a named performer and the
             // routing table sends it there before this call. Reaching one is a ROUTING bug, and the
             // answer is a refusal rather than a best effort — this reducer must never perform a
@@ -383,6 +392,29 @@ impl HostMetadata {
             .shell_complete(&cwd, &buffer, cursor)
             .map_or_else(MetadataAnswer::failed, |groups| {
                 MetadataAnswer::ok(encode_shell_complete(&groups))
+            })
+    }
+
+    /// Verb 24: a batch of typed words in, what the user's own shell says each one IS out.
+    ///
+    /// The same shape as verb 23 above, down to taking the directory from the PANE — and it has to
+    /// be the same directory, because `./deploy` is a command in one repository and nothing in the
+    /// one beside it.
+    fn whence_words(&self, pane: PaneHandles, payload: &[u8]) -> MetadataAnswer {
+        if !self.query.shell_bridged() {
+            return not_found();
+        }
+        let Ok(words) = decode_whence_request(payload) else {
+            return MetadataAnswer::failed();
+        };
+        let cwd = match self.rooted(pane) {
+            Ok(cwd) => cwd,
+            Err(refusal) => return refusal,
+        };
+        self.query
+            .whence_words(&cwd, &words)
+            .map_or_else(MetadataAnswer::failed, |verdicts| {
+                MetadataAnswer::ok(encode_whence(&verdicts))
             })
     }
 }
@@ -523,6 +555,29 @@ impl HostQuerying for HostQueries {
 
     fn shell_bridged(&self) -> bool {
         self.shell.bridged()
+    }
+
+    fn whence_words(&self, cwd: &str, words: &[String]) -> Option<Vec<WhenceVerdict>> {
+        match self.shell.whence(cwd, words) {
+            Verdicts::Words(words) => Some(words.iter().map(wire_verdict).collect()),
+            Verdicts::NotReady | Verdicts::NotZsh => None,
+        }
+    }
+}
+
+/// One captured verdict as the wire's record. See [`wire_group`] for why there are two types.
+fn wire_verdict(verdict: &slopdesk_zshcomplete::WordVerdict) -> WhenceVerdict {
+    WhenceVerdict {
+        word: verdict.word.clone(),
+        kind: match verdict.kind {
+            WordKind::None => WhenceKind::None,
+            WordKind::Command => WhenceKind::Command,
+            WordKind::Hashed => WhenceKind::Hashed,
+            WordKind::Alias => WhenceKind::Alias,
+            WordKind::Function => WhenceKind::Function,
+            WordKind::Builtin => WhenceKind::Builtin,
+            WordKind::Reserved => WhenceKind::Reserved,
+        },
     }
 }
 

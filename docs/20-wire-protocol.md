@@ -200,9 +200,12 @@ never offers or falls back to another version.
     font prefs into the shared workbench settings), plus `21` ensureSimulatorServer
     (**side-effecting** — lazily spawns/reports the shared simulator server behind the right
     panel's Simulators tab), `22` ensureAndroidBridge (**side-effecting** — lazily starts/reports
-    the shared Android bridge behind the right panel's Android tab), and `23` shellComplete
+    the shared Android bridge behind the right panel's Android tab), and the two **captive-shell**
+    verbs `23` shellComplete
     (a **pure read** returning what the user's OWN shell completion would offer at a caret —
-    zsh only, `docs/68` §14). `payload` is the
+    zsh only, `docs/68` §14) and `24` whenceWords (a **pure read** returning what the user's own
+    shell says each typed command word IS, so the prompt can paint a typo — zsh only,
+    `docs/68` §11). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`/
@@ -214,7 +217,15 @@ never offers or falls back to another version.
     for `setClipboard`/`readClipboard` (below), and `[u32 cursor][utf8 buffer]` for `shellComplete`
     — the caret is a CHARACTER index, not a byte one, because the shell's own caret is measured in
     characters; the working directory is NOT in the payload, it comes from the pane exactly as
-    `gitStatus`'s does.
+    `gitStatus`'s does. `whenceWords` (24) takes `[u16 count]` then that many length-prefixed UTF-8
+    words and answers `[u16 count]` then, per entry, `[u16 len][utf8 word][u8 kind]` where `kind` is
+    zsh's own `whence -w` vocabulary — `0` none, `1` command, `2` hashed, `3` alias, `4` function,
+    `5` builtin, `6` reserved. A kind byte a build does not know reads back as `unknown` (255) and
+    NOT as `none`, which is the whole forward-compatibility rule here: `none` is the shell saying it
+    found nothing and is the one verdict that paints, so folding an unrecognised category into it
+    would make a future zsh's own word read as a typo on every older client. The batch is never
+    failed for one strange byte — the verdicts beside it are understood perfectly well. It takes its working directory from the pane the same
+    way 23 does, and for the same reason: `./deploy` resolves in one repository and not the next.
   - **`openPath` (9) / `revealPath` (10) are the ONLY side-effecting verbs** (E10 — the ⌘click /
     ⌘⇧click link actions; the file lives on the host Mac, not the client). The host opens the path in its
     default app / Finder (`NSWorkspace.open`) or reveals it in Finder

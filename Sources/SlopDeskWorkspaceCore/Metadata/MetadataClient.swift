@@ -343,6 +343,26 @@ public final class MetadataClient {
         }
     }
 
+    /// What the user's OWN shell says each of `words` IS (``MetadataVerb/whenceWords``).
+    ///
+    /// The payload rides RAW in both directions, for the same reason ``shellComplete(cursor:buffer:)``'s
+    /// does: the request body is built by `slopdesk_prompt_whence_request` out of the editor's own
+    /// lex, and the answer is read by `slopdesk_prompt_set_word_verdicts`. Neither side of this
+    /// method has a decision to make about the bytes, and spelling the verb's frame here a second
+    /// time would be spelling it in a second language for nobody.
+    ///
+    /// The same three answers as the completion verb, and the caller latches ``noShell`` ONCE for
+    /// both — "this host's shell is not zsh" is one fact about the host, not two.
+    public func whenceWords(request body: Data) async -> ShellCompletionAnswer {
+        let (status, payload) = await request(.whenceWords, payload: body)
+        switch status {
+        case .ok: return .groups(payload)
+        case .error: return .notReady
+        case .notFound,
+             .unsupportedVerb: return .noShell
+        }
+    }
+
     // MARK: Core round-trip
 
     /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed.

@@ -258,6 +258,9 @@ typedef struct SlopDeskPrompt SlopDeskPrompt;
 #define SLOPDESK_PROMPT_TOKEN_OPERATOR 6u
 #define SLOPDESK_PROMPT_TOKEN_REDIRECTION 7u
 #define SLOPDESK_PROMPT_TOKEN_COMMENT 8u
+/* A command name the user's shell could not find. NEVER produced by the lexer — it is applied from
+ * a _set_word_verdicts answer, which is why it is a token kind and not a second parallel list. */
+#define SLOPDESK_PROMPT_TOKEN_UNKNOWN_COMMAND 9u
 
 /* The one construct the document left open, INNERMOST first — inside `$(echo '` the thing that
  * needs closing is the quote. NOTHING is what makes Enter run rather than continue. */
@@ -381,6 +384,7 @@ typedef struct {
   size_t   selected_candidate;
   size_t   history_count;
   size_t   suggestion_len;      /* bytes _suggestion would answer; 0 = no ghost */
+  uint64_t verdict_generation;  /* quote when asking _whence_request; hand back to _set_word_verdicts */
 } SlopDeskPromptState;
 
 /* One coloured run, as a byte range into _text. */
@@ -410,6 +414,16 @@ void   slopdesk_prompt_free(SlopDeskPrompt *handle);
 SlopDeskPromptState slopdesk_prompt_state(SlopDeskPrompt *handle);
 size_t slopdesk_prompt_text(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
 size_t slopdesk_prompt_spans(SlopDeskPrompt *handle, SlopDeskPromptSpan *out, size_t cap);
+
+/* Command validity — the one colour the lexer cannot derive from the text.
+ * _whence_request answers the verb-24 request BODY for the command words nothing has answered for
+ * yet (0 = nothing to ask); send it, then hand the answer body back with the `verdict_generation`
+ * read when it was SENT. An answer quoting an older generation is dropped: running a command is
+ * what empties the table, and one still in flight across that run would refill it with verdicts the
+ * run had just made false. */
+size_t slopdesk_prompt_whence_request(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
+void   slopdesk_prompt_set_word_verdicts(SlopDeskPrompt *handle, const uint8_t *payload,
+                                         size_t payload_len, uint64_t generation);
 
 /* Editing. _insert is one typed run; _paste is a whole clipboard, whose newlines CONTINUE the
  * document rather than submitting it. */

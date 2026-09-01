@@ -41,6 +41,8 @@
 pub mod parse;
 pub mod session;
 pub mod setup;
+pub mod whence;
 
 pub use parse::{CandidateGroup, MAX_CANDIDATES, MAX_GROUPS, ShellCandidate};
-pub use session::{Answer, DEADLINE, ZshComplete};
+pub use session::{Answer, DEADLINE, Verdicts, ZshComplete};
+pub use whence::{WordKind, WordVerdict};

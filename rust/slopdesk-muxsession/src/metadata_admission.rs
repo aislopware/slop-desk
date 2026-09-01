@@ -152,7 +152,8 @@ pub const fn performer(verb: u8) -> Performer {
         | MetadataVerb::ReadAgentSession
         | MetadataVerb::HostInfo
         | MetadataVerb::HostVitals
-        | MetadataVerb::ShellComplete => Performer::Builder,
+        | MetadataVerb::ShellComplete
+        | MetadataVerb::WhenceWords => Performer::Builder,
     }
 }
 

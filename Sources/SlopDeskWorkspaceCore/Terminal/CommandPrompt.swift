@@ -277,6 +277,13 @@ public enum PromptToken: Sendable, Equatable {
     case redirection
     /// `#` to end of line.
     case comment
+    /// A command name the user's shell could not find.
+    ///
+    /// Never produced by the lexer: it is the one colour that depends on a fact from off this
+    /// machine, applied from a ``MetadataVerb/whenceWords`` answer. A word nothing has answered for
+    /// yet stays ``commandName`` — a prompt that flashed red for the 3 ms before the answer landed
+    /// would be worse than one that never coloured at all.
+    case unknownCommand
 
     /// The case one `SLOPDESK_PROMPT_TOKEN_*` value names. Unknown reads as ``argument``, which is
     /// the neutral colour — a header from a newer build paints plainly rather than crashing.
@@ -290,6 +297,7 @@ public enum PromptToken: Sendable, Equatable {
         case UInt32(SLOPDESK_PROMPT_TOKEN_OPERATOR): .operator
         case UInt32(SLOPDESK_PROMPT_TOKEN_REDIRECTION): .redirection
         case UInt32(SLOPDESK_PROMPT_TOKEN_COMMENT): .comment
+        case UInt32(SLOPDESK_PROMPT_TOKEN_UNKNOWN_COMMAND): .unknownCommand
         default: .argument
         }
     }
@@ -890,6 +898,38 @@ public final class CommandPrompt {
                 handle,
                 bytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
                 bytes.count,
+            )
+        }
+    }
+
+    /// The ``MetadataVerb/whenceWords`` request body for the command words nothing has answered for
+    /// yet, or `nil` when there is nothing to ask about.
+    ///
+    /// Bytes, not words: Rust builds the frame out of its own lex and reads the answer back, so this
+    /// side carries the payload and holds no opinion about it. Ask when the document CHANGED — the
+    /// answer is empty for most keystrokes, since a word is only ever asked about once.
+    public var whenceRequest: Data? {
+        let body = Data(ffiAnswerBytes { slopdesk_prompt_whence_request(handle, $0, $1) })
+        return body.isEmpty ? nil : body
+    }
+
+    /// The generation to quote with ``whenceRequest`` and hand back to ``setWordVerdicts(_:generation:)``.
+    public var verdictGeneration: UInt64 { state.verdict_generation }
+
+    /// Takes a ``MetadataVerb/whenceWords`` answer, dropping it whole unless `generation` is still
+    /// current.
+    ///
+    /// It stops being current the moment a command RUNS, which is the one event that can move every
+    /// verdict at once — `cargo install ripgrep` makes `rg` resolve, `unalias gst` makes `gst` stop.
+    /// An answer still in flight across that run would otherwise refill the table with verdicts the
+    /// run had just made false.
+    public func setWordVerdicts(_ payload: Data, generation: UInt64) {
+        payload.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            slopdesk_prompt_set_word_verdicts(
+                handle,
+                bytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                bytes.count,
+                generation,
             )
         }
     }

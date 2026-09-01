@@ -71,6 +71,16 @@ pub enum TokenKind {
     Redirection,
     /// `#` to end of line, when the `#` began a word.
     Comment,
+    /// A command name the user's shell could not find — not an alias, not a function, not a
+    /// builtin, not on `PATH`.
+    ///
+    /// ⚠️ **[`lex`] never produces this.** Whether a word resolves is a fact about the machine the
+    /// shell runs on, and this crate does no I/O; the kind is applied afterwards by
+    /// [`crate::prompt::validity::overlaid`] from answers the host supplied. It lives in this enum
+    /// rather than beside those answers because a span carries exactly one kind and the view paints
+    /// from exactly one table — a second, parallel "and also it is unknown" channel would make
+    /// every caller join two lists to decide one colour.
+    UnknownCommand,
 }
 
 /// One coloured run of the document, in bytes.

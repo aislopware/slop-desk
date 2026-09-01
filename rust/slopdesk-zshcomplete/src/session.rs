@@ -30,6 +30,7 @@ use std::{process, thread};
 
 use crate::parse::{self, CandidateGroup};
 use crate::setup::SETUP;
+use crate::whence::{self, WHENCE_SETUP, WordVerdict};
 
 /// How long a request may wait for the shell before it is given up on.
 ///
@@ -63,6 +64,24 @@ pub enum Answer {
     /// This host's login shell is not zsh. PERMANENT for the life of the host, and distinct from
     /// [`Answer::NotReady`] precisely so a client can stop asking rather than retry a shell that
     /// will never exist. `docs/DECISIONS.md` item (6) keeps the bridge zsh-only.
+    NotZsh,
+}
+
+/// What one [`ZshComplete::whence`] request produced.
+///
+/// Its own enum rather than a variant of [`Answer`], because the two verbs answer different
+/// questions and a caller that took `Answer` would have to handle a `Groups` it can never get. The
+/// two "no" arms carry the same meanings as [`Answer`]'s, and deliberately so — the fact that this
+/// host has no zsh is one fact, and a client latches it once for both verbs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdicts {
+    /// zsh answered. One record per word it was asked about, in the order they were asked, minus
+    /// any the frame could not carry.
+    Words(Vec<WordVerdict>),
+    /// The shell is not warm yet, or this request did not finish inside [`whence::DEADLINE`].
+    /// TRANSIENT.
+    NotReady,
+    /// This host's login shell is not zsh. PERMANENT, exactly as [`Answer::NotZsh`].
     NotZsh,
 }
 
@@ -178,6 +197,34 @@ impl ZshComplete {
             state.live = None;
         }
         Answer::NotReady
+    }
+
+    /// What the user's own shell says each of `words` IS, asked from `cwd`.
+    ///
+    /// The question a prompt paints an unknown command from, and it rides this shell for the reason
+    /// [`crate::whence`] opens with: `PATH` is the small half of the answer.
+    ///
+    /// ⚠️ **A miss here is not a strike.** [`whence::DEADLINE`] is a fraction of [`DEADLINE`],
+    /// because this runs no completion function and has no business being slow — but that also
+    /// makes it far likelier to be missed by a shell that is merely busy, and two such misses
+    /// under [`STRIKES_BEFORE_RESPAWN`] would `SIGKILL` a perfectly healthy shell and cost the
+    /// user a 4-second warm-up. The strike counter exists to retire a WEDGED shell, and a
+    /// wedged shell misses completions too; letting the tighter deadline vote would be reading
+    /// a different fact through the same counter.
+    ///
+    /// It does not start the shell either: the first request is a completion or nothing, so a
+    /// colour never pays for a warm-up it would not live long enough to use.
+    pub fn whence(&self, cwd: &str, words: &[String]) -> Verdicts {
+        if self.shell.is_none() {
+            return Verdicts::NotZsh;
+        }
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(live) = state.live.as_mut() else {
+            return Verdicts::NotReady;
+        };
+        let answered = live.whence(cwd, words);
+        drop(state); // The next request may go out while this one is being shaped into an answer.
+        answered.map_or(Verdicts::NotReady, Verdicts::Words)
     }
 }
 
@@ -310,35 +357,40 @@ impl Live {
         None
     }
 
-    /// One request, start to finish. `None` on a deadline miss.
-    fn request(
+    /// The request path, whole, for every widget bound in the setup. `None` on a deadline miss.
+    ///
+    /// ⚠️ **One function and not one per verb.** The `dirty` contract is the reason: an abandoned
+    /// request keeps writing, so the answer file must not be truncated while it is set — and the
+    /// two verbs share that ONE file, so a late completion record and the next whence request
+    /// are the same race as two completions. A second hand-copied poll loop is where that check
+    /// goes missing.
+    ///
+    /// `body` is given the sequence because every frame's first line is it; `key` is the widget's
+    /// binding; `answered` is the verb's own reader, which returns `None` until its `END` lands.
+    fn ask<T>(
         &mut self,
-        cwd: &str,
-        buffer: &str,
-        cursor: u32,
+        body: impl FnOnce(u64) -> String,
+        key: &[u8],
         deadline: Duration,
-    ) -> Option<Vec<CandidateGroup>> {
+        answered: impl Fn(&str, u64) -> Option<T>,
+    ) -> Option<T> {
         self.seq += 1;
         let seq = self.seq;
-        // Line 1 is the sequence, 2 the caret, 3 the directory, and everything after it the buffer
-        // — joined back with newlines by the widget, so a multi-line command survives the trip and
-        // no text ever has to be escaped for a terminal.
-        let body = format!("{seq}\n{cursor}\n{cwd}\n{buffer}\n");
         if !self.dirty {
             // Safe only because the previous request finished: nothing else holds this file open
             // for writing.
             drop(fs::write(&self.output, ""));
         }
-        fs::write(&self.request, body).ok()?;
-        // `^X^A` is what the setup bound the drive widget to. One keystroke rather than a typed
-        // command, so the request's text never crosses the terminal at all.
-        self.master.write_all(b"\x18\x01").ok()?;
+        fs::write(&self.request, body(seq)).ok()?;
+        // One keystroke rather than a typed command, so the request's text never crosses the
+        // terminal at all.
+        self.master.write_all(key).ok()?;
 
         let until = Instant::now() + deadline;
         loop {
-            if let Some(groups) = parse::answer(&read(&self.output), seq) {
+            if let Some(answer) = answered(&read(&self.output), seq) {
                 self.dirty = false;
-                return Some(groups);
+                return Some(answer);
             }
             if Instant::now() >= until {
                 self.dirty = true;
@@ -347,7 +399,39 @@ impl Live {
             thread::sleep(POLL);
         }
     }
+
+    /// One completion request, start to finish.
+    fn request(
+        &mut self,
+        cwd: &str,
+        buffer: &str,
+        cursor: u32,
+        deadline: Duration,
+    ) -> Option<Vec<CandidateGroup>> {
+        // Line 1 is the sequence, 2 the caret, 3 the directory, and everything after it the buffer
+        // — joined back with newlines by the widget, so a multi-line command survives the trip and
+        // no text ever has to be escaped for a terminal.
+        self.ask(
+            |seq| format!("{seq}\n{cursor}\n{cwd}\n{buffer}\n"),
+            COMPLETE_KEY,
+            deadline,
+            parse::answer,
+        )
+    }
+
+    /// One whence request, start to finish.
+    fn whence(&mut self, cwd: &str, words: &[String]) -> Option<Vec<WordVerdict>> {
+        self.ask(
+            |seq| whence::request(seq, cwd, words),
+            whence::DRIVE_KEY,
+            whence::DEADLINE,
+            whence::answer,
+        )
+    }
 }
+
+/// The keystroke the setup bound the completion widget to.
+const COMPLETE_KEY: &[u8] = b"\x18\x01";
 
 impl Drop for Live {
     fn drop(&mut self) {
@@ -402,9 +486,9 @@ fn session_directory() -> Option<PathBuf> {
 /// writes one into whoever's home directory the suite happens to run under.
 fn script(rc: &Rc) -> String {
     match *rc {
-        Rc::Users => SETUP.to_owned(),
+        Rc::Users => format!("{SETUP}\n{WHENCE_SETUP}\n"),
         Rc::Synthetic(ref prelude) => {
-            format!("autoload -Uz compinit\ncompinit -D\n{SETUP}\n{prelude}\n")
+            format!("autoload -Uz compinit\ncompinit -D\n{SETUP}\n{WHENCE_SETUP}\n{prelude}\n")
         },
     }
 }

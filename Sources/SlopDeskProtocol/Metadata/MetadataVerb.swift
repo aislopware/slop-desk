@@ -222,6 +222,21 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// — stop asking). A client that could not tell the last two apart would either poll for ever or
     /// abandon a shell that was about to answer. zsh only, by decision — see `docs/68` §11.
     case shellComplete = 23
+    /// **Pure read.** What the user's OWN shell says each of a batch of words IS — an alias, a
+    /// function, a builtin, a reserved word, an executable, or nothing. Request payload:
+    /// `[u16 wordCount]` then per word `[str word]`. Response: `[u16 count]` then per verdict
+    /// `[str word][u8 kind]`, the word ECHOED because the client's cache is keyed by text and the
+    /// answer is asynchronous — the user keeps typing through the round trip. The working directory
+    /// is absent for the same reason as ``shellComplete``'s: it comes from the pane.
+    ///
+    /// The same three statuses as ``shellComplete``, meaning the same three things, and a client
+    /// latches the permanent one ONCE for both — "this host's shell is not zsh" is one fact.
+    ///
+    /// Separate from ``shellComplete`` because it is a different question with a different deadline:
+    /// a completion is one caret's worth of work a user is waiting on, and this is a colour for a
+    /// line already typed. Folding them would make every keystroke's completion carry a batch it
+    /// never asked for. See `docs/68` §11.
+    case whenceWords = 24
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

@@ -71,11 +71,20 @@ pub enum MetadataVerb {
     /// **Pure read.** What the user's OWN shell completion would offer at a caret. Request: the
     /// caret's character index and the command line. Response: a shell-completion answer.
     ShellComplete = 23,
+    /// **Pure read.** What the user's OWN shell says each of a batch of words IS — an alias, a
+    /// function, a builtin, a reserved word, an executable, or nothing. Request: the words, one per
+    /// line. Response: a verdict per word.
+    ///
+    /// Separate from [`MetadataVerb::ShellComplete`] because it is a different question with a
+    /// different deadline: a completion is one caret's worth of work a user is waiting on, and this
+    /// is a colour for a line already typed. Folding them would make every keystroke's completion
+    /// carry a batch it did not ask for.
+    WhenceWords = 24,
 }
 
 impl MetadataVerb {
     /// Every verb this build routes, in wire order.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::Processes,
         Self::Ports,
         Self::Cwd,
@@ -99,6 +108,7 @@ impl MetadataVerb {
         Self::EnsureSimulatorServer,
         Self::EnsureAndroidBridge,
         Self::ShellComplete,
+        Self::WhenceWords,
     ];
 
     /// The verb for `byte`, or `None` when this build serves nothing under it.
@@ -132,6 +142,7 @@ impl MetadataVerb {
             21 => Some(Self::EnsureSimulatorServer),
             22 => Some(Self::EnsureAndroidBridge),
             23 => Some(Self::ShellComplete),
+            24 => Some(Self::WhenceWords),
             _ => None,
         }
     }
@@ -209,7 +220,7 @@ mod tests {
 
     #[test]
     fn a_verb_this_build_does_not_serve_is_none_rather_than_a_guess() {
-        for byte in [0_u8, 24, 200, 0xFF] {
+        for byte in [0_u8, 25, 200, 0xFF] {
             assert_eq!(MetadataVerb::from_byte(byte), None);
         }
     }

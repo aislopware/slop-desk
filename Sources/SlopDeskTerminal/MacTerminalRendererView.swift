@@ -1565,7 +1565,14 @@ extension MacTerminalRendererView: @MainActor TerminalSurfaceHosting {
             composition: { [weak self] in self?.markedComposition },
         )
         promptBand = band
-        promptDidChange = { [weak band] in band?.refresh() }
+        // Repaint, then ask the host's shell about any command word on the line it has not ruled on
+        // yet. The ask is free when there is nothing to ask — ``CommandPrompt/whenceRequest`` is nil
+        // once every word has a verdict — so hanging it off the edit hook costs a cursor move
+        // nothing and needs no second "did the document change" signal.
+        promptDidChange = { [weak band, weak self] in
+            band?.refresh()
+            self?.model?.askShellAboutTypedCommands { [weak band] in band?.refresh() }
+        }
         return band
     }
 

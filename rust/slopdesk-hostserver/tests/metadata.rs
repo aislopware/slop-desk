@@ -11,6 +11,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::indexing_slicing,
     reason = "a panic in a test is the failure report, not a fault"
 )]
 
@@ -25,8 +26,9 @@ use slopdesk_wire::MetadataStatus;
 use slopdesk_wire::metadata::MetadataVerb;
 use slopdesk_wire::metadata::codec::{
     AgentSessionInfo, DirEntry, GitStatusPayload, HostVitals, ShellCandidate, ShellCompletionGroup,
-    decode_agent_session_list, decode_dir_listing, decode_git_status, decode_host_vitals,
-    decode_shell_complete, encode_shell_complete_request,
+    WhenceKind, WhenceVerdict, decode_agent_session_list, decode_dir_listing, decode_git_status,
+    decode_host_vitals, decode_shell_complete, decode_whence, encode_shell_complete_request,
+    encode_whence_request,
 };
 
 // MARK: - The door a test holds
@@ -50,6 +52,7 @@ struct Fake {
     vitals: Option<HostVitals>,
     completion: Option<Vec<ShellCompletionGroup>>,
     bridged: bool,
+    verdicts: Option<Vec<WhenceVerdict>>,
 }
 
 impl Fake {
@@ -93,6 +96,16 @@ impl Fake {
                 }],
             }]),
             bridged: true,
+            verdicts: Some(vec![
+                WhenceVerdict {
+                    word: String::from("gst"),
+                    kind: WhenceKind::Alias,
+                },
+                WhenceVerdict {
+                    word: String::from("nope"),
+                    kind: WhenceKind::None,
+                },
+            ]),
         }
     }
 
@@ -159,6 +172,11 @@ impl HostQuerying for Fake {
 
     fn shell_bridged(&self) -> bool {
         self.bridged
+    }
+
+    fn whence_words(&self, cwd: &str, words: &[String]) -> Option<Vec<WhenceVerdict>> {
+        self.note(&format!("whence_words({cwd}, {})", words.join(" ")));
+        self.verdicts.clone()
     }
 }
 
@@ -731,5 +749,94 @@ fn a_pane_with_no_working_directory_completes_nothing_rather_than_completing_els
             .asked()
             .iter()
             .any(|call| call.starts_with("shell_complete"))
+    );
+}
+
+// MARK: - WhenceWords
+
+/// The same three answers as verb 23, and the same pane-owned directory — `./deploy` is a command
+/// in one repository and nothing in the one beside it, so a verdict asked from the wrong place is
+/// confident nonsense rather than a near miss.
+#[test]
+fn a_whence_request_is_answered_in_the_panes_own_directory() {
+    let wired = Wired::over(Fake::answering());
+    let answer = wired.ask(
+        MetadataVerb::WhenceWords,
+        &encode_whence_request(&[String::from("gst"), String::from("nope")]),
+    );
+    assert_eq!(status_of(&answer), MetadataStatus::Ok);
+    assert!(
+        wired
+            .asked()
+            .contains(&String::from("whence_words(/repo, gst nope)"))
+    );
+    let verdicts = decode_whence(&answer.payload).expect("the reducer encodes what the codec decodes");
+    assert_eq!(verdicts.len(), 2);
+    assert_eq!(
+        verdicts[0].kind,
+        WhenceKind::Alias,
+        "the kind no PATH walk could see"
+    );
+    assert!(!verdicts[1].kind.resolves(), "the one verdict a prompt paints");
+}
+
+/// A host with no zsh is a PERMANENT `notFound` and a warming one an `error`, exactly as verb 23 —
+/// and the client latches the first for BOTH verbs, so the two must agree.
+#[test]
+fn a_whence_request_tells_the_permanent_no_from_the_transient_one() {
+    let unbridged = Wired::over(Fake {
+        bridged: false,
+        ..Fake::answering()
+    });
+    let answer = unbridged.ask(MetadataVerb::WhenceWords, &encode_whence_request(&[]));
+    assert_eq!(status_of(&answer), MetadataStatus::NotFound);
+    assert!(answer.payload.is_empty());
+    assert!(
+        !unbridged
+            .asked()
+            .iter()
+            .any(|call| call.starts_with("whence_words"))
+    );
+
+    let warming = Wired::over(Fake {
+        verdicts: None,
+        ..Fake::answering()
+    });
+    assert_eq!(
+        status_of(&warming.ask(MetadataVerb::WhenceWords, &encode_whence_request(&[]))),
+        MetadataStatus::Error
+    );
+}
+
+/// A payload that is not a whence request must not reach the shell: the alternative is asking about
+/// words the request never sent.
+#[test]
+fn a_malformed_whence_payload_never_reaches_the_shell() {
+    let wired = Wired::over(Fake::answering());
+    // A count of 9 with nothing behind it — the count-before-alloc guard's own case.
+    let answer = wired.ask(MetadataVerb::WhenceWords, &[0, 9]);
+    assert_eq!(status_of(&answer), MetadataStatus::Error);
+    assert!(!wired.asked().iter().any(|call| call.starts_with("whence_words")));
+}
+
+/// A pane whose cwd cannot be read has nowhere to resolve a relative command from.
+#[test]
+fn a_pane_with_no_working_directory_answers_no_verdicts_rather_than_the_wrong_ones() {
+    let rootless = Wired::over(Fake {
+        cwd: None,
+        ..Fake::answering()
+    });
+    assert_eq!(
+        status_of(&rootless.ask(
+            MetadataVerb::WhenceWords,
+            &encode_whence_request(&[String::from("ls")])
+        )),
+        MetadataStatus::Error
+    );
+    assert!(
+        !rootless
+            .asked()
+            .iter()
+            .any(|call| call.starts_with("whence_words"))
     );
 }

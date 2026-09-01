@@ -1428,6 +1428,8 @@ The split falls at the first newline:
 | verb | `MetadataVerb::ShellComplete = 23` → `Performer::Builder` | `[u32 cursor][utf8 buffer]` in, groups out |
 | ranking | `slopdesk_terminal::prompt::complete::ShellProvider` | ranks the answer beside the local sources |
 
+The same captive shell answers a **second** question — see [§11.1](#111-the-typo-colour--verb-24-what-the-shell-says-a-word-is).
+
 ### Five decisions worth not re-litigating
 
 1. **One warm shell per HOST, never per pane, and never the pane's own.** `CLAUDE.md`'s superd rule
@@ -1508,6 +1510,64 @@ The wiring is `TerminalPaneWiring.wireShellCompletion(live:)`, in the same weak-
 host path actions: the `MetadataClient` façade is replaced on every reconnect, so anything that
 stored one would keep asking a dead one. Disconnected reads as `notReady`, so being offline never
 spends the latch.
+
+### 11.1 The typo colour — verb 24, what the shell says a word IS
+
+The prompt paints a command name it knows the shell cannot find. The question sounds like one a
+`PATH` walk from Rust could answer, and that is exactly the trap: **most of what a real user types
+is not on `PATH`.** `gst` is a plugin's alias, `ll` is a function in their rc, `cd` is a builtin,
+`time` is a reserved word. A walk answers "not found" to all four and paints a working line red —
+the same failure as the bundled spec DB, one layer down. So it goes to the same captive shell,
+through zsh's own `whence -w`, and `slopdesk-zshcomplete/tests/live.rs` pins those four kinds
+against a real one.
+
+| Layer | Where | What it decides |
+| --- | --- | --- |
+| widget | `slopdesk-zshcomplete::whence::WHENCE_SETUP` (a Rust `const`) | `cd`, `rehash`, `whence -w` per word |
+| verb | `MetadataVerb::WhenceWords = 24` → `Performer::Builder` | words in, `word`+kind out |
+| cache | `slopdesk_terminal::prompt::validity::CommandValidity` | which verdicts are held, and when they die |
+| overlay | `slopdesk_terminal::prompt::validity::overlaid` | re-kinds a span to `UnknownCommand` |
+| ink | `TerminalPromptBand.ink` | ANSI slot 9, the terminal's own error colour |
+
+Five decisions, and the first four are all one shape — the answer is a fact about a MACHINE, and
+everything here is about when that fact stops being true:
+
+1. **`rehash` on every request.** zsh hashes `PATH` once and the captive shell lives as long as
+   hostd, so a `cargo install`ed binary would read as unknown for the rest of the session.
+2. **The cache is dropped when a command RUNS, not on a timer.** A command is the one thing that
+   reliably moves the machine — `cargo install ripgrep` makes `rg` resolve, `unalias gst` makes
+   `gst` stop. A timer paints a stale colour for however long it is; re-asking per keystroke spends
+   a round trip on `g`, `gi` and `git` for ever.
+3. **…which is what makes a key of the WORD ALONE safe.** A verdict is only true for the directory
+   it was asked from (`./deploy` resolves in one repository and not the one beside it) and nothing
+   is keyed by directory. It does not have to be: the only way a shell's directory moves is `cd`,
+   and running anything empties the table.
+4. **The clear bumps a GENERATION, and one is not separable from the other.** Otherwise the answer
+   to a question asked *before* `cargo install ripgrep` ran lands *after* it and refills the table
+   the run had just emptied — leaving a perfectly good `rg` red until something else happened to
+   run. `CommandPrompt.verdictGeneration` is captured before the ask and checked in
+   `setWordVerdicts(_:generation:)`.
+5. **Colour is an OVERLAY, not a lex.** `prompt::syntax::lex` stays a pure function of the text and
+   never produces `UnknownCommand`; `validity::overlaid` applies it, and a word with no verdict yet
+   is left ALONE — a prompt that flashed red for the 3 ms before the answer landed would be worse
+   than one that never coloured at all.
+
+Two more, on the seams either side:
+
+- **A missed whence deadline is NOT a strike against the shell.** Its budget is 150 ms, a fraction
+  of the completion deadline, and letting it vote on `STRIKES_BEFORE_RESPAWN` would `SIGKILL` a
+  healthy shell and buy a 4 s warm-up. It also never STARTS one: a colour is not worth a spawn.
+- **An unrecognised kind byte decodes to `WhenceKind::Unknown`, never to `None`.** `None` is the
+  shell saying it found nothing and is the one verdict that paints, so folding a future zsh category
+  into it would make that category read as a typo on every older client.
+
+On the client the ask hangs off the prompt's existing edit hook (`promptDidChange` on both
+platforms) rather than a new signal, because it is free when there is nothing to ask —
+`CommandPrompt.whenceRequest` is `nil` once every word has a verdict, so a cursor move costs
+nothing. One request is in flight at a time and the reply re-asks **only if the question changed**:
+without the first, typing `git` is three requests, two of them about prefixes already left behind;
+without the second, a host that answered nothing would be asked for ever. `noShell` latches the
+SAME flag verb 23 uses, because "this host has no zsh" is one fact about one shell.
 
 ### Scope
 

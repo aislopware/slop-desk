@@ -2115,9 +2115,81 @@ public final class TerminalViewModel {
     /// The latch is per-CONNECTION, not per-pane-lifetime: the next host may well run zsh even
     /// though this one did not, and a pane that stopped asking for good would be wrong about it for
     /// as long as it lived.
+    ///
+    /// Both sinks go, because both ride the ONE latch: verb 23 and verb 24 are two questions for the
+    /// same captive shell, and "this host has no zsh" is one fact about it.
     public func clearShellCompletion() {
         shellCompletionSink = nil
+        whenceSink = nil
         shellCompletionAvailable = true
+        whenceInFlight = false
+    }
+
+    // MARK: Which typed words the shell can find (verb 24)
+
+    /// The OUT-path sink that asks the HOST's captive zsh which of the typed command words it can
+    /// resolve — ``MetadataClient/whenceWords(request:)``, `docs/68` §11.1. Same sink shape and same
+    /// nil-means-rank-locally contract as ``shellCompletionSink``; here "rank locally" means the
+    /// prompt simply paints no word as a typo, which is what it did before this existed.
+    @ObservationIgnored
+    public var whenceSink: (@MainActor (_ request: Data) async -> MetadataClient.ShellCompletionAnswer)?
+
+    /// Whether a whence request is already out.
+    ///
+    /// ⚠️ **Without this, typing one command is a request per keystroke.**
+    /// ``CommandPrompt/whenceRequest`` names the words nothing has ANSWERED for — not the ones
+    /// already in flight — so `g`, `gi` and `git` would each send, and the first two answers are
+    /// verdicts on prefixes the user has already typed past. One at a time coalesces the burst into
+    /// two round trips: the one that went out, and one re-ask when it lands if the document has
+    /// moved on.
+    @ObservationIgnored private var whenceInFlight = false
+
+    /// Asks the shell about every command word on the line that has no verdict yet.
+    ///
+    /// Hung off the views' existing prompt-edit hook rather than a signal of its own, because it is
+    /// free when there is nothing to ask: ``CommandPrompt/whenceRequest`` is `nil` once every word
+    /// has a verdict, so a cursor move or a repaint costs a `nil` check and no round trip.
+    ///
+    /// No generation guard on this side, unlike ``askShellToComplete(didChange:)``. Two answers that
+    /// land out of order are harmless here — a verdict is keyed by the WORD and recorded in place,
+    /// so neither can overwrite the other's word — and the stale case that DOES matter is the one
+    /// the editor already kills: a command running empties the table and opens a new generation, and
+    /// ``CommandPrompt/verdictGeneration`` captured before the `await` is what
+    /// ``CommandPrompt/setWordVerdicts(_:generation:)`` checks it against.
+    @preconcurrency
+    public func askShellAboutTypedCommands(didChange: @escaping @MainActor () -> Void = {}) {
+        guard shellCompletionAvailable, !whenceInFlight, let sink = whenceSink else { return }
+        guard let request = commandPrompt.whenceRequest else { return }
+        let generation = commandPrompt.verdictGeneration
+        whenceInFlight = true
+        Task { @MainActor [weak self] in
+            let answer = await sink(request)
+            guard let self else { return }
+            whenceInFlight = false
+            switch answer {
+            case .noShell:
+                shellCompletionAvailable = false
+            case .notReady:
+                // Warming, or a missed deadline. The line is simply unpainted; the next keystroke
+                // asks again, which is why a miss here is never a strike against the shell either.
+                break
+            case let .groups(payload):
+                commandPrompt.setWordVerdicts(payload, generation: generation)
+                didChange()
+                // The user kept typing through the round trip, so new words may have arrived with
+                // no verdict. This is the second of the two round trips the in-flight guard
+                // collapses a burst into.
+                //
+                // ⚠️ **Only when the question actually CHANGED.** An identical request means the
+                // answer moved nothing — a host that dropped a word, or answered with an empty
+                // list — and re-asking it would be a loop that never converges and never yields to
+                // a keystroke. The next keystroke asks again on its own, which is the right place
+                // for a retry to come from.
+                if commandPrompt.whenceRequest != request {
+                    askShellAboutTypedCommands(didChange: didChange)
+                }
+            }
+        }
     }
 
     /// The OBSERVABLE twin of ``isAlternateScreen`` — the same truth, readable by an overlay that needs to

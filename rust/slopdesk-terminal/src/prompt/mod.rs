@@ -64,12 +64,14 @@ pub mod history;
 pub mod keys;
 pub mod syntax;
 pub mod undo;
+pub mod validity;
 
 use crate::prompt::buffer::{Motion, TextBuffer};
 use crate::prompt::complete::{CandidateProvider, HistoryProvider, Ranked};
 use crate::prompt::history::{CommandHistory, HistoryWalk, Recalled, suggestion_word_len};
-use crate::prompt::syntax::{Lexed, Unterminated, lex};
+use crate::prompt::syntax::{Lexed, SyntaxSpan, Unterminated, lex};
 use crate::prompt::undo::{EditKind, UndoStack};
+use crate::prompt::validity::CommandValidity;
 
 /// What pressing the submit key did.
 ///
@@ -142,6 +144,9 @@ pub struct CommandEditor {
     /// is one scan per keystroke either way — and an eager one keeps every reader a `&self` method
     /// instead of forcing `&mut self` on a question as innocent as "what colour is this".
     lexed: Lexed,
+    /// What the host has said about the command words typed since the last run — the one colour
+    /// this editor cannot derive from the text. See [`validity`].
+    validity: CommandValidity,
     completion: Vec<Ranked>,
     selected: usize,
 }
@@ -163,6 +168,7 @@ impl CommandEditor {
             walk: HistoryWalk::new(),
             search: None,
             lexed: lex(""),
+            validity: CommandValidity::new(),
             completion: Vec::new(),
             selected: 0,
         }
@@ -203,10 +209,45 @@ impl CommandEditor {
         self.buffer.selection()
     }
 
-    /// The highlight spans and shell words for the current document.
+    /// The highlight spans and shell words for the current document, as the LEXER read them.
+    ///
+    /// The raw scan. What a view should paint is [`CommandEditor::spans`], which is this plus the
+    /// one fact the lexer cannot know.
     #[must_use]
     pub const fn lexed(&self) -> &Lexed {
         &self.lexed
+    }
+
+    /// What to PAINT: [`CommandEditor::lexed`]'s spans with every command name the host said the
+    /// shell cannot find re-kinded to [`syntax::TokenKind::UnknownCommand`].
+    ///
+    /// Same count, same boundaries, same order as `lexed().spans` — the overlay only ever rewrites
+    /// a kind — so a caller that already sized a buffer from the span count does not resize.
+    #[must_use]
+    pub fn spans(&self) -> Vec<SyntaxSpan> {
+        validity::overlaid(self.buffer.text(), &self.lexed, &self.validity)
+    }
+
+    /// The command words of the current document that nothing has answered for yet — what to ask
+    /// the host about, empty when there is nothing to ask.
+    #[must_use]
+    pub fn unanswered_commands(&self) -> Vec<String> {
+        validity::unanswered(self.buffer.text(), &self.lexed, &self.validity)
+    }
+
+    /// The generation to quote when asking, and to hand back with the answer.
+    #[must_use]
+    pub const fn verdict_generation(&self) -> u64 {
+        self.validity.generation()
+    }
+
+    /// Takes one answer from the host: the shell can (or cannot) find `word`.
+    ///
+    /// Dropped unless `generation` is still [`CommandEditor::verdict_generation`] — see
+    /// [`validity::CommandValidity::record`] for why an answer that outlived its question is worse
+    /// than no answer.
+    pub fn record_verdict(&mut self, word: &str, resolves: bool, generation: u64) {
+        self.validity.record(word, resolves, generation);
     }
 
     /// What the document currently leaves open — `Nothing` when Enter would run it.
@@ -730,6 +771,10 @@ impl CommandEditor {
         }
         let command = self.buffer.text().to_owned();
         self.history.record(&command);
+        // The one moment the machine could have moved under every verdict held: see [`validity`].
+        // It also opens a new generation, so an answer to a question asked before this line ran
+        // cannot land afterwards and refill the table.
+        self.validity.clear();
         self.clear();
         Submission::Run(command)
     }

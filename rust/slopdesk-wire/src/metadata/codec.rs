@@ -1383,6 +1383,186 @@ pub fn decode_shell_complete(data: &[u8]) -> Result<Vec<ShellCompletionGroup>> {
     Ok(groups)
 }
 
+// ---------------------------------------------------------------------------------------------- //
+// WhenceWords — verb 24
+// ---------------------------------------------------------------------------------------------- //
+
+/// One asked word's fixed part in a request: its length prefix.
+pub const WHENCE_WORD_FIXED_BYTES: usize = 2;
+
+/// One verdict's fixed part: the word's length prefix and the kind byte.
+pub const WHENCE_VERDICT_FIXED_BYTES: usize = 3;
+
+/// What the user's shell says a word IS — `whence -w`'s own vocabulary.
+///
+/// Carried whole rather than collapsed to "resolves / does not", because the host's job on this
+/// verb is to report what the shell said and not to pre-decide how a client draws it. Today one
+/// client paints exactly one of these distinctions; a detail column reading "alias" is the natural
+/// next use of the same answer and needs no wire change to get there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum WhenceKind {
+    /// The shell would not find it. The one verdict a prompt paints.
+    #[default]
+    None = 0,
+    /// An external executable found on `PATH`.
+    Command = 1,
+    /// A `hash`ed external, which zsh reports separately from a fresh `PATH` hit.
+    Hashed = 2,
+    /// An alias, including a global or suffix one.
+    Alias = 3,
+    /// A shell function.
+    Function = 4,
+    /// A shell builtin.
+    Builtin = 5,
+    /// A reserved word — `if`, `for`, `time`.
+    Reserved = 6,
+    /// A category a NEWER host reported and this build has no name for.
+    ///
+    /// ⚠️ **Not a synonym for [`WhenceKind::None`], and the difference is the only thing on
+    /// screen.** `None` is the shell saying it found nothing, which is what paints a word as a
+    /// typo; this is the shell having classified the word as *something* this build cannot
+    /// name. Folding the two together would make a future zsh category read as a typo on every
+    /// older client — the exact failure this verb exists to avoid, arriving from the other
+    /// direction.
+    Unknown = 255,
+}
+
+impl WhenceKind {
+    /// Every kind this build knows, in wire order.
+    /// [`WhenceKind::Unknown`] is deliberately NOT here: a host never emits it, it is what a decode
+    /// produces for a byte from a build newer than this one.
+    pub const ALL: [Self; 7] = [
+        Self::None,
+        Self::Command,
+        Self::Hashed,
+        Self::Alias,
+        Self::Function,
+        Self::Builtin,
+        Self::Reserved,
+    ];
+
+    /// The kind for `byte`, falling to [`WhenceKind::Unknown`] for a value from a newer peer.
+    ///
+    /// Total rather than fallible, and that is the decision: this is a COLOUR, and a shell category
+    /// a future build learns to report should leave the word unpainted rather than fail the answer
+    /// that carried it — including the answers to the words beside it, which this build understands
+    /// perfectly well. `Unknown` and not `None` because those two paint DIFFERENTLY; see the
+    /// variant.
+    #[must_use]
+    pub const fn from_byte(byte: u8) -> Self {
+        match byte {
+            0 => Self::None,
+            1 => Self::Command,
+            2 => Self::Hashed,
+            3 => Self::Alias,
+            4 => Self::Function,
+            5 => Self::Builtin,
+            6 => Self::Reserved,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// The wire byte for this kind.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// Whether the shell would find something to run under a word of this kind.
+    #[must_use]
+    pub const fn resolves(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// One word and what the user's shell says it is.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WhenceVerdict {
+    /// The word as it was ASKED about, echoed back.
+    ///
+    /// Echoed rather than left to positional order because the client's cache is keyed by TEXT and
+    /// the answer is asynchronous: the user keeps typing through the round trip, so the list the
+    /// client would zip against is not the list it sent by the time the answer lands.
+    pub word: String,
+    /// What the shell found.
+    pub kind: WhenceKind,
+}
+
+/// Encodes a whence REQUEST: `[u16 wordCount]` then per word `[str word]`.
+///
+/// The working directory is NOT here — it comes from the pane, exactly as `shellComplete`'s does,
+/// which is what keeps the request from naming a host path at all.
+#[must_use]
+pub fn encode_whence_request(words: &[String]) -> Vec<u8> {
+    let mut out = ByteWriter::with_capacity(2 + words.len() * WHENCE_WORD_FIXED_BYTES);
+    encode_whence_request_into(&mut out, words);
+    out.into_vec()
+}
+
+/// Writes a whence request into `out`. See [`encode_whence_request`].
+pub fn encode_whence_request_into(out: &mut ByteWriter<'_>, words: &[String]) {
+    let count = clamped_count(words.len());
+    out.put_u16(count_field(count));
+    for word in words.iter().take(count) {
+        out.put_length_prefixed_str(word);
+    }
+}
+
+/// Decodes a whence request.
+///
+/// # Errors
+/// [`WireError::Truncated`] on a short body or an over-declared count,
+/// [`WireError::MalformedBody`] on a non-UTF-8 word.
+pub fn decode_whence_request(data: &[u8]) -> Result<Vec<String>> {
+    let mut reader = ByteReader::new(data);
+    let count = usize::from(reader.read_u16()?);
+    let count = checked_count(&reader, count, WHENCE_WORD_FIXED_BYTES)?;
+    let mut words = Vec::with_capacity(count);
+    for _ in 0..count {
+        words.push(reader.read_length_prefixed_str("whenceWords.word")?);
+    }
+    Ok(words)
+}
+
+/// Encodes a whence answer: `[u16 verdictCount]` then per verdict `[str word][u8 kind]`.
+#[must_use]
+pub fn encode_whence(verdicts: &[WhenceVerdict]) -> Vec<u8> {
+    let mut out = ByteWriter::with_capacity(2 + verdicts.len() * WHENCE_VERDICT_FIXED_BYTES);
+    encode_whence_into(&mut out, verdicts);
+    out.into_vec()
+}
+
+/// Writes a whence answer into `out`. See [`encode_whence`].
+pub fn encode_whence_into(out: &mut ByteWriter<'_>, verdicts: &[WhenceVerdict]) {
+    let count = clamped_count(verdicts.len());
+    out.put_u16(count_field(count));
+    for verdict in verdicts.iter().take(count) {
+        out.put_length_prefixed_str(&verdict.word);
+        out.put_u8(verdict.kind.as_byte());
+    }
+}
+
+/// Decodes a whence answer.
+///
+/// # Errors
+/// [`WireError::Truncated`] on a short body or an over-declared count,
+/// [`WireError::MalformedBody`] on a non-UTF-8 word.
+pub fn decode_whence(data: &[u8]) -> Result<Vec<WhenceVerdict>> {
+    let mut reader = ByteReader::new(data);
+    let count = usize::from(reader.read_u16()?);
+    let count = checked_count(&reader, count, WHENCE_VERDICT_FIXED_BYTES)?;
+    let mut verdicts = Vec::with_capacity(count);
+    for _ in 0..count {
+        let word = reader.read_length_prefixed_str("whenceWords.word")?;
+        verdicts.push(WhenceVerdict {
+            word,
+            kind: WhenceKind::from_byte(reader.read_u8()?),
+        });
+    }
+    Ok(verdicts)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -1395,16 +1575,17 @@ mod tests {
         AgentHookStatus, AgentKind, AgentSessionInfo, CLIPBOARD_BASELINE_PROBE, ClipboardClip, ClipboardKind,
         CodeFontSpec, CodeOpenDisposition, DISK_FREE_UNKNOWN, DirEntry, GitFileChange, GitStatusPayload,
         HostVitals, MAX_CLIPBOARD_CONTENT_BYTES, MemoryPressure, PortInfo, PortProtocol, ProcessInfo,
-        ServiceEndpoint, ServiceState, ShellCandidate, ShellCompletionGroup, WireError,
-        decode_agent_hook_status, decode_agent_session_list, decode_clipboard_read_request,
+        ServiceEndpoint, ServiceState, ShellCandidate, ShellCompletionGroup, WhenceKind, WhenceVerdict,
+        WireError, decode_agent_hook_status, decode_agent_session_list, decode_clipboard_read_request,
         decode_clipboard_read_response, decode_clipboard_set, decode_code_font_spec,
         decode_code_open_disposition, decode_dir_listing, decode_git_status, decode_host_vitals,
         decode_port_list, decode_process_list, decode_service_endpoint, decode_shell_complete,
-        decode_shell_complete_request, encode_agent_hook_status, encode_agent_session_list,
-        encode_clipboard_read_request, encode_clipboard_read_response, encode_clipboard_set,
-        encode_code_font_spec, encode_code_open_disposition, encode_dir_listing, encode_git_status,
-        encode_host_vitals, encode_port_list, encode_process_list, encode_service_endpoint,
-        encode_shell_complete, encode_shell_complete_request,
+        decode_shell_complete_request, decode_whence, decode_whence_request, encode_agent_hook_status,
+        encode_agent_session_list, encode_clipboard_read_request, encode_clipboard_read_response,
+        encode_clipboard_set, encode_code_font_spec, encode_code_open_disposition, encode_dir_listing,
+        encode_git_status, encode_host_vitals, encode_port_list, encode_process_list,
+        encode_service_endpoint, encode_shell_complete, encode_shell_complete_request, encode_whence,
+        encode_whence_request,
     };
 
     #[test]
@@ -1932,5 +2113,97 @@ mod tests {
         let decoded = decode_shell_complete(&body).unwrap();
         assert!(decoded[0].candidates[0].verbatim);
         assert!(!decoded[0].candidates[0].has_detail);
+    }
+
+    /// The word is echoed back with the verdict because the client's cache is keyed by TEXT and the
+    /// answer is asynchronous — the user keeps typing through the round trip, so a client that
+    /// zipped the answer against the list it sent would key a verdict onto the wrong word.
+    #[test]
+    fn a_whence_answer_carries_the_word_beside_its_kind() {
+        let verdicts = vec![
+            WhenceVerdict {
+                word: String::from("gst"),
+                kind: WhenceKind::Alias,
+            },
+            WhenceVerdict {
+                word: String::from("slopdesk-no-such-command"),
+                kind: WhenceKind::None,
+            },
+        ];
+        let decoded = decode_whence(&encode_whence(&verdicts)).unwrap();
+        assert_eq!(decoded, verdicts);
+        assert!(decoded[0].kind.resolves());
+        assert!(!decoded[1].kind.resolves());
+    }
+
+    /// A COLOUR, so a category a newer host learns to report must leave that word unpainted rather
+    /// than fail the whole answer — including the verdicts beside it, which this build understands.
+    #[test]
+    fn a_kind_from_a_newer_host_leaves_its_word_unpainted_rather_than_failing_the_batch() {
+        let mut bytes = encode_whence(&[
+            WhenceVerdict {
+                word: String::from("future"),
+                kind: WhenceKind::Command,
+            },
+            WhenceVerdict {
+                word: String::from("ls"),
+                kind: WhenceKind::Command,
+            },
+        ]);
+        // The first verdict's kind byte, made a value this build has never heard of.
+        let kind_at = bytes.len() - 1 - 2 - 2 - 1;
+        bytes[kind_at] = 200;
+        let decoded = decode_whence(&bytes).unwrap();
+        assert_eq!(decoded[0].kind, WhenceKind::Unknown, "unpainted, not rejected");
+        assert!(
+            decoded[0].kind.resolves(),
+            "a category this build cannot name is still the shell having FOUND something — reading it as \
+             `None` would paint a future zsh's own word as a typo",
+        );
+        assert_eq!(decoded[1].kind, WhenceKind::Command, "and its neighbour survived");
+    }
+
+    /// Every kind survives its own byte, so the two tables cannot drift apart silently.
+    #[test]
+    fn every_whence_kind_survives_its_own_byte() {
+        for (index, kind) in WhenceKind::ALL.into_iter().enumerate() {
+            assert_eq!(
+                u8::try_from(index).unwrap(),
+                kind.as_byte(),
+                "{kind:?} is out of order"
+            );
+            assert_eq!(WhenceKind::from_byte(kind.as_byte()), kind);
+        }
+        // The one kind outside the ladder, and the only one no host ever sends.
+        assert_eq!(WhenceKind::Unknown.as_byte(), 255);
+        assert_eq!(WhenceKind::from_byte(255), WhenceKind::Unknown);
+        assert_eq!(
+            WhenceKind::from_byte(u8::try_from(WhenceKind::ALL.len()).unwrap()),
+            WhenceKind::Unknown,
+            "the byte one past the ladder is the next kind a host could add",
+        );
+    }
+
+    /// The request is a list of words and nothing else — no directory, exactly as `shellComplete`'s
+    /// carries none, which is what keeps it from naming a host path at all.
+    #[test]
+    fn a_whence_request_round_trips_its_words() {
+        let words = vec![String::from("git"), String::from("grep"), String::from("ll")];
+        assert_eq!(
+            decode_whence_request(&encode_whence_request(&words)).unwrap(),
+            words
+        );
+        assert_eq!(
+            decode_whence_request(&encode_whence_request(&[])).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    /// The count-before-alloc guard: a declared count the body cannot possibly hold is rejected
+    /// BEFORE any capacity is reserved for it.
+    #[test]
+    fn an_over_declared_whence_count_is_refused_before_anything_is_reserved() {
+        assert_eq!(decode_whence_request(&[0xFF, 0xFF]), Err(WireError::Truncated));
+        assert_eq!(decode_whence(&[0xFF, 0xFF]), Err(WireError::Truncated));
     }
 }

@@ -541,8 +541,13 @@ extension PhoneTerminalRendererView: @MainActor TerminalSurfaceHosting {
     }
 
     /// The responder edited the prompt — see the seam.
+    ///
+    /// Repaint, then ask the host's shell about any command word it has not ruled on yet. The ask is
+    /// free when there is nothing to ask — ``CommandPrompt/whenceRequest`` is nil once every word has
+    /// a verdict — so this costs a cursor move nothing.
     func promptDidChange() {
         band?.refresh()
+        model?.askShellAboutTypedCommands { [weak self] in self?.band?.refresh() }
     }
 
     func scrollPages(_ pages: Int) {

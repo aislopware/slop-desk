@@ -662,6 +662,9 @@ enum TerminalPromptBand {
         let slot: Int
         switch kind {
         case .commandName: slot = 10 // bright green
+        // The one kind the lexer never produces: it is the user's own shell saying it cannot find
+        // that word, so it takes the ladder's error slot rather than a hue invented here.
+        case .unknownCommand: slot = 9 // bright red
         case .flag: slot = 11 // bright yellow
         case .path: slot = 14 // bright cyan
         case .quoted: slot = 3 // yellow

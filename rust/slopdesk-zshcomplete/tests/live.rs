@@ -18,7 +18,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use slopdesk_zshcomplete::{Answer, ZshComplete};
+use slopdesk_zshcomplete::{Answer, Verdicts, WordKind, ZshComplete};
 
 /// A completion whose every `compadd` call is one of the forms that broke a naive parser.
 ///
@@ -41,6 +41,10 @@ _slopdesk_probe() {
   compadd -p 'sub/' -- leaf
 }
 compdef _slopdesk_probe slopdeskprobe
+
+# For the whence half: an alias and a function this shell has and no `PATH` walk could see.
+alias slopdeskalias='echo aliased'
+slopdeskfunction() { echo functioned }
 ";
 
 /// The bridge, or `None` on a machine with no zsh to bridge to.
@@ -139,6 +143,77 @@ fn a_real_zsh_composes_the_affixes_that_change_what_gets_inserted() {
     assert!(
         found.iter().any(|(prefix, _text, _also)| prefix == "sub/l"),
         "the replaced prefix is the WHOLE typed word, so the hidden prefix composes: {found:?}"
+    );
+}
+
+/// The whence half against a real shell: the four kinds a `PATH` walk cannot see, and the `cd`.
+///
+/// This is the claim `slopdesk_zshcomplete::whence`'s module doc is built on — that most of what a
+/// user types is an alias, a function, a builtin or a reserved word — stated as a test. A `which`
+/// from Rust answers `none` to four of these six and would paint every one of them as a typo.
+#[test]
+fn a_real_zsh_names_the_kinds_no_path_walk_can_see() {
+    let Some(bridge) = bridge() else { return };
+    // Warm the shell through the completion door: `whence` deliberately never starts one.
+    drop(ask(&bridge, "slopdeskprobe a"));
+
+    let cwd = env!("CARGO_MANIFEST_DIR");
+    let asked: Vec<String> = [
+        "slopdeskalias",
+        "slopdeskfunction",
+        "cd",
+        "time",
+        "slopdesk-no-such-command",
+    ]
+    .iter()
+    .map(|word| (*word).to_owned())
+    .collect();
+
+    let until = Instant::now() + Duration::from_secs(60);
+    let verdicts = loop {
+        match bridge.whence(cwd, &asked) {
+            Verdicts::NotReady if Instant::now() < until => {
+                std::thread::sleep(Duration::from_millis(20));
+            },
+            Verdicts::Words(words) => break words,
+            other => panic!("the captive shell never answered: {other:?}"),
+        }
+    };
+
+    let kind = |word: &str| {
+        verdicts
+            .iter()
+            .find(|verdict| verdict.word == word)
+            .unwrap_or_else(|| panic!("`{word}` was not answered at all: {verdicts:?}"))
+            .kind
+    };
+    assert_eq!(kind("slopdeskalias"), WordKind::Alias);
+    assert_eq!(kind("slopdeskfunction"), WordKind::Function);
+    assert_eq!(kind("cd"), WordKind::Builtin);
+    assert_eq!(kind("time"), WordKind::Reserved);
+    assert_eq!(
+        kind("slopdesk-no-such-command"),
+        WordKind::None,
+        "the one verdict a prompt paints"
+    );
+    // The `cd`, proved rather than assumed: `./ls` is a command in `/bin` and nothing anywhere
+    // else, so the same word answering differently from two directories is the widget having
+    // moved. A prompt sitting in a repository asks about `./deploy` constantly, and a widget that
+    // silently answered from its own home would call every one of them a typo.
+    let relative = ["./ls".to_owned()];
+    let Verdicts::Words(from_bin) = bridge.whence("/bin", &relative) else {
+        panic!("the warm shell missed a whence request")
+    };
+    assert_eq!(
+        from_bin.first().map(|verdict| verdict.kind),
+        Some(WordKind::Command)
+    );
+    let Verdicts::Words(from_here) = bridge.whence(cwd, &relative) else {
+        panic!("the warm shell missed a whence request")
+    };
+    assert_eq!(
+        from_here.first().map(|verdict| verdict.kind),
+        Some(WordKind::None)
     );
 }
 

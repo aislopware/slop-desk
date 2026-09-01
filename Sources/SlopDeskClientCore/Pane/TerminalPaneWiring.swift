@@ -134,6 +134,7 @@ package final class TerminalPaneWiring {
         wireNavigator(live: live)
         wirePathActions(live: live, store: store, overlay: overlay, chrome: chrome)
         wireShellCompletion(live: live)
+        wireWhenceWords(live: live)
     }
 
     /// Clear all per-pane callbacks on teardown so a surviving model can't drive a dead leaf's state,
@@ -411,7 +412,21 @@ package final class TerminalPaneWiring {
         }
     }
 
-    /// Drop the shell sink and re-arm the availability latch for the next host.
+    /// Point the pane's prompt at the same captive zsh for the OTHER question — which of the words
+    /// typed so far it can actually find (``MetadataClient/whenceWords(request:)``, `docs/68` §11.1).
+    ///
+    /// Wired beside the completion sink and torn down with it, because the two are one shell: the
+    /// availability latch ``TerminalViewModel/shellCompletionAvailable`` is shared, so a host that
+    /// answers "not zsh" to either stops being asked either.
+    private func wireWhenceWords(live: LivePaneSession?) {
+        guard let model = live?.terminalModel else { return }
+        model.whenceSink = { [weak live] request in
+            guard let client = live?.connection?.activeMetadataClient else { return .notReady }
+            return await client.whenceWords(request: request)
+        }
+    }
+
+    /// Drop both shell sinks and re-arm the availability latch for the next host.
     private func clearShellCompletionWiring(live: LivePaneSession?) {
         live?.terminalModel?.clearShellCompletion()
     }

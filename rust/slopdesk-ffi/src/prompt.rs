@@ -90,6 +90,9 @@ pub const SLOPDESK_PROMPT_TOKEN_OPERATOR: u32 = 6;
 pub const SLOPDESK_PROMPT_TOKEN_REDIRECTION: u32 = 7;
 /// `#` to end of line.
 pub const SLOPDESK_PROMPT_TOKEN_COMMENT: u32 = 8;
+/// A command name the user's shell could not find. Never produced by the lexer — see
+/// [`slopdesk_prompt_set_word_verdicts`].
+pub const SLOPDESK_PROMPT_TOKEN_UNKNOWN_COMMAND: u32 = 9;
 
 /// Everything is closed — the submit key runs it.
 pub const SLOPDESK_PROMPT_OPEN_NOTHING: u32 = 0;
@@ -456,6 +459,9 @@ pub struct SlopDeskPromptState {
     /// suggestion and the key table asks only whether there is one, and a second door answering the
     /// same question could be read a keystroke apart from this one.
     pub suggestion_len: usize,
+    /// Which round of command-validity questions the editor is on. Quoted when asking and handed
+    /// back with the answer — see [`slopdesk_prompt_set_word_verdicts`].
+    pub verdict_generation: u64,
 }
 
 impl SlopDeskPromptState {
@@ -478,6 +484,7 @@ impl SlopDeskPromptState {
         selected_candidate: 0,
         history_count: 0,
         suggestion_len: 0,
+        verdict_generation: 0,
     };
 
     /// Reads the editor's current state out.
@@ -501,6 +508,7 @@ impl SlopDeskPromptState {
             selected_candidate: editor.selected_candidate(),
             history_count: editor.history().len(),
             suggestion_len: editor.suggestion().map_or(0, str::len),
+            verdict_generation: editor.verdict_generation(),
         }
     }
 }
@@ -650,6 +658,7 @@ const fn token_index(kind: TokenKind) -> u32 {
         TokenKind::Operator => SLOPDESK_PROMPT_TOKEN_OPERATOR,
         TokenKind::Redirection => SLOPDESK_PROMPT_TOKEN_REDIRECTION,
         TokenKind::Comment => SLOPDESK_PROMPT_TOKEN_COMMENT,
+        TokenKind::UnknownCommand => SLOPDESK_PROMPT_TOKEN_UNKNOWN_COMMAND,
     }
 }
 
@@ -799,8 +808,7 @@ pub unsafe extern "C" fn slopdesk_prompt_spans(
     };
     let spans: Vec<SlopDeskPromptSpan> = state
         .editor
-        .lexed()
-        .spans
+        .spans()
         .iter()
         .map(|span| {
             SlopDeskPromptSpan {
@@ -813,6 +821,80 @@ pub unsafe extern "C" fn slopdesk_prompt_spans(
     // SAFETY: `out` is null or writable for `cap` records by the caller's obligation, and `spans`
     // was allocated inside this call so it cannot overlap.
     unsafe { spill(&spans, out, cap) }
+}
+
+/// Copies out the verb-24 request body for the command words nothing has answered for yet,
+/// answering its length either way. `0` means there is nothing to ask about.
+///
+/// ⚠️ **The BODY and not the words.** The payload this answers goes straight onto the wire, exactly
+/// as `slopdesk_prompt_set_word_verdicts` takes one straight off it. The words come from this
+/// crate's own lexer, so a caller that received a list and re-encoded it would be spelling the
+/// verb's frame a second time, in a second language, for no decision of its own — the mistake
+/// `slopdesk_prompt_set_shell_candidates` already refuses in the other direction.
+///
+/// Ask when the document CHANGED, not every frame: the answer is a scan of the line's command
+/// positions minus everything already answered, and it is empty for most keystrokes.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation and `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_whence_request(
+    handle: *mut SlopDeskPrompt,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, as above.
+    let Some(state) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let words = state.editor.unanswered_commands();
+    if words.is_empty() {
+        return 0;
+    }
+    let body = slopdesk_wire::metadata::codec::encode_whence_request(&words);
+    // SAFETY: `out` is null or writable for `cap` bytes by the caller's obligation, and `body` was
+    // allocated inside this call so it cannot overlap.
+    unsafe { deliver(&body, out, cap) }
+}
+
+/// Takes a verb-24 answer: what the user's own shell said each word IS.
+///
+/// `generation` is the [`SlopDeskPromptState::verdict_generation`] read when the request was SENT.
+/// An answer quoting an older one is dropped whole, and that is the door's whole safety property:
+/// running a command is what empties the table (`cargo install ripgrep` is the case), and an answer
+/// still in flight across that run would otherwise refill it with verdicts the run had just made
+/// false. A malformed payload records nothing, for the same reason every other decode here is
+/// tolerant — a colour is not worth a rejection.
+///
+/// # Safety
+/// `handle` must satisfy [`held`]'s obligation and `(payload, payload_len)` must describe live
+/// memory for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_prompt_set_word_verdicts(
+    handle: *mut SlopDeskPrompt,
+    payload: *const c_uchar,
+    payload_len: usize,
+    generation: u64,
+) {
+    // SAFETY: the caller's obligation, as above.
+    let Some(state) = (unsafe { held(handle) }) else {
+        return;
+    };
+    // SAFETY: the pair is live for the call or null, which borrows as empty.
+    let body = unsafe { borrow(payload, payload_len) };
+    for verdict in slopdesk_wire::metadata::codec::decode_whence(body).unwrap_or_default() {
+        state
+            .editor
+            .record_verdict(&verdict.word, verdict.kind.resolves(), generation);
+    }
 }
 
 /// Inserts text at the caret, replacing any selection.
