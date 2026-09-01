@@ -1,7 +1,7 @@
 # Command Palette
 
 > ⚠️ **THE PALETTE IS ⌘⇧P, AND TWO OF ITS LISTED CATEGORIES NO LONGER EXIST.**
-> - The chord is **⌘⇧P**, not ⌘K (`docs/DECISIONS.md:236`; ⌘K is picker-local now, `:341`).
+> - The chord is **⌘⇧P**, not ⌘K (`docs/DECISIONS.md`; ⌘K is picker-local now).
 > - **Theme: Switch Theme / Reload Theme / Open Theme File** — gone. The theme system was deleted
 >   2026-08-08 by user ruling (`docs/DECISIONS.md` §"ONE appearance").
 > - **Recipes: Save Recipe / Export Recipe / Open Recipe** — gone. Recipes deleted 2026-07-03

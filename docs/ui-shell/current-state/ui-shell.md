@@ -53,28 +53,28 @@ platform is owed to the other, laid out for it. What is NOT owed is the same arr
 | Window title tracks the focused pane | done · mac | `MacWorkspaceRootView.swift:206` → `WorkspaceChromePolicy.windowTitle(for:)` |
 | Pin window / always-on-top | **done · mac** (was "missing") | `WorkspaceChromeState.pinned:57`/`togglePin:85`; `SlopDeskMacApp.swift:638` `.windowLevel(chrome.pinned ? .floating : .normal)`; View-menu row `WorkspaceCommands.swift:154-157`; palette row `PaletteDataSource.swift:269-273`; action `WorkspaceBindingRegistry.swift:121` (chord-less by default). **Phone: inert by design** — "iOS has no resizable floating window, so the flag is inert there" (`WorkspaceChromeState.swift:56`), and the palette row says so. A stated platform fact (`COVERAGE.md:84`), not a gap |
 | Dock progress / error tint / bounce | done · mac | `DockProgressController.swift:63-84`; wired `SlopDeskMacApp.swift:166-172,405-406,488-490`. Phone has no Dock — platform fact |
-| Picture-in-Picture | n/a | Never built; there is no removal ruling because there was nothing to remove. The remote desktop is its own OS window, not a pane and not a PiP surface (`DECISIONS.md:1512` §Remote desktop is a DEDICATED OS WINDOW) |
+| Picture-in-Picture | n/a | Never built; there is no removal ruling because there was nothing to remove. The remote desktop is its own OS window, not a pane and not a PiP surface (`DECISIONS.md` §Remote desktop is a DEDICATED OS WINDOW) |
 | **Tab / session model** | | |
 | `Session → Tab → SplitNode → Pane` domain | done | `TreeWorkspace.swift`, `Session.swift`, `Tab.swift`, `SplitNode.swift` |
 | Persisted schema | done — **v12, Rust-owned** | `TreeWorkspace.swift:57` → `rust/slopdesk-tree/src/workspace.rs:50`; codec `SlopDeskWorkspaceModel/Codec/WorkspaceFile.swift` |
 | Multiple sessions in the model | done | `TreeWorkspace.sessions: [Session]` `:29`; `WorkspaceStore.newSession:1635`, `selectSession:1685` |
-| Multi-session **switcher UI** | removed | `d1d4398b` 2026-07-02; `DECISIONS.md:490` §Multi-session switcher UI REMOVED — "the workspace is effectively single-session at the UI. The `Session` domain type and the store's multi-session internals STAY." No session list exists in either navigator |
+| Multi-session **switcher UI** | removed | `d1d4398b` 2026-07-02; `DECISIONS.md` §Multi-session switcher UI REMOVED — "the workspace is effectively single-session at the UI. The `Session` domain type and the store's multi-session internals STAY." No session list exists in either navigator |
 | Multiple tabs per session | done | `Session.tabs`; cycle `⌘⇧]`/`⌘⇧[` `WorkspaceBindingRegistry.swift:520-527` |
 | Select pane by number (⌘1…⌘9) | done | `WorkspaceBindingRegistry.selectPaneBindings:967-972` — note the digits count **panes** in drawn order, not tabs (`:165`) |
 | New tab | done | `WorkspaceStore.newTerminalPane(_:):3471-3476`. **mac**: ⌘T (`:502-504`) + menu + palette + the empty-canvas button (`MacContentCanvas.swift:82`) + a drag-to-`New Tab` drop slot (`MacNavigatorColumn.swift:658,684`). **phone**: toolbar `+` and sidebar `+` (`WorkspaceRootView.swift:318`, `NavigatorColumn.swift:181`). No `+` button on the mac sidebar — chord/menu carry it there |
 | In-pane kind chooser (Terminal / Remote) | removed | Retired with the kind list: "The in-pane kind CHOOSER itself is retired (every new-pane gesture mints a terminal directly)" — `PaneChooser.swift:15-18`. `InPaneChooserView` / `openChooserPane` have zero hits in `Sources` or `Tests`. `PaneChooserOption` survives only as the kind→title/symbol registry |
 | `PaneKind` cases | done — **two** | `PaneSpec.swift:38-45` = `.terminal`, `.desktop`. Retired discriminators `claudeCode`, `web`, `chooser`, `remoteGUI`, `systemDialog` decode-fold to `.terminal` (`:47-53`); Rust mirror `rust/slopdesk-tree/src/session.rs:29-36` |
-| Web pane (`PaneKind.web`) | removed | `65da3c0d` 2026-07-02; `DECISIONS.md:483` §Web pane REMOVED. The WKWebView that *does* ship is the **code panel**, a different feature |
-| Remote-window pane (`PaneKind.remoteGUI`) | removed | 2026-07-22; `DECISIONS.md:1512` — full-desktop is the only remote-viewing mode and it opens as its own OS window; the wire types go dormant, not deleted |
+| Web pane (`PaneKind.web`) | removed | `65da3c0d` 2026-07-02; `DECISIONS.md` §Web pane REMOVED. The WKWebView that *does* ship is the **code panel**, a different feature |
+| Remote-window pane (`PaneKind.remoteGUI`) | removed | 2026-07-22; `DECISIONS.md` — full-desktop is the only remote-viewing mode and it opens as its own OS window; the wire types go dormant, not deleted |
 | Break pane to its own tab (⌃⌘T) | done | `WorkspaceBindingRegistry.swift:413-415` |
 | Detach pane into its own window (⌥⌘P) | **done · mac** (new) | `WorkspaceBindingRegistry.swift:421-423`; `SatellitePaneWindows.swift`, `MacSatellitePaneContent.swift`. Gated `#if canImport(AppKit)` in `PaneDragCoordinator.swift:22-35,316-425`. **Platform fact, ruled** — `WorkspaceBindingRegistry.swift:23-24`: "macOS only — a no-op routing on iOS (no NSWindow)". See Notes |
 | Close tab / close window | done | `.closeTab` chord-less, `.closeWindow` ⌘⇧W (`WorkspaceBindingRegistry.swift:174-177`) |
 | Close-confirm guard on a busy shell | done | `CloseConfirmationPolicy.swift`, `WorkspaceStore+CloseConfirmation.swift:1-40`, copy shared by `CloseConfirmationCopy.swift`; mac `NSAlert` (`MacCloseConfirmation.swift`), phone `.confirmationDialog` (`OverlayHostView.swift:137-262`). Ratcheted by `scripts/check-supervisor.sh` |
 | Reopen closed (⌘⇧T) | **done** (was "dead chord") | `WorkspaceBindingRouting.swift:292` → `WorkspaceStore.reopenLastClosedPane():33` → `reopenClosedTab(at:):50`, a LIFO `closedTabRecords` ring restoring the whole tab (split tree, specs, original `PaneID`s) through the `reopenClosedTab` wire intent (`WorkspaceIntent.swift:36`). Tests: `ReopenClosedTabTreeTests.swift`. The old symbol `reopenClosedPane` is gone; the capability is not |
-| Tab drag-reorder | removed | 2026-07-10; `DECISIONS.md:722` — "`.manual` drag-reorder … deleted". Ordering is fixed: By-Project sections A→Z, rows in creation order (`TabOrdering.swift:6-9`). `reorderTabs` (wire type 8) survives dormant |
+| Tab drag-reorder | removed | 2026-07-10; `DECISIONS.md` — "`.manual` drag-reorder … deleted". Ordering is fixed: By-Project sections A→Z, rows in creation order (`TabOrdering.swift:6-9`). `reorderTabs` (wire type 8) survives dormant |
 | **Sidebar / navigator** | | |
 | Pane rows grouped by project | done | mac `MacNavigatorColumn.swift:313`, phone `NavigatorColumn.swift:133-173`; shared builder `RailRowsBuilder`/`SidebarSections`, memoized by `RailRowsMemo` |
-| Sort / group hamburger | removed | 2026-07-10; `DECISIONS.md:722` §Sidebar grouping — "The sidebar hamburger (`SlateSortMenuButton`), `TabGrouping`/`TabSort` … are deleted." Zero hits in `Sources`/`Tests` |
+| Sort / group hamburger | removed | 2026-07-10; `DECISIONS.md` §Sidebar grouping — "The sidebar hamburger (`SlateSortMenuButton`), `TabGrouping`/`TabSort` … are deleted." Zero hits in `Sources`/`Tests` |
 | Sidebar search / filter | **done** (was "missing") | Shared filter `RailRowsBuilder.filtered`; mac `SlateNativeSearchField` as the header row (`MacNavigatorColumn.swift:62,117-152`), phone `.searchable(text:prompt:"Search tabs")` (`NavigatorColumn.swift:178`) |
 | Agent-status mark on the row | **done** (was "missing") | mac `MacSidebarRow.swift:48,284-287` → `MacStatusMark.swift:89-193`; phone `StatusDotView` (`NavigatorColumn.swift:399-404`). Both read `StatusPresentation` |
 | Attention / lifecycle badge on the row | **done** (was "missing") | `TabBadgeKind.swift:19-113` (9 cases, fused by `TabBadgeResolver` over Rust `slopdesk_agent_tab_badge`, `TabBadge.swift:11-19`). Lifecycle states render as the status mark; privilege states (`.sudo`, `.caffeinate`) as a distinct glyph — mac `MacSidebarRow.swift:329-340`, phone `TabBadgeView.swift:1-9` |
@@ -146,12 +146,12 @@ platform is owed to the other, laid out for it. What is NOT owed is the same arr
 | **Settings** | | |
 | Settings surface | done | mac `Settings` scene → `MacSettingsWindow.swift` + `MacSettingsNavigator.swift`; phone `.sheet` → `SettingsSheet.swift` (iOS has no `Settings` scene). Shared taxonomy `SettingsTaxonomy.swift`, `SettingsCatalog.swift`, `AllSettingsCatalog.swift` |
 | Keybindings editor | done | `KeybindingsEditorModel.swift` + `KeybindingsEditorReading.swift`; `MacKeybindingsEditor.swift` / `KeybindingsEditorView.swift` |
-| Theme picker / catalogue / light-dark slots / per-theme fonts | removed | 2026-08-08 user-directed; `DECISIONS.md:7393` §"ONE appearance — the theme picker is deleted, not defaulted": *"A picker whose second setting can only degrade the design is not a choice, so it goes rather than acquiring a default."* `ThemeStore`, `ThemeChoice`, `ThemeCatalog`, `AppearancePreferences.theme/darkTheme/separateDarkTheme` all gone |
-| Theme editor / import · workspace export-import | removed | `0166057c` 2026-07-03; `DECISIONS.md:527`. `WorkspaceTransfer` has no live definition |
+| Theme picker / catalogue / light-dark slots / per-theme fonts | removed | 2026-08-08 user-directed; `DECISIONS.md` §"ONE appearance — the theme picker is deleted, not defaulted": *"A picker whose second setting can only degrade the design is not a choice, so it goes rather than acquiring a default."* `ThemeStore`, `ThemeChoice`, `ThemeCatalog`, `AppearancePreferences.theme/darkTheme/separateDarkTheme` all gone |
+| Theme editor / import · workspace export-import | removed | `0166057c` 2026-07-03; `DECISIONS.md`. `WorkspaceTransfer` has no live definition |
 | **Deleted verticals (do not re-file as gaps)** | | |
-| Composer · Prompt Queue · Send-to-Chat · Fork-in · agent input footer | removed | `92472b0a` 2026-07-03; `DECISIONS.md:497` — they "duplicated typing straight into the terminal". `AgentInputFooter*` gone; `InputBarModel` kept |
-| Recipes · Snippets | removed | `d63e1274` 2026-07-03; `DECISIONS.md:507`. `SnippetExpander`, `Snippet` gone; `SendKeysParser` kept (launch presets, templates, block re-run, drops, `pane send-keys`) |
-| Floating panes | removed | `231f1398` 2026-07-03; `DECISIONS.md:517` — "the tiled split tree is the ONLY pane layout again". All that survives is a decode-ignore note for a stale persisted key (`Tab.swift:18-20`). The tear-off satellite window is a *different*, live feature |
+| Composer · Prompt Queue · Send-to-Chat · Fork-in · agent input footer | removed | `92472b0a` 2026-07-03; `DECISIONS.md` — they "duplicated typing straight into the terminal". `AgentInputFooter*` gone; `InputBarModel` kept |
+| Recipes · Snippets | removed | `d63e1274` 2026-07-03; `DECISIONS.md`. `SnippetExpander`, `Snippet` gone; `SendKeysParser` kept (launch presets, templates, block re-run, drops, `pane send-keys`) |
+| Floating panes | removed | `231f1398` 2026-07-03; `DECISIONS.md` — "the tiled split tree is the ONLY pane layout again". All that survives is a decode-ignore note for a stale persisted key (`Tab.swift:18-20`). The tear-off satellite window is a *different*, live feature |
 | Details panel tabs (Info · Outline · Git · Files) | removed | With the column (`6de70aae`). `InspectorColumn`, `BlockHistoryView` have no live definitions; the block history lives on as the ⌃⌘O command navigator and Global Search |
 
 ---
@@ -283,7 +283,7 @@ void — both halves are drawn on both platforms.
 
 ### Sidebar ordering is fixed and not a setting
 By-Project sections A→Z, rows in creation order, no grouping menu, no sort menu, no drag-reorder
-(`DECISIONS.md:722`, `TabOrdering.swift:6-9`). The `reorderTabs` wire verb survives dormant so the
+(`DECISIONS.md`, `TabOrdering.swift:6-9`). The `reorderTabs` wire verb survives dormant so the
 golden vectors stay byte-identical — that is not an entry point.
 
 ### The schema is Rust's now

@@ -6,7 +6,7 @@
 // forwards it is the same view before and after — what changed is the C ABI it forwards INTO.
 //
 // So this type owns exactly one thing, a `SlopDeskTerminalSurface *`, and every question anybody
-// asks it is answered by `rust/slopdesk-ffi/src/terminal_surface.rs`. There is no grid here, no cell
+// asks it is answered by `rust/slopdesk-ffi/src/terminal_surface/`. There is no grid here, no cell
 // arithmetic, no selection state, no glyph, no colour table and no scroll position. Each of those
 // lived in the deleted fork's embedder as a Swift copy of something the old libghostty engine also
 // held, and each was a place for the two to disagree.

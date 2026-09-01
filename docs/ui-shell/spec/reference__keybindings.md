@@ -6,11 +6,11 @@
 > - **⌘⇧E Composer, ⌘⇧M Prompt Queue** — unbound; both features deleted 2026-07-03 (`92472b0a`).
 > - **⌘S / ⌘⇧S save-or-export a recipe** — unbound; Recipes deleted 2026-07-03 (`d63e1274`).
 > - **⌘⇧R "Toggle Details Panel"** — the Details Panel was deleted 2026-07-02 (`6de70aae`). The chord is
->   live but now means **Toggle Code Panel**, deliberately re-taken (`docs/DECISIONS.md:770`).
+>   live but now means **Toggle Code Panel**, deliberately re-taken (`docs/DECISIONS.md`).
 > - **⌃B prefix mode** — removed; `prefixKey` and `sequenceOverrides` are recorded as removed fields
 >   "simply not read" (`Sources/SlopDeskVideoProtocol/Settings/KeybindingPreferences.swift:132-134`).
 > - **⌘1…⌘9** selects a **pane** in drawn order, not a tab (`WorkspaceBindingRegistry.swift:967`).
-> - The command palette is **⌘⇧P**, not ⌘K (`docs/DECISIONS.md:236`).
+> - The command palette is **⌘⇧P**, not ⌘K (`docs/DECISIONS.md`).
 
 ## Summary
 

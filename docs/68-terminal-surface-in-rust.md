@@ -11,7 +11,7 @@ the artifact rule, `docs/57-apple-frameworks-in-rust.md` §2 for what `slopdesk-
 
 ## 1. What this supersedes
 
-`DECISIONS.md:7` fixes "Renderer = **libghostty** (full surface) … No fallback paths to maintain",
+`DECISIONS.md` fixes "Renderer = **libghostty** (full surface) … No fallback paths to maintain",
 `docs/17:40` picks the external-IO surface as the way to get it, and
 `Sources/SlopDeskWorkspaceCore/Terminal/TerminalRendererSeam.swift:56` restates it at the seam. That
 ruling stands for the *engine* and is strengthened here: ghostty still parses every byte. What it no
@@ -374,7 +374,7 @@ Both halves are now built. `rust/slopdesk-termrender/src/block.rs` segments the 
 **alt-screen escape hatch** is `LayoutMode::Grid` plus `Chrome::NONE`, so vim and htop get the flat
 grid and no chrome is drawn over a program that owns its rows.
 
-`rust/slopdesk-ffi/src/terminal_surface.rs` carries it across: `slopdesk_term_surface_blocks` hands
+`rust/slopdesk-ffi/src/terminal_surface/` carries it across: `slopdesk_term_surface_blocks` hands
 back each block's screen rects, `_block_at_point` hit-tests one, `_set_block_collapsed` /
 `_toggle_block_collapsed` / `_expand_all_blocks` fold them, and `_block_scroll` /
 `_scroll_points` drive the list.
@@ -460,7 +460,7 @@ ordinals are unique, so the anchor is the only ambiguity worth resolving.
 
 The anchor cannot simply be the newest record. A prompt row is born from PTY bytes while its record
 arrives as a control message, and those do not order against each other — the same race
-`DECISIONS.md` (~line 763) exists for. In the window between a shell printing its prompt and the
+`DECISIONS.md` exists for. In the window between a shell printing its prompt and the
 host reporting the block, the frame holds one more prompt than the records account for, and an
 anchor of "newest record" would slide every header up one and print the previous command's exit code
 under this one. So the anchor is guessed (offset 0, then 1 — the host cannot fall two behind) and

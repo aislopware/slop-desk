@@ -6,7 +6,7 @@ named ruling for what is gone.
 
 > **2026-07-22 — PREFIX MODE REMOVED.** The tmux-style prefix (`PrefixStateMachine`,
 > `defaultPrefixChord`, `prefixKey`, the sequence table, send-prefix, the Settings Workspace-Prefix row)
-> was deleted outright — `docs/DECISIONS.md:1404` ("Prefix mode is REMOVED — the ⌘ plane is the only
+> was deleted outright — `docs/DECISIONS.md` ("Prefix mode is REMOVED — the ⌘ plane is the only
 > workspace-chord surface"). Nothing named in that sentence survives anywhere in `Sources/`
 > (greps for `PrefixStateMachine`, `defaultPrefixChord`, `sequenceTable`, `CommandInterpreter` return
 > zero hits; `KeybindingPreferences.swift:133` records that the schema stayed at v3 because fields were
@@ -27,7 +27,7 @@ named ruling for what is gone.
 The keybinding/command-routing stack is **complete on both halves**. The 2026-06-25 survey's one
 headline gap ("⌘K and ⌘/ are no-ops from the keyboard — the dispatcher is built without the toggle
 closures") is fixed and no longer describes anything: the palette chord is **⌘⇧P**, not ⌘K
-(`docs/DECISIONS.md:236` re-bound it), and `SlopDeskMacApp.swift:241` constructs the dispatcher with
+(`docs/DECISIONS.md` re-bound it), and `SlopDeskMacApp.swift:241` constructs the dispatcher with
 every overlay closure supplied. Both overlay views exist and are mounted on both halves.
 
 Two structural additions post-date the survey and shape every row below:
@@ -51,7 +51,7 @@ Two structural additions post-date the survey and shape every row below:
 | Binding registry — single source of truth | done | `WorkspaceBindingRegistry.swift:355` — `declared` (76 `WorkspaceBinding` rows, :375–963) → `bindings` (platform-filtered, :364) → `allBindings` (:985, plus the nine `selectPaneBindings` at :967). Read by the menu, the palette, the cheat sheet, both dispatchers and the tests |
 | Default keymap (full set) | done | 76 declared rows + ⌘1…⌘9 generated; `WorkspaceBindingRegistry.swift:375–963`. The `allBindings` `let` is load-bearing and pinned by `scripts/check-supervisor.sh` (:979–985 explains the 210 µs/keystroke it cost as a `var`) |
 | Per-platform row filter | done (new since the survey) | `BindingRowPlatform.lists(_:)` at `BindingRowPlatform.swift:40`, over `slopdesk_binding_row_shown`. Five rows are `Platform::Mac` — `pane.detach`, `pane.reattachAll`, `window.close`, `view.secureKeyboardEntry`, `view.pinWindow` (`bindings.rs`, the five `Platform::Mac` rows). Everything else is `Both`. `BindingRowPlatformTests` + `check-supervisor.sh` pin the two id sets equal |
-| NSEvent prefix monitor (tmux-style, default ⌃B) | **REMOVED by ruling** | Shipped 2026-07-14 (`docs/DECISIONS.md:804`), deleted 2026-07-22 (`docs/DECISIONS.md:1404`). The `.keyDown` monitor survives without it — `WorkspaceKeyDispatcher.swift:221` |
+| NSEvent prefix monitor (tmux-style, default ⌃B) | **REMOVED by ruling** | Shipped 2026-07-14 (`docs/DECISIONS.md`), deleted 2026-07-22 (`docs/DECISIONS.md`). The `.keyDown` monitor survives without it — `WorkspaceKeyDispatcher.swift:221` |
 | Prefix state machine (arm/resolve/timeout/disarm) | **REMOVED by ruling** | `CommandInterpreter.swift` and `PrefixStateMachineTests.swift` are both gone from the tree (same ruling) |
 | Configurable prefix chord | **REMOVED by ruling** | `KeybindingPreferences` carries no `prefixKey`; :129–136 records that the schema deliberately stayed at v3 because only fields were removed, so a stale blob still decodes and the retired keys are simply never read |
 | Double-tap prefix → send literal | **REMOVED by ruling** | Same ruling. Literal bytes reach a pane only via a user `text:`/`csi:`/`esc:` binding now |
@@ -68,20 +68,20 @@ Two structural additions post-date the survey and shape every row below:
 | `unbind:` suppression | done, **both halves** | macOS: `WorkspaceKeyDispatcher.swift:376`. iOS + the Mac's pane surface: `WorkspaceStore.makeKeyInterceptor`'s `resolveChord` closure checks `isUnbound` first (`WorkspaceStore+Keybinding.swift:111`) — its own comment records that the interceptor *used* to skip this, so one config file produced two behaviours. Plus the ⌃⇥ escape hatch on both (`WorkspaceKeyDispatcher.swift:418` / `PhoneKey.swift:237`) |
 | Keybindings settings editor UI | done, two views over one model | Logic: `KeybindingsEditorModel.swift` + `KeybindingsEditorReading.swift`. macOS: `MacKeybindingsEditor.swift` (mounted at `MacSettingsRows.swift:148`). iOS: `KeybindingsEditorView.swift` + `KeybindingCaptureHost.swift` (mounted at `SettingsBespokeSurfaces.swift:75`). The iOS recorder is live, not read-only — `PhoneKey.captureOutcome` (`PhoneKey.swift:264`) answers the same four verdicts as the Mac's `KeybindingCapture` |
 | Conflict detection | done | `KeybindingPreferences.conflicts()` (:212) — folds `textBindings` and `unbinds` in under synthetic `text:`/`unbind:` ids so every contender on a chord is listed. Surfaced via `PreferencesStore.keybindingConflicts()` (:471), read by `MacKeybindingsEditor.swift:135,164` and `KeybindingsEditorView.swift:46` |
-| ⌘⇧P command palette — chord | done | `view.palette` at `WorkspaceBindingRegistry.swift:645`, chord ⌘⇧P. **It is no longer ⌘K** — `docs/DECISIONS.md:236` re-bound it to the reference default and freed ⌘K, which is now a PICKER-LOCAL chord inside Open-Quickly. Routed at `WorkspaceBindingRouting.swift:146` |
+| ⌘⇧P command palette — chord | done | `view.palette` at `WorkspaceBindingRegistry.swift:645`, chord ⌘⇧P. **It is no longer ⌘K** — `docs/DECISIONS.md` re-bound it to the reference default and freed ⌘K, which is now a PICKER-LOCAL chord inside Open-Quickly. Routed at `WorkspaceBindingRouting.swift:146` |
 | ⌘⇧P palette — keyboard dispatch wired | done (was **partial**) | macOS: `SlopDeskMacApp.swift:243` passes `togglePalette:` at construction. iOS: `WorkspaceRootView.swift:242` installs `store.overlayKeyToggles`, whose `palette` member `routeInterceptedKey` threads into `route` (`WorkspaceStore+Keybinding.swift:63`) |
 | ⌘/ cheat sheet — coordinator + view | done (was **partial**) | State: `OverlayCoordinator.swift:78,633–635`. Rows: `CheatSheetContent.swift:53` over `slopdesk_cheat_sheet_columns`. Views: `MacCheatSheetPanel.swift` (NSPanel) and `KeyboardCheatSheetView.swift` (`.sheet`, mounted at `WorkspaceRootView.swift:168`). `check-supervisor.sh` fails if either half stops reading `CheatSheetContent` or reaches past it to the registry |
 | ⌘/ is CONTEXTUAL | done (new since the survey) | `WorkspaceBindingRouting.swift:150` — in vi/copy-mode ⌘/ toggles the pane's vi key-hint bar; otherwise the global cheat sheet. One chord, no collision. Pinned by `ViKeyHintsRoutingTests` |
 | SwiftUI `.commands` menu | done (was **partial**) | `Sources/SlopDeskMacUI/Commands/WorkspaceCommands.swift`, attached at `SlopDeskMacApp.swift:645,663`. Renders `groupedForDisplay`; the load-bearing rule is **NO `.keyboardShortcut` on any item** (the monitor owns chords) — the glyph rides a trailing hint `Text`. The one exception is ⌘, (`.appSettings`), which is the app menu's, not the workspace's |
-| ⌘1…⌘9 select **PANE** (not tab) | done | `selectPaneBindings` at `WorkspaceBindingRegistry.swift:967`; `case let .selectPane(n): store.selectPaneNumber(n)` at `WorkspaceBindingRouting.swift:275`. The survey called this "select-tab"; `docs/DECISIONS.md:5902` ("The switcher's unit is the PANE, and so is the ⌘-digit") is the ruling. The nine chords collapse to one display row, `selectPaneRepresentative` (:1125) |
+| ⌘1…⌘9 select **PANE** (not tab) | done | `selectPaneBindings` at `WorkspaceBindingRegistry.swift:967`; `case let .selectPane(n): store.selectPaneNumber(n)` at `WorkspaceBindingRouting.swift:275`. The survey called this "select-tab"; `docs/DECISIONS.md` ("The switcher's unit is the PANE, and so is the ⌘-digit") is the ruling. The nine chords collapse to one display row, `selectPaneRepresentative` (:1125) |
 | Alias chords (no display row) | done | `aliasChords` at `WorkspaceBindingRegistry.swift:1024` — ⌘⇧`+` and keypad `+` → increase font, ⌃⇧Space → Vi Mode. Folded into `chordTable`/`resolvedChordTable` but deliberately outside `allBindings`, so the uniqueness guard does not see them |
 | Modal yield — Open-Quickly picker | done (new since the survey) | `WorkspaceKeyDispatcher.swift:323` — the monitor preempts the responder chain, so without this ⌘1–9 would switch the tab *behind* the picker and ⌘W would destroy the pane behind it. Pinned by `DispatcherOverlayYieldTests` |
-| Modal yield — code panel webview | done (new since the survey) | `WorkspaceKeyDispatcher.swift:350` — while the embedded VS Code holds first responder every chord passes through except `survivesCodePanelYield` (:173, ⌘⇧R and ⌥⌘R). ⌃\` / ⌘\` become panel-local "take me to the terminal" (:192, `docs/DECISIONS.md:6929`). iOS twin: `CodePanelKeyYield.survives` via `PhoneAppDelegate.swift:174` |
+| Modal yield — code panel webview | done (new since the survey) | `WorkspaceKeyDispatcher.swift:350` — while the embedded VS Code holds first responder every chord passes through except `survivesCodePanelYield` (:173, ⌘⇧R and ⌥⌘R). ⌃\` / ⌘\` become panel-local "take me to the terminal" (:192, `docs/DECISIONS.md`). iOS twin: `CodePanelKeyYield.survives` via `PhoneAppDelegate.swift:174` |
 | Key-window gate | done (new since the survey) | `WorkspaceKeyDispatcher.swift:302` — an app-wide monitor would otherwise resolve chords typed into the Settings window against the hidden workspace tree (and starve the keybindings recorder). Pinned by `DispatcherKeyWindowGateTests` |
 | ⌘-hold sidebar number hints | done, **macOS only** | `WorkspaceKeyDispatcher.swift:253` (`updateShortcutHint`) off `.flagsChanged`, with a stuck-hint self-heal at :291. iOS has no bare-modifier press to observe (`PhoneKey.swift:424` states the same limitation for the ⌃⇥ commit), so this is a platform capability gap with a stated physical cause, not an unexplained one |
 | Binding conflict uniqueness pinned by tests | done | `TreeCommandRoutingTests` (chord uniqueness + the ⌘/⌥-prefix rule with the named-key exemption for ⇧PageUp/⇧Home/⇧End), `E1KeymapParityTests` (the documented defaults, chord-less rows, the ⌘+ alias) |
 | Override-apply pipeline (settings → registry → dispatcher) | done | `PreferencesStore.swift:277` writes `activeOverrides`; its `didSet` invalidates the memo (`WorkspaceBindingOverrides.swift:24`); `resolvedChordTable` (:59) rebuilds once and is then read per keystroke. Pinned by `KeybindingsEditorLogicTests`, `PreferencesStoreApplyTests` |
-| Details panel ⌘⇧R (`.toggleDetailsPanel`) | **REMOVED — shipped, then deleted** | Assigned ⌘⇧R on 2026-06-26 (`docs/DECISIONS.md:236`), deleted with the panel itself in `6de70aae` ("remove the right sidebar (inspector / Details panel) — keyboard-centric"). No `view.toggleDetails` row exists. The chord was deliberately re-taken for **Toggle Code Panel** on 2026-08-02 (`docs/DECISIONS.md:770`); `focus.codePanel` took ⌥⌘R beside it |
+| Details panel ⌘⇧R (`.toggleDetailsPanel`) | **REMOVED — shipped, then deleted** | Assigned ⌘⇧R on 2026-06-26 (`docs/DECISIONS.md`), deleted with the panel itself in `6de70aae` ("remove the right sidebar (inspector / Details panel) — keyboard-centric"). No `view.toggleDetails` row exists. The chord was deliberately re-taken for **Toggle Code Panel** on 2026-08-02 (`docs/DECISIONS.md`); `focus.codePanel` took ⌥⌘R beside it |
 
 ---
 
@@ -147,7 +147,7 @@ Two structural additions post-date the survey and shape every row below:
 ### Closed since the 2026-06-25 survey
 
 1. **⌘K / ⌘/ keyboard dispatch.** Fixed, and the premise moved: the palette chord is ⌘⇧P
-   (`docs/DECISIONS.md:236`), and `SlopDeskMacApp.swift:241` builds the dispatcher with `togglePalette`,
+   (`docs/DECISIONS.md`), and `SlopDeskMacApp.swift:241` builds the dispatcher with `togglePalette`,
    `toggleCheatSheet`, `togglePeekReply`, `toggleGlobalSearch`, `toggleJumpTo`, `toggleOpenQuickly` and
    both key-capture predicates. The chrome closures that need a `WorkspaceChromeState` are installed late
    (`setToggleSidebar` / `setToggleCodeSidebar` / `setFocusCodePanel` / `setTogglePinWindow` /

@@ -2853,7 +2853,7 @@ double slopdesk_terminal_factory_number(uint8_t field);
  * `slopdesk-vterm` (what the bytes did), `slopdesk-termrender` (where every pixel goes),
  * `slopdesk-apple-text` (what a glyph looks like), `slopdesk-apple-metal` (the draw) — because
  * they only exist together and the contents scale picks something in all four. See
- * `rust/slopdesk-ffi/src/terminal_surface.rs`'s header.
+ * `rust/slopdesk-ffi/src/terminal_surface/`'s header.
  *
  * ⚠️ MAIN THREAD, EVERY DOOR, and this one is not a convention. The engine's terminal is `!Send`
  * and `!Sync` with no lock upstream, a `CAMetalLayer` is main-thread-affine, and Core Text's font
