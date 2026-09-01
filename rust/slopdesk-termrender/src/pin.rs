@@ -57,7 +57,7 @@ use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_vterm::Frame;
 
 use crate::block::{BlockLayout, PlacedBlock};
-use crate::chrome::{BlockStatus, ChromeFrame, ChromeStyle, label, solid, status_label};
+use crate::chrome::{BlockStatus, ChromeFrame, ChromeStyle, label, solid, status_columns};
 use crate::glyph::{GlyphCache, GlyphRasterizer, TextShaper};
 use crate::layout::CellGeometry;
 use crate::paint::{PaintStyle, Painter};
@@ -355,30 +355,12 @@ fn paint_status(
     if header.height <= 0.0 {
         return;
     }
-    let printed = status_label(*status);
-    if printed.is_empty() {
-        return;
-    }
-    let Ok(cells) = u16::try_from(printed.chars().count()) else {
-        return;
-    };
     let geometry = text.geometry;
+    // The band's own y, and the header's height: the head is drawn where the viewport starts, not
+    // where the block it stands for is.
     let baseline = band.y + (header.height - geometry.metrics.cell_height) / 2.0 + geometry.font.baseline;
-    let width = f64::from(cells) * geometry.metrics.cell_width;
-    let x = header.x + header.width - width - geometry.metrics.cell_width;
-    if x <= header.x + geometry.metrics.cell_width {
-        return;
-    }
-    label(
-        &printed,
-        x,
-        baseline,
-        style.label,
-        text.size_px,
-        cache,
-        shaper,
-        rasterizer,
-        out,
+    status_columns(
+        *status, header, baseline, style, text, cache, shaper, rasterizer, out,
     );
 }
 
@@ -540,6 +522,7 @@ mod tests {
             gutter_thickness: 2.0,
             hover: Rgba::opaque(4, 4, 4),
             label: Rgba::opaque(5, 5, 5),
+            status_err: Rgba::opaque(7, 7, 7),
             scrollbar: Rgba::opaque(6, 6, 6),
             scrollbar_thickness: 4.0,
             scrollbar_min_height: 24.0,
@@ -793,7 +776,10 @@ mod tests {
             duration_ms: Some(2400),
         })];
         let (_, runs) = draw(0, 100.0, &statuses, None, None);
-        assert!(runs.iter().any(|run| run == "✗ 1  2.4s"), "{runs:?}");
+        // Two runs, because the header's two halves take two inks and the band shares that painter
+        // rather than owning a second right-alignment of its own.
+        assert!(runs.iter().any(|run| run == "✗ 1"), "{runs:?}");
+        assert!(runs.iter().any(|run| run == "2.4s"), "{runs:?}");
     }
 
     /// A recovered head that DID join prints its outcome in the same column a header would — the

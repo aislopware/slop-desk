@@ -429,10 +429,16 @@ and §10, which this pass FOUND rather than inherited.
     that has not finished has no outcome; that kills the retyped-command case where a live prompt
     would wear the previous run's `✗ 1`.
 
-    Still true, and not a gap: a failed block is marked `✗ <code>` rather than coloured red. That
-    would need a new `ChromeStyle` field and a token chosen on the Rust side of a design system that
-    lives in Swift — a design decision, available whenever the design asks. Written up at `docs/68`
-    §5.3.
+    ⚠️ The one thing this entry left open — "a failed block is marked `✗ <code>` rather than
+    coloured red" — **closed 2026-09-01, and its stated reason was wrong**. It read "a token chosen
+    on the Rust side of a design system that lives in Swift", but `Slate.Native.Terminal.err` is the
+    PROFILE's own ANSI red and exists for precisely this; nothing had to be invented. `ChromeStyle`
+    gained `status_err`, fed through the existing `_set_chrome_style` door from
+    `SlateTheme.terminalErrHex` (never `Slate.Status.err`, which is the system palette and out of
+    family on the glass). Only the `✗ <code>` takes it — the duration keeps `label`, because a slow
+    command is not a broken one — which is why `chrome::status_parts` splits the two halves where
+    the words are chosen and `chrome::status_columns` draws them as two runs for the header AND the
+    pinned head. Written up at `docs/68` §5.3.
 
 ### What was REMOVED since the 2026-06-25/26 survey (unaffected by the terminal-surface rewrite)
 

@@ -49,6 +49,12 @@ enum TerminalChromeAppearance {
             // rejected once before. The scrollbar takes the dose instead, because a thumb is a
             // shape and a header is words.
             label: opaque(glass.ink2),
+            // The one hue on a finished block, and it is the PROFILE's red (the ANSI slot behind
+            // ``Slate/Native/Terminal/err``) rather than ``Slate/Status/err``: the system palette is
+            // solved against the cream ground and lands out of family beside the glass. Spent only
+            // on the `✗ <code>` — the duration next to it stays `label`, because a slow command is
+            // not a failed one.
+            status_err: opaque(Slate.theme.terminalErrHex),
             scrollbar: translucent(glass.ink2, Slate.Opacity.muted),
             divider_thickness: Double(Slate.Metric.hairline),
             // Wider than a hairline because it is a MARK and not a rule — at 1pt the resting gutter

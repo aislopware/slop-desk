@@ -79,7 +79,7 @@ pub struct SlopDeskTerminalBlockScroll {
     pub following: bool,
 }
 
-/// The client's design for the block furniture: six colours and five lengths.
+/// The client's design for the block furniture: seven colours and five lengths.
 ///
 /// Colours are `0xAARRGGBB` — the one place on this surface where the high byte IS alpha. A cell's
 /// ink is opaque by definition, so [`rgb`] drops it; a hover wash and a scrollbar thumb are
@@ -105,6 +105,8 @@ pub struct SlopDeskTerminalChromeStyle {
     pub hover: u32,
     /// The collapse mark and its folded-row count.
     pub label: u32,
+    /// The `✗ <code>` on a failed block's header, and nothing else on it.
+    pub status_err: u32,
     /// The scrollbar thumb.
     pub scrollbar: u32,
     /// How thick the divider is, in points.
@@ -130,6 +132,7 @@ impl SlopDeskTerminalChromeStyle {
             gutter_thickness: self.gutter_thickness * scale,
             hover: argb(self.hover),
             label: argb(self.label),
+            status_err: argb(self.status_err),
             scrollbar: argb(self.scrollbar),
             scrollbar_thickness: self.scrollbar_thickness * scale,
             scrollbar_min_height: self.scrollbar_min_height * scale,

@@ -80,6 +80,10 @@ pub struct ChromeStyle {
     pub hover: Rgba,
     /// The collapse mark and the folded-row count.
     pub label: Rgba,
+    /// The `✗ <code>` a failed block's header leads with — and NOTHING else, which is what keeps it
+    /// worth spending a hue on. The duration beside it stays [`ChromeStyle::label`]: a slow command
+    /// is not a broken one, and colouring the whole status would make the red mean "finished".
+    pub status_err: Rgba,
     /// The scrollbar thumb.
     pub scrollbar: Rgba,
     /// How wide the thumb is.
@@ -100,6 +104,7 @@ impl ChromeStyle {
         gutter_thickness: 0.0,
         hover: Rgba::CLEAR,
         label: Rgba::CLEAR,
+        status_err: Rgba::CLEAR,
         scrollbar: Rgba::CLEAR,
         scrollbar_thickness: 0.0,
         scrollbar_min_height: 0.0,
@@ -141,34 +146,44 @@ pub struct BlockStatus {
     pub duration_ms: Option<u32>,
 }
 
-/// The label for a status, or an empty string when there is nothing worth printing.
+/// The two halves of a status: what FAILED, and how long it took. Either may be empty.
 ///
-/// Failure leads with `✗` and the code because that is the thing a reader scrolls back to find, and
-/// success prints only the duration — a `✓` on every successful block is ink on the majority case
-/// to distinguish the case nobody is looking for.
-///
-/// Deliberately NOT a colour. A red would have to come from a new [`ChromeStyle`] field, which
-/// means a new appearance door and a token invented on this side of the design system; the mark
-/// carries the same information and the header stays on the one ink the chrome already owns.
+/// Two rather than one because they are drawn in different inks and the split has to be decided
+/// where the words are chosen, not re-derived at the painter by looking for a `✗`. Failure leads,
+/// because that is the thing a reader scrolls back to find; success contributes no mark of its own
+/// — a `✓` on every successful block is ink on the majority case to distinguish the case nobody is
+/// looking for.
 #[must_use]
-pub(crate) fn status_label(status: BlockStatus) -> String {
-    let mut out = String::new();
+pub(crate) fn status_parts(status: BlockStatus) -> (String, String) {
+    let mut failure = String::new();
     if let Some(code) = status.exit_code
         && code != 0
     {
-        out.push_str("✗ ");
-        out.push_str(&code.to_string());
+        failure.push_str("✗ ");
+        failure.push_str(&code.to_string());
     }
-    if let Some(ms) = status.duration_ms
-        && let Some(spent) = duration_label(ms)
-    {
-        if !out.is_empty() {
-            out.push_str("  ");
-        }
-        out.push_str(&spent);
-    }
-    out
+    let spent = status.duration_ms.and_then(duration_label).unwrap_or_default();
+    (failure, spent)
 }
+
+/// The whole status as one string — what the header reads out, and what its width is measured from.
+///
+/// The two halves are joined by two spaces, the same gap the painter leaves between the runs it
+/// draws them as. ⚠️ Keep this the ONE arithmetic: a width computed from a differently-joined
+/// string would right-align the status against a length nothing on the row actually occupies.
+#[must_use]
+pub(crate) fn status_label(status: BlockStatus) -> String {
+    let (failure, spent) = status_parts(status);
+    match (failure.is_empty(), spent.is_empty()) {
+        (true, _) => spent,
+        (false, true) => failure,
+        (false, false) => format!("{failure}{STATUS_GAP}{spent}"),
+    }
+}
+
+/// What parts a failure's code from its duration. Two cells, so the number and the time never read
+/// as one figure in a monospaced face.
+const STATUS_GAP: &str = "  ";
 
 /// A duration a reader can take in at a glance, or `None` for one too short to be worth the ink.
 ///
@@ -341,6 +356,13 @@ fn paint_mark(
 /// as long as it is, so a status pinned to the left would sit at a different column on every block
 /// and a status after the text would wander. Against the trailing edge the numbers stack in one
 /// column, which is what makes a failed block findable by scrolling rather than by reading.
+///
+/// TWO runs, one ink each. The `✗ <code>` takes [`ChromeStyle::status_err`] — the island's own ANSI
+/// red, which is why this stopped being "a token invented on the Rust side of a design system that
+/// lives in Swift" and became a colour the profile already publishes — and the duration keeps
+/// [`ChromeStyle::label`]. Shaped separately rather than as one run with a colour break, because a
+/// run is the shaper's unit and splitting one afterwards would put this file in the business of
+/// counting glyphs back to a character index.
 #[expect(
     clippy::too_many_arguments,
     reason = "the same stack `paint_mark` takes, plus the status it prints"
@@ -361,12 +383,39 @@ fn paint_status(
     if header.height <= 0.0 {
         return;
     }
+    let geometry = text.geometry;
+    let baseline = header.y + (header.height - geometry.metrics.cell_height) / 2.0 + geometry.font.baseline;
+    status_columns(
+        status, header, baseline, style, text, cache, shaper, rasterizer, out,
+    );
+}
+
+/// The status itself, right-aligned inside `header` and sitting on `baseline`.
+///
+/// Its own function because the pinned head prints the SAME status in the same column while the
+/// real header is scrolled off ([`crate::pin`]), and a second copy of this arithmetic there would
+/// be two right-alignments to keep agreeing — the exact thing that would let the head and the
+/// header disagree about where a number sits, or about which half is red.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the painter's stack, plus the header row it is placed in"
+)]
+pub(crate) fn status_columns(
+    status: BlockStatus,
+    header: Rect,
+    baseline: f64,
+    style: &ChromeStyle,
+    text: &PaintStyle,
+    cache: &mut GlyphCache,
+    shaper: &mut impl TextShaper,
+    rasterizer: &mut impl GlyphRasterizer,
+    out: &mut DrawList,
+) {
     let printed = status_label(status);
     if printed.is_empty() {
         return;
     }
     let geometry = text.geometry;
-    let baseline = header.y + (header.height - geometry.metrics.cell_height) / 2.0 + geometry.font.baseline;
     let Ok(cells) = u16::try_from(printed.chars().count()) else {
         return;
     };
@@ -379,9 +428,31 @@ fn paint_status(
     if x <= header.x + geometry.metrics.cell_width {
         return;
     }
+    let (failure, spent) = status_parts(status);
+    // The duration's column is the failure's length plus the gap, measured in CELLS off the same
+    // origin the whole label was aligned from — never `x + measured width of the first run`, which
+    // would let a shaper that reports a different advance for `✗` drift the two runs apart.
+    let gap = if failure.is_empty() {
+        0
+    } else {
+        STATUS_GAP.chars().count()
+    };
+    let after_failure = u16::try_from(failure.chars().count().saturating_add(gap)).unwrap_or(u16::MAX);
+    let spent_x = x + f64::from(after_failure) * geometry.metrics.cell_width;
     label(
-        &printed,
+        &failure,
         x,
+        baseline,
+        style.status_err,
+        text.size_px,
+        cache,
+        shaper,
+        rasterizer,
+        out,
+    );
+    label(
+        &spent,
+        spent_x,
         baseline,
         style.label,
         text.size_px,
@@ -602,6 +673,7 @@ mod tests {
             gutter_thickness: 2.0,
             hover: Rgba::opaque(4, 4, 4),
             label: Rgba::opaque(5, 5, 5),
+            status_err: Rgba::opaque(7, 7, 7),
             scrollbar: Rgba::opaque(6, 6, 6),
             scrollbar_thickness: 4.0,
             scrollbar_min_height: 24.0,
@@ -741,12 +813,86 @@ mod tests {
             }),
         ];
         let (_, runs) = draw_with(&layout, &style(), &frame(), &statuses, &text_style());
-        assert!(runs.iter().any(|run| run == "✗ 2  5.0s"), "{runs:?}");
+        // TWO runs, because the two halves take different inks — the joined string is what the
+        // WIDTH is measured from, not what is shaped.
+        assert!(runs.iter().any(|run| run == "✗ 2"), "{runs:?}");
+        assert!(runs.iter().any(|run| run == "5.0s"), "{runs:?}");
         assert_eq!(
             runs.iter().filter(|run| run.starts_with('✗')).count(),
             1,
             "only the block with a record got one"
         );
+    }
+
+    /// ⚠️ The failure wears the error ink and the duration does not — one status, two inks.
+    ///
+    /// Asserted on the GLYPHS rather than on the runs, because a shaper that returned the right two
+    /// strings in one colour is exactly the regression this exists to catch: a reader scanning a
+    /// scrollback for a red mark would find every slow command wearing one.
+    #[test]
+    fn only_the_failure_half_takes_the_error_ink() {
+        let layout = layout(1, false);
+        let statuses = [Some(BlockStatus {
+            exit_code: Some(2),
+            duration_ms: Some(5000),
+        })];
+        let (drawn, _) = draw_with(&layout, &style(), &frame(), &statuses, &text_style());
+        let failed: Vec<_> = drawn
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.color == style().status_err)
+            .collect();
+        // The collapse mark shares `label`, so the duration is the label ink RIGHT of the status's
+        // own origin — everything else in that ink is at the header's leading edge.
+        let quiet: Vec<_> = drawn
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.color == style().label && glyph.x > 200.0)
+            .collect();
+        assert_eq!(
+            failed.len(),
+            3,
+            "`✗`, a space and `2` — and nothing of the duration"
+        );
+        assert_eq!(quiet.len(), 4, "`5.0s`, in the ink every other header word takes");
+        // The duration follows the failure across the row rather than sitting on top of it.
+        let rightmost_failure = failed.iter().map(|glyph| glyph.x).fold(f32::MIN, f32::max);
+        let leftmost_quiet = quiet.iter().map(|glyph| glyph.x).fold(f32::MAX, f32::min);
+        assert!(
+            leftmost_quiet > rightmost_failure,
+            "{leftmost_quiet} vs {rightmost_failure}"
+        );
+    }
+
+    /// A successful block's duration starts where a failure would have — at the left of the whole
+    /// status — rather than being pushed right by a gap that has nothing in front of it.
+    #[test]
+    fn a_success_spends_no_room_on_the_mark_it_does_not_print() {
+        let layout = layout(1, false);
+        let statuses = [Some(BlockStatus {
+            exit_code: Some(0),
+            duration_ms: Some(5000),
+        })];
+        let (drawn, runs) = draw_with(&layout, &style(), &frame(), &statuses, &text_style());
+        assert_eq!(
+            runs.iter().filter(|run| !run.is_empty()).count(),
+            2,
+            "the mark and the time"
+        );
+        assert!(runs.iter().any(|run| run == "5.0s"), "{runs:?}");
+        assert!(
+            !drawn.glyphs.iter().any(|glyph| glyph.color == style().status_err),
+            "nothing failed, so nothing wears the failure ink"
+        );
+        let time = drawn
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.color == style().label && glyph.x > 200.0)
+            .map(|glyph| glyph.x)
+            .fold(f32::MAX, f32::min);
+        // Four cells of `5.0s` plus one of air off a header that ends at 400, at 10px cells — the
+        // same trailing edge the failed case lands its LAST glyph on.
+        assert!((time - 350.0).abs() < f32::EPSILON, "{time}");
     }
 
     /// The active block refuses a status even when one is handed to it.

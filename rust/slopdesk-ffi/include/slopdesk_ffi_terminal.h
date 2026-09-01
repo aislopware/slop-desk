@@ -543,6 +543,7 @@ typedef struct {
   uint32_t gutter_active;          /* the same bar on the block holding the cursor */
   uint32_t hover;                  /* the wash over the block under the pointer   */
   uint32_t label;                  /* the collapse mark and its folded-row count  */
+  uint32_t status_err;             /* the `✗ <code>` on a failed block's header   */
   uint32_t scrollbar;              /* the thumb                                   */
   double   divider_thickness;
   double   gutter_thickness;

@@ -489,10 +489,23 @@ Retype a command the newest record already holds and the join would otherwise ma
 onto the previous run and print its `✗ 1` under a command not yet entered. A running block's label
 is empty either way, so the skip costs nothing.
 
-What a header still does NOT do is colour a failure red. That would need a new `ChromeStyle` field,
-which is a new appearance door and a token chosen on the Rust side of a design system that lives in
-Swift; the `✗` mark carries the same information on the ink the chrome already owns. A red is a
-design decision, and it is available whenever the design asks for it.
+**A failure IS red, since 2026-09-01** — this paragraph used to say it was not, and gave the reason
+as "a token chosen on the Rust side of a design system that lives in Swift". That reason was wrong
+about the design system: `Slate.Native.Terminal.err` is the PROFILE's own ANSI red, published for
+exactly this — anything drawn inside the island that has to say "failed" — so nothing had to be
+invented, only read. `ChromeStyle::status_err` carries it through the one appearance door the chrome
+already has (`_set_chrome_style`, now seven colours), and `TerminalChromeAppearance` fills it from
+`terminalErrHex` rather than from `Slate.Status.err`, which is the SYSTEM palette and lands out of
+family beside the glass.
+
+Only the `✗ <code>` wears it; the duration next to it keeps `label`, because a slow command is not a
+broken one and a status that were red end to end would come to mean "finished". That is why the two
+are separate shaped runs — `chrome::status_parts` splits the words where they are CHOSEN, so the
+painter never has to find a `✗` in a string and count glyphs back to it. `status_label` stays as the
+joined form, and it is the one thing the right-alignment is measured from: a width taken from a
+differently-joined string would align the column against a length nothing on the row occupies. The
+pinned head (§5.3's band) prints the same status through the same `chrome::status_columns`, so the
+head and the header cannot disagree about the column or about which half is red.
 
 ### 5.4 The editor-like prompt
 
