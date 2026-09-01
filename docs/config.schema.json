@@ -503,6 +503,11 @@
           "maximum": 1,
           "default": 1
         },
+        "images": {
+          "description": "Draw inline images (kitty graphics). Off hides them; the terminal still stores them.",
+          "type": "boolean",
+          "default": true
+        },
         "scrollback-limit": {
           "description": "How many lines are kept above the viewport for scrollback.",
           "type": "integer",

@@ -18752,3 +18752,45 @@ draws with no cursor on screen. `setFramebufferOnly(true)` gives up a readback o
 drawable, which would only re-check that Metal blits quads it blits for every glyph anyway. Verify
 the decision in the layer that makes it; a pixel rig is for the layers that decide in pixels, which
 is what the band does and the grid does not.
+
+## Inline images draw, and a remote terminal may not read a local path (2026-09-01)
+
+`docs/68` §5.1 scoped kitty-graphics RENDERING out with one sentence: `TerminalConfigBuilder` enabled
+no image token, so nothing regressed by not drawing them. That builder was DELETED in the same
+document (§5.6), which killed the premise without anyone striking the conclusion — a scope cut
+outliving its reason. §5.7 is the close. Nothing upstream had to change: the pinned bindings already
+publish storage, placements, z, `PlacementRenderInfo` and a PNG hook, which is precisely the return
+"owning the grid" was supposed to pay.
+
+**The kitty file and shared-memory transmission mediums are CLOSED, and no setting reopens them.**
+The protocol lets a program transmit an image by naming a filesystem PATH (`t=f`, `t=t`) or a POSIX
+shared-memory object (`t=s`), and in a local terminal that is a feature — the program and the
+terminal share a filesystem, and passing a 4 MB PNG by name beats base64 in an APC. **This app is the
+case where they do not.** The terminal is the CLIENT and the program runs on a REMOTE host, so a path
+the far side names is resolved by the LAPTOP: an arbitrary local file read, driven by whatever is on
+the other end of the pty, with the bytes then drawn on screen where the far side can see what they
+were. Only the direct medium (`t=d`, base64 inside the APC) is accepted. `terminal.images` gates
+DRAWING and nothing else; it cannot turn this back on.
+
+**The engine's own default storage limit is large, and reading the documentation would have missed
+it.** The bindings say images are stored "only once a non-zero storage limit has been set" — which
+reads as "nothing is stored until you ask". A probe test measured the opposite: a fresh session
+accepts and stores a transmission with nothing configured. So the seal writes an explicit zero as
+well as closing the mediums. The regression test asserts on `image_meta` and NOT on
+`graphics_generation`, because the generation moves even when nothing was stored — the obvious
+assertion is the one that passes for the wrong reason.
+
+**A placement is clipped to its BLOCK.** Nothing in the protocol stops a placement's rows from
+running past the command that emitted them, and under block layout the next thing below is the next
+command's header. An image over it would be furniture describing the wrong command. So the
+destination is intersected with the block body and the source rectangle narrowed by the same
+fraction — a crop, not a squash — and the same intersection handles a placement scrolled off the top,
+which is why the engine's negative row costs no second code path.
+
+**`f64::max` swallows a NaN, which is the opposite of what an intersection wants.** `CLAUDE.md`
+requires `f64::max`/`min` over a `<` ternary for bit-exactness, and those two disagree on exactly
+this input: IEEE `maxNum` answers the non-NaN operand, so a NaN clip bound would be silently replaced
+by the image's own edge and the placement would draw at full size in the wrong place rather than not
+at all. The clip therefore checks finiteness FIRST and explicitly. The test that pins it exists
+because the first version of that function claimed the intersections would reject a NaN, and they
+did not.

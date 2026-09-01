@@ -1,9 +1,9 @@
-// The whole GPU program for the terminal surface: two vertex shaders, two fragment shaders.
+// The whole GPU program for the terminal surface: three vertex shaders, three fragment shaders.
 //
 // This file is the OTHER half of `slopdesk-termrender`'s `quad.rs`. The structs below must match
 // that module field for field, and the `static_assert`s at the bottom of each one are how that stops
 // being a hope — `pipeline.rs` compiles this source at start-up, so a layout drift is a start-up
-// error with a line number rather than a screen of shifted glyphs. The Rust side pins the same three
+// error with a line number rather than a screen of shifted glyphs. The Rust side pins the same four
 // numbers in `geom.rs`'s tests, so a `#[repr(C)]` edit fails `cargo test` even with no GPU present.
 //
 // ## No vertex buffer
@@ -69,6 +69,12 @@ constant uint kStyleDotted = 1u;
 constant uint kStyleDashed = 2u;
 constant uint kStyleCurly  = 3u;
 constant uint kStyleHollow = 4u;
+
+struct ImageInstance {
+    packed_float4 rect;   // x, y, width, height — device pixels, top-left origin
+    packed_float4 uv;     // u0, v0, u1, v1 into the image's own texture
+};
+static_assert(sizeof(ImageInstance) == 32, "ImageInstance drifted from quad.rs");
 
 // One value per frame: the drawable's size in device pixels. `renderer.rs` writes it with
 // `setVertexBytes`, Metal's inline path for a uniform too small to be worth a buffer.
@@ -251,4 +257,53 @@ fragment float4 glyph_fragment(GlyphVarying in [[stage_in]],
     float mask = coverage.sample(atlas_sampler, in.uv).r;
     float alpha = in.color.a * mask;
     return float4(in.color.rgb * alpha, alpha);
+}
+
+// MARK: - Inline images
+
+struct ImageVarying {
+    float4 position [[position]];
+    float2 uv;
+};
+
+vertex ImageVarying image_vertex(uint vertexId [[vertex_id]],
+                                 uint instanceId [[instance_id]],
+                                 const device ImageInstance *instances [[buffer(0)]],
+                                 constant Viewport &viewport [[buffer(1)]]) {
+    ImageInstance instance = instances[instanceId];
+    float2 origin = float2(instance.rect.x, instance.rect.y);
+    float2 extent = float2(instance.rect.z, instance.rect.w);
+    float2 unit = corner_of(vertexId);
+    float2 pixels = origin + unit * extent;
+
+    float2 uv0 = float2(instance.uv.x, instance.uv.y);
+    float2 uv1 = float2(instance.uv.z, instance.uv.w);
+
+    ImageVarying out;
+    out.position = to_clip(pixels, float2(viewport.size));
+    // The same unit corner indexes the source rectangle, so the image's top-left is the quad's
+    // top-left and a cropped placement (`image.rs`'s `clip`) needs no second winding rule.
+    out.uv = uv0 + unit * (uv1 - uv0);
+    return out;
+}
+
+fragment float4 image_fragment(ImageVarying in [[stage_in]],
+                               texture2d<float> image [[texture(0)]]) {
+    // `linear`, and this is the ONE sampler in this file that is not `nearest`. A glyph is
+    // rasterised at the device scale and drawn at its own size, so filtering it could only blur it.
+    // An image is not: the program picked its pixel dimensions and the placement's box comes from a
+    // cell grid, so the two disagree by whatever the font size happens to be and every image is
+    // resampled. `nearest` there is visible aliasing on the diagonal of every chart.
+    //
+    // `clamp_to_edge` because `image.rs` crops a placement by NARROWING its uv rectangle, so an
+    // edge texel is a real edge and repeating or bordering it would put the far side of the picture
+    // — or black — into the last half-texel of every scrolled image.
+    constexpr sampler image_sampler(coord::normalized, filter::linear, address::clamp_to_edge);
+
+    // STRAIGHT alpha in, premultiplied out. `slopdesk-vterm`'s `ImagePixels` documents its RGBA as
+    // straight and `images.rs` uploads those bytes unchanged, so the multiply the `One /
+    // OneMinusSourceAlpha` blend expects is owed here. Doing it in the shader rather than on upload
+    // is what keeps the store's pixels the same bytes the engine produced — see `images.rs`.
+    float4 texel = image.sample(image_sampler, in.uv);
+    return float4(texel.rgb * texel.a, texel.a);
 }

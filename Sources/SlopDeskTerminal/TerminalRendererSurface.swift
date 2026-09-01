@@ -321,6 +321,15 @@ final class TerminalRendererSurface {
         slopdesk_term_surface_set_cursor_opacity(handle, opacity)
     }
 
+    /// Whether inline images (the kitty graphics protocol) are drawn.
+    ///
+    /// The engine keeps its storage regardless, so this is a live toggle in both directions: turning
+    /// it back on redraws what is already on screen rather than waiting for a retransmission.
+    func setImages(_ enabled: Bool) {
+        guard let handle else { return }
+        slopdesk_term_surface_set_images(handle, enabled)
+    }
+
     /// The colour the glyph under a filled caret takes. `nil` keeps the cell's own background.
     func setCursorTextColor(_ rgb: UInt32?) {
         guard let handle else { return }

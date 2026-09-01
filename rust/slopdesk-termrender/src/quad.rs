@@ -1,12 +1,21 @@
-//! What the GPU is handed: two instance arrays and nothing else.
+//! What the GPU is handed: four instance arrays and nothing else.
 //!
-//! ## Three buffers, and the order is the whole design
+//! ## Four buffers, and the order is the whole design
 //!
 //! [`DrawList`] keeps backgrounds, glyphs and overlays apart because they must be drawn in that
 //! order and because each wants a different pipeline. What makes the split load-bearing rather than
 //! tidy is the **block cursor**: a filled block sits UNDER its glyph and inverts it, so it is a
 //! background; a bar or an underline sits OVER the glyph, so it is an overlay. One buffer would
 //! force a sort per frame to express a rule that is already known at build time.
+//!
+//! Images are the fourth buffer and the one that breaks the pattern, because a kitty placement
+//! carries a Z INDEX and the protocol gives that index three meanings: below the cell background,
+//! between the background and the text, or over the text. So the image instances are ONE array
+//! visited THREE times — the run list says which layer each stretch belongs to, and
+//! `slopdesk-apple-metal` draws each layer at its own point in the pass. Three separate arrays
+//! would have been the obvious spelling and the wrong one: it is the same pipeline and the same
+//! textures every time, and a program that puts one image behind text and another in front would
+//! then need its instances split across two allocations to say so.
 //!
 //! ## Why `#[repr(C)]` in a crate that forbids `unsafe`
 //!
@@ -148,17 +157,82 @@ impl GlyphInstance {
     }
 }
 
+/// Where an image sits in the painter's order, which the kitty protocol calls its z index.
+///
+/// The three bands are the protocol's own, not a rendering convenience: a program says "behind
+/// everything", "behind the text but over the cell colour" or "in front" by choosing a number, and
+/// these are the three ranges those numbers fall into. Carried as an enum because the RANGES are
+/// the engine's to classify and the ORDER is this crate's to honour, and a raw `i32` on the
+/// instance would put the classification in whichever module happened to read it next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum ImageLayer {
+    /// Under the cell backgrounds — a wallpaper the terminal's own colours paint over.
+    BelowBackground = 0,
+    /// Over the cell backgrounds, under the text. The commonest case a program that draws behind
+    /// its own output asks for.
+    BelowText = 1,
+    /// Over everything the terminal drew. The protocol's default, and what `z=0` means.
+    #[default]
+    AboveText = 2,
+}
+
+/// One stretch of [`DrawList::images`] that shares a texture and a layer.
+///
+/// A run rather than a per-instance texture id, because binding a texture is an ENCODER action and
+/// an instance field could not express one: the GPU reads one texture per draw call, so the runs
+/// are exactly the draw calls. `first` is carried rather than accumulated so the renderer's loop
+/// has nothing to get wrong when it skips the runs of the two layers it is not drawing yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageRun {
+    /// Which image's texture the run samples.
+    pub image: u32,
+    /// When in the pass the run is drawn.
+    pub layer: ImageLayer,
+    /// Index of the run's first instance in [`DrawList::images`].
+    pub first: u32,
+    /// How many instances the run holds.
+    pub count: u32,
+}
+
+/// One image placement, or one visible piece of one.
+///
+/// No colour and no tint: an image carries its own pixels, and a terminal that recoloured one would
+/// be answering a question the protocol never asked. What it does carry is a source rectangle in
+/// NORMALISED texture coordinates, because clipping a placement against the viewport and against
+/// its own block is done on this side — see [`crate::image`] — and the result is a sub-rectangle of
+/// the texture that the vertex stage interpolates exactly as the glyph pass does.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub struct ImageInstance {
+    /// Left edge in device pixels.
+    pub x: f32,
+    /// Top edge in device pixels.
+    pub y: f32,
+    /// Width in device pixels.
+    pub width: f32,
+    /// Height in device pixels.
+    pub height: f32,
+    /// `[u0, v0, u1, v1]` into the run's texture.
+    pub uv: [f32; 4],
+}
+
 /// Everything one frame draws, in draw order.
 ///
-/// Reused across frames: [`DrawList::clear`] keeps all three allocations, so the steady state of a
+/// Reused across frames: [`DrawList::clear`] keeps every allocation, so the steady state of a
 /// repaint is writing over memory that is already warm. That matters more than it looks — the
 /// buffers are the size of the viewport, and a fresh `Vec` per frame would put a 200 KiB allocation
 /// on the path `docs/68` §6.3 measures.
 #[derive(Debug, Clone, Default)]
 pub struct DrawList {
-    /// Cell backgrounds, the selection fill, and a filled block cursor. Drawn first.
+    /// Kitty image placements, sorted so every run of one layer is contiguous. Which of them is
+    /// drawn WHEN is [`Self::image_runs`]'s answer, not this vector's order alone.
+    pub images: Vec<ImageInstance>,
+    /// The draw calls [`Self::images`] is cut into, in ascending layer order.
+    pub image_runs: Vec<ImageRun>,
+    /// Cell backgrounds, the selection fill, and a filled block cursor. Drawn after
+    /// [`ImageLayer::BelowBackground`].
     pub backgrounds: Vec<RectInstance>,
-    /// Text. Drawn over the backgrounds.
+    /// Text. Drawn over the backgrounds and over [`ImageLayer::BelowText`].
     pub glyphs: Vec<GlyphInstance>,
     /// Underlines, strikethroughs, overlines, and any cursor that is not a filled block. Drawn
     /// last, because a strikethrough that the glyph painted over is not a strikethrough.
@@ -172,8 +246,10 @@ impl DrawList {
         Self::default()
     }
 
-    /// Empties all three buffers, keeping their allocations.
+    /// Empties every buffer, keeping their allocations.
     pub fn clear(&mut self) {
+        self.images.clear();
+        self.image_runs.clear();
         self.backgrounds.clear();
         self.glyphs.clear();
         self.overlays.clear();
@@ -182,13 +258,45 @@ impl DrawList {
     /// Whether the list would draw nothing.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.backgrounds.is_empty() && self.glyphs.is_empty() && self.overlays.is_empty()
+        self.backgrounds.is_empty()
+            && self.glyphs.is_empty()
+            && self.overlays.is_empty()
+            && self.images.is_empty()
     }
 
-    /// How many instances the list holds, across all three buffers.
+    /// How many instances the list holds, across every buffer.
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.backgrounds.len() + self.glyphs.len() + self.overlays.len()
+        self.backgrounds.len() + self.glyphs.len() + self.overlays.len() + self.images.len()
+    }
+
+    /// Appends an image instance to the run `image` and `layer` name, opening one if needed.
+    ///
+    /// Extending the LAST run rather than searching for a matching one is deliberate and is what
+    /// makes the run list correct: runs are draw calls in order, so merging into an earlier run
+    /// would move an instance backwards past everything emitted since — which for images is exactly
+    /// the z ordering the layer exists to preserve. `crate::image` sorts before it pushes, so
+    /// adjacency is where the merging opportunity actually is.
+    pub fn push_image(&mut self, image: u32, layer: ImageLayer, instance: ImageInstance) {
+        if instance.width <= 0.0 || instance.height <= 0.0 {
+            return;
+        }
+        match self.image_runs.last_mut() {
+            Some(run) if run.image == image && run.layer == layer => run.count += 1,
+            _ => {
+                // A `u32` because that is what a base-instance argument is; a list longer than four
+                // billion image quads is not a frame anyone renders, and saturating keeps the
+                // arithmetic total rather than making the render path the thing that panics.
+                let first = u32::try_from(self.images.len()).unwrap_or(u32::MAX);
+                self.image_runs.push(ImageRun {
+                    image,
+                    layer,
+                    first,
+                    count: 1,
+                });
+            },
+        }
+        self.images.push(instance);
     }
 
     /// Appends a background rect, dropping one that would draw nothing.
@@ -241,7 +349,7 @@ pub const fn px(value: f64) -> f32 {
 mod tests {
     use slopdesk_vterm::Rgb;
 
-    use super::{DrawList, GlyphInstance, RectInstance, RectStyle, Rgba, px};
+    use super::{DrawList, GlyphInstance, ImageInstance, ImageLayer, RectInstance, RectStyle, Rgba, px};
 
     fn rect(color: Rgba) -> RectInstance {
         RectInstance {
@@ -329,5 +437,72 @@ mod tests {
     #[test]
     fn narrowing_keeps_a_device_pixel_exact() {
         assert!((px(1234.5) - 1234.5_f32).abs() < f32::EPSILON);
+    }
+
+    fn image() -> ImageInstance {
+        ImageInstance {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+            uv: [0.0, 0.0, 1.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn adjacent_placements_of_one_image_on_one_layer_are_one_draw_call() {
+        let mut list = DrawList::new();
+        list.push_image(1, ImageLayer::AboveText, image());
+        list.push_image(1, ImageLayer::AboveText, image());
+
+        assert_eq!(list.images.len(), 2);
+        assert_eq!(
+            list.image_runs.len(),
+            1,
+            "two placements of one image bound its texture twice"
+        );
+        assert_eq!(list.image_runs.first().map(|run| run.count), Some(2));
+    }
+
+    #[test]
+    fn a_new_image_or_a_new_layer_opens_a_new_run() {
+        let mut list = DrawList::new();
+        list.push_image(1, ImageLayer::BelowText, image());
+        list.push_image(2, ImageLayer::BelowText, image());
+        list.push_image(2, ImageLayer::AboveText, image());
+        // Back to the FIRST image and layer, but not adjacent to it: merging here would reorder the
+        // draw and put an image on the wrong side of the text.
+        list.push_image(1, ImageLayer::BelowText, image());
+
+        let runs: Vec<(u32, ImageLayer, u32, u32)> = list
+            .image_runs
+            .iter()
+            .map(|run| (run.image, run.layer, run.first, run.count))
+            .collect();
+        assert_eq!(runs, vec![
+            (1, ImageLayer::BelowText, 0, 1),
+            (2, ImageLayer::BelowText, 1, 1),
+            (2, ImageLayer::AboveText, 2, 1),
+            (1, ImageLayer::BelowText, 3, 1),
+        ]);
+    }
+
+    #[test]
+    fn a_zero_area_image_never_reaches_a_buffer() {
+        let mut list = DrawList::new();
+        list.push_image(1, ImageLayer::AboveText, ImageInstance {
+            width: 0.0,
+            ..image()
+        });
+        list.push_image(1, ImageLayer::AboveText, ImageInstance {
+            height: -1.0,
+            ..image()
+        });
+
+        assert!(list.is_empty());
+        assert!(
+            list.image_runs.is_empty(),
+            "an empty run would still bind a texture"
+        );
     }
 }

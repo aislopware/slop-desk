@@ -2978,6 +2978,17 @@ void slopdesk_term_surface_set_cursor_color(SlopDeskTerminalSurface *handle, uin
  * the paint owns this number. Out-of-range and NaN clamp where it is applied. */
 void slopdesk_term_surface_set_cursor_opacity(SlopDeskTerminalSurface *handle, double opacity);
 
+/* Whether inline images (the kitty graphics protocol) are DRAWN.
+ *
+ * A renderer setting and not an engine one, deliberately: the engine keeps its image storage either
+ * way, so turning this back on redraws whatever is still on screen instead of waiting for a program
+ * to retransmit. Off is a picture nobody sees, not a picture nobody has.
+ *
+ * This does NOT gate what the terminal ACCEPTS. The file and shared-memory transmission mediums are
+ * closed permanently, because in this app the terminal is the CLIENT and a path a remote program
+ * names would resolve on the user's own laptop — a refusal, not a preference. */
+void slopdesk_term_surface_set_images(SlopDeskTerminalSurface *handle, bool enabled);
+
 /* The colour the glyph under a filled caret takes, packed 0x00RRGGBB. `present` false keeps the
  * cell's own background, which is the reading that is always legible.
  *

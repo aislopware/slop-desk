@@ -448,6 +448,14 @@ public enum SettingsKey {
     /// default OFF.
     public static var copyOnSelectEnabled: Bool { AppConfig.current.flag("controls.copy-on-select") }
 
+    /// Draw inline images the kitty graphics protocol transmitted (`terminal.images`), default ON.
+    ///
+    /// A RENDER toggle, not an acceptance one: the terminal keeps every image it was sent either
+    /// way, so turning this back on redraws what is already on screen. Read live by the terminal
+    /// surface for the same reason the neighbours here are — a plain toggle resolves to itself, so
+    /// carrying it on the preferences broadcaster would be a second spelling of one fact.
+    public static var terminalImagesEnabled: Bool { AppConfig.current.flag("terminal.images") }
+
     /// Strip trailing whitespace from each copied line (`controls.trim-trailing-spaces`), default ON.
     public static var trimTrailingSpacesOnCopyEnabled: Bool {
         AppConfig.current.flag("controls.trim-trailing-spaces")

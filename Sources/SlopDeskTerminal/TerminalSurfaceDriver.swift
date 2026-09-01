@@ -346,6 +346,7 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         // falls on: the store publishes what it had to RESOLVE, and a plain toggle resolves to
         // itself. `copy-on-select` and its neighbours are read the same way, where they are used.
         surface?.setTrimTrailing(SettingsKey.trimTrailingSpacesOnCopyEnabled)
+        surface?.setImages(SettingsKey.terminalImagesEnabled)
         onNeedsPresent?()
     }
 

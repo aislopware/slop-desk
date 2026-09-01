@@ -34,6 +34,7 @@
 use core::fmt;
 
 use libghostty_vt::error::Error as EngineError;
+use libghostty_vt::kitty::graphics::PlacementIterator;
 use libghostty_vt::render::{CellIterator, Dirty, RenderState, RowIterator};
 use libghostty_vt::screen::{CellContentTag, CellWide};
 use libghostty_vt::style::{Style, StyleColor};
@@ -190,6 +191,13 @@ pub struct VtSession {
     /// arrives in — the user sets it once and every copy after obeys. `pub(crate)` for
     /// [`crate::selection`], which is where the copy reads it.
     pub(crate) trim_selection: bool,
+    /// The kitty-graphics placement iterator, reused across frames.
+    ///
+    /// `pub(crate)` for [`crate::graphics`] alone, which needs it mutably while the terminal beside
+    /// it is borrowed immutably — a getter could hand out only one of the two. The engine reuses
+    /// this object's allocation on every update, so making one per frame would put an allocation
+    /// and a free on the render path to save a field.
+    pub(crate) placements: PlacementIterator<'static>,
 }
 
 /// The two buffers one cell's text passes through on its way into a row arena.
@@ -230,7 +238,7 @@ impl VtSession {
         Self::attach_handlers(&mut terminal, &events)?;
         let mut frame = Frame::new();
         frame.reshape(cols, rows);
-        Ok(Self {
+        let mut session = Self {
             terminal,
             render: RenderState::new()?,
             row_iter: RowIterator::new()?,
@@ -250,7 +258,16 @@ impl VtSession {
             scratch: CellScratch::default(),
             events,
             trim_selection: true,
-        })
+            placements: PlacementIterator::new()?,
+        };
+        // Two facts about images, stated at construction because both are refusals: the two file
+        // transmission mediums are closed (see `graphics::set_image_file_transmission` — a remote
+        // shell must not name a path on the user's own machine), and the PNG hook is installed so
+        // an `f=100` transmission decodes rather than being dropped. Neither is a setting; the one
+        // setting is the storage LIMIT, which starts at the engine's zero and therefore holds no
+        // image at all until `set_image_storage_limit` says otherwise.
+        session.seal_image_transmission()?;
+        Ok(session)
     }
 
     /// Points the engine's five push handlers at `events`.

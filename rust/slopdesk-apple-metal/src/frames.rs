@@ -158,13 +158,17 @@ impl InstanceBuffer {
     }
 }
 
-/// The three buffers one frame writes, filled.
+/// The four buffers one frame writes, filled.
 ///
-/// A struct rather than three return values because all three borrow the same [`Slot`], and three
-/// successive `&mut` calls could not hand out three live references. Filling them in one call is
-/// also the honest shape: a frame writes all three or none.
+/// A struct rather than four return values because all four borrow the same [`Slot`], and four
+/// successive `&mut` calls could not hand out four live references. Filling them in one call is
+/// also the honest shape: a frame writes all four or none.
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct Filled<'a> {
+    /// Every inline image on the frame, in the order `image.rs` sorted them. ONE buffer for all
+    /// three z layers — `DrawList::image_runs` is what says where each layer's slice starts, and
+    /// splitting them into three buffers would be three allocations to express an index.
+    pub(crate) images: Option<&'a ProtocolObject<dyn MTLBuffer>>,
     /// Cell backgrounds, the selection fill and a filled block cursor. `None` when there are none.
     pub(crate) backgrounds: Option<&'a ProtocolObject<dyn MTLBuffer>>,
     /// Text.
@@ -173,9 +177,10 @@ pub(crate) struct Filled<'a> {
     pub(crate) overlays: Option<&'a ProtocolObject<dyn MTLBuffer>>,
 }
 
-/// One frame's three buffers.
+/// One frame's four buffers.
 #[derive(Debug, Default)]
 pub(crate) struct Slot {
+    images: InstanceBuffer,
     backgrounds: InstanceBuffer,
     glyphs: InstanceBuffer,
     /// A THIRD buffer rather than an offset into the background one, and that is a considered
@@ -187,16 +192,18 @@ pub(crate) struct Slot {
 }
 
 impl Slot {
-    /// Writes all three instance arrays into this slot.
+    /// Writes all four instance arrays into this slot.
     pub(crate) fn fill(
         &mut self,
         device: &ProtocolObject<dyn MTLDevice>,
         list: &DrawList,
     ) -> Result<Filled<'_>, MetalError> {
+        let images = self.images.fill(device, &list.images)?;
         let backgrounds = self.backgrounds.fill(device, &list.backgrounds)?;
         let glyphs = self.glyphs.fill(device, &list.glyphs)?;
         let overlays = self.overlays.fill(device, &list.overlays)?;
         Ok(Filled {
+            images,
             backgrounds,
             glyphs,
             overlays,

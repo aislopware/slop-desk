@@ -698,6 +698,11 @@ pub const KEYS: &[Key] = &[
         doc: "Cursor body opacity, 0 transparent through 1 opaque.",
     },
     Key {
+        path: "terminal.images",
+        kind: Kind::Flag { default: Some(true) },
+        doc: "Draw inline images (kitty graphics). Off hides them; the terminal still stores them.",
+    },
+    Key {
         path: "terminal.scrollback-limit",
         kind: Kind::Int {
             default: Some(slopdesk_terminal::config::FACTORY_SCROLLBACK_LINES),

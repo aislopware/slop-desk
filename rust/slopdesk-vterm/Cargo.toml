@@ -91,11 +91,24 @@ imprecise_flops = "allow"
 # carries upstream's full history and every ref, so it is a superset of what it replaces.
 libghostty-vt = { git = "https://github.com/aislopware/libghostty-rs", rev = "519649e" }
 
+# The kitty graphics protocol's `f=100` transmission. `libghostty-vt` decodes no PNG itself — it
+# publishes a HOOK and declines the format when nothing is installed, because an engine does not
+# choose an image library for its embedders. `crate::graphics::PngDecoder` is the four lines that
+# fill it. The bindings' own optional `RustPngDecoder` is NOT taken and could not be: it reserves
+# CAPACITY into a `Vec` and hands the `Vec` to `next_frame`, which reads its LENGTH, so the buffer
+# it passes is always empty and every decode fails.
+png = "0.18"
+
 # The find bar's regex mode. Linear-time by construction, which is the whole reason it is here
 # rather than a backtracking engine: a ⌘F pattern is re-run over the entire retained buffer on every
 # keystroke, and one pathological pattern must not be able to freeze the bar. The same crate
 # `slopdesk-rowscan`, `slopdesk-workspace` and `slopdesk-screend` already take, so this adds a
 # version to the lock file and nothing to the tree.
 regex = "1"
+
+[dev-dependencies]
+# The kitty graphics protocol carries its payload base64-encoded inside an APC, so a test that
+# proves an image round-trips has to speak it. Tests only: nothing in the shipped crate encodes.
+base64 = "0.23"
 
 [workspace]

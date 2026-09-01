@@ -1,20 +1,37 @@
 //! One object, one entry point: a [`DrawList`] and a [`GlyphCache`] in, one presented frame out.
 //!
-//! ## The three draws, and why the order is not this crate's to choose
+//! ## The six draws, and why the order is not this crate's to choose
 //!
-//! Backgrounds, then glyphs, then overlays — the order `quad.rs` stores them in, because the reason
-//! for the order is stated there: a filled block cursor sits UNDER its glyph and inverts it, a bar
-//! or an underline sits OVER it, and a strikethrough the glyph painted over is not a strikethrough.
-//! This module encodes those three in sequence and makes no decision at all about what is in them.
-//! There is no sort here, no depth buffer and no stencil: painter's order over three pre-separated
-//! lists is the whole hidden-surface algorithm, and it is exact.
+//! ``text
+//!   images   z <  i32::MIN/2   (behind even the cell background)
+//!   backgrounds
+//!   images   i32::MIN/2 <= z < 0
+//!   glyphs
+//!   images   z >= 0
+//!   overlays
+//! ``
+//!
+//! The three text passes are the order `quad.rs` stores them in, because the reason for the order
+//! is stated there: a filled block cursor sits UNDER its glyph and inverts it, a bar or an
+//! underline sits OVER it, and a strikethrough the glyph painted over is not a strikethrough. The
+//! three image passes are the kitty graphics protocol's own z bands, interleaved at the two points
+//! the protocol names, and `slopdesk_termrender::layer_of` is what assigns them. This module
+//! encodes six lists in sequence and makes no decision at all about what is in them. There is no
+//! sort here, no depth buffer and no stencil: painter's order over pre-separated lists is the whole
+//! hidden-surface algorithm, and it is exact.
+//!
+//! The overlays go LAST, after every image, so a cursor and a selection stay visible over a picture
+//! — which is also what every other terminal that draws images does.
 //!
 //! ## What a frame costs
 //!
-//! One command buffer, one render pass, two pipeline switches, three `drawPrimitives` calls, four
-//! `setVertexBuffer`s and two texture binds — for any number of cells. A 200×50 repaint and a
-//! one-character update issue the same calls with different instance counts, which is the property
-//! that makes `docs/68` §6's budget a budget rather than a hope.
+//! One command buffer, one render pass, at most four pipeline switches, three `drawPrimitives`
+//! calls plus one per image on screen, and two texture binds plus one per image — for any number of
+//! cells. A 200×50 repaint and a one-character update issue the same calls with different instance
+//! counts, which is the property that makes `docs/68` §6's budget a budget rather than a hope. An
+//! image-free frame — every frame in an ordinary session — costs exactly what it did before images
+//! existed, because each of the three image passes returns on an empty run list before it touches
+//! the encoder.
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -24,11 +41,14 @@ use objc2_metal::{
     MTLStoreAction, MTLTexture,
 };
 use objc2_quartz_core::CAMetalDrawable;
-use slopdesk_termrender::{DrawList, GlyphCache, GlyphInstance, RectInstance, Rgba};
+use slopdesk_termrender::{
+    DrawList, GlyphCache, GlyphInstance, ImageInstance, ImageLayer, ImageRun, ImageStore, RectInstance, Rgba,
+};
 
 use crate::error::MetalError;
 use crate::frames::{Filled, Ring};
 use crate::geom::Viewport;
+use crate::images::ImageTextures;
 use crate::pipeline::Pipelines;
 use crate::surface::Surface;
 use crate::texture::AtlasTexture;
@@ -38,6 +58,9 @@ const INSTANCE_INDEX: usize = 0;
 /// Where the viewport uniform is bound. Matches `[[buffer(1)]]`.
 const VIEWPORT_INDEX: usize = 1;
 /// Fragment texture slots, matching `[[texture(0)]]` and `[[texture(1)]]`.
+///
+/// `image_fragment` declares only slot 0, so an image binds its texture where the glyph pass binds
+/// the coverage atlas. One constant, two shaders — not a coincidence worth a second name.
 const COVERAGE_TEXTURE: usize = 0;
 const COLOR_TEXTURE: usize = 1;
 
@@ -54,6 +77,7 @@ pub struct Renderer {
     ring: Ring,
     coverage: AtlasTexture,
     colored: AtlasTexture,
+    images: ImageTextures,
 }
 
 impl Renderer {
@@ -85,6 +109,7 @@ impl Renderer {
             ring: Ring::new(),
             coverage: AtlasTexture::new(),
             colored: AtlasTexture::new(),
+            images: ImageTextures::new(),
         })
     }
 
@@ -100,6 +125,10 @@ impl Renderer {
     /// [`slopdesk_termrender::Atlas::take_dirty`]. Nothing else about the cache is touched, and no
     /// glyph is ever rasterised here.
     ///
+    /// `images` is the store `list.image_runs` names by id. Passed BESIDE the draw list rather than
+    /// inside it because a `DrawList` is rebuilt every frame and an image store is not: the pixels
+    /// survive across frames and the instances do not, which is the same split `cache` already has.
+    ///
     /// `background` is the pass's clear colour, and clearing to it is why `quad.rs` may drop a rect
     /// that matches: a terminal's commonest cell is a space on the default background, and the
     /// cheapest way to paint ten thousand of them is a load action.
@@ -114,6 +143,7 @@ impl Renderer {
         &mut self,
         list: &DrawList,
         cache: &mut GlyphCache,
+        images: &ImageStore,
         background: Rgba,
     ) -> Result<(), MetalError> {
         let size = self.surface.drawable_size();
@@ -133,6 +163,7 @@ impl Renderer {
         let (alpha, color) = cache.atlases_mut();
         self.coverage.sync(&self.device, alpha)?;
         self.colored.sync(&self.device, color)?;
+        self.images.sync(&self.device, images)?;
 
         // The slot is borrowed out of the ring for exactly as long as the encode, which is why the
         // fill and the encode are two calls rather than one method on `Renderer`: `Filled` holds
@@ -156,8 +187,9 @@ impl Renderer {
             pipelines: &self.pipelines,
             coverage: &self.coverage,
             colored: &self.colored,
+            images: &self.images,
         };
-        match encode(gpu, viewport, background, filled) {
+        match encode(gpu, viewport, background, list.image_runs.as_slice(), filled) {
             Ok(command_buffer) => {
                 self.ring.release_on_completion(&command_buffer);
                 command_buffer.commit();
@@ -185,6 +217,7 @@ struct Gpu<'a> {
     pipelines: &'a Pipelines,
     coverage: &'a AtlasTexture,
     colored: &'a AtlasTexture,
+    images: &'a ImageTextures,
 }
 
 /// Everything between a drawable and a committed command buffer.
@@ -196,6 +229,7 @@ fn encode(
     gpu: Gpu<'_>,
     viewport: Viewport,
     background: Rgba,
+    runs: &[ImageRun],
     filled: Filled<'_>,
 ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MetalError> {
     let drawable = gpu.surface.next_drawable()?;
@@ -208,8 +242,15 @@ fn encode(
         return Err(MetalError::NoCommandBuffer);
     };
 
+    let images = Images {
+        buffer: filled.images,
+        runs,
+    };
+    encode_images(&encoder, viewport, images, ImageLayer::BelowBackground, gpu);
     encode_rects(&encoder, viewport, filled.backgrounds, &gpu.pipelines.rect);
+    encode_images(&encoder, viewport, images, ImageLayer::BelowText, gpu);
     encode_glyphs(&encoder, viewport, filled.glyphs, gpu);
+    encode_images(&encoder, viewport, images, ImageLayer::AboveText, gpu);
     encode_rects(&encoder, viewport, filled.overlays, &gpu.pipelines.rect);
 
     encoder.endEncoding();
@@ -278,6 +319,86 @@ fn encode_glyphs(
     }
 
     draw_instances(encoder, count);
+}
+
+/// One frame's images: the instances, and the runs that index them.
+///
+/// The pair travels together and is `Copy`, so all three passes read the same two values and none
+/// of them can be given one without the other.
+#[derive(Debug, Clone, Copy)]
+struct Images<'a> {
+    buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    runs: &'a [ImageRun],
+}
+
+/// One image layer's draws — one per run, each with its own texture bound.
+///
+/// A draw call per run rather than a texture array or an argument buffer, and it is not a
+/// compromise: a frame with images has a handful of them, the runs are already coalesced by
+/// `DrawList::push_image`, and the alternative costs a residency set to maintain plus a
+/// per-instance index in the vertex struct — machinery for a count that is never large. If a
+/// session ever does place hundreds of distinct images at once, the answer is `MTLArgumentEncoder`,
+/// and it is a change to this function and `image_fragment` and nothing else.
+///
+/// The whole pass returns before it touches the encoder when no run matches, which is what keeps an
+/// image-free frame exactly as cheap as it was before this existed.
+fn encode_images(
+    encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
+    viewport: Viewport,
+    images: Images<'_>,
+    layer: ImageLayer,
+    gpu: Gpu<'_>,
+) {
+    let Some(buffer) = images.buffer else {
+        return;
+    };
+    let capacity = instance_count::<ImageInstance>(buffer);
+    let mut bound = false;
+
+    for run in images.runs.iter().filter(|run| run.layer == layer) {
+        // A run whose texture has not arrived yet is SKIPPED rather than drawn untextured.
+        // `image.rs` already drops a placement whose pixels the store lacks, so this is the second
+        // half of the same rule and covers the frame where an upload failed for want of memory.
+        let Some(texture) = gpu.images.texture(run.image) else {
+            continue;
+        };
+        let (Ok(first), Ok(count)) = (usize::try_from(run.first), usize::try_from(run.count)) else {
+            continue;
+        };
+        // The bound the safety note on `draw_run` leans on: every instance this run names has to be
+        // inside the buffer that was actually allocated. `first + count` cannot wrap, and a run
+        // past the end would mean `quad.rs` and this function disagree about the same
+        // `Vec`.
+        if count == 0 || first.saturating_add(count) > capacity {
+            continue;
+        }
+
+        if !bound {
+            // Once per LAYER, not once per run: the pipeline and the instance buffer are the same
+            // for every run in a pass, and only the texture changes.
+            encoder.setRenderPipelineState(&gpu.pipelines.image);
+            bind(encoder, buffer, viewport);
+            bound = true;
+        }
+
+        // # Safety
+        //
+        // The same Metal rule `encode_glyphs` discharges: `setFragmentTexture:atIndex:` is an
+        // unchecked slot, and `image_fragment` in `shaders.metal` declares exactly
+        // `[[texture(0)]]`, which is `COVERAGE_TEXTURE`. The texture is alive for the
+        // encode — `gpu.images` owns it and `Renderer::draw` holds `&self` across this
+        // call, so nothing can drop it before `endEncoding`.
+        #[expect(
+            unsafe_code,
+            reason = "setFragmentTexture:atIndex: is an unchecked slot; slot 0 is the only one \
+                      image_fragment declares"
+        )]
+        unsafe {
+            encoder.setFragmentTexture_atIndex(Some(texture), COVERAGE_TEXTURE);
+        }
+
+        draw_run(encoder, first, count);
+    }
 }
 
 /// The render pass descriptor for one frame.
@@ -386,6 +507,36 @@ fn draw_instances(encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>, count: 
             0,
             QUAD_VERTICES,
             count,
+        );
+    }
+}
+
+/// One run's instances, starting partway into the bound buffer.
+///
+/// The `baseInstance` sibling of [`draw_instances`], and the reason images need it while nothing
+/// else does: three z layers share ONE instance buffer, so a pass draws a SLICE of it rather than
+/// all of it. Metal's own way of expressing that without four buffers or four binds.
+fn draw_run(encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>, first: usize, count: usize) {
+    // # Safety
+    //
+    // `drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:` carries
+    // `drawPrimitives`' own contract plus one term: every instance from `baseInstance` to
+    // `baseInstance + count` must be addressable in the bound buffer. `encode_images` checked
+    // exactly that against `instance_count`, which reads the bound buffer's own `length()` — so
+    // the last instance read is the last one written. The four vertices come from `vertex_id`
+    // arithmetic and address no buffer at all.
+    #[expect(
+        unsafe_code,
+        reason = "drawPrimitives: counts are validated only by a debug device; the run was bounds-checked \
+                  against the bound buffer's length"
+    )]
+    unsafe {
+        encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+            MTLPrimitiveType::TriangleStrip,
+            0,
+            QUAD_VERTICES,
+            count,
+            first,
         );
     }
 }

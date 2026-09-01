@@ -29,6 +29,8 @@
 //! - [`chrome`] — the furniture around one: the gutter, the divider, the collapse mark, the
 //!   scrollbar.
 //! - [`paint`] — the pass that turns a frame into instances, sixty times a second.
+//! - [`image`] — inline images: the CPU-side pixel cache, and where a kitty placement lands once
+//!   [`block`] rather than a multiplication decides where a row is.
 //!
 //! ## Units
 //!
@@ -43,6 +45,7 @@ pub mod block;
 pub mod blockjoin;
 pub mod chrome;
 pub mod glyph;
+pub mod image;
 pub mod layout;
 pub mod paint;
 pub mod quad;
@@ -56,6 +59,13 @@ pub use glyph::{
     CachedGlyph, GlyphCache, GlyphKey, GlyphRasterizer, RasterGlyph, ShapedGlyph, Synthetic, TextRun,
     TextShaper,
 };
+// `ImageMeta`/`ImagePixels`/`ImagePlacement` are re-exported rather than merely used: they are in
+// this crate's own signatures, so a caller that cannot name them cannot call `ImageStore::insert` or
+// `place`. Re-exporting is also what keeps `slopdesk-apple-metal` off a direct `slopdesk-vterm`
+// dependency — the GPU crate has no business knowing an engine exists.
+pub use image::{
+    BELOW_BACKGROUND_Z, ImageMeta, ImagePixels, ImagePlacement, ImageStore, StoredImage, layer_of, place,
+};
 pub use layout::{CellGeometry, FontMetrics, Insets, Thumb, Underline, grid_size, scrollbar};
 pub use paint::{PaintStyle, Painter, Preedit, SelectionColors};
-pub use quad::{DrawList, GlyphInstance, RectInstance, RectStyle, Rgba};
+pub use quad::{DrawList, GlyphInstance, ImageInstance, ImageLayer, ImageRun, RectInstance, RectStyle, Rgba};

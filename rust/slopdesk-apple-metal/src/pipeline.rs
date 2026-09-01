@@ -1,4 +1,4 @@
-//! The shader library and the two pipeline states.
+//! The shader library and the three pipeline states.
 //!
 //! ## The decision: compile at RUN TIME, from `include_str!`, and here is the trade
 //!
@@ -55,23 +55,32 @@ use crate::surface::DRAWABLE_FORMAT;
 /// The shaders, verbatim. See `shaders.metal`'s own header for what is in them.
 const SHADER_SOURCE: &str = include_str!("shaders.metal");
 
-/// The four entry points, named once so a typo is a compile error rather than a run-time `None`.
+/// The six entry points, named once so a typo is a compile error rather than a run-time `None`.
 const RECT_VERTEX: &str = "rect_vertex";
 const RECT_FRAGMENT: &str = "rect_fragment";
 const GLYPH_VERTEX: &str = "glyph_vertex";
 const GLYPH_FRAGMENT: &str = "glyph_fragment";
+const IMAGE_VERTEX: &str = "image_vertex";
+const IMAGE_FRAGMENT: &str = "image_fragment";
 
-/// The two states one frame switches between.
+/// The three states one frame switches between.
 #[derive(Debug)]
 pub(crate) struct Pipelines {
     /// Backgrounds and overlays — `RectInstance`, five styles, one fragment shader.
     pub(crate) rect: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     /// Text — `GlyphInstance`, two atlases, one fragment shader.
     pub(crate) glyph: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    /// Inline images — `ImageInstance`, one texture per draw call, a LINEAR sampler.
+    ///
+    /// A third state rather than a third branch in `glyph_fragment`, and the reason is the sampler
+    /// rather than the arithmetic: a glyph must be sampled `nearest` and an image must be sampled
+    /// `linear`, a `constexpr sampler` is baked into the function, and a branch between two of them
+    /// would make every glyph fragment pay for a decision that is constant per pass.
+    pub(crate) image: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
 }
 
 impl Pipelines {
-    /// Compiles the shaders and builds both states, or says which step refused.
+    /// Compiles the shaders and builds all three states, or says which step refused.
     pub(crate) fn build(device: &ProtocolObject<dyn MTLDevice>) -> Result<Self, MetalError> {
         let source = NSString::from_str(SHADER_SOURCE);
         let library = device
@@ -82,11 +91,14 @@ impl Pipelines {
         let rect_fragment = function(&library, RECT_FRAGMENT)?;
         let glyph_vertex = function(&library, GLYPH_VERTEX)?;
         let glyph_fragment = function(&library, GLYPH_FRAGMENT)?;
+        let image_vertex = function(&library, IMAGE_VERTEX)?;
+        let image_fragment = function(&library, IMAGE_FRAGMENT)?;
 
         let rect = build_state(device, &rect_vertex, &rect_fragment)?;
         let glyph = build_state(device, &glyph_vertex, &glyph_fragment)?;
+        let image = build_state(device, &image_vertex, &image_fragment)?;
 
-        Ok(Self { rect, glyph })
+        Ok(Self { rect, glyph, image })
     }
 }
 
@@ -101,7 +113,7 @@ fn function(
         .ok_or(MetalError::MissingFunction(name))
 }
 
-/// One pipeline state, with the blend mode both of them share.
+/// One pipeline state, with the blend mode all three share.
 fn build_state(
     device: &ProtocolObject<dyn MTLDevice>,
     vertex: &ProtocolObject<dyn MTLFunction>,
@@ -152,10 +164,12 @@ fn describe(error: &NSError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{GLYPH_FRAGMENT, GLYPH_VERTEX, RECT_FRAGMENT, RECT_VERTEX, SHADER_SOURCE};
+    use super::{
+        GLYPH_FRAGMENT, GLYPH_VERTEX, IMAGE_FRAGMENT, IMAGE_VERTEX, RECT_FRAGMENT, RECT_VERTEX, SHADER_SOURCE,
+    };
 
     #[test]
-    fn the_source_is_embedded_and_declares_the_four_entry_points() {
+    fn the_source_is_embedded_and_declares_the_six_entry_points() {
         // Cheap, unconditional, and it catches the thing a rename actually breaks: the Rust name
         // and the Metal name are two spellings of one fact, and `newFunctionWithName`
         // answers `None` rather than failing loudly when they part.
@@ -163,7 +177,14 @@ mod tests {
             SHADER_SOURCE.len() > 1024,
             "shaders.metal did not make it into the binary"
         );
-        for name in [RECT_VERTEX, RECT_FRAGMENT, GLYPH_VERTEX, GLYPH_FRAGMENT] {
+        for name in [
+            RECT_VERTEX,
+            RECT_FRAGMENT,
+            GLYPH_VERTEX,
+            GLYPH_FRAGMENT,
+            IMAGE_VERTEX,
+            IMAGE_FRAGMENT,
+        ] {
             assert!(
                 SHADER_SOURCE.contains(name),
                 "shaders.metal has no entry point named {name}"

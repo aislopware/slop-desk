@@ -17,6 +17,10 @@
 //!   why.
 //! - [`frame`] — [`Frame`], the grid flattened into plain owned data. Everything downstream reads
 //!   this and never the engine.
+//! - [`graphics`] — the kitty graphics protocol's images and placements, flattened the same way and
+//!   for the same reason. Also the two refusals every terminal here makes about images: the file
+//!   and shared-memory transmission mediums are closed, because in this app the terminal is the
+//!   CLIENT and a path a remote program names would resolve on the user's own machine.
 //! - [`input`] — a keystroke and a pointer gesture, encoded to the bytes the far side expects,
 //!   through the engine's own encoders so the kitty protocol and mouse formats are not re-derived.
 //! - [`keycode`] — the one table between an `AppKit` `NSEvent.keyCode` and a key the engine names.
@@ -51,6 +55,7 @@
 pub mod events;
 pub mod find;
 pub mod frame;
+pub mod graphics;
 pub mod input;
 pub mod keycode;
 pub mod screen;
@@ -63,6 +68,7 @@ pub use frame::{
     CellFlags, ColumnSpan, CursorShape, Frame, FrameCell, FrameColors, FrameCursor, FrameDirty, FrameRow,
     Rgb, RowSemantic, TextSpan, UnderlineStyle, text_cells,
 };
+pub use graphics::{ImageMeta, ImagePixels, ImagePlacement};
 pub use input::{Key, KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt};
 pub use keycode::key_from_macos_keycode;
 pub use screen::{LogicalLineText, ScreenMatch, SelectionAdjust, ViewportInfo};

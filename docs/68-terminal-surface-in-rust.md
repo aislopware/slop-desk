@@ -328,8 +328,10 @@ pixel-pushing to the host application."
 10. padding, content scale, resize → cols·rows, which `rust/slopdesk-terminal/src/geometry.rs`
     already computes
 
-Kitty-graphics *rendering* is **out of the bar**: `TerminalConfigBuilder` enables no image token
-today, so nothing regresses by not drawing them. vt keeps the state if that changes.
+Kitty-graphics *rendering* was scoped out here and is **now in** — §5.7 is the change, and the
+sentence it replaces ("out of the bar: `TerminalConfigBuilder` enables no image token today, so
+nothing regresses by not drawing them") is left recorded because its premise died with the emitter
+that made it true.
 
 The renderer's home is Rust. `rust/slopdesk-apple-text` already declares itself "the whole of the Core
 Text area slopdesk touches" and is in the `slopdesk-apple-*` family, so shaping extends an audited
@@ -658,6 +660,77 @@ needed a new door — `slopdesk_term_surface_click_to_move` — because the thre
 (where the cursor is, how many GLYPHS away the click is, and whether DECCKM wants `ESC [ C` or
 `ESC O C`) are all the engine's. It answers the `←`/`→` presses a user would have made, never `↑`/`↓`:
 at a prompt those are HISTORY, so crossing rows would replace the command being typed.
+### 5.7 Inline images (2026-09-01)
+
+The one Warp-class capability §5.1 scoped out, closed. The reason it was scoped out was the deleted
+`TerminalConfigBuilder` — no image token, so nothing to draw — and once that emitter went the premise
+went with it. Nothing upstream had to change: the pinned bindings already publish the whole kitty
+graphics surface (storage, placements, z, `PlacementRenderInfo`, and a PNG hook), which is exactly
+the bet "owning the grid" was placed on.
+
+**Five decisions worth not re-litigating.**
+
+1. **The file and shared-memory transmission mediums are CLOSED, permanently.** The kitty protocol
+   lets a program transmit an image by naming a PATH (`t=f`, `t=t`) or a POSIX shared-memory object
+   (`t=s`). In every other terminal the program and the terminal share a filesystem and that is a
+   feature. Here they do not: the terminal is the CLIENT and the program is on a REMOTE host, so a
+   path the far side names resolves against the USER'S OWN LAPTOP — an arbitrary local file read
+   driven by whatever is running on the other end of the pty. Only the direct medium (`t=d`,
+   base64 inside the APC) is accepted. This is a refusal, not a setting, and `terminal.images` does
+   not reopen it. `docs/DECISIONS.md` carries the same entry.
+2. **The engine's default storage limit is LARGE and had to be written back down.** The bindings'
+   documentation says images are stored "only once a non-zero storage limit has been set", which
+   reads as "nothing is stored by default". It is wrong — measured, not inferred: with a probe test,
+   a fresh session accepts and stores a transmission before anything sets a limit. So
+   `seal_image_transmission` writes the explicit zero as well as closing the mediums, and the test
+   that guards it asserts on `image_meta`, because `graphics_generation` moves even when nothing is
+   stored.
+3. **A placement is clipped to its own BLOCK, not to the viewport alone.** Nothing in the protocol
+   stops a placement's rows from running past the command that emitted them. Under a flat grid that
+   is harmless; under block layout the next thing down is the next command's HEADER, and an image
+   over it would describe the wrong command. So the destination is intersected with the block body
+   and the source rectangle is narrowed by the same fraction — a crop, not a squash — and the same
+   intersection handles a placement scrolled off the top for free, which is why the engine's
+   negative row needs no second code path.
+4. **Three z bands, interleaved into the existing pass.** The protocol splits z at `0` and at
+   `i32::MIN / 2`, so the frame is `images → backgrounds → images → glyphs → images → overlays`. The
+   overlays stay LAST so a cursor and a selection survive over a picture. One instance array visited
+   three times rather than three arrays: `DrawList::image_runs` is what says where each band starts,
+   and `drawPrimitives(…, baseInstance:)` is Metal's own way to draw a slice.
+5. **A VIRTUAL placement is skipped rather than approximated.** The protocol has a second way to
+   position an image: `U=1` places nothing itself and lets unicode PLACEHOLDER characters in the grid
+   say where the image goes, cell by cell, so that a scrolling pager can move it for free. The engine
+   reports such a placement with no viewport position, because the position lives in the CELLS.
+   Inventing one would put an image somewhere the program did not ask for, so `placements` drops it —
+   the one shape of the protocol this renderer declines. Supporting it is a cell-scan in the frame
+   pass, not a change to anything here.
+
+**What it costs a frame with no images**, which is every ordinary frame: one `u64` comparison.
+`Surface::place_images` returns on `graphics_generation() == 0` before it touches the store or the
+placement iterator, and each of the three encode passes returns on an empty run list before it
+touches the encoder.
+
+**Where it lives.** `slopdesk-vterm/src/graphics.rs` flattens the engine's storage into owned pixels
+and placements (and installs the PNG decoder the bindings publish a hook for — their own bundled
+`RustPngDecoder` cannot be used, it hands `next_frame` a `Vec` with capacity but no length).
+`slopdesk-termrender/src/image.rs` holds the pixel cache and does the block-layout placement.
+`slopdesk-apple-metal/src/images.rs` mirrors one `MTLTexture` per image, and `shaders.metal` grows an
+`image_vertex`/`image_fragment` pair — the only `linear` sampler in the file, because an image is
+resampled and a glyph never is. `terminal.images` is the row; the engine keeps its storage when it is
+off, so the toggle is live in both directions.
+
+**How it is verified without pixels.** Four links, each pinned where it lives: the engine test feeds a
+real `a=T` APC and asserts the placement's `width_px`/`height_px`/`cols`/`rows`, because a zero in any
+of them would be dropped as a zero-area quad and draw nothing while every other test passed;
+`image.rs` pins the block-relative arithmetic, the crop and the three bands; `quad.rs` pins the run
+batching; and `tests/device.rs` builds a real `Renderer`, which compiles `shaders.metal` through the
+Metal front end and builds all three pipeline states — so a typo in `image_fragment` is a test failure
+rather than a black pane.
+
+**Still open:** iTerm2's inline-image protocol (OSC 1337) and Sixel. Both are transmission formats
+that would land in the same store and draw through the same pass, so neither needs a second renderer
+— they need a decoder each, and the engine does not parse them today.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`

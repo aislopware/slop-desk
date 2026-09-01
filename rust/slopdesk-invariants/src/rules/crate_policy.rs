@@ -231,7 +231,13 @@ const WIDE: [Wide; 7] = [
         crate_dir: "rust/slopdesk-apple-metal",
         // 762 → 765: the row was measured before the crate had been through `cargo +nightly fmt`,
         // which split three lines. No new API and no new `unsafe` — the width is the formatter's.
-        cap: 765,
+        //
+        // 765 → 909: inline images (`docs/68` §5.7). `images.rs` is one `MTLTexture` per transmitted
+        // image and `renderer.rs` grew the three z-band passes plus the `baseInstance` draw. Two new
+        // `unsafe` sites in `images.rs` and two in `renderer.rs`, every one the same two framework
+        // rules the crate already discharges — an unchecked descriptor setter and an unchecked slot
+        // or count — so the width is a fourth resource of a shape already here, not a new boundary.
+        cap: 909,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-cgvirtualdisplay",

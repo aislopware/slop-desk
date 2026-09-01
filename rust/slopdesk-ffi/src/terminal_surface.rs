@@ -58,9 +58,9 @@ use slopdesk_apple_text::{FontStack, Rasterizer, Shaper};
 use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_terminal::surface_action::{SelectionEdge, SurfaceAction};
 use slopdesk_termrender::{
-    BlockLayout, BlockSpan, CellGeometry, Chrome, ChromeFrame, ChromeStyle, DrawList, GlyphCache, Insets,
-    LayoutMode, PaintStyle, Painter, PlacedBlock, Preedit, Rgba, SelectionColors, Thumb, Viewport, blockjoin,
-    chrome, grid_size, lay_out, scrollbar, segment,
+    BlockLayout, BlockSpan, CellGeometry, Chrome, ChromeFrame, ChromeStyle, DrawList, GlyphCache,
+    ImagePlacement, ImageStore, Insets, LayoutMode, PaintStyle, Painter, PlacedBlock, Preedit, Rgba,
+    SelectionColors, Thumb, Viewport, blockjoin, chrome, grid_size, lay_out, place, scrollbar, segment,
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{
@@ -111,6 +111,15 @@ pub struct SlopDeskTerminalSurface {
 ///
 /// See the module header for why this is one object and not four, and for the thread rule every
 /// door on it inherits.
+// Four independent flags, and the lint's own remedy is the wrong shape for them: `focused` comes
+// from the responder chain, `blink_visible` from a timer, `follow_bottom` from the scroll, and
+// `images_enabled` from the config file. Nothing constrains their combinations, so the "state
+// machine" the lint asks for would be a sixteen-state enum enumerating a product of four bits — more
+// spelling, no fewer states, and each owner would then write through a translation.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "four independent inputs from four owners; their product is not a state machine"
+)]
 #[derive(Debug)]
 struct Surface {
     /// The engine. Fed bytes, asked for frames.
@@ -137,6 +146,19 @@ struct Surface {
     painter: Painter,
     /// The instances one frame draws. Cleared and refilled rather than reallocated.
     list: DrawList,
+    /// Every inline image the engine holds, as pixels. Survives a frame, unlike [`Self::list`] —
+    /// the whole point of a store is that a picture is not retransmitted to be redrawn.
+    images: ImageStore,
+    /// The engine's placements for this frame. A field rather than a local so the `Vec`'s
+    /// allocation survives sixty frames a second; [`VtSession::placements`] clears it on entry.
+    placements: Vec<ImagePlacement>,
+    /// Which image ids this frame placed, scratch for [`ImageStore::retain`]. Same reason.
+    placed_ids: Vec<u32>,
+    /// Whether inline images are drawn at all — `terminal.images`.
+    ///
+    /// The engine keeps its storage either way, so this gates the RENDER and nothing else: turning
+    /// it back on redraws whatever is still on screen without asking a program to retransmit.
+    images_enabled: bool,
     /// The device, the queue, the layer and the pipelines.
     renderer: Renderer,
     /// The drawable's size in device pixels, and the scale it was derived at.
@@ -335,6 +357,13 @@ impl Surface {
             cache: GlyphCache::default(),
             painter: Painter::new(),
             list: DrawList::default(),
+            images: ImageStore::new(),
+            placements: Vec::new(),
+            placed_ids: Vec::new(),
+            // ON by default, and the setting exists to turn it OFF rather than to opt in. A
+            // terminal that silently discards what a program drew is the surprising one; `docs/68`
+            // §5.7 argues it.
+            images_enabled: true,
             renderer,
             geometry,
             scroll_y: 0.0,
@@ -608,10 +637,77 @@ impl Surface {
                 &mut self.list,
             );
         }
+        // AFTER both paint passes, because `Painter::paint` is what clears the list and an image
+        // pushed before it would be thrown away. Order within the frame is otherwise free: images
+        // live in their own instance array and `renderer.rs` interleaves the three z bands itself.
+        //
+        // Runs on the ALTERNATE screen too, unlike the chrome pass above, and that is where it
+        // matters most — `timg`, `chafa` and every image-viewing TUI live on the alternate screen.
+        // `LayoutMode::for_screen` gives them one headerless block, so the clip is the viewport and
+        // the arithmetic is the same.
+        self.place_images(&layout, &style, Rect {
+            x: insets.left,
+            y: insets.top,
+            width: viewport.width,
+            height: viewport_height,
+        });
+
         self.layout = layout;
         self.renderer
-            .draw(&self.list, &mut self.cache, self.background)
+            .draw(&self.list, &mut self.cache, &self.images, self.background)
             .is_ok()
+    }
+
+    /// Fetches whatever pixels this frame needs and appends every visible placement.
+    ///
+    /// The first line is the whole cost for a session that has never received an image, which is
+    /// every ordinary session: the engine's graphics generation starts at zero and only a kitty
+    /// transmission moves it, so an image-free terminal pays one comparison per frame and touches
+    /// neither the store nor the placement iterator.
+    ///
+    /// Pixels are fetched by PLACEMENT rather than by walking the engine's image table, so an image
+    /// that is stored but not on screen is never copied. The generation comparison
+    /// ([`ImageStore::is_stale`]) is what makes the steady state free — a chart on screen for a
+    /// minute is fetched once and drawn three and a half thousand times.
+    fn place_images(&mut self, layout: &BlockLayout, style: &PaintStyle, viewport: Rect) {
+        if !self.images_enabled || self.session.graphics_generation() == 0 {
+            return;
+        }
+
+        self.session.placements(&mut self.placements);
+        self.placed_ids.clear();
+        for index in 0..self.placements.len() {
+            let Some(id) = self.placements.get(index).map(|placement| placement.image_id) else {
+                continue;
+            };
+            if !self.placed_ids.contains(&id) {
+                self.placed_ids.push(id);
+            }
+            // A fetch failure is left alone rather than retried or cached as a miss: `place` skips
+            // a placement whose pixels the store lacks, and the next frame asks again —
+            // which is exactly right for a transmission still arriving in chunks.
+            if self
+                .session
+                .image_meta(id)
+                .is_some_and(|meta| self.images.is_stale(meta))
+                && let Some(pixels) = self.session.image_pixels(id)
+            {
+                self.images.insert(pixels);
+            }
+        }
+
+        // Dropping what this frame did not place is what bounds the store — see [`ImageStore`]. It
+        // runs before `place` rather than after so the pixels and the textures are released in the
+        // same frame the last placement of them went away.
+        self.images.retain(&self.placed_ids);
+        place(
+            &mut self.placements,
+            layout,
+            style,
+            viewport,
+            &self.images,
+            &mut self.list,
+        );
     }
 
     /// The prompt rows of one laid-out block, rejoined into one string.
@@ -1530,6 +1626,35 @@ pub const unsafe extern "C" fn slopdesk_term_surface_set_cursor_opacity(
         return;
     };
     surface.cursor_opacity = opacity;
+}
+
+/// Whether inline images (the kitty graphics protocol) are DRAWN.
+///
+/// A renderer setting and not an engine one, deliberately: the engine keeps its image storage
+/// either way, so turning this back on redraws whatever is still on screen instead of waiting for a
+/// program to retransmit. Off is a picture nobody sees, not a picture nobody has.
+///
+/// This does NOT gate what the terminal ACCEPTS. `slopdesk-vterm`'s `graphics.rs` closes the file
+/// and shared-memory transmission mediums permanently, because in this app the terminal is the
+/// CLIENT and a path a remote program names would resolve on the user's own laptop — that is a
+/// refusal, not a preference, and no setting reopens it.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_term_surface_set_images(
+    handle: *mut SlopDeskTerminalSurface,
+    enabled: bool,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.images_enabled = enabled;
 }
 
 /// The colour the glyph under a filled caret takes, packed `0x00RRGGBB`. `present` false keeps the

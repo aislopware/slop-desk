@@ -179,7 +179,7 @@ impl Upload {
 
 #[cfg(test)]
 mod tests {
-    use slopdesk_termrender::{AtlasRegion, GlyphInstance, RectInstance, RectStyle};
+    use slopdesk_termrender::{AtlasRegion, GlyphInstance, ImageInstance, RectInstance, RectStyle};
 
     use super::{TextureKey, Upload, Viewport, instance_bytes};
 
@@ -208,9 +208,14 @@ mod tests {
 
     #[test]
     fn the_instance_structs_are_the_size_the_shader_asserts() {
-        // `shaders.metal` carries the same two numbers in `static_assert`s, so this test and the
+        // `shaders.metal` carries the same three numbers in `static_assert`s, so this test and the
         // shader compile fail TOGETHER when `quad.rs` grows a field — one of them from `cargo test`
         // with no GPU, the other from `Renderer::new` on a machine that has one.
+        assert_eq!(
+            size_of::<ImageInstance>(),
+            32,
+            "ImageInstance drifted from shaders.metal"
+        );
         assert_eq!(
             size_of::<RectInstance>(),
             24,
@@ -305,6 +310,7 @@ mod tests {
         assert_eq!(instance_bytes::<RectInstance>(0), 0);
         assert_eq!(instance_bytes::<RectInstance>(1000), 24_000);
         assert_eq!(instance_bytes::<GlyphInstance>(1000), 40_000);
+        assert_eq!(instance_bytes::<ImageInstance>(1000), 32_000);
     }
 
     #[test]

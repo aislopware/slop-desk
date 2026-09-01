@@ -8,8 +8,8 @@
 //! the arithmetic a reviewer would actually doubt is pinned.
 //!
 //! What is left for THIS file is the questions no arithmetic can answer: does the Metal front end
-//! accept `shaders.metal`, do both pipeline states build against the drawable's pixel format, and
-//! does the whole object create and drop without climbing.
+//! accept `shaders.metal`, do all three pipeline states build against the drawable's pixel format,
+//! and does the whole object create and drop without climbing.
 
 #![cfg(target_os = "macos")]
 #![expect(
@@ -30,12 +30,13 @@ fn renderer() -> Option<Renderer> {
 }
 
 #[test]
-fn the_shaders_compile_and_both_pipelines_build() {
-    // `Renderer::new` compiles `shaders.metal` through the real Metal front end and builds both
-    // pipeline states against `DRAWABLE_FORMAT`. So this one line covers the shader source, the two
-    // `static_assert`s in it, all four entry-point names, and the blend configuration — anything
-    // wrong in any of them is a `ShaderCompile`, `MissingFunction` or `PipelineState` here rather
-    // than a black pane at run time.
+fn the_shaders_compile_and_every_pipeline_builds() {
+    // `Renderer::new` compiles `shaders.metal` through the real Metal front end and builds all
+    // three pipeline states against `DRAWABLE_FORMAT`. So this one line covers the shader
+    // source, the four `static_assert`s in it, all six entry-point names, the `constexpr
+    // sampler` baked into `image_fragment`, and the blend configuration — anything wrong in any
+    // of them is a `ShaderCompile`, `MissingFunction` or `PipelineState` here rather than a
+    // black pane at run time.
     let Some(renderer) = renderer() else {
         return;
     };
@@ -76,7 +77,7 @@ fn creating_and_dropping_the_renderer_does_not_climb() {
     // it alive.
     //
     // The renderer is the crate's central object and it holds every other one — device, queue,
-    // layer, two pipeline states, three slots of buffers, two atlas textures — so a loop over
+    // layer, three pipeline states, three slots of buffers, two atlas textures — so a loop over
     // its whole lifetime is the widest possible statement in the fewest lines.
     if renderer().is_none() {
         return;
@@ -96,9 +97,9 @@ fn creating_and_dropping_the_renderer_does_not_climb() {
     let after = resident_bytes();
 
     // A generous ceiling on purpose. The claim under test is "does not CLIMB", and thirty-two
-    // renderers each holding a shader library and two pipeline states would be tens of megabytes if
-    // any of them were held; a few hundred kilobytes of drift is the allocator and the Metal shader
-    // cache, not a leak.
+    // renderers each holding a shader library and three pipeline states would be tens of megabytes
+    // if any of them were held; a few hundred kilobytes of drift is the allocator and the Metal
+    // shader cache, not a leak.
     let ceiling = before + 4 * 1024 * 1024;
     assert!(
         after <= ceiling,
