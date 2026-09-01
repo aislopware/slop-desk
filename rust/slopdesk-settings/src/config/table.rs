@@ -630,6 +630,45 @@ pub const KEYS: &[Key] = &[
         doc: "The primary monospace family.",
     },
     Key {
+        path: "terminal.font-family-bold",
+        kind: Kind::Text { default: "" },
+        doc: "The family drawn BOLD. Unset follows `font-family`'s own bold cut.",
+    },
+    Key {
+        path: "terminal.font-family-italic",
+        kind: Kind::Text { default: "" },
+        doc: "The family drawn ITALIC. Unset follows `font-family`'s own italic cut.",
+    },
+    Key {
+        path: "terminal.font-family-bold-italic",
+        kind: Kind::Text { default: "" },
+        doc: "The family drawn BOLD ITALIC. Unset follows `font-family`'s own cut.",
+    },
+    Key {
+        path: "terminal.font-family-fallback",
+        kind: Kind::List,
+        doc: "Families tried, in order, for a character `font-family` cannot draw.",
+    },
+    Key {
+        path: "terminal.font-feature",
+        kind: Kind::List,
+        doc: "OpenType features, ghostty's syntax: `-calt`, `+ss01`, `cv01=2`.",
+    },
+    Key {
+        path: "terminal.font-thicken",
+        kind: Kind::Flag { default: Some(false) },
+        doc: "Stroke every glyph as well as filling it, so the face reads heavier.",
+    },
+    Key {
+        path: "terminal.font-thicken-strength",
+        kind: Kind::Int {
+            default: Some(slopdesk_terminal::config::FACTORY_FONT_THICKEN_STRENGTH),
+            min: 0,
+            max: 255,
+        },
+        doc: "How hard `font-thicken` strokes. `0` is the lightest, not none.",
+    },
+    Key {
         path: "terminal.font-size",
         kind: Kind::Float {
             default: Some(slopdesk_terminal::config::FACTORY_FONT_SIZE),

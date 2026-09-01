@@ -225,7 +225,17 @@ const WIDE: [Wide; 7] = [
         // stretches the cell and centres the glyph in what it gained. Seven lines, no new API surface
         // beyond the parameter and no new `unsafe` — the arithmetic sits inside the existing
         // Core Text read.
-        cap: 821,
+        //
+        // 821 → 901: the widened face settings — `font-family-bold`/`-italic`/`-bold-italic`,
+        // `font-family-fallback`, `font-feature` and `font-thicken`. `FontStack::new` now takes one
+        // `FontSpec` instead of four scalars, and the crate grew three helpers for it: a descriptor
+        // carrying the cascade list and the feature settings, the resolve that copies a face against
+        // it, and the family-name read-back that makes a mistyped style family fall back to the
+        // primary's own cut. Four new `unsafe` sites, every one a rule the crate already discharges —
+        // two Create-rule returns, one Copy-rule return, and the extern statics holding Core Text's
+        // attribute keys. The PARSING is not here: ghostty's feature syntax is read in
+        // `slopdesk-terminal`, which reaches no framework.
+        cap: 901,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-metal",

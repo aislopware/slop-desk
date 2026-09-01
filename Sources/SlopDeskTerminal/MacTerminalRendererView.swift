@@ -139,9 +139,7 @@ final class MacTerminalRendererView: NSView {
     /// Builds a view for a pane, or `nil` when this machine cannot open a surface.
     init?(model: TerminalViewModel, isFocused: Bool) {
         guard let driver = TerminalSurfaceDriver(
-            family: TerminalConfigBroadcaster.shared.fontFamily,
-            pointSize: TerminalConfigBroadcaster.shared.fontSize,
-            lineHeight: TerminalConfigBroadcaster.shared.lineHeight,
+            font: TerminalConfigBroadcaster.shared.font,
             scale: Double(NSScreen.main?.backingScaleFactor ?? 2),
             size: CGSize(width: 640, height: 400),
         ) else {

@@ -61,11 +61,40 @@ const ITALIC_SHEAR: f64 = 0.21;
 /// half of it.
 const BOLD_STROKE: f64 = 0.028;
 
+/// The lightest `terminal.font-thicken` stroke, as a width per point of size.
+///
+/// `font-thicken-strength = 0` is not "no thickening" — `ghostty`'s own documentation says so — so
+/// the floor is a stroke a reader can still see rather than zero, which is what the flag being OFF
+/// already means.
+const THICKEN_LIGHTEST: f64 = 0.004;
+
+/// The heaviest one, which is a synthesised bold's: past it a thickened regular face would be
+/// indistinguishable from the bold drawn beside it, and a terminal that cannot show bold has lost
+/// something a terminal is for.
+const THICKEN_HEAVIEST: f64 = BOLD_STROKE;
+
+/// `terminal.font-thicken` and its strength as the stroke they mean, per point of size — zero when
+/// the flag is off.
+///
+/// Lives beside the two constants rather than in `font.rs` because the stroke it answers is the one
+/// [`GlyphRasterizer::rasterize`] applies, and a second interpolation elsewhere would be a second
+/// place to look when a face draws heavier than the setting says.
+pub(crate) fn thicken_stroke(thicken: bool, strength: u8) -> f64 {
+    if !thicken {
+        return 0.0;
+    }
+    let ratio = f64::from(strength) / f64::from(u8::MAX);
+    THICKEN_LIGHTEST + (THICKEN_HEAVIEST - THICKEN_LIGHTEST) * ratio
+}
+
 /// Draws one glyph at a time into a buffer it owns.
 #[derive(Debug)]
 pub struct Rasterizer {
     faces: Faces,
     size_px: u16,
+    /// The stroke every glyph carries before its own style is considered, per point of size. See
+    /// [`thicken_stroke`]; zero for every stack whose settings left `font-thicken` off.
+    thicken: f64,
     scratch: Vec<u8>,
 }
 
@@ -73,10 +102,11 @@ impl Rasterizer {
     /// Built by [`FontStack::rasterizer`], which is what owns the chain this one reads.
     ///
     /// [`FontStack::rasterizer`]: crate::FontStack::rasterizer
-    pub(crate) const fn new(faces: Faces, size_px: u16) -> Self {
+    pub(crate) const fn new(faces: Faces, size_px: u16, thicken: f64) -> Self {
         Self {
             faces,
             size_px,
+            thicken,
             scratch: Vec::new(),
         }
     }
@@ -156,10 +186,13 @@ impl GlyphRasterizer for Rasterizer {
 
         let size = f64::from(key.size_px);
         let shear = if key.synthetic.italic { ITALIC_SHEAR } else { 0.0 };
+        // A synthesised bold's stroke REPLACES a thickening one rather than adding to it: they are
+        // the same mechanism at two weights, and stacking them would draw a faked bold heavier than
+        // its own constant says whenever thickening happened to be on.
         let stroke = if key.synthetic.bold {
             size * BOLD_STROKE
         } else {
-            0.0
+            size * self.thicken
         };
         // The four phases are a fraction of a pixel of extra offset, applied as a translation
         // before the glyph is drawn. Quantisation inside Core Graphics is turned off below
@@ -323,7 +356,11 @@ impl Rasterizer {
             CGContext::set_gray_fill_color(Some(&context), 1.0, 1.0);
             CGContext::set_gray_stroke_color(Some(&context), 1.0, 1.0);
         }
-        if key.synthetic.bold {
+        // The STROKE decides, not the style: a thickened regular face is drawn through exactly the
+        // path a faked bold is, one weight lighter. The comparison is a validity guard against a
+        // constant — "is there a stroke at all" — rather than a `<` between two live values, which
+        // is what this crate's float rule bars.
+        if plan.stroke > 0.0 {
             CGContext::set_text_drawing_mode(Some(&context), CGTextDrawingMode::FillStroke);
             CGContext::set_line_width(Some(&context), plan.stroke);
         }
@@ -402,6 +439,7 @@ mod tests {
     };
 
     use crate::FontStack;
+    use crate::font::spec_of;
 
     const MONO: &str = "Menlo";
 
@@ -428,7 +466,7 @@ mod tests {
     /// Ink, in the format an alpha atlas takes, inside a bitmap the bearings place on the baseline.
     #[test]
     fn a_letter_comes_back_as_coverage_with_ink_in_it() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let glyph = rasterizer.rasterize(key_of(&stack, "M", 0)).unwrap();
 
@@ -455,7 +493,7 @@ mod tests {
     /// is not one.
     #[test]
     fn the_first_row_is_the_top_of_the_glyph() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         // A `T` is a full-width crossbar over a narrow stem, so its two halves carry very different
         // amounts of ink and the difference survives any amount of antialiasing.
@@ -486,7 +524,7 @@ mod tests {
     /// a box or re-rasterise a space on every frame.
     #[test]
     fn a_space_exists_and_draws_nothing() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let glyph = rasterizer.rasterize(key_of(&stack, " ", 0)).unwrap();
         assert_eq!(glyph.width, 0);
@@ -497,7 +535,7 @@ mod tests {
     /// A colour face comes back as BGRA, because coverage would lose everything about it.
     #[test]
     fn an_emoji_comes_back_as_colour() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let key = key_of(&stack, "\u{1f600}", 0);
         assert_ne!(
@@ -528,7 +566,7 @@ mod tests {
     /// one answer and the whole subpixel key would be dead weight.
     #[test]
     fn the_four_phases_are_four_different_bitmaps() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let base = key_of(&stack, "e", 0);
         let mut seen: Vec<Vec<u8>> = Vec::new();
@@ -547,11 +585,61 @@ mod tests {
         }
     }
 
+    /// `terminal.font-thicken` is the synthetic bold's own mechanism at a lighter weight, so the
+    /// three facts to hold are that it adds ink to a plain glyph, that it adds LESS than a faked
+    /// bold does, and that a faked bold is unchanged by it — the stroke replaces rather than
+    /// stacks.
+    #[test]
+    fn thickening_adds_ink_to_a_plain_glyph_and_leaves_a_faked_bold_where_it_was() {
+        let ink = |spec: &slopdesk_terminal::config::FontSpec, synthetic: Synthetic| -> u64 {
+            let stack = FontStack::new(spec, 2.0).unwrap();
+            let mut rasterizer = stack.rasterizer();
+            let base = key_of(&stack, "H", 0);
+            let glyph = rasterizer.rasterize(GlyphKey { synthetic, ..base }).unwrap();
+            glyph.pixels.iter().map(|texel| u64::from(*texel)).sum()
+        };
+        let plain = Synthetic {
+            bold: false,
+            italic: false,
+        };
+        let faked = Synthetic {
+            bold: true,
+            italic: false,
+        };
+        let bare = spec_of(MONO, 13.0, 1.0);
+        let thickened = slopdesk_terminal::config::FontSpec {
+            thicken: true,
+            ..spec_of(MONO, 13.0, 1.0)
+        };
+        let lightly = slopdesk_terminal::config::FontSpec {
+            thicken: true,
+            thicken_strength: 0,
+            ..spec_of(MONO, 13.0, 1.0)
+        };
+
+        assert!(ink(&thickened, plain) > ink(&bare, plain), "a stroke adds ink");
+        assert!(
+            ink(&lightly, plain) < ink(&thickened, plain),
+            "the strength is the stroke, and zero is the lightest one rather than none",
+        );
+        assert_eq!(
+            ink(&thickened, plain),
+            ink(&bare, faked),
+            "the heaviest thickening IS a faked bold's stroke — the ceiling the constant names",
+        );
+        assert_eq!(
+            ink(&thickened, faked),
+            ink(&bare, faked),
+            "a faked bold already strokes; thickening it again would draw it heavier than its own constant \
+             says",
+        );
+    }
+
     /// Synthesis is only for a family that needs it, but the mechanics have to be right when it
     /// does: a stroke adds ink and a shear moves it sideways.
     #[test]
     fn a_synthetic_bold_is_heavier_and_a_synthetic_italic_is_wider() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let base = key_of(&stack, "H", 0);
         let plain = rasterizer.rasterize(base).unwrap();
@@ -589,7 +677,7 @@ mod tests {
     /// — "no such glyph" — rather than something drawn at the wrong size.
     #[test]
     fn a_key_from_another_stack_is_declined() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let base = key_of(&stack, "M", 0);
         assert!(
@@ -614,7 +702,7 @@ mod tests {
     /// context and a colour space.
     #[test]
     fn a_thousand_glyphs_hold_nothing() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let mut rasterizer = stack.rasterizer();
         let coverage = key_of(&stack, "W", 0);
         let color = key_of(&stack, "\u{1f600}", 0);

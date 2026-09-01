@@ -100,7 +100,7 @@ enum TerminalPromptBand {
             return Self(
                 font: resolved,
                 ascent: ascent,
-                lineHeight: natural * CGFloat(TerminalConfigBroadcaster.shared.lineHeight),
+                lineHeight: natural * CGFloat(TerminalConfigBroadcaster.shared.font.lineHeight),
             )
         }
     }

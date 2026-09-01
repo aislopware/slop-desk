@@ -646,7 +646,8 @@ of the two it is has not been thought about yet.
 four explicit face families, `auto-match-weight-style`, `ligatures`, `ligatures-alphabet`, `bold`,
 `italic`, `blending`, `theme`. They worked under the fork, which parsed the text, so this is a
 regression being codified rather than a feature that never landed; each returns with its actuation,
-in the same change. `docs/DECISIONS.md` §"The rows that survived their reader" argues it and names
+in the same change. Six have (§5.11): the three style families, a fallback list, ligature control
+and thickening. `docs/DECISIONS.md` §"The rows that survived their reader" argues it and names
 the two rows that were WIRED instead.
 
 **The four that were wired rather than deleted (2026-09-01).** `terminal.line-height` is the third
@@ -864,6 +865,60 @@ one guard, rather than letting five rows draw of which four grey and the fifth w
 nothing. A block that IS named but whose record the client ring no longer holds is the other case, and
 that one keeps its fold: the clean command line and the ring index are both the record's, but the
 layout still knows where the block is.
+
+### 5.11 The widened face settings, and the one value they cross as (2026-09-01)
+
+§5.6 deleted the four explicit face families with the promise that each returns with its actuation.
+Six rows land here: `terminal.font-family-bold`, `-italic`, `-bold-italic`, a
+`font-family-fallback` list, `font-feature`, and `font-thicken` with its `-strength`. The syntax of
+the feature row is `ghostty`'s to the letter — `feat`, `+feat`, `-feat`, `feat=2`, `feat on`,
+`feat off`, quoted names, comma-separated lists, invalid entries ignored — because a line that works
+in a `~/.config/ghostty/config` should paste in here, and because it is also the CSS
+`font-feature-settings` grammar. `-calt, -liga, -dlig` is how ligatures go away.
+
+**⚠️ The feature row does not yet reach an ASCII cell, and this is the shaper's gap.** §5.1's fast
+path — `shape_monospace`, one `CTFontGetGlyphsForCharacters` over the run — reads the cmap, which maps
+a character to its default glyph and runs NO substitution table. Every feature is a `GSUB`/`GPOS`
+lookup, so on a run of plain ASCII `-calt` turns nothing off and `ss01=2` swaps nothing in; only a run
+that falls through to `CTLine` sees them. The settings half is what landed here and it is complete —
+the row parses, crosses whole, and rides the descriptor every face is cut from. What is missing is a
+face PROBE that notices the resolved face substitutes over ASCII and routes that face's runs the slow
+way; it lands with the ligature work, which needs the same probe, and the test that pins it needs a
+ligating face this machine does not have. Until then the honest claim is: features apply where
+Core Text shapes, which is not where the prompt is.
+
+**Where each half is decided.** The TEXT is parsed in `slopdesk_terminal::config`, which reaches no
+framework and can test every spelling; `slopdesk-apple-text` is handed `(tag, value)` pairs and never
+a string it has to interpret. That is the same split §5.1 makes for the renderer: the crate holding
+the `unsafe` holds as little judgement as possible.
+
+**The fallback families are Core Text's cascade list, not a `Vec<Face>`.** The crate's own header
+already argues why the chain is the RESULT of Core Text's walk rather than a copy of the ~40-entry
+default cascade; the user's families go in the same place, as the `kCTFontCascadeListAttribute`
+PREFIX on the descriptor every face in the stack is copied against. So a named fallback resolves no
+face until a character actually needs one, exactly like the system's own, and
+`fallback_families_and_features_change_no_metric_and_resolve_no_face` is the test that says so. This
+is also what keeps `PreferencesStore`'s promise true — only a font SIZE change reflows the remote
+grid; a fallback family, a feature setting and a stroke move no cell.
+
+**A named style family is taken at its word; a mistyped one is not.** `cut()` reads the traits back
+off Core Text's answer because Core Text will approximate a trait REQUEST, and a family the user
+NAMED is not a request. The one check that survives is ghostty's own rule: `CTFontCreateWithName`
+answers Helvetica rather than NULL, so the family and PostScript names are read back, and a face that
+is neither falls through to the primary family's own cut rather than putting a proportional face in
+the middle of a grid.
+
+**Thickening is the synthetic bold's mechanism at a lighter weight**, not a second one: the stroke
+`font-thicken-strength` interpolates rides the STACK rather than the glyph key, because a settings
+write rebuilds the stack and empties the cache anyway, and a faked bold's own stroke REPLACES it so
+the two never stack.
+
+**One spec crosses, and the door compares the whole of it.** The eight rows plus the size and the
+line height travel as a `SlopDeskTermFontSpec` of arena spans with two span arrays beside it — the
+shape `slopdesk_prompt_add_command` already speaks — and the surface stashes the whole `FontSpec` it
+last drew with. That is the load-bearing part: the publish fires on EVERY settings write, so a door
+that compared only the family and the size would read a new `font-feature` line, publish it and drop
+it. There is nothing left to forget to add to the comparison, on either side of the boundary.
 
 ## 6. Measured
 

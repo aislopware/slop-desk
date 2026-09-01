@@ -61,10 +61,13 @@ That emitter, its 507-line FFI face, `TerminalConfigBuilder.swift` and the `Term
 were **deleted** on 2026-09-01. Every setting the renderer honours now crosses as a typed door, and
 every row that had no door left was either given one or removed:
 
-- `slopdesk_term_surface_new(family, point_size, scale, width, height)` — font family + point size at
-  surface construction.
-- `slopdesk_term_surface_set_font(handle, family, family_len, point_size)` — the same two, LIVE. Answers
-  the grid the new cell size fits, packed `cols << 16 | rows`, because a font change reflows.
+- `slopdesk_term_surface_new(spec, fallback, features, arena, scale, width, height)` — the whole
+  `[terminal]` font spec at surface construction: the primary family, the three style families, the
+  fallback list, the OpenType features, the size, the cell-height multiplier and thickening.
+- `slopdesk_term_surface_set_font(handle, spec, fallback, features, arena)` — the same spec, LIVE.
+  Answers the grid the new cell size fits, packed `cols << 16 | rows`, because a font change reflows.
+  The WHOLE spec decides whether anything is rebuilt: a `font-feature` line that turned ligatures off
+  would otherwise be published and dropped.
 - `slopdesk_term_surface_set_theme(handle, foreground, background, selection)` — three colours.
 - `slopdesk_term_surface_set_palette(handle, entries, count)` — the ANSI palette, as a prefix.
 - `slopdesk_term_surface_set_scrollback(handle, lines)` — the retention depth, in ROWS. The old text
@@ -97,7 +100,15 @@ actuate them and a row that resolves silently and changes nothing is worse than 
 exist: `font-weight`, `font-family-fallback` / `-bold` / `-italic` / `-bold-italic`,
 `auto-match-weight-style`, `ligatures`, `ligatures-alphabet`, `bold`, `italic`, `blending`, `theme`.
 They WORKED under the fork, which parsed the text — this is a regression being codified, not a feature
-that never landed. Each comes back with its actuation, in the same change. `docs/DECISIONS.md`
+that never landed. Each comes back with its actuation, in the same change. **Five have (2026-09-01):**
+`font-family-fallback` / `-bold` / `-italic` / `-bold-italic` are declared and doored again, and
+ligature control returned as `terminal.font-feature` — ghostty's own row and syntax (`-calt, -liga,
+-dlig`), which subsumes both `ligatures` and `ligatures-alphabet` without inventing a spelling. New
+beside them: `terminal.font-thicken` and `-strength`. ⚠️ The feature row REACHES the descriptor but
+only takes effect on runs that go through `CTLine`: `Shaper::shape_monospace` answers a plain-ASCII
+run out of the cmap, which performs no substitution at all, so `-calt` and `ss01` alike are inert on
+exactly the content a terminal is mostly made of. That is the shaper's gap, not the row's — `docs/68`
+§5.11 states it and it closes in the ligature batch. `docs/DECISIONS.md`
 §"The rows that survived their reader" argues it, and names the two rows that were kept and wired
 instead (`terminal.background` / `terminal.foreground`, whose consumer is the headless fallback the
 `AppearanceApplier` seam already promised).
@@ -157,7 +168,7 @@ genuinely absent or unwired.
 | **Unicode / text styles** (bold, italic, dim…) | done — moved | SGR attribute rendering is `rust/slopdesk-termrender/src/paint.rs` (`PaintStyle`, `DecorationKey`, ~41-111) using glyphs from `glyph.rs` (`Synthetic{bold,italic}`). No embedder involvement, same delegation model, different renderer. |
 | **True colour / 256-colour** | done — moved | `COLORTERM=truecolor` now set in `rust/slopdesk-muxsession/src/spawn_env.rs` (`curated()`, ~line 145, tested ~229). `Sources/SlopDeskHost/HostEnvironment.swift` is deleted. |
 | **Box-drawing / powerline glyphs** | done — moved | No dedicated code: ordinary glyphs shaped by Core Text through `rust/slopdesk-apple-text/src/shape.rs`, rasterized/cached by `slopdesk-termrender`'s glyph atlas — the same delegation the old fork used, over this repo's renderer instead of libghostty's. |
-| **Font family, size, weight** | family + size done and LIVE; the widened face settings still a gap | `slopdesk_term_surface_set_font(handle, family, family_len, point_size)` rebuilds the face stack on any `TerminalConfigBroadcaster` generation, through `TerminalSurfaceDriver.applySettings()`. It answers the grid the new cell size fits (packed `cols << 16 | rows`), so a font change reflows and mirrors a resize to the host like a layout pass does; a family Core Text cannot resolve leaves the current stack standing rather than refusing to draw. ⚠️ It deliberately does NOT settle before the first layout — `bind` applies settings synchronously, so settling there would mirror the placeholder frame's grid to the host as a spurious SIGWINCH. Construction still reads the same two through `slopdesk_term_surface_new`. Bold/italic are synthesized from the one family via `CTFontSymbolicTraits` (`rust/slopdesk-apple-text/src/font.rs:161-206`), not chosen from separately configured face names — so the fallback family list, explicit bold/italic/bold-italic families, ligature suppression and glyph blending are still `config.toml`-authored text that never reaches the renderer. |
+| **Font family, size, weight** | done and LIVE, faces included | `slopdesk_term_surface_set_font(handle, spec, fallback, features, arena)` rebuilds the face stack on any `TerminalConfigBroadcaster` generation, through `TerminalSurfaceDriver.applySettings()`. It answers the grid the new cell size fits (packed `cols << 16 | rows`), so a font change reflows and mirrors a resize to the host like a layout pass does; a family Core Text cannot resolve leaves the current stack standing rather than refusing to draw. ⚠️ It deliberately does NOT settle before the first layout — `bind` applies settings synchronously, so settling there would mirror the placeholder frame's grid to the host as a spurious SIGWINCH. Construction reads the same spec through `slopdesk_term_surface_new`. Bold/italic are synthesized via `CTFontSymbolicTraits` only where the family HAS no cut and the user named no face for it: `terminal.font-family-bold` / `-italic` / `-bold-italic` are taken at their word, a name the system does not have falls back to the primary's own cut (ghostty's rule), `terminal.font-family-fallback` prefixes Core Text's cascade list, `terminal.font-feature` carries ghostty's syntax for ligature control, and `terminal.font-thicken` strokes every glyph. Glyph BLENDING remains undoored — it is a renderer decision rather than a face one. See `docs/68` §5.11. |
 | **Theme / palette** | done — both doors live, and the hex round-trip is bypassed | `slopdesk_term_surface_set_theme(handle, foreground, background, selection)` plus `slopdesk_term_surface_set_palette(handle, entries, count)` (the ANSI palette as a PREFIX of `0x00RRGGBB` words from index 0 — apart from `_set_theme` because a theme always states its three colours while a palette is optional, and a config naming none must leave the engine's own 256 standing). Both are pushed from `TerminalSurfaceDriver.applySettings()`. The colours travel as packed `UInt32` words: `ResolvedTerminalTheme` carries the same numbers `SlateTheme` holds natively, which `ClientTerminalPalette` fills straight from the profile's literals. The 6-hex twin that used to ride alongside was always a `hex6` OF these numbers for the deleted fork's parser, and it went with the parser. ⚠️ Install order matters and both shells already have it: `ClientTerminalPalette.install()` runs BEFORE the composition builds `PreferencesStore`, or the first config a pane sees resolves against an unfilled closure. The engine's own damage tracking counts CELLS and a theme change touches none, so `slopdesk-vterm`'s session sets a `refill` flag in both colour doors — without it a theme change would sit invisible until the user happened to type. The "ONE APPEARANCE" ruling (ChooseR removed 2026-08-08) still stands as a comment at `Sources/SlopDeskSlate/SlateDesign.swift:44`. |
 | **$TERM** | done — moved | `rust/slopdesk-hostserver/src/gates.rs`: `DEFAULT_TERM = "xterm-ghostty"` (~line 38), `FALLBACK_TERM = "xterm-256color"` (~line 45). Resolution: `rust/slopdesk-probe/src/terminfo.rs`. `Sources/SlopDeskHost/HostEnvironment.swift` is deleted. `xterm-ghostty` stays the advertised entry even with the fork gone — the client still renders through `libghostty-vt`, so the kitty-keyboard/DEC2026-capable terminfo entry is still the right target. |
 | **TERMINFO propagation** | done — moved | `rust/slopdesk-muxsession/src/spawn_env.rs`: `MIRRORED_KEYS` (~37-47) mirrors `TERMINFO`/`TERMINFO_DIRS` to the child, tested at ~261-290. |

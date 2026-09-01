@@ -19,6 +19,9 @@ public enum TerminalFactoryDefaults {
     public static let cursorOpacity = slopdesk_terminal_factory_number(1)
     /// The scrollback depth, in lines.
     public static let scrollbackLines = Int(slopdesk_terminal_factory_number(2))
+    /// How hard a thickened stroke is drawn, `0`–`255`. `0` is the LIGHTEST thickening rather than
+    /// none, which is why the factory value is not the zero a memberwise default would reach for.
+    public static let fontThickenStrength = Int(slopdesk_terminal_factory_number(3))
 
     private static func text(_ field: UInt8) -> String {
         var out = [UInt8](repeating: 0, count: 64)
@@ -27,6 +30,125 @@ public enum TerminalFactoryDefaults {
         }
         guard needed > 0, needed <= out.count else { return "" }
         return String(bytes: out[0..<needed], encoding: .utf8) ?? ""
+    }
+}
+
+/// Every `terminal.font-*` row resolved into the one value the renderer's face stack is built from.
+///
+/// One value rather than ten publishes, and it is what the surface STASHES as well as what it takes:
+/// "did anything about the font move" is one `==` on this struct, so the next `terminal.font-*` row
+/// cannot be added to the publish and forgotten in the comparison — the shape the Rust `FontSpec`
+/// carries for the same reason.
+///
+/// A default-constructed value is the pre-publish one, matching ``TerminalConfigBroadcaster``'s own
+/// rule: an EMPTY family reads as "the engine's default", and a zero size as "nothing published
+/// yet". Not the factory face — that is the config table's answer, one layer down, and spelling it
+/// here would be the second copy this type exists to prevent.
+public struct TerminalFontSpec: Sendable, Equatable {
+    /// `terminal.font-family` — the primary family, and the face the grid is measured from.
+    public var family: String
+    /// `terminal.font-family-bold`. Empty follows the primary family's own bold cut.
+    public var bold: String
+    /// `terminal.font-family-italic`. Empty follows the primary family's own italic cut.
+    public var italic: String
+    /// `terminal.font-family-bold-italic`. Empty follows the primary family's own cut.
+    public var boldItalic: String
+    /// `terminal.font-family-fallback` — families tried, in order, for a character the primary
+    /// cannot draw, ahead of the system's own cascade rather than instead of it.
+    public var fallback: [String]
+    /// `terminal.font-feature`, as the TEXT the user typed (`-calt`, `+ss01`, `cv01=2`). Parsed in
+    /// Rust, beside the settings table that declares the row — see `slopdesk_terminal::config`.
+    public var features: [String]
+    /// `terminal.font-thicken` — stroke every glyph as well as filling it.
+    public var thicken: Bool
+    /// `terminal.font-thicken-strength`, `0`–`255`; read only when ``thicken`` is set, where `0` is
+    /// the LIGHTEST stroke rather than none.
+    public var thickenStrength: Int
+    /// The EFFECTIVE point size: the file's `terminal.font-size` plus whatever ⌘± has moved it by.
+    public var pointSize: Double
+    /// `terminal.line-height` as a multiple of the face's natural cell; `1` is the face's own.
+    public var lineHeight: Double
+
+    public init(
+        family: String = "",
+        bold: String = "",
+        italic: String = "",
+        boldItalic: String = "",
+        fallback: [String] = [],
+        features: [String] = [],
+        thicken: Bool = false,
+        thickenStrength: Int = 0,
+        pointSize: Double = 0,
+        lineHeight: Double = 1,
+    ) {
+        self.family = family
+        self.bold = bold
+        self.italic = italic
+        self.boldItalic = boldItalic
+        self.fallback = fallback
+        self.features = features
+        self.thicken = thicken
+        self.thickenStrength = thickenStrength
+        self.pointSize = pointSize
+        self.lineHeight = lineHeight
+    }
+}
+
+/// The `terminal.font-*` rows that say nothing about the primary family or its size.
+///
+/// Split from ``TerminalPreferences`` rather than inlined into it because nothing outside the face
+/// stack reads one of these: the prompt band wants the family, the code panel wants the family, ⌘±
+/// wants the size, and none of them has an opinion about a ligature. A reader who has to know what
+/// `cv01=2` means finds every such row in one type.
+///
+/// Every default here is "the row's own", which is empty or off — the values come from
+/// `rust/slopdesk-settings`' table, and a default spelled twice is the bug ``TerminalFactoryDefaults``
+/// exists to prevent.
+public struct TerminalFaceRows: Sendable, Equatable {
+    /// `terminal.font-family-bold`.
+    public var bold: String
+    /// `terminal.font-family-italic`.
+    public var italic: String
+    /// `terminal.font-family-bold-italic`.
+    public var boldItalic: String
+    /// `terminal.font-family-fallback`.
+    public var fallback: [String]
+    /// `terminal.font-feature`, as typed.
+    public var features: [String]
+    /// `terminal.font-thicken`.
+    public var thicken: Bool
+    /// `terminal.font-thicken-strength`.
+    public var thickenStrength: Int
+
+    public init(
+        bold: String = "",
+        italic: String = "",
+        boldItalic: String = "",
+        fallback: [String] = [],
+        features: [String] = [],
+        thicken: Bool = false,
+        thickenStrength: Int = TerminalFactoryDefaults.fontThickenStrength,
+    ) {
+        self.bold = bold
+        self.italic = italic
+        self.boldItalic = boldItalic
+        self.fallback = fallback
+        self.features = features
+        self.thicken = thicken
+        self.thickenStrength = thickenStrength
+    }
+
+    /// Read the rows out of a resolved ``AppConfig`` — every one declared, so none is spelled here.
+    public init(_ config: AppConfig) {
+        self.init(
+            bold: config.text("terminal.font-family-bold"),
+            italic: config.text("terminal.font-family-italic"),
+            boldItalic: config.text("terminal.font-family-bold-italic"),
+            fallback: config.list("terminal.font-family-fallback"),
+            features: config.list("terminal.font-feature"),
+            thicken: config.flag("terminal.font-thicken"),
+            thickenStrength: config.int("terminal.font-thicken-strength"),
+        )
     }
 }
 
@@ -44,8 +166,15 @@ public enum TerminalFactoryDefaults {
 /// has a real default (these are render prefs, not env overrides), so a default-constructed value is
 /// a sensible terminal.
 public struct TerminalPreferences: Sendable, Equatable {
-    /// Monospace font family (libghostty `font-family`).
+    /// Monospace font family (`terminal.font-family`).
     public var fontFamily: String
+    /// The three style families and everything else about the FACES — see ``TerminalFontSpec``.
+    ///
+    /// Apart from ``fontFamily`` and ``fontSize`` rather than swallowing them, because those two are
+    /// not only the renderer's: ⌘± moves the size, the prompt band and the code panel follow the
+    /// family, and every one of those reads a scalar. ``fontSpec(size:)`` is where the two halves
+    /// are joined, once, on the way to the door.
+    public var faces: TerminalFaceRows
     /// Font point size (libghostty `font-size`).
     public var fontSize: Double
     /// Terminal background colour (`terminal.background`, 6-hex). Defaults to the profile's own
@@ -141,6 +270,7 @@ public struct TerminalPreferences: Sendable, Equatable {
 
     public init(
         fontFamily: String = TerminalFactoryDefaults.fontFamily,
+        faces: TerminalFaceRows = TerminalFaceRows(),
         fontSize: Double = TerminalFactoryDefaults.fontSize,
         background: String = TerminalFactoryDefaults.background,
         foreground: String = TerminalFactoryDefaults.foreground,
@@ -153,6 +283,7 @@ public struct TerminalPreferences: Sendable, Equatable {
         lineHeight: LineHeightMode = .default,
     ) {
         self.fontFamily = fontFamily
+        self.faces = faces
         self.fontSize = fontSize
         self.background = background
         self.foreground = foreground
@@ -179,6 +310,7 @@ public struct TerminalPreferences: Sendable, Equatable {
     public init(_ config: AppConfig) {
         self.init(
             fontFamily: config.text("terminal.font-family"),
+            faces: TerminalFaceRows(config),
             fontSize: config.double("terminal.font-size"),
             background: config.text("terminal.background"),
             foreground: config.text("terminal.foreground"),
@@ -204,6 +336,28 @@ public struct TerminalPreferences: Sendable, Equatable {
         case "loose": return .loose
         default: return .default
         }
+    }
+
+    /// The whole font spec at `size` — the effective point size, which only the store knows, joined
+    /// to the rows this type read.
+    ///
+    /// Takes the size rather than reading ``fontSize`` because the number the renderer measures its
+    /// grid from is the CONFIGURED size plus the ⌘± delta, and only ``PreferencesStore`` holds the
+    /// delta. Handing over the configured one would draw at one size and lay out at another the
+    /// moment ⌘+ was pressed.
+    public func fontSpec(size: Double) -> TerminalFontSpec {
+        TerminalFontSpec(
+            family: fontFamily,
+            bold: faces.bold,
+            italic: faces.italic,
+            boldItalic: faces.boldItalic,
+            fallback: faces.fallback,
+            features: faces.features,
+            thicken: faces.thicken,
+            thickenStrength: faces.thickenStrength,
+            pointSize: size,
+            lineHeight: lineHeight.cellHeightMultiplier,
+        )
     }
 
     /// The cell background as the door takes it, or `nil` when the file's text is not a colour.

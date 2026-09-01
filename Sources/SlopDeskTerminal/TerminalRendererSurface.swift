@@ -36,6 +36,7 @@ import CSlopDeskFFI
 import Foundation
 import QuartzCore
 import SlopDeskArena
+import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 
 /// A live terminal: one Rust handle, and the calls that reach it.
@@ -61,12 +62,14 @@ final class TerminalRendererSurface {
     private var scratch = [UInt8](repeating: 0, count: 4096)
 
     /// Opens a surface, or `nil` when this machine cannot draw one.
-    init?(family: String, pointSize: Double, lineHeight: Double, scale: Double, size: CGSize) {
-        let opened = Array(family.utf8).withUnsafeBufferPointer { bytes in
+    init?(font: TerminalFontSpec, scale: Double, size: CGSize) {
+        let opened = font.withCrossing { spec, fallback, fallbackCount, features, featureCount, arena, arenaLength in
             slopdesk_term_surface_new(
-                bytes.baseAddress, bytes.count,
-                pointSize, lineHeight, scale,
-                Double(size.width), Double(size.height),
+                spec,
+                fallback, fallbackCount,
+                features, featureCount,
+                arena, arenaLength,
+                scale, Double(size.width), Double(size.height),
             )
         }
         guard let opened else { return nil }
@@ -223,15 +226,21 @@ final class TerminalRendererSurface {
         }
     }
 
-    /// Rebuilds the face stack at a new family, size and cell-height multiplier, answering the grid
-    /// that now fits.
+    /// Rebuilds the face stack at a new font spec, answering the grid that now fits.
     ///
     /// Answers the pair for ``setGeometry(size:scale:)``'s reason, and the caller owes the same
     /// follow-through: a new cell size is a new grid, and the host is still holding the old one.
-    func setFont(family: String, pointSize: Double, lineHeight: Double) -> (cols: UInt16, rows: UInt16)? {
+    /// The door decides whether anything is rebuilt at all — it holds the spec it last drew with.
+    func setFont(_ font: TerminalFontSpec) -> (cols: UInt16, rows: UInt16)? {
         guard let handle else { return nil }
-        let packed = Array(family.utf8).withUnsafeBufferPointer { bytes in
-            slopdesk_term_surface_set_font(handle, bytes.baseAddress, bytes.count, pointSize, lineHeight)
+        let packed = font.withCrossing { spec, fallback, fallbackCount, features, featureCount, arena, arenaLength in
+            slopdesk_term_surface_set_font(
+                handle,
+                spec,
+                fallback, fallbackCount,
+                features, featureCount,
+                arena, arenaLength,
+            )
         }
         guard packed != 0 else { return nil }
         return (cols: UInt16(packed >> 16), rows: UInt16(packed & 0xFFFF))
@@ -1186,5 +1195,64 @@ private extension ArraySlice<UInt8> {
     mutating func takeBigEndianDouble() -> Double? {
         guard let run = take(8) else { return nil }
         return Double(bitPattern: run.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) })
+    }
+}
+
+// MARK: - The font spec's crossing shape
+
+private extension TerminalFontSpec {
+    /// Flattens into the shape the two font doors take — one record of spans, two span arrays, and
+    /// the arena all of them index — and calls `body` with it.
+    ///
+    /// An arena rather than seven pointer/length pairs, because that is the convention
+    /// `SlopDeskByteSpan` states for exactly this: names that travel together travel in ONE
+    /// allocation, so no field makes either side own a lifetime. Every pointer is valid only for
+    /// the duration of `body`, which is why this is a `with`-style call and not a builder.
+    func withCrossing<Answer>(
+        _ body: (
+            UnsafePointer<SlopDeskTermFontSpec>?,
+            UnsafePointer<SlopDeskByteSpan>?, Int,
+            UnsafePointer<SlopDeskByteSpan>?, Int,
+            UnsafePointer<UInt8>?, Int,
+        ) -> Answer,
+    ) -> Answer {
+        var arena: [UInt8] = []
+        var record = SlopDeskTermFontSpec()
+        record.family = Self.intern(family, into: &arena)
+        record.bold = Self.intern(bold, into: &arena)
+        record.italic = Self.intern(italic, into: &arena)
+        record.bold_italic = Self.intern(boldItalic, into: &arena)
+        record.point_size = pointSize
+        record.line_height = lineHeight
+        record.thicken = thicken
+        record.thicken_strength = UInt8(clamping: thickenStrength)
+        let fallbackSpans = fallback.map { Self.intern($0, into: &arena) }
+        let featureSpans = features.map { Self.intern($0, into: &arena) }
+
+        return withUnsafePointer(to: &record) { spec in
+            fallbackSpans.withUnsafeBufferPointer { fallbackBuffer in
+                featureSpans.withUnsafeBufferPointer { featureBuffer in
+                    arena.withUnsafeBufferPointer { arenaBuffer in
+                        body(
+                            spec,
+                            fallbackBuffer.baseAddress, fallbackBuffer.count,
+                            featureBuffer.baseAddress, featureBuffer.count,
+                            arenaBuffer.baseAddress, arenaBuffer.count,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Appends `text` to `arena` and answers where it landed.
+    static func intern(_ text: String, into arena: inout [UInt8]) -> SlopDeskByteSpan {
+        let bytes = Array(text.utf8)
+        let span = SlopDeskByteSpan(
+            offset: UInt32(truncatingIfNeeded: arena.count),
+            length: UInt32(truncatingIfNeeded: bytes.count),
+        )
+        arena.append(contentsOf: bytes)
+        return span
     }
 }

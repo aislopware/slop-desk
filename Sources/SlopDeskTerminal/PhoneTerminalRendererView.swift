@@ -63,9 +63,7 @@ final class PhoneTerminalRendererView: UIView {
 
     init?(model: TerminalViewModel, isFocused: Bool) {
         guard let driver = TerminalSurfaceDriver(
-            family: TerminalConfigBroadcaster.shared.fontFamily,
-            pointSize: TerminalConfigBroadcaster.shared.fontSize,
-            lineHeight: TerminalConfigBroadcaster.shared.lineHeight,
+            font: TerminalConfigBroadcaster.shared.font,
             scale: Double(UIScreen.main.scale),
             size: CGSize(width: 390, height: 600),
         ) else {

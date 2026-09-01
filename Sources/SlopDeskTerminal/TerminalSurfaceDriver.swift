@@ -21,6 +21,7 @@ import CSlopDeskFFI
 import Foundation
 import QuartzCore
 import SlopDeskClientCore
+import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 
 /// The framework-neutral half of the terminal renderer.
@@ -79,10 +80,8 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// The refusal is latched by ``TerminalRendererSurface`` rather than retried: a machine with no
     /// Metal device does not acquire one a frame later, and a view that kept asking would ask every
     /// frame forever.
-    init?(family: String, pointSize: Double, lineHeight: Double, scale: Double, size: CGSize) {
-        guard let opened = TerminalRendererSurface(
-            family: family, pointSize: pointSize, lineHeight: lineHeight, scale: scale, size: size,
-        ) else {
+    init?(font: TerminalFontSpec, scale: Double, size: CGSize) {
+        guard let opened = TerminalRendererSurface(font: font, scale: scale, size: size) else {
             return nil
         }
         surface = opened
@@ -338,10 +337,9 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// grid of its PLACEHOLDER size and `settle` would mirror that made-up geometry to the host as a
     /// resize. The grid comes from layout, so a pre-layout font change only rebuilds the faces and
     /// waits: ``setGeometry(size:scale:)`` mirrors it a moment later with the real one.
-    func setFont(family: String, pointSize: Double, lineHeight: Double) {
-        guard let surface, !family.isEmpty, pointSize > 0 else { return }
-        guard let grid = surface.setFont(family: family, pointSize: pointSize, lineHeight: lineHeight)
-        else { return }
+    func setFont(_ font: TerminalFontSpec) {
+        guard let surface, !font.family.isEmpty, font.pointSize > 0 else { return }
+        guard let grid = surface.setFont(font) else { return }
         if lastGrid != nil {
             settle(grid)
         } else {
@@ -359,11 +357,7 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// setting the user can only change by reopening the pane.
     func applySettings() {
         let broadcaster = TerminalConfigBroadcaster.shared
-        setFont(
-            family: broadcaster.fontFamily,
-            pointSize: broadcaster.fontSize,
-            lineHeight: broadcaster.lineHeight,
-        )
+        setFont(broadcaster.font)
         if let words = broadcaster.themeWords {
             setTheme(
                 foreground: words.foreground,

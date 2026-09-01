@@ -345,8 +345,13 @@ let package = Package(
             // `TerminalChromeAppearance` is the design record that crosses, and it has to be spelled
             // in the same on-glass tokens the chrome around the island already wears. Acyclic —
             // Slate is the floor and depends on no view layer.
+            // `SlopDeskVideoProtocol` is SPELLED for the same reason `SlopDeskArena` is: the face
+            // stack crosses as `TerminalFontSpec`, which is a SETTINGS record and lives with the
+            // rows it is read from. Inheriting it through the store would name the type without
+            // owning the edge.
             dependencies: [
                 "SlopDeskWorkspaceCore",
+                "SlopDeskVideoProtocol",
                 "SlopDeskClientCore",
                 "SlopDeskArena",
                 "SlopDeskSlate",

@@ -2865,14 +2865,41 @@ double slopdesk_terminal_factory_number(uint8_t field);
  * with no Metal device answers NULL from _new and nothing after it crashes. */
 typedef struct SlopDeskTerminalSurface SlopDeskTerminalSurface;
 
+/* Every `[terminal]` font row, as the two doors that build a face stack take it.
+ *
+ * The four names are spans into ONE arena the caller lends beside the record, so no field makes the
+ * caller own a lifetime — SlopDeskByteSpan's own convention. The two LISTS ride beside it as span
+ * arrays into that same arena: the fallback families, and the `terminal.font-feature` settings as
+ * the TEXT a user typed (`-calt`, `+ss01`, `cv01=2` — ghostty's syntax, parsed in Rust).
+ *
+ * An empty style name is not "no bold": it means the primary family's own cut, which is also what a
+ * named family that the system does not have falls back to. `thicken_strength` is read only when
+ * `thicken` is set, and 0 there is the LIGHTEST stroke rather than none. */
+typedef struct {
+  SlopDeskByteSpan family;
+  SlopDeskByteSpan bold;
+  SlopDeskByteSpan italic;
+  SlopDeskByteSpan bold_italic;
+  double point_size;
+  double line_height;
+  bool thicken;
+  uint8_t thicken_strength;
+} SlopDeskTermFontSpec;
+
 /* Opens a surface, or NULL when this machine cannot draw one (no Metal device, pipelines that
  * will not build, a point size that is no sane number of device pixels). A refusal does not
  * become true a frame later, so the caller latches it. An UNKNOWN family is not a refusal —
- * Core Text answers Helvetica, and `slopdesk font list` is how the user finds out what to type. */
-SlopDeskTerminalSurface *slopdesk_term_surface_new(const uint8_t *family, size_t family_len,
-                                                   double point_size, double line_height,
-                                                   double scale, double width_points,
-                                                   double height_points);
+ * Core Text answers Helvetica, and `slopdesk font list` is how the user finds out what to type.
+ *
+ * A NULL `spec` is the FACTORY font rather than a refusal: every row it carries has a compiled
+ * default one layer down, in the settings table. */
+SlopDeskTerminalSurface *slopdesk_term_surface_new(const SlopDeskTermFontSpec *spec,
+                                                   const SlopDeskByteSpan *fallback,
+                                                   size_t fallback_count,
+                                                   const SlopDeskByteSpan *features,
+                                                   size_t feature_count, const uint8_t *arena,
+                                                   size_t arena_len, double scale,
+                                                   double width_points, double height_points);
 /* Teardown is TWO doors, and the split is load-bearing.
  *
  * _close takes the state — engine, atlas, layer, device — and leaves the handle valid and inert.
@@ -2926,16 +2953,22 @@ void slopdesk_term_surface_set_theme(SlopDeskTerminalSurface *handle, uint32_t f
 void slopdesk_term_surface_set_palette(SlopDeskTerminalSurface *handle, const uint32_t *entries,
                                        size_t count);
 
-/* Rebuilds the face stack at a family, point size and cell-height multiplier, answering the grid
- * it now fits, packed `cols << 16 | rows` exactly as _set_geometry does — a font change resizes the
- * cell, so it reflows the grid and the caller owes the host a resize. A family Core Text cannot
- * resolve leaves the current stack standing rather than refusing to draw.
+/* Rebuilds the face stack at a whole font spec, answering the grid it now fits, packed
+ * `cols << 16 | rows` exactly as _set_geometry does — a font change resizes the cell, so it reflows
+ * the grid and the caller owes the host a resize. A family Core Text cannot resolve leaves the
+ * current stack standing rather than refusing to draw.
+ *
+ * The WHOLE spec decides whether anything is rebuilt, not just the family and the size: a
+ * `font-feature` line that turned ligatures off would otherwise be published and dropped.
  *
  * `line_height` is `terminal.line-height` as a MULTIPLE of the face's natural cell (1 for the
  * face's own). A taller cell centres its glyph in the space it gained and every offset the face
  * reported rides with the baseline, so an underline stays the same distance under its own glyph. */
-uint32_t slopdesk_term_surface_set_font(SlopDeskTerminalSurface *handle, const uint8_t *family,
-                                        size_t family_len, double point_size, double line_height);
+uint32_t slopdesk_term_surface_set_font(SlopDeskTerminalSurface *handle,
+                                        const SlopDeskTermFontSpec *spec,
+                                        const SlopDeskByteSpan *fallback, size_t fallback_count,
+                                        const SlopDeskByteSpan *features, size_t feature_count,
+                                        const uint8_t *arena, size_t arena_len);
 
 /* Scrolls the viewport: mode 0 by rows, 1 by PAGES, 2 to the bottom, 3 to the top. `lines` is
  * signed and negative reveals OLDER output. A page is converted against the grid the surface last

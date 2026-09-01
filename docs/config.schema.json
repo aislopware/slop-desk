@@ -449,6 +449,45 @@
           "type": "string",
           "default": "SF Mono"
         },
+        "font-family-bold": {
+          "description": "The family drawn BOLD. Unset follows `font-family`'s own bold cut.",
+          "type": "string",
+          "default": ""
+        },
+        "font-family-italic": {
+          "description": "The family drawn ITALIC. Unset follows `font-family`'s own italic cut.",
+          "type": "string",
+          "default": ""
+        },
+        "font-family-bold-italic": {
+          "description": "The family drawn BOLD ITALIC. Unset follows `font-family`'s own cut.",
+          "type": "string",
+          "default": ""
+        },
+        "font-family-fallback": {
+          "description": "Families tried, in order, for a character `font-family` cannot draw.",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "font-feature": {
+          "description": "OpenType features, ghostty's syntax: `-calt`, `+ss01`, `cv01=2`.",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "font-thicken": {
+          "description": "Stroke every glyph as well as filling it, so the face reads heavier.",
+          "type": "boolean",
+          "default": false
+        },
+        "font-thicken-strength": {
+          "description": "How hard `font-thicken` strokes. `0` is the lightest, not none.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 255
+        },
         "font-size": {
           "description": "Point size of the primary face.",
           "type": "number",

@@ -139,9 +139,7 @@ public final class PreferencesStore {
         // `prefs` already carries the EFFECTIVE size — the ⌘± delta was folded in above — so the
         // renderer measures its grid from the same number that was published.
         TerminalConfigBroadcaster.shared.publish(
-            fontFamily: prefs.fontFamily,
-            fontSize: prefs.fontSize,
-            lineHeight: prefs.lineHeight.cellHeightMultiplier,
+            font: prefs.fontSpec(size: prefs.fontSize),
             // The FALLBACK is the point, and it is what keeps `terminal.background` /
             // `terminal.foreground` honest: with the hook installed (every GUI build) the one flat
             // profile wins, and without it the file's own two colours are what the cells wear. A
@@ -167,7 +165,9 @@ public final class PreferencesStore {
 
     /// ⌘+ / ⌘= — one step bigger. A font-SIZE change DOES reflow the remote PTY grid (the cell box
     /// resizes → SIGWINCH); that is correct, not a bug — only font FAMILY/STYLE rebuilds are
-    /// grid-preserving.
+    /// grid-preserving, and so is every other `terminal.font-*` row: a fallback family is reached
+    /// only by a character the primary cannot draw, a feature setting rides the descriptor, and
+    /// thickening is a stroke. None of the three is measured, so none of them moves the cell.
     public func increaseFontSize() { applyZoom(.increase) }
 
     /// ⌘- — one step smaller.
@@ -309,9 +309,15 @@ public final class PreferencesStore {
 public final class TerminalConfigBroadcaster {
     public static let shared = TerminalConfigBroadcaster()
 
-    /// The monospace family the terminal draws with, as the renderer's `slopdesk_term_surface_new`
-    /// takes it. Empty until the first publish, which the renderer reads as "the engine's default".
-    public private(set) var fontFamily = ""
+    /// Every `terminal.font-*` row the terminal draws with, as the renderer's
+    /// `slopdesk_term_surface_new` takes it. Empty-family and zero-size until the first publish,
+    /// which the renderer reads as "the engine's default".
+    ///
+    /// ONE value rather than a field per row, and that is the point: the door compares the whole
+    /// spec to decide whether to rebuild, so a row that reached this seam but not that comparison
+    /// would be a setting the user could change and never see. There is nothing here to forget to
+    /// add.
+    public private(set) var font = TerminalFontSpec()
 
     /// Monotonic publish counter — the renderer keys its "apply on change" off this, so re-publishing
     /// the same values still reloads.
@@ -319,17 +325,17 @@ public final class TerminalConfigBroadcaster {
 
     public init() {}
 
-    /// The EFFECTIVE point size — the file's `terminal.font-size` plus whatever ⌘± has moved it by.
-    /// `0` until the first publish, for ``fontFamily``'s reason.
+    /// The primary family, for the two readers that are not the face stack: the prompt band, which
+    /// draws its own text in it, and the code panel's font sync. Both want a family name and neither
+    /// has an opinion about a ligature.
+    public var fontFamily: String { font.family }
+
+    /// The EFFECTIVE point size — the file's `terminal.font-size` plus whatever ⌘± has moved it by —
+    /// for ``fontFamily``'s two readers.
     ///
     /// Effective rather than configured, because the renderer measures a grid from it: handing over
     /// the configured size would draw at one size and lay out at another the moment ⌘+ was pressed.
-    public private(set) var fontSize: Double = 0
-
-    /// How tall a cell is as a MULTIPLE of the face's natural height (`terminal.line-height`), which
-    /// is what `slopdesk_term_surface_set_font` takes. `1` — the face's own — until the first
-    /// publish, for ``fontFamily``'s reason.
-    public private(set) var lineHeight: Double = 1
+    public var fontSize: Double { font.pointSize }
 
     /// The cell colours as the renderer's doors take them, or `nil` where no GUI filled the seam
     /// (headless, pre-launch) and the engine's own defaults stand.
@@ -362,9 +368,7 @@ public final class TerminalConfigBroadcaster {
 
     /// Publish the resolved terminal settings (bumps ``generation`` even if nothing moved).
     public func publish(
-        fontFamily: String = "",
-        fontSize: Double = 0,
-        lineHeight: Double = 1,
+        font: TerminalFontSpec = TerminalFontSpec(),
         themeWords: ResolvedTerminalTheme? = nil,
         scrollbackLines: Int = 0,
         cursorStyle: UInt8 = 0,
@@ -373,9 +377,7 @@ public final class TerminalConfigBroadcaster {
         cursorTextColor: UInt32? = nil,
         cursorOpacity: Double = 1,
     ) {
-        self.fontFamily = fontFamily
-        self.fontSize = fontSize
-        self.lineHeight = lineHeight
+        self.font = font
         self.themeWords = themeWords
         self.scrollbackLines = scrollbackLines
         self.cursorStyle = cursorStyle

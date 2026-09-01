@@ -141,6 +141,36 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertEqual(TerminalConfigBroadcaster.shared.fontSize, 16)
     }
 
+    /// The whole face stack crosses, not just the primary family and the size. Each of these rows is
+    /// one a user can set and never see if the seam drops it — the spec is ONE value precisely so
+    /// there is nothing to forget, and this asserts a non-factory reading for every field of it.
+    ///
+    /// The size on the spec is the EFFECTIVE one (⌘± folded in); everything else is the file's word.
+    func testTheWholeFaceStackReachesTheBroadcaster() {
+        _ = makeStore(
+            AppConfig.compiledDefaults
+                .setting("terminal.font-family", "Menlo")
+                .setting("terminal.font-family-bold", "Menlo-Bold")
+                .setting("terminal.font-family-italic", "Menlo-Italic")
+                .setting("terminal.font-family-bold-italic", "Menlo-BoldItalic")
+                .setting("terminal.font-family-fallback", ["Apple Color Emoji", "Menlo"])
+                .setting("terminal.font-feature", ["-calt", "ss01=2"])
+                .setting("terminal.font-thicken", true)
+                .setting("terminal.font-thicken-strength", 128)
+                .setting("terminal.font-size", 16.0),
+        )
+        let font = TerminalConfigBroadcaster.shared.font
+        XCTAssertEqual(font.family, "Menlo")
+        XCTAssertEqual(font.bold, "Menlo-Bold")
+        XCTAssertEqual(font.italic, "Menlo-Italic")
+        XCTAssertEqual(font.boldItalic, "Menlo-BoldItalic")
+        XCTAssertEqual(font.fallback, ["Apple Color Emoji", "Menlo"])
+        XCTAssertEqual(font.features, ["-calt", "ss01=2"])
+        XCTAssertTrue(font.thicken)
+        XCTAssertEqual(font.thickenStrength, 128)
+        XCTAssertEqual(font.pointSize, 16)
+    }
+
     /// ⌘± moves the LIVE size without touching the file — the one ephemeral thing the store holds.
     /// ⌘0 puts it back, and the file's own answer is what it goes back TO.
     func testFontSizeZoomIsEphemeralAndReturnsToTheFilesAnswer() {

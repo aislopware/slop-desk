@@ -21,6 +21,23 @@
 //! answer a slightly different question and look like the same one, which is the argument the
 //! crate's own header already makes about font enumeration.
 //!
+//! `terminal.font-family-fallback` is the user's half of that, and it goes in the same place rather
+//! than beside it: the families they named are handed to Core Text as `kCTFontCascadeListAttribute`
+//! — a PREFIX to the system's own list, since Core Text appends the default cascade after whatever
+//! a descriptor carries — so their faces are tried first, by the same walk, and still only resolved
+//! when something is actually drawn in one. Pre-resolving the named families into `Vec<Face>` up
+//! front would have been the same mistake at a smaller scale.
+//!
+//! ## What a style family means, and what happens when it is a typo
+//!
+//! `font-family-bold` and its two siblings are taken at their word: a family the user NAMED is
+//! resolved by name and drawn as-is, with [`Synthetic`] empty, because the trait read-back that
+//! [`cut`] performs exists to catch Core Text approximating a REQUEST, and there is no request to
+//! approximate here. The one check that survives is ghostty's own rule for a name that resolves to
+//! nothing: `CTFontCreateWithName` answers Helvetica rather than NULL, so the family name is read
+//! back off the answer, and a face that is not the family that was asked for falls through to the
+//! primary family's own cut — "if `font-family-bold = FooBar` cannot be found, use `font-family`".
+//!
 //! ## Device pixels, decided once
 //!
 //! The renderer's units are device pixels and its header says the contents scale is applied once,
@@ -33,9 +50,13 @@ use core::ptr;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use objc2_core_foundation::{CFRetained, CFString};
+use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_graphics::CGGlyph;
-use objc2_core_text::{CTFont, CTFontOrientation, CTFontSymbolicTraits};
+use objc2_core_text::{
+    CTFont, CTFontDescriptor, CTFontOrientation, CTFontSymbolicTraits, kCTFontCascadeListAttribute,
+    kCTFontFeatureSettingsAttribute, kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue,
+};
+use slopdesk_terminal::config::{FontFeature, FontSpec};
 use slopdesk_termrender::glyph::Synthetic;
 use slopdesk_termrender::layout::FontMetrics;
 
@@ -123,47 +144,50 @@ pub struct FontStack {
     cell_width: f64,
     cell_height: f64,
     size_px: u16,
+    /// `terminal.font-thicken` resolved into the stroke it means, as a width per device pixel of
+    /// size — zero when the setting is off. It rides the STACK rather than the glyph key because a
+    /// stack is rebuilt, and its cache emptied, by every settings write that could move it.
+    thicken: f64,
 }
 
 impl FontStack {
-    /// Resolves `family` at `point_size` on a display of `contents_scale`, in cells `line_height`
-    /// times the face's natural height.
+    /// Resolves `spec` on a display of `contents_scale`: its family at its point size, wearing its
+    /// fallback families and OpenType features, in cells its line height times the face's natural
+    /// one.
     ///
     /// `None` for a size that is not a sane number of device pixels — a NaN scale, a zero point
     /// size, a value that would not survive the rounding — because every metric below is derived
     /// from it and a stack that answered a NaN baseline would put every glyph in the grid
     /// somewhere unpredictable rather than failing where the mistake was made.
     ///
-    /// An UNKNOWN family is not a failure: `CTFontCreateWithName` never returns NULL, it returns
-    /// Helvetica. That is deliberate here too — a typo in `config.toml` gets a legible terminal in
-    /// the wrong face, and `slopdesk font list` is how the user finds out what to type instead.
+    /// An UNKNOWN primary family is not a failure: `CTFontCreateWithName` never returns NULL, it
+    /// returns Helvetica. That is deliberate here too — a typo in `config.toml` gets a legible
+    /// terminal in the wrong face, and `slopdesk font list` is how the user finds out what to type
+    /// instead. An unknown STYLE family is a different answer, argued in the module header.
     #[must_use]
-    pub fn new(family: &str, point_size: f64, contents_scale: f64, line_height: f64) -> Option<Self> {
-        let size_px = round_u16(point_size * contents_scale)?;
+    pub fn new(spec: &FontSpec, contents_scale: f64) -> Option<Self> {
+        let size_px = round_u16(spec.point_size * contents_scale)?;
         if size_px == 0 {
             return None;
         }
         let size = f64::from(size_px);
 
-        let name = CFString::from_str(family);
-        // SAFETY: framework rule. The Core Foundation CREATE rule — `CTFontCreateWithName` answers
-        // a reference this caller owns, which `objc2` wraps in a `CFRetained` that releases it. The
-        // matrix argument is documented as optional, and a null one selects the identity matrix,
-        // which is what a renderer that does its own transforms wants.
-        #[expect(
-            unsafe_code,
-            reason = "a Create-rule return, and a null matrix meaning identity"
-        )]
-        let primary = unsafe { CTFont::with_name(&name, size, ptr::null()) };
+        // Built once and worn by every face in the stack, including the ones `cut` copies: a
+        // feature the primary applies and its bold does not would be a family that changes its
+        // ligatures when a program turns bold on.
+        let dressing = dressing(spec, size);
+        let primary = resolve(&spec.family, size, dressing.as_deref());
 
-        let (metrics, cell_height) = measure(&primary, size, line_height);
+        let (metrics, cell_height) = measure(&primary, size, spec.line_height);
         let cell_width = advance(&primary)?;
 
-        let bold = cut(&primary, size, CTFontSymbolicTraits::TraitBold);
-        let italic = cut(&primary, size, CTFontSymbolicTraits::TraitItalic);
-        let bold_italic = cut(
-            &primary,
-            size,
+        let for_style = |named: &str, wanted| {
+            named_family(named, size, dressing.as_deref()).or_else(|| cut(&primary, size, wanted))
+        };
+        let bold = for_style(&spec.bold, CTFontSymbolicTraits::TraitBold);
+        let italic = for_style(&spec.italic, CTFontSymbolicTraits::TraitItalic);
+        let bold_italic = for_style(
+            &spec.bold_italic,
             CTFontSymbolicTraits::TraitBold | CTFontSymbolicTraits::TraitItalic,
         );
 
@@ -213,6 +237,7 @@ impl FontStack {
             cell_width,
             cell_height,
             size_px,
+            thicken: crate::raster::thicken_stroke(spec.thicken, spec.thicken_strength),
         })
     }
 
@@ -264,8 +289,143 @@ impl FontStack {
     /// shaper discovers is one the rasteriser can already draw.
     #[must_use]
     pub fn rasterizer(&self) -> Rasterizer {
-        Rasterizer::new(Rc::clone(&self.faces), self.size_px)
+        Rasterizer::new(Rc::clone(&self.faces), self.size_px, self.thicken)
     }
+}
+
+/// The descriptor every face in a stack is copied against, or `None` when the settings asked for
+/// neither a fallback family nor a feature.
+///
+/// `None` rather than an empty descriptor because the two are not the same call: a font copied
+/// against an empty attribute set is a second `CTFont` that answers everything the first one did,
+/// and a stack that built four of them for a user who set nothing would pay for a feature nobody
+/// uses on every settings write.
+fn dressing(spec: &FontSpec, size: f64) -> Option<CFRetained<CTFontDescriptor>> {
+    if spec.fallback.is_empty() && spec.features.is_empty() {
+        return None;
+    }
+    let families: Vec<CFRetained<CTFontDescriptor>> = spec
+        .fallback
+        .iter()
+        .map(|family| family.trim())
+        .filter(|family| !family.is_empty())
+        .map(|family| {
+            let name = CFString::from_str(family);
+            // SAFETY: framework rule. The Core Foundation CREATE rule —
+            // `CTFontDescriptorCreateWithNameAndSize` answers a reference this caller owns, which
+            // `objc2` wraps in a `CFRetained` that releases it.
+            #[expect(unsafe_code, reason = "a Create-rule return; the caller owns it")]
+            unsafe {
+                CTFontDescriptor::with_name_and_size(&name, size)
+            }
+        })
+        .collect();
+    let settings: Vec<CFRetained<CFDictionary<CFString, CFType>>> =
+        spec.features.iter().copied().map(feature_setting).collect();
+
+    let cascade = (!families.is_empty()).then(|| CFArray::from_retained_objects(&families));
+    let features = (!settings.is_empty()).then(|| CFArray::from_retained_objects(&settings));
+
+    // SAFETY: framework rule. The extern statics holding Core Text's attribute keys, whose contract
+    // is a non-null immutable `CFStringRef` for the process's whole life — the same rule `of_file`
+    // reads its key under, and the Core Text symbols above are what force the image to load. Read
+    // together because they are one obligation rather than two.
+    #[expect(unsafe_code, reason = "the framework's key constants are extern statics")]
+    let (cascade_key, feature_key) =
+        unsafe { (kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute) };
+
+    let mut keys: Vec<&CFString> = Vec::new();
+    let mut values: Vec<&CFType> = Vec::new();
+    if let Some(list) = cascade.as_deref() {
+        keys.push(cascade_key);
+        values.push(list);
+    }
+    if let Some(list) = features.as_deref() {
+        keys.push(feature_key);
+        values.push(list);
+    }
+    if keys.is_empty() {
+        return None;
+    }
+    let attributes: CFRetained<CFDictionary<CFString, CFType>> = CFDictionary::from_slices(&keys, &values);
+    // SAFETY: framework rule. The CREATE rule again, plus the generic obligation `objc2` states for
+    // this door — "attributes generics must be of the correct type", which is exactly what the two
+    // pushes above guarantee: each key is Core Text's own constant and each value the type that
+    // constant's documentation names.
+    #[expect(
+        unsafe_code,
+        reason = "a Create-rule return over a dictionary whose element types this fn just built"
+    )]
+    let descriptor = unsafe { CTFontDescriptor::with_attributes(attributes.as_opaque()) };
+    Some(descriptor)
+}
+
+/// One OpenType feature as Core Text's own two-key dictionary.
+fn feature_setting(feature: FontFeature) -> CFRetained<CFDictionary<CFString, CFType>> {
+    let tag = CFString::from_str(&String::from_utf8_lossy(&feature.tag()));
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "a feature value is a small alternate number; Core Text's own field is signed"
+    )]
+    let value = CFNumber::new_i32(feature.value() as i32);
+    // SAFETY: framework rule, as in `dressing` — two extern statics holding Core Text's key
+    // constants, read together because they are one obligation rather than two.
+    #[expect(unsafe_code, reason = "the framework's key constants are extern statics")]
+    let keys: [&CFString; 2] = unsafe { [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue] };
+    CFDictionary::from_slices(&keys, &[&*tag, &*value])
+}
+
+/// `family` at `size`, wearing `dressing` when there is any.
+///
+/// The name is resolved by `CTFontCreateWithName`, which takes a family name OR a PostScript one
+/// and never answers NULL — the two facts the header's "unknown family is Helvetica" paragraph
+/// rests on.
+fn resolve(family: &str, size: f64, dressing: Option<&CTFontDescriptor>) -> CFRetained<CTFont> {
+    let name = CFString::from_str(family);
+    // SAFETY: framework rule. The Core Foundation CREATE rule — `CTFontCreateWithName` answers a
+    // reference this caller owns, which `objc2` wraps in a `CFRetained` that releases it. The
+    // matrix argument is documented as optional, and a null one selects the identity matrix, which
+    // is what a renderer that does its own transforms wants.
+    #[expect(
+        unsafe_code,
+        reason = "a Create-rule return, and a null matrix meaning identity"
+    )]
+    let font = unsafe { CTFont::with_name(&name, size, ptr::null()) };
+    let Some(dressing) = dressing else {
+        return font;
+    };
+    // SAFETY: framework rule. The COPY rule — `CTFontCreateCopyWithAttributes` answers a reference
+    // this caller owns; `objc2` declares it non-null. The matrix is null, documented as "preserve
+    // the original font matrix", and the descriptor is live for the whole call.
+    #[expect(unsafe_code, reason = "a Copy-rule return; the caller owns it")]
+    unsafe {
+        font.copy_with_attributes(size, ptr::null(), Some(dressing))
+    }
+}
+
+/// The face a user NAMED for one style, or `None` when they named none — or named one the system
+/// does not have.
+///
+/// The read-back is ghostty's rule, stated in the module header: Core Text answers Helvetica for a
+/// family it cannot find, so a bold that came back under a different family name is a typo, and the
+/// honest response to a typo is the primary family's own bold rather than a proportional face in
+/// the middle of a grid.
+fn named_family(family: &str, size: f64, dressing: Option<&CTFontDescriptor>) -> Option<CFRetained<CTFont>> {
+    let wanted = family.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    let font = resolve(wanted, size, dressing);
+    // SAFETY: framework rule. The COPY rule, twice — each answers a reference this caller owns,
+    // which `objc2` wraps in a `CFRetained` that releases it. Both names are asked for because
+    // `CTFontCreateWithName` accepts either spelling, so refusing on the family name alone would
+    // reject the PostScript name it had just honoured.
+    #[expect(unsafe_code, reason = "two Copy-rule returns; the caller owns both")]
+    let names = unsafe { [font.family_name(), font.post_script_name()] };
+    names
+        .iter()
+        .any(|name| name.to_string().eq_ignore_ascii_case(wanted))
+        .then_some(font)
 }
 
 /// The face in the same family carrying `wanted`, or `None` when the family has no such cut.
@@ -438,6 +598,22 @@ pub(crate) const fn finite(value: f64, fallback: f64) -> f64 {
     if value.is_finite() { value } else { fallback }
 }
 
+/// A spec naming one family at one size in one cell, for the tests across this crate that care
+/// about none of the other seven rows.
+///
+/// Here rather than in each test module because all three of them build one, and a default that
+/// drifted between them would make a shaping test and a rasterising test disagree about what "the
+/// factory font" is.
+#[cfg(test)]
+pub(crate) fn spec_of(family: &str, point_size: f64, line_height: f64) -> FontSpec {
+    FontSpec {
+        family: family.to_owned(),
+        point_size,
+        line_height,
+        ..FontSpec::default()
+    }
+}
+
 /// A pixel count, rounded once and refused when it is not one.
 pub(crate) fn round_u16(value: f64) -> Option<u16> {
     let rounded = value.round();
@@ -471,17 +647,21 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::FontStack;
+    use super::{FontSpec, FontStack, spec_of};
 
     /// A face every macOS carries, so these run on any machine that can build this crate.
     const MONO: &str = "Menlo";
+
+    /// A second face every macOS carries, for the tests that need two families that are not each
+    /// other — a named style family, and a fallback entry.
+    const OTHER: &str = "Courier New";
 
     /// The grid a real family implies has to be one a glyph fits inside. Every relationship here is
     /// one a renderer would otherwise discover as a clipped descender or an underline outside the
     /// cell it belongs to.
     #[test]
     fn a_real_family_measures_a_grid_that_could_hold_it() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         let metrics = stack.metrics();
 
         assert_eq!(
@@ -512,7 +692,7 @@ mod tests {
     /// The family resolves four ways, and the chain starts as short as the family allows.
     #[test]
     fn the_four_cuts_resolve_before_any_text_arrives() {
-        let stack = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         // Menlo ships Regular, Bold, Italic and Bold Italic, so all four are real faces and none is
         // synthesised. A family with fewer would resolve fewer, which is what `Synthetic` covers.
         assert_eq!(stack.face_count(), 4);
@@ -522,19 +702,19 @@ mod tests {
     /// propagated into every metric below it.
     #[test]
     fn a_size_that_is_not_a_number_of_pixels_is_refused() {
-        assert!(FontStack::new(MONO, f64::NAN, 2.0, 1.0).is_none());
-        assert!(FontStack::new(MONO, 13.0, f64::NAN, 1.0).is_none());
-        assert!(FontStack::new(MONO, 13.0, f64::INFINITY, 1.0).is_none());
-        assert!(FontStack::new(MONO, 0.0, 2.0, 1.0).is_none());
-        assert!(FontStack::new(MONO, -13.0, 2.0, 1.0).is_none());
-        assert!(FontStack::new(MONO, 1e9, 2.0, 1.0).is_none());
+        assert!(FontStack::new(&spec_of(MONO, f64::NAN, 1.0), 2.0).is_none());
+        assert!(FontStack::new(&spec_of(MONO, 13.0, 1.0), f64::NAN).is_none());
+        assert!(FontStack::new(&spec_of(MONO, 13.0, 1.0), f64::INFINITY).is_none());
+        assert!(FontStack::new(&spec_of(MONO, 0.0, 1.0), 2.0).is_none());
+        assert!(FontStack::new(&spec_of(MONO, -13.0, 1.0), 2.0).is_none());
+        assert!(FontStack::new(&spec_of(MONO, 1e9, 1.0), 2.0).is_none());
     }
 
     /// An unknown family is Helvetica, not a failure — a typo in `config.toml` gets a legible
     /// terminal in the wrong face rather than a blank one.
     #[test]
     fn a_family_the_system_does_not_have_still_answers_a_stack() {
-        let stack = FontStack::new("No Such Family At All", 13.0, 2.0, 1.0).unwrap();
+        let stack = FontStack::new(&spec_of("No Such Family At All", 13.0, 1.0), 2.0).unwrap();
         assert!(stack.cell_width() >= 1.0);
     }
 
@@ -549,8 +729,8 @@ mod tests {
                   pass a multiplier that had leaked into the width"
     )]
     fn a_multiplier_stretches_the_cell_and_centres_the_glyph_in_it() {
-        let natural = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
-        let loose = FontStack::new(MONO, 13.0, 2.0, 1.5).unwrap();
+        let natural = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
+        let loose = FontStack::new(&spec_of(MONO, 13.0, 1.5), 2.0).unwrap();
 
         assert!(loose.cell_height() > natural.cell_height());
         assert_eq!(
@@ -586,9 +766,9 @@ mod tests {
                   not one within a tolerance of it"
     )]
     fn a_multiplier_that_is_not_a_number_leaves_the_natural_cell() {
-        let natural = FontStack::new(MONO, 13.0, 2.0, 1.0).unwrap();
+        let natural = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
         for broken in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 0.0] {
-            let stack = FontStack::new(MONO, 13.0, 2.0, broken).unwrap();
+            let stack = FontStack::new(&spec_of(MONO, 13.0, broken), 2.0).unwrap();
             assert_eq!(
                 stack.cell_height(),
                 natural.cell_height(),
@@ -597,13 +777,89 @@ mod tests {
         }
     }
 
+    /// A family the user NAMED for a style is drawn as itself, with nothing faked — the read-back
+    /// that [`cut`] does exists to catch an approximated REQUEST, and a name is not one.
+    #[test]
+    fn a_named_style_family_is_taken_at_its_word() {
+        let spec = FontSpec {
+            bold: OTHER.to_owned(),
+            ..spec_of(MONO, 13.0, 1.0)
+        };
+        let stack = FontStack::new(&spec, 2.0).unwrap();
+        let bold = stack.styles.get(1).copied().unwrap();
+        assert_ne!(bold.face, 0, "a named family is its own face, not the primary");
+        assert!(!bold.synthetic.bold && !bold.synthetic.italic);
+
+        let faces = stack.faces.borrow();
+        let face = faces.get(usize::from(bold.face)).unwrap();
+        #[expect(
+            unsafe_code,
+            reason = "a Copy-rule return in a test, under the same rule the module states"
+        )]
+        let resolved = unsafe { face.font.family_name() }.to_string();
+        assert_eq!(
+            resolved, OTHER,
+            "the face drawn bold is the family that was named"
+        );
+    }
+
+    /// ghostty's rule for a style family that does not exist: fall back to `font-family`'s own cut
+    /// rather than to the Helvetica `CTFontCreateWithName` answers for any name at all.
+    #[test]
+    fn a_style_family_the_system_does_not_have_falls_back_to_the_primary_cut() {
+        let spec = FontSpec {
+            bold: "No Such Family At All".to_owned(),
+            ..spec_of(MONO, 13.0, 1.0)
+        };
+        let stack = FontStack::new(&spec, 2.0).unwrap();
+        let named = stack.styles.get(1).copied().unwrap();
+        let plain = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
+        let own = plain.styles.get(1).copied().unwrap();
+        assert_eq!(named.face, own.face);
+        assert_eq!(named.synthetic.bold, own.synthetic.bold);
+        assert_eq!(stack.face_count(), plain.face_count());
+    }
+
+    /// The fallback families and the features are worn by the DESCRIPTOR, so neither resolves a
+    /// face up front and neither moves the grid: a cascade entry is only reached by a character
+    /// the primary cannot map, and turning ligatures off does not change what a monospace cell
+    /// measures.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "bit-equality is the CLAIM: the grid is the SAME number, and a tolerance would pass a \
+                  fallback family that had leaked into the measurement"
+    )]
+    fn fallback_families_and_features_change_no_metric_and_resolve_no_face() {
+        let bare = FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).unwrap();
+        let dressed = FontStack::new(
+            &FontSpec {
+                fallback: vec![OTHER.to_owned(), String::new(), "  ".to_owned()],
+                features: FontSpec::features_of(&["-calt, -liga, -dlig", "ss01=2"]),
+                ..spec_of(MONO, 13.0, 1.0)
+            },
+            2.0,
+        )
+        .unwrap();
+
+        assert_eq!(dressed.cell_width(), bare.cell_width());
+        assert_eq!(dressed.cell_height(), bare.cell_height());
+        assert_eq!(dressed.metrics().baseline, bare.metrics().baseline);
+        assert_eq!(
+            dressed.face_count(),
+            bare.face_count(),
+            "a named fallback is Core Text's cascade list, walked when text arrives — not a face resolved \
+             before any has",
+        );
+    }
+
     /// The leak test this family owes: a thousand stacks, each taking and dropping four faces and a
     /// handful of descriptors, so a missing release shows up as growth rather than as a comment
     /// nobody checked.
     #[test]
     fn a_thousand_stacks_hold_nothing() {
         for _ in 0..1000 {
-            assert!(FontStack::new(MONO, 13.0, 2.0, 1.0).is_some());
+            assert!(FontStack::new(&spec_of(MONO, 13.0, 1.0), 2.0).is_some());
         }
     }
 }

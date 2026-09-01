@@ -47,7 +47,7 @@ pub const unsafe extern "C" fn slopdesk_terminal_factory_text(
 }
 
 /// A FACTORY default that is a number, by index: 0 the point size, 1 the cursor opacity, 2 the
-/// scrollback depth in lines. Any other index answers zero.
+/// scrollback depth in lines, 3 the thickening strength. Any other index answers zero.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -62,6 +62,8 @@ pub const extern "C" fn slopdesk_terminal_factory_number(field: u8) -> f64 {
             reason = "a line count this small is exact in f64"
         )]
         2 => slopdesk_terminal::config::FACTORY_SCROLLBACK_LINES as f64,
+        #[expect(clippy::cast_precision_loss, reason = "a 0–255 strength is exact in f64")]
+        3 => slopdesk_terminal::config::FACTORY_FONT_THICKEN_STRENGTH as f64,
         _ => 0.0,
     }
 }

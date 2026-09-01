@@ -55,6 +55,7 @@ use core::time::Duration;
 
 use slopdesk_apple_metal::Renderer;
 use slopdesk_apple_text::{FontStack, Rasterizer, Shaper};
+use slopdesk_terminal::config::FontSpec;
 use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_terminal::surface_action::{SelectionEdge, SurfaceAction};
 use slopdesk_termrender::{
@@ -69,7 +70,9 @@ use slopdesk_vterm::{
     SelectionAdjust, SurfacePoint, VtSession, key_from_macos_keycode, text_cells,
 };
 
-use crate::{borrow, deliver, lent, push_text, records_of, saturating_u32, spill};
+use crate::{
+    SlopDeskByteSpan, arena_text, borrow, deliver, lent, push_text, records_of, saturating_u32, spill,
+};
 
 /// The gutter, header and gap a command block is drawn with, in POINTS.
 ///
@@ -127,14 +130,11 @@ struct Surface {
     /// The faces, and the two traits the paint pass reaches them through.
     font: FontStack,
     /// What [`Self::font`] was built FROM, kept because a `FontStack` does not answer it and a
-    /// scale change has to rebuild the stack from the same two inputs. Storing them is what makes
-    /// that rebuild reproducible rather than a second call into the config.
-    family: String,
-    /// The point size [`Self::font`] was built at.
-    point_size: f64,
-    /// The `terminal.line-height` multiplier [`Self::font`] was built at, for [`Self::family`]'s
-    /// reason: a rescale rebuilds the stack from the same inputs, and this is one of them.
-    line_height: f64,
+    /// scale change has to rebuild the stack from the same inputs. Storing the whole spec is what
+    /// makes that rebuild reproducible rather than a second call into the config — and what makes
+    /// "did anything about the font move" ONE comparison, rather than one per row that the next
+    /// `terminal.font-*` setting would have to be remembered to join.
+    spec: FontSpec,
     /// Core Text shaping, rebuilt whenever [`Self::font`] is.
     shaper: Shaper,
     /// Core Text rasterisation, rebuilt whenever [`Self::font`] is.
@@ -307,21 +307,14 @@ struct PixelGeometry {
 }
 
 impl Surface {
-    /// Builds a surface on the system default Metal device with `family` at `point_size`.
+    /// Builds a surface on the system default Metal device wearing `spec`.
     ///
-    /// `None` when there is no Metal device, when the pipelines will not build, or when Core Text
-    /// resolves no face for `family` — each of which is a machine or a configuration this build
-    /// cannot draw on, and none of which becomes true a frame later. The caller latches the
-    /// refusal.
-    fn create(
-        family: &str,
-        point_size: f64,
-        line_height: f64,
-        scale: f64,
-        width: f64,
-        height: f64,
-    ) -> Option<Self> {
-        let font = FontStack::new(family, point_size, scale, line_height)?;
+    /// `None` when there is no Metal device, when the pipelines will not build, or when the spec
+    /// names a size Core Text cannot measure a grid at — each of which is a machine or a
+    /// configuration this build cannot draw on, and none of which becomes true a frame later. The
+    /// caller latches the refusal.
+    fn create(spec: &FontSpec, scale: f64, width: f64, height: f64) -> Option<Self> {
+        let font = FontStack::new(spec, scale)?;
         let renderer = Renderer::new().ok()?;
         let geometry = PixelGeometry {
             width: width * scale,
@@ -351,9 +344,7 @@ impl Surface {
             rasterizer: font.rasterizer(),
             session,
             font,
-            family: family.to_owned(),
-            point_size,
-            line_height,
+            spec: spec.clone(),
             cache: GlyphCache::default(),
             painter: Painter::new(),
             list: DrawList::default(),
@@ -418,7 +409,7 @@ impl Surface {
             // A scale change invalidates every rasterised glyph — the atlas holds coverage masks
             // measured in device pixels — so the face stack, both traits and the cache are rebuilt
             // together. Rebuilding any subset would pair a 1× atlas with a 2× shaper.
-            if let Some(font) = FontStack::new(&self.family, self.point_size, scale, self.line_height) {
+            if let Some(font) = FontStack::new(&self.spec, scale) {
                 self.shaper = font.shaper();
                 self.rasterizer = font.rasterizer();
                 self.font = font;
@@ -429,40 +420,34 @@ impl Surface {
         self.session.size()
     }
 
-    /// Rebuilds the face stack at a new family and point size, answering the grid that now fits.
+    /// Rebuilds the face stack at a new spec, answering the grid that now fits.
     ///
-    /// The rebuild is [`Self::set_geometry`]'s rescale branch with the other two inputs moving
-    /// instead of the scale, and for the same reason: the atlas holds coverage masks measured
-    /// against ONE face at ONE size, so a new face invalidates every glyph in it. Rebuilding any
-    /// subset would pair last size's atlas with this size's shaper.
+    /// The rebuild is [`Self::set_geometry`]'s rescale branch with the spec moving instead of the
+    /// scale, and for the same reason: the atlas holds coverage masks measured against ONE face at
+    /// ONE size, so a new face invalidates every glyph in it. Rebuilding any subset would pair last
+    /// size's atlas with this size's shaper. It is the WHOLE spec that decides, not the family and
+    /// the size: a `font-feature` line that turned ligatures off would otherwise be read, published
+    /// and dropped, because nothing the early-out compared had moved.
     ///
     /// A family Core Text cannot resolve leaves the current stack standing rather than refusing to
     /// draw — the honest outcome for a font name the user mistyped in `config.toml`, and the same
     /// one a scale change takes.
-    fn set_font(&mut self, family: &str, point_size: f64, line_height: f64) -> (u16, u16) {
-        // Bit-equality is a CONSERVATIVE test here, not an exact one: an identical pair is
-        // certainly unchanged, and a pair that differs by an ulp costs one needless atlas rebuild
+    fn set_font(&mut self, spec: &FontSpec) -> (u16, u16) {
+        // Bit-equality is a CONSERVATIVE test here, not an exact one: an identical spec is
+        // certainly unchanged, and one that differs by an ulp costs one needless atlas rebuild
         // rather than a wrong frame. The publish this answers fires on every settings write, so the
         // early-out is what keeps an unrelated toggle from re-rasterising the screen.
-        #[expect(
-            clippy::float_cmp,
-            reason = "a conservative unchanged-test, argued immediately above"
-        )]
-        let unchanged =
-            family == self.family && point_size == self.point_size && line_height == self.line_height;
-        if unchanged {
+        if *spec == self.spec {
             return self.session.size();
         }
-        let Some(font) = FontStack::new(family, point_size, self.geometry.scale, line_height) else {
+        let Some(font) = FontStack::new(spec, self.geometry.scale) else {
             return self.session.size();
         };
         self.shaper = font.shaper();
         self.rasterizer = font.rasterizer();
         self.font = font;
         self.cache = GlyphCache::default();
-        family.clone_into(&mut self.family);
-        self.point_size = point_size;
-        self.line_height = line_height;
+        self.spec = spec.clone();
         self.apply_geometry();
         self.session.size()
     }
@@ -1001,16 +986,100 @@ const unsafe fn held<'a>(handle: *mut SlopDeskTerminalSurface) -> Option<&'a mut
     }
 }
 
+/// The four face names, the two numbers and the two thickening fields one font spec carries.
+///
+/// A record rather than eight more arguments on two doors, and spans rather than pointers for the
+/// reason [`SlopDeskByteSpan`]'s own header gives: the names travel in ONE arena, so no field makes
+/// the caller own a lifetime, and the two doors that speak this shape stay readable. The two LISTS
+/// — the fallback families and the feature settings — cross beside it as span arrays into the same
+/// arena, which is the shape `slopdesk_prompt_add_command` already speaks.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SlopDeskTermFontSpec {
+    /// The primary family, `terminal.font-family`.
+    pub family: SlopDeskByteSpan,
+    /// `terminal.font-family-bold`, empty to take the primary family's own cut.
+    pub bold: SlopDeskByteSpan,
+    /// `terminal.font-family-italic`, on `bold`'s terms.
+    pub italic: SlopDeskByteSpan,
+    /// `terminal.font-family-bold-italic`, on `bold`'s terms.
+    pub bold_italic: SlopDeskByteSpan,
+    /// The point size, before the view's contents scale.
+    pub point_size: f64,
+    /// The cell height as a multiple of the face's natural one; `1` for the face's own.
+    pub line_height: f64,
+    /// `terminal.font-thicken`.
+    pub thicken: bool,
+    /// `terminal.font-thicken-strength`, `0`-`255`. Read only when `thicken` is set.
+    pub thicken_strength: u8,
+}
+
+/// One crossing font spec, read into the value the renderer takes.
+///
+/// A NULL record answers the FACTORY spec rather than refusing: every field it would have carried
+/// has a declared default one layer down, in `slopdesk-settings`' table, and a surface that drew
+/// nothing because a caller passed no font would be the wrong shape of failure for a row that
+/// cannot be unset.
+///
+/// The feature entries cross as the TEXT a user typed and are parsed here, by
+/// [`FontSpec::features_of`], for the reason its own crate header gives: `-calt` is a string, a
+/// `(tag, value)` pair is a fact, and the crate full of Core Text `unsafe` should be handed facts.
+///
+/// # Safety
+/// `spec` must be null or name one live record for the call; each span array must be null or name
+/// its stated count of live records; `(arena, arena_len)` must name live bytes. Every span in every
+/// record is read against the arena and answers empty when it does not fit, so a lying span costs
+/// a name rather than a read out of bounds.
+#[expect(
+    unsafe_code,
+    reason = "reconstituting the caller's record and arrays IS the boundary this module documents"
+)]
+unsafe fn font_spec(
+    spec: *const SlopDeskTermFontSpec,
+    fallback: *const SlopDeskByteSpan,
+    fallback_count: usize,
+    features: *const SlopDeskByteSpan,
+    feature_count: usize,
+    arena: *const c_uchar,
+    arena_len: usize,
+) -> FontSpec {
+    // SAFETY: the caller's obligation above; each helper states its own.
+    let (record, fallback, features, bytes) = unsafe {
+        (
+            spec.as_ref(),
+            records_of(fallback, fallback_count),
+            records_of(features, feature_count),
+            borrow(arena, arena_len),
+        )
+    };
+    let Some(record) = record else {
+        return FontSpec::default();
+    };
+    let read = |span: SlopDeskByteSpan| arena_text(bytes, span.offset, span.length);
+    let entries: Vec<String> = features.iter().copied().map(read).collect();
+    FontSpec {
+        family: read(record.family),
+        bold: read(record.bold),
+        italic: read(record.italic),
+        bold_italic: read(record.bold_italic),
+        fallback: fallback.iter().copied().map(read).collect(),
+        features: FontSpec::features_of(&entries),
+        thicken: record.thicken,
+        thicken_strength: record.thicken_strength,
+        point_size: record.point_size,
+        line_height: record.line_height,
+    }
+}
+
 /// Opens a terminal surface, or NULL when this machine cannot draw one.
 ///
-/// `family` is a font family name; `point_size` its size in points, `line_height` the
-/// `terminal.line-height` multiplier of the face's natural cell (`1` for the face's own), and
-/// `scale` the view's contents scale, from which every device-pixel number below is derived.
+/// `spec` is the whole of `[terminal]`'s font settings — see [`SlopDeskTermFontSpec`] — and `scale`
+/// the view's contents scale, from which every device-pixel number below is derived.
 /// `width_points` and `height_points` are the hosting view's bounds.
 ///
 /// # Safety
-/// `(family, family_len)` must describe `family_len` live bytes for the call. The answer must be
-/// passed to [`slopdesk_term_surface_free`] exactly once, from the main thread.
+/// [`font_spec`]'s, for the spec and its two arrays. The answer must be passed to
+/// [`slopdesk_term_surface_free`] exactly once, from the main thread.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -1018,25 +1087,30 @@ const unsafe fn held<'a>(handle: *mut SlopDeskTerminalSurface) -> Option<&'a mut
 )]
 #[must_use]
 pub unsafe extern "C" fn slopdesk_term_surface_new(
-    family: *const c_uchar,
-    family_len: usize,
-    point_size: f64,
-    line_height: f64,
+    spec: *const SlopDeskTermFontSpec,
+    fallback: *const SlopDeskByteSpan,
+    fallback_count: usize,
+    features: *const SlopDeskByteSpan,
+    feature_count: usize,
+    arena: *const c_uchar,
+    arena_len: usize,
     scale: f64,
     width_points: f64,
     height_points: f64,
 ) -> *mut SlopDeskTerminalSurface {
     // SAFETY: the caller's obligation, restated above.
-    let family = unsafe { lent(family, family_len) };
-    Surface::create(
-        family,
-        point_size,
-        line_height,
-        scale,
-        width_points,
-        height_points,
-    )
-    .map_or(core::ptr::null_mut(), |surface| {
+    let spec = unsafe {
+        font_spec(
+            spec,
+            fallback,
+            fallback_count,
+            features,
+            feature_count,
+            arena,
+            arena_len,
+        )
+    };
+    Surface::create(&spec, scale, width_points, height_points).map_or(core::ptr::null_mut(), |surface| {
         Box::into_raw(Box::new(SlopDeskTerminalSurface { inner: Some(surface) }))
     })
 }
@@ -1281,8 +1355,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_palette(
     let _refused = surface.session.set_palette(&palette);
 }
 
-/// Rebuilds the face stack at `family`, `point_size` and `line_height`, answering the grid it now
-/// fits, packed
+/// Rebuilds the face stack at `spec`, answering the grid it now fits, packed
 /// `cols << 16 | rows` exactly as [`slopdesk_term_surface_set_geometry`] does.
 ///
 /// The grid comes BACK rather than being read separately for that door's reason: a font change
@@ -1290,7 +1363,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_palette(
 /// one. `0` for a null handle.
 ///
 /// # Safety
-/// [`held`]'s, plus `(family, family_len)` being a live UTF-8 span for the call.
+/// [`held`]'s, plus [`font_spec`]'s for the spec and its two arrays.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -1299,18 +1372,31 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_palette(
 #[must_use]
 pub unsafe extern "C" fn slopdesk_term_surface_set_font(
     handle: *mut SlopDeskTerminalSurface,
-    family: *const c_uchar,
-    family_len: usize,
-    point_size: f64,
-    line_height: f64,
+    spec: *const SlopDeskTermFontSpec,
+    fallback: *const SlopDeskByteSpan,
+    fallback_count: usize,
+    features: *const SlopDeskByteSpan,
+    feature_count: usize,
+    arena: *const c_uchar,
+    arena_len: usize,
 ) -> u32 {
     // SAFETY: the caller's obligation, restated above.
     let Some(surface) = (unsafe { held(handle) }) else {
         return 0;
     };
-    // SAFETY: the caller's obligation, discharged by the shared span helper.
-    let family = unsafe { lent(family, family_len) };
-    let (cols, rows) = surface.set_font(family, point_size, line_height);
+    // SAFETY: the caller's obligation, discharged by the shared reader.
+    let spec = unsafe {
+        font_spec(
+            spec,
+            fallback,
+            fallback_count,
+            features,
+            feature_count,
+            arena,
+            arena_len,
+        )
+    };
+    let (cols, rows) = surface.set_font(&spec);
     (u32::from(cols) << 16) | u32::from(rows)
 }
 
