@@ -10,7 +10,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_terminal::link::authored;
 use slopdesk_termrender::ChromeStyle;
-use slopdesk_vterm::{CellFlags, Scroll, text_cells};
+use slopdesk_vterm::{CellFlags, RowSemantic, Scroll, VtSession, text_cells};
 
 use super::doors::argb;
 use super::{BlockRecord, Composition, MAX_RECORDS, SlopDeskTerminalSurface, block_at, held};
@@ -1041,6 +1041,93 @@ pub(super) fn settled_scroll(current: f64, content_height: f64, viewport_height:
         return limit;
     }
     f64::min(f64::max(current, 0.0), limit)
+}
+
+/// The prompt line of the block the viewport's top row is inside, when it is older than the frame.
+///
+/// The frame is one screenful, so a command whose output is taller than the grid leaves a viewport
+/// with no prompt row in it — `slopdesk_termrender::block` calls that leading block an ORPHAN, and
+/// without this it has no command anywhere. The prompt is still in the engine's scrollback; this is
+/// what was found there, and what makes the pinned band and the block join agree about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OrphanPrompt {
+    /// The viewport top row the answer was last confirmed against, so the next frame can tell
+    /// whether anything it did not examine has moved.
+    pub(super) top_row: u32,
+    /// The screen row the prompt starts on.
+    pub(super) row: u32,
+    /// Its rows as the shell rendered them, one per line — the same shape `Surface::prompt_text`
+    /// gives a block whose prompt IS in the frame, so both sides of the join speak one language.
+    pub(super) text: String,
+}
+
+/// The full walk: find the prompt above the viewport and read its rows.
+///
+/// A prompt that reads as nothing — a bare `$ ` with no command typed at it — is answered as `None`
+/// rather than as an empty band. It also cannot confirm a join, for the reason
+/// `blockjoin::matches` gives: every string ends with an empty one.
+///
+/// Free functions rather than methods for [`settled_scroll`]'s reason: the surface they would sit
+/// on cannot be built without a Metal device, and this rule is exactly the kind that has to be
+/// tested against a real scrollback.
+pub(super) fn walk_orphan(session: &VtSession, top_row: u32) -> Option<OrphanPrompt> {
+    let span = session.prompt_span_above_viewport().ok().flatten()?;
+    let mut text = String::new();
+    for offset in 0..span.rows {
+        if offset > 0 {
+            text.push('\n');
+        }
+        let row = span.row.saturating_add(u32::from(offset));
+        let Some(line) = session.screen_row_text(row).ok().flatten() else {
+            continue;
+        };
+        text.push_str(line.trim_end());
+    }
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(OrphanPrompt {
+        top_row,
+        row: span.row,
+        text,
+    })
+}
+
+/// The held answer re-confirmed against this frame's viewport, or `None` to say re-walk.
+///
+/// ⚠️ **The walk this avoids is unbounded**, and the rows it steps over are the output of the
+/// command being read — as long as the scrollback allows, in exactly the case the pinned head
+/// exists for. Two things can invalidate the memo and both are checked, because both are ordinary:
+///
+/// - **A newer prompt has passed the top edge.** Only rows between the last confirmed top and this
+///   one can hold one, and at the bottom of a live terminal that is the handful of rows that
+///   arrived since the last frame. A viewport that moved BACKWARDS, or that jumped past the held
+///   prompt entirely, has unexamined rows in it and re-walks instead of guessing.
+/// - **⚠️ The scrollback evicted from the front.** Screen rows are offsets from the oldest RETAINED
+///   row, so once the buffer is full every row's index shifts under a viewport that has not moved,
+///   and the held index would quietly come to name different content. Re-reading the row's text is
+///   the guard. A row that shifted to hold an IDENTICAL prompt passes it and draws identical
+///   pixels, which is why text is enough and an ordinal would not have to be.
+pub(super) fn carry_orphan(session: &VtSession, held: &OrphanPrompt, top_row: u32) -> Option<OrphanPrompt> {
+    if top_row < held.top_row || held.row >= top_row {
+        return None;
+    }
+    let first = held.text.lines().next().unwrap_or_default();
+    if session.screen_row_text(held.row).ok().flatten().as_deref() != Some(first) {
+        return None;
+    }
+    for row in held.top_row..top_row {
+        if session
+            .screen_row_semantic(row)
+            .is_ok_and(|semantic| semantic == RowSemantic::Prompt)
+        {
+            return None;
+        }
+    }
+    Some(OrphanPrompt {
+        top_row,
+        ..held.clone()
+    })
 }
 
 /// One whole-number scroll count as the `i32` the engine takes, or `None` when it will not fit.

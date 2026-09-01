@@ -31,7 +31,7 @@ use libghostty_vt::screen::GridRef;
 use libghostty_vt::selection::{Adjustment, FormatOptions, Selection};
 use libghostty_vt::terminal::{Point, PointCoordinate};
 
-use crate::frame::Frame;
+use crate::frame::{Frame, RowSemantic};
 use crate::search::{CellPos, LineScan, Matcher, SearchQuery, search_line};
 use crate::session::{Result, VtError, VtSession};
 
@@ -109,6 +109,18 @@ impl ViewportInfo {
     pub const fn is_at_bottom(self) -> bool {
         self.viewport_top_row.saturating_add(self.viewport_rows) >= self.total_rows
     }
+}
+
+/// A prompt line in the screen coordinate space: where it starts, and how tall it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromptSpan {
+    /// The screen row carrying the `OSC 133;A` mark.
+    pub row: u32,
+    /// It, plus its `k=c` continuations — the same count
+    /// [`BlockSpan::prompt_rows`](https://docs.rs/slopdesk-termrender) holds for a prompt that is
+    /// inside the viewport, so the two describe the same thing whichever side of the top edge it
+    /// is on.
+    pub rows: u16,
 }
 
 /// Which way the selection's free end moves, and what it moves over.
@@ -443,6 +455,44 @@ impl VtSession {
         Ok(found)
     }
 
+    /// The prompt line that OPENS the block the viewport's top row is sitting inside.
+    ///
+    /// ## Why this exists
+    ///
+    /// The frame is one screenful, so [`crate::Frame`]'s per-row semantics can only ever segment
+    /// the blocks whose prompt is currently visible. Read the middle of a long command's output and
+    /// the block you are inside has no prompt row in the frame at all — the renderer calls that an
+    /// ORPHAN, and an orphan is exactly the block whose command a reader most wants named. This is
+    /// the door that names it: the prompt is still in the buffer, just above the viewport.
+    ///
+    /// `None` when there is no prompt above the viewport — a session's opening banner, a pane
+    /// joined mid-stream, or a shell with no OSC 133 integration at all.
+    ///
+    /// ⚠️ **Costs one C call per row stepped over**, for [`Self::prompt_row`]'s reason and with the
+    /// same bound: the walk stops at the buffer's oldest row. Unlike a prompt hop, which is a
+    /// keystroke, this one is asked per FRAME — so its caller is expected to memoise the answer and
+    /// re-walk only when the viewport has moved somewhere the memo cannot cover.
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn prompt_span_above_viewport(&self) -> Result<Option<PromptSpan>> {
+        let Some(row) = self.prompt_row(-1)? else {
+            return Ok(None);
+        };
+        // A wrapped prompt is one place, so the span runs on while the rows below say they are its
+        // continuation — the same count `block::segment` gives a prompt inside the viewport, so a
+        // band drawn from this is the height that block's own header will be.
+        let total = self.viewport_info()?.total_rows;
+        let mut rows = 1_u16;
+        while row.saturating_add(u32::from(rows)) < total
+            && self.screen_row_semantic(row.saturating_add(u32::from(rows)))?
+                == RowSemantic::PromptContinuation
+        {
+            rows = rows.saturating_add(1);
+        }
+        Ok(Some(PromptSpan { row, rows }))
+    }
+
     /// The OSC 8 hyperlink URI at one VIEWPORT cell, or `None` when that cell carries no link.
     ///
     /// Viewport rather than screen coordinates because the only caller is a pointer, and a pointer
@@ -536,10 +586,25 @@ impl VtSession {
     /// Continuation rows do NOT count: a two-line prompt is one place to jump to, and counting both
     /// halves would make `[` take two presses to leave it.
     fn row_is_prompt(&self, row: u32) -> Result<bool> {
-        use libghostty_vt::screen::RowSemanticPrompt;
+        Ok(self.screen_row_semantic(row)? == RowSemantic::Prompt)
+    }
 
+    /// One screen row's OSC 133 semantics, in the frame's own vocabulary.
+    ///
+    /// Translated into [`RowSemantic`] rather than answered raw so that a rule written against a
+    /// row in the viewport and the same rule written against a row above it cannot come to spell
+    /// the same question two ways.
+    ///
+    /// ⚠️ Rows between `133;A` and `133;C` are the shell's INPUT region and read as
+    /// [`RowSemantic::PromptContinuation`], not as output — that is what makes a two-line PS1 one
+    /// place to jump to. A caller counting a prompt's height must therefore stop at the first row
+    /// that is neither, and a fixture that omits the `C` has no such row.
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn screen_row_semantic(&self, row: u32) -> Result<RowSemantic> {
         let grid = self.terminal.grid_ref(screen_point(0, row))?;
-        Ok(grid.row()?.semantic_prompt()? == RowSemanticPrompt::Prompt)
+        Ok(grid.row()?.semantic_prompt()?.into())
     }
 
     /// One row's wrap flag.
@@ -639,7 +704,7 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::SelectionAdjust;
+    use super::{RowSemantic, SelectionAdjust};
     use crate::search::SearchQuery;
     use crate::selection::CopyFormat;
     use crate::session::{Scroll, VtSession};
@@ -928,6 +993,62 @@ mod tests {
             Some(older),
             "an over-long hop did not saturate at the oldest prompt"
         );
+    }
+
+    /// ⚠️ THE ORPHAN CASE, which is the whole reason `prompt_span_above_viewport` exists.
+    ///
+    /// A command whose output is taller than the grid leaves a viewport with NO prompt row in it —
+    /// the frame's semantics can say nothing about which command produced what is on screen. The
+    /// prompt is still in the buffer, one walk above the top.
+    /// One whole OSC 133 cycle: prompt, input, execution, exit.
+    ///
+    /// ⚠️ The `C` is not decoration. Between `A` and `C` the engine marks every row it opens as the
+    /// prompt's CONTINUATION — that is the input region — so a fixture that stops at `A` reports a
+    /// prompt as tall as the output under it. A real shell always closes the region; a probe that
+    /// forgot to measured six rows of "prompt" and sent this walk to the end of the buffer.
+    fn command(text: &str) -> Vec<u8> {
+        format!("\x1b]133;A\x07$ \x1b]133;B\x07{text}\x1b]133;C\x07\r\n").into_bytes()
+    }
+
+    #[test]
+    fn the_prompt_above_the_viewport_names_the_block_you_are_inside() {
+        let mut vt = VtSession::new(8, 3, 10, 20).unwrap();
+        vt.feed(&command("seq"));
+        vt.feed(b"one\r\ntwo\r\nthree\r\nfour\r\n\x1b]133;D;0\x07");
+        vt.render().unwrap();
+        vt.scroll(Scroll::Bottom);
+        assert!(
+            vt.frame()
+                .rows
+                .iter()
+                .all(|row| row.semantic != RowSemantic::Prompt),
+            "the fixture must leave no prompt in the viewport"
+        );
+        let span = vt.prompt_span_above_viewport().unwrap().expect("no prompt above");
+        assert_eq!(span.rows, 1, "an unwrapped prompt is one row");
+        assert_eq!(vt.screen_row_text(span.row).unwrap().as_deref(), Some("$ seq"));
+    }
+
+    /// A two-line PS1 is ONE place, so the span covers the `k=c` continuation too — the band drawn
+    /// from it is then the height that block's own header will be once it scrolls into view.
+    #[test]
+    fn a_wrapped_prompt_spans_its_continuation_rows() {
+        let mut vt = VtSession::new(8, 3, 10, 20).unwrap();
+        vt.feed(b"\x1b]133;A\x07dir\r\n\x1b]133;A;k=c\x07$ \x1b]133;B\x07seq\x1b]133;C\x07\r\n");
+        vt.feed(b"one\r\ntwo\r\nthree\r\n\x1b]133;D;0\x07");
+        vt.scroll(Scroll::Bottom);
+        let span = vt.prompt_span_above_viewport().unwrap().expect("no prompt above");
+        assert_eq!(span.rows, 2, "the continuation was not counted");
+        assert_eq!(vt.screen_row_text(span.row).unwrap().as_deref(), Some("dir"));
+    }
+
+    /// A shell with no OSC 133 integration has nothing above the viewport to name, and the caller
+    /// must get `None` rather than the oldest row as a guess.
+    #[test]
+    fn a_buffer_without_prompt_marks_has_nothing_above_the_viewport() {
+        let mut vt = session();
+        vt.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
+        assert_eq!(vt.prompt_span_above_viewport().unwrap(), None);
     }
 
     /// `Scroll::Row` puts an absolute screen row at the viewport's top — the variant the engine

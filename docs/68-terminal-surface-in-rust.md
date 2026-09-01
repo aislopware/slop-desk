@@ -958,13 +958,52 @@ new `pin` module answers it by keeping that block's HEAD — its header band and
 the top of the content box while its output scrolls underneath. Warp's shape, and Rio's, and every
 code viewer's sticky section header.
 
-**It redraws the ROW, not the recorded command text.** `blockjoin` can hand over the command the
-host recorded, and printing that string would be a third of the code — and wrong twice. The join
-answers `None` whenever its confirmation fails, including for the newest block, which is the one a
-reader is most often inside; the head would blank exactly when it is wanted. And the row on screen
-is the SHELL's rendering: the prompt, its colours, the git branch, the user's own theme. So the pass
-runs `Painter::paint_row` over the block's prompt rows at a new y — same cells, same runs, same
-selection, same coalescing, by construction rather than by a second implementation.
+**A prompt can be off the top of two different things, and only one of them is a scroll.** When it
+has scrolled out of the LIST — the header band and gap above it pushed it past the content box —
+the rows are still in the frame, and the pass runs `Painter::paint_row` over them at a new y: same
+cells, same runs, same selection, same coalescing, by construction rather than by a second
+implementation. The row on screen is the SHELL's rendering — the prompt, its colours, the git
+branch, the user's own theme — and nothing else can stand in for it.
+
+**⚠️ The first version could only draw that case, which is the narrow one.** `segment` reads
+`VtSession::frame()`, and the frame is ONE SCREENFUL; `settled_scroll` caps `scroll_y` at the block
+list's chrome overhead, because history is the ENGINE's scroll (`spill_rows` hands a flick's
+leftover to `Scroll::Delta`). So the pinned head as first shipped fired only inside the few dozen
+pixels of header-and-gap slack — and a command whose output is taller than the grid leaves a
+viewport with no prompt row in it at all, which `block` calls an ORPHAN and gives no header, so
+`head_height` was zero and the band never came up. That is the flagship case, not an edge: a band
+that appears and then drops out mid-gesture is worse than no band. Pixel-verified on the real app
+before it was believed — `seq 1 400` under a live hostd showed block chrome and no head.
+
+**The fix reads the prompt out of the scrollback.** `VtSession::prompt_span_above_viewport` walks
+back from `viewport_top_row` to the nearest `RowSemantic::Prompt` row and counts its `k=c`
+continuations; the surface reads those rows as text and hands them to `pin` as `Recovered`. Plain
+text, not cells — no colours, no attributes — because recovering cells would mean a second
+frame-scan path over the scrollback for a one-line band. The height is the same either way
+(`Recovered::header_height` is the header that block will wear once its prompt scrolls in), so the
+two paths hand over without the band resizing.
+
+**⚠️ The walk is memoised, and both invalidations are ordinary.** It costs one C call per row
+stepped over and the rows it steps over are the output being read — as long as the scrollback allows,
+in exactly the case the feature exists for. `carry_orphan` re-confirms instead: it scans only the
+rows that crossed the top edge since the last frame for a newer prompt, and re-reads the held row's
+text, because screen rows are offsets from the oldest RETAINED row and eviction shifts every index
+under a viewport that has not moved. A backwards scroll or a jump re-walks rather than guessing.
+
+**⚠️ A LONE orphan gets a command but no outcome, and that refusal is load-bearing.** The orphan
+joins through `blockjoin` by having its recovered prompt prepended to the frame's prompt list —
+ordinals count one per prompt cycle and a cycle draws one prompt row, so it slots in at its own
+position. But with NO other prompt in the frame there is nothing positional left: the join would
+anchor its one entry on the newest record, and everyday commands repeat. Read the middle of an old
+`cargo build` while a newer `cargo build` is the latest record and the text check CONFIRMS the wrong
+one, printing a stale exit code over someone's output. Deep in an output the answer is genuinely
+unknowable, so the band shows the command alone.
+
+**⚠️ A test fixture that stops at `OSC 133;A` measures a prompt as tall as the block.** Rows between
+`A` and `C` are the shell's INPUT region and the engine reports them as `PromptContinuation`, not as
+output — which is what makes a two-line PS1 one place to jump to. A real shell always closes the
+region. Two fixtures written without the `C` sent the continuation count to the end of the buffer;
+`screen_row_semantic`'s doc carries the warning.
 
 **It never slides, and that is a renderer fact rather than a taste.** The obvious polish is the
 shove: push the pinned head up and out as the next block's arrives. `slopdesk-apple-metal`'s
@@ -990,6 +1029,15 @@ consuming `Surface::on_screen` rects, and when it moved into Rust the transform 
 fix is `PlacedBlock::translated`, applied once at the top of the chrome loop, pinned by
 `the_furniture_lands_on_the_rows_it_decorates` — nonzero inset AND nonzero scroll, on both axes.
 `ChromeFrame::viewport` and the scrollbar thumb are drawable-space already and are NOT translated.
+
+**And the same transform, applied TWICE, was the second bug.** `pin::paint` built its row geometry
+as `origin_x + head.block.body.x` — the shape `crate::paint` uses over UNtranslated layout blocks —
+but `head` has already been through `translated`, which is where its `origin_x` went. The pinned
+line therefore sat one left inset to the right of the line it stands in for. `body.x` alone is the
+fix, and both band tests now assert the leftmost pinned glyph's x — it got past the suite because no
+test asserted one. Both bugs are the same mistake in opposite directions, and the lesson is the one
+the chrome comment now states at the top of its loop: translate ONCE, at the boundary, and write
+everything past it against drawable space.
 
 **No new design door.** The band's bed is `frame.colors.background`, the colour the render pass
 clears to, for the reason the preedit bed is; its hairline is the divider the block list already

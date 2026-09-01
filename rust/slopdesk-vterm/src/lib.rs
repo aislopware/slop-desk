@@ -78,7 +78,7 @@ pub use graphics::{ImageMeta, ImagePixels, ImagePlacement};
 pub use input::{Key, KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt};
 pub use keycode::key_from_macos_keycode;
 pub use placeholder::PlaceholderRun;
-pub use screen::{LogicalLineText, ScreenMatch, SelectionAdjust, ViewportInfo};
+pub use screen::{LogicalLineText, PromptSpan, ScreenMatch, SelectionAdjust, ViewportInfo};
 pub use search::{Match, Matcher, SearchQuery, search_rows};
 pub use selection::{Autoscroll, ClickLadder, CopyFormat, Granularity, SurfacePoint};
 pub use session::{Result, Scroll, VtError, VtSession};

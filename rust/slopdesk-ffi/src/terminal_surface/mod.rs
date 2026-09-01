@@ -67,7 +67,7 @@ pub mod reading;
 #[cfg(test)]
 mod tests;
 
-use blocks::{SlopDeskTerminalChromeStyle, settled_scroll};
+use blocks::{OrphanPrompt, SlopDeskTerminalChromeStyle, carry_orphan, settled_scroll, walk_orphan};
 use slopdesk_apple_metal::Renderer;
 use slopdesk_apple_text::{FontStack, Rasterizer, Shaper};
 use slopdesk_terminal::config::FontSpec;
@@ -194,6 +194,12 @@ struct Surface {
     /// hands over their rects instead, so a hit test and a header's frame are questions asked long
     /// after the draw that computed them.
     layout: BlockLayout,
+    /// The prompt of the block the viewport's top row is inside, when that prompt is older than the
+    /// frame. `None` whenever the leading block is not an orphan, or nothing could be recovered.
+    ///
+    /// Refreshed once per [`Self::draw`] and read by two callers that must agree — the band and the
+    /// block join — which is why it is state rather than a value passed down one of them.
+    orphan: Option<OrphanPrompt>,
     /// Whether the surface holds the keyboard. Drives the hollow cursor and nothing else — an
     /// unfocused split sibling still repaints.
     focused: bool,
@@ -367,6 +373,7 @@ impl Surface {
             follow_bottom: true,
             collapsed: Vec::new(),
             layout: BlockLayout::default(),
+            orphan: None,
             focused: false,
             blink_visible: true,
             cursor_opacity: 1.0,
@@ -602,7 +609,13 @@ impl Surface {
         // `LayoutMode::for_screen` hands a full-screen program ONE headerless block, so a style
         // that survived here would run a gutter down `vim`'s left column and — the cursor being
         // inside block zero by definition — accent it.
-        if !alternate {
+        if alternate {
+            // `refresh_orphan` lives in the pass that is being skipped, so the recovered prompt is
+            // dropped here instead. A full-screen program's ONE headerless block reads as an orphan
+            // to `joined_ordinals`, which the doors still call between frames — and the prompt held
+            // from before `vim` opened describes a screen nobody is looking at any more.
+            self.orphan = None;
+        } else {
             self.draw_chrome(&layout, &style, Rect {
                 x: insets.left,
                 y: insets.top,
@@ -638,7 +651,38 @@ impl Surface {
     ///
     /// `view` is the content box, which is the frame both passes measure against: the scrollbar's
     /// track, a block's width, and the top edge the pinned head is pinned to.
+    /// Re-establishes [`Self::orphan`] for this frame.
+    ///
+    /// Only the FIRST block can be an orphan — segmentation opens a new block at every prompt row,
+    /// so the rows before the frame's first prompt are the only ones with no command of their own —
+    /// which is why this asks one question rather than scanning.
+    ///
+    /// ⚠️ **Memoised, because the walk is unbounded.**
+    /// [`VtSession::prompt_span_above_viewport`] costs one C call per row it steps over, and the
+    /// rows it steps over are the output of the command being read — which, in the case this whole
+    /// feature exists for, is as long as the scrollback allows. Walking it every frame would put a
+    /// per-row cost on the one workload this app is built around: an agent printing steadily.
+    ///
+    /// [`VtSession::prompt_span_above_viewport`]: slopdesk_vterm::VtSession::prompt_span_above_viewport
+    fn refresh_orphan(&mut self, layout: &BlockLayout) {
+        if !layout.blocks.first().is_some_and(|block| block.span.is_orphan()) {
+            self.orphan = None;
+            return;
+        }
+        let Ok(info) = self.session.viewport_info() else {
+            self.orphan = None;
+            return;
+        };
+        let top_row = info.viewport_top_row;
+        self.orphan = self
+            .orphan
+            .as_ref()
+            .and_then(|held| carry_orphan(&self.session, held, top_row))
+            .or_else(|| walk_orphan(&self.session, top_row));
+    }
+
     fn draw_chrome(&mut self, layout: &BlockLayout, style: &PaintStyle, view: Rect) {
+        self.refresh_orphan(layout);
         let frame = ChromeFrame {
             hovered: self
                 .hover
@@ -664,12 +708,19 @@ impl Surface {
         // both passes above without either of them knowing it exists. It shares the painter with
         // the main pass on purpose: the head is a terminal ROW redrawn at a different y, so it has
         // to be that same row painter or it is a second one.
+        let recovered = self.orphan.as_ref().map(|orphan| {
+            pin::Recovered {
+                text: &orphan.text,
+                header_height: BLOCK_HEADER_PT * self.geometry.scale,
+            }
+        });
         pin::paint(
             self.session.frame(),
             layout,
             &chrome_style,
             &frame,
             &statuses,
+            recovered,
             style,
             &mut self.painter,
             &mut self.cache,
@@ -788,10 +839,19 @@ impl Surface {
     /// re-flowed. Two callers, one join — writing it twice is how they would come to disagree
     /// about which block is which.
     ///
-    /// Orphan blocks — no prompt rows, so no command of their own — are skipped before the join and
-    /// hold `None` after it, which is what keeps the ordinals counting over the blocks that have
-    /// prompts rather than over the rows on screen. An alt-screen program has no prompts at all, so
-    /// every slot is `None` and the block section offers nothing.
+    /// An orphan block — no prompt rows, so no command of its own IN THE FRAME — joins through
+    /// [`Self::orphan`], the prompt recovered from the scrollback above it. Ordinals count one per
+    /// prompt CYCLE and a cycle draws exactly one prompt row, so a recovered prompt slots into the
+    /// count at its own position and every ordinal below it is unchanged. An alt-screen program has
+    /// no prompts at all, so every slot is `None` and the block section offers nothing.
+    ///
+    /// ⚠️ **A LONE orphan is refused, and that refusal is load-bearing.** With no other prompt in
+    /// the frame there is nothing positional left in the input: [`blockjoin::join`] would anchor
+    /// its one entry on the NEWEST record, and everyday commands repeat — read the middle of an
+    /// old `cargo build` while a newer `cargo build` is the latest record, and the text check
+    /// CONFIRMS the wrong one. That prints a stale exit code over someone's output, which is
+    /// exactly the failure the join exists to prevent. Deep in an output the answer is
+    /// genuinely unknowable, so the band shows the command and no outcome.
     fn joined_ordinals(&self, layout: &BlockLayout) -> Vec<Option<u32>> {
         let mut out = vec![None; layout.blocks.len()];
         if self.records.is_empty() {
@@ -803,7 +863,13 @@ impl Surface {
             if block.span.prompt_rows > 0 {
                 prompts.push(self.prompt_text(block));
                 where_from.push(index);
+            } else if let (0, Some(orphan)) = (index, self.orphan.as_ref()) {
+                prompts.push(orphan.text.clone());
+                where_from.push(index);
             }
+        }
+        if where_from.as_slice() == [0] && layout.blocks.first().is_some_and(|b| b.span.is_orphan()) {
+            return out;
         }
         let borrowed: Vec<&str> = prompts.iter().map(String::as_str).collect();
         let records: Vec<blockjoin::Record<'_>> = self

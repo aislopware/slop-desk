@@ -341,6 +341,100 @@ mod actions {
     }
 }
 
+/// The prompt an orphan block borrows from the scrollback, and the memo that keeps it cheap.
+///
+/// Against a REAL engine rather than a synthetic layout, because the two things being tested are
+/// exactly the ones a fake would get to define: what the buffer says above the viewport, and what
+/// moves under a viewport that has not.
+mod orphan {
+    #![expect(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "a panic in a test is the failure report, not a runtime fault"
+    )]
+
+    use slopdesk_vterm::VtSession;
+
+    use super::super::blocks::{carry_orphan, walk_orphan};
+
+    /// One whole OSC 133 cycle — see `screen_row_semantic`'s warning about omitting the `C`.
+    fn run(vt: &mut VtSession, command: &str, output_rows: usize) {
+        vt.feed(format!("\x1b]133;A\x07$ \x1b]133;B\x07{command}\x1b]133;C\x07\r\n").as_bytes());
+        for row in 0..output_rows {
+            vt.feed(format!("line {row}\r\n").as_bytes());
+        }
+        vt.feed(b"\x1b]133;D;0\x07");
+    }
+
+    fn session() -> VtSession {
+        let mut vt = VtSession::new(16, 3, 10, 20).unwrap();
+        vt.set_scrollback_rows(1000).unwrap();
+        vt
+    }
+
+    /// ⚠️ THE FLAGSHIP CASE: output taller than the grid, so the command is nowhere in the frame.
+    #[test]
+    fn the_command_that_left_the_frame_is_found_above_it() {
+        let mut vt = session();
+        run(&mut vt, "seq 1 400", 20);
+        let top = vt.viewport_info().unwrap().viewport_top_row;
+        let found = walk_orphan(&vt, top).expect("nothing recovered");
+        assert_eq!(found.text, "$ seq 1 400");
+        assert!(found.row < top, "the prompt must be above the viewport");
+    }
+
+    /// A shell with no OSC 133 integration has nothing to recover, and must not guess a row.
+    #[test]
+    fn a_buffer_with_no_prompt_marks_recovers_nothing() {
+        let mut vt = session();
+        vt.feed(b"one\r\ntwo\r\nthree\r\nfour\r\n");
+        let top = vt.viewport_info().unwrap().viewport_top_row;
+        assert_eq!(walk_orphan(&vt, top), None);
+    }
+
+    /// The memo's whole job: at the bottom of a live terminal the answer does not change, and
+    /// re-confirming it must not re-walk the output.
+    #[test]
+    fn output_arriving_under_the_viewport_carries_the_memo_forward() {
+        let mut vt = session();
+        run(&mut vt, "seq 1 400", 20);
+        let held = walk_orphan(&vt, vt.viewport_info().unwrap().viewport_top_row).unwrap();
+
+        vt.feed(b"more\r\nmore\r\n");
+        let top = vt.viewport_info().unwrap().viewport_top_row;
+        let carried = carry_orphan(&vt, &held, top).expect("the memo should have survived");
+        assert_eq!(carried.row, held.row, "the prompt moved");
+        assert_eq!(carried.text, held.text);
+        assert_eq!(carried.top_row, top, "the memo did not take the new top");
+    }
+
+    /// ⚠️ A NEWER prompt crossing the top edge is what makes the held answer wrong, and it is the
+    /// one thing the cheap path scans for. Refusing here is what sends the caller back to the walk.
+    #[test]
+    fn a_prompt_crossing_the_top_edge_refuses_the_memo() {
+        let mut vt = session();
+        run(&mut vt, "first", 20);
+        let held = walk_orphan(&vt, vt.viewport_info().unwrap().viewport_top_row).unwrap();
+
+        run(&mut vt, "second", 20);
+        let top = vt.viewport_info().unwrap().viewport_top_row;
+        assert_eq!(carry_orphan(&vt, &held, top), None, "a stale prompt was carried");
+        // And the walk that follows finds the newer one.
+        assert_eq!(walk_orphan(&vt, top).unwrap().text, "$ second");
+    }
+
+    /// Scrolling BACKWARDS leaves rows the cheap scan never examined, so it refuses rather than
+    /// carrying an answer it cannot check.
+    #[test]
+    fn scrolling_back_refuses_the_memo() {
+        let mut vt = session();
+        run(&mut vt, "seq 1 400", 20);
+        let top = vt.viewport_info().unwrap().viewport_top_row;
+        let held = walk_orphan(&vt, top).unwrap();
+        assert_eq!(carry_orphan(&vt, &held, top.saturating_sub(5)), None);
+    }
+}
+
 #[test]
 fn a_colour_word_drops_its_high_byte_rather_than_reading_it_as_alpha() {
     assert_eq!(rgb(0x00FF_8040), Rgb {

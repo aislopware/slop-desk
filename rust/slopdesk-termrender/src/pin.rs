@@ -9,19 +9,36 @@
 //! Pinning the head answers it for free, and only in the case where the answer is missing: a block
 //! whose command is still on screen is never pinned, because there would be two of it.
 //!
-//! ## Why it redraws the ROW rather than printing the command text
+//! ## The two kinds of head, and why there have to be two
 //!
-//! [`crate::blockjoin`] can hand this module the command the host recorded, and printing that
-//! string would be a third of the code. It would also be wrong twice. The join answers `None`
-//! whenever its confirmation fails — including for the newest block, which is the one a reader is
-//! most often inside — so the head would blank exactly when it is needed. And the row on screen is
-//! the SHELL's rendering of that command: the prompt, its colours, the git branch, the exit mark
-//! the user's own theme prints. A head that showed plain text would not be the line it is standing
-//! in for, it would be a caption about it.
+//! A block's prompt can be off the top of two different things, and only one of them is a scroll.
 //!
-//! So the pinned head runs [`crate::paint::Painter::paint_row`] over the block's prompt rows at a
-//! new y. Same cells, same runs, same selection, same coalescing — by construction, not by a
-//! second implementation of any of it.
+//! **It scrolled out of the LIST.** The prompt rows are still in the frame — the chrome above them
+//! (header band, gap) is what pushed them past the content box's top edge. Then the head is
+//! [`crate::paint::Painter::paint_row`] over those same rows at a new y: same cells, same runs,
+//! same selection, same coalescing, by construction rather than by a second implementation. The
+//! row on screen is the SHELL's rendering of the command — the prompt, its colours, the git branch,
+//! the exit mark the user's own theme prints — and nothing else can stand in for it.
+//!
+//! **It scrolled out of the FRAME.** ⚠️ This is the case the feature exists for, and the first
+//! version of this module could not draw it. The frame is one screenful, so a command whose output
+//! is taller than the grid leaves a viewport with no prompt row in it at all — [`crate::block`]
+//! calls that block an ORPHAN and gives it no header, because there is no command row to put in
+//! one. `head_height` is therefore zero and the band never came up, which meant a pinned head that
+//! worked only inside the few dozen pixels of chrome overhead and vanished for the whole rest of
+//! the scroll. A band that appears and then drops out mid-gesture is worse than no band.
+//!
+//! The prompt is not gone, only out of the frame: it is still in the engine's scrollback, and
+//! [`slopdesk_vterm::VtSession::prompt_span_above_viewport`] walks to it. The caller reads those
+//! rows as TEXT and hands them over as [`Recovered`], which this module prints. Plain text is a
+//! real loss of fidelity against the redraw above — no colours, no attributes — and it is the price
+//! of naming the command at all; recovering cells would mean a second frame-scan path over the
+//! scrollback for a one-line band.
+//!
+//! Both kinds are the same height by construction: [`Recovered::header_height`] is the header this
+//! block will wear the moment its prompt scrolls into view, and the row count is the same
+//! `prompt_rows` the frame would have segmented. So the band does not resize as the two paths hand
+//! over to each other.
 //!
 //! ## Why the head never slides
 //!
@@ -46,43 +63,113 @@ use crate::layout::CellGeometry;
 use crate::paint::{PaintStyle, Painter};
 use crate::quad::DrawList;
 
+/// The prompt line of an ORPHAN block, recovered from the scrollback above the frame.
+///
+/// What the caller could not read off the frame, because the frame is one screenful and this
+/// block's prompt is older than it. Absent when the caller has nothing to recover — a session's
+/// opening banner, a pane joined mid-stream, a shell with no OSC 133 integration — and the band
+/// then stays down, which is the same answer the first version of this module always gave.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Recovered<'a> {
+    /// Those prompt rows as the shell rendered them, oldest first, one per line.
+    ///
+    /// Newline-separated rather than a slice so the caller can hand over the string it already
+    /// builds for the block join, and so an empty one is trivially "nothing recovered".
+    pub text: &'a str,
+    /// The header band this block will wear once its prompt scrolls back into the frame.
+    ///
+    /// Passed in rather than measured here because an orphan has no header of its own to measure —
+    /// that is what makes it an orphan — and guessing from a sibling would give a lone orphan a
+    /// different band from a neighboured one.
+    pub header_height: f64,
+}
+
+impl Recovered<'_> {
+    /// How many rows the recovered prompt covers, saturating.
+    fn rows(&self) -> u16 {
+        u16::try_from(self.text.lines().count()).unwrap_or(u16::MAX)
+    }
+}
+
+/// Where the band's command text comes from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Ink<'a> {
+    /// The block's own prompt rows, still in the frame, redrawn at the band.
+    Rows,
+    /// The prompt recovered from above the frame, printed as text.
+    Recovered(&'a str),
+}
+
 /// The block whose head is on the band this frame, already in the drawable's space.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Head {
+struct Head<'a> {
     /// Its place in [`BlockLayout::blocks`], which is what indexes the caller's statuses.
     index: usize,
     /// The block itself, translated — see [`PlacedBlock::translated`].
     block: PlacedBlock,
     /// How tall the band is.
     height: f64,
+    /// The header strip inside it — the block's own, or the one an orphan is owed.
+    header_height: f64,
+    /// What to draw in it.
+    ink: Ink<'a>,
 }
 
 /// Which block's head belongs on the band, if any.
 ///
-/// Three questions, and all three have to answer yes. Its own head has scrolled off the top, so
-/// there is something to stand in for. Some of the block is still on screen, so there is something
-/// to label. And the next block's header has not yet reached the band, so the band is not about to
-/// cover the very thing it exists to announce.
+/// Three questions, and all three have to answer yes. Its own head is off the top, so there is
+/// something to stand in for. Some of the block is still on screen, so there is something to label.
+/// And the next block's header has not yet reached the band, so the band is not about to cover the
+/// very thing it exists to announce.
+///
+/// ⚠️ "Off the top" means two different things, which is why an orphan does not take the early
+/// break. An ordinary block qualifies by having been SCROLLED above the content box. An orphan's
+/// prompt was never in the frame to be scrolled, so it qualifies wherever the list happens to have
+/// put it — including at the very top, at rest, which is where a long command's output always
+/// leaves it.
 ///
 /// At most one block can satisfy the first two — they stack, in order — so the loop returns on its
 /// first match rather than scanning for a best one.
-fn head(layout: &BlockLayout, text: &PaintStyle, viewport: Rect) -> Option<Head> {
+fn head<'a>(
+    layout: &BlockLayout,
+    text: &PaintStyle,
+    viewport: Rect,
+    recovered: Option<Recovered<'a>>,
+) -> Option<Head<'a>> {
     let cell_height = text.geometry.metrics.cell_height;
     let (dx, dy) = (text.geometry.metrics.origin_x, text.content_origin_y);
     for (index, block) in layout.blocks.iter().enumerate() {
         let block = block.translated(dx, dy);
+        let orphan = block.span.is_orphan();
         // Blocks are stacked in order, so the first one whose head is still on screen ends the
         // search — nothing below it can have scrolled off the top.
-        if block.frame.y >= viewport.y {
+        if block.frame.y >= viewport.y && !orphan {
             break;
         }
         if block.frame.y + block.frame.height <= viewport.y {
             continue;
         }
+        let (height, header_height, ink) = if orphan {
+            // An orphan with nothing recovered has no command anywhere — not in the frame, not in
+            // the scrollback — so there is no head to pin and no later block can straddle the top
+            // either.
+            let recovered = recovered?;
+            let rows = recovered.rows();
+            (
+                recovered.header_height + cell_height * f64::from(rows),
+                recovered.header_height,
+                Ink::Recovered(recovered.text),
+            )
+        } else {
+            (
+                block.head_height(cell_height),
+                block.header.map_or(0.0, |header| header.height),
+                Ink::Rows,
+            )
+        };
         // Capped at the viewport: a shell with a five-line prompt is a choice its user made, but a
-        // band taller than the screen is not a band. Zero is an orphan, and an orphan straddling
-        // the top means no later block can straddle it either.
-        let height = f64::min(block.head_height(cell_height), viewport.height);
+        // band taller than the screen is not a band.
+        let height = f64::min(height, viewport.height);
         if height <= 0.0 {
             return None;
         }
@@ -93,7 +180,20 @@ fn head(layout: &BlockLayout, text: &PaintStyle, viewport: Rect) -> Option<Head>
         if arriving {
             return None;
         }
-        return Some(Head { index, block, height });
+        // Nothing of the block would be left under its own band. A head labels the output you are
+        // looking at, so a band that covers every visible row of it has replaced the thing it was
+        // announcing — which is what a short orphan does, since an orphan qualifies for the band at
+        // rest and may be only a row or two tall just after a scroll.
+        if block.frame.y + block.frame.height <= viewport.y + height {
+            return None;
+        }
+        return Some(Head {
+            index,
+            block,
+            height,
+            header_height,
+            ink,
+        });
     }
     None
 }
@@ -113,6 +213,7 @@ pub fn paint(
     style: &ChromeStyle,
     view: &ChromeFrame,
     statuses: &[Option<BlockStatus>],
+    recovered: Option<Recovered<'_>>,
     text: &PaintStyle,
     painter: &mut Painter,
     cache: &mut GlyphCache,
@@ -120,7 +221,7 @@ pub fn paint(
     rasterizer: &mut impl GlyphRasterizer,
     out: &mut DrawList,
 ) {
-    let Some(head) = head(layout, text, view.viewport) else {
+    let Some(head) = head(layout, text, view.viewport, recovered) else {
         return;
     };
     let band = Rect {
@@ -139,34 +240,71 @@ pub fn paint(
     // The gutter shifts column zero, the same way the main pass shifts it per block — so the
     // pinned command sits on the column it sits on when it is scrolled into view, and the band is
     // the line staying still rather than the line moving sideways.
+    //
+    // ⚠️ `body.x` ALONE, where `crate::paint` adds the pass's own `origin_x` to it. This block has
+    // already been through `translated`, which is where its `origin_x` went; adding it again put
+    // the pinned line one left inset to the right of the line it stands in for.
     let geometry = CellGeometry {
         metrics: CellMetrics {
-            origin_x: text.geometry.metrics.origin_x + head.block.body.x,
+            origin_x: head.block.body.x,
             ..text.geometry.metrics
         },
         ..text.geometry
     };
     let cell_height = geometry.metrics.cell_height;
-    let header_height = head.block.header.map_or(0.0, |header| header.height);
-    for offset in 0..head.block.span.prompt_rows {
-        let row_index = head.block.span.rows.start.saturating_add(offset);
-        // ⚠️ Straight to `frame.row`, past `block.visible`. That is not a hole in the
-        // virtualisation: `visible` is the rows the LAYOUT places, and the whole premise of a
-        // pinned head is a row the layout placed off screen. The frame holds every row it
-        // segmented, so the lookup is bounded by the same list `block::segment` walked.
-        let Some(row) = frame.row(row_index) else {
-            continue;
-        };
-        let top = band.y + header_height + cell_height * f64::from(offset);
-        if top + cell_height > band.y + band.height {
-            break;
-        }
-        painter.paint_row(
-            row, row_index, top, &geometry, frame, text, cache, shaper, rasterizer, out,
-        );
+    let top_of = |offset: u16| band.y + head.header_height + cell_height * f64::from(offset);
+    match head.ink {
+        Ink::Rows => {
+            for offset in 0..head.block.span.prompt_rows {
+                let row_index = head.block.span.rows.start.saturating_add(offset);
+                // ⚠️ Straight to `frame.row`, past `block.visible`. That is not a hole in the
+                // virtualisation: `visible` is the rows the LAYOUT places, and the whole premise of
+                // a pinned head is a row the layout placed off screen. The frame holds every row it
+                // segmented, so the lookup is bounded by the same list `block::segment` walked.
+                let Some(row) = frame.row(row_index) else {
+                    continue;
+                };
+                let top = top_of(offset);
+                if top + cell_height > band.y + band.height {
+                    break;
+                }
+                painter.paint_row(
+                    row, row_index, top, &geometry, frame, text, cache, shaper, rasterizer, out,
+                );
+            }
+        },
+        // The terminal's own foreground rather than the chrome's label ink: this is standing in for
+        // a line of output, not annotating one. It is the closest a plain-text band can get to the
+        // row it replaces, and it is what makes the handover to `Ink::Rows` read as the same line.
+        Ink::Recovered(recovered) => {
+            for (offset, line) in recovered.lines().enumerate() {
+                let offset = u16::try_from(offset).unwrap_or(u16::MAX);
+                let top = top_of(offset);
+                if top + cell_height > band.y + band.height {
+                    break;
+                }
+                label(
+                    line,
+                    geometry.metrics.origin_x,
+                    top + geometry.font.baseline,
+                    frame.colors.foreground.into(),
+                    text.size_px,
+                    cache,
+                    shaper,
+                    rasterizer,
+                    out,
+                );
+            }
+        },
     }
 
-    paint_status(&head, statuses, style, text, band, cache, shaper, rasterizer, out);
+    // The ACTIVE block never wears an outcome, for the reason `chrome::paint` states where it makes
+    // the same skip: its command has not finished, so it has none — and the join upstream can still
+    // hand one over, by mapping a retyped command onto the previous run. Skipping in one pass and
+    // not the other would put a stale `✗ 1` on the band and nothing on the header it stands in for.
+    if view.active != Some(head.index) {
+        paint_status(&head, statuses, style, text, band, cache, shaper, rasterizer, out);
+    }
 
     // The hairline is what makes the band read as pinned rather than as a row that stopped moving.
     // Its own ink, and the divider's: this is the same seam between two blocks the list already
@@ -186,15 +324,14 @@ pub fn paint(
 /// The pinned block's exit code and duration, against the band's trailing edge.
 ///
 /// The same right-aligned column [`crate::chrome`] prints a header's status in, so a status does
-/// not jump sideways when its block reaches the top. Nothing is printed for a block that is still
-/// running, which is every block the reader is inside — the case this module exists for prints the
-/// command alone, and that is the whole point of it.
+/// not jump sideways when its block reaches the top. The caller has already refused the ACTIVE
+/// block; a running one has nothing to print either way, since its label is empty.
 #[expect(
     clippy::too_many_arguments,
     reason = "the same stack the band itself takes, minus the frame it does not read"
 )]
 fn paint_status(
-    head: &Head,
+    head: &Head<'_>,
     statuses: &[Option<BlockStatus>],
     style: &ChromeStyle,
     text: &PaintStyle,
@@ -207,9 +344,14 @@ fn paint_status(
     let Some(Some(status)) = statuses.get(head.index) else {
         return;
     };
-    let Some(header) = head.block.header else {
-        return;
-    };
+    // An orphan has no header of its own — that is what makes it an orphan — so the column is the
+    // one its header WILL occupy: same x and width as the block, the height the band reserved. The
+    // status must not move sideways when the prompt scrolls back into the frame and the real
+    // header takes over.
+    let header = head.block.header.unwrap_or(Rect {
+        height: head.header_height,
+        ..head.block.frame
+    });
     if header.height <= 0.0 {
         return;
     }
@@ -250,7 +392,7 @@ mod tests {
     use slopdesk_terminal::geometry::{CellMetrics, Rect};
     use slopdesk_vterm::{Frame, FrameCell, FrameRow, Rgb, RowSemantic, TextSpan};
 
-    use super::paint;
+    use super::{Recovered, paint};
     use crate::atlas::AtlasFormat;
     use crate::block::{BlockLayout, Chrome, LayoutMode, Viewport, lay_out, segment};
     use crate::chrome::{BlockStatus, ChromeFrame, ChromeStyle};
@@ -405,10 +547,10 @@ mod tests {
         }
     }
 
-    fn view() -> ChromeFrame {
+    fn view(active: Option<usize>) -> ChromeFrame {
         ChromeFrame {
             hovered: None,
-            active: None,
+            active,
             viewport: Rect {
                 x: INSET,
                 y: INSET,
@@ -434,7 +576,13 @@ mod tests {
     }
 
     /// The main pass, then the band — so a test sees the band's instances beside the frame's own.
-    fn draw(orphan_rows: u16, scroll_y: f64, statuses: &[Option<BlockStatus>]) -> (DrawList, Vec<String>) {
+    fn draw(
+        orphan_rows: u16,
+        scroll_y: f64,
+        statuses: &[Option<BlockStatus>],
+        recovered: Option<Recovered<'_>>,
+        active: Option<usize>,
+    ) -> (DrawList, Vec<String>) {
         let frame = frame_of(orphan_rows);
         let layout = layout_of(&frame, scroll_y);
         let text = style(scroll_y);
@@ -458,8 +606,9 @@ mod tests {
             &frame,
             &layout,
             &chrome_style(),
-            &view(),
+            &view(active),
             statuses,
+            recovered,
             &text,
             &mut painter,
             &mut cache,
@@ -475,10 +624,34 @@ mod tests {
         (out, shaper.runs.split_off(runs_before))
     }
 
+    /// The x of the band's leftmost glyph — column zero, whichever ink drew it.
+    ///
+    /// ⚠️ Worth a helper because the double-count SHIPPED once. `crate::paint` composes its own
+    /// `origin_x + block.body.x` from a block it has NOT translated; the band's block has already
+    /// been through `PlacedBlock::translated`, which is where its `origin_x` went, so adding
+    /// the inset a second time put the pinned line one left inset right of the line it stands
+    /// in for. No test asserted an x, which is exactly how it got past the suite and into the
+    /// pixels.
+    fn column_zero(drawn: &DrawList) -> f64 {
+        drawn
+            .pinned_glyphs
+            .iter()
+            .map(|glyph| f64::from(glyph.x))
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// The prompt this crate could not have read off the frame, as its caller recovers it.
+    fn recovered(text: &str) -> Recovered<'_> {
+        Recovered {
+            text,
+            header_height: CHROME.header,
+        }
+    }
+
     /// The case the module exists for: the command has scrolled off, its output has not.
     #[test]
     fn the_head_of_the_block_you_are_reading_stays_on_screen() {
-        let (drawn, runs) = draw(0, 100.0, &[]);
+        let (drawn, runs) = draw(0, 100.0, &[], None, None);
         assert!(!drawn.pinned_backgrounds.is_empty(), "the band has a bed");
         assert!(!drawn.pinned_glyphs.is_empty(), "and the command on it");
         assert!(
@@ -494,6 +667,12 @@ mod tests {
         );
         // The header band plus one prompt row.
         assert!((f64::from(bed.height) - (CHROME.header + CELL_HEIGHT)).abs() < 1e-4);
+        // And on the column the main pass gives that same cell, not one inset right of it.
+        assert!(
+            (column_zero(&drawn) - (INSET + CHROME.gutter)).abs() < 1e-4,
+            "the band's column zero moved sideways: {}",
+            column_zero(&drawn)
+        );
 
         // Nothing the band draws may leave it — there is no scissor rect to catch it.
         let bottom = INSET + CHROME.header + CELL_HEIGHT;
@@ -509,7 +688,7 @@ mod tests {
     /// A command still on screen is never pinned — there would be two of it.
     #[test]
     fn a_command_already_on_screen_is_left_alone() {
-        let (drawn, runs) = draw(0, 0.0, &[]);
+        let (drawn, runs) = draw(0, 0.0, &[], None, None);
         assert!(drawn.pinned_backgrounds.is_empty());
         assert!(drawn.pinned_glyphs.is_empty());
         assert!(drawn.pinned_overlays.is_empty());
@@ -525,22 +704,84 @@ mod tests {
     fn the_band_gives_way_to_the_header_arriving_under_it() {
         // The first block is 13 rows under a 20pt header, so the second one's header reaches the
         // band — 40 tall — once the scroll passes 250.
-        let (drawn, runs) = draw(0, 260.0, &[]);
+        let (drawn, runs) = draw(0, 260.0, &[], None, None);
         assert!(drawn.pinned_backgrounds.is_empty());
         assert!(drawn.pinned_glyphs.is_empty());
         assert!(runs.is_empty(), "{runs:?}");
     }
 
-    /// An orphan has no command of its own, so there is nothing to keep on screen.
+    /// An orphan with nothing recovered has no command ANYWHERE, so there is nothing to pin.
     ///
-    /// The rows before the session's first prompt — a shell's login banner, a `tmux` reattach —
-    /// are a block with no header, and a band over them would be an empty bed.
+    /// The rows before the session's first prompt — a shell's login banner, a `tmux` reattach, a
+    /// shell with no OSC 133 integration at all — have no prompt in the frame and none above it
+    /// either, and a band over them would be an empty bed.
     #[test]
-    fn an_orphan_block_has_no_head_to_pin() {
-        let (drawn, _) = draw(12, 100.0, &[]);
+    fn an_orphan_with_nothing_recovered_has_no_head_to_pin() {
+        let (drawn, _) = draw(12, 100.0, &[], None, None);
         assert!(
             drawn.pinned_backgrounds.is_empty(),
             "a block with no command drew a band anyway"
+        );
+    }
+
+    /// ⚠️ THE FLAGSHIP CASE. Output taller than the grid, so the command is not in the frame at
+    /// all — and the band names it anyway, from the prompt the caller recovered above the viewport.
+    ///
+    /// At rest, scroll zero: an orphan's prompt was never in the list to be scrolled off, so unlike
+    /// every other block it qualifies for the band where the layout puts it.
+    #[test]
+    fn a_command_that_left_the_frame_is_named_from_the_scrollback() {
+        let (drawn, runs) = draw(12, 0.0, &[], Some(recovered("$ seq 1 400")), None);
+        assert!(!drawn.pinned_backgrounds.is_empty(), "the band has a bed");
+        assert!(
+            runs.iter().any(|run| run.contains("seq 1 400")),
+            "the recovered command was not printed: {runs:?}"
+        );
+
+        // The same height its own header will be when the prompt scrolls back into the frame, so
+        // the two paths hand over without the band resizing.
+        let bed = drawn.pinned_backgrounds[0];
+        assert!((f64::from(bed.height) - (CHROME.header + CELL_HEIGHT)).abs() < 1e-4);
+        // Same column as the redrawn kind, so the handover between the two inks does not shift the
+        // line sideways either.
+        assert!(
+            (column_zero(&drawn) - (INSET + CHROME.gutter)).abs() < 1e-4,
+            "the recovered band's column zero moved sideways: {}",
+            column_zero(&drawn)
+        );
+        let bottom = INSET + CHROME.header + CELL_HEIGHT;
+        assert!(
+            drawn
+                .pinned_glyphs
+                .iter()
+                .all(|glyph| f64::from(glyph.y) >= INSET && f64::from(glyph.y) <= bottom),
+            "a pinned glyph escaped the band"
+        );
+    }
+
+    /// A wrapped prompt is recovered whole, and the band grows to hold it.
+    #[test]
+    fn a_recovered_prompt_of_two_rows_gets_a_band_of_two_rows() {
+        let (drawn, runs) = draw(12, 0.0, &[], Some(recovered("~/src on main\n$ seq 1 400")), None);
+        let bed = drawn.pinned_backgrounds[0];
+        assert!((f64::from(bed.height) - (CHROME.header + CELL_HEIGHT * 2.0)).abs() < 1e-4);
+        assert!(runs.iter().any(|run| run.contains("~/src on main")), "{runs:?}");
+        assert!(runs.iter().any(|run| run.contains("seq 1 400")), "{runs:?}");
+    }
+
+    /// ⚠️ Deep in an output the caller cannot prove WHICH run this is, so it hands over no status
+    /// and the band prints the command alone.
+    ///
+    /// Pinned here rather than in the caller because it is this module that would draw the wrong
+    /// answer: a confidently-placed stale `✗ 1` over someone's output is worse than no outcome at
+    /// all, and the shape that produces it — a repeated command, a newer record — is the ordinary
+    /// case, not an exotic one.
+    #[test]
+    fn a_recovered_head_with_no_confirmed_record_prints_no_outcome() {
+        let (_, runs) = draw(12, 0.0, &[None], Some(recovered("$ seq 1 400")), None);
+        assert!(
+            runs.iter().all(|run| !run.contains('✗') && !run.contains('✓')),
+            "an unjoined orphan printed an outcome: {runs:?}"
         );
     }
 
@@ -551,7 +792,53 @@ mod tests {
             exit_code: Some(1),
             duration_ms: Some(2400),
         })];
-        let (_, runs) = draw(0, 100.0, &statuses);
+        let (_, runs) = draw(0, 100.0, &statuses, None, None);
         assert!(runs.iter().any(|run| run == "✗ 1  2.4s"), "{runs:?}");
+    }
+
+    /// A recovered head that DID join prints its outcome in the same column a header would — the
+    /// case where the frame still holds a later prompt to anchor the count on.
+    #[test]
+    fn a_recovered_head_that_joined_prints_its_outcome() {
+        let statuses = [Some(BlockStatus {
+            exit_code: Some(0),
+            duration_ms: Some(1500),
+        })];
+        let (_, runs) = draw(12, 0.0, &statuses, Some(recovered("$ seq 1 400")), None);
+        assert!(runs.iter().any(|run| run == "1.5s"), "{runs:?}");
+    }
+
+    /// ⚠️ The ACTIVE block wears no outcome on the band either, matching `chrome::paint`.
+    ///
+    /// Its command has not finished, so it HAS none — and the join upstream can still hand one over
+    /// by mapping a retyped command onto the previous run. Skipping in one pass and not the other
+    /// would put a stale `✗ 1` on the band and nothing on the header it stands in for.
+    #[test]
+    fn the_running_block_wears_no_outcome_on_the_band() {
+        let statuses = [Some(BlockStatus {
+            exit_code: Some(1),
+            duration_ms: Some(2400),
+        })];
+        let (_, runs) = draw(0, 100.0, &statuses, None, Some(0));
+        assert!(
+            runs.iter().all(|run| !run.contains('✗')),
+            "the active block printed an outcome: {runs:?}"
+        );
+    }
+
+    /// A band that would cover every visible row of its own block has replaced the thing it was
+    /// announcing, so it stays down.
+    ///
+    /// Two rows of orphan under a band that is a header plus a row: there is nothing left to label.
+    /// The next block's header is still well below the band, so this is the rule doing it and not
+    /// the handover.
+    #[test]
+    fn a_band_that_would_cover_its_whole_block_stays_down() {
+        let (drawn, runs) = draw(2, 0.0, &[], Some(recovered("$ seq 1 400")), None);
+        assert!(
+            drawn.pinned_backgrounds.is_empty(),
+            "the band covered its own block"
+        );
+        assert!(runs.is_empty(), "{runs:?}");
     }
 }
