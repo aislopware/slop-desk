@@ -116,19 +116,31 @@ reading.
 
 ## 4. What ships free, and what is ours
 
-Verified against `Uzaaft/libghostty-rs` @ `a0b5a46`, MIT, pinning ghostty `22d13172`.
+The table below was read off `libghostty-rs` @ `a0b5a46`, MIT, pinning ghostty `22d13172`. The live
+pin is five commits later and none of them moves a row of it — see §6.2 for what those five are.
 
-We now build on an org-hosted mirror of it, `aislopware/libghostty-rs` @ `519649e`, and the single
-divergence is soundness.
+**The pin is `aislopware/libghostty-rs` @ `5988a0b7`, and that commit IS upstream's master** — the
+org mirror was fast-forwarded onto it on 2026-09-02, so the two remotes are byte-identical and the
+pin carries nothing of ours. For a day it did: at `519649e` the single divergence was soundness.
 Upstream's `ClipboardContent` handed over a `&str` built with `from_utf8_unchecked` over an OSC 52
 payload, and `ClipboardWrite::contents` sliced a null pointer for the "clear the clipboard" shape —
 both reachable by any program on the pty, both tracked by upstream's own issue #75, and both
-reproduced by the two `cfg(miri)` tests their PR #76 added, which FAIL at `f4c72b9`. The fork is
-`f4c72b9` plus one commit that flips them to pass: a null-guarding `String::to_bytes`,
-`ClipboardContent::data` typed `&[u8]`, and a validated `mime`. `slopdesk_vterm::events::preferred_text`
-is where those bytes become a `String` or are declined. The commit is upstreamable as it stands and
-the pin goes home when #75 closes; the bindings are still generated against ghostty `22d13172`, so
-no engine bump rode along.
+reproduced by the two `cfg(miri)` tests their PR #76 added, which FAILED at `f4c72b9`. That commit
+was written to be upstreamable rather than kept, and it went home: **#75 is closed and PR #81 merged
+the fix**, so upstream now null-guards `String::to_bytes`, types `ClipboardContent::data` as `&[u8]`
+and validates `mime`, and the reproducers pass there.
+`slopdesk_vterm::events::preferred_text` is still where those bytes become a `String` or are
+declined. No engine bump rode along in either direction — the bindings are generated against ghostty
+`22d13172` at both revs, which is the record `ThirdParty/tools/tools.lock` pins and
+`lint-invariants`' `engine-pin-agree` holds.
+
+Two reasons were tangled in that URL and only one died. A soundness patch is a thing to send, not a
+thing to hold — a fork carried past its fix is a maintained divergence whatever it was called at the
+start, and that half is retired. The other half never depended on the patch: a build dependency one
+person administers is a bus factor in the build itself, and a `rev` pin does not survive the remote
+going away. So the URL stays and the divergence goes. Maintenance is now one fast-forward,
+`git push origin up/master:master` from a clone with upstream as a second remote — no force, nothing
+of ours on top to rebase, and `git merge-base --is-ancestor` is the check that it stayed that way.
 
 | | |
 | --- | --- |
@@ -1353,8 +1365,9 @@ than left on disk, because the same five shapes are what the after-numbers must 
 number nobody can re-run is not a baseline. `Cargo.toml` is one dependency —
 `libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "a0b5a46" }` — built
 `--release`. That is the rev the numbers were TAKEN at and it stays written that way; the tree's
-live pin is the fork named in §4, which changes two clipboard signatures and nothing the harness
-touches.
+live pin is the mirrored upstream rev named in §4. Its delta over `a0b5a46` is five commits: the
+clipboard soundness fix (two signatures) and its miri reproducers, a Windows link-name fix and a CI
+job. None of them is on a path the harness touches.
 
 ```rust
 use std::time::Instant;

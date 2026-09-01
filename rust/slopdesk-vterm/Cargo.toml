@@ -75,21 +75,19 @@ imprecise_flops = "allow"
 # generated against one ghostty commit, and the source tree `GHOSTTY_SOURCE_DIR` points at is what
 # actually compiles. `just lint-invariants` holds the second half of that pair.
 #
-# A MIRROR, and only for soundness. `Uzaaft/libghostty-rs` builds a `&str` with `from_utf8_unchecked`
-# over an OSC 52 payload — base64-decoded bytes any program in the pty picks — and slices a null
-# pointer for the "clear the clipboard" shape. Upstream's own issue #75 tracks both and its PR #76
-# added two `cfg(miri)` reproducers that FAIL; this rev is `f4c72b9` (their HEAD, reproducers and
-# all) plus the one commit that flips them to pass: `String::to_bytes` guards the null,
-# `ClipboardContent::data` is `&[u8]`, and `crate::events::preferred_text` decides whether those
-# bytes are text. Nothing else diverges, so this goes home the moment #75 closes — the branch is the
-# upstreamable commit, not a maintained divergence. The bindings are still generated against ghostty
-# `22d13172`, so no engine bump rides along with it.
+# ZERO DIVERGENCE since 2026-09-02: `5988a0b7` is upstream's own master, fast-forwarded onto the org
+# mirror, so the URL is a second REMOTE and nothing else. The soundness carry is retired. It existed
+# for ONE reason and said so: upstream built a `&str` with `from_utf8_unchecked` over an OSC 52
+# payload — base64-decoded bytes any program in the pty picks — and sliced a null pointer for the
+# "clear the clipboard" shape, both tracked as its issue #75. That closed: PR #81 merged the fix,
+# `ClipboardContent::data` is `&[u8]` upstream, and the two `cfg(miri)` reproducers pass there.
+# Carrying a patch past its merge is how a soundness fix becomes a maintained divergence.
 #
-# Hosted in the same ORG as this project rather than a personal account: a build dependency that only
-# one person can administer is a bus factor in the build itself — a deleted or renamed account takes
-# the tree red with it, and `rev` pinning does not protect against the remote going away. The mirror
-# carries upstream's full history and every ref, so it is a superset of what it replaces.
-libghostty-vt = { git = "https://github.com/aislopware/libghostty-rs", rev = "519649e" }
+# The URL stays the mirror because that was never the patch's reason: a build dependency one person
+# administers is a bus factor in the build itself, and a `rev` pin does not survive the remote going
+# away. Fast-forwarding is now the whole maintenance — `git push origin up/master:master`, no force,
+# nothing of ours on top to rebase.
+libghostty-vt = { git = "https://github.com/aislopware/libghostty-rs", rev = "5988a0b7" }
 
 # The kitty graphics protocol's `f=100` transmission. `libghostty-vt` decodes no PNG itself — it
 # publishes a HOOK and declines the format when nothing is installed, because an engine does not

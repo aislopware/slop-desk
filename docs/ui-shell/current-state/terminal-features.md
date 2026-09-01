@@ -12,9 +12,10 @@
 
 The client no longer embeds a terminal *application*; it drives a terminal *engine* and draws the
 pixels itself. `libghostty-vt` — the renderer-agnostic half of upstream ghostty, reached through the
-MIT `aislopware/libghostty-rs @ 519649e` Rust bindings — replaces the deleted fork's full surface
-API. That is an org-hosted mirror of `Uzaaft/libghostty-rs @ f4c72b9` carrying one soundness commit
-and nothing else; `docs/68` §4 says which UB it closes and why the pin goes home when upstream's issue #75 does.
+MIT `aislopware/libghostty-rs @ 5988a0b7` Rust bindings — replaces the deleted fork's full surface
+API. That rev IS upstream's master, fast-forwarded onto the org mirror; the mirror carried one
+soundness commit for a day, upstream merged it as PR #81 and closed issue #75, and the URL stays for
+the bus-factor reason that never depended on the patch (`docs/68` §4).
 The pin is a git commit, not a tarball: `ThirdParty/tools/tools.lock`'s `ghostty` record materialises
 `ghostty-org/ghostty @ 22d13172cde98a0a4dda05d3d6a3fcb0dd8ed018` into
 `ThirdParty/tools/.prefix/ghostty/22d13172`, and `rust/.cargo/config.toml:14` exports
