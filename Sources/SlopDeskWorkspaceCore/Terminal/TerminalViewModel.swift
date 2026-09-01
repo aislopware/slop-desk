@@ -2538,6 +2538,20 @@ public final class TerminalViewModel {
             // Warp-style Blocks (wire types 28/29): the metadata upsert + the output-request resolve both
             // fold into the per-pane block store, which drives the navigator / sticky header / chip.
             blocks.handle(event)
+            // The renderer gets the same record, because it draws the block HEADERS and the store does
+            // not: the exit code and duration a scrolled-back header prints can only come from here.
+            // Forwarded rather than pulled, so a header is right on the frame after the update instead
+            // of the next time something else asks the store a question.
+            if case let .commandBlock(_, exitCode, durationMS, complete, _, commandText, promptOrdinal) = event {
+                surface?.noteBlock(
+                    ordinal: promptOrdinal,
+                    command: commandText,
+                    // An incomplete block has no outcome yet. Passing the fields through regardless
+                    // would print the PREVIOUS run's exit code the moment a command started again.
+                    exitCode: complete ? exitCode : nil,
+                    duration: complete ? durationMS : nil,
+                )
+            }
         case .metadataResponse:
             // Host metadata reply (wire type 30): correlated + decoded at the connection layer
             // (ConnectionViewModel folds it into the pane's MetadataRequestRegistry). The terminal model holds
@@ -2670,6 +2684,13 @@ public final class TerminalViewModel {
         // any in-flight copy-output request as unavailable) so the navigator/header don't show stale commands
         // grafted onto the new shell.
         blocks.reset()
+        // ...and the SURFACE's copy of the same records with it. The surface keeps its own ring so a
+        // scrolled-back header can print an outcome, and it joins those records to the blocks on
+        // screen by counting back from the newest ordinal it holds. Left behind, the dead session's
+        // ordinals would anchor that count while the fresh shell starts from one again — and since
+        // everyday commands repeat, the join's text check would CONFIRM the wrong anchor rather than
+        // reject it, printing a dead session's failure under a command that just succeeded.
+        surface?.forgetBlocks()
         clearGlitchCaret() // keystrokes in flight died with the old session
         endAwaitingReflow() // the dead session's pending reflow is moot — release the scrim
         // The dead session's terminal MODE is a lie for the fresh shell (a drop inside vim leaves .altScreen
@@ -2703,6 +2724,11 @@ public final class TerminalViewModel {
         shellActivity = .idle // a fresh session is idle until its first command runs
         lastCommand = nil
         blocks.reset() // a fresh session has no blocks — the navigator/header start empty
+        // ...and the surface's own record ring, for the same reason and with the same asymmetry as in
+        // `markReconnecting()`: clearing when the shell in fact survived costs a few headers until the
+        // host replays its snapshot, while NOT clearing prints a dead session's exit code under a live
+        // command. When in doubt at a reset, clear.
+        surface?.forgetBlocks()
         lastResumeSeq = 0
         lastSentSize = nil // a fresh session must re-assert its grid size
         ring.removeAll() // stale scrollback must not survive into a new session

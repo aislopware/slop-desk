@@ -408,6 +408,14 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     /// Every block the last draw placed, for the chrome that decorates them.
     func blocks() -> [TerminalRendererSurface.Block] { surface?.blocks() ?? [] }
 
+    /// Hands the surface one command-block record, so a scrolled-back header can print its outcome.
+    func noteBlock(ordinal: UInt32, command: String, exitCode: Int32?, duration: UInt32?) {
+        surface?.noteBlock(ordinal: ordinal, command: command, exitCode: exitCode, duration: duration)
+    }
+
+    /// Drops those records when the shell behind this pane died and a fresh one replaced it.
+    func forgetBlocks() { surface?.forgetBlocks() }
+
     /// Where the block list sits, for a scrollbar.
     func blockScroll() -> TerminalRendererSurface.BlockScroll? { surface?.blockScroll() }
 

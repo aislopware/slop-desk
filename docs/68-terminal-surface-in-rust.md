@@ -440,13 +440,57 @@ The rules the block list settled, all in the surface rather than the layout:
   viewport (never laid out, so plain `rows × cell_height`) to `BlockLayout::content_height` (laid
   out, chrome included) and asks once.
 
-The one thing a header still cannot show for a scrolled-back block is its **exit code and
-duration**. Those live in the command-block ring keyed by `index`/`prompt_ordinal`, which the host's
-segmenter assigns; the client's engine exposes only a per-row OSC 133 `A` flag, so nothing ties a
-`PlacedBlock` back to a ring entry. `slopdesk_term_surface_block_text` answers what a header can
-always know — the prompt rows as rendered. Closing the gap means carrying the ordinal in the mark
-itself (`OSC 133;A` with an id the engine surfaces per row), which is a shell-integration change,
-not a rendering one.
+A header shows a scrolled-back block's **exit code and duration**, right-aligned, and how it does
+that is the interesting part.
+
+This section used to say it could not, and that closing the gap meant "carrying the ordinal in the
+mark itself (`OSC 133;A` with an id the engine surfaces per row), which is a shell-integration
+change, not a rendering one". That was wrong on both counts, and it is recorded rather than quietly
+deleted because the failure mode generalises: **it declared a gap upstream without checking what
+this tree already had.** Wire type 28 has always carried `exitCode`, `durationMS` and
+`promptOrdinal` to the client, per block. Nothing needed to be added to the mark, to the engine or
+to the shell — the two halves were already on the same machine, and only the join was missing.
+
+The join is `rust/slopdesk-termrender/src/blockjoin.rs`, and it is one question asked once: which
+ordinal does the LAST prompt-bearing block hold? Every other block counts backwards from it.
+Per-block text matching is not used, because a session that runs `ls` three times ties three ways;
+ordinals are unique, so the anchor is the only ambiguity worth resolving.
+
+The anchor cannot simply be the newest record. A prompt row is born from PTY bytes while its record
+arrives as a control message, and those do not order against each other — the same race
+`DECISIONS.md` (~line 763) exists for. In the window between a shell printing its prompt and the
+host reporting the block, the frame holds one more prompt than the records account for, and an
+anchor of "newest record" would slide every header up one and print the previous command's exit code
+under this one. So the anchor is guessed (offset 0, then 1 — the host cannot fall two behind) and
+then VERIFIED against the recorded command text, and **a frame that cannot be verified prints
+nothing.** Four states degrade that way on purpose: the race window, records evicted past the ring's
+64, `prompt_ordinal == 0` mid-stream joins, and the leading orphan block whose command scrolled off.
+
+`slopdesk_term_surface_note_block` is the door the client feeds records through, upserted by ordinal
+because a block arrives once running and again finished. `slopdesk_term_surface_block_text` still
+answers what a header can know without any of this — the prompt rows as rendered.
+
+Verification is ONE-SIDED — an unmatched prompt proves nothing, only a contradiction fails — and
+that leaves exactly one shape the join cannot refuse: records from a shell that DIED. The fresh
+shell counts from ordinal 1 while the surface still holds the dead session's forties, so the anchor
+is stale, and because everyday commands repeat (`ls`, `just quick`) the text check confirms the
+wrong anchor instead of rejecting it. No evidence inside the join's own input separates that case
+from a correct one, so the guard is a door rather than a rule:
+`slopdesk_term_surface_forget_blocks`, called from the same edge in `TerminalViewModel` that already
+drops the client's block list on a fresh session — and never on a reattach that RESUMED the shell.
+`blockjoin`'s `stale_records_from_a_dead_session_confirm_a_wrong_anchor` asserts the wrong answer on
+purpose, so the reason the door exists cannot be deleted by someone reading only the join.
+
+The second false positive is closed in the painter, not the join: the ACTIVE block never prints a
+status even when handed one, because it is by definition the block whose command has not finished.
+Retype a command the newest record already holds and the join would otherwise map the live prompt
+onto the previous run and print its `✗ 1` under a command not yet entered. A running block's label
+is empty either way, so the skip costs nothing.
+
+What a header still does NOT do is colour a failure red. That would need a new `ChromeStyle` field,
+which is a new appearance door and a token chosen on the Rust side of a design system that lives in
+Swift; the `✗` mark carries the same information on the ink the chrome already owns. A red is a
+design decision, and it is available whenever the design asks for it.
 
 ### 5.4 The editor-like prompt
 

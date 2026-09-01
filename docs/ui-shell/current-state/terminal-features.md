@@ -364,18 +364,39 @@ and §10, which this pass FOUND rather than inherited.
    sibling pair makes it silent, because the loser's handlers simply never run rather than running
    late. The `pressedKeys` edge the old entry closed with was an edge of a path that did not exist.
 
-10. **A scrolled-back block header cannot show its exit code or duration**, and the reason is a
-    shell-integration gap rather than a rendering one — which is why it is listed rather than fixed.
-    Those two facts live in the host segmenter's command-block ring, keyed by `index`/`prompt_ordinal`;
-    the client's engine exposes only a per-row OSC 133 `A` flag, so nothing ties a `PlacedBlock` back to
-    a ring entry. A header therefore shows what it can always know — the prompt rows as rendered, via
-    `slopdesk_term_surface_block_text`. Closing it takes BOTH halves, which is why `docs/68` §5.3 and
-    `chrome.rs`'s header call it a shell-integration change: the emitting side has to put an id in its
-    `OSC 133;A`, and `libghostty-vt` has to surface that id per row rather than the bare three-state
-    flag it exposes today. The second half is Zig, behind the same pin as everything else there. Do
-    NOT close it by re-deriving the ordinal on the
-    client from row counts: scrollback eviction makes that wrong exactly when the header is scrolled
-    back, i.e. the only case it exists for. Written up at `docs/68` §5.3.
+10. ~~**A scrolled-back block header cannot show its exit code or duration.**~~ **CLOSED, and the
+    entry was wrong twice over.** A header now prints both, right-aligned, joined by
+    `rust/slopdesk-termrender/src/blockjoin.rs` and fed through
+    `slopdesk_term_surface_note_block`.
+
+    The old entry said this needed an id in `OSC 133;A` plus a Zig-side `libghostty-vt` change. It
+    needed neither: **wire type 28 already carries `exitCode`, `durationMS` and `promptOrdinal` to
+    the client, per block.** Both halves were on the same machine the whole time. The lesson is not
+    about terminals — it is that the entry declared a dependency on someone else's release without
+    checking what this tree already sent itself.
+
+    It also closed with "Do NOT close it by re-deriving the ordinal on the client from row counts:
+    scrollback eviction makes that wrong exactly when the header is scrolled back." That objection is
+    real and does not apply, for two independent reasons. It describes counting FORWARD from the top
+    of the retained buffer, where an eviction silently changes the origin; the join counts BACKWARDS
+    from the newest block, and eviction takes from the old end, which a backwards count never reads.
+    And the count is not trusted on its own — the anchor is confirmed against the command text the
+    host recorded, and an unconfirmed frame prints nothing at all. What eviction actually costs is
+    one `None` for a block whose record has aged out of the 64-entry ring, which degrades to exactly
+    the header this entry described as the permanent state.
+
+    Two ways the join could be confidently WRONG are closed outside it, because its verification is
+    one-sided and cannot see either from its own input. A dead shell's records would anchor the
+    fresh shell's blocks (which restart at ordinal 1) and repeated commands would confirm it — so
+    `slopdesk_term_surface_forget_blocks` drops them at the same edge `TerminalViewModel` drops its
+    own block list. And the ACTIVE block never prints a status even when handed one, since a command
+    that has not finished has no outcome; that kills the retyped-command case where a live prompt
+    would wear the previous run's `✗ 1`.
+
+    Still true, and not a gap: a failed block is marked `✗ <code>` rather than coloured red. That
+    would need a new `ChromeStyle` field and a token chosen on the Rust side of a design system that
+    lives in Swift — a design decision, available whenever the design asks. Written up at `docs/68`
+    §5.3.
 
 ### What was REMOVED since the 2026-06-25/26 survey (unaffected by the terminal-surface rewrite)
 

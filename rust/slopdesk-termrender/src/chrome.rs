@@ -18,11 +18,24 @@
 //! ## What it draws, and what it deliberately cannot
 //!
 //! A gutter bar per block, a hairline between blocks, a collapse mark with the folded row count,
-//! and the scrollbar. Not an exit code and not a duration: `libghostty-vt` surfaces OSC 133 as
-//! three row states — none, prompt, continuation — and exposes no command-end callback at all, so
-//! the engine genuinely does not know how a command ended. `docs/68` §5.3 records the fix, and it
-//! is a shell-integration change rather than a rendering one. Counting prompts from the bottom to
-//! index the host's ring would be exactly the heuristic [`crate::block`] refuses.
+//! the scrollbar — and a block's exit code and duration, right-aligned on its header.
+//!
+//! ⚠️ That last one was recorded here as IMPOSSIBLE, and the reasoning is worth keeping because it
+//! was wrong in an instructive way. It ran: `libghostty-vt` surfaces OSC 133 as three row states
+//! and no command-end callback, so the engine does not know how a command ended; therefore the fix
+//! is a shell-integration change; and counting prompts from the bottom to index the host's ring
+//! "would be exactly the heuristic [`crate::block`] refuses".
+//!
+//! Both steps failed. The engine never had to know — the HOST's segmenter already knows, and
+//! already ships the exit code, the duration and a `prompt_ordinal` to this very client on wire
+//! type 28, so nothing was missing but the join. And the counting is not the refused heuristic:
+//! [`crate::block`] refuses to GUESS a block's identity from its shape, while [`crate::blockjoin`]
+//! proposes an anchor and then CONFIRMS it against the command text the host recorded, answering
+//! nothing at all when the confirmation fails. A guess that can be checked and is checked is not a
+//! heuristic.
+//!
+//! The cost of the error was not the missing feature but where it pointed: it parked closable work
+//! behind someone else's release.
 //!
 //! ## The label is monospaced because the terminal is
 //!
@@ -111,6 +124,79 @@ pub struct ChromeFrame {
     pub thumb: Option<Thumb>,
 }
 
+/// What the host recorded about a block, reduced to what a header prints.
+///
+/// Built by the surface from the command-block ring after [`crate::blockjoin`] has decided which
+/// record describes which block, so a `Some` here means the join was CONFIRMED — this type carries
+/// no doubt and the painter does no second-guessing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockStatus {
+    /// The command's exit code, or `None` while it is still running.
+    ///
+    /// `None` is drawn as nothing rather than as a spinner or a zero: the gutter already accents
+    /// the running block, so a second running indicator on the header would say the same thing
+    /// twice, and a zero would be a lie with a number on it.
+    pub exit_code: Option<i32>,
+    /// How long it took, in milliseconds, or `None` when the host has not closed the block.
+    pub duration_ms: Option<u32>,
+}
+
+/// The label for a status, or an empty string when there is nothing worth printing.
+///
+/// Failure leads with `✗` and the code because that is the thing a reader scrolls back to find, and
+/// success prints only the duration — a `✓` on every successful block is ink on the majority case
+/// to distinguish the case nobody is looking for.
+///
+/// Deliberately NOT a colour. A red would have to come from a new [`ChromeStyle`] field, which
+/// means a new appearance door and a token invented on this side of the design system; the mark
+/// carries the same information and the header stays on the one ink the chrome already owns.
+#[must_use]
+fn status_label(status: BlockStatus) -> String {
+    let mut out = String::new();
+    if let Some(code) = status.exit_code
+        && code != 0
+    {
+        out.push_str("✗ ");
+        out.push_str(&code.to_string());
+    }
+    if let Some(ms) = status.duration_ms
+        && let Some(spent) = duration_label(ms)
+    {
+        if !out.is_empty() {
+            out.push_str("  ");
+        }
+        out.push_str(&spent);
+    }
+    out
+}
+
+/// A duration a reader can take in at a glance, or `None` for one too short to be worth the ink.
+///
+/// The threshold is the point of the function: almost every command in a session finishes in
+/// milliseconds, and printing `0.01s` on all of them would make the header noise that hides the one
+/// slow command it exists to mark.
+#[must_use]
+fn duration_label(ms: u32) -> Option<String> {
+    if ms < 1000 {
+        return None;
+    }
+    let seconds = f64::from(ms) / 1000.0;
+    if seconds < 60.0 {
+        return Some(format!("{seconds:.1}s"));
+    }
+    // Truncation is the format, not a loss: a command past a minute is reported as whole minutes
+    // and whole seconds, and a fractional second inside `4m 7s` would be ink nobody reads.
+    #[expect(
+        clippy::integer_division,
+        reason = "minutes and seconds are whole by definition"
+    )]
+    let (minutes, seconds) = {
+        let whole = ms / 1000;
+        (whole / 60, whole % 60)
+    };
+    Some(format!("{minutes}m {seconds}s"))
+}
+
 /// Draws the furniture for every visible block, plus the scrollbar.
 ///
 /// Runs AFTER the text pass and writes to both ends of the list: the gutter, the divider and the
@@ -127,6 +213,7 @@ pub fn paint(
     layout: &BlockLayout,
     style: &ChromeStyle,
     frame: &ChromeFrame,
+    statuses: &[Option<BlockStatus>],
     text: &PaintStyle,
     cache: &mut GlyphCache,
     shaper: &mut impl TextShaper,
@@ -152,8 +239,23 @@ pub fn paint(
                 style.divider,
             ));
         }
-        paint_gutter(block, style, frame.active == Some(index), out);
+        let active = frame.active == Some(index);
+        paint_gutter(block, style, active, out);
         paint_mark(block, style, text, cache, shaper, rasterizer, out);
+        // Read positionally, and a short slice means "nothing known" for the rest — the same rule
+        // `lay_out` reads `collapsed` by, so a caller whose records lag a resize by one frame draws
+        // yesterday's header rather than panicking.
+        //
+        // The ACTIVE block never wears one, whatever the caller passed. It is by definition the
+        // block whose command has not finished, so it has no outcome to print — and the
+        // join upstream can still hand one over: retype a command the newest record already
+        // holds (`clear`, `ls`) and the text check confirms an anchor that maps the live
+        // prompt onto the PREVIOUS run. That would print a stale `✗ 1` under a command the
+        // user has not even entered yet. Nothing is lost by the skip, since a running
+        // block's label is empty either way.
+        if let (false, Some(Some(status))) = (active, statuses.get(index)) {
+            paint_status(block, *status, style, text, cache, shaper, rasterizer, out);
+        }
     }
     paint_scrollbar(style, frame, out);
 }
@@ -217,6 +319,63 @@ fn paint_mark(
     label(
         &mark,
         header.x,
+        baseline,
+        style.label,
+        text.size_px,
+        cache,
+        shaper,
+        rasterizer,
+        out,
+    );
+}
+
+/// The exit code and duration, against the header's trailing edge.
+///
+/// Right-aligned, and that is the whole layout decision: the command text starts at the left and is
+/// as long as it is, so a status pinned to the left would sit at a different column on every block
+/// and a status after the text would wander. Against the trailing edge the numbers stack in one
+/// column, which is what makes a failed block findable by scrolling rather than by reading.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the same stack `paint_mark` takes, plus the status it prints"
+)]
+fn paint_status(
+    block: &PlacedBlock,
+    status: BlockStatus,
+    style: &ChromeStyle,
+    text: &PaintStyle,
+    cache: &mut GlyphCache,
+    shaper: &mut impl TextShaper,
+    rasterizer: &mut impl GlyphRasterizer,
+    out: &mut DrawList,
+) {
+    let Some(header) = block.header else {
+        return;
+    };
+    if header.height <= 0.0 {
+        return;
+    }
+    let printed = status_label(status);
+    if printed.is_empty() {
+        return;
+    }
+    let geometry = text.geometry;
+    let baseline = header.y + (header.height - geometry.metrics.cell_height) / 2.0 + geometry.font.baseline;
+    let Ok(cells) = u16::try_from(printed.chars().count()) else {
+        return;
+    };
+    // One cell of air off the edge, so the last glyph is not flush against the scrollbar's track.
+    let width = f64::from(cells) * geometry.metrics.cell_width;
+    let x = header.x + header.width - width - geometry.metrics.cell_width;
+    // A header narrow enough that the status would collide with the collapse mark prints nothing:
+    // the mark is the control, and a number overlapping it would break the one thing on the row a
+    // pointer has to be able to hit.
+    if x <= header.x + geometry.metrics.cell_width {
+        return;
+    }
+    label(
+        &printed,
+        x,
         baseline,
         style.label,
         text.size_px,
@@ -339,7 +498,7 @@ mod tests {
 
     use slopdesk_terminal::geometry::{CellMetrics, Rect};
 
-    use super::{ChromeFrame, ChromeStyle, paint};
+    use super::{BlockStatus, ChromeFrame, ChromeStyle, paint, status_label};
     use crate::atlas::AtlasFormat;
     use crate::block::{BlockLayout, BlockSpan, PlacedBlock, RowRange};
     use crate::glyph::{
@@ -502,7 +661,125 @@ mod tests {
         }
     }
 
+    /// A header prints a failure's code and a slow command's duration.
+    #[test]
+    fn a_failed_block_leads_with_its_code() {
+        assert_eq!(
+            status_label(BlockStatus {
+                exit_code: Some(1),
+                duration_ms: Some(2400),
+            }),
+            "✗ 1  2.4s"
+        );
+    }
+
+    /// Success prints the duration alone — no ✓ on the majority case.
+    #[test]
+    fn a_slow_success_prints_only_its_duration() {
+        assert_eq!(
+            status_label(BlockStatus {
+                exit_code: Some(0),
+                duration_ms: Some(65_000),
+            }),
+            "1m 5s"
+        );
+    }
+
+    /// ⚠️ The case that keeps the column quiet: almost every command is fast and succeeds, and a
+    /// header that printed `0.0s` on all of them would bury the one it exists to mark.
+    #[test]
+    fn a_fast_success_prints_nothing_at_all() {
+        assert_eq!(
+            status_label(BlockStatus {
+                exit_code: Some(0),
+                duration_ms: Some(12),
+            }),
+            ""
+        );
+    }
+
+    /// A fast FAILURE still prints, because the code is the point, not the time.
+    #[test]
+    fn a_fast_failure_still_prints_its_code() {
+        assert_eq!(
+            status_label(BlockStatus {
+                exit_code: Some(127),
+                duration_ms: Some(3),
+            }),
+            "✗ 127"
+        );
+    }
+
+    /// A running block says nothing — the accented gutter already says it.
+    #[test]
+    fn a_running_block_prints_nothing() {
+        assert_eq!(
+            status_label(BlockStatus {
+                exit_code: None,
+                duration_ms: None,
+            }),
+            ""
+        );
+    }
+
+    /// The status reaches the header, and a block with no status leaves it alone.
+    #[test]
+    fn the_status_is_shaped_onto_the_header() {
+        let layout = layout(2, false);
+        let statuses = [
+            None,
+            Some(BlockStatus {
+                exit_code: Some(2),
+                duration_ms: Some(5000),
+            }),
+        ];
+        let (_, runs) = draw_with(&layout, &style(), &frame(), &statuses);
+        assert!(runs.iter().any(|run| run == "✗ 2  5.0s"), "{runs:?}");
+        assert_eq!(
+            runs.iter().filter(|run| run.starts_with('✗')).count(),
+            1,
+            "only the block with a record got one"
+        );
+    }
+
+    /// The active block refuses a status even when one is handed to it.
+    ///
+    /// Not a redundant guard over `a_running_block_prints_nothing`: that one covers the status the
+    /// caller KNOWS is unfinished. This is the caller getting it WRONG — the join confirming a
+    /// stale anchor because the user retyped a command the newest record already holds — and
+    /// the paint dropping it anyway.
+    #[test]
+    fn the_active_block_refuses_a_status_it_is_handed() {
+        let layout = layout(2, false);
+        let statuses = [
+            None,
+            Some(BlockStatus {
+                exit_code: Some(1),
+                duration_ms: Some(200),
+            }),
+        ];
+        let (_, runs) = draw_with(
+            &layout,
+            &style(),
+            &ChromeFrame {
+                active: Some(1),
+                ..frame()
+            },
+            &statuses,
+        );
+        assert!(!runs.iter().any(|run| run.starts_with('✗')), "{runs:?}");
+    }
+
     fn draw(layout: &BlockLayout, style: &ChromeStyle, frame: &ChromeFrame) -> (DrawList, Vec<String>) {
+        draw_with(layout, style, frame, &[])
+    }
+
+    fn draw_with(
+        layout: &BlockLayout,
+        style: &ChromeStyle,
+        frame: &ChromeFrame,
+        statuses: &[Option<BlockStatus>],
+    ) -> (DrawList, Vec<String>) {
         let mut out = DrawList::new();
         let mut cache = GlyphCache::new();
         let mut shaper = OneToOne::default();
@@ -510,6 +787,7 @@ mod tests {
             layout,
             style,
             frame,
+            statuses,
             &text_style(),
             &mut cache,
             &mut shaper,

@@ -862,6 +862,43 @@ final class TerminalRendererSurface {
         return found < 0 ? nil : Int(found)
     }
 
+    /// Tells the surface what the host said about one command block, so its header can print it.
+    ///
+    /// Upserted by `ordinal` — the same block arrives running and then finished, and the second has
+    /// to replace the first. A zero ordinal is a mid-stream attach the host could not count, and the
+    /// surface drops it rather than trying to place it.
+    ///
+    /// `exitCode` and `duration` stay optional all the way across: a running command has neither,
+    /// and flattening that to a sentinel here would make a fresh command look like an instant
+    /// success on the far side.
+    func noteBlock(ordinal: UInt32, command: String, exitCode: Int32?, duration: UInt32?) {
+        guard let handle else { return }
+        var command = Array(command.utf8)
+        command.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_term_surface_note_block(
+                handle,
+                ordinal,
+                buffer.baseAddress,
+                buffer.count,
+                exitCode != nil,
+                exitCode ?? 0,
+                duration != nil,
+                duration ?? 0,
+            )
+        }
+    }
+
+    /// Forgets every noted block, for a pane whose shell died and came back FRESH.
+    ///
+    /// The fresh shell re-counts its prompts from one while the surface still holds the dead
+    /// session's ordinals, and the join anchors on the newest ordinal it holds — so without this the
+    /// first prompt of the new shell would wear the exit code of a command from the old one, and
+    /// repeated everyday commands make the join's own text check confirm it rather than reject it.
+    func forgetBlocks() {
+        guard let handle else { return }
+        slopdesk_term_surface_forget_blocks(handle)
+    }
+
     /// Folds one block. An index past the end, or an orphan with no header to click, is ignored.
     func setBlock(_ index: Int, collapsed: Bool) {
         guard let handle else { return }

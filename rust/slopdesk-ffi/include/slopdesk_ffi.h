@@ -3333,10 +3333,27 @@ void slopdesk_term_surface_expand_all_blocks(SlopDeskTerminalSurface *handle);
  * cannot absorb spills into the engine as whole rows. */
 void slopdesk_term_surface_scroll_points(SlopDeskTerminalSurface *handle, double delta);
 
+/* One command-block record from the host (wire type 28), so the block's HEADER can print its exit
+ * code and duration once the rows have scrolled back. Upserted by `ordinal` — a block arrives once
+ * running and again finished, and the second replaces the first. An `ordinal` of 0 is a mid-stream
+ * attach that names no position and is DROPPED. `exit_code`/`duration_ms` are read only when their
+ * `has_` flag is set, because a running command has neither and every sentinel collides with a real
+ * value. `command_text` confirms the join and is never displayed. */
+void slopdesk_term_surface_note_block(SlopDeskTerminalSurface *handle, uint32_t ordinal,
+                                      const uint8_t *text, size_t text_len, bool has_exit_code,
+                                      int32_t exit_code, bool has_duration, uint32_t duration_ms);
+
+/* Drops every record noted above, for a pane whose shell DIED and came back fresh. The fresh shell
+ * counts its prompts from 1 while the surface still holds the dead session's forties, so the join
+ * would anchor on a stale ordinal — and repeated everyday commands can make the text check CONFIRM
+ * that wrong anchor. Call it wherever the client drops its own block list; NOT on a reattach that
+ * resumed the same shell, whose blocks are still the ones on screen. */
+void slopdesk_term_surface_forget_blocks(SlopDeskTerminalSurface *handle);
+
 /* One block's prompt rows as RENDERED, soft wraps rejoined — what a header prints. Not the bare
  * command: OSC 133 `B` does not cross the engine's per-row API, so a shell that decorates its
- * prompt sends that decoration too. A header wanting the exit code and duration reads the
- * command-block ring instead. */
+ * prompt sends that decoration too. The exit code and duration come from
+ * slopdesk_term_surface_note_block instead, joined to this block by prompt ordinal. */
 size_t slopdesk_term_surface_block_text(SlopDeskTerminalSurface *handle, size_t index, uint8_t *out,
                                         size_t cap);
 

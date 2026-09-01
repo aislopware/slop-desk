@@ -40,6 +40,7 @@
 
 pub mod atlas;
 pub mod block;
+pub mod blockjoin;
 pub mod chrome;
 pub mod glyph;
 pub mod layout;
@@ -50,7 +51,7 @@ pub use atlas::{Atlas, AtlasFormat, AtlasRegion};
 pub use block::{
     BlockLayout, BlockSpan, Chrome, LayoutMode, PlacedBlock, RowRange, Viewport, lay_out, segment,
 };
-pub use chrome::{ChromeFrame, ChromeStyle};
+pub use chrome::{BlockStatus, ChromeFrame, ChromeStyle};
 pub use glyph::{
     CachedGlyph, GlyphCache, GlyphKey, GlyphRasterizer, RasterGlyph, ShapedGlyph, Synthetic, TextRun,
     TextShaper,

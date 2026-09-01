@@ -59,8 +59,8 @@ use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_terminal::surface_action::{SelectionEdge, SurfaceAction};
 use slopdesk_termrender::{
     BlockLayout, BlockSpan, CellGeometry, Chrome, ChromeFrame, ChromeStyle, DrawList, GlyphCache, Insets,
-    LayoutMode, PaintStyle, Painter, Preedit, Rgba, SelectionColors, Thumb, Viewport, chrome, grid_size,
-    lay_out, scrollbar, segment,
+    LayoutMode, PaintStyle, Painter, PlacedBlock, Preedit, Rgba, SelectionColors, Thumb, Viewport, blockjoin,
+    chrome, grid_size, lay_out, scrollbar, segment,
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{
@@ -215,6 +215,42 @@ struct Surface {
     clipboard_writes: Vec<u8>,
     /// What an input method is composing over the cursor, or `None` when nothing is.
     composing: Option<Composition>,
+    /// What the host has said about this pane's command blocks, newest last.
+    ///
+    /// The surface holds these ONLY to print them on a header. It does not own them — the client's
+    /// `TerminalBlockModel` is the ring, fed by wire type 28 — and it does not interpret them:
+    /// which record describes which laid-out block is [`blockjoin`]'s decision, retaken every
+    /// frame because both sides move (output re-lays the blocks out, and a completion rewrites
+    /// a record).
+    ///
+    /// Bounded by [`MAX_RECORDS`], because a long-lived pane would otherwise accumulate one entry
+    /// per command it ever ran for the sake of headers that scrolled out of reach hours ago.
+    records: Vec<BlockRecord>,
+}
+
+/// How many command-block records a surface keeps.
+///
+/// Matched to the host ring's own `MAX_BLOCKS`, so the surface can print a header for exactly the
+/// blocks the host can still describe and not one more. A larger number here would hold records
+/// whose blocks the host has already forgotten; a smaller one would drop records for blocks still
+/// on screen.
+const MAX_RECORDS: usize = 64;
+
+/// One host command-block record, as much of it as a header needs.
+///
+/// `command_text` is carried for the JOIN and not for display — the header prints the rows in front
+/// of it, which are the real thing rather than the host's transcription of it. It is what confirms
+/// that the ordinal counted down to this block is the ordinal the host meant.
+#[derive(Debug, Clone)]
+struct BlockRecord {
+    /// The segmenter's 1-based OSC 133 `A` count for this block.
+    ordinal: u32,
+    /// The command it recorded, used to confirm the join.
+    command_text: String,
+    /// Its exit code, or `None` while it runs.
+    exit_code: Option<i32>,
+    /// How long it took, or `None` while it runs.
+    duration_ms: Option<u32>,
 }
 
 /// One composition, measured where it arrived.
@@ -322,6 +358,7 @@ impl Surface {
             pty_replies: Vec::new(),
             clipboard_writes: Vec::new(),
             composing: None,
+            records: Vec::new(),
         };
         surface.apply_geometry();
         Some(surface)
@@ -558,10 +595,12 @@ impl Surface {
                 },
                 thumb: self.thumb(&layout, viewport_height, cell_height),
             };
+            let statuses = self.statuses(&layout);
             chrome::paint(
                 &layout,
                 &self.chrome_style.scaled(self.geometry.scale),
                 &frame,
+                &statuses,
                 &style,
                 &mut self.cache,
                 &mut self.shaper,
@@ -573,6 +612,77 @@ impl Surface {
         self.renderer
             .draw(&self.list, &mut self.cache, self.background)
             .is_ok()
+    }
+
+    /// The prompt rows of one laid-out block, rejoined into one string.
+    ///
+    /// The rows AS RENDERED, PS1 and all — see [`slopdesk_term_surface_block_text`], which answers
+    /// the same thing to the client and is the reason this is factored out rather than written
+    /// twice. A block with no prompt rows (an orphan, whose command scrolled off) answers empty.
+    fn prompt_text(&self, block: &PlacedBlock) -> String {
+        let frame = self.frame();
+        let start = block.span.rows.start;
+        let end = start.saturating_add(block.span.prompt_rows);
+        let mut text = String::new();
+        let mut joined = false;
+        for row in start..end {
+            let Some(line) = frame.row(row) else { continue };
+            if joined {
+                text.push('\n');
+            }
+            text.push_str(line.text.trim_end());
+            joined = !line.wrapped;
+        }
+        text
+    }
+
+    /// What each laid-out block's header should print, positionally against `layout`.
+    ///
+    /// Retaken every frame rather than cached against the layout, because both inputs move
+    /// independently: output re-segments the blocks, and a `commandBlock` update rewrites a record
+    /// in place when a running command finishes. A cache would have to be invalidated by both, and
+    /// the join is a walk over at most a screenful of blocks.
+    ///
+    /// Orphan blocks — no prompt rows, so no command of their own — are skipped before the join and
+    /// hold `None` after it, which is what keeps the ordinals counting over the blocks that have
+    /// prompts rather than over the rows on screen.
+    fn statuses(&self, layout: &BlockLayout) -> Vec<Option<chrome::BlockStatus>> {
+        if self.records.is_empty() {
+            return Vec::new();
+        }
+        let mut prompts: Vec<String> = Vec::new();
+        let mut where_from: Vec<usize> = Vec::new();
+        for (index, block) in layout.blocks.iter().enumerate() {
+            if block.span.prompt_rows > 0 {
+                prompts.push(self.prompt_text(block));
+                where_from.push(index);
+            }
+        }
+        let borrowed: Vec<&str> = prompts.iter().map(String::as_str).collect();
+        let records: Vec<blockjoin::Record<'_>> = self
+            .records
+            .iter()
+            .map(|record| {
+                blockjoin::Record {
+                    ordinal: record.ordinal,
+                    command_text: &record.command_text,
+                }
+            })
+            .collect();
+
+        let mut out = vec![None; layout.blocks.len()];
+        for (ordinal, index) in blockjoin::join(&borrowed, &records).into_iter().zip(where_from) {
+            let Some(ordinal) = ordinal else { continue };
+            let Some(record) = self.records.iter().find(|record| record.ordinal == ordinal) else {
+                continue;
+            };
+            let Some(slot) = out.get_mut(index) else { continue };
+            *slot = Some(chrome::BlockStatus {
+                exit_code: record.exit_code,
+                duration_ms: record.duration_ms,
+            });
+        }
+        out
     }
 
     /// The scrollbar thumb for everything that scrolls under this surface, in device pixels.
@@ -3043,6 +3153,97 @@ pub unsafe extern "C" fn slopdesk_term_surface_scroll_points(
     if rows != 0 {
         surface.session.scroll(Scroll::Delta(rows));
     }
+}
+
+/// Tells the surface what the host said about one command block, so a header can print it.
+///
+/// Upserted by `ordinal`, because that is what identifies a block across its life: the same block
+/// arrives once as running (no exit code, no duration) and again as finished, and the second must
+/// replace the first rather than stack behind it.
+///
+/// `exit_code` and `duration_ms` are read only when their `has_` flag is set — C has no `Option`,
+/// and a sentinel would collide with a real exit code (`-1` is one) or a real duration (`0` is
+/// one). A running block therefore says so explicitly rather than by looking like a fast success.
+///
+/// An `ordinal` of zero is DROPPED. The host stamps zero when it attached mid-stream and cannot
+/// count prompts, and a record that names no position cannot be joined to a block — keeping it
+/// would only give the join something it has to defend against.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `(text, text_len)` being readable for `text_len` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_note_block(
+    handle: *mut SlopDeskTerminalSurface,
+    ordinal: u32,
+    text: *const c_uchar,
+    text_len: usize,
+    has_exit_code: bool,
+    exit_code: i32,
+    has_duration: bool,
+    duration_ms: u32,
+) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    if ordinal == 0 {
+        return;
+    }
+    // SAFETY: the caller's obligation. A null pointer or a non-UTF-8 command is an empty one, which
+    // the join treats as no confirmation rather than as a match — the record still lands, so its
+    // exit code prints once some other block confirms the anchor.
+    let command_text = core::str::from_utf8(unsafe { borrow(text, text_len) })
+        .unwrap_or_default()
+        .to_owned();
+    let record = BlockRecord {
+        ordinal,
+        command_text,
+        exit_code: has_exit_code.then_some(exit_code),
+        duration_ms: has_duration.then_some(duration_ms),
+    };
+    if let Some(held) = surface.records.iter_mut().find(|held| held.ordinal == ordinal) {
+        *held = record;
+    } else {
+        surface.records.push(record);
+        // Ordinals arrive in order in practice, but a reattach replays a snapshot and nothing
+        // guarantees it — sorting is what lets the eviction below always drop the OLDEST.
+        surface.records.sort_unstable_by_key(|record| record.ordinal);
+        if surface.records.len() > MAX_RECORDS {
+            let excess = surface.records.len() - MAX_RECORDS;
+            surface.records.drain(..excess);
+        }
+    }
+}
+
+/// Forgets every block record, for a pane whose shell died and came back fresh.
+///
+/// The one edge the join cannot survive on its own, and the reason this door exists rather than the
+/// records ageing out: a fresh shell re-counts its prompts from one, while the surface still holds
+/// the dead session's ordinals in the forties. The join anchors on the NEWEST ordinal it holds, so
+/// it would map today's first prompt onto yesterday's fortieth — and because everyday commands
+/// repeat (`ls`, `just quick`), the text check can CONFIRM that wrong anchor rather than reject it.
+/// A confidently wrong exit code is the one failure the whole design is built to avoid, so the
+/// caller that drops its own block list on a fresh session drops these in the same breath.
+///
+/// Not called on a reattach that RESUMED the same shell: those blocks are still the ones on screen.
+///
+/// # Safety
+/// [`held`]'s obligation.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_term_surface_forget_blocks(handle: *mut SlopDeskTerminalSurface) {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return;
+    };
+    surface.records.clear();
 }
 
 /// The text of one block's prompt rows, which is what a header prints.

@@ -46,9 +46,37 @@ public protocol TerminalSurface: AnyObject {
     /// Called when the surface has bytes to send back to the host (keystrokes the
     /// renderer encoded). The client encodes these as ``WireMessage/input(_:)``.
     var onWrite: ((Data) -> Void)? { get set }
+
+    /// Tells the surface what the host recorded for one command block (wire type 28), so the block's
+    /// HEADER can print its exit code and duration once the rows have scrolled back.
+    ///
+    /// Metadata only, and deliberately a separate door from ``feed(_:)``: this rides CONTROL while
+    /// the rows ride the output FIFO, and the two do not order against each other. The surface joins
+    /// them itself rather than assuming they arrive together.
+    func noteBlock(ordinal: UInt32, command: String, exitCode: Int32?, duration: UInt32?)
+
+    /// Drops every record ``noteBlock(ordinal:command:exitCode:duration:)`` handed over, because the
+    /// shell behind this pane DIED and a fresh one took its place.
+    ///
+    /// The join on the far side anchors on the newest ordinal it holds, and a fresh shell counts its
+    /// prompts from one again — so a surface that kept the dead session's records would place the
+    /// new shell's first command against the old shell's fortieth. Called from the same edge that
+    /// drops the model's own block list, and never on a reattach that RESUMED the shell.
+    ///
+    /// The error is asymmetric, which is what settles the doubtful sites: clearing when the shell in
+    /// fact survived costs a few blank headers until the host replays its records, while keeping them
+    /// prints a dead session's exit code under a live command. When in doubt, clear.
+    func forgetBlocks()
 }
 
 public extension TerminalSurface {
+    /// Default: ignore the record. A headless conformer draws no headers, so it has nothing to print
+    /// one on — and every test double stays a `feed`/`onWrite` pair rather than growing a stub.
+    func noteBlock(ordinal _: UInt32, command _: String, exitCode _: Int32?, duration _: UInt32?) {}
+
+    /// Default: nothing to forget, since the default `noteBlock` kept nothing.
+    func forgetBlocks() {}
+
     /// Default: feed each chunk individually (per-chunk flush). Renderers with a
     /// write/flush split override for one flush per batch.
     func feedBatch(_ chunks: ArraySlice<Data>) {
