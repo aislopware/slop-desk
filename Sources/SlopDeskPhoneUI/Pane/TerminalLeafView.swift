@@ -1481,8 +1481,8 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         case .historyNext: walkHistory(prompt, back: false)
         case .submit: submit(prompt)
         case .insertNewline: prompt.insertNewline()
-        case .completeForward: complete(prompt, forward: true)
-        case .completeBackward: complete(prompt, forward: false)
+        case .completeForward: complete(forward: true)
+        case .completeBackward: complete(forward: false)
         case .cancel: cancel(prompt)
         case .selectAll: prompt.selectAll()
         case .paste: paste(into: prompt)
@@ -1559,15 +1559,16 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         _ = live?.terminalModel?.submitCommandPrompt()
     }
 
-    /// Tab: ask for candidates, then step through them. The first Tab COMPLETES — with one candidate
-    /// it is applied outright, which is the behaviour a shell has and the reason Tab is worth pressing.
-    private func complete(_ prompt: CommandPrompt, forward: Bool) {
-        guard prompt.candidates.isEmpty else {
-            if forward { prompt.selectNextCandidate() } else { prompt.selectPreviousCandidate() }
-            return
+    /// Tab: ask for candidates, then step through them.
+    ///
+    /// The rule is the model's — first Tab completes, later Tabs move the highlight, and the user's
+    /// own shell merges its answer in when it lands — because the Mac renderer presses the same key.
+    /// What is left here is telling the band to redraw once that asynchronous half arrives, since by
+    /// then ``editsPrompt(_:)``'s own `promptDidChange()` has long returned.
+    private func complete(forward: Bool) {
+        live?.terminalModel?.completeCommandPrompt(forward: forward) { [weak self] in
+            self?.promptDidChange()
         }
-        guard forward, prompt.complete() == 1 else { return }
-        prompt.acceptCompletion()
     }
 
     /// Escape: undo the most recent thing that is up, innermost first. Never clears the TEXT — a key

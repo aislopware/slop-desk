@@ -588,8 +588,8 @@ final class MacTerminalRendererView: NSView {
         switch selector {
         case #selector(NSResponder.insertNewline(_:)): submitPrompt(prompt)
         case #selector(NSResponder.insertLineBreak(_:)): prompt.insertNewline()
-        case #selector(NSResponder.insertTab(_:)): completePrompt(prompt, forward: true)
-        case #selector(NSResponder.insertBacktab(_:)): completePrompt(prompt, forward: false)
+        case #selector(NSResponder.insertTab(_:)): completePrompt(forward: true)
+        case #selector(NSResponder.insertBacktab(_:)): completePrompt(forward: false)
         case #selector(NSResponder.cancelOperation(_:)): cancelPrompt(prompt)
         case #selector(NSResponder.selectAll(_:)): prompt.selectAll()
         case #selector(NSResponder.yank(_:)): pastePrompt(prompt)
@@ -618,15 +618,12 @@ final class MacTerminalRendererView: NSView {
 
     /// Tab: ask for candidates, then step through them.
     ///
-    /// The first Tab COMPLETES — with one candidate it is applied outright, which is the behaviour a
-    /// shell has and the reason Tab is worth pressing at all. Later Tabs move the highlight.
-    private func completePrompt(_ prompt: CommandPrompt, forward: Bool) {
-        guard prompt.candidates.isEmpty else {
-            if forward { prompt.selectNextCandidate() } else { prompt.selectPreviousCandidate() }
-            return
-        }
-        guard forward, prompt.complete() == 1 else { return }
-        prompt.acceptCompletion()
+    /// The rule itself — first Tab completes, later Tabs move the highlight, and the shell's own
+    /// answer merges in when it lands — lives on the model, because the phone leaf presses the same
+    /// key. What is left here is the AppKit half: the selector arrives, and the band is told to
+    /// redraw when the asynchronous half of the answer lands after this has returned.
+    private func completePrompt(forward: Bool) {
+        model?.completeCommandPrompt(forward: forward) { [weak self] in self?.promptDidChange?() }
     }
 
     /// Escape: undo the most recent thing that is up, innermost first.

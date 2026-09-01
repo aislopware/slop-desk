@@ -2004,6 +2004,111 @@ public final class TerminalViewModel {
         return true
     }
 
+    // MARK: The user's own shell completion (verb 23)
+
+    /// The OUT-path sink that asks the HOST's captive zsh what it would complete at a caret —
+    /// ``MetadataClient/shellComplete(cursor:buffer:)``, `docs/68` §11. Wired on connect, cleared on
+    /// teardown; `nil` (disconnected, or a client with no metadata channel) simply means Tab ranks
+    /// the local sources alone, which is what it did before this existed.
+    ///
+    /// A sink rather than a held ``MetadataClient`` for ``HostPathActions``' reason: the façade is
+    /// replaced on every reconnect, so anything that stored one would keep asking a dead one.
+    @ObservationIgnored
+    public var shellCompletionSink: (@MainActor (_ cursor: Int, _ buffer: String) async -> MetadataClient
+        .ShellCompletionAnswer)?
+
+    /// FALSE once this connection has answered ``MetadataClient/ShellCompletionAnswer/noShell`` —
+    /// the host's shell is not zsh, or it is too old to know verb 23.
+    ///
+    /// Latched rather than re-asked, which is the whole reason the host spends a separate status on
+    /// it: a client that could not tell "not zsh" from "not warm yet" would either pay the round
+    /// trip on every Tab for ever, or give up on a shell that was three seconds from ready. Reset by
+    /// ``clearShellCompletion()`` when the wiring is torn down, so a reconnect to a different host
+    /// starts asking again.
+    @ObservationIgnored public private(set) var shellCompletionAvailable = true
+
+    /// Which shell request is the live one. A reply from an older generation is DROPPED.
+    ///
+    /// The round trip is 20–92 ms and the user types through it (`docs/68` §11), so two Tabs in
+    /// quick succession put two requests in flight and they may land out of order. Without this the
+    /// older answer would overwrite the newer one and the panel would show candidates for a line
+    /// that is no longer on screen.
+    @ObservationIgnored private var shellCompletionGeneration: UInt64 = 0
+
+    /// Tab: rank every local source at the caret, and ask the user's OWN shell in parallel.
+    ///
+    /// The two halves are deliberately not sequenced. The local sources (paths, history, variables,
+    /// the command table) answer in-process and are on screen before the key is released; the
+    /// shell's answer merges in when it lands, 20–92 ms later. Waiting for the shell to draw
+    /// anything would make every Tab feel like the network it rides.
+    ///
+    /// ⚠️ THE AUTO-ACCEPT IS SUPPRESSED WHILE A SHELL REQUEST IS OUT, and that is the one subtle
+    /// line here. "Exactly one candidate applies outright" is what makes Tab worth pressing — but
+    /// "exactly one" read off the local sources alone is a claim this client cannot make yet. On
+    /// `git checkout ma` the local path source finds one file called `main.rs` and zsh is about to
+    /// name 27 refs; accepting the file would write the user's command line for them and throw the
+    /// refs away. So the rule moves to whoever knows the whole list: the reply path applies it once
+    /// the merge is done, and only then.
+    ///
+    /// `didChange` is fired ONLY from the async reply — the synchronous half returns into a key
+    /// handler that redraws on its own.
+    @preconcurrency
+    public func completeCommandPrompt(forward: Bool, didChange: @escaping @MainActor () -> Void = {}) {
+        guard commandPrompt.candidates.isEmpty else {
+            // A list is already up: Tab walks it, and asking the shell again would rank an answer
+            // for a caret the user has since moved past with the selection.
+            if forward { commandPrompt.selectNextCandidate() } else { commandPrompt.selectPreviousCandidate() }
+            return
+        }
+        guard forward else { return }
+        let asked = askShellToComplete(didChange: didChange)
+        if commandPrompt.complete() == 1, !asked { commandPrompt.acceptCompletion() }
+    }
+
+    /// Sends one shell-completion request for the caret as it stands. Answers whether one went out.
+    ///
+    /// The buffer and caret are captured HERE, before the `await`, and compared again on the reply:
+    /// the answer is only auto-accepted into a document that has not moved under it. Merging is safe
+    /// either way — `ShellProvider` re-derives its range against the LIVE document and offers
+    /// nothing when the prefix no longer matches (`docs/68` §11 decision 2) — but ACCEPTING into a
+    /// line the user has kept typing is how a completion writes over what they meant.
+    private func askShellToComplete(didChange: @escaping @MainActor () -> Void) -> Bool {
+        guard shellCompletionAvailable, let sink = shellCompletionSink else { return false }
+        shellCompletionGeneration &+= 1
+        let generation = shellCompletionGeneration
+        let cursor = commandPrompt.cursor
+        let buffer = commandPrompt.text
+        Task { @MainActor [weak self] in
+            let answer = await sink(cursor, buffer)
+            guard let self, generation == shellCompletionGeneration else { return }
+            switch answer {
+            case .noShell:
+                shellCompletionAvailable = false
+            case .notReady:
+                // The captive shell is warming or missed its deadline. The local candidates are
+                // already up and the next Tab asks again; there is nothing to redraw.
+                break
+            case let .groups(payload):
+                commandPrompt.setShellCandidates(payload)
+                let count = commandPrompt.complete()
+                let untouched = commandPrompt.cursor == cursor && commandPrompt.text == buffer
+                if count == 1, untouched { commandPrompt.acceptCompletion() }
+                didChange()
+            }
+        }
+        return true
+    }
+
+    /// Drops the shell-completion wiring and re-arms the availability latch.
+    ///
+    /// The latch is per-CONNECTION, not per-pane-lifetime: the next host may well run zsh even
+    /// though this one did not, and a pane that stopped asking for good would be wrong about it for
+    /// as long as it lived.
+    public func clearShellCompletion() {
+        shellCompletionSink = nil
+        shellCompletionAvailable = true
+    }
+
     /// The OBSERVABLE twin of ``isAlternateScreen`` — the same truth, readable by an overlay that needs to
     /// be told when it changes. Same idiom as the ``isCopyMode``/``copyModeBadgeActive`` pair above,
     /// and here for the same reason: ``modeTracker`` is `@ObservationIgnored`, so reading

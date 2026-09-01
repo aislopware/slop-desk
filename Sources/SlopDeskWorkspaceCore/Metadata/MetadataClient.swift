@@ -301,26 +301,46 @@ public final class MetadataClient {
         return status == .ok
     }
 
-    /// What the user's OWN shell completion would offer at `cursor` (CHARACTERS) in `buffer`
-    /// (``MetadataVerb/shellComplete``), as the RAW response payload.
+    /// The answer to ``MetadataClient/shellComplete(cursor:buffer:)`` — the user's own zsh
+    /// completion, or the reason there is none.
     ///
-    /// Raw on purpose: the caller hands these bytes straight to
+    /// The payload rides RAW on purpose: the caller hands those bytes straight to
     /// `slopdesk_prompt_set_shell_candidates`, which decodes them in Rust beside every other
     /// candidate source. Decoding here would put a second reader in front of a payload
     /// `slopdesk_wire` already reads, and would then have to re-encode it to hand it over.
     ///
-    /// `nil` covers BOTH the transient miss (`.error` — the captive shell is still warming, or this
-    /// request outran its deadline) and the permanent one (`.notFound` — this host's shell is not
-    /// zsh). The caller keeps whatever local candidates it has either way, and only a caller that
-    /// wants to STOP asking has to tell them apart — which is why the host keeps them as two
-    /// statuses rather than folding both into one refusal.
-    public func shellComplete(cursor: Int, buffer: String) async -> Data? {
+    /// The three answers are kept apart because the caller's next move differs for each: ``groups``
+    /// merges, ``notReady`` asks again on the next Tab, and ``noShell`` stops asking for the rest of
+    /// the connection. Folding the last two into one `nil` would make a client either poll a host
+    /// that will never answer or abandon a shell that was three seconds from warm — `docs/68` §11
+    /// decision 4, which is why the HOST spends two statuses on it.
+    public enum ShellCompletionAnswer: Sendable, Equatable {
+        /// The shell answered — the RAW response payload, for ``CommandPrompt/setShellCandidates(_:)``.
+        /// Possibly empty: "the shell had nothing here" is an answer.
+        case groups(Data)
+        /// TRANSIENT (`.error`): the captive zsh is still warming, or this request outran the host's
+        /// 400 ms deadline. Ask again.
+        case notReady
+        /// PERMANENT for this connection (`.notFound` — the host's shell is not zsh — or
+        /// `.unsupportedVerb` from a host too old to have the bridge). Stop asking.
+        case noShell
+    }
+
+    /// What the user's OWN shell completion would offer at `cursor` (CHARACTERS) in `buffer`
+    /// (``MetadataVerb/shellComplete``).
+    public func shellComplete(cursor: Int, buffer: String) async -> ShellCompletionAnswer {
         let (status, payload) = await request(
             .shellComplete,
             payload: MetadataCodec.encodeShellCompleteRequest(cursor: cursor, buffer: buffer),
         )
-        guard status == .ok else { return nil }
-        return payload
+        switch status {
+        case .ok: return .groups(payload)
+        // A dropped reply times out in the registry as `.error`, which lands here as "ask again" —
+        // the right reading, since a lost datagram says nothing about whether the host has zsh.
+        case .error: return .notReady
+        case .notFound,
+             .unsupportedVerb: return .noShell
+        }
     }
 
     // MARK: Core round-trip

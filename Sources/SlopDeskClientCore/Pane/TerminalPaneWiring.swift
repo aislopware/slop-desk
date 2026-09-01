@@ -133,6 +133,7 @@ package final class TerminalPaneWiring {
         wireHint(live: live)
         wireNavigator(live: live)
         wirePathActions(live: live, store: store, overlay: overlay, chrome: chrome)
+        wireShellCompletion(live: live)
     }
 
     /// Clear all per-pane callbacks on teardown so a surviving model can't drive a dead leaf's state,
@@ -146,6 +147,7 @@ package final class TerminalPaneWiring {
         clearHint(live: live)
         clearNavigator(live: live)
         clearPathActions(live: live)
+        clearShellCompletionWiring(live: live)
     }
 
     /// Reconcile this pane's Secure Input to a LIVE "Auto Secure Input" settings change.
@@ -387,5 +389,30 @@ package final class TerminalPaneWiring {
     private func clearPathActions(live: LivePaneSession?) {
         guard let model = live?.terminalModel else { return }
         HostPathActions.clear(model: model)
+    }
+
+    // MARK: - The user's own shell completion (verb 23)
+
+    /// Point the pane's Tab key at the HOST's captive zsh — ``MetadataClient/shellComplete(cursor:buffer:)``,
+    /// `docs/68` §11. This is the leg that makes the differentiator fire: without it the editor ranks
+    /// only what the client can see (paths, history, variables, the seeded command table) and the
+    /// user's own completions — their plugin manager's, their company CLI's, whatever a package
+    /// dropped into `site-functions` — are never asked.
+    ///
+    /// Same provider shape as ``wirePathActions(live:store:overlay:chrome:)`` and for the same
+    /// reason: `live` is captured WEAKLY and the façade is read on each fire, because it is replaced
+    /// on every reconnect. While disconnected the sink answers ``MetadataClient/ShellCompletionAnswer/notReady``
+    /// rather than nothing, so the availability latch is not spent on being offline.
+    private func wireShellCompletion(live: LivePaneSession?) {
+        guard let model = live?.terminalModel else { return }
+        model.shellCompletionSink = { [weak live] cursor, buffer in
+            guard let client = live?.connection?.activeMetadataClient else { return .notReady }
+            return await client.shellComplete(cursor: cursor, buffer: buffer)
+        }
+    }
+
+    /// Drop the shell sink and re-arm the availability latch for the next host.
+    private func clearShellCompletionWiring(live: LivePaneSession?) {
+        live?.terminalModel?.clearShellCompletion()
     }
 }
