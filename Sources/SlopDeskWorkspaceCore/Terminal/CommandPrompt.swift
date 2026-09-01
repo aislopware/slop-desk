@@ -485,10 +485,12 @@ public final class CommandPrompt {
     public var isWalkingHistory: Bool { state.walking_history }
 
     /// Whether a reverse search is open.
+    ///
+    /// Its ROWS are ``candidates`` and ``selectedCandidate`` — a ⌃R row and a completion candidate
+    /// are the same record, so the panel is drawn by the same code and crosses through the same
+    /// doors. Nothing matched is `candidates.isEmpty`, which is what the `searchHasHit` flag this
+    /// replaced used to answer for a search that could only ever show one.
     public var isSearching: Bool { state.searching }
-
-    /// Whether the reverse search has a hit. Always `false` with no search open.
-    public var searchHasHit: Bool { state.search_has_hit }
 
     /// Whether there is an undo step to take.
     public var canUndo: Bool { state.can_undo }
@@ -565,16 +567,6 @@ public final class CommandPrompt {
     /// The reverse-search query. Empty when no search is open.
     public var searchQuery: String {
         ffiAnswerText { slopdesk_prompt_search_query(handle, $0, $1) }
-    }
-
-    /// The history entry the query currently matches, or `nil` when nothing does.
-    ///
-    /// The buffer is deliberately untouched while a search runs — cancelling must leave the draft
-    /// exactly as it was — so this is the ONLY way to see what ⌃R would accept. ``searchHasHit``
-    /// rather than emptiness decides, because a recorded empty command is a hit like any other.
-    public var searchHit: String? {
-        guard state.search_has_hit else { return nil }
-        return ffiAnswerText { slopdesk_prompt_search_hit(handle, $0, $1) }
     }
 
     /// The history, oldest first — what a session save writes out.
@@ -740,25 +732,25 @@ public final class CommandPrompt {
 
     // MARK: Reverse search
 
-    /// Opens a reverse search over the history.
+    /// Opens the ⌃R panel, which starts on the most recent commands rather than empty.
     public func beginSearch() {
         slopdesk_prompt_search_begin(handle)
         refresh()
     }
 
-    /// Appends to the query and re-runs it.
+    /// Appends to the query and re-ranks the panel.
     public func searchType(_ text: String) {
         lend(text) { slopdesk_prompt_search_type(handle, $0, $1) }
         refresh()
     }
 
-    /// Drops the query's last grapheme and re-runs it.
+    /// Drops the query's last grapheme and re-ranks the panel.
     public func searchBackspace() {
         slopdesk_prompt_search_backspace(handle)
         refresh()
     }
 
-    /// Steps to the next older hit. `false` when there is none.
+    /// Steps one row down the panel, wrapping. `false` when nothing matched.
     @discardableResult
     public func searchAgain() -> Bool {
         let moved = slopdesk_prompt_search_again(handle)
@@ -766,7 +758,16 @@ public final class CommandPrompt {
         return moved
     }
 
-    /// Takes the hit into the document and closes the search. `false` with no hit.
+    /// Steps one row back up it — ⌃S, and ↑ while the panel is open.
+    @discardableResult
+    public func searchBack() -> Bool {
+        let moved = slopdesk_prompt_search_back(handle)
+        refresh()
+        return moved
+    }
+
+    /// Puts the selected row on the command line and closes the search, WITHOUT running it —
+    /// `fish`'s pager rather than `atuin`'s Enter. `false` when nothing matched.
     @discardableResult
     public func acceptSearch() -> Bool {
         let taken = slopdesk_prompt_search_accept(handle)
@@ -774,7 +775,7 @@ public final class CommandPrompt {
         return taken
     }
 
-    /// Closes the search, leaving the document as it was.
+    /// Closes the search and its panel, leaving the document as it was.
     public func cancelSearch() {
         slopdesk_prompt_search_cancel(handle)
         refresh()

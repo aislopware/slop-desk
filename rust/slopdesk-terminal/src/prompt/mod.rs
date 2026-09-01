@@ -67,9 +67,7 @@ pub mod undo;
 
 use crate::prompt::buffer::{Motion, TextBuffer};
 use crate::prompt::complete::{CandidateProvider, HistoryProvider, Ranked};
-use crate::prompt::history::{
-    CommandHistory, HistoryWalk, Recalled, ReverseSearch, SearchHit, suggestion_word_len,
-};
+use crate::prompt::history::{CommandHistory, HistoryWalk, Recalled, suggestion_word_len};
 use crate::prompt::syntax::{Lexed, Unterminated, lex};
 use crate::prompt::undo::{EditKind, UndoStack};
 
@@ -87,28 +85,31 @@ pub enum Submission {
     Continued(Unterminated),
 }
 
-/// A live ⌃R session.
+/// A live ⌃R session — which is now nothing but the query.
 ///
 /// The searched line is NOT put into the buffer while the search runs. bash and zsh both show the
 /// hit on a separate `(reverse-i-search)` line, and keeping the buffer untouched means cancelling
 /// costs nothing and the undo stack never sees a step per keystroke of the query.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// ⚠️ **THE RESULTS ARE THE CANDIDATE LIST**, and that invariant is what this type does not hold:
+/// while a session is up, [`CommandEditor::candidates`] holds
+/// [`complete::search_history`]'s ranked entries and [`CommandEditor::selected_candidate`] is the
+/// row the user is on. That is not a shortcut — a ⌃R hit and a completion candidate are the same
+/// record down to the field (text, what it inserts, the whole range it replaces, the matched
+/// positions the underline draws), so a second list would be the same shape crossing the FFI
+/// through a second set of doors and drawn by a second copy of the panel code. What follows from
+/// it: the search methods below are the ONLY writers of that list while a session is up, and
+/// [`CommandEditor::complete`] refuses outright rather than racing them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SearchSession {
-    search: ReverseSearch,
-    hit: Option<SearchHit>,
+    query: String,
 }
 
 impl SearchSession {
     /// The query typed so far.
     #[must_use]
     pub fn query(&self) -> &str {
-        self.search.query()
-    }
-
-    /// The entry currently found, or `None` when nothing matches.
-    #[must_use]
-    pub const fn hit(&self) -> Option<&SearchHit> {
-        self.hit.as_ref()
+        &self.query
     }
 }
 
@@ -441,71 +442,99 @@ impl CommandEditor {
 
     // ------------------------------------------------------------------ reverse search
 
-    /// Opens a ⌃R session with an empty query, which shows the newest command.
+    /// Opens a ⌃R session with an empty query, which lists the most recent commands.
+    ///
+    /// The panel opens FULL rather than empty — an empty query matches everything (see
+    /// [`complete::search_history`]) — which is what `fzf`'s ⌃R and `atuin` both do and is the
+    /// whole difference from the `(reverse-i-search)` line this replaced: the first press
+    /// already shows the answer for the common case, "the thing I ran a minute ago".
     pub fn begin_reverse_search(&mut self) {
-        let mut search = ReverseSearch::new();
-        let hit = search.refine(&self.history, "");
-        self.search = Some(SearchSession { search, hit });
+        self.search = Some(SearchSession::default());
         self.walk.reset();
-        self.dismiss_completion();
+        self.research();
     }
 
-    /// Adds to the ⌃R query and re-searches from the newest entry. A no-op when no session is up.
+    /// Adds to the ⌃R query and re-ranks. A no-op when no session is up.
     pub fn reverse_search_type(&mut self, text: &str) {
         let Some(session) = self.search.as_mut() else {
             return;
         };
-        let mut query = session.search.query().to_owned();
-        query.push_str(text);
-        session.hit = session.search.refine(&self.history, &query);
+        session.query.push_str(text);
+        self.research();
     }
 
-    /// Removes the last grapheme of the ⌃R query and re-searches.
+    /// Removes the last grapheme of the ⌃R query and re-ranks.
     pub fn reverse_search_backspace(&mut self) {
         let Some(session) = self.search.as_mut() else {
             return;
         };
-        let query = session.search.query();
-        let shortened = query
-            .get(..buffer::prev_grapheme(query, query.len()))
-            .unwrap_or("")
-            .to_owned();
-        session.hit = session.search.refine(&self.history, &shortened);
+        let end = buffer::prev_grapheme(&session.query, session.query.len());
+        session.query.truncate(end);
+        self.research();
     }
 
-    /// ⌃R again — one match older. `false` at the oldest, which holds rather than wrapping.
-    pub fn reverse_search_again(&mut self) -> bool {
-        let Some(session) = self.search.as_mut() else {
-            return false;
-        };
-        match session.search.again(&self.history) {
-            Some(found) => {
-                session.hit = Some(found);
-                true
-            },
-            None => false,
-        }
-    }
-
-    /// Accepts the current ⌃R hit into the buffer and closes the session.
+    /// ⌃R again — one row further down the panel, wrapping. `false` when no session is up or the
+    /// query matched nothing.
     ///
-    /// `false` when there is no session or no hit, in which case the buffer is untouched.
-    pub fn reverse_search_accept(&mut self) -> bool {
-        let Some(session) = self.search.take() else {
+    /// ⚠️ **IT WRAPS NOW, and the sentence that used to forbid it argued for this.**
+    /// [`CommandEditor::select_next_candidate`] reads "wrapping here and NOT in ⌃R is deliberate: a
+    /// completion list is on screen with a visible end, so coming back round is obvious, where a
+    /// reverse search's position is invisible." The ⌃R position is on screen now, so the rule that
+    /// sentence states puts it on the same side as the completion list rather than the other one.
+    pub const fn reverse_search_again(&mut self) -> bool {
+        if self.search.is_none() || self.completion.is_empty() {
             return false;
-        };
-        let Some(hit) = session.hit else {
-            return false;
-        };
-        let edit = self.buffer.replace_range(0..self.buffer.len(), &hit.text);
-        self.undo.push(edit, EditKind::Paste);
-        self.refresh();
+        }
+        self.select_next_candidate();
         true
     }
 
-    /// Closes a ⌃R session without touching the buffer.
+    /// ⌃R backwards — one row up the panel, wrapping. The `fish` pager's ⌃S, and what ↑ does while
+    /// the panel is up.
+    pub const fn reverse_search_back(&mut self) -> bool {
+        if self.search.is_none() || self.completion.is_empty() {
+            return false;
+        }
+        self.select_previous_candidate();
+        true
+    }
+
+    /// Accepts the selected row into the buffer and closes the session. `false` with no session or
+    /// no rows, in which case the buffer is untouched.
+    ///
+    /// ⚠️ **IT DOES NOT RUN THE COMMAND**, and that is a decision rather than an omission. `fish`'s
+    /// pager puts the entry on the command line for a second Enter; `atuin` runs it outright and
+    /// makes people configure that back (its own docs offer `enter = return-selection` for exactly
+    /// this). This crate's bridge header already states the tie-break — "a missing candidate costs
+    /// a completion, and a wrong one writes the user's command line for them" — and a wrong one
+    /// RUN is strictly worse than a wrong one written. So `Run` stays the submit key's, pressed
+    /// against a line the user can see.
+    pub fn reverse_search_accept(&mut self) -> bool {
+        if self.search.is_none() {
+            return false;
+        }
+        if !self.accept_completion() {
+            return false;
+        }
+        self.search = None;
+        true
+    }
+
+    /// Closes a ⌃R session without touching the buffer, taking its panel with it.
     pub fn reverse_search_cancel(&mut self) {
         self.search = None;
+        self.dismiss_completion();
+    }
+
+    /// Re-ranks the open session's query into the candidate list. The one writer of that list while
+    /// a search is up, which is the invariant [`SearchSession`] documents.
+    fn research(&mut self) {
+        let Some(session) = self.search.as_ref() else {
+            return;
+        };
+        self.completion =
+            complete::search_history(&self.history, &session.query, complete::LIMIT, self.buffer.len());
+        self.selected = 0;
     }
 
     // ------------------------------------------------------------------ completion
@@ -516,7 +545,17 @@ impl CommandEditor {
     /// The history provider is supplied here rather than by the caller because the history is the
     /// editor's; a caller assembling it would have to borrow the editor immutably while calling a
     /// `&mut` method on it.
+    ///
+    /// ⚠️ **Refuses outright while a ⌃R session is up**, answering the panel's own row count. The
+    /// list belongs to the search then (see [`SearchSession`]), and a caller that recompletes on a
+    /// redraw — which both platforms do — would otherwise replace the search's rows with candidates
+    /// for a caret nobody moved, halfway through a query. The guard is here rather than at the two
+    /// call sites for the reason every other rule in this module is: spelled twice in Swift, it
+    /// would eventually be spelled differently.
     pub fn complete(&mut self, providers: &[&dyn CandidateProvider], limit: usize) -> usize {
+        if self.search.is_some() {
+            return self.completion.len();
+        }
         let history = HistoryProvider::new(&self.history);
         let mut sources: Vec<&dyn CandidateProvider> = Vec::with_capacity(providers.len() + 1);
         sources.push(&history);
@@ -529,8 +568,10 @@ impl CommandEditor {
 
     /// Highlights the next candidate, wrapping. A no-op with no candidates.
     ///
-    /// Wrapping here and NOT in ⌃R is deliberate: a completion list is on screen with a visible
-    /// end, so coming back round is obvious, where a reverse search's position is invisible.
+    /// Wrapping because the list is ON SCREEN with a visible end, so coming back round is obvious.
+    /// ⌃R used to be the counter-example — its position was invisible, so it stopped at the oldest
+    /// match rather than wrapping — and it is not one any more: the panel it draws now is this
+    /// list, and [`CommandEditor::reverse_search_again`] is this method.
     pub const fn select_next_candidate(&mut self) {
         if self.completion.is_empty() {
             return;
@@ -920,8 +961,13 @@ mod tests {
         assert!(!editor.history_next());
     }
 
+    /// The row the panel is on, for a test that does not care how it got there.
+    fn selected_row(editor: &CommandEditor) -> &str {
+        &editor.candidates()[editor.selected_candidate()].candidate.text
+    }
+
     #[test]
-    fn reverse_search_walks_without_touching_the_buffer_until_it_is_accepted() {
+    fn reverse_search_ranks_a_panel_without_touching_the_buffer_until_it_is_accepted() {
         let mut editor = CommandEditor::new();
         for command in ["cargo build", "ls", "cargo test"] {
             editor.insert_text(command);
@@ -929,20 +975,61 @@ mod tests {
         }
         editor.insert_text("draft");
 
+        // An empty query opens FULL — the recent-commands panel, newest first.
         editor.begin_reverse_search();
-        assert_eq!(editor.search().unwrap().hit().unwrap().text, "cargo test");
+        assert_eq!(editor.candidates().len(), 3);
+        assert_eq!(selected_row(&editor), "cargo test");
+
+        // The query narrows the panel rather than stepping a hidden walk.
         editor.reverse_search_type("cargo");
-        assert_eq!(editor.search().unwrap().hit().unwrap().text, "cargo test");
+        assert_eq!(editor.candidates().len(), 2, "`ls` is out");
+        assert_eq!(selected_row(&editor), "cargo test");
         assert!(editor.reverse_search_again());
-        assert_eq!(editor.search().unwrap().hit().unwrap().text, "cargo build");
-        assert!(!editor.reverse_search_again(), "the oldest match holds");
+        assert_eq!(selected_row(&editor), "cargo build");
+        assert!(
+            editor.reverse_search_again(),
+            "and it wraps, because the end is visible"
+        );
+        assert_eq!(selected_row(&editor), "cargo test");
+        assert!(editor.reverse_search_back());
+        assert_eq!(selected_row(&editor), "cargo build", "⌃S goes back up");
         assert_eq!(editor.text(), "draft", "the line is untouched while searching");
 
         assert!(editor.reverse_search_accept());
         assert_eq!(editor.text(), "cargo build");
         assert!(editor.search().is_none());
+        assert!(editor.candidates().is_empty(), "the panel goes with the session");
         assert!(editor.undo(), "and it is one undo step");
         assert_eq!(editor.text(), "draft");
+    }
+
+    /// Out-of-order matching is the whole reason ⌃R ranks rather than walks — `fzf`'s ⌃R and
+    /// `fish` 4.0's `git*HEAD` by another spelling.
+    #[test]
+    fn the_search_matches_out_of_order_and_ranks_by_score_then_recency() {
+        let mut editor = CommandEditor::new();
+        for command in ["git reset --hard HEAD", "ls", "git log HEAD"] {
+            editor.insert_text(command);
+            editor.submit();
+        }
+        editor.begin_reverse_search();
+        editor.reverse_search_type("gitHEAD");
+        assert_eq!(editor.candidates().len(), 2, "`ls` matches neither run");
+        assert_eq!(selected_row(&editor), "git log HEAD", "the tighter match wins");
+    }
+
+    /// A redraw that recompletes must not replace the search's rows with caret candidates.
+    #[test]
+    fn completing_while_a_search_is_open_leaves_the_panel_alone() {
+        let mut editor = CommandEditor::new();
+        editor.insert_text("cargo test --lib");
+        editor.submit();
+        editor.insert_text("car");
+        editor.begin_reverse_search();
+        editor.reverse_search_type("lib");
+        let rows = editor.candidates().to_vec();
+        assert_eq!(editor.complete(&[], 10), rows.len());
+        assert_eq!(editor.candidates(), rows, "the search still owns the list");
     }
 
     #[test]
@@ -956,10 +1043,12 @@ mod tests {
         editor.reverse_search_cancel();
         assert_eq!(editor.text(), "draft");
         assert!(editor.search().is_none());
+        assert!(editor.candidates().is_empty(), "and the panel with it");
         // And the doors are all no-ops with no session up.
         editor.reverse_search_type("x");
         editor.reverse_search_backspace();
         assert!(!editor.reverse_search_again());
+        assert!(!editor.reverse_search_back());
         assert!(!editor.reverse_search_accept());
     }
 
@@ -972,11 +1061,12 @@ mod tests {
         }
         editor.begin_reverse_search();
         editor.reverse_search_type("make d");
-        assert_eq!(editor.search().unwrap().hit().unwrap().text, "make docs");
+        assert_eq!(editor.candidates().len(), 1);
+        assert_eq!(selected_row(&editor), "make docs");
         editor.reverse_search_backspace();
         editor.reverse_search_backspace();
         assert_eq!(editor.search().unwrap().query(), "make");
-        assert_eq!(editor.search().unwrap().hit().unwrap().text, "make docs");
+        assert_eq!(editor.candidates().len(), 2, "both are back");
     }
 
     #[test]

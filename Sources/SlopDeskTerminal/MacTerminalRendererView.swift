@@ -554,6 +554,14 @@ final class MacTerminalRendererView: NSView {
             driver.scroll(scroll)
             return
         }
+        // ↑/↓ move the ⌃R PANEL while one is up, before they can mean history or a line. The panel
+        // is a list on screen and the arrows are what moves a list; the history walk they otherwise
+        // do is the same store read a different way, so leaving them on it would offer two ways
+        // through one set of commands at once.
+        if prompt.isSearching, Self.promptWalksHistory(selector) {
+            _ = selector == #selector(NSResponder.moveUp(_:)) ? prompt.searchBack() : prompt.searchAgain()
+            return
+        }
         if Self.promptWalksHistory(selector), walkPromptHistory(prompt, selector: selector) { return }
         if let motion = Self.promptMotion(selector) {
             let extends = Self.promptExtendsSelection(selector)
@@ -594,12 +602,15 @@ final class MacTerminalRendererView: NSView {
     /// A live candidate list claims the key first — that is what every completion UI does, and the
     /// alternative is running a command the user was still choosing the last word of.
     private func submitPrompt(_ prompt: CommandPrompt) {
-        if !prompt.candidates.isEmpty {
-            prompt.acceptCompletion()
-            return
-        }
+        // ⚠️ THE SEARCH FIRST, and it has to be: a ⌃R panel's rows ARE `candidates`, so the
+        // completion branch would fire on them, insert the row and leave the session open behind a
+        // panel that had just answered. `acceptSearch` is the same insertion plus the close.
         if prompt.isSearching {
             _ = prompt.acceptSearch()
+            return
+        }
+        if !prompt.candidates.isEmpty {
+            prompt.acceptCompletion()
             return
         }
         model?.submitCommandPrompt()

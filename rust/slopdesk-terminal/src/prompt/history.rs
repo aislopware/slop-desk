@@ -1,10 +1,12 @@
-//! Command history: the store, the up/down walk, and reverse-incremental search.
+//! Command history: the store, the up/down walk, and the three readings that search it.
 //!
-//! Three types rather than one, because they have three lifetimes. [`CommandHistory`] outlives the
+//! Two types rather than one, because they have two lifetimes. [`CommandHistory`] outlives the
 //! prompt and is what a session restores. [`HistoryWalk`] lives for as long as the user holds ↑ and
-//! is thrown away the moment they type. [`ReverseSearch`] lives for as long as ⌃R is up. Folding
-//! them together is how a draft gets lost: the draft belongs to the walk, and clearing the walk has
-//! to be the same act as dropping it.
+//! is thrown away the moment they type. Folding them together is how a draft gets lost: the draft
+//! belongs to the walk, and clearing the walk has to be the same act as dropping it.
+//!
+//! ⌃R used to be a third — a `ReverseSearch` holding a query and a walk position — and it is gone.
+//! See the ⌃R section below for what replaced it and why.
 //!
 //! ## Dedup is most-recent-wins, not first-wins
 //!
@@ -40,15 +42,34 @@
 //! would have to be reset from every editing path, which is exactly the bug [`HistoryWalk`] exists
 //! to contain, and there is no reason to pay it twice.
 //!
-//! ## ⌃R is a SUBSTRING match, and deliberately not the fuzzy matcher
+//! ## ⌃R is a RANKED PANEL, and the substring walk it replaced is gone
 //!
-//! Completion ranks with fzf (see [`crate::prompt::complete`]); reverse search does not. ⌃R is
-//! thirty years of muscle memory for "step back through the commands containing this", where each
-//! press moves exactly one match older and the highlight sits on the literal run. A fuzzy re-rank
-//! would reorder the walk under the user's fingers between two presses of the same key. Smart case
-//! is the one modern concession: a lowercase query ignores case, an uppercase one does not.
-
-use core::ops::Range;
+//! ⚠️ **THIS SECTION USED TO SAY THE OPPOSITE**, and the reversal is worth reading because the old
+//! reason was sound about a thing that is no longer true. It read: "Completion ranks with fzf;
+//! reverse search does not. ⌃R is thirty years of muscle memory for stepping back through the
+//! commands containing this, where each press moves exactly one match older — a fuzzy re-rank would
+//! reorder the walk under the user's fingers between two presses of the same key." That objection
+//! is about re-ranking BETWEEN PRESSES, and it is fatal to fuzzy ranking behind a bash-style
+//! `(reverse-i-search)` line, where one hit is visible and its neighbours are not: the list moves
+//! and the user cannot see that it moved.
+//!
+//! A PANEL dissolves it. The ranking changes when the QUERY changes and at no other time; ⌃R and
+//! the arrows move a selection down a list that is on screen, so nothing reorders under anyone's
+//! fingers. And with the list visible, ranking is the whole value — `fzf`'s ⌃R, `atuin` and
+//! `fish`'s own pager (3.6.0, whose 4.0 `git*HEAD` glob is out-of-order matching by another
+//! spelling) all present ranked rows rather than one hit at a time, because the second-best match
+//! is the one you wanted about as often as the best.
+//!
+//! So ⌃R now ranks with `slopdesk_fuzzy` through [`crate::prompt::complete::search_history`] — the
+//! SAME scorer completion uses, which is what keeps this one implementation and not two searches
+//! that disagree about case. Three consequences fell out of that and each deleted code:
+//!  * `SearchHit` and its single matched `Range` are gone — a fuzzy match is a SET of scalar
+//!    positions, which is what the candidate records already carry for the completion underline;
+//!  * `ReverseSearch`, the walk position, is gone — the selected index in the panel is the
+//!    position;
+//!  * `find_smart_case` and its case-fold length arithmetic are gone — `slopdesk_fuzzy` folds 1:1
+//!    by scalar precisely so a matched position stays valid against the original, which is the same
+//!    problem solved once instead of twice.
 
 /// How many commands the store keeps.
 ///
@@ -320,134 +341,6 @@ impl HistoryWalk {
     }
 }
 
-/// A ⌃R hit: which entry, and where in it the query matched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchHit {
-    /// The entry's index in the store.
-    pub index: usize,
-    /// The entry's text.
-    pub text: String,
-    /// The matched byte run inside `text`, for the highlight.
-    pub matched: Range<usize>,
-}
-
-/// An in-progress reverse-incremental search.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ReverseSearch {
-    query: String,
-    /// Where the walk has got to. `None` before the first hit.
-    index: Option<usize>,
-}
-
-impl ReverseSearch {
-    /// A search with an empty query, which matches the newest entry.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            query: String::new(),
-            index: None,
-        }
-    }
-
-    /// The query so far.
-    #[must_use]
-    pub fn query(&self) -> &str {
-        &self.query
-    }
-
-    /// Whether the query is empty, in which case the search shows the newest command rather than
-    /// nothing.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.query.is_empty()
-    }
-
-    /// Sets the query and re-searches from the NEWEST entry.
-    ///
-    /// From the newest rather than from where the walk was, because the query changed: an
-    /// incremental search that kept its position would skip matches the new query just made
-    /// eligible, and the user would see the list jump backwards as they typed.
-    pub fn refine(&mut self, history: &CommandHistory, query: &str) -> Option<SearchHit> {
-        self.query.clear();
-        self.query.push_str(query);
-        self.index = None;
-        self.step(history, history.len())
-    }
-
-    /// ⌃R again — one match older than the current one.
-    ///
-    /// `None` at the oldest match, which holds the current hit rather than wrapping. Wrapping is
-    /// the one behaviour that makes a long search feel broken: the same command comes back and it
-    /// is not obvious that it is the same one.
-    pub fn again(&mut self, history: &CommandHistory) -> Option<SearchHit> {
-        let from = self.index.unwrap_or(history.len());
-        self.step(history, from)
-    }
-
-    /// The newest match strictly older than `before`.
-    fn step(&mut self, history: &CommandHistory, before: usize) -> Option<SearchHit> {
-        let found = (0..before).rev().find_map(|index| {
-            let text = history.get(index)?;
-            let matched = find_smart_case(text, &self.query)?;
-            Some(SearchHit {
-                index,
-                text: text.to_owned(),
-                matched,
-            })
-        })?;
-        self.index = Some(found.index);
-        Some(found)
-    }
-}
-
-/// Where `needle` sits in `haystack`, case-insensitively unless the needle carries an uppercase
-/// scalar — fzf's smart-case rule, so the one thing the two searches DO share is the case rule.
-///
-/// An empty needle matches at the start, which is what makes a fresh ⌃R show the newest command.
-#[must_use]
-pub fn find_smart_case(haystack: &str, needle: &str) -> Option<Range<usize>> {
-    if needle.is_empty() {
-        return Some(0..0);
-    }
-    if needle.chars().any(char::is_uppercase) {
-        return haystack
-            .find(needle)
-            .map(|at| at..at.saturating_add(needle.len()));
-    }
-    // The search runs over the ORIGINAL bytes rather than over a lowercased copy, because folding
-    // can change a string's length — `İ` folds to two scalars — and an offset found in the copy has
-    // no exact preimage in the original. Highlighting the wrong run is the visible failure.
-    haystack.char_indices().find_map(|(start, _)| {
-        let tail = haystack.get(start..).unwrap_or("");
-        folded_match_len(tail, needle).map(|len| start..start.saturating_add(len))
-    })
-}
-
-/// How many bytes of `tail` a case-folded `needle` covers, or `None` if it does not start there.
-///
-/// A character whose fold is only PARTLY consumed by the needle is included whole, the same rule
-/// [`crate::prompt::buffer::snap_up`] applies to a clipped cluster: a highlight over half of `İ` is
-/// not a thing a renderer can draw.
-fn folded_match_len(tail: &str, needle: &str) -> Option<usize> {
-    let mut wanted = needle.chars().flat_map(char::to_lowercase);
-    let mut next_wanted = wanted.next();
-    let mut end = 0_usize;
-    for (offset, ch) in tail.char_indices() {
-        if next_wanted.is_none() {
-            break;
-        }
-        for folded in ch.to_lowercase() {
-            match next_wanted {
-                None => break,
-                Some(want) if want == folded => next_wanted = wanted.next(),
-                Some(_) => return None,
-            }
-        }
-        end = offset.saturating_add(ch.len_utf8());
-    }
-    next_wanted.is_none().then_some(end)
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -455,7 +348,7 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::{CommandHistory, HistoryWalk, Recalled, ReverseSearch, find_smart_case, suggestion_word_len};
+    use super::{CommandHistory, HistoryWalk, Recalled, suggestion_word_len};
 
     fn seeded(commands: &[&str]) -> CommandHistory {
         let mut history = CommandHistory::new();
@@ -612,81 +505,8 @@ mod tests {
     }
 
     #[test]
-    fn reverse_search_steps_one_match_older_per_press() {
-        let history = seeded(&["cargo build", "ls", "cargo test", "cargo test --lib"]);
-        let mut search = ReverseSearch::new();
-
-        let hit = search.refine(&history, "cargo").unwrap();
-        assert_eq!(hit.text, "cargo test --lib");
-        assert_eq!(hit.matched, 0..5);
-        assert_eq!(search.again(&history).unwrap().text, "cargo test");
-        assert_eq!(search.again(&history).unwrap().text, "cargo build");
-        assert!(
-            search.again(&history).is_none(),
-            "the oldest match holds rather than wrapping"
-        );
-    }
-
-    #[test]
-    fn refining_the_query_restarts_from_the_newest() {
-        let history = seeded(&["make all", "cargo test", "make docs"]);
-        let mut search = ReverseSearch::new();
-        search.refine(&history, "make").unwrap();
-        search.again(&history).unwrap();
-        // Typing another letter re-searches from the top rather than continuing the walk.
-        let hit = search.refine(&history, "make d").unwrap();
-        assert_eq!(hit.text, "make docs");
-    }
-
-    #[test]
-    fn reverse_search_matches_a_substring_anywhere_not_a_prefix() {
-        let history = seeded(&["git commit --amend"]);
-        let mut search = ReverseSearch::new();
-        let hit = search.refine(&history, "amend").unwrap();
-        assert_eq!(&hit.text[hit.matched.clone()], "amend");
-    }
-
-    #[test]
-    fn an_empty_query_shows_the_newest_command() {
-        let history = seeded(&["a", "b"]);
-        let mut search = ReverseSearch::new();
-        assert!(search.is_empty());
-        assert_eq!(search.refine(&history, "").unwrap().text, "b");
-    }
-
-    #[test]
-    fn reverse_search_is_smart_case() {
-        let history = seeded(&["Cargo test", "cargo build"]);
-        let mut search = ReverseSearch::new();
-        assert_eq!(search.refine(&history, "cargo").unwrap().text, "cargo build");
-        assert_eq!(
-            search.again(&history).unwrap().text,
-            "Cargo test",
-            "lowercase reaches both"
-        );
-        assert_eq!(
-            search.refine(&history, "Cargo").unwrap().text,
-            "Cargo test",
-            "uppercase narrows"
-        );
-        assert!(search.again(&history).is_none());
-    }
-
-    #[test]
-    fn a_case_fold_that_changes_length_still_reports_a_range_in_the_original() {
-        // `İ` (U+0130) lowercases to two scalars, so a naive offset would be off by one byte.
-        let found = find_smart_case("aİb", "i\u{307}").unwrap();
-        assert_eq!(&"aİb"[found], "İ");
-        assert!(find_smart_case("abc", "").unwrap().is_empty());
-        assert!(find_smart_case("abc", "zz").is_none());
-    }
-
-    #[test]
-    fn searching_an_empty_history_answers_nothing() {
+    fn walking_an_empty_history_answers_nothing() {
         let history = CommandHistory::new();
-        let mut search = ReverseSearch::new();
-        assert!(search.refine(&history, "x").is_none());
-        assert!(search.again(&history).is_none());
         let mut walk = HistoryWalk::new();
         assert!(walk.previous(&history, "", 0).is_none());
     }

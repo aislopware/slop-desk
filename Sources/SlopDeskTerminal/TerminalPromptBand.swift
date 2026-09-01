@@ -111,9 +111,14 @@ enum TerminalPromptBand {
     static func documentRows(_ prompt: CommandPrompt) -> Int { wrap(prompt.text).count }
 
     /// How many rows the accessory under it occupies.
+    ///
+    /// A ⌃R session is the query row PLUS its panel — the search's rows are the candidate list (see
+    /// ``CommandPrompt/isSearching``), so the two branches count the same array and the search one
+    /// adds the line it is queried on.
     static func accessoryRows(_ prompt: CommandPrompt) -> Int {
-        if prompt.isSearching { return 1 }
-        if !prompt.candidates.isEmpty { return min(prompt.candidates.count, candidateLimit) }
+        let rows = min(prompt.candidates.count, candidateLimit)
+        if prompt.isSearching { return 1 + rows }
+        if rows > 0 { return rows }
         return openLabel(prompt.unterminated) == nil ? 0 : 1
     }
 
@@ -310,50 +315,87 @@ enum TerminalPromptBand {
         into context: CGContext,
     ) {
         if prompt.isSearching {
-            // ⚠️ THE HIT, not just the query. Pixel verification caught this: the row printed
-            // `(reverse-i-search)`clip'` and stopped, so a search UI showed a query and never a
-            // result. The buffer stays untouched while ⌃R runs — that is the point, cancelling must
-            // leave the draft alone — which makes this row the only place the match can appear, and
-            // it is the shape bash and zsh both print.
+            // The query row, and the PANEL under it. This used to be the query row alone with the
+            // one hit spliced into it, because the search only ever had one — the rows below are
+            // that same answer with its neighbours restored, and they are the candidate list.
+            let matches = prompt.candidates.count
             drawRow(
-                searchRow(query: prompt.searchQuery, hit: prompt.searchHit),
-                ink: prompt.searchHasHit ? Slate.Native.Terminal.ink2 : Slate.Native.Terminal.err,
+                searchRow(query: prompt.searchQuery, matches: matches, shown: candidateLimit),
+                ink: matches > 0 ? Slate.Native.Terminal.ink2 : Slate.Native.Terminal.err,
                 metrics: metrics,
                 at: top,
                 into: context,
             )
+            drawCandidates(prompt, metrics: metrics, at: top + metrics.lineHeight, into: context)
             return
         }
-        let candidates = prompt.candidates.prefix(candidateLimit)
-        guard candidates.isEmpty else {
-            for (index, candidate) in candidates.enumerated() {
-                let selected = index == prompt.selectedCandidate
-                drawRow(
-                    candidate.detail.map { "\(candidate.text)    \($0)" } ?? candidate.text,
-                    ink: selected ? Slate.Native.Terminal.accent : Slate.Native.Terminal.ink2,
-                    metrics: metrics,
-                    at: top + CGFloat(index) * metrics.lineHeight,
-                    into: context,
-                )
-            }
+        guard prompt.candidates.isEmpty else {
+            drawCandidates(prompt, metrics: metrics, at: top, into: context)
             return
         }
         guard let open = openLabel(prompt.unterminated) else { return }
         drawRow(open, ink: Slate.Native.Terminal.ink2, metrics: metrics, at: top, into: context)
     }
 
-    /// One plain line of accessory text.
+    /// The candidate panel, which the completion list and the ⌃R search are two openings of.
+    ///
+    /// One drawing for both, because they are one list: the ⌃R rows ARE `prompt.candidates` while a
+    /// session is up (`prompt/mod.rs`'s `SearchSession` says why), which is what keeps the fuzzy
+    /// underline, the selection ink and the detail column from being written twice and drifting.
+    private static func drawCandidates(
+        _ prompt: CommandPrompt,
+        metrics: Metrics,
+        at top: CGFloat,
+        into context: CGContext,
+    ) {
+        for (index, candidate) in prompt.candidates.prefix(candidateLimit).enumerated() {
+            let selected = index == prompt.selectedCandidate
+            drawRow(
+                candidate.detail.map { "\(candidate.text)    \($0)" } ?? candidate.text,
+                ink: selected ? Slate.Native.Terminal.accent : Slate.Native.Terminal.ink2,
+                metrics: metrics,
+                at: top + CGFloat(index) * metrics.lineHeight,
+                into: context,
+                matched: candidate.matched,
+            )
+        }
+    }
+
+    /// One line of accessory text, with the scalars the query matched underlined.
+    ///
+    /// ⚠️ The underline is the answer to "why is this row here", and the ranker has always sent it —
+    /// `PromptCandidate.matched` crossed the FFI from the day the candidate records did and nothing
+    /// drew it. On a PREFIX list that was survivable, because the match is the head of every row;
+    /// on the ⌃R panel it is not, since fzf matches out of order and a row can be offered for two
+    /// letters at either end of it.
+    ///
+    /// The indices are SCALARS of `candidate.text` and the drawn string may carry a detail column
+    /// after it, so a mark past the text's own length is dropped rather than clamped: an underline
+    /// under the wrong column is worse than a missing one.
     private static func drawRow(
         _ text: String,
         ink: SlateNativeColor,
         metrics: Metrics,
         at top: CGFloat,
         into context: CGContext,
+        matched: [Int] = [],
     ) {
-        let line = CTLineCreateWithAttributedString(
-            attributed(text, metrics: metrics, ink: ink),
+        let string = NSMutableAttributedString(attributedString: attributed(text, metrics: metrics, ink: ink))
+        let scalars = Array(text.unicodeScalars)
+        for at in matched where at < scalars.count {
+            let start = String(String.UnicodeScalarView(scalars[..<at])).utf16.count
+            let length = String(scalars[at]).utf16.count
+            string.addAttribute(
+                .init(kCTUnderlineStyleAttributeName as String),
+                value: CTUnderlineStyle.single.rawValue,
+                range: NSRange(location: start, length: length),
+            )
+        }
+        draw(
+            CTLineCreateWithAttributedString(string),
+            at: CGPoint(x: inset.width, y: top + metrics.ascent),
+            into: context,
         )
-        draw(line, at: CGPoint(x: inset.width, y: top + metrics.ascent), into: context)
     }
 
     /// Draws a `CTLine` with the flip already undone, so the glyphs are not upside down.
@@ -572,16 +614,22 @@ enum TerminalPromptBand {
         CTLineGetOffsetForStringIndex(line, CFIndex(markWidth + utf16Offset(lineText, utf8: byte)), nil)
     }
 
-    /// The `(reverse-i-search)` row's whole text.
+    /// The `(reverse-i-search)` row's whole text — the line the query is typed on, above the panel.
     ///
-    /// ⚠️ THE HIT IS PART OF IT, and it was not until pixel verification looked at the band: the row
-    /// printed the query alone, which is a search that never shows a result. The buffer is left
-    /// untouched while ⌃R runs — cancelling has to give the draft back exactly — so this row is the
-    /// only place the match can appear, and `` `query': hit`` is the shape bash and zsh both print.
+    /// ⚠️ **IT USED TO CARRY THE HIT**, spliced in as `` `query': hit``, because ⌃R found exactly one
+    /// match and this row was the only place it could appear — the buffer is left untouched while a
+    /// search runs, and pixel verification once caught this row printing the query and nothing else.
+    /// The panel below shows every match now, so a hit here would print the selected row twice.
     ///
-    /// A pure function so the finding is pinned by a test rather than by another render.
-    static func searchRow(query: String, hit: String?) -> String {
-        "(reverse-i-search)`\(query)'" + (hit.map { ": \($0)" } ?? "  (no match)")
+    /// What it says instead is the one thing the panel CANNOT: how many matches did not fit. A
+    /// truncated list looks identical to a complete one, and `fzf`'s own counter exists for that.
+    /// Nothing is appended when they all fit, because a count of what you can see is noise.
+    ///
+    /// A pure function so both findings stay pinned by a test rather than by another render.
+    static func searchRow(query: String, matches: Int, shown: Int) -> String {
+        let head = "(reverse-i-search)`\(query)'"
+        if matches == 0 { return head + "  (no match)" }
+        return matches > shown ? head + "  \(shown) of \(matches)" : head
     }
 
     /// What is holding the document open, phrased as the thing to close.

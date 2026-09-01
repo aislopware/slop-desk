@@ -1,7 +1,7 @@
 //! The editor-like command prompt: one handle over [`slopdesk_terminal::prompt::CommandEditor`].
 //!
 //! `docs/68` §5.4 asks for a prompt that behaves like an editor rather than like a line —
-//! multi-line documents, selections, undo, syntax colour, history recall, reverse search and
+//! multi-line documents, selections, undo, syntax colour, history recall, the ⌃R panel and
 //! completion. All of that is decided in Rust and has been since the module landed; this file is
 //! the door, and it is the FIRST caller. Nothing here holds a rule of its own.
 //!
@@ -193,7 +193,7 @@ pub const SLOPDESK_PROMPT_ACTION_CUT: u8 = 14;
 pub const SLOPDESK_PROMPT_ACTION_UNDO: u8 = 15;
 /// Put one back.
 pub const SLOPDESK_PROMPT_ACTION_REDO: u8 = 16;
-/// Open a reverse search, or step it to the next older hit.
+/// Open a reverse search, or step its panel one row down.
 pub const SLOPDESK_PROMPT_ACTION_SEARCH: u8 = 17;
 /// The press is the SHELL's: send its control byte, leave the editor's text alone.
 pub const SLOPDESK_PROMPT_ACTION_FORWARD: u8 = 18;
@@ -425,9 +425,12 @@ pub struct SlopDeskPromptState {
     /// Whether ↑/↓ are walking the history rather than moving the caret.
     pub walking_history: bool,
     /// Whether a reverse search is open.
+    ///
+    /// Its ROWS are the candidate list — `candidate_count` and `selected_candidate` describe the
+    /// ⌃R panel while this is set, which is why there is no second count here. The `search_has_hit`
+    /// field this replaced answered a question the panel makes visible: an empty `candidate_count`
+    /// IS "nothing matched".
     pub searching: bool,
-    /// Whether the reverse search has a hit. Meaningless without `searching`.
-    pub search_has_hit: bool,
     /// Whether there is an undo step to take.
     pub can_undo: bool,
     /// Whether there is a redo step to take.
@@ -460,7 +463,6 @@ impl SlopDeskPromptState {
         would_run: true,
         walking_history: false,
         searching: false,
-        search_has_hit: false,
         can_undo: false,
         can_redo: false,
         span_count: 0,
@@ -473,7 +475,6 @@ impl SlopDeskPromptState {
     /// Reads the editor's current state out.
     fn of(editor: &CommandEditor) -> Self {
         let selection = editor.selection();
-        let search = editor.search();
         Self {
             text_len: editor.text().len(),
             cursor: editor.cursor(),
@@ -483,8 +484,7 @@ impl SlopDeskPromptState {
             unterminated: open_index(editor.unterminated()),
             would_run: editor.would_run(),
             walking_history: editor.is_walking_history(),
-            searching: search.is_some(),
-            search_has_hit: search.is_some_and(|session| session.hit().is_some()),
+            searching: editor.search().is_some(),
             can_undo: editor.undo_stack().can_undo(),
             can_redo: editor.undo_stack().can_redo(),
             span_count: editor.lexed().spans.len(),
@@ -1273,7 +1273,10 @@ pub unsafe extern "C" fn slopdesk_prompt_search_again(handle: *mut SlopDeskPromp
     state.editor.reverse_search_again()
 }
 
-/// Takes the hit into the document and closes the search. `false` with no hit.
+/// Takes the selected row into the document and closes the search. `false` with no rows.
+///
+/// It does not RUN the command — see `CommandEditor::reverse_search_accept` for why the submit key
+/// keeps that, against a line the user can see.
 ///
 /// # Safety
 /// `handle` must satisfy [`held`]'s obligation.
@@ -1329,33 +1332,27 @@ pub unsafe extern "C" fn slopdesk_prompt_search_query(
     unsafe { deliver(query.as_bytes(), out, cap) }
 }
 
-/// Copies the reverse-search HIT out — the history entry the query currently matches.
+/// ⌃S / ↑ — one row back UP the ⌃R panel, wrapping. `false` with no session or no rows.
 ///
-/// Empty when no search is open or nothing matches, which `search_has_hit` distinguishes from a
-/// genuinely empty entry. The buffer is deliberately NOT changed while a search runs (see the
-/// module header), so this is the only way to see what ⌃R would accept: without it the band can
-/// print the query and nothing else, which is a search UI that never shows a result.
+/// ⚠️ **This replaced `slopdesk_prompt_search_hit`.** That door existed because the search showed
+/// exactly one match and the buffer is deliberately not touched while it runs, so a single string
+/// was the only way the band could show a result at all. The panel makes every match visible
+/// through the candidate doors, so what is missing is not a way to READ the hit but a way to move
+/// backwards through the ones on screen — `fish`'s pager binds ⌃S to it.
 ///
 /// # Safety
-/// `handle` must satisfy [`held`]'s obligation and `out` must be null or writable for `cap` bytes.
+/// `handle` must satisfy [`held`]'s obligation.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_prompt_search_hit(
-    handle: *mut SlopDeskPrompt,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
+pub unsafe extern "C" fn slopdesk_prompt_search_back(handle: *mut SlopDeskPrompt) -> bool {
     // SAFETY: the caller's obligation, as above.
     let Some(state) = (unsafe { held(handle) }) else {
-        return 0;
+        return false;
     };
-    let hit = state.editor.search().and_then(|session| session.hit());
-    let text = hit.map_or("", |hit| hit.text.as_str());
-    // SAFETY: `out` is null or writable for `cap` bytes, and `text` cannot overlap it.
-    unsafe { deliver(text.as_bytes(), out, cap) }
+    state.editor.reverse_search_back()
 }
 
 /// Replaces the filesystem source: the directory prefix, and the names read from it.
@@ -1875,10 +1872,11 @@ mod tests {
         slopdesk_prompt_candidate_arena, slopdesk_prompt_candidates, slopdesk_prompt_complete,
         slopdesk_prompt_delete, slopdesk_prompt_free, slopdesk_prompt_history_entry,
         slopdesk_prompt_history_previous, slopdesk_prompt_insert, slopdesk_prompt_new,
-        slopdesk_prompt_search_accept, slopdesk_prompt_search_begin, slopdesk_prompt_search_hit,
-        slopdesk_prompt_search_type, slopdesk_prompt_select_all, slopdesk_prompt_set_paths,
-        slopdesk_prompt_spans, slopdesk_prompt_state, slopdesk_prompt_submit, slopdesk_prompt_take_clipboard,
-        slopdesk_prompt_take_submitted, slopdesk_prompt_text, slopdesk_prompt_undo,
+        slopdesk_prompt_search_accept, slopdesk_prompt_search_again, slopdesk_prompt_search_back,
+        slopdesk_prompt_search_begin, slopdesk_prompt_search_type, slopdesk_prompt_select_all,
+        slopdesk_prompt_set_paths, slopdesk_prompt_spans, slopdesk_prompt_state, slopdesk_prompt_submit,
+        slopdesk_prompt_take_clipboard, slopdesk_prompt_take_submitted, slopdesk_prompt_text,
+        slopdesk_prompt_undo,
     };
     use crate::{SlopDeskByteSpan, arena_text};
 
@@ -1896,12 +1894,18 @@ mod tests {
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
-    fn read_search_hit(handle: *mut SlopDeskPrompt) -> String {
-        let needed = unsafe { slopdesk_prompt_search_hit(handle, std::ptr::null_mut(), 0) };
+    /// The panel row the ⌃R selection is on, read the way the band reads it — through the candidate
+    /// records and their arena, which is the whole point of the search having no doors of its own.
+    fn read_selected_row(handle: *mut SlopDeskPrompt) -> String {
+        let state = unsafe { slopdesk_prompt_state(handle) };
+        let count = state.candidate_count;
+        let mut records = vec![SlopDeskPromptCandidate::default(); count];
+        let _written = unsafe { slopdesk_prompt_candidates(handle, records.as_mut_ptr(), count) };
+        let needed = unsafe { slopdesk_prompt_candidate_arena(handle, std::ptr::null_mut(), 0) };
         let mut bytes = vec![0_u8; needed];
-        let written = unsafe { slopdesk_prompt_search_hit(handle, bytes.as_mut_ptr(), bytes.len()) };
-        assert_eq!(written, needed, "the door answered a size it would not fill");
-        String::from_utf8_lossy(&bytes).into_owned()
+        let _filled = unsafe { slopdesk_prompt_candidate_arena(handle, bytes.as_mut_ptr(), needed) };
+        let row = records.get(state.selected_candidate).copied().unwrap_or_default();
+        arena_text(&bytes, row.text.offset, row.text.length)
     }
 
     #[test]
@@ -2034,22 +2038,29 @@ mod tests {
     }
 
     #[test]
-    fn a_reverse_search_finds_an_older_command_and_takes_it() {
+    fn a_reverse_search_ranks_a_panel_and_takes_the_row_it_is_on() {
         let handle = unsafe { slopdesk_prompt_new() };
-        type_text(handle, "cargo build --release");
-        let _ran = unsafe { slopdesk_prompt_submit(handle) };
-        type_text(handle, "ls");
-        let _also = unsafe { slopdesk_prompt_submit(handle) };
+        for command in ["cargo build --release", "ls", "cargo test"] {
+            type_text(handle, command);
+            let _ran = unsafe { slopdesk_prompt_submit(handle) };
+        }
         unsafe { slopdesk_prompt_search_begin(handle) };
-        let query = b"release";
+        // An empty query opens the recent-commands panel rather than one hit.
+        assert_eq!(unsafe { slopdesk_prompt_state(handle) }.candidate_count, 3);
+        let query = b"cargo";
         unsafe { slopdesk_prompt_search_type(handle, query.as_ptr(), query.len()) };
-        assert!(unsafe { slopdesk_prompt_state(handle) }.search_has_hit);
-        // The hit is READABLE while the search runs, which is the whole reason the door exists: the
-        // buffer stays empty until accept, so this is all the band can show.
-        assert_eq!(read_search_hit(handle), "cargo build --release");
-        assert_eq!(read_text(handle), "");
+        let state = unsafe { slopdesk_prompt_state(handle) };
+        assert_eq!(state.candidate_count, 2, "`ls` is out");
+        assert!(state.searching);
+        // The rows cross through the CANDIDATE doors — the search has none of its own.
+        assert_eq!(read_selected_row(handle), "cargo test");
+        assert!(unsafe { slopdesk_prompt_search_again(handle) });
+        assert_eq!(read_selected_row(handle), "cargo build --release");
+        assert!(unsafe { slopdesk_prompt_search_back(handle) });
+        assert_eq!(read_selected_row(handle), "cargo test");
+        assert_eq!(read_text(handle), "", "the buffer is untouched while searching");
         assert!(unsafe { slopdesk_prompt_search_accept(handle) });
-        assert_eq!(read_text(handle), "cargo build --release");
+        assert_eq!(read_text(handle), "cargo test");
         assert!(!unsafe { slopdesk_prompt_state(handle) }.searching);
         unsafe { slopdesk_prompt_free(handle) };
     }

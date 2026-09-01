@@ -339,6 +339,61 @@ impl<'a> HistoryProvider<'a> {
     }
 }
 
+/// The ⌃R panel: every history entry `query` matches, best first, at most `limit` of them.
+///
+/// **Not a [`CandidateProvider`], and not [`complete`] with one source.** Both of those are
+/// functions of the CARET — the query is what the candidate would replace up to the cursor — and a
+/// reverse search has no caret in it at all: the query is typed into the search, the document is
+/// untouched while it runs, and the whole line is what an accept replaces. Routing it through
+/// [`complete`] would mean lying about the cursor to get the right query out.
+///
+/// What it DOES share is the scorer, which is the part that matters: `gc` orders `git commit`
+/// against `git checkout` here exactly as it does in the completion list and in the command
+/// palette. The records are [`Ranked`] for the same reason — the panel is drawn by the same view
+/// code, and the `positions` are the same underline.
+///
+/// **The tie-break is RECENCY, and that is the one place this diverges from [`complete`].** Equal
+/// scores keep the order they arrive in — `sort_by` is stable — and they arrive newest-first, so
+/// two commands that match a query equally well are offered most-recent-first. [`complete`] breaks
+/// the same tie alphabetically, which is right for a list of filenames and wrong for a history: a
+/// shell history's second axis is time, and `zsh`'s own `HIST_IGNORE_ALL_DUPS` order (see
+/// [`CommandHistory::record`]) exists to make it so.
+///
+/// An empty query answers the newest `limit` entries rather than nothing: `slopdesk_fuzzy` scores
+/// an empty pattern as a match against everything with no positions, so a freshly opened ⌃R is the
+/// recent-commands panel `fzf` and `atuin` both open with, and it falls out of the same code path
+/// rather than being a special case here.
+/// `document_len` is how much an accept replaces — the whole draft, always, because a history entry
+/// is a whole command line and there is no caret in a search to anchor anything narrower.
+#[must_use]
+pub fn search_history(
+    history: &CommandHistory,
+    query: &str,
+    limit: usize,
+    document_len: usize,
+) -> Vec<Ranked> {
+    let mut ranked: Vec<Ranked> = history
+        .entries()
+        .iter()
+        .rev()
+        .filter_map(|entry| {
+            let found = slopdesk_fuzzy::score(query, entry)?;
+            Some(Ranked {
+                // A history entry is quoted the way the user wrote it, so it inserts verbatim —
+                // `HistoryProvider`'s rule, for its reason.
+                candidate: Candidate::plain(entry.clone(), CandidateKind::History, 0..document_len),
+                score: found.score,
+                positions: found.positions,
+            })
+        })
+        .collect();
+    // By the NEGATED score rather than `sort_by`, so the stable sort keeps the newest-first
+    // order equal scores arrived in — which is the recency tie-break this function exists for.
+    ranked.sort_by_key(|hit| -hit.score);
+    ranked.truncate(limit);
+    ranked
+}
+
 impl CandidateProvider for HistoryProvider<'_> {
     fn candidates(&self, request: &CompletionRequest<'_>) -> Vec<Candidate> {
         // A caret in the middle of a line is editing, not composing: replacing the whole document

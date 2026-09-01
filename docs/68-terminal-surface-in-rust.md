@@ -511,7 +511,7 @@ head and the header cannot disagree about the column or about which half is red.
 
 Built, and it is `rust/slopdesk-terminal/src/prompt/` (4 571 lines): a `TextBuffer` with
 grapheme/word/line motions and a goal column, a coalescing `UndoStack`, a shell lexer that decides
-both the colours and whether Enter runs, a `CommandHistory` with a walk and a reverse search, and
+both the colours and whether Enter runs, a `CommandHistory` with a walk and a ranked ⌃R panel, and
 fzf-ranked completion over caller-seeded sources. It crosses through
 `rust/slopdesk-ffi/src/prompt.rs` as ONE handle — the editor's own header says why: typing has to
 abandon a history walk, dismiss the completion list and coalesce into the undo step together, and
@@ -543,17 +543,49 @@ over the editor's line is DRAWN by the band and never enters the buffer.
 Every editing chord arrives as an AppKit **selector** through `interpretKeyEvents`, so the standard
 key-binding table supplies ⌥←, ⌃A, ⇧⌘→ and the rest for free. Four control keys are carved out in
 Rust (`prompt::keys`) because `readline` never owned them either: `⌃C`, `⌃D` on an empty line, `⌃Z`,
-`⌃L`. Three chords the binding table does not name are read on the Swift side instead: `⌃R` (reverse
-search) and ⌘Z / ⇧⌘Z / ⌘Y, which drive the editor's own history rather than
+`⌃L`. Three chords the binding table does not name are read on the Swift side instead: `⌃R` (the
+history panel) and ⌘Z / ⇧⌘Z / ⌘Y, which drive the editor's own history rather than
 `controls.undo-at-prompt`'s readline byte — while the editor holds the line there is no shell to
 send that byte to. `controls.command-prompt` (default on) is the one setting that hands the line back
 to the shell.
 
-A reverse search never touches the buffer — cancelling has to give the draft back exactly — so the
-band's `(reverse-i-search)` row is the ONLY place its match can appear, and it needs two doors rather
-than one: `slopdesk_prompt_search_query` and `slopdesk_prompt_search_hit`. Shipping only the query
-plus a `search_has_hit` bool is a search that shows no result, which is what the first pixel render
-of the band caught and no test would have.
+A reverse search never touches the buffer — cancelling has to give the draft back exactly — so
+whatever it found has to be drawn somewhere other than the line.
+
+**⌃R is a RANKED PANEL, since 2026-09-01, and the bash-style single hit it replaced is deleted.**
+This paragraph used to end "it needs two doors rather than one: `slopdesk_prompt_search_query` and
+`slopdesk_prompt_search_hit` — shipping only the query plus a `search_has_hit` bool is a search that
+shows no result", which was the right fix for a search that could only ever find ONE thing. The
+finding stands and the shape does not: ⌃R now ranks the whole history with the same `slopdesk-fuzzy`
+scorer completion uses, and every match is on screen.
+
+Two prior questions it settles, each with the reason written where the code is:
+
+- **Why ranked at all.** The old refusal (`prompt/history.rs`'s own header) was that a fuzzy re-rank
+  reorders the walk between two presses of the same key. That is fatal behind a one-line
+  `(reverse-i-search)`, where the neighbours are invisible, and empty in front of a panel — the
+  ranking moves when the QUERY moves and at no other time. `fzf`'s ⌃R, `atuin` and `fish`'s own
+  pager (3.6.0; its 4.0 `git*HEAD` glob is out-of-order matching by another name) all rank.
+- **What Enter does.** It puts the row on the command line and does NOT run it — `fish`'s pager, not
+  `atuin`'s, whose own docs ship a `enter = return-selection` rebinding for the people it surprises.
+  `slopdesk-zshcomplete`'s header already states the tie-break this side of the app takes: "a
+  missing candidate costs a completion, and a wrong one writes the user's command line for them".
+  A wrong one RUN is strictly worse than a wrong one written.
+
+**It cost doors rather than adding them, because a ⌃R row and a completion candidate are the same
+record.** Text, what it inserts, the whole range it replaces, and the scalar positions the underline
+draws — all four already crossed for the candidate list, so the panel's rows ARE
+`slopdesk_prompt_candidates`/`_candidate_arena`/`_candidate_positions` and the band draws them with
+the code that draws a completion. `slopdesk_prompt_search_hit` and the `search_has_hit` flag are
+gone; `slopdesk_prompt_search_back` (⌃S / ↑, one row up) is the one door that replaced them, because
+what the panel is missing is not a way to READ the hit but a way to move through the ones on screen.
+`CommandEditor::complete` refuses outright while a session is up — the search owns that list, and
+both platforms recomplete on a redraw.
+
+**It also wired a door that had been inert since the candidate records landed.** `positions` crossed
+from the first day and nothing drew it. On a prefix list that was survivable — the match is the head
+of every row — and on a fuzzy panel it is not, since a row can be offered for two letters at either
+end of it. The underline is drawn for both lists now, from the one place.
 
 Three verbs the editor SHADOWS while it is armed, each decided in `docs/DECISIONS.md`: paste goes
 into the editor at the driver's single funnel; copy and cut are the editor's only when the grid has

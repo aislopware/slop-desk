@@ -77,7 +77,7 @@ pub use link_action::{CmdClick, CmdShiftClick, LinkAction, LinkConfig, LinkTarge
 pub use mode::{TerminalMode, TerminalModeEvent};
 pub use prompt::buffer::{Direction, LineColumn, Motion, TextBuffer};
 pub use prompt::complete::{Candidate, CandidateKind, CandidateProvider, CompletionRequest, Ranked};
-pub use prompt::history::{CommandHistory, HistoryWalk, Recalled, ReverseSearch, SearchHit};
+pub use prompt::history::{CommandHistory, HistoryWalk, Recalled};
 pub use prompt::syntax::{Lexed, SyntaxSpan, TokenKind, Unterminated, Word, WordRole};
 pub use prompt::undo::{Edit, EditKind, UndoStack};
 pub use prompt::{CommandEditor, SearchSession, Submission};

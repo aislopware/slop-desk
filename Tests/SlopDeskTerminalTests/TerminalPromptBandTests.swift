@@ -75,21 +75,66 @@ final class TerminalPromptBandTests: XCTestCase {
         XCTAssertEqual(TerminalPromptBand.openLabel(.substitution), "unclosed $(")
     }
 
-    /// The regression for what the first pixel render of the band found: the ⌃R row printed the
-    /// query and stopped, so the search never showed what it had matched. The buffer stays empty
-    /// until accept, which is what makes this row the only place a hit can appear.
-    func testTheSearchRowShowsTheHitItWouldAccept() {
+    /// A ⌃R session is the query row PLUS its panel, and the count has to say so.
+    ///
+    /// The regression: `accessoryRows` answered a flat `1` while searching, which was right when a
+    /// search had exactly one hit spliced into that row and clips every row of the panel that
+    /// replaced it. Arithmetic can settle this one because the same number both reserves the height
+    /// and places the rows — a wrong answer agrees with itself and draws off the end of the band.
+    func testASearchCountsItsQueryRowAndItsPanel() {
+        let prompt = CommandPrompt()
+        for command in ["cargo test", "cargo build", "ls"] { prompt.recordHistory(command) }
+        XCTAssertEqual(TerminalPromptBand.accessoryRows(prompt), 0, "a closed line shows nothing")
+
+        prompt.beginSearch()
         XCTAssertEqual(
-            TerminalPromptBand.searchRow(query: "clip", hit: "cargo clippy --all-targets"),
-            "(reverse-i-search)`clip': cargo clippy --all-targets",
+            TerminalPromptBand.accessoryRows(prompt), 4,
+            "an empty query lists every command, under the row it is typed on",
+        )
+        prompt.searchType("cargo")
+        XCTAssertEqual(TerminalPromptBand.accessoryRows(prompt), 3, "`ls` is out; the row stays")
+        prompt.searchType("zzz")
+        XCTAssertEqual(TerminalPromptBand.accessoryRows(prompt), 1, "nothing matched: the row alone")
+        prompt.cancelSearch()
+        XCTAssertEqual(TerminalPromptBand.accessoryRows(prompt), 0, "and the panel goes with it")
+    }
+
+    /// The panel is capped, so a thousand-command history cannot take the pane.
+    func testThePanelNeverGrowsPastItsLimit() {
+        let prompt = CommandPrompt()
+        for index in 0..<40 { prompt.recordHistory("cargo test --lib \(index)") }
+        prompt.beginSearch()
+        XCTAssertEqual(
+            TerminalPromptBand.accessoryRows(prompt), TerminalPromptBand.candidateLimit + 1,
+        )
+    }
+
+    /// The ⌃R row says the query and the one thing the panel under it CANNOT: what did not fit.
+    ///
+    /// It used to splice the single hit in, because the search only ever found one and the buffer
+    /// stays untouched until accept — the first pixel render of the band caught it printing the
+    /// query and stopping, which was a search that never showed a result. The panel shows every
+    /// match now, so a hit here would print the selected row twice.
+    func testTheSearchRowCountsOnlyWhatDidNotFit() {
+        // Everything fits: no count, because a count of what you can see is noise.
+        XCTAssertEqual(
+            TerminalPromptBand.searchRow(query: "clip", matches: 3, shown: 6),
+            "(reverse-i-search)`clip'",
+        )
+        // Truncated: the total, which is otherwise invisible.
+        XCTAssertEqual(
+            TerminalPromptBand.searchRow(query: "git", matches: 23, shown: 6),
+            "(reverse-i-search)`git'  6 of 23",
         )
         XCTAssertEqual(
-            TerminalPromptBand.searchRow(query: "zzz", hit: nil),
+            TerminalPromptBand.searchRow(query: "zzz", matches: 0, shown: 6),
             "(reverse-i-search)`zzz'  (no match)",
         )
-        // A recorded EMPTY command is still a hit, and reads as one rather than as no match — which
-        // is why the caller keys on `searchHasHit` rather than on the string being empty.
-        XCTAssertEqual(TerminalPromptBand.searchRow(query: "", hit: ""), "(reverse-i-search)`': ")
+        // A fresh ⌃R has an empty query and a full panel — the recent-commands list, not "no match".
+        XCTAssertEqual(
+            TerminalPromptBand.searchRow(query: "", matches: 4, shown: 6),
+            "(reverse-i-search)`'",
+        )
     }
 }
 

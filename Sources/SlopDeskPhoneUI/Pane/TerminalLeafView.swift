@@ -1516,6 +1516,13 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// thing being edited and at either edge they leave it. Counted here rather than asked of a door
     /// because both halves are already on this side — the text and the caret's byte offset.
     private func walkHistory(_ prompt: CommandPrompt, back: Bool) {
+        // ↑/↓ move the ⌃R PANEL while one is up — the Mac's rule, for its reason: the panel is a
+        // list on screen, the arrows are what moves a list, and the walk they otherwise do reads
+        // the same store a second way.
+        if prompt.isSearching {
+            _ = back ? prompt.searchBack() : prompt.searchAgain()
+            return
+        }
         let text = prompt.text
         let caret = text.utf8.index(text.utf8.startIndex, offsetBy: min(prompt.cursor, text.utf8.count))
         if back {
@@ -1538,12 +1545,15 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// A live candidate list claims the key first — that is what every completion UI does, and the
     /// alternative is running a command the user was still choosing the last word of.
     private func submit(_ prompt: CommandPrompt) {
-        if !prompt.candidates.isEmpty {
-            prompt.acceptCompletion()
-            return
-        }
+        // ⚠️ THE SEARCH FIRST, and it has to be: a ⌃R panel's rows ARE `candidates`, so the
+        // completion branch would fire on them, insert the row and leave the session open behind a
+        // panel that had just answered. `acceptSearch` is the same insertion plus the close.
         if prompt.isSearching {
             _ = prompt.acceptSearch()
+            return
+        }
+        if !prompt.candidates.isEmpty {
+            prompt.acceptCompletion()
             return
         }
         _ = live?.terminalModel?.submitCommandPrompt()

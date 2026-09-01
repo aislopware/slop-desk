@@ -372,8 +372,7 @@ typedef struct {
   uint32_t unterminated;        /* SLOPDESK_PROMPT_OPEN_*    */
   bool     would_run;           /* Enter runs rather than continues */
   bool     walking_history;
-  bool     searching;
-  bool     search_has_hit;
+  bool     searching;           /* the ⌃R panel's ROWS are candidate_count/selected_candidate */
   bool     can_undo;
   bool     can_redo;
   size_t   span_count;
@@ -445,16 +444,19 @@ bool   slopdesk_prompt_history_next(SlopDeskPrompt *handle);
 void   slopdesk_prompt_history_record(SlopDeskPrompt *handle, const uint8_t *bytes, size_t len);
 size_t slopdesk_prompt_history_entry(SlopDeskPrompt *handle, size_t index, uint8_t *out, size_t cap);
 
-/* Reverse search (⌃R). _again steps to the next older hit; _accept takes the hit into the document
- * and closes the search; _cancel restores what was there before it opened. */
+/* Reverse search (⌃R) — a RANKED PANEL, whose rows cross through the CANDIDATE doors below rather
+ * than through any of its own: a ⌃R row and a completion candidate are the same record, so a
+ * second set would be the same shape twice. _again/_back move the selection down/up (wrapping,
+ * `fish`'s pager ⌃R/⌃S); _accept puts the selected row on the command line and closes the search
+ * WITHOUT running it; _cancel leaves the draft exactly as it was. */
 void   slopdesk_prompt_search_begin(SlopDeskPrompt *handle);
 void   slopdesk_prompt_search_type(SlopDeskPrompt *handle, const uint8_t *bytes, size_t len);
 void   slopdesk_prompt_search_backspace(SlopDeskPrompt *handle);
 bool   slopdesk_prompt_search_again(SlopDeskPrompt *handle);
+bool   slopdesk_prompt_search_back(SlopDeskPrompt *handle);
 bool   slopdesk_prompt_search_accept(SlopDeskPrompt *handle);
 void   slopdesk_prompt_search_cancel(SlopDeskPrompt *handle);
 size_t slopdesk_prompt_search_query(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
-size_t slopdesk_prompt_search_hit(SlopDeskPrompt *handle, uint8_t *out, size_t cap);
 
 /* What completion may offer. The crate does no I/O and reads no PATH: the caller seeds the
  * directory it listed, the environment it holds, and the command specs it knows, each as spans into

@@ -16,6 +16,13 @@
 // end. `testTheCaretTheBandReportsIsTheCaretItDraws` is that defect's pin, and it is a pixel test
 // because no arithmetic assertion could have caught a disagreement between two spellings of the
 // same number — it takes photographing one and asking the other.
+//
+// ⚠️ THE ⌃R PANEL'S SUITE IS IN THIS FILE TOO, and shares its `Bitmap`/`Diff`. Both are `private`
+// to a file rather than a target, and the iOS bundle's sources are a hand-kept list in
+// `project.pbxproj` — so a second file would cost a third copy of the rig or a fourth thing to keep
+// in sync. What the two suites have in common is the reason either exists: the band is the one part
+// of this terminal that can be photographed off-screen, and both features are drawings whose
+// arithmetic looks right on its own.
 
 import CoreText
 import SlopDeskWorkspaceCore
@@ -112,6 +119,92 @@ final class TerminalPreeditPixelsOnIOSTests: XCTestCase {
     }
 }
 
+/// The ⌃R panel, photographed — the rows and the underline that says why each is there.
+///
+/// Arithmetic cannot settle either claim. The band's height is `accessoryRows × lineHeight` and the
+/// rows are drawn from that same number, so a panel that counted one row while drawing four would
+/// agree with itself and clip three; and the fuzzy underline is the only mark distinguishing a
+/// ranked panel from a list of recent commands, which is exactly the "green tests, feature never
+/// fires" shape.
+@MainActor
+final class TerminalSearchPanelPixelsOnIOSTests: XCTestCase {
+    private let width: CGFloat = 420
+
+    /// The panel is TALLER than the query row alone, by one row per match it draws.
+    ///
+    /// The regression this pins is the one the change could not avoid: `accessoryRows` answered `1`
+    /// while a search was up, because a search used to have exactly one hit to show.
+    func testThePanelGrowsTheBandByOneRowPerMatch() throws {
+        let one = try photograph(history: ["cargo test"], query: "cargo")
+        let three = try photograph(
+            history: ["cargo test", "cargo build", "cargo clippy"], query: "cargo",
+        )
+        let row = TerminalPromptBand.Metrics.current.lineHeight
+        XCTAssertEqual(
+            three.height - one.height, row * 2, accuracy: 0.5,
+            "the band did not make room for the rows it draws — the panel is clipped",
+        )
+        // And the rows it grew by carry INK rather than being reserved space nothing draws into.
+        XCTAssertTrue(
+            three.pixels.hasVariation(from: Int(one.height * three.pixels.scale)),
+            "the band grew but drew nothing in the rows it grew by",
+        )
+    }
+
+    /// The scalars the query matched are UNDERLINED, and an unqueried row is not.
+    ///
+    /// Two renders of the SAME single row: an empty query lists it with no positions, and a query
+    /// that matches a run inside it underlines exactly that run. The row's text is identical in
+    /// both, so everything the diff finds below the query row is the underline — and its longest
+    /// horizontal run is the mark's width, since glyph strokes break and an underline does not.
+    func testTheMatchedRunIsUnderlinedInThePanel() throws {
+        let entry = "git commit --amend"
+        let listed = try photograph(history: [entry], query: "")
+        let matched = try photograph(history: [entry], query: "amend")
+        let scale = listed.pixels.scale
+        // Past the query row, so the two different queries printed on it are out of the comparison.
+        let panelTop = Int((TerminalPromptBand.inset.height + TerminalPromptBand.Metrics.current
+                .lineHeight * 2) * scale)
+        let changed = try XCTUnwrap(
+            Diff(listed.pixels, matched.pixels, from: panelTop),
+            "the panel row is pixel-identical — the match drew no underline",
+        )
+        XCTAssertGreaterThan(
+            CGFloat(changed.longestRun) / scale, runWidth(of: "amend") * 0.8,
+            "no mark spans the matched run — the ranking is invisible to the reader",
+        )
+    }
+
+    // MARK: - The rig
+
+    /// One render of an armed band with a ⌃R session open over `history`.
+    private func photograph(
+        history: [String], query: String,
+    ) throws -> (pixels: Bitmap, height: CGFloat) {
+        let prompt = CommandPrompt()
+        for command in history { prompt.recordHistory(command) }
+        prompt.beginSearch()
+        if !query.isEmpty { prompt.searchType(query) }
+        XCTAssertTrue(prompt.isSearching)
+        XCTAssertFalse(prompt.candidates.isEmpty, "the fixture matched nothing to draw")
+        let view = PhoneTerminalPromptView(prompt: prompt, armed: { true }, composition: { nil })
+        let height = view.fittingHeight
+        let image = HostedRaster.image(view, width: width, height: height)
+        let bitmap = try XCTUnwrap(Bitmap(image), "the rig photographed something with no backing")
+        XCTAssertTrue(bitmap.hasVariation, "the band photographed as one flat colour")
+        return (bitmap, height)
+    }
+
+    /// How wide a run draws, asked of Core Text the way the band asks.
+    private func runWidth(of text: String) -> CGFloat {
+        let metrics = TerminalPromptBand.Metrics.current
+        let line = CTLineCreateWithAttributedString(NSAttributedString(
+            string: text, attributes: [.init(kCTFontAttributeName as String): metrics.font],
+        ))
+        return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+    }
+}
+
 // MARK: - Reading the bitmap
 
 /// A rendered `UIImage` as one RGBA buffer.
@@ -141,10 +234,15 @@ private struct Bitmap {
     }
 
     /// Whether more than one colour is present — a blank photograph is the failure to catch first.
-    var hasVariation: Bool {
-        guard bytes.count > 4 else { return false }
-        return (1..<width * height).contains { pixel in
-            (0..<4).contains { bytes[pixel * 4 + $0] != bytes[$0] }
+    var hasVariation: Bool { hasVariation(from: 0) }
+
+    /// The same question asked of the rows at or below `row`, for a rig checking that a band which
+    /// grew actually drew into the space it took.
+    func hasVariation(from row: Int) -> Bool {
+        let first = max(row, 0) * width
+        guard bytes.count > 4, first < width * height else { return false }
+        return (first + 1..<width * height).contains { pixel in
+            (0..<4).contains { bytes[pixel * 4 + $0] != bytes[first * 4 + $0] }
         }
     }
 
@@ -166,12 +264,14 @@ private struct Diff {
     /// The longest contiguous horizontal run of changed pixels in any single row.
     let longestRun: Int
 
-    init?(_ a: Bitmap, _ b: Bitmap) {
+    /// `from` skips the rows above it, for a comparison that has to exclude a header the two renders
+    /// deliberately differ on — the ⌃R query line, which carries the query being varied.
+    init?(_ a: Bitmap, _ b: Bitmap, from: Int = 0) {
         guard a.width == b.width, a.height == b.height, a.width > 0 else { return nil }
         var low = Int.max
         var high = Int.min
         var best = 0
-        for y in 0..<a.height {
+        for y in max(from, 0)..<a.height {
             var run = 0
             for x in 0..<a.width {
                 guard a.differs(from: b, x: x, y: y) else {
