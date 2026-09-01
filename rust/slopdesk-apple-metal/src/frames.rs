@@ -158,11 +158,11 @@ impl InstanceBuffer {
     }
 }
 
-/// The four buffers one frame writes, filled.
+/// The buffers one frame writes, filled.
 ///
-/// A struct rather than four return values because all four borrow the same [`Slot`], and four
-/// successive `&mut` calls could not hand out four live references. Filling them in one call is
-/// also the honest shape: a frame writes all four or none.
+/// A struct rather than a return value each because they all borrow the same [`Slot`], and
+/// successive `&mut` calls could not hand out that many live references. Filling them in one call
+/// is also the honest shape: a frame writes all of them or none.
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct Filled<'a> {
     /// Every inline image on the frame, in the order `image.rs` sorted them. ONE buffer for all
@@ -175,6 +175,12 @@ pub(crate) struct Filled<'a> {
     pub(crate) glyphs: Option<&'a ProtocolObject<dyn MTLBuffer>>,
     /// Underlines, strikethroughs and any cursor that is not a filled block.
     pub(crate) overlays: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    /// The pinned head's bed — see `slopdesk_termrender::pin`. Drawn over every buffer above.
+    pub(crate) pinned_backgrounds: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    /// The pinned head's text.
+    pub(crate) pinned_glyphs: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    /// The pinned head's own decorations, and the hairline under it. Last pass of the frame.
+    pub(crate) pinned_overlays: Option<&'a ProtocolObject<dyn MTLBuffer>>,
 }
 
 /// One frame's four buffers.
@@ -189,10 +195,16 @@ pub(crate) struct Slot {
     /// that holds on the developer's Mac and not on the user's is the worst kind, and three
     /// allocations that are reused forever cost nothing to avoid it.
     overlays: InstanceBuffer,
+    /// The pinned trio. Their own buffers for `overlays`' reason — a sub-range would need an
+    /// offset whose alignment rule is not the same on every Mac — and empty on the overwhelming
+    /// majority of frames, where `InstanceBuffer::fill` allocates nothing at all.
+    pinned_backgrounds: InstanceBuffer,
+    pinned_glyphs: InstanceBuffer,
+    pinned_overlays: InstanceBuffer,
 }
 
 impl Slot {
-    /// Writes all four instance arrays into this slot.
+    /// Writes every instance array into this slot.
     pub(crate) fn fill(
         &mut self,
         device: &ProtocolObject<dyn MTLDevice>,
@@ -202,11 +214,17 @@ impl Slot {
         let backgrounds = self.backgrounds.fill(device, &list.backgrounds)?;
         let glyphs = self.glyphs.fill(device, &list.glyphs)?;
         let overlays = self.overlays.fill(device, &list.overlays)?;
+        let pinned_backgrounds = self.pinned_backgrounds.fill(device, &list.pinned_backgrounds)?;
+        let pinned_glyphs = self.pinned_glyphs.fill(device, &list.pinned_glyphs)?;
+        let pinned_overlays = self.pinned_overlays.fill(device, &list.pinned_overlays)?;
         Ok(Filled {
             images,
             backgrounds,
             glyphs,
             overlays,
+            pinned_backgrounds,
+            pinned_glyphs,
+            pinned_overlays,
         })
     }
 }

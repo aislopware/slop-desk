@@ -128,9 +128,9 @@ public final class TerminalViewModel {
     public private(set) var progress: PaneProgress?
 
     /// The per-pane Warp-style "Blocks" store: the host's `commandBlock` metadata (wire type 28)
-    /// folded into an ordered, bounded `[CommandBlock]`. Drives the Command Navigator, sticky command header,
-    /// and chrome status chip. Captured output is fetched on demand (``copyBlockOutput(index:onResult:)``).
-    /// Observed so the navigator/header re-render as blocks land.
+    /// folded into an ordered, bounded `[CommandBlock]`. Drives the Command Navigator and the chrome status
+    /// chip. Captured output is fetched on demand (``copyBlockOutput(index:onResult:)``).
+    /// Observed so the navigator re-renders as blocks land.
     public let blocks = TerminalBlockModel()
 
     /// TRUE from the instant a COMMITTED resize forwards a CHANGED grid to the host (cols/rows differ) until

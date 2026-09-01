@@ -75,7 +75,7 @@ use slopdesk_terminal::geometry::{CellMetrics, Rect};
 use slopdesk_termrender::{
     BlockLayout, BlockSpan, CellGeometry, Chrome, ChromeFrame, DrawList, GlyphCache, ImagePlacement,
     ImageStore, Insets, LayoutMode, PaintStyle, Painter, PlacedBlock, Preedit, Rgba, SelectionColors, Thumb,
-    Viewport, blockjoin, chrome, grid_size, lay_out, place, scrollbar, segment,
+    Viewport, blockjoin, chrome, grid_size, lay_out, pin, place, scrollbar, segment,
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::{Frame, VtSession};
@@ -591,7 +591,8 @@ impl Surface {
         // The furniture goes on AFTER the text and reads the layout the text was placed against —
         // the same `layout`, not `self.layout`, because assigning first would put a re-borrow of
         // `self` between the two passes for no gain. `chrome::paint` writes to the list's two ENDS,
-        // so drawing second does not mean drawing over.
+        // so drawing second does not mean drawing over; `pin::paint` draws over on purpose, and
+        // says so by lifting what it emits into the list's pinned buffers.
         //
         // The alternate screen gets no second pass at all, rather than `ChromeStyle::NONE`. The two
         // draw the same picture — every one of NONE's lengths is zero — but they are not the same
@@ -602,31 +603,12 @@ impl Surface {
         // that survived here would run a gutter down `vim`'s left column and — the cursor being
         // inside block zero by definition — accent it.
         if !alternate {
-            let frame = ChromeFrame {
-                hovered: self
-                    .hover
-                    .and_then(|(x, y)| block_at(&layout, |rect| self.on_screen(rect), x, y)),
-                active: active_block(&layout, self.session.frame()),
-                viewport: Rect {
-                    x: insets.left,
-                    y: insets.top,
-                    width: viewport.width,
-                    height: viewport_height,
-                },
-                thumb: self.thumb(&layout, viewport_height, cell_height),
-            };
-            let statuses = self.statuses(&layout);
-            chrome::paint(
-                &layout,
-                &self.chrome_style.scaled(self.geometry.scale),
-                &frame,
-                &statuses,
-                &style,
-                &mut self.cache,
-                &mut self.shaper,
-                &mut self.rasterizer,
-                &mut self.list,
-            );
+            self.draw_chrome(&layout, &style, Rect {
+                x: insets.left,
+                y: insets.top,
+                width: viewport.width,
+                height: viewport_height,
+            });
         }
         // AFTER both paint passes, because `Painter::paint` is what clears the list and an image
         // pushed before it would be thrown away. Order within the frame is otherwise free: images
@@ -647,6 +629,54 @@ impl Surface {
         self.renderer
             .draw(&self.list, &mut self.cache, &self.images, self.background)
             .is_ok()
+    }
+
+    /// The two furniture passes, over the layout the text was just placed against.
+    ///
+    /// Its own method because it is one decision — this is not a full-screen program, so the block
+    /// list wears chrome — and inlining it puts that decision behind the whole paint pass.
+    ///
+    /// `view` is the content box, which is the frame both passes measure against: the scrollbar's
+    /// track, a block's width, and the top edge the pinned head is pinned to.
+    fn draw_chrome(&mut self, layout: &BlockLayout, style: &PaintStyle, view: Rect) {
+        let frame = ChromeFrame {
+            hovered: self
+                .hover
+                .and_then(|(x, y)| block_at(layout, |rect| self.on_screen(rect), x, y)),
+            active: active_block(layout, self.session.frame()),
+            viewport: view,
+            thumb: self.thumb(layout, view.height, style.geometry.metrics.cell_height),
+        };
+        let statuses = self.statuses(layout);
+        let chrome_style = self.chrome_style.scaled(self.geometry.scale);
+        chrome::paint(
+            layout,
+            &chrome_style,
+            &frame,
+            &statuses,
+            style,
+            &mut self.cache,
+            &mut self.shaper,
+            &mut self.rasterizer,
+            &mut self.list,
+        );
+        // Last, and it LIFTS what it draws into the list's pinned buffers — so the band is over
+        // both passes above without either of them knowing it exists. It shares the painter with
+        // the main pass on purpose: the head is a terminal ROW redrawn at a different y, so it has
+        // to be that same row painter or it is a second one.
+        pin::paint(
+            self.session.frame(),
+            layout,
+            &chrome_style,
+            &frame,
+            &statuses,
+            style,
+            &mut self.painter,
+            &mut self.cache,
+            &mut self.shaper,
+            &mut self.rasterizer,
+            &mut self.list,
+        );
     }
 
     /// Fetches whatever pixels this frame needs and appends every visible placement.

@@ -132,7 +132,11 @@ impl Chrome {
     };
 }
 
-/// A block with a place on screen.
+/// A block with a place in the CONTENT, which is not yet a place on screen.
+///
+/// Every rect here is measured from the top of the first block, at x zero — [`lay_out`] knows
+/// neither the drawable's insets nor how far the view is scrolled. Whoever draws adds both back;
+/// see [`PlacedBlock::translated`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlacedBlock {
     /// Which rows this block holds.
@@ -172,6 +176,48 @@ impl PlacedBlock {
             return None;
         }
         Some(self.body.y + cell_height * f64::from(offset))
+    }
+
+    /// The height of this block's HEAD — its header band, plus the prompt rows under it.
+    ///
+    /// The unit [`crate::pin`] keeps on screen: everything that says WHICH command this is, and
+    /// nothing that says what it printed. Zero for a block with no header, which is an orphan or
+    /// the alternate screen — neither has a command of its own worth pinning.
+    ///
+    /// For a COLLAPSED block this is the whole frame, since a collapse is exactly the fold that
+    /// leaves the head and nothing else.
+    #[must_use]
+    pub fn head_height(&self, cell_height: f64) -> f64 {
+        self.header.map_or(0.0, |header| {
+            header.height + cell_height * f64::from(self.span.prompt_rows)
+        })
+    }
+
+    /// The same block with its rects moved into the drawable's space.
+    ///
+    /// The paint pass makes this move inline for every row it places — x by
+    /// `CellMetrics::origin_x`, y by `PaintStyle::content_origin_y`, which carries the top inset
+    /// and the scroll offset together. Anything else that draws on a block's rects has to make the
+    /// IDENTICAL move, and this is the one copy of it: furniture placed a scroll offset away from
+    /// the rows it decorates is what this exists to make impossible.
+    ///
+    /// [`PlacedBlock::span`] and [`PlacedBlock::visible`] are row indices, not lengths, so they
+    /// come across untouched.
+    #[must_use]
+    pub fn translated(&self, dx: f64, dy: f64) -> Self {
+        let shift = |rect: Rect| {
+            Rect {
+                x: rect.x + dx,
+                y: rect.y + dy,
+                ..rect
+            }
+        };
+        Self {
+            frame: shift(self.frame),
+            header: self.header.map(shift),
+            body: shift(self.body),
+            ..*self
+        }
     }
 }
 

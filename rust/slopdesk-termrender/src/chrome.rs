@@ -151,7 +151,7 @@ pub struct BlockStatus {
 /// means a new appearance door and a token invented on this side of the design system; the mark
 /// carries the same information and the header stays on the one ink the chrome already owns.
 #[must_use]
-fn status_label(status: BlockStatus) -> String {
+pub(crate) fn status_label(status: BlockStatus) -> String {
     let mut out = String::new();
     if let Some(code) = status.exit_code
         && code != 0
@@ -224,6 +224,12 @@ pub fn paint(
         if !block.is_visible() {
             continue;
         }
+        // Into the drawable's space ONCE, at the top, so no helper below can be written against a
+        // content-space rect: everything past this line is where it will land on screen. The two
+        // terms are the same ones `crate::paint` adds to every row it places, which is the point —
+        // a gutter drawn at `body.y` while its rows draw at `content_origin_y + body.y` slid down
+        // the drawable by the whole scroll offset.
+        let block = &block.translated(text.geometry.metrics.origin_x, text.content_origin_y);
         if frame.hovered == Some(index) {
             out.push_background(solid(block.frame, style.hover));
         }
@@ -423,7 +429,7 @@ fn paint_scrollbar(style: &ChromeStyle, frame: &ChromeFrame, out: &mut DrawList)
     clippy::too_many_arguments,
     reason = "the text, its place, its ink, the font stack, the atlas and the sink — each used once"
 )]
-fn label(
+pub(crate) fn label(
     text: &str,
     origin_x: f64,
     baseline: f64,
@@ -478,7 +484,7 @@ fn label(
 }
 
 /// One filled rect, which is every rect this module draws.
-const fn solid(rect: Rect, color: Rgba) -> RectInstance {
+pub(crate) const fn solid(rect: Rect, color: Rgba) -> RectInstance {
     RectInstance {
         x: px(rect.x),
         y: px(rect.y),
@@ -493,6 +499,7 @@ const fn solid(rect: Rect, color: Rgba) -> RectInstance {
 mod tests {
     #![expect(
         clippy::indexing_slicing,
+        clippy::panic,
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
@@ -733,7 +740,7 @@ mod tests {
                 duration_ms: Some(5000),
             }),
         ];
-        let (_, runs) = draw_with(&layout, &style(), &frame(), &statuses);
+        let (_, runs) = draw_with(&layout, &style(), &frame(), &statuses, &text_style());
         assert!(runs.iter().any(|run| run == "✗ 2  5.0s"), "{runs:?}");
         assert_eq!(
             runs.iter().filter(|run| run.starts_with('✗')).count(),
@@ -766,12 +773,13 @@ mod tests {
                 ..frame()
             },
             &statuses,
+            &text_style(),
         );
         assert!(!runs.iter().any(|run| run.starts_with('✗')), "{runs:?}");
     }
 
     fn draw(layout: &BlockLayout, style: &ChromeStyle, frame: &ChromeFrame) -> (DrawList, Vec<String>) {
-        draw_with(layout, style, frame, &[])
+        draw_with(layout, style, frame, &[], &text_style())
     }
 
     fn draw_with(
@@ -779,6 +787,7 @@ mod tests {
         style: &ChromeStyle,
         frame: &ChromeFrame,
         statuses: &[Option<BlockStatus>],
+        text: &PaintStyle,
     ) -> (DrawList, Vec<String>) {
         let mut out = DrawList::new();
         let mut cache = GlyphCache::new();
@@ -788,7 +797,7 @@ mod tests {
             style,
             frame,
             statuses,
-            &text_style(),
+            text,
             &mut cache,
             &mut shaper,
             &mut Square,
@@ -920,5 +929,85 @@ mod tests {
                 .any(|rect| rect.y < 0.5 && rect.color == style().gutter),
             "the culled block drew no edge"
         );
+    }
+
+    /// ⚠️ The furniture has to land in the SAME space as the rows it decorates.
+    ///
+    /// [`crate::block::lay_out`] measures the content from the top of the first block, at x zero.
+    /// The paint pass puts a row at `content_origin_y + row_y` and `origin_x + body.x`, where
+    /// `content_origin_y` carries the top inset AND the scroll offset together. A chrome pass that
+    /// emitted a block's rect verbatim therefore drew the gutter, the divider and the header band
+    /// where the rows would have been at scroll zero — off by the inset at rest, and by the WHOLE
+    /// scroll offset the moment anyone scrolled.
+    ///
+    /// It shipped that way because every other test in this module runs at the origin, which is
+    /// the one offset where the two spaces coincide and the bug is invisible. This one runs at a
+    /// nonzero inset AND a nonzero scroll, on both axes, for that reason.
+    #[test]
+    fn the_furniture_lands_on_the_rows_it_decorates() {
+        let scrolled = PaintStyle {
+            geometry: CellGeometry {
+                metrics: CellMetrics {
+                    origin_x: 12.0,
+                    ..text_style().geometry.metrics
+                },
+                ..text_style().geometry
+            },
+            // The top inset less a screen of scroll — what `Surface::draw` hands the paint pass.
+            content_origin_y: 8.0 - 300.0,
+            ..text_style()
+        };
+        let laid = layout(3, false);
+        let (drawn, _) = draw_with(
+            &laid,
+            &style(),
+            &ChromeFrame {
+                hovered: Some(1),
+                ..frame()
+            },
+            &[],
+            &scrolled,
+        );
+
+        let middle = &laid.blocks[1];
+        let Some(gutter) = drawn
+            .backgrounds
+            .iter()
+            .filter(|rect| rect.color == style().gutter)
+            .nth(1)
+        else {
+            panic!("every visible block wears an edge")
+        };
+        let Some(body_top) = middle.row_y(middle.span.rows.start, 20.0) else {
+            panic!("a block holds its own first row")
+        };
+        // Spelled the way `crate::paint` spells it, so the assertion is the other pass's arithmetic
+        // rather than a number copied out of it.
+        let row_top = scrolled.content_origin_y + body_top;
+        assert!(
+            (f64::from(gutter.y) - row_top).abs() < 1e-4,
+            "the edge at {} against rows at {row_top}",
+            gutter.y
+        );
+        assert!(
+            (f64::from(gutter.x) - scrolled.geometry.metrics.origin_x).abs() < 1e-4,
+            "the leading edge sits on the content box, not on x zero"
+        );
+
+        // The mark starts on the column the command's own text starts on.
+        let column = scrolled.geometry.metrics.origin_x + middle.body.x;
+        assert!(
+            drawn
+                .glyphs
+                .iter()
+                .all(|glyph| (f64::from(glyph.x) - column).abs() < 1e-4),
+            "a chrome label drifted off the command's column"
+        );
+
+        // And the wash covers the block, not the place it would sit at rest.
+        let Some(wash) = drawn.backgrounds.iter().find(|rect| rect.color == style().hover) else {
+            panic!("the hovered block takes a wash")
+        };
+        assert!((f64::from(wash.y) - (scrolled.content_origin_y + middle.frame.y)).abs() < 1e-4);
     }
 }

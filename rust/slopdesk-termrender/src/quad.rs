@@ -1,6 +1,6 @@
-//! What the GPU is handed: four instance arrays and nothing else.
+//! What the GPU is handed: a handful of instance arrays and nothing else.
 //!
-//! ## Four buffers, and the order is the whole design
+//! ## The buffers, and the order is the whole design
 //!
 //! [`DrawList`] keeps backgrounds, glyphs and overlays apart because they must be drawn in that
 //! order and because each wants a different pipeline. What makes the split load-bearing rather than
@@ -16,6 +16,12 @@
 //! would have been the obvious spelling and the wrong one: it is the same pipeline and the same
 //! textures every time, and a program that puts one image behind text and another in front would
 //! then need its instances split across two allocations to say so.
+//!
+//! The pinned trio is the same three kinds again, drawn after all of the above. It exists because
+//! this renderer has no scissor rect: [`crate::pin`]'s band cannot be clipped, so being LAST is the
+//! whole of how it stays on top of rows it overlaps. Three more arrays rather than a z field on
+//! every instance, for the reason the first three are separate — the order is known when the
+//! instance is built, and a sort per frame would be paying to rediscover it.
 //!
 //! ## Why `#[repr(C)]` in a crate that forbids `unsafe`
 //!
@@ -237,6 +243,24 @@ pub struct DrawList {
     /// Underlines, strikethroughs, overlines, and any cursor that is not a filled block. Drawn
     /// last, because a strikethrough that the glyph painted over is not a strikethrough.
     pub overlays: Vec<RectInstance>,
+    /// Backgrounds that draw over everything above — the pinned head's bed.
+    pub pinned_backgrounds: Vec<RectInstance>,
+    /// Text drawn over [`Self::pinned_backgrounds`], and over every unpinned instance.
+    pub pinned_glyphs: Vec<GlyphInstance>,
+    /// The pinned pass's own decorations, last of all.
+    pub pinned_overlays: Vec<RectInstance>,
+}
+
+/// Where a [`DrawList`] stood before a pass appended to it.
+///
+/// Opaque on purpose — the only thing a caller may do with one is hand it back to
+/// [`DrawList::lift_pinned`], which is what keeps "everything since here" from becoming three
+/// indices a caller could get individually wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mark {
+    backgrounds: usize,
+    glyphs: usize,
+    overlays: usize,
 }
 
 impl DrawList {
@@ -253,6 +277,9 @@ impl DrawList {
         self.backgrounds.clear();
         self.glyphs.clear();
         self.overlays.clear();
+        self.pinned_backgrounds.clear();
+        self.pinned_glyphs.clear();
+        self.pinned_overlays.clear();
     }
 
     /// Whether the list would draw nothing.
@@ -262,12 +289,57 @@ impl DrawList {
             && self.glyphs.is_empty()
             && self.overlays.is_empty()
             && self.images.is_empty()
+            && self.pinned_backgrounds.is_empty()
+            && self.pinned_glyphs.is_empty()
+            && self.pinned_overlays.is_empty()
     }
 
     /// How many instances the list holds, across every buffer.
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.backgrounds.len() + self.glyphs.len() + self.overlays.len() + self.images.len()
+        self.backgrounds.len()
+            + self.glyphs.len()
+            + self.overlays.len()
+            + self.images.len()
+            + self.pinned_backgrounds.len()
+            + self.pinned_glyphs.len()
+            + self.pinned_overlays.len()
+    }
+
+    /// Where the list stands right now, so a pass can lift what it is about to append.
+    #[must_use]
+    pub const fn mark(&self) -> Mark {
+        Mark {
+            backgrounds: self.backgrounds.len(),
+            glyphs: self.glyphs.len(),
+            overlays: self.overlays.len(),
+        }
+    }
+
+    /// Moves everything appended since `mark` into the pinned buffers.
+    ///
+    /// ## Why lifting, rather than a second set of `push_*` doors
+    ///
+    /// The pinned pass draws a terminal ROW — the same cells, the same runs, the same selection and
+    /// the same coalescing as the row beside it — so it runs [`crate::paint::Painter`]'s own row
+    /// painter and can only be right by construction if that painter is the SAME code. A pinned
+    /// variant of every push would make it a copy, and the day the two copies disagree is the day a
+    /// user's sticky head renders with last month's underline rule.
+    ///
+    /// Images are not lifted, and there is nothing to lift: the pinned pass emits no placement, and
+    /// [`crate::image`] places from the block layout after every text pass has run. A kitty image
+    /// on a prompt row therefore scrolls away with its row rather than riding the head, which is
+    /// the honest answer — the head is a label, and a label that redrew an image would have to
+    /// clip it against a band it has no scissor for.
+    pub fn lift_pinned(&mut self, mark: Mark) {
+        self.pinned_backgrounds.extend(
+            self.backgrounds
+                .drain(mark.backgrounds.min(self.backgrounds.len())..),
+        );
+        self.pinned_glyphs
+            .extend(self.glyphs.drain(mark.glyphs.min(self.glyphs.len())..));
+        self.pinned_overlays
+            .extend(self.overlays.drain(mark.overlays.min(self.overlays.len())..));
     }
 
     /// Appends an image instance to the run `image` and `layer` name, opening one if needed.
@@ -347,6 +419,11 @@ pub const fn px(value: f64) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "a panic in a test is the failure report, not a runtime fault"
+    )]
+
     use slopdesk_vterm::Rgb;
 
     use super::{DrawList, GlyphInstance, ImageInstance, ImageLayer, RectInstance, RectStyle, Rgba, px};
@@ -504,5 +581,64 @@ mod tests {
             list.image_runs.is_empty(),
             "an empty run would still bind a texture"
         );
+    }
+
+    /// A lift takes everything since the mark and nothing before it.
+    #[test]
+    fn a_lift_moves_only_what_came_after_the_mark() {
+        let mut list = DrawList::new();
+        list.push_background(rect(Rgba::opaque(1, 1, 1)));
+        list.push_overlay(rect(Rgba::opaque(2, 2, 2)));
+
+        let mark = list.mark();
+        list.push_background(rect(Rgba::opaque(3, 3, 3)));
+        list.push_overlay(rect(Rgba::opaque(4, 4, 4)));
+        list.lift_pinned(mark);
+
+        assert_eq!(list.backgrounds.len(), 1);
+        assert_eq!(list.backgrounds[0].color, Rgba::opaque(1, 1, 1));
+        assert_eq!(list.overlays.len(), 1);
+        assert_eq!(list.overlays[0].color, Rgba::opaque(2, 2, 2));
+        assert_eq!(list.pinned_backgrounds.len(), 1);
+        assert_eq!(list.pinned_backgrounds[0].color, Rgba::opaque(3, 3, 3));
+        assert_eq!(list.pinned_overlays.len(), 1);
+        assert_eq!(list.pinned_overlays[0].color, Rgba::opaque(4, 4, 4));
+        assert_eq!(list.len(), 4, "a lift moves instances, it does not drop them");
+    }
+
+    /// ⚠️ A lift over a mark taken before a `clear` must not panic.
+    ///
+    /// The pinned pass takes its mark and lifts within one call, so this cannot happen today — but
+    /// the mark is three plain indices and the drain that reads them is the one place a stale one
+    /// would become a slice out of range rather than a wrong picture.
+    #[test]
+    fn a_stale_mark_lifts_nothing_rather_than_panicking() {
+        let mut list = DrawList::new();
+        list.push_background(rect(Rgba::opaque(1, 1, 1)));
+        list.push_glyph(GlyphInstance {
+            width: 4.0,
+            height: 4.0,
+            color: Rgba::opaque(9, 9, 9),
+            ..GlyphInstance::default()
+        });
+        let mark = list.mark();
+        list.clear();
+        list.lift_pinned(mark);
+
+        assert!(list.is_empty());
+    }
+
+    /// Clearing empties the pinned buffers too — a head left behind would draw over a new frame.
+    #[test]
+    fn a_clear_takes_the_pinned_buffers_with_it() {
+        let mut list = DrawList::new();
+        let mark = list.mark();
+        list.push_background(rect(Rgba::opaque(1, 1, 1)));
+        list.lift_pinned(mark);
+        assert!(!list.is_empty());
+
+        list.clear();
+        assert!(list.is_empty());
+        assert_eq!(list.len(), 0);
     }
 }

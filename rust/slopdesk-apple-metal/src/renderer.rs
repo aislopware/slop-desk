@@ -253,6 +253,16 @@ fn encode(
     encode_images(&encoder, viewport, images, ImageLayer::AboveText, gpu);
     encode_rects(&encoder, viewport, filled.overlays, &gpu.pipelines.rect);
 
+    // The pinned head, over everything — its bed, its text, its hairline, in the same order the six
+    // passes above put a background under a glyph under an overlay. This is the whole of what
+    // replaces a scissor rect: the band cannot be CLIPPED, so `slopdesk_termrender::pin` keeps it
+    // inside the content box and the z ordering is what puts it on top. Three no-op calls on every
+    // frame that has no head, which is most of them — `encode_rects` and `encode_glyphs` both
+    // return on a `None` buffer, and a slot with no pinned instances never allocates one.
+    encode_rects(&encoder, viewport, filled.pinned_backgrounds, &gpu.pipelines.rect);
+    encode_glyphs(&encoder, viewport, filled.pinned_glyphs, gpu);
+    encode_rects(&encoder, viewport, filled.pinned_overlays, &gpu.pipelines.rect);
+
     encoder.endEncoding();
     command_buffer.presentDrawable(ProtocolObject::from_ref(&*drawable));
     Ok(command_buffer)

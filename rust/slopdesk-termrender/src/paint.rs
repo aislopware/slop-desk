@@ -320,7 +320,7 @@ impl Painter {
         reason = "a paint pass needs the frame, the row, its place, the style and three sinks; bundling \
                   them into a struct would move the argument list rather than shorten it"
     )]
-    fn paint_row(
+    pub(crate) fn paint_row(
         &mut self,
         row: &FrameRow,
         row_index: u16,

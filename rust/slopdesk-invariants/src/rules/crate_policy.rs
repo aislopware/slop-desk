@@ -255,7 +255,12 @@ const WIDE: [Wide; 7] = [
         // `unsafe` sites in `images.rs` and two in `renderer.rs`, every one the same two framework
         // rules the crate already discharges — an unchecked descriptor setter and an unchecked slot
         // or count — so the width is a fourth resource of a shape already here, not a new boundary.
-        cap: 909,
+        //
+        // 909 → 924: the pinned command head (`docs/68` §5.12). Three more `InstanceBuffer`s on the
+        // slot and three more encode calls, in the order they already draw in. NO new `unsafe` —
+        // the buffers go through `InstanceBuffer::fill`, which is the crate's one copy-in site, and
+        // the passes go through `encode_rects`/`encode_glyphs`, which are the ones already here.
+        cap: 924,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-cgvirtualdisplay",

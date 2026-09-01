@@ -181,7 +181,7 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
         }
     }
 
-    /// The SF Symbol name for the status icon (chrome chip / navigator row / sticky header).
+    /// The SF Symbol name for the status icon (chrome chip / navigator row).
     public var statusSymbol: String {
         switch status {
         case .running: "circle.dotted" // a spinner is overlaid in the view; this is the static fallback
@@ -245,7 +245,7 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
 /// `blockOutput` (type 29) — empty-eviction handled so it never hangs.
 ///
 /// PURE + headlessly testable: no view framework, no surface, no actor state. The owning ``TerminalViewModel``
-/// folds the two block events in; the surfaces that show them (navigator / sticky header / chrome chip) track
+/// folds the two block events in; the surfaces that show them (navigator / chrome chip) track
 /// its observable projections from their own arms. `@MainActor @Observable` (fold + reads are both on the main actor), yet
 /// every method is a synchronous mutation a unit test drives directly.
 @preconcurrency
@@ -289,8 +289,11 @@ public final class TerminalBlockModel {
 
     deinit { slopdesk_block_store_free(store) }
 
-    /// The newest block (the CURRENT / last command), or `nil` if none yet. Drives the sticky header +
-    /// the chrome status chip.
+    /// The newest block (the CURRENT / last command), or `nil` if none yet. Drives the chrome status chip.
+    ///
+    /// NOT the pinned command head: that is `slopdesk_termrender::pin`, and it reads the row the shell
+    /// drew from the block LAYOUT rather than this ring — the head has to render for a block the host
+    /// has told us nothing about yet, which is every block while its command is still running.
     public var latest: CommandBlock? { blocks.last }
 
     /// The blocks newest-first — the Command Navigator's display order (most recent at the top).

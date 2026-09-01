@@ -29,6 +29,7 @@
 //! - [`chrome`] — the furniture around one: the gutter, the divider, the collapse mark, the
 //!   scrollbar.
 //! - [`paint`] — the pass that turns a frame into instances, sixty times a second.
+//! - [`pin`] — the head of the block you are inside, kept on screen while its output scrolls.
 //! - [`image`] — inline images: the CPU-side pixel cache, and where a kitty placement lands once
 //!   [`block`] rather than a multiplication decides where a row is.
 //!
@@ -48,6 +49,7 @@ pub mod glyph;
 pub mod image;
 pub mod layout;
 pub mod paint;
+pub mod pin;
 pub mod quad;
 
 pub use atlas::{Atlas, AtlasFormat, AtlasRegion};
@@ -68,4 +70,6 @@ pub use image::{
 };
 pub use layout::{CellGeometry, FontMetrics, Insets, Thumb, Underline, grid_size, scrollbar};
 pub use paint::{PaintStyle, Painter, Preedit, SelectionColors};
-pub use quad::{DrawList, GlyphInstance, ImageInstance, ImageLayer, ImageRun, RectInstance, RectStyle, Rgba};
+pub use quad::{
+    DrawList, GlyphInstance, ImageInstance, ImageLayer, ImageRun, Mark, RectInstance, RectStyle, Rgba,
+};

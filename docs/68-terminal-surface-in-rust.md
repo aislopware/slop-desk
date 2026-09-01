@@ -950,6 +950,51 @@ last drew with. That is the load-bearing part: the publish fires on EVERY settin
 that compared only the family and the size would read a new `font-feature` line, publish it and drop
 it. There is nothing left to forget to add to the comparison, on either side of the boundary.
 
+### 5.12 The pinned command head, and the coordinate bug it found (2026-09-01)
+
+Scroll into a long command's output and the command that produced it leaves the screen, which is
+the one question a reader has while looking at output: *what produced this?* `slopdesk-termrender`'s
+new `pin` module answers it by keeping that block's HEAD — its header band and its prompt rows — at
+the top of the content box while its output scrolls underneath. Warp's shape, and Rio's, and every
+code viewer's sticky section header.
+
+**It redraws the ROW, not the recorded command text.** `blockjoin` can hand over the command the
+host recorded, and printing that string would be a third of the code — and wrong twice. The join
+answers `None` whenever its confirmation fails, including for the newest block, which is the one a
+reader is most often inside; the head would blank exactly when it is wanted. And the row on screen
+is the SHELL's rendering: the prompt, its colours, the git branch, the user's own theme. So the pass
+runs `Painter::paint_row` over the block's prompt rows at a new y — same cells, same runs, same
+selection, same coalescing, by construction rather than by a second implementation.
+
+**It never slides, and that is a renderer fact rather than a taste.** The obvious polish is the
+shove: push the pinned head up and out as the next block's arrives. `slopdesk-apple-metal`'s
+`encode` is six fixed passes with no `setScissorRect` anywhere, so a band moved above the content
+box would spill its glyphs into the drawable's top inset, and a glyph cannot be clipped after the
+fact the way `image.rs` clips a placement on the CPU. It costs nothing, because the swap has
+somewhere better to happen: the head is dropped the moment the NEXT block's own header reaches the
+band, and what the reader sees in its place is that real header arriving.
+
+**Z ordering replaces the clip.** `DrawList` gained a pinned background/glyph/overlay trio and a
+`Mark`; the pass takes a mark, draws through the ordinary `push_*` doors so the row painter is
+reused verbatim, and `lift_pinned` moves everything since into the pinned buffers. `renderer::encode`
+draws those three last. Three no-op encodes on a frame with no head, which is most of them.
+
+**⚠️ Building it surfaced a live drawing bug.** `block::lay_out` measures CONTENT — from the top of
+the first block, at x zero, knowing neither the drawable's insets nor the scroll. The paint pass adds
+both back for every row (`content_origin_y + row_y`, `origin_x + body.x`). `chrome::paint` added
+NEITHER: it emitted `block.frame` and `block.body` verbatim, so the gutter, the divider, the hover
+wash and the header status drew a top inset low at rest and a WHOLE SCROLL OFFSET low once anyone
+scrolled. It shipped because every test in that module ran at the origin, the one offset where the
+two spaces coincide. The origin story is in this file's own history: the fill used to be Swift's,
+consuming `Surface::on_screen` rects, and when it moved into Rust the transform stayed behind. The
+fix is `PlacedBlock::translated`, applied once at the top of the chrome loop, pinned by
+`the_furniture_lands_on_the_rows_it_decorates` — nonzero inset AND nonzero scroll, on both axes.
+`ChromeFrame::viewport` and the scrollbar thumb are drawable-space already and are NOT translated.
+
+**No new design door.** The band's bed is `frame.colors.background`, the colour the render pass
+clears to, for the reason the preedit bed is; its hairline is the divider the block list already
+draws; its status is the label ink. `SlopDeskTerminalChromeStyle` is unchanged.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`
