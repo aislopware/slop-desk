@@ -447,6 +447,22 @@ public final class CommandPrompt {
     /// The last state read out of the door, refreshed by every call that can change it.
     private var state: SlopDeskPromptState
 
+    /// Which COMPLETION QUESTION the editor is on. Bumped by each of the three keys that end one —
+    /// Enter that runs the line (``submit()``), ⌃C that abandons it (``clear()``), Escape that puts
+    /// the panel away (``dismissCompletion()``) — and never by editing the line itself.
+    ///
+    /// It exists for the asynchronous answers that outlive their question. A shell completion is
+    /// asked about a caret and lands 20–92 ms later (`docs/68` §11), and in that window the user can
+    /// end the question three different ways that the TEXT alone cannot report. Enter is the sharp
+    /// one: it empties the document, so an answer checking only the text would rank the whole
+    /// history against an empty prefix and hang a panel on the fresh prompt — where the next Enter
+    /// accepts a candidate instead of running what the user typed. Escape is the quiet one: a panel
+    /// that reappears sixty milliseconds after it was dismissed reads as a bug in any UI.
+    ///
+    /// Read rather than observed, and bumped HERE rather than at the six call sites in the two
+    /// views, so no caller has to remember to retire anything.
+    public private(set) var completionEpoch: UInt64 = 0
+
     public init() {
         guard let created = slopdesk_prompt_new() else {
             preconditionFailure("slopdesk_prompt_new returned null — allocation failed")
@@ -642,6 +658,7 @@ public final class CommandPrompt {
     /// Empties the document, keeping the history.
     public func clear() {
         slopdesk_prompt_clear(handle)
+        completionEpoch &+= 1
         refresh()
     }
 
@@ -926,6 +943,7 @@ public final class CommandPrompt {
     /// Drops the candidate list.
     public func dismissCompletion() {
         slopdesk_prompt_dismiss_completion(handle)
+        completionEpoch &+= 1
         refresh()
     }
 
@@ -936,8 +954,11 @@ public final class CommandPrompt {
         let verdict = slopdesk_prompt_submit(handle)
         refresh()
         guard verdict == UInt8(SLOPDESK_PROMPT_SUBMISSION_RUN) else {
+            // An open document did not retire the line — it grew one row. Anything still in flight
+            // is about a line that is very much still here, so the epoch holds.
             return .continued(unterminated)
         }
+        completionEpoch &+= 1
         return .run(ffiAnswerText { slopdesk_prompt_take_submitted(handle, $0, $1) })
     }
 

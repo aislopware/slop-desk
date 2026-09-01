@@ -1465,19 +1465,28 @@ both renderers press the same key into it (the macOS `insertTab:` selector and t
 sources and the shell **in parallel**: the local answer is on screen before the key is released, and
 the shell's merges in 20–92 ms later.
 
-Three things about that are worth not re-deriving:
+Four things about that are worth not re-deriving:
 
 1. **The outright accept moves to the reply.** "Exactly one candidate applies without asking" is what
    makes Tab worth pressing, but *exactly one* counted off the local sources alone is a claim the
    client cannot make while a shell request is out. On `git checkout ma` the local path source finds
    one file called `main.rs` and zsh is about to name 27 refs. So the rule is applied by whoever
    knows the whole list — and only then.
-2. **The accept is withheld from a line that moved.** The buffer and caret are captured before the
-   `await` and compared on the reply. Merging is safe either way (decision 2 — `ShellProvider`
-   re-derives its range against the LIVE document), but accepting into a line the user kept typing
-   writes over what they meant.
-3. **`noShell` latches for the connection; `notReady` never does.** A generation counter drops an
-   older answer that lands after a newer one, which two Tabs in quick succession will produce.
+2. **The accept is withheld from a line that MOVED.** The buffer and caret are captured before the
+   `await` and compared on the reply. The merge still happens (decision 2 — `ShellProvider`
+   re-derives its range against the LIVE document, and offers nothing once the prefix stops
+   matching), but accepting into a line the user kept typing writes over what they meant.
+3. **Nothing at all lands on a question the user ENDED.** A line that moved still wants the merge; a
+   line that is over wants none of it, and three keys end one inside the window: Enter runs it, ⌃C
+   abandons it, ⎋ puts the panel away. The text cannot report any of them — after Enter the document
+   is empty, and merging into it would rank the whole history against an empty prefix and hang a
+   panel on the fresh prompt, where the user's *next* Enter would accept a candidate instead of
+   running what they typed. `CommandPrompt.completionEpoch` is bumped by those three and by nothing
+   else, captured with the buffer, and checked before the merge rather than beside the accept. It is
+   bumped inside `CommandPrompt` rather than at the six view call sites, so no key has to remember.
+4. **`noShell` latches for the connection; `notReady` never does.** The latch is a fact about the
+   HOST, so it is taken even from an answer whose line is gone. A generation counter drops an older
+   answer that lands after a newer one, which two Tabs in quick succession will produce.
 
 The wiring is `TerminalPaneWiring.wireShellCompletion(live:)`, in the same weak-provider shape as the
 host path actions: the `MetadataClient` façade is replaced on every reconnect, so anything that

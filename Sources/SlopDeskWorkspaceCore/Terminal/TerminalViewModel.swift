@@ -2067,17 +2067,27 @@ public final class TerminalViewModel {
 
     /// Sends one shell-completion request for the caret as it stands. Answers whether one went out.
     ///
-    /// The buffer and caret are captured HERE, before the `await`, and compared again on the reply:
-    /// the answer is only auto-accepted into a document that has not moved under it. Merging is safe
-    /// either way — `ShellProvider` re-derives its range against the LIVE document and offers
-    /// nothing when the prefix no longer matches (`docs/68` §11 decision 2) — but ACCEPTING into a
-    /// line the user has kept typing is how a completion writes over what they meant.
+    /// The buffer, caret and LINE are captured HERE, before the `await`, and each is checked again on
+    /// the reply, because there are two different ways the question can go stale and they want
+    /// different answers.
+    ///
+    /// A line that MOVED still wants the merge: the user typed through the round trip, and
+    /// `ShellProvider` re-derives its range against the LIVE document and offers nothing when the
+    /// prefix no longer matches (`docs/68` §11 decision 2). Only the auto-accept is withheld, since
+    /// accepting into a line the user has kept typing writes over what they meant.
+    ///
+    /// A line that is GONE wants nothing at all. Enter within the window empties the document, and
+    /// merging into the fresh prompt would rank the whole history against an empty prefix and hang a
+    /// panel on a line the user has not started — where their next Enter would accept a candidate
+    /// instead of running what they typed. ``CommandPrompt/completionEpoch`` is what says gone, and it is
+    /// checked BEFORE the merge rather than beside the accept.
     private func askShellToComplete(didChange: @escaping @MainActor () -> Void) -> Bool {
         guard shellCompletionAvailable, let sink = shellCompletionSink else { return false }
         shellCompletionGeneration &+= 1
         let generation = shellCompletionGeneration
         let cursor = commandPrompt.cursor
         let buffer = commandPrompt.text
+        let epoch = commandPrompt.completionEpoch
         Task { @MainActor [weak self] in
             let answer = await sink(cursor, buffer)
             guard let self, generation == shellCompletionGeneration else { return }
@@ -2089,6 +2099,7 @@ public final class TerminalViewModel {
                 // already up and the next Tab asks again; there is nothing to redraw.
                 break
             case let .groups(payload):
+                guard commandPrompt.completionEpoch == epoch else { return }
                 commandPrompt.setShellCandidates(payload)
                 let count = commandPrompt.complete()
                 let untouched = commandPrompt.cursor == cursor && commandPrompt.text == buffer

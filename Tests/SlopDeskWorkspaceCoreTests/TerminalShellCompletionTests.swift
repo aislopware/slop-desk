@@ -171,6 +171,68 @@ final class TerminalShellCompletionTests: XCTestCase {
         XCTAssertEqual(model.commandPrompt.selectedCandidate, 1, "and the highlight moved")
     }
 
+    /// Tab, then Enter before the host answers — the fastest thing a user does with a completion they
+    /// decided not to wait for.
+    ///
+    /// The answer is for a line that has RUN. Landing it on the fresh prompt would open a panel over
+    /// a line the user has not started, and the next Enter would accept a candidate instead of
+    /// running what they typed — the completion eating a command.
+    func testAnAnswerForALineThatHasRunIsDropped() async {
+        let model = seeded()
+        model.shellCompletionSink = { _, _ in .groups(Data()) }
+
+        model.completeCommandPrompt(forward: true)
+        XCTAssertTrue(model.submitCommandPrompt(), "the line ran")
+        await drainReply()
+
+        XCTAssertEqual(model.commandPrompt.text, "", "the fresh prompt is still empty")
+        XCTAssertTrue(model.commandPrompt.candidates.isEmpty, "and carries no panel from the last line")
+    }
+
+    /// ⌃C is the other way a line ends. It reaches ``CommandPrompt/clear()`` straight from the two
+    /// views, so the epoch is bumped THERE rather than at a call site that could forget.
+    func testAnAnswerForAnAbandonedLineIsDropped() async {
+        let model = seeded()
+        model.shellCompletionSink = { _, _ in .groups(Data()) }
+
+        model.completeCommandPrompt(forward: true)
+        model.commandPrompt.clear()
+        await drainReply()
+
+        XCTAssertEqual(model.commandPrompt.text, "", "⌃C abandoned it")
+        XCTAssertTrue(model.commandPrompt.candidates.isEmpty, "so the answer had nothing to land on")
+    }
+
+    /// Escape during the round trip. The panel the user dismissed must not come back wearing the
+    /// shell's answer — a list that reappears sixty milliseconds after ⎋ reads as a bug, and Tab is
+    /// right there to ask again.
+    func testAnAnswerForADismissedPanelIsDropped() async {
+        let model = seeded()
+        model.shellCompletionSink = { _, _ in .groups(Data()) }
+
+        model.completeCommandPrompt(forward: true)
+        model.commandPrompt.dismissCompletion()
+        await drainReply()
+
+        XCTAssertTrue(model.commandPrompt.candidates.isEmpty, "⎋ won")
+        XCTAssertEqual(model.commandPrompt.text, "ls", "and nothing was accepted into the line")
+    }
+
+    /// The submit that does NOT end a line: an open quote makes Enter a newline, and the question is
+    /// still about the line on screen.
+    func testAnOpenDocumentDoesNotRetireTheQuestion() async {
+        let model = TerminalViewModel()
+        model.commandPrompt.recordHistory("echo \"hi there\"")
+        model.commandPrompt.insert("echo \"hi")
+        model.shellCompletionSink = { _, _ in .groups(Data()) }
+
+        model.completeCommandPrompt(forward: true)
+        XCTAssertFalse(model.submitCommandPrompt(), "the quote is still open, so Enter added a row")
+        await drainReply()
+
+        XCTAssertEqual(model.commandPrompt.candidates.count, 1, "the answer still had its line")
+    }
+
     /// Lets the `Task` the ask spawned run to completion. Yielding rather than sleeping: the sink
     /// answers immediately in every test that calls this, so there is nothing to wait OUT.
     private func drainReply() async {
