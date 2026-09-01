@@ -1147,6 +1147,13 @@ pub unsafe extern "C" fn slopdesk_term_surface_draw(handle: *mut SlopDeskTermina
 /// thing either changes — and because an unfocused surface has no cursor to blink, so a caller that
 /// set them separately would be able to describe a state the painter cannot draw.
 ///
+/// ⚠️ Focus is no longer only the painter's. A program that set DEC mode 1004 is owed `CSI I`/`CSI
+/// O` on each edge, so the focus goes to the ENGINE as well as to the flag `PaintStyle` reads. The
+/// edge is detected inside `VtSession::set_focused` — a view pushes its focus from
+/// `didMoveToWindow` and from every layout pass, and a report per pass would be one `CSI I` per
+/// pass on the program's input. The bytes join the pty queue, so the caller must drain it after
+/// this call as it does after a feed.
+///
 /// # Safety
 /// [`held`]'s.
 #[unsafe(no_mangle)]
@@ -1154,7 +1161,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_draw(handle: *mut SlopDeskTermina
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub const unsafe extern "C" fn slopdesk_term_surface_set_focus(
+pub unsafe extern "C" fn slopdesk_term_surface_set_focus(
     handle: *mut SlopDeskTerminalSurface,
     focused: bool,
     blink_visible: bool,
@@ -1164,6 +1171,7 @@ pub const unsafe extern "C" fn slopdesk_term_surface_set_focus(
         return;
     };
     surface.focused = focused;
+    surface.session.set_focused(focused);
     surface.blink_visible = blink_visible;
 }
 

@@ -34,6 +34,7 @@
 use core::fmt;
 
 use libghostty_vt::error::Error as EngineError;
+use libghostty_vt::focus::Event as FocusEvent;
 use libghostty_vt::kitty::graphics::PlacementIterator;
 use libghostty_vt::render::{CellIterator, Dirty, RenderState, RowIterator};
 use libghostty_vt::screen::{CellContentTag, CellWide};
@@ -197,6 +198,8 @@ pub struct VtSession {
     /// arrives in — the user sets it once and every copy after obeys. `pub(crate)` for
     /// [`crate::selection`], which is where the copy reads it.
     pub(crate) trim_selection: bool,
+    /// The surface's focus and the mode that asks to hear about it. See [`FocusState`].
+    focus: FocusState,
     /// The kitty-graphics placement iterator, reused across frames.
     ///
     /// `pub(crate)` for [`crate::graphics`] alone, which needs it mutably while the terminal beside
@@ -204,6 +207,23 @@ pub struct VtSession {
     /// this object's allocation on every update, so making one per frame would put an allocation
     /// and a free on the render path to save a field.
     pub(crate) placements: PlacementIterator<'static>,
+}
+
+/// The surface's focus, paired with the mode that decides whether it is anybody's business.
+///
+/// One struct rather than two fields on the session because the two are never read apart — a report
+/// is composed from `held` only when `reporting` says a program asked — and because a session that
+/// carries its bools loose stops being readable at four of them.
+#[derive(Debug, Default)]
+struct FocusState {
+    /// Whether the surface has the user's focus.
+    ///
+    /// Held here rather than by the caller because DEC 1004 needs it from inside a feed — see
+    /// [`VtSession::set_focused`]. It is NOT what the painter reads: the hollow cursor is the
+    /// surface's own flag, and the two are pushed by the same call.
+    held: bool,
+    /// The last reading of mode 1004, kept to spot the OFF→ON edge a feed can carry.
+    reporting: bool,
 }
 
 /// The two buffers one cell's text passes through on its way into a row arena.
@@ -270,6 +290,7 @@ impl VtSession {
             scratch: CellScratch::default(),
             events,
             trim_selection: true,
+            focus: FocusState::default(),
             placements: PlacementIterator::new()?,
         };
         // Two facts about images, stated at construction because both are refusals: the two file
@@ -279,7 +300,37 @@ impl VtSession {
         // setting is the storage LIMIT, which starts at the engine's zero and therefore holds no
         // image at all until `set_image_storage_limit` says otherwise.
         session.seal_image_transmission()?;
+        session.refuse_glyph_protocol()?;
         Ok(session)
+    }
+
+    /// Stops the engine claiming a Glyph Protocol this renderer cannot draw.
+    ///
+    /// ghostty's Glyph Protocol (`ESC _ 25a1 ; …`) lets a program register its own glyph OUTLINES
+    /// with the terminal at runtime, so a TUI can draw icons without the user installing a patched
+    /// font. The engine implements the wire half and enables every APC protocol by default
+    /// (`apc.zig`'s `initFull()`), which means a terminal built without this line answers the
+    /// support query — measured, not read: a fresh session fed `ESC _ 25a1 ; s ESC \` replies
+    /// `ESC _ 25a1 ; s ; fmt=glyf ESC \`.
+    ///
+    /// ⚠️ That answer is a LIE here, and a costly one. Nothing downstream can draw a registered
+    /// glyph: the C ABI has a setter and no reader — disabling is documented to CLEAR the glossary,
+    /// and there is no door that hands the outlines out — and `slopdesk-apple-text` rasterizes
+    /// INSTALLED fonts through Core Text, not `glyf`/COLR tables arriving on a pty. So a program
+    /// that believes the reply registers its icons and then prints codepoints we render as tofu,
+    /// which is strictly worse than the fallback it would otherwise have taken (a Nerd Font glyph
+    /// out of the user's own family). The protocol's own rule is that silence means unsupported, so
+    /// refusing is spelled by not answering at all rather than by an empty `fmt=`.
+    ///
+    /// This is a REFUSAL WITH A DATE ON IT, not a non-goal like sixel: it comes back the day the
+    /// bindings expose the glossary and the renderer can rasterize an outline. `docs/68` §5.7 and
+    /// `docs/DECISIONS.md` carry the argument.
+    ///
+    /// # Errors
+    /// The engine's own, if it declines.
+    fn refuse_glyph_protocol(&mut self) -> Result<()> {
+        self.terminal.set_glyph_protocol_enabled(false)?;
+        Ok(())
     }
 
     /// Points the engine's five push handlers at `events`.
@@ -346,6 +397,85 @@ impl VtSession {
         self.events.take_pty(out)
     }
 
+    /// Takes the surface's focus, reporting the edge to a program that asked for one.
+    ///
+    /// DEC mode 1004. A program that sets it wants `CSI I` when the terminal gains focus and
+    /// `CSI O` when it loses it — vim's `FocusGained`/`FocusLost` (which is what makes `autoread`
+    /// notice a file another window wrote), tmux's `focus-events`, and every full-screen picker
+    /// that dims itself when the user looks away. Until this existed the mode was settable, nothing
+    /// ever arrived, and those programs behaved as if the window were never left.
+    ///
+    /// ⚠️ **The mode is asked, never assumed.** Sending `CSI I` to a program that did not enable
+    /// 1004 puts a bare `I` on its input — the sequence is indistinguishable from a keystroke to a
+    /// parser not looking for it — so a terminal that reports unconditionally corrupts the line of
+    /// everything that did not opt in.
+    ///
+    /// The focus itself is held HERE rather than by the caller, which is what makes [`Self::feed`]
+    /// able to answer the other half of the protocol: ghostty reports the current state at the
+    /// moment the mode is TURNED ON, so a program that enables 1004 mid-run learns immediately
+    /// whether it has focus instead of waiting for the user to click away and back. A caller that
+    /// owned the flag could not be asked from inside a feed.
+    ///
+    /// Idempotent, and deliberately: a view pushes its focus from `didMoveToWindow` and from every
+    /// layout pass, and a report per pass would be one `CSI I` per layout on the program's input.
+    /// The bytes join the queue [`Self::take_pty_replies`] drains, so poll after calling this
+    /// exactly as after a feed.
+    pub fn set_focused(&mut self, focused: bool) {
+        if self.focus.held == focused {
+            return;
+        }
+        self.focus.held = focused;
+        self.push_focus_report();
+    }
+
+    /// Answers the focus this surface last took.
+    #[must_use]
+    pub const fn focused(&self) -> bool {
+        self.focus.held
+    }
+
+    /// Reports the current focus at the moment a program turns mode 1004 ON.
+    ///
+    /// Called after every feed, because the mode is the program's to set and there is no push to
+    /// tell us it did. Only the OFF→ON edge reports: re-reporting while the mode stays on would
+    /// send one `CSI I` per chunk of output.
+    ///
+    /// ⚠️ The granularity is the FEED, not the escape sequence, and that is a real difference from
+    /// ghostty — which answers inside its mode handler and would report for a `1004l` and a `1004h`
+    /// arriving in the same write. Here the two cancel and nothing is sent. Closing it needs a
+    /// mode-change push the C ABI does not have; the case is a program disabling and re-enabling
+    /// focus reporting without any output between, which is not a thing a program does. If the
+    /// bindings ever grow the hook, this is the one place that changes.
+    fn sync_focus_reporting(&mut self) {
+        let reporting = self.terminal.mode(Mode::FOCUS_EVENT).unwrap_or(false);
+        let armed = reporting && !self.focus.reporting;
+        self.focus.reporting = reporting;
+        if armed {
+            self.push_focus_report();
+        }
+    }
+
+    /// Queues one `CSI I`/`CSI O` for the current focus, if the program asked to hear about it.
+    fn push_focus_report(&self) {
+        if !self.terminal.mode(Mode::FOCUS_EVENT).unwrap_or(false) {
+            return;
+        }
+        let event = if self.focus.held {
+            FocusEvent::Gained
+        } else {
+            FocusEvent::Lost
+        };
+        // Three bytes (`ESC [ I`), and the encoder is asked for the length rather than trusted with
+        // a guess: a buffer too small is an error it reports, not a truncation.
+        let mut buf = [0_u8; 8];
+        let Ok(len) = event.encode(&mut buf) else {
+            return;
+        };
+        if let Some(bytes) = buf.get(..len) {
+            self.events.push_pty(bytes);
+        }
+    }
+
     /// Empties the queue of clipboard writes running programs asked for, oldest first.
     ///
     /// ⚠️ **Asked for, not applied.** Whether one of these reaches a pasteboard is
@@ -368,6 +498,10 @@ impl VtSession {
     /// keeps its state consistent rather than surfacing an error the caller could not act on.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.terminal.vt_write(bytes);
+        // The one thing a feed can arm that no handler reports: mode 1004. See
+        // [`Self::sync_focus_reporting`] — the program is owed the CURRENT focus the moment it
+        // turns focus reporting on, not only on the next time the user looks away.
+        self.sync_focus_reporting();
     }
 
     /// Resizes the grid, reflowing the primary screen.
@@ -1350,6 +1484,90 @@ mod tests {
         assert!(
             !session.take_pty_replies(&mut replies),
             "a reply must leave exactly once"
+        );
+    }
+
+    /// Focus reporting, and the refusal that has to come with it. The two assertions are one
+    /// feature: a program that set DEC 1004 gets `CSI I`/`CSI O` on every edge, and a program that
+    /// did not gets NOTHING — because `CSI I` on the input of a parser not looking for it is a bare
+    /// `I` typed into whatever line it was reading. The default is off, so the silent half is what
+    /// almost every program on the pty sees.
+    #[test]
+    fn a_focus_change_is_reported_only_to_a_program_that_asked_for_one() {
+        let mut session = session();
+        let mut replies = Vec::new();
+        session.set_focused(true);
+        assert!(
+            !session.take_pty_replies(&mut replies),
+            "focus reporting is off until a program turns it on"
+        );
+
+        session.feed(b"\x1b[?1004h");
+        assert!(
+            session.take_pty_replies(&mut replies),
+            "turning the mode on is itself answered, with the focus the surface already had"
+        );
+        assert_eq!(replies, b"\x1b[I");
+
+        replies.clear();
+        session.set_focused(true);
+        assert!(
+            !session.take_pty_replies(&mut replies),
+            "the door is idempotent, or a layout pass would be a keystroke"
+        );
+
+        session.set_focused(false);
+        assert!(session.take_pty_replies(&mut replies));
+        assert_eq!(replies, b"\x1b[O");
+
+        replies.clear();
+        session.feed(b"\x1b[?1004l");
+        session.set_focused(true);
+        assert!(
+            !session.take_pty_replies(&mut replies),
+            "turning the mode back off stops the reports"
+        );
+    }
+
+    /// The half of mode 1004 that is easy to leave out and impossible to notice: a program that
+    /// enables focus reporting is owed the CURRENT state right then, not on the next time the user
+    /// looks away. ghostty answers the mode-set itself, and `feed` is where that edge can be seen —
+    /// so this pins that the report follows the mode ON→ and does NOT repeat on later output.
+    #[test]
+    fn arming_focus_reporting_answers_with_the_focus_already_held() {
+        let mut session = session();
+        let mut replies = Vec::new();
+        session.feed(b"\x1b[?1004h");
+        assert!(session.take_pty_replies(&mut replies));
+        assert_eq!(replies, b"\x1b[O", "an unfocused surface says so");
+
+        replies.clear();
+        session.feed(b"hello");
+        assert!(
+            !session.take_pty_replies(&mut replies),
+            "ordinary output must not re-report a mode that was already on"
+        );
+
+        replies.clear();
+        session.feed(b"\x1b[?1004l");
+        session.feed(b"\x1b[?1004h");
+        assert!(session.take_pty_replies(&mut replies));
+        assert_eq!(replies, b"\x1b[O", "re-arming reports again");
+    }
+
+    /// The inverse of the test above, and the only kind of pin a refusal can have: the ONE query
+    /// the engine would answer and must not. Written after the affirmative version of it failed —
+    /// a fresh session replied `ESC _ 25a1 ; s ; fmt=glyf ESC \`, advertising a protocol whose
+    /// glyphs nothing here can rasterize. It catches both ways this could come undone: the seal
+    /// being dropped, and the engine's `initFull()` default arriving through a bindings bump.
+    #[test]
+    fn the_glyph_protocol_support_query_goes_unanswered() {
+        let mut session = session();
+        session.feed(b"\x1b_25a1;s\x1b\\");
+        let mut replies = Vec::new();
+        assert!(
+            !session.take_pty_replies(&mut replies),
+            "claiming a protocol nothing can draw is worse than the font fallback it displaces"
         );
     }
 

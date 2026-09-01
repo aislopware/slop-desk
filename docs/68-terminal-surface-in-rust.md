@@ -766,6 +766,19 @@ Adding either would mean a decoder we maintain alone, a second path through the 
 class of security question about payloads the far end chose — for pictures the kitty path already
 draws. Do not re-open.
 
+**The Glyph Protocol is the rule's first COST, and it is refused rather than struck.** Kitty graphics
+is not the only APC protocol ghostty `main` carries: `ESC _ 25a1 ; …` registers a program's own glyph
+outlines with the terminal, so a TUI can draw icons without the user installing a patched font.
+`libghostty-vt` implements the wire half, and `apc.zig` arms every APC protocol by default
+(`initFull()`) — which meant this terminal answered the support query with `fmt=glyf` and then drew
+tofu, because the C ABI exposes a setter and no glossary READER, and Core Text rasterizes installed
+fonts rather than `glyf`/COLR tables arriving on a pty. Claiming the protocol is worse than declining
+it: the program's fallback is a Nerd Font glyph out of the user's own family, and the claim displaces
+it. `VtSession::refuse_glyph_protocol` turns it off at construction, beside the image seal and for
+the same reason — the engine's default assumes an embedder that draws. Unlike sixel this is a gap
+that is OWED work: it returns when the bindings expose the glossary and the renderer can rasterize a
+transmitted outline. `docs/DECISIONS.md` carries the argument.
+
 ## 6. Measured
 
 `libghostty-vt` parse throughput, release, this Mac Studio, 256 MiB per shape through `vt_write`

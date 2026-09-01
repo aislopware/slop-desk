@@ -270,8 +270,13 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
     }
 
     /// Pushes the pane's workspace focus and the blink clock's phase.
+    /// ⚠️ Drains afterwards because focus is not only the painter's: a program that set DEC mode
+    /// 1004 is owed a `CSI I`/`CSI O` report on the edge, and the engine composes it into the same
+    /// queue a device-status reply lands in. The edge itself is detected on the Rust side, so
+    /// pushing the same focus twice costs nothing.
     func setFocus(_ focused: Bool, blinkVisible: Bool) {
         surface?.setFocus(focused, blinkVisible: blinkVisible)
+        drainPtyReplies()
         onNeedsPresent?()
     }
 

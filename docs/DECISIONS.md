@@ -18849,3 +18849,51 @@ screenshot of a single image and wrong in every one of a tiled image, by a fract
 tile. `ImagePlacement` carries them now and `place` adds them as separate terms — never folded into
 the multiply, per `CLAUDE.md`'s bit-exactness rule, because these land in the same vertex buffer as
 the layout's numbers.
+
+**And the same survey found the rule's first cost: the Glyph Protocol is REFUSED, out loud
+(2026-09-01).** ghostty `main` ships one more APC protocol beside kitty graphics — `ESC _ 25a1 ; …`,
+the Glyph Protocol, which lets a TUI register its own glyph OUTLINES so icons draw without the user
+installing a patched font. `libghostty-vt` implements the whole wire half and `apc.zig` enables every
+APC protocol by default (`initFull()`), so this terminal was ANSWERING the support query: a probe fed
+`ESC _ 25a1 ; s ESC \` to a fresh session and got `ESC _ 25a1 ; s ; fmt=glyf ESC \` back.
+
+That reply is a promise nothing here can keep, and it costs more than saying nothing. The C ABI has a
+setter and no reader — disabling is documented to CLEAR the glossary, and no door hands the outlines
+out — and the rasterizer on this side is Core Text over INSTALLED fonts, not `glyf`/COLR tables
+arriving on a pty. A program that believes the reply registers its icons and then prints codepoints
+we draw as tofu, displacing the Nerd Font glyph out of the user's own family that it would otherwise
+have fallen back to. So `VtSession` calls `set_glyph_protocol_enabled(false)` at construction, beside
+the image seal and for the same reason: the engine's default assumes an embedder that draws.
+
+⚠️ This is a REFUSAL WITH A DATE ON IT, not a non-goal. Sixel and OSC 1337 were struck; this one
+returns the day the bindings expose the glossary and `slopdesk-termrender` can rasterize a
+transmitted outline. Recorded here so a future pass reads it as a gap that is owed work rather than a
+question already settled — and pinned by `the_glyph_protocol_support_query_goes_unanswered`, which
+fails both if the seal is dropped and if a bindings bump re-arms the default.
+
+**The same survey's second find was an outright absence: focus reporting (DEC 1004) was never
+wired.** Focus reached the RENDERER — it drives the hollow cursor — and stopped there; the FFI door's
+own doc comment said "drives the hollow cursor and nothing else", which was true and read for months
+as a scope statement rather than as the gap it described. A program that sets mode 1004 expects
+`CSI I` when the terminal gains focus and `CSI O` when it loses it. vim's `FocusGained`/`FocusLost`
+is what makes `autoread` notice a file another window wrote; tmux's `focus-events` forwards the same
+edges to whatever is inside it; a full-screen picker dims itself on blur. All of them were behaving
+as though this window were never left.
+
+`VtSession::set_focused` closes it: it ASKS `Mode::FOCUS_EVENT` and encodes through
+`libghostty_vt::focus::Event` into the queue a device-status reply already uses. Asking is not
+defensive politeness — `CSI I` delivered to a parser that did not opt in is a bare `I` typed into
+whatever line it was reading, so a terminal that reports unconditionally corrupts the input of every
+program that never asked. The edge is detected inside that door rather than left to the caller,
+because a view pushes its focus from `didMoveToWindow` and from every layout pass: idempotent on the
+painter's side, one report per pass on the program's.
+
+**The focus flag moved INTO the session, and that is the part worth reading.** The obvious shape —
+the caller owns the flag and calls a `report_focus(focused)` — cannot answer the second half of the
+protocol, and reading ghostty is what showed the second half exists: `stream_handler.zig` replies at
+the moment mode 1004 is TURNED ON, with the focus the terminal already has. So a program that
+enables focus reporting mid-run knows immediately whether it is focused, instead of waiting for the
+user to click away and back. Answering that means being asked from inside a feed, which means the
+session holds the flag. ⚠️ One honest difference remains and is written at the function: our
+granularity is the FEED rather than the escape sequence, so a `1004l` and a `1004h` in the same
+write cancel instead of reporting. Closing it needs a mode-change push the C ABI does not have.
