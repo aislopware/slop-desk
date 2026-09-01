@@ -178,8 +178,8 @@ The right panel's surfaces stand on programs this repo does not build. They are 
 
 | Dep | Surface | Pinned | Note |
 |---|---|---|---|
-| `code-server` | code panel (verb 18) | 4.131.0 | floor is **4.121** — Code 1.121 is where `mermaid-markdown-features` became built-in |
-| `baguette` | simulator panel (verb 21) | 0.1.88 | executable is `Baguette`, sibling to the `.bundle` it loads assets from; the `bin/` symlink was checked to still resolve it |
+| `code-server` | code panel (verb 18) | 4.135.0 | floor is **4.121** — Code 1.121 is where `mermaid-markdown-features` became built-in |
+| `baguette` | simulator panel (verb 21) | 0.1.97 | executable is `Baguette`, sibling to the `.bundle` it loads assets from; the `bin/` symlink was checked to still resolve it |
 | `adb` | Android panel (verb 22) | 37.0.1 | Google's versioned zip; its `repository2-3.xml` SHA-1 was cross-checked against our SHA-256 |
 | `scrcpy-server` | Android panel | 4.1 | **committed** at `ThirdParty/tools/vendor/scrcpy-server` (716 KB, not an executable — the device's `app_process` runs it). `slopdesk-provision` verifies those bytes, never downloads them |
 

@@ -295,7 +295,7 @@ mod tests {
             Some(PathBuf::from("adb"))
         );
         assert_eq!(
-            strip_one(Path::new("code-server-4.131.0/bin/code-server")),
+            strip_one(Path::new("code-server-4.135.0/bin/code-server")),
             Some(PathBuf::from("bin/code-server"))
         );
     }

@@ -18981,3 +18981,27 @@ the next survey does not re-derive the same answers:
 - **`set_default_mode`** — sets what a mode returns to after `RIS`. Every mode this app cares about
   is one a program drives; a default we imposed would be a divergence from ghostty that no setting
   asked for.
+
+## The code-server / baguette bump, and the tail it carries (2026-09-01)
+
+`code-server` **4.131.0 → 4.135.0** (Code 1.131 → 1.135) and `baguette` **0.1.88 → 0.1.97**, both
+sha256-pinned in `ThirdParty/tools/tools.lock` and verified by re-downloading each archive and
+hashing it rather than by trusting a release page. `adb` (37.0.1) is already upstream's latest;
+`scrcpy-server` and the ghostty pin are unchanged.
+
+`docs/46` says a `code-server` bump has a tail, so the tail was walked rather than assumed:
+
+- **`CLIPPED_TITLE_BAR_HEIGHT` stays 30.0 — MEASURED, not carried over.** A 4.135.0 workbench was
+  booted on a throwaway profile seeded with `slopdesk-codeseed`'s own `resources/settings.json` (the
+  activity-bar-at-top layout is what forces the title bar to show at all) and
+  `#workbench.parts.titlebar`'s `getBoundingClientRect().height` read **30**, with the activity bar
+  at 0 as expected. It went 35 → 30 across 1.112 → 1.131 and has not moved since.
+- **All 38 seeded keys are still registered.** Checked against the shipped 1.135 workbench bundle.
+  ⚠️ Four of them — `editor.glyphMargin`, `editor.hideCursorInOverviewRuler`,
+  `editor.lineNumbersMinChars`, `editor.overviewRulerBorder` — do NOT appear as full dotted literals
+  anywhere in `out/`, because core editor options are registered by concatenating `editor.` onto a
+  bare name. A literal grep for the dotted key reports them missing and is wrong; grep the bare name.
+  Anyone re-running this check will hit the same false positive.
+- **Spawn → listening: 0.54 / 0.59 / 0.69 s** over three runs with a throwaway `HOME`
+  (`slopdesk-ops measure-code-server 3`), against the ~0.4 s warm / ~1.2 s cold recorded when this
+  chain was first timed. Inside the old envelope; the prewarm architecture above is unchanged.

@@ -49,14 +49,14 @@
 # code-server — the code panel's workbench (verb 18). The floor is 4.121: Code 1.121 is where the
 # built-in `mermaid-markdown-features` extension landed, and the panel renders mermaid fences
 # through it rather than through the deprecated `bierner.markdown-mermaid`.
-code-server|4.131.0|tar.gz|bin/code-server|https://github.com/coder/code-server/releases/download/v4.131.0/code-server-4.131.0-macos-arm64.tar.gz|f7ebe8ac986ab0b89eb5882a5c804ad15c2999ad58a13c042f7645fa85124e5d
+code-server|4.135.0|tar.gz|bin/code-server|https://github.com/coder/code-server/releases/download/v4.135.0/code-server-4.135.0-macos-arm64.tar.gz|30e8c2fcf3cb7d125c06401ed7f24ff0609634b7ee01f259a52c7d462b90bd4e
 
 # baguette — the simulator panel's server (verb 21). Ships the executable as `Baguette` (capital B)
 # next to the `Baguette_Baguette.bundle` it loads its web assets from, so `binary` is the bare name
 # and the two stay siblings inside the versioned directory. The `.prefix/bin/baguette` symlink was
 # checked to still resolve that bundle — `serve` binds and serves through it — so no wrapper is
 # needed; re-check on a version bump if the panel ever comes up blank.
-baguette|0.1.88|tar.gz|Baguette|https://github.com/tddworks/baguette/releases/download/v0.1.88/baguette_v0.1.88_macOS_arm64.tar.gz|81752085712ccb6b6075ccbb6f6c298e190c0080060b9c5f11244ec101b1e967
+baguette|0.1.97|tar.gz|Baguette|https://github.com/tddworks/baguette/releases/download/v0.1.97/baguette_v0.1.97_macOS_arm64.tar.gz|7f490fca6bbe0df8136f35fdccff7bdfde6494b28ded0382f4350782e926870d
 
 # adb — the Android panel's device channel (verb 22). Google publishes the versioned zip alongside a
 # SHA-1 in `repository2-3.xml`; that SHA-1 was checked against this download, and the SHA-256 below

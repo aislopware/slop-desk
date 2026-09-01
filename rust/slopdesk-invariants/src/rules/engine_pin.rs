@@ -132,7 +132,7 @@ mod tests {
         fixture.write(
             super::LOCK,
             &format!(
-                "# prose\n\ncode-server|4.131.0|tar.gz|bin/code-server|https://e.invalid/c.tar.gz|{}\n\
+                "# prose\n\ncode-server|4.135.0|tar.gz|bin/code-server|https://e.invalid/c.tar.gz|{}\n\
                  ghostty|{version_in_lock}|git|build.zig|https://e.invalid/g.git|{}\n",
                 "a".repeat(64),
                 "b".repeat(40),
