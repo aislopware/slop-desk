@@ -51,7 +51,7 @@ dependencies = [
 [[package]]
 name = "libghostty-vt"
 version = "0.2.1"
-source = "git+https://github.com/trancong12102/libghostty-rs?rev=519649e#519649e5fcd4994aa6fa8ea9ac3c17c6f1e51dd4"
+source = "git+https://github.com/aislopware/libghostty-rs?rev=519649e#519649e5fcd4994aa6fa8ea9ac3c17c6f1e51dd4"
 dependencies = [
  "bitflags",
  "int-enum",
@@ -61,7 +61,7 @@ dependencies = [
 [[package]]
 name = "libghostty-vt-sys"
 version = "0.2.1"
-source = "git+https://github.com/trancong12102/libghostty-rs?rev=519649e#519649e5fcd4994aa6fa8ea9ac3c17c6f1e51dd4"
+source = "git+https://github.com/aislopware/libghostty-rs?rev=519649e#519649e5fcd4994aa6fa8ea9ac3c17c6f1e51dd4"
 
 [[package]]
 name = "memchr"

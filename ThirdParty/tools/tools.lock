@@ -78,9 +78,9 @@ scrcpy-server|4.1|file|scrcpy-server|https://github.com/Genymobile/scrcpy/releas
 # tree and `just ghostty-src` exports `GHOSTTY_SOURCE_DIR` at it, which `build.rs` honours by
 # short-circuiting its own clone entirely.
 #
-# The commit is the one the pinned bindings (`trancong12102/libghostty-rs` @ `519649e`, a soundness
-# fork of `Uzaaft/libghostty-rs` — see `docs/68` §4) were generated against — changing one without
-# the other is how the Rust surface and the Zig library drift apart. The fork carries no
+# The commit is the one the pinned bindings (`aislopware/libghostty-rs` @ `519649e`, a soundness
+# mirror of `Uzaaft/libghostty-rs` — see `docs/68` §4) were generated against — changing one without
+# the other is how the Rust surface and the Zig library drift apart. The mirror carries no
 # regeneration, so it did not move this commit.
 # `version` is descriptive only; the commit is the pin. See `docs/68-terminal-surface-in-rust.md` §3.
 ghostty|22d13172|git|build.zig|https://github.com/ghostty-org/ghostty.git|22d13172cde98a0a4dda05d3d6a3fcb0dd8ed018

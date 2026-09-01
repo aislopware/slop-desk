@@ -118,7 +118,8 @@ reading.
 
 Verified against `Uzaaft/libghostty-rs` @ `a0b5a46`, MIT, pinning ghostty `22d13172`.
 
-We now build on a fork of it, `trancong12102/libghostty-rs` @ `519649e`, and only for soundness.
+We now build on an org-hosted mirror of it, `aislopware/libghostty-rs` @ `519649e`, and the single
+divergence is soundness.
 Upstream's `ClipboardContent` handed over a `&str` built with `from_utf8_unchecked` over an OSC 52
 payload, and `ClipboardWrite::contents` sliced a null pointer for the "clear the clipboard" shape —
 both reachable by any program on the pty, both tracked by upstream's own issue #75, and both
