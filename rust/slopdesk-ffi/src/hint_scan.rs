@@ -28,7 +28,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_rowscan::hint::{Pattern, Target, TargetKind, targets};
+use slopdesk_rowscan::hint::{Authored, Pattern, Target, TargetKind, targets};
 use slopdesk_terminal::link::LinkSchemePolicy;
 
 use crate::link_detect::{SLOPDESK_LINK_KIND_NONE, SLOPDESK_LINK_SCHEMES_CUSTOM, kind_code, split};
@@ -194,10 +194,17 @@ unsafe fn held<'a>(handle: *mut SlopDeskHintScan) -> Option<&'a SlopDeskHintScan
 
 /// Scans `row_count` rows for every hintable target and hands back an owned result.
 ///
-/// `rows`, `schemes`, `patterns` and `actions` each cross as a flat UTF-8 blob plus a length per
-/// entry. `pattern_count` governs both pattern lists: entry `i` of `actions` is pattern `i`'s
-/// template, and a length of `0` there means the pattern carries none. `max_scan_columns` of `0`
-/// scans nothing rather than everything.
+/// `rows`, `schemes`, `patterns`, `actions` and `uris` each cross as a flat UTF-8 blob plus a
+/// length per entry. `pattern_count` governs both pattern lists: entry `i` of `actions` is pattern
+/// `i`'s template, and a length of `0` there means the pattern carries none. `max_scan_columns` of
+/// `0` scans nothing rather than everything.
+///
+/// The AUTHORED runs — `authored_rows` / `_starts` / `_ends` alongside `uris`, all `authored_count`
+/// long — are the `OSC 8` links the program declared, read off
+/// [`slopdesk_term_surface_hyperlink_runs`](crate::terminal_surface::slopdesk_term_surface_hyperlink_runs).
+/// They are not scanned for and not bounded by `max_scan_columns`, and their columns are the
+/// ENGINE's cells, taken as given: an authored run's display text is whatever the program wrote, so
+/// re-clustering the row would move the badge off the link.
 ///
 /// Never returns null: an empty scan is a real answer with zero records.
 ///
@@ -231,6 +238,13 @@ pub unsafe extern "C" fn slopdesk_hint_scan(
     actions_len: usize,
     action_lengths: *const usize,
     pattern_count: usize,
+    authored_rows: *const usize,
+    authored_starts: *const usize,
+    authored_ends: *const usize,
+    uris: *const c_uchar,
+    uris_len: usize,
+    uri_lengths: *const usize,
+    authored_count: usize,
     max_scan_columns: usize,
 ) -> *mut SlopDeskHintScan {
     // SAFETY: every pair is null or live for the call by the caller's obligation, discharged on the
@@ -270,6 +284,31 @@ pub unsafe extern "C" fn slopdesk_hint_scan(
         })
         .collect();
 
+    // SAFETY: as above.
+    let uri_text = split(unsafe { borrow(uris, uris_len) }, unsafe {
+        records_of(uri_lengths, authored_count)
+    });
+    // SAFETY: as above — three parallel index tables of `authored_count` entries each.
+    let (rows_at, starts_at, ends_at) = unsafe {
+        (
+            records_of(authored_rows, authored_count),
+            records_of(authored_starts, authored_count),
+            records_of(authored_ends, authored_count),
+        )
+    };
+    let declared: Vec<Authored> = uri_text
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, uri)| {
+            Some(Authored {
+                row: *rows_at.get(index)?,
+                col_start: *starts_at.get(index)?,
+                col_end: *ends_at.get(index)?,
+                uri,
+            })
+        })
+        .collect();
+
     let borrowed: Vec<&str> = row_text.iter().map(String::as_str).collect();
     let found = targets(
         &borrowed,
@@ -280,6 +319,7 @@ pub unsafe extern "C" fn slopdesk_hint_scan(
         },
         &policy,
         &compiled,
+        &declared,
         max_scan_columns,
     );
 
@@ -405,9 +445,24 @@ mod tests {
 
     /// One scan through the door, read back as `(kind, raw, action)` per record.
     fn scan(rows: &[&str], patterns: &[&str], actions: &[&str]) -> Vec<(u32, String, Option<String>)> {
+        declared(rows, patterns, actions, &[])
+    }
+
+    /// The same scan with authored `OSC 8` runs alongside, each `(row, start, end, uri)`.
+    fn declared(
+        rows: &[&str],
+        patterns: &[&str],
+        actions: &[&str],
+        runs: &[(usize, usize, usize, &str)],
+    ) -> Vec<(u32, String, Option<String>)> {
         let (row_blob, row_lengths) = flatten(rows);
         let (pattern_blob, pattern_lengths) = flatten(patterns);
         let (action_blob, action_lengths) = flatten(actions);
+        let uris: Vec<&str> = runs.iter().map(|run| run.3).collect();
+        let (uri_blob, uri_lengths) = flatten(&uris);
+        let authored_rows: Vec<usize> = runs.iter().map(|run| run.0).collect();
+        let authored_starts: Vec<usize> = runs.iter().map(|run| run.1).collect();
+        let authored_ends: Vec<usize> = runs.iter().map(|run| run.2).collect();
         // SAFETY: every pointer names a live local for the duration of the call, and the handle is
         // freed exactly once below.
         let handle: *mut SlopDeskHintScan = unsafe {
@@ -430,6 +485,13 @@ mod tests {
                 action_blob.len(),
                 action_lengths.as_ptr(),
                 pattern_lengths.len(),
+                authored_rows.as_ptr(),
+                authored_starts.as_ptr(),
+                authored_ends.as_ptr(),
+                uri_blob.as_ptr(),
+                uri_blob.len(),
+                uri_lengths.as_ptr(),
+                runs.len(),
                 4096,
             )
         };
@@ -490,6 +552,21 @@ mod tests {
         assert_eq!(
             found.first().and_then(|record| record.2.clone()),
             Some("open {0}".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_declared_link_crosses_and_outranks_what_its_display_text_would_detect() {
+        let found = declared(&["src/main.c:12: warning"], &[], &[], &[(
+            0,
+            0,
+            12,
+            "file:///build/src/main.c",
+        )]);
+        assert_eq!(found.len(), 1, "the detector's guess lost to the declaration");
+        assert_eq!(
+            found.first().map(|record| (record.0, record.1.clone())),
+            Some((SLOPDESK_HINT_KIND_LINK, "file:///build/src/main.c".to_owned()))
         );
     }
 

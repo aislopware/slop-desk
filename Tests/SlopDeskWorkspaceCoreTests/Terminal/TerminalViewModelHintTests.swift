@@ -25,10 +25,12 @@ final class TerminalViewModelHintTests: XCTestCase {
         var onWrite: ((Data) -> Void)?
         private let rows: [String]
         private let metrics: TerminalCellMetrics
+        private let declared: [DetectedLink]
 
-        init(rows: [String], metrics: TerminalCellMetrics) {
+        init(rows: [String], metrics: TerminalCellMetrics, declared: [DetectedLink] = []) {
             self.rows = rows
             self.metrics = metrics
+            self.declared = declared
         }
 
         // TerminalSurface (inert — hint tests never feed bytes through here).
@@ -39,9 +41,13 @@ final class TerminalViewModelHintTests: XCTestCase {
         // TerminalViewportSnapshotting (the overlay-geometry seam beginHint reads).
         func viewportTextRows() -> [String] { rows }
 
-        /// Nothing here is an `OSC 8` link: these rows are canned TEXT, and an authored span is a
-        /// thing a program DECLARED. Empty is the honest answer, not a stub.
+        /// The UNDERLINE's door, which hint mode does not read — it needs the URI, and this one
+        /// carries columns only. Empty is the honest answer for a fake that draws nothing.
         func authoredLinkSpans() -> [TerminalLinkSpan] { [] }
+
+        /// What a program DECLARED. Canned rows carry none unless a test says so, because an
+        /// authored link is not a thing any scan of the text could turn up.
+        func authoredLinkRuns() -> [DetectedLink] { declared }
         func cellMetrics() -> TerminalCellMetrics? { metrics }
     }
 
@@ -57,6 +63,21 @@ final class TerminalViewModelHintTests: XCTestCase {
         let surface = HintViewportSurface(
             rows: ["see /usr/local/bin/tool and /etc/hosts"],
             metrics: TerminalCellMetrics(cellWidth: 8, cellHeight: 16, cols: 80, rows: 24),
+        )
+        retainedSurface = surface
+        return TerminalViewModel(surface: surface)
+    }
+
+    /// A pane whose row is plain WORDS with an `OSC 8` link declared over four of its cells — the
+    /// shape no scan of the text can find, and the one Hint Mode could not label until 2026-09-01.
+    private func makeDeclaredModel() -> TerminalViewModel {
+        let surface = HintViewportSurface(
+            rows: ["see the docs for more"],
+            metrics: TerminalCellMetrics(cellWidth: 8, cellHeight: 16, cols: 80, rows: 24),
+            declared: [DetectedLink(
+                row: 0, colStart: 8, colEnd: 12, kind: .url,
+                raw: "https://example.com/manual", resolvedAbsolute: nil,
+            )],
         )
         retainedSurface = surface
         return TerminalViewModel(surface: surface)
@@ -88,6 +109,18 @@ final class TerminalViewModelHintTests: XCTestCase {
         XCTAssertEqual(model.hintLabels.count, 2, "each target gets a label")
         XCTAssertEqual(Set(model.hintLabels).count, 2, "labels are collision-free")
         XCTAssertEqual(model.hintTyped, "", "no keys typed yet")
+    }
+
+    /// The gap closed 2026-09-01: an authored link over ordinary words is hintable, and the label
+    /// sits on the cells the ENGINE said the link covers rather than on the URI's own length.
+    func testBeginHintLabelsALinkTheProgramDeclaredOverPlainWords() throws {
+        let model = makeDeclaredModel()
+        model.beginHint(.open)
+        XCTAssertEqual(model.hintTargets.count, 1, "the declared run is the only target")
+        let target = try XCTUnwrap(model.hintTargets.first)
+        XCTAssertEqual(target.raw, "https://example.com/manual", "the target opens what was declared")
+        XCTAssertEqual(target.colStart, 8, "the badge sits on the engine's first linked cell")
+        XCTAssertEqual(target.colEnd, 12, "and ends where the run does, not where the URI would")
     }
 
     // MARK: type → confirm (first letter dims, second confirms with NO Enter)

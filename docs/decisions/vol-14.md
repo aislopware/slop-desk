@@ -1106,3 +1106,53 @@ The measurement it costs: `FontStack::new` goes 0.07 ms → 1.46 ms (`Menlo`) or
 (`Helvetica`), once per stack — at launch, on a settings write, on a move to a display of another
 scale. No timing assertion was added, per the rule that a threshold in a test reads machine load as
 a regression.
+
+## An authored link is an input to the hint scan, not something a better scan could find (2026-09-01)
+
+`docs/68` §5.5's neighbour carried a "Ceiling": an `OSC 8` link was clickable and not hintable,
+because `HintLabelAssigner` scanned the DETECTOR's spans and a link whose display text is not itself
+a URL produces none. The tempting reading is that the scan needed to get better. It did not, and
+could not: a declared link's display text is whatever the program wrote — `gcc` wrapping
+`file:///…#L12` around the words `src/main.c:12` is the ordinary case — so there is nothing in the
+row's TEXT that reveals it. The fix was an input.
+
+`slopdesk_rowscan::hint::targets` takes `&[Authored]` and accepts those runs before it detects
+anything. That is the whole of their priority: the per-row overlap rule was already there for "a hex
+run inside a URL must not also light as a hash", and putting the declarations in first makes it drop
+a detector's guess laid over one, which is the same ranking `TerminalSurfaceDriver.link(at:cwd:slop:)`
+has always applied to a click. One rule, extracted as `overlaps`, now serving four kinds.
+
+**The columns cross untouched, and that is the load-bearing part.** Every other span in this scan is
+placed by `text_cells` clustering the row's text. An authored run's columns are the ENGINE's cells —
+where a wide character's two columns are decided in the first place — and re-deriving them from a
+display text that stands for something else would move the badge off the link. `hint.rs`'s own
+"the columns come from the link scan's clustering" section now names the exception, because the
+invariant it states is otherwise exactly the trap.
+
+### The gap turned up a second implementation, and it was in the wrong language
+
+Writing the Rust conversion meant the tree would hold two answers to "what link is this URI?" —
+the new one, and `TerminalSurfaceDriver.authoredLink`'s `URL(string:).isFileURL`. So the Swift half
+went: `slopdesk_terminal::link::authored` is the one classification, deliberately spelled as
+`classify_url`'s own (`file://` with no path component is a `FileUrl` that resolved to nothing in
+both, rather than one thing here and another there). The Swift `URL` version disagreed on exactly
+that input.
+
+The same change deleted the outward per-cell walk that recovered a clicked link's span in Swift.
+`VtSession::hyperlink_runs` splits the frame's flag runs wherever the URI changes, and what is left
+on the Swift side is a hit test against runs the engine already split.
+
+### Two doors for one protocol, and why that is not a duplicate
+
+`slopdesk_term_surface_hyperlink_spans` walks the frame's `CellFlags::HYPERLINK` and answers columns
+with zero engine calls. `_hyperlink_runs` asks the engine per LINKED cell and answers a classified
+link per run. They differ on one input — two DIFFERENT links that abut with no character between
+them — and that difference is the reason both exist rather than an inconsistency to resolve: the
+underline is redrawn every frame and one stroke across both is the same picture, while a hint label
+or a click that merged them would open the first link from the second's cells. So the cheap door
+stays on the frame path, and the exact one is called when a pointer lands or Hint Mode arms.
+
+The alternative considered and dropped was carrying a hyperlink ID per cell in the frame, which
+would let one walk split runs with no engine call. `libghostty-vt` exposes `has_hyperlink` and
+`hyperlink_uri` and no id, so it would mean a URI string per cell per frame — the allocation
+`CellFlags::HYPERLINK` exists to avoid.

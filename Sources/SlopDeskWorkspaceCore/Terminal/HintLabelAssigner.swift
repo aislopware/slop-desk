@@ -180,6 +180,11 @@ public enum HintLabelAssigner {
     ///   - cwd: the pane's last-known working directory (OSC 7) — resolves relative detected paths.
     ///   - schemes: which `scheme://…` URLs are detected (`http(s)`/`file`/`mailto` always on).
     ///   - patterns: user `hint-pattern` regexes (+ their `{0}` action templates).
+    ///   - authored: the `OSC 8` runs the program DECLARED
+    ///     (``TerminalViewportSnapshotting/authoredLinkRuns()``). They cannot be found by scanning
+    ///     `rows` — the display text of a declared link is whatever the program wrote — and they
+    ///     OUTRANK every detected span they overlap, which is the same order the ⌘-click path takes
+    ///     them in. Their columns are the engine's cells and are passed through untouched.
     ///   - maxScanColumns: per-row cell-scan ceiling (the anti-hang bound). The default is
     ///     ``TerminalLinkDetector/maxScanColumnsDefault``, which is the one spelling of
     ///     `link::MAX_SCAN_COLUMNS` on this side and the one `slopdesk-invariants` ratchets. A bare
@@ -190,6 +195,7 @@ public enum HintLabelAssigner {
         cwd: String?,
         schemes: LinkSchemePolicy,
         patterns: [HintPattern] = [],
+        authored: [DetectedLink] = [],
         maxScanColumns: Int = TerminalLinkDetector.maxScanColumnsDefault,
     ) -> [HintTarget] {
         guard maxScanColumns > 0 else { return [] }
@@ -211,6 +217,13 @@ public enum HintLabelAssigner {
         // zero-length entry rather than a hole the two lists would then disagree about.
         let (actionBlob, actionLengths) = TerminalLinkDetector.flatten(patterns.map { $0.action ?? "" })
         let cwdBytes = Array((cwd ?? "").utf8)
+        // Three parallel index tables beside the URI blob — the same one-length-per-entry shape the
+        // rows and the patterns already cross as. The columns go over UNTOUCHED: they are the
+        // engine's cells, and an authored run's display text is not what it points at.
+        let (uriBlob, uriLengths) = TerminalLinkDetector.flatten(authored.map(\.raw))
+        let authoredRows = authored.map(\.row)
+        let authoredStarts = authored.map(\.colStart)
+        let authoredEnds = authored.map(\.colEnd)
 
         guard let scan = slopdesk_hint_scan(
             rowBlob, rowBlob.count,
@@ -224,6 +237,9 @@ public enum HintLabelAssigner {
             actionBlob, actionBlob.count,
             actionLengths,
             patternLengths.count,
+            authoredRows, authoredStarts, authoredEnds,
+            uriBlob, uriBlob.count,
+            uriLengths, uriLengths.count,
             maxScanColumns,
         ) else { return [] }
         defer { slopdesk_hint_scan_free(scan) }

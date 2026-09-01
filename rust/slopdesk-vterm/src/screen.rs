@@ -31,6 +31,7 @@ use libghostty_vt::screen::GridRef;
 use libghostty_vt::selection::{Adjustment, FormatOptions, Selection};
 use libghostty_vt::terminal::{Point, PointCoordinate};
 
+use crate::frame::Frame;
 use crate::search::{CellPos, LineScan, Matcher, SearchQuery, search_line};
 use crate::session::{Result, VtError, VtSession};
 
@@ -43,6 +44,24 @@ pub struct LogicalLineText {
     pub last_row: u32,
     /// The line's text, soft wraps joined and trailing padding trimmed.
     pub text: String,
+}
+
+/// One run of viewport cells sharing a single authored `OSC 8` URI.
+///
+/// The URI-bearing counterpart to [`Frame::hyperlink_spans`](crate::Frame::hyperlink_spans), and
+/// the difference is the one that matters to anything that ACTUATES a link rather than drawing one:
+/// two different links that abut with no character between them are one span there and two runs
+/// here. An underline does not care; a hint label and a click do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HyperlinkRun {
+    /// The viewport row the run sits on, counted from the top.
+    pub row: u16,
+    /// First linked column.
+    pub start: u16,
+    /// One past the last linked column.
+    pub end: u16,
+    /// The URI every cell of the run carries.
+    pub uri: String,
 }
 
 /// One search hit, in SCREEN coordinates.
@@ -457,6 +476,61 @@ impl VtSession {
         Ok(Some(decode(buffer.get(..length).unwrap_or_default())))
     }
 
+    /// Every authored `OSC 8` run in the viewport, split wherever the URI changes.
+    ///
+    /// `frame` supplies the flagged cells, which is what keeps this affordable: the engine is asked
+    /// only about cells [`CellFlags::HYPERLINK`](crate::CellFlags::HYPERLINK) already says carry a
+    /// link, so an ordinary screen of text costs one frame walk and ZERO engine calls. A screen
+    /// full of links costs one call per linked cell, which is why this is an on-demand door — a
+    /// click, a hint scan — and [`Frame::hyperlink_spans`](crate::Frame::hyperlink_spans) remains
+    /// what the per-frame underline reads.
+    ///
+    /// A cell the engine cannot resolve CLOSES the run rather than being skipped: the alternative
+    /// is joining two links across a cell whose URI is unknown, and a target that opens the wrong
+    /// thing is worse than one that is a character short.
+    #[must_use]
+    pub fn hyperlink_runs(&self, frame: &Frame) -> Vec<HyperlinkRun> {
+        let mut runs = Vec::new();
+        for (row, span) in frame.hyperlink_spans() {
+            let mut open: Option<(u16, String)> = None;
+            for column in span.start..span.end {
+                let found = self.hyperlink_at(column, u32::from(row)).ok().flatten();
+                open = match (found, open.take()) {
+                    (Some(uri), Some((start, held))) if held == uri => Some((start, held)),
+                    (Some(uri), Some((start, held))) => {
+                        runs.push(HyperlinkRun {
+                            row,
+                            start,
+                            end: column,
+                            uri: held,
+                        });
+                        Some((column, uri))
+                    },
+                    (Some(uri), None) => Some((column, uri)),
+                    (None, Some((start, held))) => {
+                        runs.push(HyperlinkRun {
+                            row,
+                            start,
+                            end: column,
+                            uri: held,
+                        });
+                        None
+                    },
+                    (None, None) => None,
+                };
+            }
+            if let Some((start, held)) = open {
+                runs.push(HyperlinkRun {
+                    row,
+                    start,
+                    end: span.end,
+                    uri: held,
+                });
+            }
+        }
+        runs
+    }
+
     /// Whether a screen row starts a shell prompt.
     ///
     /// Continuation rows do NOT count: a two-line prompt is one place to jump to, and counting both
@@ -866,5 +940,52 @@ mod tests {
         let info = vt.viewport_info().unwrap();
         assert_eq!(info.viewport_top_row, 0);
         assert_eq!(vt.screen_row_text(0).unwrap().as_deref(), Some("one"));
+    }
+
+    /// A grid wide enough for two links and a margin.
+    fn wide_session() -> VtSession {
+        VtSession::new(40, 3, 10, 20).unwrap()
+    }
+
+    /// The whole reason `hyperlink_runs` exists next to `Frame::hyperlink_spans`.
+    #[test]
+    fn two_abutting_links_are_two_runs_where_the_frame_sees_one_span() {
+        let mut vt = wide_session();
+        vt.feed(b"\x1b]8;;https://a.example\x1b\\ab\x1b]8;;https://b.example\x1b\\cd\x1b]8;;\x1b\\");
+        vt.render().unwrap();
+        let frame = vt.frame().clone();
+        assert_eq!(
+            frame.hyperlink_spans().len(),
+            1,
+            "the flag alone cannot tell the two apart"
+        );
+        let runs = vt.hyperlink_runs(&frame);
+        assert_eq!(runs.len(), 2);
+        assert_eq!((runs[0].start, runs[0].end), (0, 2));
+        assert_eq!(runs[0].uri, "https://a.example");
+        assert_eq!((runs[1].start, runs[1].end), (2, 4));
+        assert_eq!(runs[1].uri, "https://b.example");
+    }
+
+    /// The columns are the ENGINE's cells, so a wide character before a run moves it by two — the
+    /// number a hint badge and a link underline both have to agree on.
+    #[test]
+    fn a_wide_character_before_a_run_offsets_it_by_two_cells() {
+        let mut vt = wide_session();
+        vt.feed("漢\u{1b}]8;;https://x.example\u{1b}\\ok\u{1b}]8;;\u{1b}\\".as_bytes());
+        vt.render().unwrap();
+        let frame = vt.frame().clone();
+        let runs = vt.hyperlink_runs(&frame);
+        assert_eq!(runs.len(), 1);
+        assert_eq!((runs[0].start, runs[0].end), (2, 4));
+    }
+
+    #[test]
+    fn a_screen_with_no_link_asks_the_engine_nothing_and_answers_nothing() {
+        let mut vt = wide_session();
+        vt.feed(b"plain text");
+        vt.render().unwrap();
+        let frame = vt.frame().clone();
+        assert!(vt.hyperlink_runs(&frame).is_empty());
     }
 }

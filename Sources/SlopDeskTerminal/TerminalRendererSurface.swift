@@ -1052,6 +1052,45 @@ final class TerminalRendererSurface {
         }
     }
 
+    /// The same declarations SPLIT where the URI changes, each already classified.
+    ///
+    /// What ``hyperlinkSpans()`` cannot answer, and the reason is one cell wide: two different links
+    /// that abut with no character between them carry one flag run and two URIs. An underline may
+    /// merge them; a hint label or a click must not, or the second link opens the first.
+    ///
+    /// Sized then filled, because the answer is two buffers — records naming offsets into an arena
+    /// of URIs — and a record set delivered against an arena that did not fit would name bytes that
+    /// were never written. A zero-cap call answers both sizes and writes neither.
+    func hyperlinkRuns() -> [DetectedLink] {
+        guard let handle else { return [] }
+        var arenaLength = 0
+        let count = slopdesk_term_surface_hyperlink_runs(handle, nil, 0, nil, 0, &arenaLength)
+        guard count > 0 else { return [] }
+        var records = [SlopDeskTerminalLinkRun](repeating: SlopDeskTerminalLinkRun(), count: count)
+        var arena = [UInt8](repeating: 0, count: arenaLength)
+        let written = records.withUnsafeMutableBufferPointer { out in
+            arena.withUnsafeMutableBufferPointer { bytes in
+                slopdesk_term_surface_hyperlink_runs(
+                    handle, out.baseAddress, out.count, bytes.baseAddress, bytes.count, &arenaLength,
+                )
+            }
+        }
+        guard written == count else { return [] }
+        return arena.withUnsafeBytes { raw -> [DetectedLink] in
+            records.compactMap { record in
+                guard let kind = TerminalLinkDetector.kind(of: record.kind) else { return nil }
+                return DetectedLink(
+                    row: Int(record.row), colStart: Int(record.start), colEnd: Int(record.end),
+                    kind: kind,
+                    raw: TerminalLinkDetector.text(raw, record.uri_offset, record.uri_length),
+                    resolvedAbsolute: record.has_resolved
+                        ? TerminalLinkDetector.text(raw, record.resolved_offset, record.resolved_length)
+                        : nil,
+                )
+            }
+        }
+    }
+
     // MARK: - What the far side pushed
 
     /// The bytes the TERMINAL owes the pty, drained.

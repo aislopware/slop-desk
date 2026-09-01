@@ -1656,8 +1656,9 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onHintConfirmed: ((HintTarget, HintIntent) -> Void)?
 
     /// Arm Hint Mode over the VISIBLE viewport for `intent` (⌘⇧J open / ⌘⇧Y copy / reveal). Reads the live
-    /// surface's viewport rows (``TerminalViewportSnapshotting``), detects every hintable target
-    /// (``HintLabelAssigner/targets(rows:cwd:schemes:patterns:maxScanColumns:)``), and assigns collision-free
+    /// surface's viewport rows AND the `OSC 8` runs the program declared (``TerminalViewportSnapshotting``),
+    /// finds every hintable target
+    /// (``HintLabelAssigner/targets(rows:cwd:schemes:patterns:authored:maxScanColumns:)``), and assigns collision-free
     /// 2-letter labels. A NO-OP when there is no live surface (headless / placeholder), when the surface is on
     /// the ALT screen (don't fight a TUI), or when no target is found — so the chord never enters an empty mode.
     ///
@@ -1671,6 +1672,7 @@ public final class TerminalViewModel {
             cwd: linkCwd,
             schemes: SettingsKey.linkSchemePolicy,
             patterns: SettingsKey.hintPatternList,
+            authored: snapshot.authoredLinkRuns(),
         )
         guard !targets.isEmpty else { return }
         let labels = HintLabelAssigner.labels(count: targets.count)

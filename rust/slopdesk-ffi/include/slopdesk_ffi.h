@@ -3462,6 +3462,35 @@ typedef struct SlopDeskTerminalLinkSpan {
 size_t slopdesk_term_surface_hyperlink_spans(SlopDeskTerminalSurface *handle,
                                              SlopDeskTerminalLinkSpan *out, size_t cap);
 
+/* One OSC 8 run, split where the URI changes, with the link it classifies to. The strings name
+ * (offset, length) into the arena the door below fills. */
+typedef struct SlopDeskTerminalLinkRun {
+  uint16_t row;             /* viewport row, from the top */
+  uint16_t start;           /* first linked column */
+  uint16_t end;             /* one past the last linked column */
+  uint32_t kind;            /* SLOPDESK_LINK_KIND_*; URL unless the URI is a file:// one */
+  size_t   uri_offset;      /* into the arena */
+  size_t   uri_length;
+  bool     has_resolved;
+  size_t   resolved_offset; /* into the arena; read only when has_resolved */
+  size_t   resolved_length;
+} SlopDeskTerminalLinkRun;
+
+/* Every authored hyperlink run in the viewport, SPLIT where the URI changes and already classified.
+ *
+ * The ACTUATION door, where _hyperlink_spans is the DRAWING one: an underline does not care that two
+ * different links abut with no character between them, and a click or a hint label cares about
+ * nothing else. This asks the engine per LINKED cell, so it is called when a pointer lands or Hint
+ * Mode arms — never per frame. No scheme policy is consulted: that setting governs GUESSING, and a
+ * program that emitted OSC 8 did not guess.
+ *
+ * Returns the run COUNT always and writes arena_len always, so one call with both caps at 0 sizes
+ * both buffers and a second fills them. Nothing is written unless BOTH are large enough — a record
+ * set delivered against an arena that did not fit would name bytes nobody wrote. */
+size_t slopdesk_term_surface_hyperlink_runs(SlopDeskTerminalSurface *handle,
+                                            SlopDeskTerminalLinkRun *out, size_t cap,
+                                            uint8_t *arena, size_t arena_cap, size_t *arena_len);
+
 /* What an input method is composing over the cursor, or nothing at all for len 0.
  *
  * The composition NEVER reaches the engine: an input method may replace the whole run on the next
@@ -4736,7 +4765,20 @@ SlopDeskHintScan *slopdesk_hint_scan(const uint8_t *rows, size_t rows_len,
                                      const size_t *pattern_lengths,
                                      const uint8_t *actions, size_t actions_len,
                                      const size_t *action_lengths,
-                                     size_t pattern_count, size_t max_scan_columns);
+                                     size_t pattern_count,
+                                     /* The OSC 8 runs the program DECLARED, off
+                                      * _hyperlink_runs: three parallel index tables beside one
+                                      * URI blob. Not scanned for, not bounded by
+                                      * max_scan_columns, and their columns are the ENGINE's
+                                      * cells — a declared link's display text is not what it
+                                      * points at, so re-clustering the row would move the badge
+                                      * off the link. */
+                                     const size_t *authored_rows,
+                                     const size_t *authored_starts,
+                                     const size_t *authored_ends,
+                                     const uint8_t *uris, size_t uris_len,
+                                     const size_t *uri_lengths, size_t authored_count,
+                                     size_t max_scan_columns);
 void   slopdesk_hint_scan_free(SlopDeskHintScan *handle);
 SlopDeskHintCounts slopdesk_hint_scan_counts(SlopDeskHintScan *handle);
 SlopDeskHintTarget slopdesk_hint_scan_target(SlopDeskHintScan *handle, size_t index);

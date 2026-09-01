@@ -1,10 +1,19 @@
 //! Hint Mode's target scan: every span in the visible viewport a two-letter label can pin to.
 //!
-//! Four kinds, in priority order per row: the paths and URLs [`slopdesk_terminal::link`] already
-//! classifies, then the user's `hint-pattern` matches, then IPv4 addresses, then git commit hashes.
-//! Every span carries display-CELL columns, and every extra match that overlaps an already-accepted
-//! span on its row is dropped — a hex run inside a URL must not also light as a hash, and an IP
-//! inside a path must not double-light.
+//! Four kinds, in priority order per row: the `OSC 8` links the program DECLARED and the paths and
+//! URLs [`slopdesk_terminal::link`] classifies, then the user's `hint-pattern` matches, then IPv4
+//! addresses, then git commit hashes. Every span carries display-CELL columns, and every later
+//! match that overlaps an already-accepted span on its row is dropped — a hex run inside a URL must
+//! not also light as a hash, and an IP inside a path must not double-light.
+//!
+//! ## The authored links come in, they are not found here
+//!
+//! An `OSC 8` run's display text is whatever the program wrote — `gcc` wrapping `file:///…#L12`
+//! around the words `src/main.c:12` is the ordinary case — so nothing in `rows` reveals it and no
+//! scan could. The caller supplies [`Authored`] runs from the engine, they are accepted before
+//! anything is detected, and the overlap rule that was already here does the rest: a detector
+//! guessing a different span over a declared link is dropped, because the program said what it
+//! meant (`docs/68` §5.5).
 //!
 //! ## Untrusted on both sides
 //!
@@ -20,11 +29,34 @@
 //! [`slopdesk_terminal::link::text_cells`], not a second width table. The hint badge is drawn at
 //! `col_start` and the link underline at the link's own `col_start`; on a CJK row those have to be
 //! the same number, and the only way to guarantee that is one clustering answering both.
+//!
+//! An [`Authored`] run is the one exception, and it is not a second table either: its columns are
+//! the ENGINE's cells, which is where a wide character's two columns are decided in the first
+//! place. `text_cells` exists to reconstruct that count from text; a run that arrives with the
+//! engine's own answer must not be re-clustered, or a `～` before the link would move the badge.
 
 use regex::Regex;
 use slopdesk_terminal::link::{
-    DetectedLink, LinkSchemePolicy, MAX_MATCHES_PER_ROW, bounded_prefix, detect, text_cells,
+    DetectedLink, LinkSchemePolicy, MAX_MATCHES_PER_ROW, authored, bounded_prefix, detect, text_cells,
 };
+
+/// One `OSC 8` run a program DECLARED, as the engine reports it.
+///
+/// The columns are the engine's cells and are used as given — never re-derived from the row's text.
+/// An authored link's display text is whatever the program wrote (`click here` over a thirty-byte
+/// URL is the ordinary case), so there is nothing in `rows` to cluster that would answer the same
+/// question.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Authored {
+    /// Index into the rows being scanned.
+    pub row: usize,
+    /// First display cell of the run.
+    pub col_start: usize,
+    /// One past the last display cell.
+    pub col_end: usize,
+    /// The URI every cell of the run carries.
+    pub uri: String,
+}
 
 /// A user-defined hint pattern: a regex, and the shell-command template a resolved label runs.
 ///
@@ -76,14 +108,17 @@ pub struct Target {
 /// Every hintable target in `rows`, row-major and left-to-right — the order labels are assigned in.
 ///
 /// `cwd` resolves relative paths and is ignored unless it is itself absolute; `schemes` governs
-/// which `scheme://…` URLs count. `max_scan_columns` of `0` scans nothing rather than everything,
-/// which is the same bound and the same reading [`detect`] applies.
+/// which `scheme://…` URLs count; `declared` carries the `OSC 8` runs the engine reports and is
+/// neither scanned nor bounded by `max_scan_columns`, because a program's own link is not a guess
+/// this scan is rationing. `max_scan_columns` of `0` scans nothing rather than everything, which is
+/// the same bound and the same reading [`detect`] applies.
 #[must_use]
 pub fn targets(
     rows: &[&str],
     cwd: Option<&str>,
     schemes: &LinkSchemePolicy,
     patterns: &[Pattern],
+    declared: &[Authored],
     max_scan_columns: usize,
 ) -> Vec<Target> {
     if max_scan_columns == 0 {
@@ -93,10 +128,32 @@ pub fn targets(
     // match — can be dropped before it is built.
     let mut per_row: Vec<Vec<Target>> = vec![Vec::new(); rows.len()];
 
+    // The authored runs go in FIRST, which is the whole of their priority: every later match is
+    // already checked against what is accepted, so a detector guessing a different span over a link
+    // the program declared is dropped by the rule that was there all along.
+    for run in declared {
+        let Some(accepted) = per_row.get_mut(run.row) else {
+            continue;
+        };
+        if accepted.len() >= MAX_MATCHES_PER_ROW {
+            continue;
+        }
+        accepted.push(Target {
+            row: run.row,
+            col_start: run.col_start,
+            col_end: run.col_end,
+            raw: run.uri.clone(),
+            kind: TargetKind::Link(Box::new(authored(&run.uri, run.row, run.col_start, run.col_end))),
+        });
+    }
+
     for link in detect(rows, cwd, schemes, max_scan_columns) {
         let Some(accepted) = per_row.get_mut(link.row) else {
             continue;
         };
+        if overlaps(accepted, link.col_start, link.col_end) {
+            continue;
+        }
         accepted.push(Target {
             row: link.row,
             col_start: link.col_start,
@@ -158,6 +215,17 @@ pub fn targets(
     out
 }
 
+/// Whether `col_start..col_end` touches any span already accepted on the row.
+///
+/// One predicate for all four kinds, because "a higher-priority span already claimed these cells"
+/// is one rule: an authored link outranks a detected one, a detected one outranks a custom pattern,
+/// and a hex run inside either must not also light as a hash.
+fn overlaps(accepted: &[Target], col_start: usize, col_end: usize) -> bool {
+    accepted
+        .iter()
+        .any(|other| col_start < other.col_end && other.col_start < col_end)
+}
+
 /// Runs `regex` over `bounded`, and keeps each match that `build` accepts, does not overlap an
 /// already-accepted span, and fits under the per-row cap.
 fn add_matches(
@@ -176,10 +244,7 @@ fn add_matches(
         }
         let col_start = text_cells(bounded.get(..matched.start()).unwrap_or(""));
         let col_end = col_start.saturating_add(text_cells(matched.as_str()));
-        if accepted
-            .iter()
-            .any(|other| col_start < other.col_end && other.col_start < col_end)
-        {
+        if overlaps(accepted, col_start, col_end) {
             continue;
         }
         let Some(kind) = build(&matched) else { continue };
@@ -235,10 +300,22 @@ fn ipv4_regex() -> Option<Regex> {
 mod tests {
     use slopdesk_terminal::link::{LinkSchemePolicy, MAX_SCAN_COLUMNS};
 
-    use super::{Pattern, Target, TargetKind, targets};
+    use super::{Authored, Pattern, Target, TargetKind, targets};
 
     fn scan(rows: &[&str], patterns: &[Pattern]) -> Vec<Target> {
-        targets(rows, None, &LinkSchemePolicy::All, patterns, MAX_SCAN_COLUMNS)
+        targets(
+            rows,
+            None,
+            &LinkSchemePolicy::All,
+            patterns,
+            &[],
+            MAX_SCAN_COLUMNS,
+        )
+    }
+
+    /// One scan with authored runs alongside the rows the program printed.
+    fn declared(rows: &[&str], runs: &[Authored]) -> Vec<Target> {
+        targets(rows, None, &LinkSchemePolicy::All, &[], runs, MAX_SCAN_COLUMNS)
     }
 
     fn kinds(rows: &[&str]) -> Vec<TargetKind> {
@@ -332,6 +409,85 @@ mod tests {
 
     #[test]
     fn a_zero_column_bound_scans_nothing() {
-        assert!(targets(&["deadbeef1"], None, &LinkSchemePolicy::All, &[], 0).is_empty());
+        assert!(targets(&["deadbeef1"], None, &LinkSchemePolicy::All, &[], &[], 0).is_empty());
+    }
+
+    /// The gap this input closes: the display text is a word, so no scan of the row could find it.
+    #[test]
+    fn a_declared_link_over_plain_words_is_hintable_at_all() {
+        let found = declared(&["see the docs for more"], &[Authored {
+            row: 0,
+            col_start: 8,
+            col_end: 12,
+            uri: "https://example.com/manual".to_owned(),
+        }]);
+        assert_eq!(found.len(), 1);
+        // The span is the ENGINE's four cells, not the twenty-six the URI would cluster to.
+        assert_eq!(
+            found
+                .first()
+                .map(|target| (target.col_start, target.col_end, target.raw.as_str())),
+            Some((8, 12, "https://example.com/manual"))
+        );
+        assert!(
+            found
+                .first()
+                .is_some_and(|target| matches!(target.kind, TargetKind::Link(_)))
+        );
+    }
+
+    /// `gcc` wrapping `file://…#L12` around the words it printed — the case `docs/68` §5.5 names.
+    #[test]
+    fn a_detected_span_under_a_declared_one_is_dropped() {
+        let runs = [Authored {
+            row: 0,
+            col_start: 0,
+            col_end: 12,
+            uri: "file:///build/src/main.c".to_owned(),
+        }];
+        let found = declared(&["src/main.c:12: warning"], &runs);
+        assert_eq!(found.len(), 1, "the detector's guess lost to the declaration");
+        assert_eq!(
+            found.first().map(|target| target.raw.as_str()),
+            Some("file:///build/src/main.c")
+        );
+    }
+
+    #[test]
+    fn a_detected_span_beside_a_declared_one_survives() {
+        let runs = [Authored {
+            row: 0,
+            col_start: 0,
+            col_end: 4,
+            uri: "https://example.com/a".to_owned(),
+        }];
+        let found = declared(&["docs /etc/hosts"], &runs);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found.get(1).map(|target| target.raw.as_str()), Some("/etc/hosts"));
+    }
+
+    /// A hash inside a declared link must not double-light, exactly as one inside a detected link
+    /// does not — the priority rule is one rule, not one per kind.
+    #[test]
+    fn a_hash_inside_a_declared_link_does_not_also_light() {
+        let runs = [Authored {
+            row: 0,
+            col_start: 0,
+            col_end: 16,
+            uri: "https://git.example/commit/deadbeef1".to_owned(),
+        }];
+        let found = declared(&["commit deadbeef1"], &runs);
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn a_declared_run_on_a_row_that_does_not_exist_is_ignored() {
+        let found = declared(&["one row"], &[Authored {
+            row: 9,
+            col_start: 0,
+            col_end: 3,
+            uri: "https://example.com".to_owned(),
+        }]);
+        assert!(found.is_empty());
     }
 }

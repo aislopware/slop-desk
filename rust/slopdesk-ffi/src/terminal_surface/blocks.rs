@@ -8,11 +8,13 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_terminal::link::authored;
 use slopdesk_termrender::ChromeStyle;
 use slopdesk_vterm::{CellFlags, Scroll, text_cells};
 
 use super::doors::argb;
 use super::{BlockRecord, Composition, MAX_RECORDS, SlopDeskTerminalSurface, block_at, held};
+use crate::link_detect::kind_code;
 use crate::{borrow, deliver, lent, spill};
 
 /// Where one block sits on screen, and what a header drawn over it would be heading.
@@ -820,6 +822,117 @@ pub unsafe extern "C" fn slopdesk_term_surface_hyperlink_spans(
         .collect();
     // SAFETY: `out` is null or writable for `cap` records, and `spans` was built inside this call.
     unsafe { spill(&spans, out, cap) }
+}
+
+/// One `OSC 8` run a program declared, with the link it classifies to.
+///
+/// The strings name `(offset, length)` into the arena
+/// [`slopdesk_term_surface_hyperlink_runs`] fills, the same convention the hint scan's records use.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlopDeskTerminalLinkRun {
+    /// The viewport row the run sits on, counted from the top.
+    pub row: u16,
+    /// First linked column.
+    pub start: u16,
+    /// One past the last linked column.
+    pub end: u16,
+    /// The run's `SLOPDESK_LINK_KIND_*` — `URL` for anything but a `file://` URI.
+    pub kind: u32,
+    /// Where the URI starts in the arena.
+    pub uri_offset: usize,
+    /// How long the URI is, in bytes.
+    pub uri_length: usize,
+    /// Whether the URI resolved to an absolute filesystem path.
+    pub has_resolved: bool,
+    /// Where that path starts in the arena; read only when `has_resolved`.
+    pub resolved_offset: usize,
+    /// How long that path is, in bytes; read only when `has_resolved`.
+    pub resolved_length: usize,
+}
+
+/// Every authored hyperlink run in the viewport, split where the URI changes, each already
+/// classified.
+///
+/// The ACTUATION door, where [`slopdesk_term_surface_hyperlink_spans`] is the DRAWING one, and the
+/// two are not redundant: an underline does not care that two different links abut with no
+/// character between them, and a hint label or a click cares about nothing else. This one asks the
+/// engine per linked cell, so it is called when a pointer lands or a hint mode arms — never per
+/// frame.
+///
+/// The classification is `slopdesk_terminal::link::authored`, the same function the hint scan runs,
+/// so a declared link means one thing on both paths. No scheme policy is consulted: "Auto-Detect
+/// Link Schemes" governs GUESSING, and a program that emitted `OSC 8` did not guess.
+///
+/// Returns the run COUNT always and writes `arena_len` always, so a caller sizes both buffers from
+/// one call with `cap` and `arena_cap` of zero, then calls again to fill them. Records and arena
+/// are written only when both are large enough — a half-filled answer would name offsets into
+/// bytes that were never delivered.
+///
+/// # Safety
+/// [`held`]'s obligation, plus `out` being null or writable for `cap` records, `arena` null or
+/// writable for `arena_cap` bytes, and `arena_len` null or writable for one `usize`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_hyperlink_runs(
+    handle: *mut SlopDeskTerminalSurface,
+    out: *mut SlopDeskTerminalLinkRun,
+    cap: usize,
+    arena: *mut c_uchar,
+    arena_cap: usize,
+    arena_len: *mut usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut records: Vec<SlopDeskTerminalLinkRun> = Vec::new();
+    for run in surface.session.hyperlink_runs(surface.frame()) {
+        let link = authored(
+            &run.uri,
+            usize::from(run.row),
+            usize::from(run.start),
+            usize::from(run.end),
+        );
+        let uri_offset = bytes.len();
+        bytes.extend_from_slice(run.uri.as_bytes());
+        let (has_resolved, resolved_offset, resolved_length) =
+            link.resolved_absolute.as_deref().map_or((false, 0, 0), |path| {
+                let offset = bytes.len();
+                bytes.extend_from_slice(path.as_bytes());
+                (true, offset, path.len())
+            });
+        records.push(SlopDeskTerminalLinkRun {
+            row: run.row,
+            start: run.start,
+            end: run.end,
+            kind: kind_code(link.kind),
+            uri_offset,
+            uri_length: run.uri.len(),
+            has_resolved,
+            resolved_offset,
+            resolved_length,
+        });
+    }
+    if !arena_len.is_null() {
+        // SAFETY: non-null and writable for one `usize` by the caller's obligation.
+        unsafe { arena_len.write(bytes.len()) };
+    }
+    if records.len() > cap || bytes.len() > arena_cap {
+        return records.len();
+    }
+    // SAFETY: both caps were just checked, and each buffer is null or writable for the size the
+    // caller declared. A null `out` with a non-zero record count fails that check and returns
+    // above.
+    unsafe { spill(&records, out, cap) };
+    // SAFETY: as above, for the byte buffer.
+    unsafe { deliver(&bytes, arena, arena_cap) };
+    records.len()
 }
 
 /// The text an input method is composing over the cursor, or nothing at all when `len` is zero.

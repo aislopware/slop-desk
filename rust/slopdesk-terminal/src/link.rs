@@ -110,6 +110,42 @@ pub fn detect(
     found
 }
 
+/// The link a program DECLARED with `OSC 8`, over the run of cells it declared it on.
+///
+/// Not a detection, and that is the whole difference: nothing is guessed, no token is trimmed and
+/// [`LinkSchemePolicy`] is never consulted, because the program said what it meant. "Auto-Detect
+/// Link Schemes" is a rule about GUESSING a URL out of ordinary text (`docs/68` §5.5), and a
+/// program that emitted `OSC 8` did not guess.
+///
+/// The columns are the ENGINE's — the cells the URI was actually attached to — rather than a
+/// clustering of the row's text, so `raw` is the URI and not the display text. A caller must NOT
+/// re-derive them with [`text_cells`]: an authored run's display text can be anything, including a
+/// word that occupies fewer cells than the URI it stands for.
+///
+/// `file://` is the one authored scheme that names something on disk, so it is the one that
+/// resolves — every other URI is a URL with no filesystem answer to give. The classification is
+/// [`classify_url`]'s, deliberately: a `file://` with no path component is a `FileUrl` that
+/// resolved to nothing in both, rather than one thing here and another there.
+#[must_use]
+pub fn authored(uri: &str, row: usize, col_start: usize, col_end: usize) -> DetectedLink {
+    let is_file = uri
+        .split_once("://")
+        .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("file"));
+    let (kind, resolved) = if is_file {
+        (DetectedLinkKind::FileUrl, file_url_path(uri))
+    } else {
+        (DetectedLinkKind::Url, None)
+    };
+    DetectedLink {
+        row,
+        col_start,
+        col_end,
+        kind,
+        raw: uri.to_owned(),
+        resolved_absolute: resolved,
+    }
+}
+
 /// A whitespace-delimited run, with the display cell its first cluster occupies.
 #[derive(Debug, Clone)]
 struct RawToken {
@@ -564,9 +600,46 @@ pub(crate) fn clusters(text: &str) -> impl Iterator<Item = &str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DetectedLink, DetectedLinkKind, LinkSchemePolicy, MAX_MATCHES_PER_ROW, MAX_SCAN_COLUMNS, detect,
-        text_cells,
+        DetectedLink, DetectedLinkKind, LinkSchemePolicy, MAX_MATCHES_PER_ROW, MAX_SCAN_COLUMNS, authored,
+        detect, text_cells,
     };
+
+    #[test]
+    fn an_authored_file_url_resolves_the_same_path_the_detector_would() {
+        let declared = authored("file:///Users/me/My%20Notes.txt", 3, 10, 14);
+        assert_eq!(declared.kind, DetectedLinkKind::FileUrl);
+        assert_eq!(
+            declared.resolved_absolute.as_deref(),
+            Some("/Users/me/My Notes.txt")
+        );
+        // The span is the ENGINE's four cells, not the URI's length — the program wrapped the word
+        // `docs`, and the URI is thirty characters.
+        assert_eq!((declared.row, declared.col_start, declared.col_end), (3, 10, 14));
+        assert_eq!(declared.raw, "file:///Users/me/My%20Notes.txt");
+    }
+
+    #[test]
+    fn an_authored_uri_is_taken_whatever_the_scheme_policy_says() {
+        // `internal-tool://` is not in the always-on four, so `detect` under a Custom policy that
+        // omits it finds nothing — and the authored answer is unaffected, because the program
+        // declared the link rather than being guessed at.
+        let policy = LinkSchemePolicy::Custom(vec!["ssh".to_owned()]);
+        assert!(detect(&["internal-tool://x/y"], None, &policy, MAX_SCAN_COLUMNS).is_empty());
+        let declared = authored("internal-tool://x/y", 0, 0, 5);
+        assert_eq!(declared.kind, DetectedLinkKind::Url);
+        assert_eq!(declared.resolved_absolute, None);
+    }
+
+    #[test]
+    fn an_authored_uri_that_is_not_a_url_at_all_is_still_a_target() {
+        // A program may write anything into `OSC 8`. Nothing here parses it further, so a caller
+        // that hands the string to the open policy gets one that refuses rather than one that
+        // silently vanished at the scan.
+        let declared = authored("not a url", 1, 2, 3);
+        assert_eq!(declared.kind, DetectedLinkKind::Url);
+        assert_eq!(declared.raw, "not a url");
+        assert_eq!(declared.resolved_absolute, None);
+    }
 
     fn scan(line: &str, cwd: Option<&str>) -> Vec<DetectedLink> {
         detect(&[line], cwd, &LinkSchemePolicy::All, MAX_SCAN_COLUMNS)

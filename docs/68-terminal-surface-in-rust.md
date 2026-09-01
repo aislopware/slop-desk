@@ -612,10 +612,29 @@ The authored URI wins, because the program said what it meant.
 
 **One door ranks them**, `TerminalSurfaceDriver.link(at:cwd:slop:)`, and both platforms call it —
 the Mac's context menu and ⌘-hover, the phone's long press. It asks the authored question first and
-falls back to the detector, so the ranking is decided once rather than at each call site. The
-engine flags the link per CELL and shares one URI across the run, so the SPAN a menu names is
-recovered by walking outwards while the answer stays the same; that walk runs only when the pointer
-is already over a link.
+falls back to the detector, so the ranking is decided once rather than at each call site.
+
+**There are two authored-link doors, and the split is one cell wide (2026-09-01).**
+`slopdesk_term_surface_hyperlink_spans` walks the frame's flag and answers COLUMNS, which is what an
+underline redrawn every frame needs and why it costs no engine call; two different links that abut
+with no character between them arrive as one span, and one stroke across both is the same picture.
+`slopdesk_term_surface_hyperlink_runs` splits at the URI and answers a CLASSIFIED link per run —
+`VtSession::hyperlink_runs` asks the engine per LINKED cell — which is what anything that ACTUATES a
+link needs, because merging two links there opens the wrong one. It is an on-demand door: a click, a
+hint scan. Nothing calls it per frame.
+
+`slopdesk_terminal::link::authored` is the one classification both actuating paths run, and it
+replaced a `URL(string:)`-based twin in `TerminalSurfaceDriver` along with the outward per-cell walk
+that used to recover the span in Swift. What is left on that side is a hit test against runs the
+engine already split.
+
+**Hint Mode reaches them too, since the same date.** `HintLabelAssigner.targets` takes the runs as
+an input and `slopdesk_rowscan::hint::targets` accepts them BEFORE it detects anything, so the
+overlap rule that was already there drops a detector's guess laid over a declared link. That closes
+the ceiling this section's neighbour recorded: an `OSC 8` link whose display text is not itself a
+URL was clickable and unhintable, because a scan of the row's TEXT is the one thing that cannot find
+it. Its columns cross untouched — they are the engine's cells, and `text_cells` must not re-derive
+them from a display text that stands for something else entirely.
 
 **Link detection's setting does not gate the authored path.** "Auto-Detect Link Schemes" is a rule
 about GUESSING — how eagerly to read a URL out of ordinary text — and a program that emitted `OSC 8`

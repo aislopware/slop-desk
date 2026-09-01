@@ -532,42 +532,24 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         )
     }
 
-    /// The `OSC 8` span under a point, widened to the whole run that shares its URI.
+    /// The `OSC 8` run under a point — the whole run that shares its URI, already classified.
     ///
-    /// The engine flags the link per CELL and shares one URI across the run — a URL per character
-    /// per frame is what the flag exists to avoid — so the extent is recovered by walking outwards
-    /// while the answer stays the same. That walk costs one door call per cell and runs ONLY when
-    /// the pointer is already over a link, which is the rare case; a pointer over ordinary text pays
-    /// the single flag read and stops.
+    /// The engine flags the link per CELL and shares one URI across the run, so the extent is a
+    /// question about where the URI changes rather than about the point. `authoredLinkRuns()` asks
+    /// it once for the whole viewport, in Rust, and the same answer feeds Hint Mode: an outward
+    /// walk spelled here would be that decision written a second time, in the language `docs/68`
+    /// §10 keeps it out of.
     ///
     /// The span matters because a menu names what it will open and an underline has to end
     /// somewhere. A one-cell answer would title the menu after a character.
     private func authoredLink(at point: CGPoint, metrics: TerminalCellMetrics) -> DetectedLink? {
-        guard let cell = TerminalLinkHitTest.cell(metrics: metrics, pointX: point.x, pointY: point.y),
-              let uri = hyperlink(column: cell.column, row: cell.row)
+        guard let cell = TerminalLinkHitTest.cell(metrics: metrics, pointX: point.x, pointY: point.y)
         else {
             return nil
         }
-        var start = cell.column
-        while start > 0, hyperlink(column: start - 1, row: cell.row) == uri {
-            start -= 1
+        return authoredLinkRuns().first { run in
+            run.row == cell.row && run.colStart <= cell.column && cell.column < run.colEnd
         }
-        var end = cell.column + 1
-        while hyperlink(column: end, row: cell.row) == uri {
-            end += 1
-        }
-        // `file://` is the one authored scheme that names something on disk, so it is the one that
-        // resolves — everything else is a URL and has no filesystem answer to give. Derived from
-        // `URL` rather than by trimming the scheme, so a percent-escaped path arrives decoded.
-        let file = URL(string: uri).flatMap { $0.isFileURL ? $0.path : nil }
-        return DetectedLink(
-            row: cell.row,
-            colStart: start,
-            colEnd: end,
-            kind: file == nil ? .url : .fileURL,
-            raw: uri,
-            resolvedAbsolute: file,
-        )
     }
 
     // MARK: - Input
@@ -1089,6 +1071,10 @@ extension TerminalSurfaceDriver: @MainActor TerminalViewportSnapshotting {
 
     func authoredLinkSpans() -> [TerminalLinkSpan] {
         surface?.hyperlinkSpans() ?? []
+    }
+
+    func authoredLinkRuns() -> [DetectedLink] {
+        surface?.hyperlinkRuns() ?? []
     }
 }
 

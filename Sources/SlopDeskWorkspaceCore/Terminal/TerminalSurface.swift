@@ -304,6 +304,16 @@ public protocol TerminalViewportSnapshotting: AnyObject {
     /// which is why the underline for it is not gated on `SettingsKey.linkDetectionEnabled` — that
     /// setting governs guessing, and nothing here guessed.
     func authoredLinkSpans() -> [TerminalLinkSpan]
+
+    /// The same declarations, split where the URI changes and already classified.
+    ///
+    /// Two doors rather than one because they answer for two different consumers, and the
+    /// difference is exactly the split: ``authoredLinkSpans()`` walks the frame's flag and costs
+    /// nothing per cell, which is what an underline redrawn every frame needs, and two abutting
+    /// links underlined as one stroke are the same picture as two. Anything that ACTUATES a link —
+    /// a click, a hint label — needs the URI, so this one asks the engine per linked cell and is
+    /// called on demand instead.
+    func authoredLinkRuns() -> [DetectedLink]
 }
 
 /// One run of cells a program declared as an `OSC 8` hyperlink.

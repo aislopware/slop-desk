@@ -210,9 +210,12 @@ public enum TerminalLinkDetector {
     /// The kind a `SLOPDESK_LINK_KIND_*` code names. `nil` for `SLOPDESK_LINK_KIND_NONE` — the
     /// door's answer to an index past the end, which the reader loop never asks for.
     ///
-    /// Module-internal: a hint target of kind LINK carries a link kind in the same encoding, and
-    /// two readings of one code is how the two overlays start disagreeing about what a span is.
-    static func kind(of code: UInt32) -> DetectedLinkKind? {
+    /// `package` rather than internal: a hint target of kind LINK carries a link kind in the same
+    /// encoding, and so does an authored `OSC 8` run read through
+    /// `slopdesk_term_surface_hyperlink_runs` in `SlopDeskTerminal`. Two readings of one code is how
+    /// the two overlays start disagreeing about what a span is, so there is one reading and the
+    /// module boundary widens to reach it rather than a second `switch` being written.
+    package static func kind(of code: UInt32) -> DetectedLinkKind? {
         switch code {
         case UInt32(SLOPDESK_LINK_KIND_ABSOLUTE_PATH): .absolutePath
         case UInt32(SLOPDESK_LINK_KIND_TILDE_PATH): .tildePath
@@ -259,8 +262,9 @@ public enum TerminalLinkDetector {
     /// Reads one `(offset, length)` span out of the scan's arena.
     ///
     /// This door spells its pair `size_t`, the way §4 spells every length, so the `Int` overload is
-    /// the one it reaches for.
-    static func text(_ arena: UnsafeRawBufferPointer, _ offset: Int, _ length: Int) -> String {
+    /// the one it reaches for. `package` for ``kind(of:)``'s reason — one arena reader, not one per
+    /// module.
+    package static func text(_ arena: UnsafeRawBufferPointer, _ offset: Int, _ length: Int) -> String {
         ArenaText.text(arena, offset, length)
     }
 }
