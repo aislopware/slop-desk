@@ -1040,6 +1040,53 @@ mod tests {
         assert_eq!(selected_row(&editor), "git log HEAD", "the tighter match wins");
     }
 
+    /// ⌃R reads `fzf`'s extended-search syntax, and this is the reach test for it: the panel, not a
+    /// unit of the scorer.
+    ///
+    /// One query carrying three of the sigils, against a history built so that each one is doing
+    /// work — drop the `!` and `git push` returns, drop the `^` and `sudo git log` does.
+    #[test]
+    fn the_reverse_search_reads_fzfs_extended_syntax() {
+        let mut editor = CommandEditor::new();
+        for command in [
+            "git push origin",
+            "sudo git log",
+            "git log --oneline",
+            "git commit",
+        ] {
+            editor.insert_text(command);
+            editor.submit();
+        }
+        editor.begin_reverse_search();
+        editor.reverse_search_type("^git !push");
+        // `sudo git log` fails the `^`, `git push origin` fails the `!` — one sigil each.
+        assert_eq!(
+            editor.candidates().len(),
+            2,
+            "the two that open with `git` and carry no push"
+        );
+        editor.reverse_search_type(" log$");
+        assert_eq!(
+            editor.candidates().len(),
+            0,
+            "and `--oneline` is not how either line ENDS"
+        );
+    }
+
+    /// The sigils stay OUT of the completion list, where they are shell text: `$HOME` is a variable
+    /// and `!!` is a history expansion, not a suffix anchor and a negation.
+    #[test]
+    fn tab_completion_reads_the_sigils_as_text() {
+        let mut editor = CommandEditor::new();
+        editor.insert_text("echo $HOME");
+        editor.submit();
+        editor.insert_text("echo $HO");
+        assert!(
+            editor.complete(&[], 10) > 0,
+            "the draft's own history entry is offered"
+        );
+    }
+
     /// A redraw that recompletes must not replace the search's rows with caret candidates.
     #[test]
     fn completing_while_a_search_is_open_leaves_the_panel_alone() {

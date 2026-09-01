@@ -367,6 +367,11 @@ pub struct HistorySearch {
 /// palette. The records are [`Ranked`] for the same reason — the panel is drawn by the same view
 /// code, and the `positions` are the same underline.
 ///
+/// **The query is `fzf`'s EXTENDED-SEARCH syntax, and this is the one place in the app that reads
+/// it.** `git !push ^g` means what it looks like — see [`slopdesk_fuzzy::Pattern`]. It belongs here
+/// and not in [`complete`] because a search field is a place to write a QUERY, while a completion's
+/// query is real shell text in which `^`, `$`, `!` and `|` already mean four other things.
+///
 /// **The tie-break is RECENCY, and that is the one place this diverges from [`complete`].** Equal
 /// scores keep the order they arrive in — `sort_by` is stable — and they arrive newest-first, so
 /// two commands that match a query equally well are offered most-recent-first. [`complete`] breaks
@@ -374,10 +379,10 @@ pub struct HistorySearch {
 /// shell history's second axis is time, and `zsh`'s own `HIST_IGNORE_ALL_DUPS` order (see
 /// [`CommandHistory::record`]) exists to make it so.
 ///
-/// An empty query answers the newest `limit` entries rather than nothing: `slopdesk_fuzzy` scores
-/// an empty pattern as a match against everything with no positions, so a freshly opened ⌃R is the
-/// recent-commands panel `fzf` and `atuin` both open with, and it falls out of the same code path
-/// rather than being a special case here.
+/// An empty query answers the newest `limit` entries rather than nothing: it parses to a `Pattern`
+/// with no term sets at all, and a pattern that demands nothing matches everything at score 0 with
+/// no positions. So a freshly opened ⌃R is the recent-commands panel `fzf` and `atuin` both open
+/// with, and it falls out of the same code path rather than being a special case here.
 /// `document_len` is how much an accept replaces — the whole draft, always, because a history entry
 /// is a whole command line and there is no caret in a search to anchor anything narrower.
 #[must_use]
@@ -387,12 +392,16 @@ pub fn search_history(
     limit: usize,
     document_len: usize,
 ) -> HistorySearch {
+    // Parsed ONCE for the whole history, which is the split [`slopdesk_fuzzy::Pattern`] exists for:
+    // every ⌃R keystroke re-ranks every entry, and a parse per entry would be the same tiny work
+    // done a thousand times over.
+    let pattern = slopdesk_fuzzy::Pattern::parse(query);
     let mut ranked: Vec<Ranked> = history
         .entries()
         .iter()
         .rev()
         .filter_map(|entry| {
-            let found = slopdesk_fuzzy::score(query, entry)?;
+            let found = pattern.score(entry)?;
             Some(Ranked {
                 // A history entry is quoted the way the user wrote it, so it inserts verbatim —
                 // `HistoryProvider`'s rule, for its reason.

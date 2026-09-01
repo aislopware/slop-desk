@@ -574,6 +574,22 @@ Two prior questions it settles, each with the reason written where the code is:
   still closes the session and reports that it wrote nothing: a key that visibly does nothing reads
   as a wedged prompt, and an empty panel has already said everything it can.
 
+**The query is `fzf`'s EXTENDED-SEARCH syntax, since 2026-09-01.** `git !push ^g` reads as it looks:
+space-separated terms are ANDed, `|` ORs, a leading `'` demands a substring, `^` and `$` anchor, `!`
+excludes. `slopdesk-fuzzy`'s `pattern` module is a port of `pattern.go`'s `parseTerms` and
+`extendedMatch` plus the four non-fuzzy matchers and `calculateScore` out of `algo.go` — the same
+faithfulness discipline and the same attribution as the `FuzzyMatchV2` port beside it, because the
+precedence is not guessable (a bare `$` is a term, `'` FLIPS exactness rather than setting it, and
+`^…$` is an equality rather than a prefix).
+
+**It is deliberately confined to the SEARCH FIELD.** A ⌃R query is a place to write a query; a Tab
+completion's query is real shell text, in which `^`, `$`, `!` and `|` already mean four other things
+— `$HOME` is a variable, `!!` a history expansion, `|` a pipe. So `search_history` parses a
+`Pattern` and `complete` calls the plain `slopdesk_fuzzy::score`, and each has a test saying so.
+This is also the answer to "why not shell out to the `fzf` binary": we already run its algorithm, on
+the right side of the wire, without a full-screen TUI taking the alternate screen the block UI
+exists to avoid, and without a process per keystroke.
+
 **It cost doors rather than adding them, because a ⌃R row and a completion candidate are the same
 record.** Text, what it inserts, the whole range it replaces, and the scalar positions the underline
 draws — all four already crossed for the candidate list, so the panel's rows ARE

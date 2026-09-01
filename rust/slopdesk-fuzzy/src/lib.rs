@@ -22,6 +22,10 @@
 // sentinels of row 0). `at`/`put` below make that total: an index the rectangle does not hold
 // reads 0 and writes nowhere, which is exactly what the algorithm means by "outside".
 
+mod pattern;
+
+pub use pattern::Pattern;
+
 /// The default scheme's per-match score.
 const SCORE_MATCH: i32 = 16;
 /// The penalty for opening a gap between two matched characters.
