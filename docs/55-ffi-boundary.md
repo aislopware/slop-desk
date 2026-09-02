@@ -706,7 +706,9 @@ library through this boundary — the gate keeps the BYTES off the phone, not th
 
 `slopdesk_git_status` set a shape three later doors took: it answers the metadata reply's own
 payload, not a record. `slopdesk_pane_process_list` and `slopdesk_pane_port_list` are the same
-argument at a different verb — hostd's `MetadataResponseBuilder` holds no opinion about either list,
+argument at a different verb (both deleted with the Swift host, `docs/60` F.9: `slopdesk-panecensus`
+answers `slopdesk-hostserver` in-process now, and the client decodes with
+`slopdesk_metadata_decode_processes` / `slopdesk_metadata_decode_ports` in `slopdesk_ffi_mux.h`) — hostd's `MetadataResponseBuilder` holds no opinion about either list,
 it puts the bytes in a frame — so a `SlopDeskProcessInfo *` would cross the boundary only to be
 encoded one line later by a Swift function that already exists for the golden vectors.
 

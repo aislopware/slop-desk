@@ -8,7 +8,7 @@ Overview and architecture: [`README.md`](README.md). Repo rules and invariants:
 Apple silicon, macOS 26 or newer. Signed and notarized, two packages installed independently:
 
 ```sh
-brew install --cask aislopware/tap/slopdesk  # SlopDesk.app + SlopDeskHost.app
+brew install --cask aislopware/tap/slopdesk  # SlopDesk.app, the client viewer
 brew services start slopdesk                 # slopdesk-superd, required, see below
 ```
 

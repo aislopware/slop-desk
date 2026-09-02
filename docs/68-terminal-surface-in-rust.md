@@ -1704,8 +1704,11 @@ tests. Closing them is a client-side harness, not a recorder change.
   the revision, so a fix is a rev bump we can make ourselves, which is what §4's fork is. The
   residual risk is the sites nobody has run Miri over yet; the OSC 9/777 notification title and body
   reach the same `to_str`, and we do not register those handlers.
-- **Concurrency changes owner.** `terminal.rs:511` — "the caller must serialize it with writes,
-  rendering, searches". libghostty ran its own IO and renderer threads; afterwards that is ours.
+- **Concurrency changes owner.** Every engine handle is `!Send` and `!Sync` and upstream locks
+  nothing, so the caller serialises. `rust/slopdesk-vterm/src/session.rs` is where that landed —
+  "`VtSession` is that serialisation made structural — it owns the terminal, the render state, both
+  iterators and both encoders". libghostty ran its own IO and renderer threads; afterwards that is
+  ours.
   `superd` still owns `read` on every PTY master, so the discipline is unchanged in kind.
 - **Perf is a veto, not a worry.** Throughput, input latency and scroll all get numbers before and
   after, per §3.
@@ -1716,8 +1719,8 @@ tests. Closing them is a client-side harness, not a recorder change.
 renderer wiring. The rest is prose. The coupled set is `ThirdParty/ghostty/` (the fork, the 5 039-line
 `GhosttySurface`/`GhosttyTerminalView` embedder, `CGhostty/ghostty.h` and its modulemap), the two app
 specs and their `AppMain.swift`, `Sources/SlopDeskTerminal/`, the `Sources/SlopDeskWorkspaceCore/Terminal/`
-policy files, `rust/slopdesk-devtools/src/ops/renderer.rs` (`slopdesk-ops enable-renderer`) with its
-`stamp.rs` and `release/pack.rs` edges, and the `pointer`/`surface`/`wrap_map` modules that name
+policy files, `rust/slopdesk-devtools/src/ops/renderer.rs` (`slopdesk-ops enable-renderer`, both
+deleted with the cutover) with its `stamp.rs` and `release/pack.rs` edges, and the `pointer`/`surface`/`wrap_map` modules that name
 libghostty tokens.
 
 Per `CLAUDE.md`, this lands as ONE pass — the fork and the embedder go first, the tree is red in the

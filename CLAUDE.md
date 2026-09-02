@@ -16,11 +16,12 @@ bootstrap this tree needs is `brew install just`.
 | the wire | `docs/20-wire-protocol.md` — update it after wire changes |
 | Rust that Swift calls in-process | `docs/55-ffi-boundary.md` |
 | an Apple framework from Rust | `docs/57-apple-frameworks-in-rust.md` |
-| `MuxChannelSession` or `HostServer` | `docs/59-hostd-projection.md` |
+| why hostd's socket has the shape it has | `docs/59-hostd-projection.md` — historical: the Swift projection it replaced. `MuxChannelSession` and `HostServer` are deleted (`docs/60` F.9) |
 | hostd's socket, or Swift you think must stay | `docs/60-hostd-in-rust.md` |
 | the terminal surface | `docs/68-terminal-surface-in-rust.md` — §6.4–6.5 are the ghostty conformance sweeps |
 | a recorded TUI session | `rust/slopdesk-vterm/corpus/README.md` — frames are inputs not goldens, but the recorded INPUT bytes are pinned; `slopdesk-ttyrec` records all four kinds |
 | bumping ANY dependency or pin | `docs/69-dependency-currency.md` — audited 2026-09-02, all at latest |
+| re-auditing the tree, or a finding that looks new | `docs/70-codebase-audit-2026-09.md` — what the 2026-09-02 pass fixed, rejected with evidence, and ratcheted |
 | client UI | `DESIGN.md` |
 | the iOS/iPadOS client | `docs/62-phone-uikit.md` |
 | release, signing, brew | `docs/49-release-pipeline.md` |

@@ -58,6 +58,8 @@ Low-latency remote coding for Apple platforms (macOS host; macOS + iOS/iPadOS cl
 | 66 | [66-inspector-store-projection.md](66-inspector-store-projection.md) | The inspector's client store becomes a projection |
 | 67 | [67-swift-floor-closeout.md](67-swift-floor-closeout.md) | The closeout sweep, and the Swift floor as a list |
 | 68 | [68-terminal-surface-in-rust.md](68-terminal-surface-in-rust.md) | The terminal surface becomes ours |
+| 69 | [69-dependency-currency.md](69-dependency-currency.md) | Every pin at upstream latest, audited 2026-09-02 |
+| 70 | [70-codebase-audit-2026-09.md](70-codebase-audit-2026-09.md) | The whole-tree audit of 2026-09-02: fixed, rejected, ratcheted |
 
 ### GUI video path (design depth)
 | # | File | |

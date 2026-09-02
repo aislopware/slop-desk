@@ -4,7 +4,7 @@
 
 ios
 
-Apple-native only, and macOS-first in practice: a macOS host daemon plus native Swift/SwiftUI clients for macOS, iOS, and iPadOS. There is no web surface. Build floor is macOS 26 / iOS 26 on Apple Silicon.
+Apple-native only, and macOS-first in practice: a macOS host daemon plus native Swift (AppKit/UIKit) clients for macOS, iOS, and iPadOS. There is no web surface. Build floor is macOS 26 / iOS 26 on Apple Silicon.
 
 ## Users
 

@@ -82,9 +82,9 @@ SHFMT_FLAGS := "-i 2 -ci -sr"
 
 # Every Rust WORKSPACE ROOT: `rust/` itself, plus each crate that declares its own `[workspace]` and
 # is therefore invisible to `cargo --workspace` run at the root. Derived for the same reason the
-# shell list above is: the seventeen were spelled out by hand three times over (once in `fmt-rust`,
-# twice in `lint-rust`), so adding a crate meant remembering three places and forgetting one left it
-# silently unlinted — the failure `docs/46` warns about in the row about this very target.
+# shell list above is: the seventeen of the day were spelled out by hand three times over (once in
+# `fmt-rust`, twice in `lint-rust`), so adding a crate meant remembering three places and forgetting
+# one left it silently unlinted — the failure `docs/46` warns about in the row about this very target.
 #
 # A BACKTICK rather than `shell(…)`, and the difference is load-bearing: `just --dry-run` prints an
 # unevaluated `shell(…)` as its own source text, and `slopdesk-gate reach` reads a dry run to learn
@@ -104,10 +104,10 @@ help:
 
 # Cargo build products live OUTSIDE the checkout, in a `slopdesk-targets` sibling directory, and
 # each crate's `target` is a SYMLINK to its slice of it. The committed half is the per-crate
-# `.cargo/config.toml` — 72 of them plus the root workspace's — which is what makes cargo WRITE
-# there; the symlink is the read half, for the ten production files, three justfile sites and one
-# Swift test
-# that name `<crate>/target/release/...` as a path.
+# `.cargo/config.toml` — one per workspace `RUST_WORKSPACES` names, so 77 crates plus the root's,
+# 78 files — which is what makes cargo WRITE there; the symlink is the read half, for the ten
+# production files, three justfile sites and one Swift test that name
+# `<crate>/target/release/...` as a path.
 #
 # ⚠️ THE REASON IS MEASURED AND IT IS NOT ABOUT DISK. Both app specs declare the SwiftPM package as
 # `path: ../..` — the REPO ROOT — and Xcode enumerates that whole tree on every invocation, single
@@ -336,7 +336,7 @@ lint-shell:
 # is BUFFERED and printed only if it failed, so a red sweep reads as one crate's report instead of
 # nineteen interleaved ones; xargs exits non-zero when any of them did.
 
-# clippy -D warnings (all targets) + rustfmt --check, all 17 Rust workspaces
+# clippy -D warnings (all targets) + rustfmt --check, every workspace RUST_WORKSPACES names
 lint-rust: lint-rust-clippy
     @printf '%s\n' {{RUST_WORKSPACES}} | xargs -P 8 -I{} sh -c \
       'cd {} || exit 1; out=$(cargo +nightly fmt --all -- --check 2>&1) || { printf "── {} ──\n%s\n" "$out" >&2; exit 1; }'
@@ -351,9 +351,10 @@ lint-rust-clippy:
 
 # The pre-commit hook's Rust test sweep, and the same `--workspace`-does-not-reach-them story: the
 # hook used to run `cd rust && cargo test --workspace` while firing on ANY `rust/**.{rs,toml}` change,
-# so a commit to fifteen of the seventeen crates ran the OTHER two crates' tests and reported green.
-# ~21 s warm for the lot, which is what makes it a commit-time gate rather than a push-time one. The
-# named per-crate recipes below stay: they are how you run ONE crate, and `just test` composes them.
+# so a commit to fifteen of the seventeen crates of the day ran the OTHER two crates' tests and
+# reported green. ~21 s warm for the lot, which is what makes it a commit-time gate rather than a
+# push-time one. The named per-crate recipes below stay: they are how you run ONE crate, and
+# `just test` composes them.
 
 # cargo test across every Rust workspace (~21 s warm, 55 s if run one at a time)
 test-rust:

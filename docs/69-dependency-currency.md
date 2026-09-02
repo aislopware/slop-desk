@@ -12,7 +12,8 @@ are, and `ThirdParty/tools/tools.lock`'s own header for what the tool lock is fo
 
 Registry latest came from deps.dev, not from memory — a model's idea of "the latest version" is a
 snapshot of its training window and is wrong by construction on a tree that tracks upstream. Locked
-versions came from the `Cargo.lock` of all 17 workspaces, not from the manifests: a caret range says
+versions came from the `Cargo.lock` of every workspace `RUST_WORKSPACES` names (78 today: the root
+plus the 77 crates that declare their own `[workspace]`), not from the manifests: a caret range says
 what is *allowed*, and only the lock says what is *built*.
 
 ## 2. Result — every pin is at upstream latest

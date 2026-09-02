@@ -1,12 +1,20 @@
 # 51 — Process supervision: what outlives a hostd restart
 
-The contract for `slopdesk-superd`, the fd-custody daemon. Read this before touching `PTYProcess`,
-the two PTY spawn sites in `HostServer`, the agent hook/ctl socket paths, or anything that assumes
-"the daemon owns the shell". `docs/46` has the gate matrix and env paths; `docs/45` §6.5 described
+The contract for `slopdesk-superd`, the fd-custody daemon. Read this before touching
+`rust/slopdesk-hostpane`'s `PtyProcess`, the two PTY spawn sites in `rust/slopdesk-hostserver`, the
+agent hook/ctl socket paths, or anything that assumes "the daemon owns the shell". `docs/46` has the gate matrix and env paths; `docs/45` §6.5 described
 the *old* restart behaviour and is superseded by §7 here.
 
 Written 2026-08-11, after the cost of restarting hostd — every running agent killed — made
 host-side iteration expensive enough to distort how the host gets developed.
+
+> **The Swift names below are the pre-F.9 record, and the pointers beside them are the Rust homes.**
+> superd's half of this document has always been Rust and is current as written. hostd's half was
+> Swift when this was written, and `docs/60` F.9 deleted it. `HostServer` is
+> `rust/slopdesk-hostserver` now — `Host::stop` in `lifecycle.rs`, the adoption ladder in `adopt.rs`
+> — `PTYProcess` is `rust/slopdesk-hostpane`'s `PtyProcess`, and the daemon itself is
+> `rust/slopdesk-hostd`. The argument did not change with the language, so a Swift spelling stays
+> wherever it is carrying a before/after rather than a pointer.
 
 ---
 
@@ -182,7 +190,7 @@ document. Two teardowns exist and they must never merge:
 | hostd's master | closed (`closeMaster()` — a *duplicate*) | closed |
 | superd | told nothing; keeps the original master | reaps the child and drops the pane |
 | ZDOTDIR shim dir | kept (the shell is still living out of it) | deleted |
-| Reached from | `HostServer.stop()`, and nothing else | the child's own exit, a peer `channelClose`, a link drop |
+| Reached from | `Host::stop` (`rust/slopdesk-hostserver/src/lifecycle.rs`; was `HostServer.stop()`), and nothing else | the child's own exit, a peer `channelClose`, a link drop |
 
 Before superd these were one code path, which is exactly why editing one Swift file cost the user
 every running agent. The distinction is only *safe* because of §6.5: `closeMaster()` used to block
@@ -190,9 +198,10 @@ while a reader was parked in an uninterruptible `read()` on that fd, so "stop re
 meant "kill the shell". hostd does not read the master any more, so nothing is parked, so a pane can
 be let go without being ended.
 
-The same line runs through `PTYProcess`: `closeMaster()` drops hostd's `SCM_RIGHTS` duplicate and is
-safe on any path including `deinit`; `release(kill:)` is the deliberate end and **must never be
-called on hostd shutdown**.
+The same line runs through `rust/slopdesk-hostpane`'s `PtyProcess`: `close_master()` drops hostd's
+`SCM_RIGHTS` duplicate and is safe on any path; the `hangup()` → `terminate()` → `force_terminate()`
+ladder is the deliberate end and **must never be run on hostd shutdown**. (In Swift the pair was
+`closeMaster()` and `release(kill:)`, and `closeMaster()` had to be safe in `deinit` too.)
 
 ---
 
@@ -384,8 +393,8 @@ until superd tells it at `hello`, which is the correct number of answers to that
 
 §8 used to call this a non-goal, and the reasoning was wrong in a specific way worth recording:
 it asked *how a new hostd would find code-server again* (a port is not an fd; read it from a small
-state file) and never asked *why it had to find it again*. The answer was `HostServer.stop()`, which
-terminated both backends. Every host edit therefore cost the user a Node reboot in the code panel
+state file) and never asked *why it had to find it again*. The answer was `HostServer.stop()`, which terminated both backends. Its Rust successor does not;
+see the relinquish rule below. Every host edit therefore cost the user a Node reboot in the code panel
 and a dead simulator server — the exact tax this whole document exists to remove, still being paid
 by the surface the user looks at most.
 
@@ -407,8 +416,9 @@ a second, pipe-flavoured spawn would put a second pre-exec window next to the di
 (`fork_window_contract`) to buy a carriage return.
 
 ### relinquish, not terminate
-The §5.5 line, drawn again: `HostServer.stop()` calls `relinquish()` (hostd stops listening, superd
-keeps the child), and only a deliberate stop calls `terminate()`. Both spellings compile and both
+The §5.5 line, drawn again: hostd's stop path calls `relinquish()` on each backend
+(`panels.code` / `.simulator` / `.android` in `rust/slopdesk-hostd/src/main.rs` — hostd stops
+listening, superd keeps the child), and only a deliberate stop calls `terminate()`. Both spellings compile and both
 read like cleanup, so `rust/slopdesk-invariants` ratchets it.
 
 ### Not adopted by `adoptSurvivingPanes`
@@ -456,8 +466,9 @@ because the value lives in the pane's own writer and dies with it. And there is 
 to make, because a `head` that could be stale would have to belong to a pane superd forgot — and
 superd forgetting a pane means superd died, which takes every pane with it (§4).
 
-What is left for hostd to decide is what it always should have been: `HostServer.resumePointForSurvivor`
-asks `journal_info` and reads three cases off the answer. No file, or an empty one — nothing was
+What is left for hostd to decide is what it always should have been: the survivor's resume point
+(`resume_from` in `rust/slopdesk-hostserver/src/adopt.rs`, `HostServer.resumePointForSurvivor` in
+Swift) asks `journal_info` and reads three cases off the answer. No file, or an empty one — nothing was
 restored, so the stream starts at `0`. A file and a `head` — resume exactly there. A file and **no**
 head: the pane that wrote it is gone (superd drops the head when it closes the journal), so the
 answer is the transcript we have plus everything from NOW, `PaneOutputStream.fromNowOn`
@@ -509,15 +520,19 @@ this one's detached store, on the same journal file, one eviction away from hang
 somebody is using.
 
 Which leaves the in-process restart to answer for. The ordinary one hides the question behind
-`exit(0)`; the menu-bar host does not — it stops and starts in ONE process, so its own connection is
-still open and its own panes still read as another daemon's. It refused to adopt them, and the
-shells survived perfectly and never came back to a tab.
+`exit(0)`; the menu-bar host did not — it stopped and started in ONE process, so its own connection
+was still open and its own panes still read as another daemon's. It refused to adopt them, and the
+shells survived perfectly and never came back to a tab. That host is deleted (`docs/60` F.9) and the
+note it forced is not: `LetGo` in `rust/slopdesk-hostserver/src/adopt.rs` is injected through
+`HostParts` rather than owned by the host, for exactly the reason the Swift made it `static`.
 
 Disconnecting in `stop()` is the obvious fix and it is the wrong one: `killPaneForControl` tears its
 pane down on a background queue, so the `release` for a pane the user deliberately closed is still in
 flight when `stop()` returns, and closing the socket underneath it resurrects that pane at the next
 `start()` — adopted, parked, and unkillable-looking. (Tried, and caught by
-`testAPaneClosedBeforeTheRestartDoesNotComeBack`.) So `stop()` instead NOTES the pane ids it is
+`testAPaneClosedBeforeTheRestartDoesNotComeBack`, a Swift test deleted with the host; what pins the
+note today is `a_pane_this_very_process_let_go_is_taken_back_despite_still_reading_attached` in
+`rust/slopdesk-hostserver/tests/adopt.rs`.) So `stop()` instead NOTES the pane ids it is
 letting go, before the maps are drained, and `adoptSurvivingPanes` accepts an attached pane whose id
 this process wrote there — once, then forgets it. The connection lifecycle is untouched.
 
@@ -545,7 +560,8 @@ mid-hold puts the row back, so `endRedrawJiggle` sees a size that is no longer t
 (correctly — it cannot tell a stale echo from a real client resize), and the full re-layout the
 jiggle exists to force never happens. `claude` then stays half-painted after every reattach.
 Pinned by `registry::tests::resize_records_the_size_without_touching_the_terminal` and, from the
-other end, `PTYProcessTests.testRedrawJiggleShrinksOneRowThenRestores`.
+other end, `the_redraw_jiggle_shrinks_by_a_row_and_restores` in
+`rust/slopdesk-hostpane/tests/pane.rs`.
 
 The record still matters: it is what `list` reports, and a spawn-time 24×80 on a 200×50 pane is a lie
 in every enumeration and every log line. Recording is the whole job.
@@ -569,7 +585,8 @@ and `slopdesk-ops restart-hostd` reproduces it exactly) and the workspace state 
 before; **a different owner** → left alone whatever `attached` says; **absent** → treated exactly as
 before the field existed, because refusing there would strand real shells on the one upgrade where
 they most need adopting. Pinned by
-`HostRestartSurvivalTests.testASecondHostdDoesNotAdoptAStrangersRelinquishedPanes`.
+`a_strangers_pane_is_left_running_whatever_it_says_about_attachment` in
+`rust/slopdesk-hostserver/tests/adopt.rs`.
 
 The same "one id, one owner" question inside superd is answered by a **reservation**: `spawn` cannot
 hold the pane lock across a fork, so the id is taken out of circulation before the fork and released
@@ -818,8 +835,8 @@ warm extension host and its open editors, and `baguette serve` keeps its simulat
 block tracker, the replay sequence, the resize votes, and the hook ledger keyed by `tool_use_id`.
 Clients drop and reconnect on a 250ms backoff and receive a new epoch plus a snapshot.
 
-The screen is repainted rather than reconstructed: `PTYProcess.beginRedrawJiggle()` already exists
-and makes a TUI redraw itself, and the disk journal supplies the transcript above it.
+The screen is repainted rather than reconstructed: `PtyProcess::begin_redraw_jiggle()`
+(`rust/slopdesk-hostpane/src/pane.rs`) already exists and makes a TUI redraw itself, and the disk journal supplies the transcript above it.
 
 **The known rough edge:** a `tool_use_id` whose `PreToolUse` landed before the restart and whose
 `PostToolUse` lands after arrives as an orphaned resolve against an empty ledger. `docs/50` already

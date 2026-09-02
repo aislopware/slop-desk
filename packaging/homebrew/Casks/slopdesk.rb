@@ -11,7 +11,7 @@ cask "slopdesk" do
 
   url "https://github.com/aislopware/slop-desk/releases/download/v#{version}/SlopDesk-#{version}-arm64.dmg"
   name "SlopDesk"
-  desc "Low-latency remote coding for macOS: the client viewer and the host menu-bar app"
+  desc "Low-latency remote coding for macOS: the client viewer"
   homepage "https://github.com/aislopware/slop-desk"
 
   # See the formula for why arm64 is a hard requirement rather than a default.
@@ -20,27 +20,30 @@ cask "slopdesk" do
 
   # The cask DEPENDS ON THE FORMULA, and this is not a convenience.
   #
-  # `SlopDeskHost.app` does not shell out to `slopdesk-hostd`; it runs the same `HostServer`
-  # in-process. So it needs superd exactly as much as the CLI does — superd forks the pane shells
-  # and owns every PTY master (`docs/51`) — and a cask-only install was the same broken host wearing
-  # a menu-bar icon: it launched, showed its icon, and could not open a single pane. The CLI tools
-  # coming along is a side effect of declaring the real dependency.
+  # There is no host app any more. `docs/60` F.9 deleted `SlopDeskHost.app`, and the host is the
+  # formula's `slopdesk-hostd` — a CLI daemon — with `slopdesk-superd` under it. This cask ships
+  # the CLIENT VIEWER and nothing else, so a cask-only install on the machine somebody codes on is
+  # a viewer with nothing to view: superd forks the pane shells and owns every PTY master
+  # (`docs/51`), and every command-line tool comes from the formula too. Declaring the dependency
+  # is what makes one `brew install --cask` leave a working machine behind.
   depends_on formula: "slopdesk"
 
   app "SlopDesk.app"
-  app "SlopDeskHost.app"
 
   caveats <<~EOS
-    SlopDeskHost needs Screen Recording and Accessibility (System Settings -> Privacy &
-    Security). macOS keys both grants to the code signature, so they survive an upgrade in
-    place -- but an unsigned local build of the same app will not inherit them.
+    The host is `slopdesk-hostd` from the `slopdesk` formula this cask depends on, not an app
+    bundle. Run it on the Mac you code on; this cask is the viewer you drive it from.
 
-    superd owns every PTY master and comes from the `slopdesk` formula this cask depends on.
-    Start it once with `brew services start slopdesk`; without it the host launches and cannot
-    open a pane.
+    superd owns every PTY master and comes from that same formula. Start it once with
+    `brew services start slopdesk`; without it the host launches and cannot open a pane.
 
-    The command-line tools live in that formula too. SlopDesk.app carries no copy of the CLI,
-    so its first-launch "Install the CLI" card has nothing to link.
+    Nothing installed here needs Screen Recording or Accessibility. Terminal panes need no TCC
+    grant at all, and the two the GUI video path needs belong to `slopdesk-videohostd`, which no
+    release ships yet -- build it from a checkout with `just videohostd`.
+
+    The command-line tools live in the formula. SlopDesk.app links `slopdesk` at launch from a
+    copy beside its own executable and the shipped bundle carries none, so that link is a no-op
+    and `brew install aislopware/tap/slopdesk` is where the command comes from.
   EOS
 
   zap trash: [

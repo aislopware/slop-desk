@@ -2,6 +2,14 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (old "Phase 4 / secondary" framing retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
+> **Which process holds the grants, as of `docs/60` F.9.** The host app this section was written
+> about is deleted. The terminal host is the CLI daemon `slopdesk-hostd` and it needs no TCC grant
+> at all — it forks no capture and posts no event. Both grants below belong to the GUI video daemon
+> `rust/slopdesk-videohostd`, which links `slopdesk-apple-sck` for capture and `slopdesk-apple-ax` +
+> `slopdesk-apple-cgevent` for the raise-and-inject path. The `Info.plist` keys in §2 are the CLIENT
+> app's and the deleted host app's; no release ships `slopdesk-videohostd` yet, so today it is a
+> checkout binary (`just videohostd`) and the grant is against whatever signature that build has.
+
 ## 1. Required permissions (macOS host)
 
 | Permission (TCC) | Used for | Required? |

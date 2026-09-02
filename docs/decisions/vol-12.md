@@ -854,7 +854,9 @@ function had NO test; it has seven now, and removing the new step fails two of t
 **The cask was the same bug wearing a menu-bar icon.** `SlopDeskHost.app` does not shell out to
 `slopdesk-hostd` — `HostController` runs the same `HostServer` in-process — so it needs superd just
 as much. The cask now declares `depends_on formula:`, because the dependency is real rather than a
-convenience.
+convenience. (Superseded by `docs/60` F.9: the Swift host is deleted, the host is the CLI daemon
+`slopdesk-hostd`, and the cask ships the client viewer alone. The `depends_on` stands, on the
+formula owning every daemon and every command.)
 
 **`slopdesk-hook` had to ship for a reason no lookup in Swift states.** `slopdesk-agenthooks`
 installs the relay from `executable.parent()/slopdesk-hook`, so a formula that split the daemons

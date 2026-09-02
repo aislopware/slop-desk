@@ -71,7 +71,8 @@ default, in one place, and it is the source of three separate things:
   which is the per-PAIR one it cannot — two rows spelling ONE chord differently (`"cmd+leftarrow"`
   and `"cmd+left"`), where TOML sees two distinct keys and the last one silently wins.
 
-`SettingsKey` (Swift) is a pure projection of `AppConfig` — 71 typed accessors over the same paths.
+`SettingsKey` (Swift) is a pure projection of `AppConfig` — one typed accessor per path it reads,
+and no path of its own.
 The `settings-is-a-file` rule's `Subset` claim checks every path it names is one the table declares:
 an undeclared path answers with the accessor's fallback forever and nothing anywhere says a word.
 

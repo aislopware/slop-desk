@@ -93,9 +93,9 @@ class Slopdesk < Formula
       `slopdesk sidecars` says what the last upgrade changed, binary by binary, and what each
       change means for what is currently running.
 
-      This formula is the only source of the command-line tools. The cask ships the two app
-      bundles and nothing else — SlopDesk.app carries no copy of `slopdesk` inside it — so the
-      app's first-launch "Install the CLI" card has nothing to link and reports so.
+      This formula is the only source of the command-line tools. The cask ships one app bundle
+      and nothing else — SlopDesk.app links `slopdesk` at launch from a copy beside its own
+      executable, and the shipped bundle carries none, so that link is a no-op.
     EOS
   end
 
