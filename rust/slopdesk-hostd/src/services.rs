@@ -410,7 +410,9 @@ impl ClaudeHooks {
     /// launch produce the same file it already wrote.
     ///
     /// Never fatal: a `settings.json` this daemon cannot write is the user's file, and refusing to
-    /// serve terminals over it would trade the product for one feature.
+    /// serve terminals over it would trade the product for one feature. A file that does not decode
+    /// reads as not installed, and the install then refuses to touch it and says so on the log —
+    /// one line per launch, and the user's settings exactly as they left them.
     pub fn install_if_absent(&self) {
         if !self.is_installed() {
             let _attempted = self.install();

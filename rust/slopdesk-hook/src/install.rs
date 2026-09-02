@@ -13,11 +13,14 @@
 //! so the linker leaves it out of the relay: measured at the release profile, the relay binary is
 //! byte-for-byte the same size with this module in the crate as without it.
 //!
-//! ## Validate-then-repair, everywhere
-//! This writes a file the user also edits by hand. A settings file that is missing, unreadable, not
-//! JSON, or not an object is treated as an empty root rather than an error — the alternative is an
-//! install that refuses to proceed because of a stray comma in a key we do not own. Only the two
-//! steps that can lose data throw: staging the binary, and the write itself.
+//! ## Repair what parsed, refuse what did not
+//! This writes a file the user also edits by hand, and it holds everything Claude Code knows about
+//! them: the permissions allowlist, the model, their own hooks. A file that is missing is an empty
+//! root; a file that parsed to something other than an object is repaired to a minimal one. A file
+//! that exists but cannot be read or decoded is an ERROR, never an empty root: the merge would
+//! rebuild it from nothing and the rename would replace the user's settings with a hooks-only file
+//! — over a stray comma, or over the half-written file Claude Code leaves for the instant between
+//! its truncate and its write. The install is run on every host launch, so that window is met.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -253,14 +256,29 @@ pub fn home_in(environment: &Environment) -> String {
 
 // MARK: - The disk shim
 
-/// Reads and decodes `settings.json`, answering an empty object for a missing, unreadable or
-/// non-JSON file. Never an error: see the module note on validate-then-repair.
-#[must_use]
-pub fn read_settings(path: &Path) -> Value {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_else(|| Value::Object(Map::new()))
+/// Reads and decodes `settings.json`: `None` for a file that does not exist, the decoded root for
+/// one that does.
+///
+/// # Errors
+/// The file exists but could not be read, or its bytes are not JSON. Both are the caller's cue to
+/// leave it alone — see the module note.
+pub fn read_settings(path: &Path) -> io::Result<Option<Value>> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} is not JSON ({error}); left untouched", path.display()),
+        )
+    })
+}
+
+/// The root to merge into: the decoded file, or an empty object where there is no file.
+fn settings_root(path: &Path) -> io::Result<Value> {
+    Ok(read_settings(path)?.unwrap_or_else(|| Value::Object(Map::new())))
 }
 
 /// Encodes `root` sorted and pretty, then replaces `path` atomically.
@@ -287,6 +305,9 @@ pub fn write_settings(root: &Value, path: &Path) -> io::Result<String> {
 
 /// True iff `settings` carries one of OUR hook entries for EVERY event in [`INSTALLED_EVENTS`].
 ///
+/// A file that does not decode answers `false` like a missing one: the install that follows is
+/// what reports the problem, and it refuses to write.
+///
 /// ALL, not ANY, and the asymmetry is deliberate. A settings file written by an older build carries
 /// the events THAT build knew; answering "installed" for it would leave the newer ones permanently
 /// unregistered while the row offering the fix reads as already done. Under-reporting is the safe
@@ -294,7 +315,9 @@ pub fn write_settings(root: &Value, path: &Path) -> io::Result<String> {
 /// while the reverse is a silently degraded pane forever.
 #[must_use]
 pub fn is_installed(settings: &Path) -> bool {
-    let root = read_settings(settings);
+    let Ok(Some(root)) = read_settings(settings) else {
+        return false;
+    };
     let Some(Value::Object(hooks)) = root.get("hooks") else {
         return false;
     };
@@ -311,10 +334,15 @@ pub fn is_installed(settings: &Path) -> bool {
 /// through the inode would corrupt a running process. A rename swaps the directory entry and leaves
 /// the running image alone.
 ///
+/// The settings are read BEFORE the relay is staged: a settings file this cannot decode refuses the
+/// whole install, and a refusal that had already swapped the relay would leave a binary the
+/// settings never name.
+///
 /// # Errors
-/// Only from the two steps that can lose something — staging the relay (it is missing, or the hooks
-/// directory cannot be written) and writing the settings. The merge itself cannot fail.
+/// A settings file that exists but does not decode, staging the relay (it is missing, or the hooks
+/// directory cannot be written), and writing the settings. The merge itself cannot fail.
 pub fn install(settings: &Path, hook: &Path, relay: &Path) -> io::Result<String> {
+    let root = settings_root(settings)?;
     if !relay.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -336,7 +364,7 @@ pub fn install(settings: &Path, hook: &Path, relay: &Path) -> io::Result<String>
     }
     std::fs::rename(&staged, hook)?;
 
-    let merged = merge(read_settings(settings), &hook_command(hook));
+    let merged = merge(root, &hook_command(hook));
     write_settings(&merged, settings)
 }
 
@@ -345,9 +373,9 @@ pub fn install(settings: &Path, hook: &Path, relay: &Path) -> io::Result<String>
 /// The staged relay is left where it is — harmless, and a re-install reuses it.
 ///
 /// # Errors
-/// The settings file could not be written.
+/// The settings file exists but does not decode, or could not be written.
 pub fn uninstall(settings: &Path) -> io::Result<String> {
-    let stripped = remove(read_settings(settings));
+    let stripped = remove(settings_root(settings)?);
     write_settings(&stripped, settings)
 }
 
@@ -556,15 +584,62 @@ mod tests {
     // MARK: Disk
 
     #[test]
-    fn a_missing_or_corrupt_settings_file_reads_as_an_empty_root() {
+    fn a_missing_settings_file_reads_as_nothing_and_a_corrupt_one_as_an_error() {
         let scratch = Scratch::new("read");
-        assert_eq!(
-            read_settings(&scratch.join("absent.json")),
-            Value::Object(Map::new()),
-        );
+        assert_eq!(read_settings(&scratch.join("absent.json")).unwrap(), None);
         let corrupt = scratch.join("corrupt.json");
         std::fs::write(&corrupt, b"{not json,,,").unwrap();
-        assert_eq!(read_settings(&corrupt), Value::Object(Map::new()));
+        let error = read_settings(&corrupt).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("corrupt.json"), "{error}");
+    }
+
+    #[test]
+    fn a_settings_file_that_does_not_parse_is_left_byte_for_byte_alone() {
+        let scratch = Scratch::new("corrupt-install");
+        let relay = scratch.join("slopdesk-hook");
+        std::fs::write(&relay, b"x").unwrap();
+        let settings = scratch.join("settings.json");
+        let hook = scratch.join("hooks").join(HOOK_MARKER);
+        // A hand edit that lost its closing brace: everything the user owns is still in here.
+        let broken = br#"{"permissions": {"allow": ["Bash"]},"#;
+        std::fs::write(&settings, broken).unwrap();
+
+        assert!(!is_installed(&settings));
+        let error = install(&settings, &hook, &relay).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&settings).unwrap(), broken);
+        // Refused before the relay moved, so the hooks directory is as it was.
+        assert!(!hook.exists());
+        assert!(!scratch.join("hooks").join("slopdesk-hook.staging").exists());
+
+        let error = uninstall(&settings).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&settings).unwrap(), broken);
+    }
+
+    #[test]
+    fn a_missing_settings_file_is_created_with_only_hooks() {
+        let scratch = Scratch::new("fresh");
+        let relay = scratch.join("slopdesk-hook");
+        std::fs::write(&relay, b"x").unwrap();
+        let settings = scratch.join("settings.json");
+        install(&settings, &scratch.join("hooks").join(HOOK_MARKER), &relay).unwrap();
+        let root = read_settings(&settings).unwrap().unwrap();
+        let keys: Vec<&String> = root.as_object().unwrap().keys().collect();
+        assert_eq!(keys, vec!["hooks"]);
+        assert!(is_installed(&settings));
+    }
+
+    #[test]
+    fn a_settings_file_that_parsed_to_a_non_object_is_repaired_to_hooks_only() {
+        let scratch = Scratch::new("nonobject");
+        let relay = scratch.join("slopdesk-hook");
+        std::fs::write(&relay, b"x").unwrap();
+        let settings = scratch.join("settings.json");
+        std::fs::write(&settings, b"[1, 2, 3]").unwrap();
+        install(&settings, &scratch.join("hooks").join(HOOK_MARKER), &relay).unwrap();
+        assert!(is_installed(&settings));
     }
 
     #[test]
@@ -620,7 +695,7 @@ mod tests {
         uninstall(&settings).unwrap();
         assert!(!is_installed(&settings));
         assert_eq!(
-            read_settings(&settings),
+            read_settings(&settings).unwrap().unwrap(),
             serde_json::from_str::<Value>(r#"{"model":"opus"}"#).unwrap(),
         );
     }
