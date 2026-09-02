@@ -258,6 +258,12 @@ impl From<SurfaceGeometry> for mouse::EncoderSize {
 pub struct Keyboard {
     encoder: key::Encoder<'static>,
     event: key::Event<'static>,
+    /// The user's `macos-option-as-alt`, kept because the engine forgets it.
+    ///
+    /// `set_options_from_terminal` copies the modes a program negotiated and, having no terminal
+    /// state to read it from, resets this one to `False`. A resync runs before every press, so a
+    /// value applied once and not re-applied is a setting that lasts one keystroke.
+    option_as_alt: OptionAsAlt,
 }
 
 impl fmt::Debug for Keyboard {
@@ -275,6 +281,7 @@ impl Keyboard {
         Ok(Self {
             encoder: key::Encoder::new()?,
             event: key::Event::new()?,
+            option_as_alt: OptionAsAlt::False,
         })
     }
 
@@ -282,18 +289,22 @@ impl Keyboard {
     ///
     /// The one encoder option that is a *user* preference rather than something the running program
     /// negotiated, which is why it has its own door while the rest arrive through
-    /// [`Keyboard::sync`].
+    /// [`Keyboard::sync`] — and why it is stored: the resync would otherwise erase it.
     pub fn set_option_as_alt(&mut self, value: OptionAsAlt) {
+        self.option_as_alt = value;
         self.encoder.set_macos_option_as_alt(value);
     }
 
-    /// Copies the modes the running program negotiated out of the terminal.
+    /// Copies the modes the running program negotiated out of the terminal, then restores the one
+    /// option the terminal cannot answer.
     ///
     /// Must be called after anything that could change them, which in practice means after every
     /// feed: an application enters the kitty protocol with an escape sequence, and a stale encoder
     /// would keep sending the old encoding until something else happened to refresh it.
     pub(crate) fn sync(&mut self, terminal: &libghostty_vt::terminal::Terminal<'static, 'static>) {
-        self.encoder.set_options_from_terminal(terminal);
+        self.encoder
+            .set_options_from_terminal(terminal)
+            .set_macos_option_as_alt(self.option_as_alt);
     }
 
     /// Encodes one keystroke, appending to `out`.
@@ -356,6 +367,66 @@ pub struct Pointer {
     encoder: mouse::Encoder<'static>,
     event: mouse::Event<'static>,
     geometry: SurfaceGeometry,
+    /// The tracking and format modes the encoder was last synced to, or `None` before the first.
+    ///
+    /// The engine's `set_options_from_terminal` forgets the last reported cell as a side effect,
+    /// and that cell is what turns ten sub-cell motions into one report. So the sync happens
+    /// only when the modes actually moved, and this is how that is known without a C call per
+    /// mode per event.
+    modes: Option<MouseModes>,
+    /// Which buttons the encoder has seen pressed and not yet released, one bit per button.
+    ///
+    /// The engine reports a position outside the viewport — a drag past the surface's edge —
+    /// only while it believes a button is held, and it does not track that itself.
+    held: u16,
+}
+
+/// The eight DEC modes that decide whether and how a pointer event is reported, one bit each.
+///
+/// Read as a unit so one comparison says whether the encoder needs resyncing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MouseModes(u8);
+
+impl MouseModes {
+    /// The modes as the terminal holds them, or `None` when the engine would not say.
+    fn read(terminal: &libghostty_vt::terminal::Terminal<'static, 'static>) -> Option<Self> {
+        use libghostty_vt::terminal::Mode;
+        const MODES: [Mode; 8] = [
+            Mode::X10_MOUSE,
+            Mode::NORMAL_MOUSE,
+            Mode::BUTTON_MOUSE,
+            Mode::ANY_MOUSE,
+            Mode::UTF8_MOUSE,
+            Mode::SGR_MOUSE,
+            Mode::URXVT_MOUSE,
+            Mode::SGR_PIXELS_MOUSE,
+        ];
+        let mut bits = 0_u8;
+        for (index, mode) in MODES.iter().enumerate() {
+            if terminal.mode(*mode).ok()? {
+                bits |= 1_u8 << index;
+            }
+        }
+        Some(Self(bits))
+    }
+}
+
+/// The bit [`Pointer::held`] keeps for a button, or `0` for one it does not track.
+///
+/// Only the three physical buttons are tracked. A wheel notch is reported as a PRESS of button
+/// four or five that no release ever follows, so counting it would leave the encoder believing a
+/// button is held for the rest of the session.
+///
+/// The arms are unqualified on purpose: these are the bits of a HELD mask, not a wire alphabet, and
+/// `Enum::Variant => n,` is the shape the shared-constants ratchet reads as one.
+const fn button_bit(button: MouseButton) -> u16 {
+    use MouseButton::{Extra, Left, Middle, Right};
+    match button {
+        Left => 1,
+        Right => 2,
+        Middle => 4,
+        Extra(_) => 0,
+    }
 }
 
 impl fmt::Debug for Pointer {
@@ -372,10 +443,16 @@ impl Pointer {
     /// # Errors
     /// The engine's own error, if either allocation fails.
     pub fn new() -> Result<Self> {
+        let mut encoder = mouse::Encoder::new()?;
+        // One report per cell entered, as ghostty's `mouseReport` sends: the engine remembers the
+        // last cell it reported and drops a motion that stays inside it.
+        encoder.set_track_last_cell(true);
         Ok(Self {
-            encoder: mouse::Encoder::new()?,
+            encoder,
             event: mouse::Event::new()?,
             geometry: SurfaceGeometry::default(),
+            modes: None,
+            held: 0,
         })
     }
 
@@ -388,8 +465,16 @@ impl Pointer {
         self.encoder.set_size(geometry.into());
     }
 
-    /// Copies the tracking mode and wire format the running program negotiated.
+    /// Copies the tracking mode and wire format the running program negotiated, when they moved.
+    ///
+    /// Called after every feed rather than before every event: a feed is the only thing that can
+    /// change a mode, and syncing per event would forget the last reported cell each time.
     pub(crate) fn sync(&mut self, terminal: &libghostty_vt::terminal::Terminal<'static, 'static>) {
+        let modes = MouseModes::read(terminal);
+        if modes.is_some() && modes == self.modes {
+            return;
+        }
+        self.modes = modes;
         self.encoder.set_options_from_terminal(terminal);
     }
 
@@ -399,6 +484,8 @@ impl Pointer {
     /// button is down and reports drag motion the user is no longer making.
     pub fn reset(&mut self) {
         self.encoder.reset();
+        self.held = 0;
+        self.encoder.set_any_button_pressed(false);
     }
 
     /// Encodes one pointer event, appending to `out`.
@@ -409,6 +496,17 @@ impl Pointer {
     /// # Errors
     /// The engine's own error.
     pub fn encode(&mut self, event: &MouseMove, out: &mut Vec<u8>) -> Result<()> {
+        if let Some(button) = event.button {
+            let held = match event.action {
+                MouseAction::Press => self.held | button_bit(button),
+                MouseAction::Release => self.held & !button_bit(button),
+                MouseAction::Motion => self.held,
+            };
+            if (held != 0) != (self.held != 0) {
+                self.encoder.set_any_button_pressed(held != 0);
+            }
+            self.held = held;
+        }
         self.event
             .set_action(event.action.into())
             .set_button(event.button.map(Into::into))

@@ -22,21 +22,34 @@
 //! The bindings offer `fg_color()` and `bg_color()`, which resolve palette indices for you. The
 //! scan does not use them, for two reasons that both cost correctness otherwise:
 //!
-//! * **Bold brightening needs the index, and those doors have already spent it.** SGR 1 on one of
-//!   the first eight palette colours selects the bright counterpart. Once the index is an
-//!   `RgbColor` the rule cannot be applied, so the scan reads the raw [`Style`] and brightens
-//!   before lookup.
+//! * **The frame's rules need the raw style.** Inverse swaps the two colours and faint blends the
+//!   foreground halfway to the background, and both read the style's own bits beside the colour
+//!   they act on. A resolved colour has already lost which source it came from.
 //! * **Every resolved door is another C call per cell.** [`CellIteration::raw_cell`] is one call
 //!   that answers text presence, styling presence, the wide-pair role and the cell-level background
 //!   all at once, from a struct copied into Rust. A blank cell — most of a viewport — costs exactly
 //!   that one call. A styled one costs three.
+//!
+//! Bold does NOT brighten. ghostty's default `bold-color` is unset, so `SGR 1;31` is dark red in
+//! bold there, and the pixels here match it.
+//!
+//! ## Synchronized output
+//!
+//! DEC mode 2026 is the program's promise that the screen between `?2026h` and `?2026l` is not
+//! meant to be seen. The engine tracks the mode and deliberately does not act on it — a renderer
+//! that skips frames is a renderer's decision — so [`VtSession::render`] is where the frame is
+//! held: while the mode is set the last frame stands, the engine's damage keeps accumulating, and
+//! the first render after the close catches up in one pass. A program that opens a block and dies
+//! must not freeze the pane, so a hold older than [`SYNC_OUTPUT_HOLD`] is broken by clearing the
+//! mode, which is what ghostty's io thread does at the same age.
 
 use core::fmt;
+use std::time::{Duration, Instant};
 
 use libghostty_vt::error::Error as EngineError;
 use libghostty_vt::focus::Event as FocusEvent;
 use libghostty_vt::kitty::graphics::PlacementIterator;
-use libghostty_vt::render::{CellIterator, Dirty, RenderState, RowIterator};
+use libghostty_vt::render::{CellIterator, Dirty, RenderState, RowIterator, Snapshot};
 use libghostty_vt::screen::{CellContentTag, CellWide};
 use libghostty_vt::style::{Style, StyleColor};
 use libghostty_vt::terminal::{
@@ -49,8 +62,15 @@ use crate::frame::{
     TextSpan, UnderlineStyle,
 };
 use crate::input::{
-    Key, KeyAction, KeyPress, Keyboard, Mods, MouseMove, OptionAsAlt, Pointer, SurfaceGeometry,
+    Key, KeyAction, KeyPress, Keyboard, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Pointer,
+    SurfaceGeometry,
 };
+
+/// How long a synchronized update may hold the frame before the hold is broken.
+///
+/// ghostty's `sync_reset_ms`. A second is longer than any honest redraw and shorter than a user
+/// deciding the pane has hung.
+pub const SYNC_OUTPUT_HOLD: Duration = Duration::from_millis(1000);
 
 /// What went wrong. There is exactly one failure mode worth distinguishing from the engine's own.
 #[derive(Debug, Clone, Copy)]
@@ -213,6 +233,13 @@ pub struct VtSession {
     /// this object's allocation on every update, so making one per frame would put an allocation
     /// and a free on the render path to save a field.
     pub(crate) placements: PlacementIterator<'static>,
+    /// When a synchronized update first held the frame, while it still does. See the module header.
+    sync_hold: Option<Instant>,
+    /// Wheel travel not yet worth a whole row, in surface pixels, signed like the travel.
+    ///
+    /// A wheel reports in rows and a trackpad moves in pixels; the remainder carries across events
+    /// so a slow glide still adds up to rows rather than being rounded away at every step.
+    wheel_pending: f32,
 }
 
 /// The surface's focus, paired with the mode that decides whether it is anybody's business.
@@ -299,7 +326,10 @@ impl VtSession {
             focus: FocusState::default(),
             compression_activity: None,
             placements: PlacementIterator::new()?,
+            sync_hold: None,
+            wheel_pending: 0.0,
         };
+        session.pointer.sync(&session.terminal);
         // Two facts about images, stated at construction because both are refusals: the two file
         // transmission mediums are closed (see `graphics::set_image_file_transmission` — a remote
         // shell must not name a path on the user's own machine), and the PNG hook is installed so
@@ -509,6 +539,10 @@ impl VtSession {
         // [`Self::sync_focus_reporting`] — the program is owed the CURRENT focus the moment it
         // turns focus reporting on, not only on the next time the user looks away.
         self.sync_focus_reporting();
+        // A feed is the only thing that can change a mouse mode, so this is where the pointer
+        // encoder learns of one — not per event, where the resync would forget the last reported
+        // cell every time.
+        self.pointer.sync(&self.terminal);
     }
 
     /// Resizes the grid, reflowing the primary screen.
@@ -548,6 +582,8 @@ impl VtSession {
     pub fn reset(&mut self) {
         self.terminal.reset();
         self.refill = true;
+        self.sync_hold = None;
+        self.pointer.sync(&self.terminal);
         // A reply the OLD terminal owed is an answer about state that no longer exists, and a bell
         // it rang was about output that is gone. Sending either after a reset would be reporting
         // the wrong terminal.
@@ -592,10 +628,91 @@ impl VtSession {
         if !self.terminal.is_mouse_tracking()? {
             return Ok(false);
         }
-        self.pointer.sync(&self.terminal);
         let before = out.len();
         self.pointer.encode(event, out)?;
         Ok(out.len() > before)
+    }
+
+    /// Whether the running program owns the wheel: it tracks the mouse, or it is full-screen and
+    /// has left alternate scroll (DEC 1007, on by default) in force.
+    ///
+    /// The surface asks this before [`Self::wheel`] so a wheel the program does not own goes to
+    /// the surface's own scroll, points and all, rather than being rounded to rows here.
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn owns_wheel(&self) -> Result<bool> {
+        if self.terminal.is_mouse_tracking()? {
+            return Ok(true);
+        }
+        Ok(self.is_alternate_screen()? && self.terminal.mode(Mode::ALT_SCROLL)?)
+    }
+
+    /// Encodes wheel travel for a program that owns it — see [`Self::owns_wheel`].
+    ///
+    /// `delta_y` is surface pixels, positive towards older output, which is the wheel turning UP.
+    /// Whole rows are what a program can be told about: a tracking program gets one PRESS of
+    /// button four (up) or five (down) per row, as ghostty's `scrollCallback` sends, and a
+    /// full-screen program under alternate scroll gets the cursor key instead, in whichever form
+    /// DECCKM asks for. The remainder waits in [`Self::wheel_pending`] for the next event.
+    ///
+    /// Answers `false`, having written nothing, when the program does not own the wheel after all.
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn wheel(&mut self, delta_y: f32, mods: Mods, x: f32, y: f32, out: &mut Vec<u8>) -> Result<bool> {
+        if !self.owns_wheel()? {
+            return Ok(false);
+        }
+        let cell_height = if self.geometry.cell_height > 0 {
+            self.geometry.cell_height
+        } else {
+            self.cell_height_px.max(1)
+        };
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a cell height is a few dozen pixels, exactly representable"
+        )]
+        let cell_height = cell_height as f32;
+        let travelled = self.wheel_pending + delta_y;
+        let rows = (travelled / cell_height).trunc();
+        // `a - b * c` kept as two operations: a fused form rounds differently, and the remainder
+        // has to be the one the next event adds to.
+        let spent = rows * cell_height;
+        self.wheel_pending = travelled - spent;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the row count was truncated toward zero above and a wheel event moves a screenful at \
+                      most"
+        )]
+        let rows = rows as i32;
+        let up = rows > 0;
+        let count = rows.unsigned_abs();
+        if self.terminal.is_mouse_tracking()? {
+            let button = Some(MouseButton::Extra(if up { 4 } else { 5 }));
+            for _ in 0..count {
+                self.pointer.encode(
+                    &MouseMove {
+                        action: MouseAction::Press,
+                        button,
+                        mods,
+                        x,
+                        y,
+                    },
+                    out,
+                )?;
+            }
+            return Ok(true);
+        }
+        let press = KeyPress {
+            key: Some(if up { Key::ArrowUp } else { Key::ArrowDown }),
+            ..KeyPress::default()
+        };
+        self.keyboard.sync(&self.terminal);
+        for _ in 0..count {
+            self.keyboard.encode(&press, out)?;
+        }
+        Ok(true)
     }
 
     /// Tells the pointer encoder the surface's pixel geometry.
@@ -626,6 +743,64 @@ impl VtSession {
     /// button is down and reports drag motion the user is no longer making.
     pub fn reset_pointer(&mut self) {
         self.pointer.reset();
+        self.wheel_pending = 0.0;
+    }
+
+    /// Whether a synchronized update holds the frame at `now`, breaking a hold that has expired.
+    ///
+    /// While held nothing is filled: the frame stays what it was, the engine's own damage bits
+    /// keep accumulating so the render after the close catches up in one pass, and `Clean` is the
+    /// honest answer — the frame the caller holds IS the frame to show — with [`Self::frame_held`]
+    /// telling the caller to ask again without waiting for a byte.
+    ///
+    /// Only a frame that is a picture can stand, though. A pending refill means the frame is not
+    /// one: a resize reshaped it to the new grid without refilling its rows, so holding it would
+    /// present rows of the old width on the new grid. That frame is filled at once, mid block or
+    /// not, which is what every terminal shows under a live resize.
+    fn held_for_synchronized_output(&mut self, now: Instant) -> Result<bool> {
+        if !self.refill && self.terminal.mode(Mode::SYNC_OUTPUT)? {
+            let since = *self.sync_hold.get_or_insert(now);
+            if now.saturating_duration_since(since) < SYNC_OUTPUT_HOLD {
+                return Ok(true);
+            }
+            // Held too long: the program forgot the close, or died inside the block. The mode is
+            // cleared rather than merely ignored so the next `?2026h` starts a fresh hold instead
+            // of inheriting an expired one.
+            self.terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
+        }
+        self.sync_hold = None;
+        Ok(false)
+    }
+
+    /// Whether the last render withheld the frame for a synchronized update.
+    ///
+    /// The surface that reads `true` presents again on its next tick, so the frame appears the
+    /// moment the block closes — or the moment the hold is broken — rather than with the next byte.
+    #[must_use]
+    pub const fn frame_held(&self) -> bool {
+        self.sync_hold.is_some()
+    }
+
+    /// Whether anything on the last rendered frame blinks: a cursor that asked to and is not over
+    /// a password field, or a cell SGR 5 marked.
+    ///
+    /// The view arms its blink clock on this answer and on nothing else, so an idle frame with
+    /// nothing to blink costs no timer tick and no repaint — ghostty's `cursor-blink` idles the
+    /// same way. The cell walk is a flag test per cell over one screenful, asked once per phase.
+    #[must_use]
+    pub fn wants_blink(&self) -> bool {
+        if self
+            .frame
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.blinking && !cursor.password_input)
+        {
+            return true;
+        }
+        self.frame
+            .rows
+            .iter()
+            .any(|row| row.cells.iter().any(|cell| cell.flags.contains(CellFlags::BLINK)))
     }
 
     /// Whether a full-screen program owns the screen.
@@ -936,6 +1111,19 @@ impl VtSession {
     /// # Errors
     /// The engine's own error.
     pub fn render(&mut self) -> Result<FrameDirty> {
+        self.render_at(Instant::now())
+    }
+
+    /// [`Self::render`] with the clock injected, which is what makes the synchronized-output hold
+    /// testable without waiting a second.
+    ///
+    /// # Errors
+    /// The engine's own error.
+    pub fn render_at(&mut self, now: Instant) -> Result<FrameDirty> {
+        if self.held_for_synchronized_output(now)? {
+            return Ok(FrameDirty::Clean);
+        }
+
         let Self {
             terminal,
             render,
@@ -952,6 +1140,7 @@ impl VtSession {
         // memory only. Splitting them is what would let a future caller hold a lock across the
         // first and not the second.
         let snapshot = render.begin_update(terminal)?.end()?;
+        let alternate = terminal.active_screen()? == libghostty_vt::screen::Screen::Alternate;
 
         let reported = FrameDirty::from(snapshot.dirty()?);
         let force = *refill || reported == FrameDirty::Full;
@@ -970,40 +1159,24 @@ impl VtSession {
             foreground: colors.foreground.into(),
             palette: colors.palette.map(Into::into),
         };
-        let cursor = if snapshot.cursor_visible()? {
-            snapshot.cursor_viewport()?.map(|viewport| {
-                FrameCursor {
-                    x: viewport.x,
-                    y: viewport.y,
-                    shape: snapshot
-                        .cursor_visual_style()
-                        .map_or_else(|_| CursorShape::Block, Into::into),
-                    color: snapshot
-                        .cursor_color()
-                        .ok()
-                        .flatten()
-                        .map_or(colors.foreground, Into::into),
-                    blinking: snapshot.cursor_blinking().unwrap_or(false),
-                    at_wide_tail: viewport.at_wide_tail,
-                    password_input: snapshot.cursor_password_input().unwrap_or(false),
-                }
-            })
-        } else {
-            None
-        };
-        let moved = cursor != frame.cursor || colors != frame.colors;
+        let mut cursor = cursor_of(&snapshot, &colors, frame)?;
+        let moved = cursor != frame.cursor || colors != frame.colors || alternate != frame.alternate;
         frame.colors = colors;
         frame.cursor = cursor;
+        frame.alternate = alternate;
 
         if !force && reported == FrameDirty::Clean {
             // `Partial` rather than `Clean` when only the cursor moved: no row needs rebuilding, so
             // every `FrameRow::dirty` is false and a partial painter does no row work, but the
-            // caller is still told that the frame it holds is not the frame it last drew.
-            return Ok(if moved {
-                FrameDirty::Partial
-            } else {
-                FrameDirty::Clean
-            });
+            // caller is still told that the frame it holds is not the frame it last drew. The
+            // revision moves with it, so a painter keyed on the counter sees the move too.
+            if moved {
+                *revision = revision.wrapping_add(1);
+                frame.revision = *revision;
+                frame.dirty = FrameDirty::Partial;
+                return Ok(FrameDirty::Partial);
+            }
+            return Ok(FrameDirty::Clean);
         }
         // A refill covers every row whatever the engine reported, so the answer must not be
         // `Clean`: a caller that keys its draw off the return value would skip the one repaint that
@@ -1059,6 +1232,11 @@ impl VtSession {
             row.set_dirty(false)?;
         }
 
+        if let Some(held) = cursor.as_mut() {
+            held.wide = frame.cursor_stands_wide(held.x, held.y, held.at_wide_tail);
+            frame.cursor = cursor;
+        }
+
         *refill = false;
         *revision = revision.wrapping_add(1);
         frame.revision = *revision;
@@ -1084,13 +1262,17 @@ fn fill_cell(
         Style::default()
     };
 
+    // SGR 8 hides the whole cell, decoration included: ghostty draws neither the glyph nor its
+    // strikethrough, overline or underline, matching xterm. The text half is handled below by
+    // writing no text; the decoration half is handled here by never raising its flags.
+    let decorated = !style.invisible;
     let mut flags = CellFlags::NONE
         .set(CellFlags::BOLD, style.bold)
         .set(CellFlags::ITALIC, style.italic)
         .set(CellFlags::FAINT, style.faint)
         .set(CellFlags::BLINK, style.blink)
-        .set(CellFlags::STRIKETHROUGH, style.strikethrough)
-        .set(CellFlags::OVERLINE, style.overline);
+        .set(CellFlags::STRIKETHROUGH, style.strikethrough && decorated)
+        .set(CellFlags::OVERLINE, style.overline && decorated);
     flags = match raw.wide()? {
         CellWide::Narrow => flags,
         CellWide::Wide => flags.union(CellFlags::WIDE),
@@ -1104,14 +1286,14 @@ fn fill_cell(
         flags = flags.union(CellFlags::HYPERLINK);
     }
 
-    let mut fg = resolve(style.fg_color, style.bold, colors).unwrap_or(colors.foreground);
+    let mut fg = resolve(style.fg_color, colors).unwrap_or(colors.foreground);
     // A cell-level background beats the style's: the engine stores one directly on the cell for
     // the common `\x1b[4Xm` run, and `content_tag` is how it says which source is live.
     let mut bg = match raw.content_tag()? {
         CellContentTag::BgColorRgb => raw.bg_color_rgb()?.into(),
         CellContentTag::BgColorPalette => palette_at(colors, usize::from(raw.bg_color_palette()?.0)),
         CellContentTag::Codepoint | CellContentTag::CodepointGrapheme => {
-            resolve(style.bg_color, false, colors).unwrap_or(colors.background)
+            resolve(style.bg_color, colors).unwrap_or(colors.background)
         },
     };
     if style.inverse {
@@ -1167,27 +1349,59 @@ fn fill_cell(
         text: TextSpan::default(),
         fg,
         bg,
-        underline_color: resolve(style.underline_color, false, colors).unwrap_or(fg),
+        underline_color: resolve(style.underline_color, colors).unwrap_or(fg),
         flags,
-        underline: UnderlineStyle::from(style.underline),
+        underline: if decorated {
+            UnderlineStyle::from(style.underline)
+        } else {
+            UnderlineStyle::None
+        },
     });
     Ok(())
 }
 
-/// Turns a style colour into a literal one, applying the bold-brightening rule on the way.
+/// The cursor as the snapshot reports it, or `None` while it is hidden or off the viewport.
 ///
-/// SGR 1 over one of the first eight palette entries selects the bright counterpart — that is the
-/// convention every terminal follows and the reason the scan reads the raw style rather than the
-/// engine's pre-resolved colour, which has already spent the index.
-fn resolve(color: StyleColor, bold: bool, colors: &FrameColors) -> Option<Rgb> {
+/// `wide` is read against `frame` as it stands: on the clean path that is the frame the cursor is
+/// drawn over, and on the fill path the caller re-reads it once the row is fresh.
+fn cursor_of(
+    snapshot: &Snapshot<'_, '_>,
+    colors: &FrameColors,
+    frame: &Frame,
+) -> Result<Option<FrameCursor>> {
+    if !snapshot.cursor_visible()? {
+        return Ok(None);
+    }
+    Ok(snapshot.cursor_viewport()?.map(|viewport| {
+        FrameCursor {
+            x: viewport.x,
+            y: viewport.y,
+            shape: snapshot
+                .cursor_visual_style()
+                .map_or_else(|_| CursorShape::Block, Into::into),
+            color: snapshot
+                .cursor_color()
+                .ok()
+                .flatten()
+                .map_or(colors.foreground, Into::into),
+            blinking: snapshot.cursor_blinking().unwrap_or(false),
+            at_wide_tail: viewport.at_wide_tail,
+            wide: frame.cursor_stands_wide(viewport.x, viewport.y, viewport.at_wide_tail),
+            password_input: snapshot.cursor_password_input().unwrap_or(false),
+        }
+    }))
+}
+
+/// Turns a style colour into a literal one.
+///
+/// A palette index is looked up as it is. Bold does not select the bright counterpart: that is
+/// ghostty's `bold-color = bright`, and its default is unset, so `SGR 1;31` stays the theme's own
+/// red — bold in the face, not brighter in the ink.
+fn resolve(color: StyleColor, colors: &FrameColors) -> Option<Rgb> {
     match color {
         StyleColor::None => None,
         StyleColor::Rgb(rgb) => Some(rgb.into()),
-        StyleColor::Palette(index) => {
-            let index = usize::from(index.0);
-            let index = if bold && index < 8 { index + 8 } else { index };
-            Some(palette_at(colors, index))
-        },
+        StyleColor::Palette(index) => Some(palette_at(colors, usize::from(index.0))),
     }
 }
 
@@ -1243,11 +1457,417 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::{Rgb, Scroll, VtError, VtSession, dim};
+    use std::time::{Duration, Instant};
+
+    use super::{Rgb, SYNC_OUTPUT_HOLD, Scroll, VtError, VtSession, dim};
     use crate::frame::{CellFlags, FrameDirty, RowSemantic, UnderlineStyle};
+    use crate::input::{
+        Key, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, SurfaceGeometry,
+    };
 
     fn session() -> VtSession {
         VtSession::new(20, 5, 8, 16).unwrap()
+    }
+
+    /// A session whose pointer encoder knows the surface is exactly the grid, 8×16 cells.
+    fn pointed() -> VtSession {
+        let mut session = session();
+        session.set_surface_geometry(SurfaceGeometry {
+            width: 160,
+            height: 80,
+            cell_width: 8,
+            cell_height: 16,
+            ..SurfaceGeometry::default()
+        });
+        session
+    }
+
+    fn mouse(
+        session: &mut VtSession,
+        action: MouseAction,
+        button: Option<MouseButton>,
+        x: f32,
+        y: f32,
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        session
+            .encode_mouse(
+                &MouseMove {
+                    action,
+                    button,
+                    mods: Mods::NONE,
+                    x,
+                    y,
+                },
+                &mut out,
+            )
+            .unwrap();
+        out
+    }
+
+    fn key(session: &mut VtSession, press: &KeyPress<'_>) -> Vec<u8> {
+        let mut out = Vec::new();
+        session.encode_key(press, &mut out).unwrap();
+        out
+    }
+
+    fn wheel(session: &mut VtSession, delta_y: f32) -> (bool, Vec<u8>) {
+        let mut out = Vec::new();
+        let owned = session.wheel(delta_y, Mods::NONE, 4.0, 4.0, &mut out).unwrap();
+        (owned, out)
+    }
+
+    #[test]
+    fn a_synchronized_update_is_drawn_only_when_it_closes() {
+        let mut session = session();
+        session.feed(b"old text");
+        session.render().unwrap();
+        session.feed(b"\x1b[?2026h\x1b[2J\x1b[Hhalf");
+        assert_eq!(session.render().unwrap(), FrameDirty::Clean, "the frame is held");
+        assert!(session.frame_held());
+        assert_eq!(
+            row_text(&session, 0),
+            "old text",
+            "the half-drawn screen never shows"
+        );
+        session.feed(b"-done\x1b[?2026l");
+        assert_eq!(
+            session.render().unwrap(),
+            FrameDirty::Full,
+            "the close catches up in one pass"
+        );
+        assert!(!session.frame_held());
+        assert_eq!(row_text(&session, 0), "half-done");
+    }
+
+    #[test]
+    fn a_forgotten_synchronized_update_times_out_after_a_second() {
+        let mut session = session();
+        session.feed(b"old");
+        let opened = Instant::now();
+        session.render_at(opened).unwrap();
+        session.feed(b"\x1b[?2026h\x1b[Hnew");
+        assert_eq!(session.render_at(opened).unwrap(), FrameDirty::Clean);
+        let late = opened + SYNC_OUTPUT_HOLD.saturating_sub(Duration::from_millis(1));
+        assert_eq!(
+            session.render_at(late).unwrap(),
+            FrameDirty::Clean,
+            "still inside the hold"
+        );
+        assert_eq!(row_text(&session, 0), "old");
+        let expired = opened + SYNC_OUTPUT_HOLD;
+        assert_ne!(
+            session.render_at(expired).unwrap(),
+            FrameDirty::Clean,
+            "the hold is broken"
+        );
+        assert_eq!(row_text(&session, 0), "new");
+        assert!(!session.frame_held());
+        // The mode itself was cleared, so a fresh block starts a fresh hold rather than an expired
+        // one.
+        session.feed(b"\x1b[?2026h\x1b[Hagain");
+        assert_eq!(session.render_at(expired).unwrap(), FrameDirty::Clean);
+        assert_eq!(row_text(&session, 0), "new");
+    }
+
+    #[test]
+    fn a_resize_ends_a_synchronized_update() {
+        let mut session = session();
+        session.feed(b"old");
+        session.render().unwrap();
+        session.feed(b"\x1b[?2026h\x1b[Hnew");
+        assert_eq!(session.render().unwrap(), FrameDirty::Clean);
+        session.resize(30, 5, 8, 16).unwrap();
+        assert_eq!(session.render().unwrap(), FrameDirty::Full);
+        assert_eq!(row_text(&session, 0), "new");
+    }
+
+    #[test]
+    fn a_block_opened_before_the_first_frame_holds_nothing() {
+        // A session that has never filled a frame has no picture to stand; the mid-block frame is
+        // what there is, and a blank pane until the close would read as a hang.
+        let mut session = session();
+        session.feed(b"\x1b[?2026h\x1b[Hfirst");
+        assert_eq!(session.render().unwrap(), FrameDirty::Full);
+        assert!(!session.frame_held());
+        assert_eq!(row_text(&session, 0), "first");
+    }
+
+    #[test]
+    fn a_block_reopened_after_a_resize_cannot_hold_a_frame_of_the_old_width() {
+        // The program answers the resize by redrawing inside a fresh block. The frame was reshaped
+        // to the new grid but not refilled, so there is no picture to hold: the mid-block frame is
+        // filled rather than rows of the old width being shown on the new grid.
+        let mut session = session();
+        session.feed(b"prompt");
+        session.render().unwrap();
+        session.resize(30, 5, 8, 16).unwrap();
+        session.feed(b"\x1b[?2026h\x1b[2J\x1b[Hredrawn");
+        assert_eq!(session.render().unwrap(), FrameDirty::Full);
+        assert!(!session.frame_held());
+        assert_eq!(session.frame().rows[0].cells.len(), 30);
+        assert_eq!(row_text(&session, 0), "redrawn");
+        // With a picture at the new width in hand, the block holds again.
+        session.feed(b"\x1b[Hmore");
+        assert_eq!(session.render().unwrap(), FrameDirty::Clean);
+        assert!(session.frame_held());
+    }
+
+    #[test]
+    fn the_alternate_flag_freezes_with_the_held_frame() {
+        let mut session = session();
+        session.feed(b"prompt");
+        session.render().unwrap();
+        assert!(!session.frame().alternate);
+        session.feed(b"\x1b[?2026h\x1b[?1049h\x1b[Hvim");
+        session.render().unwrap();
+        assert!(session.is_alternate_screen().unwrap(), "the engine has moved on");
+        assert!(
+            !session.frame().alternate,
+            "the frame has not, and its chrome must match its picture"
+        );
+        session.feed(b"\x1b[?2026l");
+        session.render().unwrap();
+        assert!(session.frame().alternate);
+    }
+
+    #[test]
+    fn option_as_alt_survives_the_per_press_resync() {
+        let mut session = session();
+        session.set_option_as_alt(OptionAsAlt::True);
+        let press = KeyPress {
+            key: Some(Key::A),
+            mods: Mods::ALT,
+            text: Some("å"),
+            unshifted: Some('a'),
+            ..KeyPress::default()
+        };
+        assert_eq!(
+            key(&mut session, &press),
+            b"\x1ba",
+            "meta-a, not the composed letter"
+        );
+        assert_eq!(key(&mut session, &press), b"\x1ba", "and still on the next press");
+        session.set_option_as_alt(OptionAsAlt::Left);
+        let right = KeyPress {
+            mods: Mods::ALT.union(Mods::RIGHT_ALT),
+            consumed_mods: Mods::ALT,
+            ..press
+        };
+        assert_eq!(
+            key(&mut session, &right),
+            "å".as_bytes(),
+            "the other side still composes"
+        );
+    }
+
+    #[test]
+    fn a_second_motion_inside_the_same_cell_is_not_reported() {
+        let mut session = pointed();
+        session.feed(b"\x1b[?1003h\x1b[?1006h");
+        assert_eq!(
+            mouse(&mut session, MouseAction::Motion, None, 3.0, 3.0),
+            b"\x1b[<35;1;1M"
+        );
+        assert!(mouse(&mut session, MouseAction::Motion, None, 5.0, 5.0).is_empty());
+        assert_eq!(
+            mouse(&mut session, MouseAction::Motion, None, 12.0, 5.0),
+            b"\x1b[<35;2;1M",
+            "crossing into the next cell is"
+        );
+        // Output arriving between two motions does not forget the cell either.
+        session.feed(b"redraw");
+        assert!(mouse(&mut session, MouseAction::Motion, None, 13.0, 6.0).is_empty());
+    }
+
+    #[test]
+    fn a_drag_past_the_edge_keeps_reporting_clamped_to_the_edge() {
+        let mut session = pointed();
+        session.feed(b"\x1b[?1002h\x1b[?1006h");
+        assert_eq!(
+            mouse(
+                &mut session,
+                MouseAction::Press,
+                Some(MouseButton::Left),
+                12.0,
+                3.0
+            ),
+            b"\x1b[<0;2;1M"
+        );
+        assert_eq!(
+            mouse(
+                &mut session,
+                MouseAction::Motion,
+                Some(MouseButton::Left),
+                -40.0,
+                3.0
+            ),
+            b"\x1b[<32;1;1M",
+            "still held, so still reported, clamped to the edge cell"
+        );
+        assert_eq!(
+            mouse(
+                &mut session,
+                MouseAction::Release,
+                Some(MouseButton::Left),
+                -40.0,
+                3.0
+            ),
+            b"\x1b[<0;1;1m"
+        );
+        assert!(
+            mouse(&mut session, MouseAction::Motion, None, -40.0, 3.0).is_empty(),
+            "nothing held, so a position outside the viewport is nobody's"
+        );
+    }
+
+    #[test]
+    fn a_wheel_under_button_tracking_reports_one_press_per_row() {
+        let mut session = pointed();
+        session.feed(b"\x1b[?1002h\x1b[?1006h");
+        assert!(session.owns_wheel().unwrap());
+        assert_eq!(
+            wheel(&mut session, -32.0),
+            (true, b"\x1b[<65;1;1M\x1b[<65;1;1M".to_vec())
+        );
+        assert_eq!(
+            wheel(&mut session, 10.0),
+            (true, Vec::new()),
+            "under a row: owned, waiting"
+        );
+        assert_eq!(
+            wheel(&mut session, 6.0),
+            (true, b"\x1b[<64;1;1M".to_vec()),
+            "the remainder adds up"
+        );
+    }
+
+    #[test]
+    fn a_wheel_on_the_alternate_screen_becomes_cursor_keys() {
+        let mut session = pointed();
+        assert!(
+            !session.owns_wheel().unwrap(),
+            "a shell prompt scrolls the surface"
+        );
+        session.feed(b"\x1b[?1049h");
+        assert!(session.owns_wheel().unwrap());
+        assert_eq!(wheel(&mut session, -16.0), (true, b"\x1b[B".to_vec()));
+        assert_eq!(wheel(&mut session, 16.0), (true, b"\x1b[A".to_vec()));
+        session.feed(b"\x1b[?1h");
+        assert_eq!(
+            wheel(&mut session, 16.0),
+            (true, b"\x1bOA".to_vec()),
+            "DECCKM is honoured"
+        );
+        session.feed(b"\x1b[?1007l");
+        assert!(
+            !session.owns_wheel().unwrap(),
+            "a pager that turned alternate scroll off gets nothing"
+        );
+        assert_eq!(wheel(&mut session, 16.0), (false, Vec::new()));
+    }
+
+    #[test]
+    fn the_cursor_knows_when_it_stands_on_a_wide_cell() {
+        let mut session = session();
+        session.feed("日\x1b[2D".as_bytes());
+        session.render().unwrap();
+        let cursor = session.frame().cursor.unwrap();
+        assert_eq!((cursor.x, cursor.at_wide_tail), (0, false));
+        assert!(cursor.wide, "the leading half");
+        session.feed(b"\x1b[C");
+        session.render().unwrap();
+        let cursor = session.frame().cursor.unwrap();
+        assert!(cursor.at_wide_tail && cursor.wide, "the trailing half");
+        session.feed(b"\x1b[C");
+        session.render().unwrap();
+        assert!(!session.frame().cursor.unwrap().wide, "a blank");
+    }
+
+    #[test]
+    fn a_cursor_only_move_still_advances_the_revision() {
+        let mut session = session();
+        session.feed(b"hi");
+        session.render().unwrap();
+        let before = session.frame().revision;
+        session.feed(b"\x1b[H");
+        assert_eq!(session.render().unwrap(), FrameDirty::Partial);
+        assert_eq!(session.frame().dirty, FrameDirty::Partial);
+        assert_eq!(session.frame().revision, before + 1);
+    }
+
+    #[test]
+    fn an_invisible_cell_draws_no_decoration_either() {
+        let mut session = session();
+        session.feed(b"\x1b[8;4;9;53mx");
+        session.render().unwrap();
+        let cell = session.frame().cell(0, 0).unwrap();
+        assert_eq!(cell.underline, UnderlineStyle::None);
+        assert!(!cell.flags.contains(CellFlags::STRIKETHROUGH));
+        assert!(!cell.flags.contains(CellFlags::OVERLINE));
+    }
+
+    /// The presses the Mac view hands the door, encoded as ghostty encodes them: the text is what
+    /// the layout produced WITHOUT control, the unshifted codepoint is the base key, and Shift is
+    /// consumed whenever it was held.
+    #[test]
+    fn the_doors_press_shapes_encode_like_ghostty() {
+        let mut session = session();
+        let ctrl_c = KeyPress {
+            key: Some(Key::C),
+            mods: Mods::CTRL,
+            unshifted: Some('c'),
+            ..KeyPress::default()
+        };
+        assert_eq!(key(&mut session, &ctrl_c), b"\x03");
+        let shift_a = KeyPress {
+            key: Some(Key::A),
+            mods: Mods::SHIFT,
+            consumed_mods: Mods::SHIFT,
+            text: Some("A"),
+            unshifted: Some('a'),
+            ..KeyPress::default()
+        };
+        assert_eq!(key(&mut session, &shift_a), b"A");
+        let left = KeyPress {
+            key: Some(Key::ArrowLeft),
+            unshifted: Some('\u{F702}'),
+            ..KeyPress::default()
+        };
+        assert_eq!(key(&mut session, &left), b"\x1b[D");
+
+        session.feed(b"\x1b[>1u");
+        assert_eq!(key(&mut session, &ctrl_c), b"\x1b[99;5u");
+        assert_eq!(
+            key(&mut session, &shift_a),
+            b"A",
+            "disambiguate mode still types a capital"
+        );
+        assert_eq!(
+            key(&mut session, &left),
+            b"\x1b[D",
+            "and never the placeholder scalar"
+        );
+        let colon = KeyPress {
+            key: Some(Key::Semicolon),
+            mods: Mods::SHIFT,
+            consumed_mods: Mods::SHIFT,
+            text: Some(":"),
+            unshifted: Some(';'),
+            ..KeyPress::default()
+        };
+        assert_eq!(key(&mut session, &colon), b":");
+        let shift_left = KeyPress {
+            key: Some(Key::ShiftLeft),
+            mods: Mods::SHIFT,
+            ..KeyPress::default()
+        };
+        session.feed(b"\x1b[<u\x1b[>31u");
+        assert_eq!(
+            key(&mut session, &shift_left),
+            b"\x1b[57441;2u",
+            "a modifier tap is an event"
+        );
     }
 
     /// The rendered text of one row, blanks and all.
@@ -1380,18 +2000,16 @@ mod tests {
     }
 
     #[test]
-    fn a_bold_palette_colour_brightens_to_its_counterpart() {
+    fn a_bold_palette_colour_keeps_its_index_like_ghostty() {
         let mut session = session();
-        // SGR 31 is palette 1 (red); with SGR 1 it must resolve to palette 9 (bright red).
+        // SGR 31 is palette 1 (red); with SGR 1 it stays palette 1 — ghostty's `bold-color` is
+        // unset by default, and the bold lives in the face.
         session.feed(b"\x1b[1;31mx");
         session.render().unwrap();
         let cell = session.frame().cell(0, 0).unwrap();
-        assert_eq!(cell.fg, session.frame().colors.palette[9]);
-        assert_ne!(
-            cell.fg,
-            session.frame().colors.palette[1],
-            "bold over the first eight is the bright counterpart, not the base"
-        );
+        assert_eq!(cell.fg, session.frame().colors.palette[1]);
+        assert!(cell.flags.contains(CellFlags::BOLD));
+        assert_ne!(cell.fg, session.frame().colors.palette[9]);
     }
 
     #[test]

@@ -213,7 +213,12 @@ const WIDE: [Wide; 7] = [
         // sits here because the two Core Video getters are this crate's framework area and a
         // `forbid(unsafe_code)` daemon comparing a delivered buffer against the size its encoder
         // was opened at cannot reach them any other way.
-        cap: 1253,
+        //
+        // 1253 → 1317: `pixels::PixelBufferPool` (`docs/72`). A `CVPixelBufferPool` the encoder
+        // thread draws its rebuilt NV12 surfaces from instead of creating one per frame — two
+        // Create-rule calls (`create`, `create_pixel_buffer`) of the shape `nv12` already
+        // discharges, and `fits` so a resize replaces the pool rather than drawing the old size.
+        cap: 1317,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-sck",
@@ -250,7 +255,11 @@ const WIDE: [Wide; 7] = [
         // serve it — `line_for`, which `Shaper::line` now delegates to, and `line_glyphs` — so one
         // of the four new `unsafe` sites is a MOVE rather than an addition, and the other three are
         // the same Get-rule shapes the crate already discharges. Three tests, none of them timing.
-        cap: 1001,
+        //
+        // 1001 → 1014: the grid metrics take ghostty's rounding (`docs/68` §6.6) — a rounded
+        // advance and line height, the baseline centred from the bottom with the odd pixel of a
+        // multiplier's gain placed as `Metrics.apply` places it. Arithmetic only; NO new `unsafe`.
+        cap: 1014,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-metal",
@@ -267,7 +276,11 @@ const WIDE: [Wide; 7] = [
         // slot and three more encode calls, in the order they already draw in. NO new `unsafe` —
         // the buffers go through `InstanceBuffer::fill`, which is the crate's one copy-in site, and
         // the passes go through `encode_rects`/`encode_glyphs`, which are the ones already here.
-        cap: 924,
+        //
+        // 924 → 941: the draw issues the instances WRITTEN, not the buffer's capacity (`docs/68`
+        // §6.6) — `Bound { buffer, count }` replaces the bare buffer on every pass — and the
+        // underlines get their own two passes under the glyphs. NO new `unsafe`.
+        cap: 941,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-cgvirtualdisplay",

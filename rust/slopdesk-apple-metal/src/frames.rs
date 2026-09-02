@@ -94,11 +94,17 @@ impl InstanceBuffer {
     /// `Ok(None)` for an empty draw, which is the common case for overlays — most frames have no
     /// underline and no cursor decoration, and a zero-length `MTLBuffer` is not a thing Metal will
     /// make.
+    ///
+    /// The answer carries the COUNT written beside the buffer, and the renderer draws that count.
+    /// The buffer's own `length()` is its capacity — a doubling from the floor below, sized for the
+    /// largest frame this slot has ever held — and a draw call over the capacity would draw every
+    /// instance an earlier frame left past this frame's tail: a deselected paragraph's fill, a
+    /// cleared screen's glyphs, a hidden cursor's block, each three presents stale.
     fn fill<T: Copy>(
         &mut self,
         device: &ProtocolObject<dyn MTLDevice>,
         instances: &[T],
-    ) -> Result<Option<&ProtocolObject<dyn MTLBuffer>>, MetalError> {
+    ) -> Result<Option<Bound<'_>>, MetalError> {
         if instances.is_empty() {
             return Ok(None);
         }
@@ -154,8 +160,23 @@ impl InstanceBuffer {
                 .copy_from_nonoverlapping(instances.as_ptr(), instances.len());
         }
 
-        Ok(Some(buffer))
+        Ok(Some(Bound {
+            buffer,
+            count: instances.len(),
+        }))
     }
+}
+
+/// One filled instance buffer and how many instances this frame wrote into it.
+///
+/// The pair is inseparable on purpose: a draw call takes a buffer AND a count, and the count is
+/// the one number `length()` cannot answer — see [`InstanceBuffer::fill`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bound<'a> {
+    /// The slot's buffer, at least `count` instances long.
+    pub(crate) buffer: &'a ProtocolObject<dyn MTLBuffer>,
+    /// How many instances this frame wrote, which is how many the draw call names.
+    pub(crate) count: usize,
 }
 
 /// The buffers one frame writes, filled.
@@ -168,26 +189,32 @@ pub(crate) struct Filled<'a> {
     /// Every inline image on the frame, in the order `image.rs` sorted them. ONE buffer for all
     /// three z layers — `DrawList::image_runs` is what says where each layer's slice starts, and
     /// splitting them into three buffers would be three allocations to express an index.
-    pub(crate) images: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub(crate) images: Option<Bound<'a>>,
     /// Cell backgrounds, the selection fill and a filled block cursor. `None` when there are none.
-    pub(crate) backgrounds: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub(crate) backgrounds: Option<Bound<'a>>,
+    /// Underlines and overlines, drawn under the text so a descender crosses the line rather than
+    /// being cut by it.
+    pub(crate) underlines: Option<Bound<'a>>,
     /// Text.
-    pub(crate) glyphs: Option<&'a ProtocolObject<dyn MTLBuffer>>,
-    /// Underlines, strikethroughs and any cursor that is not a filled block.
-    pub(crate) overlays: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub(crate) glyphs: Option<Bound<'a>>,
+    /// Strikethroughs and any cursor that is not a filled block.
+    pub(crate) overlays: Option<Bound<'a>>,
     /// The pinned head's bed — see `slopdesk_termrender::pin`. Drawn over every buffer above.
-    pub(crate) pinned_backgrounds: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub(crate) pinned_backgrounds: Option<Bound<'a>>,
+    /// The pinned head's underlines.
+    pub(crate) pinned_underlines: Option<Bound<'a>>,
     /// The pinned head's text.
-    pub(crate) pinned_glyphs: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub(crate) pinned_glyphs: Option<Bound<'a>>,
     /// The pinned head's own decorations, and the hairline under it. Last pass of the frame.
-    pub(crate) pinned_overlays: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    pub(crate) pinned_overlays: Option<Bound<'a>>,
 }
 
-/// One frame's four buffers.
+/// One frame's buffers, one per draw pass.
 #[derive(Debug, Default)]
 pub(crate) struct Slot {
     images: InstanceBuffer,
     backgrounds: InstanceBuffer,
+    underlines: InstanceBuffer,
     glyphs: InstanceBuffer,
     /// A THIRD buffer rather than an offset into the background one, and that is a considered
     /// choice: `setVertexBuffer:offset:atIndex:` exists precisely to sub-range one allocation, but
@@ -199,6 +226,7 @@ pub(crate) struct Slot {
     /// offset whose alignment rule is not the same on every Mac — and empty on the overwhelming
     /// majority of frames, where `InstanceBuffer::fill` allocates nothing at all.
     pinned_backgrounds: InstanceBuffer,
+    pinned_underlines: InstanceBuffer,
     pinned_glyphs: InstanceBuffer,
     pinned_overlays: InstanceBuffer,
 }
@@ -212,17 +240,21 @@ impl Slot {
     ) -> Result<Filled<'_>, MetalError> {
         let images = self.images.fill(device, &list.images)?;
         let backgrounds = self.backgrounds.fill(device, &list.backgrounds)?;
+        let underlines = self.underlines.fill(device, &list.underlines)?;
         let glyphs = self.glyphs.fill(device, &list.glyphs)?;
         let overlays = self.overlays.fill(device, &list.overlays)?;
         let pinned_backgrounds = self.pinned_backgrounds.fill(device, &list.pinned_backgrounds)?;
+        let pinned_underlines = self.pinned_underlines.fill(device, &list.pinned_underlines)?;
         let pinned_glyphs = self.pinned_glyphs.fill(device, &list.pinned_glyphs)?;
         let pinned_overlays = self.pinned_overlays.fill(device, &list.pinned_overlays)?;
         Ok(Filled {
             images,
             backgrounds,
+            underlines,
             glyphs,
             overlays,
             pinned_backgrounds,
+            pinned_underlines,
             pinned_glyphs,
             pinned_overlays,
         })
@@ -330,9 +362,58 @@ impl Drop for Ring {
 
 #[cfg(test)]
 mod tests {
-    use slopdesk_termrender::RectInstance;
+    #![expect(
+        clippy::unwrap_used,
+        reason = "a panic in a test is the failure report, not a runtime fault"
+    )]
 
-    use super::{FENCE_DEPTH, MIN_INSTANCES, Ring, SLOTS};
+    use objc2_metal::MTLBuffer;
+    use slopdesk_termrender::{DrawList, RectInstance, RectStyle, Rgba};
+
+    use super::{FENCE_DEPTH, MIN_INSTANCES, Ring, SLOTS, Slot};
+
+    fn rects(count: usize) -> DrawList {
+        let mut list = DrawList::new();
+        for _ in 0..count {
+            list.push_background(RectInstance {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+                color: Rgba::opaque(1, 2, 3),
+                style: RectStyle::Solid,
+            });
+        }
+        list
+    }
+
+    #[test]
+    fn a_fill_answers_the_instances_written_and_not_the_buffers_capacity() {
+        // The buffer is allocated at the floor and never shrinks, so after a frame of five the
+        // capacity is a thousand instances and a frame of two must still draw exactly two — the
+        // other three are the previous frame's, and drawing them is the stale-selection bug.
+        let Some(device) = objc2_metal::MTLCreateSystemDefaultDevice() else {
+            return;
+        };
+        let mut slot = Slot::default();
+        let five = rects(5);
+        let filled = slot.fill(&device, &five).unwrap();
+        let bound = filled.backgrounds.unwrap();
+        assert_eq!(bound.count, 5);
+        assert!(
+            bound.buffer.length() >= crate::geom::instance_bytes::<RectInstance>(MIN_INSTANCES),
+            "the buffer is sized from the floor, not to fit"
+        );
+
+        let two = rects(2);
+        let filled = slot.fill(&device, &two).unwrap();
+        let bound = filled.backgrounds.unwrap();
+        assert_eq!(
+            bound.count, 2,
+            "the count is this frame's, not the slot's high-water mark"
+        );
+        assert!(filled.underlines.is_none() && filled.glyphs.is_none() && filled.overlays.is_none());
+    }
 
     #[test]
     fn the_fence_is_deeper_than_the_drawable_queue() {

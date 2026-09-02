@@ -8,13 +8,14 @@ use core::ffi::{c_uchar, c_void};
 
 use slopdesk_terminal::config::FontSpec;
 use slopdesk_terminal::controls::{Overscroll, ScrollPastFirst, ScrollPastLast};
+use slopdesk_terminal::surface::forwards_encoder_text;
 use slopdesk_termrender::{Rgba, SelectionColors};
 use slopdesk_vterm::{
     CursorShape, KeyAction, KeyPress, Mods, MouseAction, MouseButton, MouseMove, OptionAsAlt, Rgb, Scroll,
     key_from_macos_keycode,
 };
 
-use super::{SlopDeskTerminalSurface, Surface, held};
+use super::{DRAW_NOWHERE, SlopDeskTerminalSurface, Surface, held};
 use crate::{SlopDeskByteSpan, arena_text, borrow, deliver, lent, records_of};
 
 /// The four face names, the two numbers and the two thickening fields one font spec carries.
@@ -265,11 +266,19 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_geometry(
     let Some(surface) = (unsafe { held(handle) }) else {
         return 0;
     };
+    surface.repaint = true;
     let (cols, rows) = surface.set_geometry(width_points, height_points, scale);
     (u32::from(cols) << 16) | u32::from(rows)
 }
 
-/// Draws one frame. `false` when there was nowhere to draw, which needs no recovery.
+/// Draws one frame if anything changed, and answers what happened.
+///
+/// `0` nowhere to draw, `1` drawn, `2` skipped because neither the grid nor the surface moved,
+/// `3` held by a synchronized update the program has not closed yet.
+///
+/// `2` needs nothing from the caller. `3` does: the frame the program is building will be released
+/// by its own `?2026l` or by the one-second timeout, and NEITHER arrives through a door — so a
+/// caller that presents only when asked must keep asking until the answer is not `3`.
 ///
 /// # Safety
 /// [`held`]'s.
@@ -278,12 +287,33 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_geometry(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_term_surface_draw(handle: *mut SlopDeskTerminalSurface) -> bool {
+pub unsafe extern "C" fn slopdesk_term_surface_draw(handle: *mut SlopDeskTerminalSurface) -> u8 {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return DRAW_NOWHERE;
+    };
+    surface.draw()
+}
+
+/// Whether anything on the last drawn frame blinks — a blinking cursor, or an SGR 5 cell.
+///
+/// The view runs its blink clock only while this answers `true`, which is what keeps an idle
+/// pane at zero ticks and zero repaints.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_wants_blink(handle: *mut SlopDeskTerminalSurface) -> bool {
     // SAFETY: the caller's obligation, restated above.
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
-    surface.draw()
+    surface.session.wants_blink()
 }
 
 /// Sets the pane's WORKSPACE focus, and the blink clock's phase, in one call.
@@ -315,6 +345,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_focus(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     surface.focused = focused;
     surface.session.set_focused(focused);
     surface.blink_visible = blink_visible;
@@ -343,6 +374,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_theme(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     let foreground = rgb(foreground);
     let background = rgb(background);
     let _refused = surface.session.set_default_colors(foreground, background);
@@ -380,6 +412,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_palette(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     // SAFETY: the caller's obligation; `records_of` answers an empty slice for a null pointer.
     let packed = unsafe { records_of(entries, count) };
     let palette: Vec<Rgb> = packed.iter().copied().map(rgb).collect();
@@ -415,6 +448,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_font(
     let Some(surface) = (unsafe { held(handle) }) else {
         return 0;
     };
+    surface.repaint = true;
     // SAFETY: the caller's obligation, discharged by the shared reader.
     let spec = unsafe {
         font_spec(
@@ -483,6 +517,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_scroll(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     let (_, rows) = surface.session.size();
     surface.session.scroll(match mode {
         // Saturating rather than wrapping: a page count large enough to overflow is a caller asking
@@ -500,6 +535,14 @@ pub unsafe extern "C" fn slopdesk_term_surface_scroll(
 /// [`key_from_macos_keycode`] turns into the KEY the encoder needs. `0xFFFF` means "no key at all",
 /// which is an IME commit: `text` is then the whole event. iOS passes `0xFFFF` for every press, its
 /// `UIKey` carrying characters rather than a hardware position.
+///
+/// `text` is what the layout produced for the press WITHOUT control — ghostty's `ghosttyCharacters`
+/// — and the two shapes that must never reach the encoder as text are refused HERE, by
+/// [`forwards_encoder_text`], rather than by each caller: a function key's private-use placeholder
+/// (U+F700 an arrow types as) and a control-led payload (the `\t` that would consume Shift out of
+/// Shift+Tab). `unshifted` is the scalar the key produces with no modifier at all, the kitty
+/// protocol's base-layout key; `0` derives it from `text`, which is what a caller without a
+/// hardware key has.
 ///
 /// Answers §4's byte count, so a caller with a small buffer retries. `0` is a press that encodes to
 /// nothing — a modifier on its own, or a press while composing.
@@ -521,6 +564,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_key(
     consumed_mods: u16,
     text: *const c_uchar,
     text_len: usize,
+    unshifted: u32,
     composing: bool,
     out: *mut c_uchar,
     cap: usize,
@@ -540,8 +584,10 @@ pub unsafe extern "C" fn slopdesk_term_surface_key(
         },
         mods: Mods::from_bits(mods),
         consumed_mods: Mods::from_bits(consumed_mods),
-        text: (!text.is_empty()).then_some(text),
-        unshifted: text.chars().next(),
+        text: (!text.is_empty() && forwards_encoder_text(text)).then_some(text),
+        unshifted: char::from_u32(unshifted)
+            .filter(|scalar| *scalar != '\0')
+            .or_else(|| text.chars().next()),
         composing,
     };
     let mut encoded = Vec::new();
@@ -604,6 +650,72 @@ pub unsafe extern "C" fn slopdesk_term_surface_mouse(
         // `false` is the engine saying the far side does not track the mouse, which is a different
         // answer from "it does and this encodes to nothing" — but both leave the caller with no
         // bytes to send, and the caller's next move (fall through to selection) is the same.
+        Ok(true) => {
+            // SAFETY: the caller's obligation; `deliver` writes at most `cap`.
+            unsafe { deliver(&encoded, out, cap) }
+        },
+        Ok(false) | Err(_) => 0,
+    }
+}
+
+/// Whether the running program owns the wheel: it tracks the mouse, or it is full-screen with
+/// alternate scroll (DEC 1007) in force. A wheel it does not own is the surface's, points and all.
+///
+/// # Safety
+/// [`held`]'s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_owns_wheel(handle: *mut SlopDeskTerminalSurface) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    surface.session.owns_wheel().unwrap_or(false)
+}
+
+/// Encodes wheel travel for a program that owns it, or answers `0` when it does not.
+///
+/// One button-4/5 press per whole row for a mouse-tracking program, one cursor key per row under
+/// alternate scroll.
+///
+/// `delta_y` is the view's POINTS, positive towards older output (the wheel turning up); `x`/`y`
+/// are the pointer's, top-left origin, and the surface scales all three. The sub-row remainder
+/// carries to the next event, so a trackpad's small deltas still add up to rows.
+///
+/// # Safety
+/// [`held`]'s, plus `(out, cap)` being writable for `cap`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub unsafe extern "C" fn slopdesk_term_surface_wheel(
+    handle: *mut SlopDeskTerminalSurface,
+    delta_y: f64,
+    mods: u16,
+    x: f64,
+    y: f64,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(surface) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let scale = surface.geometry.scale;
+    let mut encoded = Vec::new();
+    match surface.session.wheel(
+        narrow_f32(delta_y * scale),
+        Mods::from_bits(mods),
+        narrow_f32(x * scale),
+        narrow_f32(y * scale),
+        &mut encoded,
+    ) {
         Ok(true) => {
             // SAFETY: the caller's obligation; `deliver` writes at most `cap`.
             unsafe { deliver(&encoded, out, cap) }
@@ -682,6 +794,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_scrollback(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     // `try_from` fails only for a negative, which is the same request as zero: keep nothing.
     let rows = usize::try_from(lines).unwrap_or(0);
     let _ = surface.session.set_scrollback_rows(rows);
@@ -759,6 +872,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_style(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     let _ = surface.session.set_default_cursor_shape(match style {
         0 => Some(CursorShape::Block),
         1 => Some(CursorShape::Bar),
@@ -789,6 +903,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_blink(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     let _ = surface.session.set_default_cursor_blink(match mode {
         1 => Some(true),
         2 => Some(false),
@@ -815,6 +930,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_color(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     // The three shifts cannot overflow a `u8` after the mask, so the truncation is exact.
     let colour = present.then_some(Rgb {
         r: ((rgb >> 16) & 0xFF) as u8,
@@ -874,6 +990,7 @@ pub const unsafe extern "C" fn slopdesk_term_surface_set_images(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     surface.images_enabled = enabled;
 }
 
@@ -933,6 +1050,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_overscroll(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     surface.overscroll = Overscroll {
         past_last: ScrollPastLast::ALL
             .get(past_last as usize)
@@ -969,6 +1087,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_cursor_text_color(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     // The three shifts cannot overflow a `u8` after the mask, so the truncation is exact.
     surface.cursor_text = present.then_some(Rgba {
         r: ((rgb >> 16) & 0xFF) as u8,

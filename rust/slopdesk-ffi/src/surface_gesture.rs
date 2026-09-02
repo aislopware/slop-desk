@@ -1,10 +1,9 @@
 //! What a gesture at the terminal surface means, in C.
 //!
-//! Six entry points over [`slopdesk_terminal::surface`], and none takes §4's `(out, cap)` shape:
+//! Five entry points over [`slopdesk_terminal::surface`], and none takes §4's `(out, cap)` shape:
 //! every answer is a boolean, a case index or a count, so there is nothing to size and nothing to
-//! retry. The one door that could have answered text does not —
-//! [`slopdesk_term_forwards_encoder_text`] says only WHETHER the characters may be forwarded,
-//! because the text it would otherwise write back is the caller's own input, byte for byte.
+//! retry. Whether a key's characters may reach the encoder as text is NOT asked here: the key
+//! door applies `forwards_encoder_text` itself, so no caller can forget to.
 //!
 //! ## What is NOT here
 //! The rules: which clicks the embedder takes for itself, why a full-screen program's ownership of
@@ -87,24 +86,6 @@ pub const extern "C" fn slopdesk_term_focus_follows_mouse(setting: bool, already
     surface::focus_follows_mouse(setting, already_focused)
 }
 
-/// Whether a key event's characters may be handed to the encoder as text.
-///
-/// # Safety
-/// `(characters, len)` must be null, or describe `len` live bytes for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_term_forwards_encoder_text(
-    characters: *const c_uchar,
-    characters_len: usize,
-) -> bool {
-    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
-    let characters = String::from_utf8_lossy(unsafe { borrow(characters, characters_len) });
-    surface::forwards_encoder_text(&characters)
-}
-
 /// The byte an undo/redo gesture sends, or `-1` for none.
 ///
 /// A sentinel outside the answer's range by construction: the answer is one byte, so every real one
@@ -154,7 +135,7 @@ mod tests {
 
     use super::{
         slopdesk_term_clipboard_write, slopdesk_term_cut_action, slopdesk_term_cut_delete_count,
-        slopdesk_term_forwards_encoder_text, slopdesk_term_prompt_edit_byte, slopdesk_term_right_click,
+        slopdesk_term_prompt_edit_byte, slopdesk_term_right_click,
     };
 
     #[test]
@@ -174,16 +155,14 @@ mod tests {
     #[test]
     fn a_null_payload_is_read_as_empty_rather_than_dereferenced() {
         // SAFETY: a null pair is one of the shapes the door's contract admits.
-        let (write, count, forwards) = unsafe {
+        let (write, count) = unsafe {
             (
                 slopdesk_term_clipboard_write(true, core::ptr::null(), 0),
                 slopdesk_term_cut_delete_count(core::ptr::null(), 0, true),
-                slopdesk_term_forwards_encoder_text(core::ptr::null(), 0),
             )
         };
         assert_eq!(write, 2, "nothing to write");
         assert_eq!(count, 0);
-        assert!(forwards, "an empty payload carries no placeholder and no control");
     }
 
     #[test]

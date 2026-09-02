@@ -81,7 +81,14 @@ use slopdesk_termrender::{
 };
 use slopdesk_vterm::input::SurfaceGeometry;
 use slopdesk_vterm::screen::ViewportInfo;
-use slopdesk_vterm::{Frame, VtSession};
+use slopdesk_vterm::{Frame, FrameDirty, VtSession};
+
+/// [`Surface::draw`]'s answers, as the header spells them: nowhere to draw, drawn, skipped because
+/// nothing changed, held by a synchronized update.
+pub(super) const DRAW_NOWHERE: u8 = 0;
+pub(super) const DRAWN: u8 = 1;
+pub(super) const DRAW_SKIPPED: u8 = 2;
+pub(super) const DRAW_HELD: u8 = 3;
 
 /// The gutter, header and gap a command block is drawn with, in POINTS.
 ///
@@ -123,14 +130,15 @@ pub struct SlopDeskTerminalSurface {
 ///
 /// See the module header for why this is one object and not four, and for the thread rule every
 /// door on it inherits.
-// Four independent flags, and the lint's own remedy is the wrong shape for them: `focused` comes
-// from the responder chain, `blink_visible` from a timer, `follow_bottom` from the scroll, and
-// `images_enabled` from the config file. Nothing constrains their combinations, so the "state
-// machine" the lint asks for would be a sixteen-state enum enumerating a product of four bits — more
-// spelling, no fewer states, and each owner would then write through a translation.
+// Five independent flags, and the lint's own remedy is the wrong shape for them: `focused` comes
+// from the responder chain, `blink_visible` from a timer, `follow_bottom` from the scroll,
+// `images_enabled` from the config file and `repaint` from every door that moves a pixel. Nothing
+// constrains their combinations, so the "state machine" the lint asks for would be an enum
+// enumerating a product of five bits — more spelling, no fewer states, and each owner would then
+// write through a translation.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "four independent inputs from four owners; their product is not a state machine"
+    reason = "five independent inputs from five owners; their product is not a state machine"
 )]
 #[derive(Debug)]
 struct Surface {
@@ -226,6 +234,18 @@ struct Surface {
     focused: bool,
     /// The renderer's blink clock. The view owns the timer; this is where its phase lands.
     blink_visible: bool,
+    /// Whether something OTHER than the grid changed since the last frame drawn: a scroll, a
+    /// selection, a hover, the blink phase, a theme, a resize.
+    ///
+    /// The engine's `dirty` answers about the grid alone, and this flag is everything else, so
+    /// [`Self::draw`] can skip the whole pass — layout, paint and the GPU submit — on a frame where
+    /// neither moved. Set by every door that changes what is drawn, and by a draw that found no
+    /// drawable so the next one retries; cleared by the draw that consumed it. Never set by a
+    /// feed or an input encoder, whose effects the engine reports itself.
+    repaint: bool,
+    /// The graphics-storage generation the last frame was drawn from — the one input to the picture
+    /// the engine's `dirty` does not cover, because an image placement writes no cell.
+    drawn_generation: u64,
     /// How solid the caret is drawn, `0.0`–`1.0`.
     ///
     /// Lives HERE and not on the session because no terminal escape can express it — see
@@ -400,6 +420,8 @@ impl Surface {
             orphan: None,
             focused: false,
             blink_visible: true,
+            repaint: true,
+            drawn_generation: 0,
             cursor_opacity: 1.0,
             cursor_text: None,
             // A slate the theme immediately overwrites. Not black, because a surface that flashed
@@ -554,10 +576,28 @@ impl Surface {
     /// `false` when there was nothing to draw on — a collapsed split, a window mid-resize, or a
     /// drawable the compositor declined — which is not an error and needs no recovery: the next
     /// frame has somewhere to go.
-    fn draw(&mut self) -> bool {
-        if self.session.render().is_err() {
-            return false;
+    /// One of the four `DRAW_*` answers.
+    ///
+    /// The skip is the point of the whole method: a terminal at an idle prompt reports `Clean`
+    /// every frame, and before this the surface laid out, painted and submitted a full frame for
+    /// each of them — 120 GPU passes a second drawing the same pixels. ghostty draws only when its
+    /// renderer is woken; this is the same rule, asked of the same three inputs (the grid, the
+    /// images, the surface's own state) at the top of every tick.
+    fn draw(&mut self) -> u8 {
+        let Ok(dirty) = self.session.render() else {
+            return DRAW_NOWHERE;
+        };
+        if self.session.frame_held() {
+            return DRAW_HELD;
         }
+        let generation = self.session.graphics_generation();
+        if dirty == FrameDirty::Clean && !self.repaint && generation == self.drawn_generation {
+            return DRAW_SKIPPED;
+        }
+        self.drawn_generation = generation;
+        // Cleared BEFORE the pass rather than after, so a door the pass itself calls back into
+        // (none today) could re-arm it for the next frame instead of losing the request.
+        self.repaint = false;
         let alternate = self.session.is_alternate_screen().unwrap_or(false);
         let mode = LayoutMode::for_screen(alternate);
         let chrome = self.chrome(alternate);
@@ -664,9 +704,18 @@ impl Surface {
         });
 
         self.layout = layout;
-        self.renderer
+        if self
+            .renderer
             .draw(&self.list, &mut self.cache, &self.images, self.background)
             .is_ok()
+        {
+            DRAWN
+        } else {
+            // The frame was consumed from the engine and the painter — its damage is cleared — so
+            // the picture lives only in the draw list now. The next draw must submit it again.
+            self.repaint = true;
+            DRAW_NOWHERE
+        }
     }
 
     /// The two furniture passes, over the layout the text was just placed against.

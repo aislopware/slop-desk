@@ -417,6 +417,11 @@ impl From<libghostty_vt::render::CursorVisualStyle> for CursorShape {
 
 /// Where the cursor is and what it looks like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "four independent facts about the cell under the caret, each read by a different painter rule; \
+              a state machine would be a fiction"
+)]
 pub struct FrameCursor {
     /// Column, in cells.
     pub x: u16,
@@ -431,6 +436,10 @@ pub struct FrameCursor {
     /// Whether the cursor sits on the trailing half of a wide character, where a bar belongs at the
     /// pair's leading edge rather than at this cell's.
     pub at_wide_tail: bool,
+    /// Whether the cursor stands on a wide character at all — its leading half or, with
+    /// [`Self::at_wide_tail`], its trailing one. A block or hollow cursor then covers both cells,
+    /// as ghostty's `cursor_wide` does; a bar and an underline keep to one.
+    pub wide: bool,
     /// Whether the cell under the cursor is a password field, which suppresses the blink so a
     /// shoulder-surfer cannot count keystrokes from it.
     pub password_input: bool,
@@ -491,6 +500,13 @@ pub struct Frame {
     pub rows: Vec<FrameRow>,
     /// The cursor, when it is visible and inside the viewport.
     pub cursor: Option<FrameCursor>,
+    /// Whether a full-screen program owned the screen when this frame was filled.
+    ///
+    /// Recorded in the frame rather than asked of the engine at draw time because the two can
+    /// disagree: a synchronized update holds the frame while the engine moves on, and a `?1049h`
+    /// inside the held block would otherwise dress the frozen primary-screen picture in
+    /// alternate-screen chrome for a frame.
+    pub alternate: bool,
     /// The default colours and palette.
     pub colors: FrameColors,
     /// How much changed.
@@ -603,6 +619,18 @@ impl Frame {
         self.rows.get(y as usize)?.cells.get(x as usize).copied()
     }
 
+    /// Whether a cursor at `(x, y)` stands on a wide character.
+    ///
+    /// The trailing half answers itself — the engine says so with `at_wide_tail` — and the leading
+    /// half is read off the cell, which carries the pair's role in its flags.
+    #[must_use]
+    pub fn cursor_stands_wide(&self, x: u16, y: u16, at_wide_tail: bool) -> bool {
+        at_wide_tail
+            || self
+                .cell(x, y)
+                .is_some_and(|cell| cell.flags.contains(CellFlags::WIDE))
+    }
+
     /// The text of one row with its trailing blanks removed, which is what a copy wants.
     #[must_use]
     pub fn row_text(&self, y: u16) -> String {
@@ -668,6 +696,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         }
     }

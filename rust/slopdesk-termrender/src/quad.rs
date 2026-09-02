@@ -238,13 +238,20 @@ pub struct DrawList {
     /// Cell backgrounds, the selection fill, and a filled block cursor. Drawn after
     /// [`ImageLayer::BelowBackground`].
     pub backgrounds: Vec<RectInstance>,
-    /// Text. Drawn over the backgrounds and over [`ImageLayer::BelowText`].
+    /// Underlines and overlines. Drawn UNDER the text — ghostty layers them there so a descender
+    /// crosses the line rather than being cut out of it (`renderer/generic.zig` draws
+    /// `addUnderline` and `addOverline` before `addGlyph`).
+    pub underlines: Vec<RectInstance>,
+    /// Text. Drawn over the backgrounds, the underlines, and over [`ImageLayer::BelowText`].
     pub glyphs: Vec<GlyphInstance>,
-    /// Underlines, strikethroughs, overlines, and any cursor that is not a filled block. Drawn
-    /// last, because a strikethrough that the glyph painted over is not a strikethrough.
+    /// Strikethroughs and any cursor that is not a filled block. Drawn last — over the text,
+    /// because a strikethrough the glyph painted over is not a strikethrough, and a bar caret
+    /// belongs on top.
     pub overlays: Vec<RectInstance>,
     /// Backgrounds that draw over everything above — the pinned head's bed.
     pub pinned_backgrounds: Vec<RectInstance>,
+    /// The pinned head's underlines, drawn under its glyphs.
+    pub pinned_underlines: Vec<RectInstance>,
     /// Text drawn over [`Self::pinned_backgrounds`], and over every unpinned instance.
     pub pinned_glyphs: Vec<GlyphInstance>,
     /// The pinned pass's own decorations, last of all.
@@ -259,6 +266,7 @@ pub struct DrawList {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mark {
     backgrounds: usize,
+    underlines: usize,
     glyphs: usize,
     overlays: usize,
 }
@@ -275,9 +283,11 @@ impl DrawList {
         self.images.clear();
         self.image_runs.clear();
         self.backgrounds.clear();
+        self.underlines.clear();
         self.glyphs.clear();
         self.overlays.clear();
         self.pinned_backgrounds.clear();
+        self.pinned_underlines.clear();
         self.pinned_glyphs.clear();
         self.pinned_overlays.clear();
     }
@@ -286,10 +296,12 @@ impl DrawList {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.backgrounds.is_empty()
+            && self.underlines.is_empty()
             && self.glyphs.is_empty()
             && self.overlays.is_empty()
             && self.images.is_empty()
             && self.pinned_backgrounds.is_empty()
+            && self.pinned_underlines.is_empty()
             && self.pinned_glyphs.is_empty()
             && self.pinned_overlays.is_empty()
     }
@@ -298,10 +310,12 @@ impl DrawList {
     #[must_use]
     pub const fn len(&self) -> usize {
         self.backgrounds.len()
+            + self.underlines.len()
             + self.glyphs.len()
             + self.overlays.len()
             + self.images.len()
             + self.pinned_backgrounds.len()
+            + self.pinned_underlines.len()
             + self.pinned_glyphs.len()
             + self.pinned_overlays.len()
     }
@@ -311,6 +325,7 @@ impl DrawList {
     pub const fn mark(&self) -> Mark {
         Mark {
             backgrounds: self.backgrounds.len(),
+            underlines: self.underlines.len(),
             glyphs: self.glyphs.len(),
             overlays: self.overlays.len(),
         }
@@ -335,6 +350,10 @@ impl DrawList {
         self.pinned_backgrounds.extend(
             self.backgrounds
                 .drain(mark.backgrounds.min(self.backgrounds.len())..),
+        );
+        self.pinned_underlines.extend(
+            self.underlines
+                .drain(mark.underlines.min(self.underlines.len())..),
         );
         self.pinned_glyphs
             .extend(self.glyphs.drain(mark.glyphs.min(self.glyphs.len())..));
@@ -389,6 +408,19 @@ impl DrawList {
             return;
         }
         self.overlays.push(rect);
+    }
+
+    /// Appends an underline or overline rect, dropping one that would draw nothing.
+    ///
+    /// Its own buffer rather than [`Self::push_overlay`]'s because the two draw at different points
+    /// in the pass: an underline goes UNDER the glyph so a descender crosses it, an overlay goes
+    /// over. Keeping them apart is what lets the renderer issue two rect passes with the glyph pass
+    /// between them and no per-instance z field to sort.
+    pub fn push_underline(&mut self, rect: RectInstance) {
+        if rect.color.is_invisible() || rect.width <= 0.0 || rect.height <= 0.0 {
+            return;
+        }
+        self.underlines.push(rect);
     }
 
     /// Appends a glyph, dropping one that would draw nothing.

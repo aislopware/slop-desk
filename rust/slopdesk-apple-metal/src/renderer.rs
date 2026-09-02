@@ -46,7 +46,7 @@ use slopdesk_termrender::{
 };
 
 use crate::error::MetalError;
-use crate::frames::{Filled, Ring};
+use crate::frames::{Bound, Filled, Ring};
 use crate::geom::Viewport;
 use crate::images::ImageTextures;
 use crate::pipeline::Pipelines;
@@ -249,6 +249,10 @@ fn encode(
     encode_images(&encoder, viewport, images, ImageLayer::BelowBackground, gpu);
     encode_rects(&encoder, viewport, filled.backgrounds, &gpu.pipelines.rect);
     encode_images(&encoder, viewport, images, ImageLayer::BelowText, gpu);
+    // Underlines and overlines UNDER the glyphs, the way ghostty layers them, so a descender
+    // crosses the line rather than being cut out of it. Strikethroughs and non-block cursors stay
+    // in the overlay pass below, drawn OVER the text.
+    encode_rects(&encoder, viewport, filled.underlines, &gpu.pipelines.rect);
     encode_glyphs(&encoder, viewport, filled.glyphs, gpu);
     encode_images(&encoder, viewport, images, ImageLayer::AboveText, gpu);
     encode_rects(&encoder, viewport, filled.overlays, &gpu.pipelines.rect);
@@ -260,6 +264,7 @@ fn encode(
     // frame that has no head, which is most of them — `encode_rects` and `encode_glyphs` both
     // return on a `None` buffer, and a slot with no pinned instances never allocates one.
     encode_rects(&encoder, viewport, filled.pinned_backgrounds, &gpu.pipelines.rect);
+    encode_rects(&encoder, viewport, filled.pinned_underlines, &gpu.pipelines.rect);
     encode_glyphs(&encoder, viewport, filled.pinned_glyphs, gpu);
     encode_rects(&encoder, viewport, filled.pinned_overlays, &gpu.pipelines.rect);
 
@@ -272,19 +277,17 @@ fn encode(
 fn encode_rects(
     encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     viewport: Viewport,
-    instances: Option<&ProtocolObject<dyn MTLBuffer>>,
+    instances: Option<Bound<'_>>,
     pipeline: &ProtocolObject<dyn MTLRenderPipelineState>,
 ) {
-    let Some(buffer) = instances else {
+    let Some(bound) = instances.filter(|bound| bound.count > 0) else {
         return;
     };
-    let count = instance_count::<RectInstance>(buffer);
-    if count == 0 {
-        return;
-    }
     encoder.setRenderPipelineState(pipeline);
-    bind(encoder, buffer, viewport);
-    draw_instances(encoder, count);
+    bind(encoder, bound.buffer, viewport);
+    // `bound.count`, this frame's own tally — never `instance_count`, which is the buffer's
+    // capacity and would draw whatever an earlier, larger frame left in the slot.
+    draw_instances(encoder, clamped(bound, size_of::<RectInstance>()));
 }
 
 /// The glyph pass, with both atlases bound.
@@ -296,20 +299,18 @@ fn encode_rects(
 fn encode_glyphs(
     encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     viewport: Viewport,
-    instances: Option<&ProtocolObject<dyn MTLBuffer>>,
+    instances: Option<Bound<'_>>,
     gpu: Gpu<'_>,
 ) {
-    let (Some(buffer), Some(coverage), Some(colored)) =
-        (instances, gpu.coverage.texture(), gpu.colored.texture())
-    else {
+    let (Some(bound), Some(coverage), Some(colored)) = (
+        instances.filter(|bound| bound.count > 0),
+        gpu.coverage.texture(),
+        gpu.colored.texture(),
+    ) else {
         return;
     };
-    let count = instance_count::<GlyphInstance>(buffer);
-    if count == 0 {
-        return;
-    }
     encoder.setRenderPipelineState(&gpu.pipelines.glyph);
-    bind(encoder, buffer, viewport);
+    bind(encoder, bound.buffer, viewport);
 
     // # Safety
     //
@@ -328,7 +329,7 @@ fn encode_glyphs(
         encoder.setFragmentTexture_atIndex(Some(colored), COLOR_TEXTURE);
     }
 
-    draw_instances(encoder, count);
+    draw_instances(encoder, clamped(bound, size_of::<GlyphInstance>()));
 }
 
 /// One frame's images: the instances, and the runs that index them.
@@ -337,7 +338,7 @@ fn encode_glyphs(
 /// of them can be given one without the other.
 #[derive(Debug, Clone, Copy)]
 struct Images<'a> {
-    buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>,
+    buffer: Option<Bound<'a>>,
     runs: &'a [ImageRun],
 }
 
@@ -359,11 +360,14 @@ fn encode_images(
     layer: ImageLayer,
     gpu: Gpu<'_>,
 ) {
-    let Some(buffer) = images.buffer else {
+    let Some(image_buffer) = images.buffer else {
         return;
     };
-    let capacity = instance_count::<ImageInstance>(buffer);
-    let mut bound = false;
+    // The count this frame wrote, not the buffer's capacity: a run past it would mean `quad.rs`
+    // and this function disagree about the same `Vec`, and a stale run from a larger frame is
+    // exactly what the count guards against.
+    let capacity = clamped(image_buffer, size_of::<ImageInstance>());
+    let mut set = false;
 
     for run in images.runs.iter().filter(|run| run.layer == layer) {
         // A run whose texture has not arrived yet is SKIPPED rather than drawn untextured.
@@ -383,12 +387,12 @@ fn encode_images(
             continue;
         }
 
-        if !bound {
+        if !set {
             // Once per LAYER, not once per run: the pipeline and the instance buffer are the same
             // for every run in a pass, and only the texture changes.
             encoder.setRenderPipelineState(&gpu.pipelines.image);
-            bind(encoder, buffer, viewport);
-            bound = true;
+            bind(encoder, image_buffer.buffer, viewport);
+            set = true;
         }
 
         // # Safety
@@ -504,8 +508,8 @@ fn draw_instances(encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>, count: 
     // validates the counts against the bound buffers only in a debug device. The framework rule is
     // that every vertex and instance the call names must be addressable in what is bound: four
     // vertices come from `vertex_id` arithmetic and address no buffer at all, and `count` is
-    // derived from the bound buffer's own `length()` immediately above, so the last instance
-    // read is the last one written.
+    // `clamped` to the bound buffer's own `length()` at the call site, so the last instance read is
+    // inside the allocation whether the frame's tally or the capacity is smaller.
     #[expect(
         unsafe_code,
         reason = "drawPrimitives: counts are validated only by a debug device; count comes from the bound \
@@ -556,11 +560,23 @@ fn draw_run(encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>, first: usize,
 /// Deriving the count from `length()` rather than carrying the slice's `len()` forward is what
 /// makes [`draw_instances`]'s safety note checkable on the line: the number handed to Metal and the
 /// number Metal will address come from the same place.
-fn instance_count<T>(buffer: &ProtocolObject<dyn MTLBuffer>) -> usize {
+fn instance_count(buffer: &ProtocolObject<dyn MTLBuffer>, instance_size: usize) -> usize {
     // `checked_div` rather than `/`, and the lint that asks for it is right for once: a zero-sized
     // instance type is not reachable through `quad.rs` today, and a panic on the render path would
     // be an odd way to find out that it became so.
-    buffer.length().checked_div(size_of::<T>()).unwrap_or_default()
+    buffer.length().checked_div(instance_size).unwrap_or_default()
+}
+
+/// This frame's instance count, clamped to what the buffer can actually address.
+///
+/// The count is the truth — [`crate::frames::InstanceBuffer::fill`] wrote exactly that many — and
+/// the buffer is always at least that long, so the clamp never bites. It is here for the safety
+/// note on [`draw_instances`]: the number handed to Metal is provably inside the bound buffer,
+/// whichever of the two is smaller.
+fn clamped(bound: Bound<'_>, instance_size: usize) -> usize {
+    let capacity = instance_count(bound.buffer, instance_size);
+    debug_assert!(bound.count <= capacity, "fill wrote past the buffer it grew");
+    bound.count.min(capacity)
 }
 
 /// A `CGFloat` drawable dimension as the `f32` the shader reads.

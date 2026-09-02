@@ -32,6 +32,15 @@ final class PhoneTerminalRendererView: UIView {
     private var displayLink: CADisplayLink?
     private var needsPresent = false
 
+    /// The blink clock — see the Mac view's. Phase, when it last flipped, and whether the last
+    /// drawn frame wants one at all.
+    private var blinkVisible = true
+    private var blinkPhaseStart: CFTimeInterval = 0
+    private var blinkWanted = false
+    private static let blinkInterval: CFTimeInterval = 0.6
+    /// The focus as last pushed, which the blink clock re-pushes with each phase.
+    private var paneFocused: Bool
+
     /// Whether a long-press selection drag is live.
     private var isSelecting = false
     private var isRectangularDrag = false
@@ -69,6 +78,7 @@ final class PhoneTerminalRendererView: UIView {
         ) else {
             return nil
         }
+        paneFocused = isFocused
         self.driver = driver
         self.model = model
         super.init(frame: .zero)
@@ -94,7 +104,7 @@ final class PhoneTerminalRendererView: UIView {
         // buffer. Without it the band appears only at the first keypress and stays up under `htop`.
         driver.onPromptEdited = { [weak self] in self?.band?.refresh() }
         driver.bind(to: model)
-        driver.setFocus(isFocused, blinkVisible: true)
+        driver.setFocus(paneFocused, blinkVisible: true)
         installGestures()
     }
 
@@ -155,9 +165,39 @@ final class PhoneTerminalRendererView: UIView {
         if isSelecting, driver.autoscrollDirection != .none {
             driver.autoscrollTick(at: lastPointerPoint, rectangle: isRectangularDrag)
         }
+        advanceBlink(now: CACurrentMediaTime())
         guard needsPresent else { return }
         needsPresent = false
-        driver.present()
+        switch driver.present() {
+        case .drawn:
+            blinkWanted = driver.wantsBlink
+        case .held:
+            // A synchronized update holds the frame; its release arrives through no door, so the
+            // ask stands until the answer changes.
+            needsPresent = true
+        case .nowhere:
+            break
+        case .skipped:
+            break
+        }
+    }
+
+    /// One step of the blink clock — the Mac view's, in the same words. Runs only while the last
+    /// drawn frame had something to blink, so an idle pane never flips and never repaints.
+    private func advanceBlink(now: CFTimeInterval) {
+        guard blinkWanted else {
+            if !blinkVisible {
+                blinkVisible = true
+                driver.setFocus(paneFocused, blinkVisible: true)
+                needsPresent = true
+            }
+            return
+        }
+        guard now - blinkPhaseStart >= Self.blinkInterval else { return }
+        blinkPhaseStart = now
+        blinkVisible.toggle()
+        driver.setFocus(paneFocused, blinkVisible: blinkVisible)
+        needsPresent = true
     }
 
     // MARK: - Focus
@@ -180,6 +220,9 @@ final class PhoneTerminalRendererView: UIView {
     /// included. So the collapse gives nothing up. What remains here is the DRIVER's focus, which is
     /// the caret's blink and the engine's own notion, pushed by the leaf.
     func setFocus(_ isFocused: Bool) {
+        paneFocused = isFocused
+        blinkVisible = true
+        blinkPhaseStart = CACurrentMediaTime()
         driver.setFocus(isFocused, blinkVisible: true)
     }
 

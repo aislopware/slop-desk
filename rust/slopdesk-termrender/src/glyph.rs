@@ -362,9 +362,16 @@ impl GlyphCache {
             // frees them, so an emoji-heavy screen would refill the colour atlas from scratch every
             // time the text atlas grew. Retain by format, and keep the misses — a `None` belongs to
             // no atlas.
+            //
+            // At the ceiling, the atlas is EMPTIED and repacked from this glyph on rather than
+            // refused: a refusal here would be remembered as "this glyph draws nothing" for the
+            // life of the cache, and a long session that had cycled a CJK repertoire through four
+            // subpixel phases and three styles would then render every glyph it met next as
+            // blank until a font change. ghostty clears and repacks at the same point. The cost is
+            // one cold-start refill of the glyphs still on screen, a few milliseconds.
             let dead = raster.format;
             if !atlas.grow() {
-                return None;
+                atlas.reset();
             }
             self.entries
                 .retain(|_, held| held.is_none_or(|glyph| glyph.format != dead));
@@ -423,7 +430,7 @@ mod tests {
     use super::{
         CachedGlyph, GlyphCache, GlyphKey, GlyphRasterizer, RasterGlyph, SUBPIXEL_PHASES, Synthetic,
     };
-    use crate::atlas::AtlasFormat;
+    use crate::atlas::{AtlasFormat, MAX_ATLAS_SIZE};
     use crate::sprite::{JoinMask, SpriteKey};
 
     /// A rasteriser that draws every glyph as a solid square, and counts how often it was asked.
@@ -613,6 +620,40 @@ mod tests {
         assert_ne!(
             after.region, before.region,
             "the sprite kept a region from a dead generation of the atlas"
+        );
+    }
+
+    #[test]
+    fn an_atlas_at_its_ceiling_is_repacked_rather_than_refusing_every_glyph_after() {
+        // The ceiling, reached the way a long session reaches it: glyphs that are never seen again
+        // filling the atlas until it cannot grow. The glyph that arrives then must still land —
+        // and be cached as a REGION, not as a `None` the cache would answer for it forever.
+        let mut cache = GlyphCache::new();
+        let mut text = Counting::new(500);
+        let mut generation = cache.alpha_atlas().generation();
+        let mut grew_to_ceiling = false;
+        for glyph in 0..200 {
+            assert!(
+                cache.get(key(glyph), &mut text).is_some(),
+                "glyph {glyph} was refused"
+            );
+            if cache.alpha_atlas().size() == MAX_ATLAS_SIZE {
+                grew_to_ceiling = true;
+            }
+            generation = generation.max(cache.alpha_atlas().generation());
+        }
+        assert!(grew_to_ceiling, "the fill never reached the ceiling");
+        let calls = text.calls;
+        let landed = cache.get(key(999), &mut text).unwrap();
+        assert_eq!(landed.format, AtlasFormat::Alpha8);
+        assert_eq!(text.calls, calls + 1, "rasterised once");
+        assert!(
+            cache.len() < 200,
+            "the repack dropped the entries of the dead generation, not just the one that failed"
+        );
+        assert!(
+            cache.get(key(999), &mut text).is_some() && text.calls == calls + 1,
+            "and the glyph is served from the cache afterwards"
         );
     }
 

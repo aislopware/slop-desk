@@ -302,6 +302,8 @@ fn an_incremental_feed_lands_where_a_fresh_one_does() {
 
         let stops = checkpoints(chunks.len());
         let mut next = 0_usize;
+        let mut compared = 0_usize;
+        let mut held = 0_usize;
         for (index, chunk) in chunks.iter().enumerate() {
             drop(feed_chunk(&mut incremental, chunk));
             // Drawn after EVERY read, which is what the shipped surface does and what makes the
@@ -313,6 +315,15 @@ fn an_incremental_feed_lands_where_a_fresh_one_does() {
                 continue;
             }
             next += 1;
+
+            // A read that ends inside a synchronized update leaves the frame held, and the held
+            // frame is by design NOT what the engine holds: it is the last closed picture, which an
+            // earlier checkpoint already compared. The fresh session would hold nothing at all.
+            if incremental.frame_held() {
+                held += 1;
+                continue;
+            }
+            compared += 1;
 
             let prefix = chunks.get(..=index).unwrap_or_default();
             let fresh = fresh(recording.cols, recording.rows, cell, prefix);
@@ -326,6 +337,11 @@ fn an_incremental_feed_lands_where_a_fresh_one_does() {
                 difference.unwrap_or_default()
             );
         }
+        assert!(
+            compared > 0,
+            "{name}: every one of {held} checkpoints landed inside a synchronized update — nothing was \
+             compared"
+        );
     }
 }
 
@@ -345,6 +361,12 @@ fn every_recorded_frame_reads_the_same_as_the_engine() {
             drop(feed_chunk(&mut session, chunk));
             session.render().expect("render");
             frames += 1;
+            // Held for a synchronized update: the frame is the last closed picture, already
+            // compared, while the engine is mid-redraw. The read that closes the block compares the
+            // catch-up frame.
+            if session.frame_held() {
+                continue;
+            }
 
             let (verdict, took_concession) = compare(&session);
             blanked += usize::from(took_concession);

@@ -517,7 +517,12 @@ fn measure(font: &CTFont, size: f64, line_height: f64) -> (FontMetrics, f64) {
     let descent = f64::max(finite(descent, size * 0.2), 0.0);
     let leading = f64::max(finite(leading, 0.0), 0.0);
 
-    let natural_height = f64::max((leading + ascent + descent).ceil(), 1.0);
+    // ghostty's `Metrics.calc`, number for number, because §6.4's sweep compares pictures and a
+    // grid one pixel wider per cell than the oracle's is eighty pixels wider per line. ROUNDED, not
+    // ceiled: a rounded cell is within half a pixel of the face's own line height either way,
+    // where ceiling always errs tall and reads as looser leading at low DPI than at high.
+    let face_height = leading + ascent + descent;
+    let natural_height = f64::max(face_height.round(), 1.0);
     // The multiplier is sanitised for the face metrics' own reason: a NaN reaching the `f64::max`
     // below would be answered by the OTHER operand and produce a plausible-looking grid at a height
     // nobody asked for. Repaired to the NATURAL cell rather than floored at some minimum — the
@@ -531,15 +536,31 @@ fn measure(font: &CTFont, size: f64, line_height: f64) -> (FontMetrics, f64) {
     } else {
         1.0
     };
-    let cell_height = f64::max((natural_height * line_height).ceil(), 1.0);
-    // Half the gain, above and below. Negative when the multiplier tightened the cell, which is the
-    // same arithmetic reading the other way — the glyph rides up into the space that was removed.
-    let lift = (cell_height - natural_height) * 0.5;
-    let baseline = f64::min(f64::max((leading + ascent).ceil() + lift, 0.0), cell_height);
+    let cell_height = f64::max((natural_height * line_height).round(), 1.0);
+    // The baseline, measured from the BOTTOM as ghostty measures it: half the line gap under the
+    // descender, then centred in the rounded cell by half of what rounding added or took.
+    let face_baseline = leading * 0.5 + descent;
+    let rounding_gain = (natural_height - face_height) * 0.5;
+    let cell_baseline = (face_baseline - rounding_gain).round();
+    // The multiplier's gain is split top and bottom, and an odd pixel goes to whichever edge the
+    // rounding above left short — ghostty's `Metrics.apply` for `cell_height`. A genuine branch on
+    // which side is short, not a `<` standing in for `max`.
+    let half_gain = (cell_height - natural_height) * 0.5;
+    let above_centre = (cell_baseline - face_baseline) - rounding_gain > 0.0;
+    let gain_below = if above_centre {
+        half_gain.floor()
+    } else {
+        half_gain.ceil()
+    };
+    let baseline = f64::min(
+        f64::max(cell_height - (cell_baseline + gain_below), 0.0),
+        cell_height,
+    );
 
     // Never thinner than a device pixel: the renderer's own field doc says so, and a sub-pixel rect
-    // on an unfiltered atlas draws as nothing at all rather than as something faint.
-    let thickness = f64::max(finite(underline_thickness, 0.0).round(), 1.0);
+    // on an unfiltered atlas draws as nothing at all rather than as something faint. CEILED, as
+    // ghostty ceils it: a hairline that rounds to nothing is still a line the face asked for.
+    let thickness = f64::max(finite(underline_thickness, 0.0).ceil(), 1.0);
     // Core Text's underline position is negative below the baseline; the fallback is one thickness
     // below, which is where a face that reports nothing should still put it.
     let underline_top = baseline - finite(underline_position, -thickness);
@@ -576,8 +597,10 @@ fn measure(font: &CTFont, size: f64, line_height: f64) -> (FontMetrics, f64) {
 /// would be arbitrary — except that `M` is also the widest ASCII glyph in a PROPORTIONAL one, so a
 /// family configured by mistake gets a grid that is too loose rather than one that clips.
 ///
-/// Rounded UP for the same reason: a cell narrower than the face's own advance clips every glyph in
-/// the grid at once, and nothing further down the pipeline gets a second chance at it.
+/// ROUNDED, as ghostty rounds it: within half a pixel of the face's advance either way, where
+/// ceiling made every cell up to a pixel wider than the oracle's and no column boundary coincided.
+/// A glyph with no side bearing can overflow its cell by that pixel; such glyphs are drawn to join
+/// their neighbours, and nothing clips a glyph to its cell here.
 fn advance(font: &CTFont) -> Option<f64> {
     let mut characters = [u16::from(b'M')];
     let mut glyphs = [CGGlyph::MIN];
@@ -606,7 +629,7 @@ fn advance(font: &CTFont) -> Option<f64> {
             1,
         )
     };
-    Some(f64::max(finite(width, 0.0).ceil(), 1.0))
+    Some(f64::max(finite(width, 0.0).round(), 1.0))
 }
 
 /// A decoration's top edge, kept inside the cell it decorates.
@@ -764,7 +787,7 @@ mod tests {
         let drift = loose.metrics().baseline - natural.metrics().baseline - lift;
         assert!(
             f64::abs(drift) <= 1.0,
-            "the glyph sits half the gain lower, within the rounding the ceil() costs"
+            "the glyph sits half the gain lower, within the pixel the odd-gain rule places"
         );
         let under = loose.metrics().underline_position - loose.metrics().baseline;
         let natural_under = natural.metrics().underline_position - natural.metrics().baseline;

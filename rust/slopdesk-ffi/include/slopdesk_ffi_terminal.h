@@ -100,9 +100,16 @@ void slopdesk_term_surface_feed(SlopDeskTerminalSurface *handle, const uint8_t *
 uint32_t slopdesk_term_surface_set_geometry(SlopDeskTerminalSurface *handle, double width_points,
                                             double height_points, double scale);
 
-/* Draws one frame. false = there was nowhere to draw (a collapsed split, a window mid-resize, a
- * drawable the compositor declined). Not an error and needs no recovery. */
-bool slopdesk_term_surface_draw(SlopDeskTerminalSurface *handle);
+/* Draws one frame if anything changed, and answers what happened: 0 nowhere to draw (a collapsed
+ * split, a window mid-resize, a drawable the compositor declined — not an error), 1 drawn,
+ * 2 skipped because neither the grid nor the surface moved, 3 HELD by a synchronized update
+ * (DEC 2026) the program has not closed. 3 owes a re-poll: the release comes from the program's
+ * own bytes or the one-second timeout, and neither arrives through a door. */
+uint8_t slopdesk_term_surface_draw(SlopDeskTerminalSurface *handle);
+
+/* Whether anything on the last drawn frame blinks — a blinking cursor, or an SGR 5 cell. The
+ * view runs its blink clock only while this is true, so an idle pane costs no ticks. */
+bool slopdesk_term_surface_wants_blink(SlopDeskTerminalSurface *handle);
 
 /* Workspace focus and the blink clock's phase, together because the cursor is the only thing
  * either changes and an unfocused surface has no cursor to blink. Focus drives the hollow cursor
@@ -288,11 +295,17 @@ size_t slopdesk_term_surface_click_to_move(SlopDeskTerminalSurface *handle, uint
  * NSEvent.keyCode — a POSITION, which the engine's own table turns into the KEY its encoder needs
  * — and 0xFFFF means "no key at all", which is an IME commit where `text` is the whole event. iOS
  * passes 0xFFFF for every press: a UIKey carries characters, not a hardware position.
- * `action` 0 press / 1 release / 2 repeat. Answers §4's byte count; 0 is a press that encodes to
- * nothing (a bare modifier, or a press while composing). */
+ * `text` is what the layout produced WITHOUT control (ghostty's `ghosttyCharacters`); a
+ * function key's private-use placeholder and a control-led payload are refused inside, so no
+ * caller filters. `consumed_mods` is what the layout spent producing it — every modifier but
+ * control and command. `unshifted` is the scalar the key produces with no modifier, the kitty
+ * protocol's base-layout key; 0 derives it from `text`. `action` 0 press / 1 release / 2 repeat.
+ * Answers §4's byte count; 0 is a press that encodes to nothing (a bare modifier, or a press
+ * while composing). */
 size_t slopdesk_term_surface_key(SlopDeskTerminalSurface *handle, uint16_t keycode, uint8_t action,
                                  uint16_t mods, uint16_t consumed_mods, const uint8_t *text,
-                                 size_t text_len, bool composing, uint8_t *out, size_t cap);
+                                 size_t text_len, uint32_t unshifted, bool composing, uint8_t *out,
+                                 size_t cap);
 
 /* One pointer event, or 0 when the far side is not tracking the mouse — which the caller reads as
  * "this gesture is mine", and falls through to the selection doors below. `action` 0 press /
@@ -301,6 +314,19 @@ size_t slopdesk_term_surface_key(SlopDeskTerminalSurface *handle, uint16_t keyco
  * would use is the one it drew with and a caller's copy can be a frame stale. */
 size_t slopdesk_term_surface_mouse(SlopDeskTerminalSurface *handle, uint8_t action, uint8_t button,
                                    uint16_t mods, double x, double y, uint8_t *out, size_t cap);
+
+/* Whether the running program owns the wheel: it tracks the mouse, or it is full-screen with
+ * alternate scroll (DEC 1007) in force. A wheel it does not own is the surface's own scroll,
+ * points and all — ask this first, so a wheel the program declines is never rounded to rows. */
+bool slopdesk_term_surface_owns_wheel(SlopDeskTerminalSurface *handle);
+
+/* Wheel travel for a program that owns it: one button-4/5 press per whole row for a tracking
+ * program, one cursor key per row under alternate scroll. `delta_y` is the view's POINTS,
+ * positive towards older output (the wheel turning up); x and y are the pointer's, top-left
+ * origin; the surface scales all three and carries the sub-row remainder to the next call.
+ * Answers §4's byte count, 0 when the program does not own the wheel after all. */
+size_t slopdesk_term_surface_wheel(SlopDeskTerminalSurface *handle, double delta_y, uint16_t mods,
+                                   double x, double y, uint8_t *out, size_t cap);
 
 /* Pointer selection, over the ENGINE's own gesture state machine — the click ladder (single a
  * cell, double a word, triple a line) is a rule about a gesture's HISTORY, so it is not

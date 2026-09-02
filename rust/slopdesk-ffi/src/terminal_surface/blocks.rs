@@ -163,6 +163,7 @@ pub const unsafe extern "C" fn slopdesk_term_surface_set_chrome_style(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     surface.chrome_style = style;
 }
 
@@ -200,6 +201,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_hover(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     let wanted = inside.then_some((x, y));
     let hit = |point: Option<(f64, f64)>| {
         point.and_then(|(x, y)| block_at(&surface.layout, |rect| surface.on_screen(rect), x, y))
@@ -415,6 +417,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_toggle_block_collapsed_at_ordinal
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     let Some(index) = surface.layout_index_of_ordinal(ordinal) else {
         return false;
     };
@@ -453,6 +456,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_block_collapsed(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     if index >= surface.collapsed.len() {
         surface.collapsed.resize(index.saturating_add(1), false);
     }
@@ -480,6 +484,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_toggle_block_collapsed(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     // An orphan refuses the fold in `lay_out` anyway; refusing HERE too is what keeps the flag and
     // the drawing from disagreeing about a block the user clicked.
     if surface
@@ -546,6 +551,8 @@ pub unsafe extern "C" fn slopdesk_term_surface_scroll_points(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
+    surface.repaint = true;
     let phase = ScrollPhase::ALL.get(phase as usize).copied().unwrap_or_default();
     // A phase-only event still has to settle: the fingers lifting after a scroll that ended exactly
     // on a fraction of a row is precisely when the snap is owed, and it carries no delta.
@@ -624,6 +631,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_note_block(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     if ordinal == 0 {
         return;
     }
@@ -677,6 +685,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_forget_blocks(handle: *mut SlopDe
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     surface.records.clear();
 }
 
@@ -993,6 +1002,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_marked_text(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     // SAFETY: the caller's obligation, restated above.
     let composing = unsafe { lent(text, len) };
     let wanted = if composing.is_empty() {

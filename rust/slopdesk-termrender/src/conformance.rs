@@ -255,7 +255,9 @@ fn misdrawn(frame: &Frame, list: &DrawList, bounds: ContentBox) -> Option<String
     let rects = list
         .backgrounds
         .iter()
+        .chain(&list.underlines)
         .chain(&list.overlays)
+        .chain(&list.pinned_underlines)
         .chain(&list.pinned_backgrounds)
         .chain(&list.pinned_overlays)
         .map(|rect| ("rect", rect.x, rect.y, rect.width, rect.height));

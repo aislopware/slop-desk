@@ -69,6 +69,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_select_press(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     let scale = surface.geometry.scale;
     surface
         .session
@@ -115,6 +116,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_select_drag(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     let scale = surface.geometry.scale;
     surface
         .session
@@ -146,6 +148,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_select_release(
     let Some(surface) = (unsafe { held(handle) }) else {
         return;
     };
+    surface.repaint = true;
     let scale = surface.geometry.scale;
     let _refused = surface.session.select_release(SurfacePoint {
         x: x * scale,
@@ -201,6 +204,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_select_autoscroll(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     let scale = surface.geometry.scale;
     surface
         .session
@@ -236,6 +240,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_selection_verb(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     match verb {
         1 => drop(surface.session.select_all()),
         2 => {},
@@ -505,6 +510,7 @@ pub unsafe extern "C" fn slopdesk_term_surface_set_selection(
     let Some(surface) = (unsafe { held(handle) }) else {
         return false;
     };
+    surface.repaint = true;
     surface
         .session
         .set_screen_selection(

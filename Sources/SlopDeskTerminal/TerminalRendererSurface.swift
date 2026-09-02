@@ -136,11 +136,32 @@ final class TerminalRendererSurface {
         }
     }
 
-    /// Draws one frame. `false` = there was nowhere to draw, which needs no recovery.
+    /// What one call to ``draw()`` did — the door's four answers, by their wire numbers.
+    enum DrawOutcome: UInt8 {
+        /// Nowhere to draw: a collapsed split, a window mid-resize, a drawable the compositor
+        /// declined. Not an error and needs no recovery.
+        case nowhere = 0
+        /// A frame was submitted.
+        case drawn = 1
+        /// Neither the grid nor the surface moved, so nothing was laid out, painted or submitted.
+        case skipped = 2
+        /// A synchronized update (DEC 2026) holds the frame. The release comes from the program's
+        /// own bytes or the one-second timeout, neither of which arrives through a door — so the
+        /// caller must ask again next frame.
+        case held = 3
+    }
+
+    /// Draws one frame if anything changed, and answers what happened.
     @discardableResult
-    func draw() -> Bool {
+    func draw() -> DrawOutcome {
+        guard let handle else { return .nowhere }
+        return DrawOutcome(rawValue: slopdesk_term_surface_draw(handle)) ?? .nowhere
+    }
+
+    /// Whether anything on the last drawn frame blinks — a blinking cursor, or an SGR 5 cell.
+    func wantsBlink() -> Bool {
         guard let handle else { return false }
-        return slopdesk_term_surface_draw(handle)
+        return slopdesk_term_surface_wants_blink(handle)
     }
 
     /// Re-measures and answers the grid that now fits.
@@ -388,13 +409,16 @@ final class TerminalRendererSurface {
     ///
     /// `keyCode` is the platform's hardware position on the Mac and ``TerminalRendererSurface/noKey``
     /// on the phone, where a `UIKey` carries characters instead — the door's own comment is where
-    /// that asymmetry is argued.
+    /// that asymmetry is argued. `text` is the layout's translation WITHOUT control; the door refuses
+    /// the two shapes that must not be forwarded, so no caller filters. `unshifted` is the scalar the
+    /// key produces bare, `0` to derive it from the text.
     func encodeKey(
         keyCode: UInt16,
         action: UInt8,
         mods: UInt16,
         consumedMods: UInt16,
         text: String,
+        unshifted: UInt32,
         composing: Bool,
     ) -> Data {
         guard let handle else { return Data() }
@@ -404,7 +428,7 @@ final class TerminalRendererSurface {
                     handle,
                     keyCode, action, mods, consumedMods,
                     characters.baseAddress, characters.count,
-                    composing, out, cap,
+                    unshifted, composing, out, cap,
                 )
             }
         })
@@ -424,6 +448,23 @@ final class TerminalRendererSurface {
                 Double(point.x), Double(point.y),
                 out, cap,
             )
+        })
+    }
+
+    /// Whether the running program owns the wheel — it tracks the mouse, or it is full-screen with
+    /// alternate scroll in force. Asked BEFORE ``encodeWheel(deltaY:mods:at:)``, so a wheel the
+    /// program declines goes to the surface's own scroll in points rather than being rounded to rows.
+    func ownsWheel() -> Bool {
+        guard let handle else { return false }
+        return slopdesk_term_surface_owns_wheel(handle)
+    }
+
+    /// Wheel travel for a program that owns it, encoded — one report or cursor key per whole row,
+    /// the remainder carried to the next call. Empty when the travel did not reach a row.
+    func encodeWheel(deltaY: Double, mods: UInt16, at point: CGPoint) -> Data {
+        guard let handle else { return Data() }
+        return Data(answer { out, cap in
+            slopdesk_term_surface_wheel(handle, deltaY, mods, Double(point.x), Double(point.y), out, cap)
         })
     }
 

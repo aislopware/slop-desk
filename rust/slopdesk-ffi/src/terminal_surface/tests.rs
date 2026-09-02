@@ -10,8 +10,9 @@ use super::blocks::{num_to_i32, settled_scroll, spill_rows};
 use super::doors::{
     narrow_f32, rgb, slopdesk_term_surface_draw, slopdesk_term_surface_feed, slopdesk_term_surface_free,
     slopdesk_term_surface_key, slopdesk_term_surface_layer, slopdesk_term_surface_mouse,
-    slopdesk_term_surface_scroll, slopdesk_term_surface_set_focus, slopdesk_term_surface_set_geometry,
-    slopdesk_term_surface_set_option_as_alt, slopdesk_term_surface_set_theme,
+    slopdesk_term_surface_owns_wheel, slopdesk_term_surface_scroll, slopdesk_term_surface_set_focus,
+    slopdesk_term_surface_set_geometry, slopdesk_term_surface_set_option_as_alt,
+    slopdesk_term_surface_set_theme, slopdesk_term_surface_wants_blink, slopdesk_term_surface_wheel,
 };
 use super::pointer::{
     slopdesk_term_shift_arrow_edge, slopdesk_term_surface_autoscroll_direction,
@@ -160,14 +161,20 @@ fn a_null_handle_is_inert_at_every_door() {
         slopdesk_term_surface_set_option_as_alt(null, 1);
         slopdesk_term_surface_select_release(null, 0.0, 0.0);
         assert!(slopdesk_term_surface_layer(null).is_null());
-        assert!(!slopdesk_term_surface_draw(null));
+        assert_eq!(slopdesk_term_surface_draw(null), 0);
+        assert!(!slopdesk_term_surface_wants_blink(null));
+        assert!(!slopdesk_term_surface_owns_wheel(null));
         assert_eq!(slopdesk_term_surface_set_geometry(null, 100.0, 100.0, 2.0), 0);
         assert_eq!(
-            slopdesk_term_surface_key(null, 0, 0, 0, 0, out.as_ptr(), 0, false, out.as_mut_ptr(), 8),
+            slopdesk_term_surface_key(null, 0, 0, 0, 0, out.as_ptr(), 0, 0, false, out.as_mut_ptr(), 8),
             0
         );
         assert_eq!(
             slopdesk_term_surface_mouse(null, 0, 0, 0, 0.0, 0.0, out.as_mut_ptr(), 8),
+            0
+        );
+        assert_eq!(
+            slopdesk_term_surface_wheel(null, 1.0, 0, 0.0, 0.0, out.as_mut_ptr(), 8),
             0
         );
         assert!(!slopdesk_term_surface_select_press(null, 0.0, 0.0, 0.0, 0.5, 3.0));

@@ -33,6 +33,20 @@ final class MacTerminalRendererView: NSView {
     /// per frame, so a burst of chunks costs one draw rather than one each.
     private var needsPresent = false
 
+    /// The blink clock's phase — whether the cursor is currently drawn — and when it last flipped.
+    ///
+    /// The clock runs inside ``tick()`` on the display link rather than on a timer of its own, and
+    /// only while ``blinkWanted`` says the frame has something to blink: a pane with a steady cursor
+    /// never flips, never repaints, never wakes. A keystroke resets the phase to visible, as every
+    /// terminal does, so the cursor is always shown right where the typing is.
+    private var blinkVisible = true
+    private var blinkPhaseStart: CFTimeInterval = 0
+    /// What the surface answered after the last frame it DREW. Cached rather than asked per tick
+    /// because a frame that did not change cannot change the answer, and asking walks the grid.
+    private var blinkWanted = false
+    /// ghostty's `cursor-blink` cadence: 600 ms a phase.
+    private static let blinkInterval: CFTimeInterval = 0.6
+
     /// The tracking area for hover, rebuilt on every bounds change because an `NSTrackingArea` is
     /// fixed to the rect it was made with.
     private var tracking: NSTrackingArea?
@@ -178,7 +192,32 @@ final class MacTerminalRendererView: NSView {
     /// The ONE writer of ``isPaneFocused``, so the mirror and the surface can never disagree.
     private func pushFocus(_ focused: Bool) {
         isPaneFocused = focused
+        blinkVisible = true
+        blinkPhaseStart = CACurrentMediaTime()
         driver.setFocus(focused, blinkVisible: true)
+    }
+
+    /// Shows the cursor and restarts its phase — what a keystroke owes the blink clock.
+    private func resetBlink() {
+        blinkPhaseStart = CACurrentMediaTime()
+        guard !blinkVisible else { return }
+        blinkVisible = true
+        driver.setFocus(isPaneFocused, blinkVisible: true)
+        needsPresent = true
+    }
+
+    /// One step of the blink clock, from ``tick()``.
+    private func advanceBlink(now: CFTimeInterval) {
+        guard blinkWanted else {
+            // Nothing blinks any more; a cursor left mid-phase must not stay hidden.
+            if !blinkVisible { resetBlink() }
+            return
+        }
+        guard now - blinkPhaseStart >= Self.blinkInterval else { return }
+        blinkPhaseStart = now
+        blinkVisible.toggle()
+        driver.setFocus(isPaneFocused, blinkVisible: blinkVisible)
+        needsPresent = true
     }
 
     @available(*, unavailable)
@@ -207,6 +246,14 @@ final class MacTerminalRendererView: NSView {
             startDisplayLink()
             driver.setGeometry(size: bounds.size, scale: window?.backingScaleFactor ?? 2)
         }
+    }
+
+    /// A window dragged between a Retina and a non-Retina display changes the scale and NOTHING
+    /// else — the bounds hold, so `layout()` is not called, and without this the glyphs would be
+    /// cut for the panel the window left.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        driver.setGeometry(size: bounds.size, scale: window?.backingScaleFactor ?? 2)
     }
 
     private func rebuildTrackingArea() {
@@ -244,9 +291,21 @@ final class MacTerminalRendererView: NSView {
         if isSelecting, driver.autoscrollDirection != .none {
             driver.autoscrollTick(at: lastPointerPoint, rectangle: isRectangularDrag)
         }
+        advanceBlink(now: CACurrentMediaTime())
         guard needsPresent else { return }
         needsPresent = false
-        driver.present()
+        switch driver.present() {
+        case .drawn:
+            blinkWanted = driver.wantsBlink
+        case .held:
+            // A synchronized update holds the frame; its release arrives through no door, so the
+            // ask stands until the answer changes.
+            needsPresent = true
+        case .nowhere:
+            break
+        case .skipped:
+            break
+        }
     }
 
     // MARK: - Focus
@@ -338,7 +397,7 @@ final class MacTerminalRendererView: NSView {
             for text in commits {
                 _ = driver.sendKey(
                     keyCode: event.keyCode, action: action, mods: mods,
-                    consumedMods: Self.consumedMods(event), text: text, composing: false,
+                    consumedMods: Self.consumedMods(event.modifierFlags), text: text, composing: false,
                 )
             }
             return
@@ -376,13 +435,11 @@ final class MacTerminalRendererView: NSView {
     ///
     /// Zero for every other press, including ⇧: an engine that saw Shift consumed would stop
     /// reporting it, and the kitty protocol reports it.
-    private static func consumedMods(_ event: NSEvent) -> UInt16 {
-        guard event.modifierFlags.contains(.option),
-              event.characters != event.charactersIgnoringModifiers
-        else {
-            return 0
-        }
-        return slopdesk_term_mods(false, true, false, false, false, false, false, false, false, false)
+    /// The modifiers the layout spent producing the text: every one held but control and command,
+    /// which the translation ignores. ghostty's rule, and the encoder subtracts these only when text
+    /// is present — so Shift survives into Shift+Tab, whose `\t` the door drops.
+    private static func consumedMods(_ flags: NSEvent.ModifierFlags) -> UInt16 {
+        mods(flags.subtracting([.control, .command]))
     }
 
     /// ⌘Z at an editable shell prompt, which is the ONE ⌘ combination that is terminal input rather
@@ -786,15 +843,74 @@ final class MacTerminalRendererView: NSView {
     private func send(_ event: NSEvent, action: UInt8, composing: Bool) {
         // Every press that reaches the engine passes here, which is what makes ``pressedKeys`` an
         // answer rather than a guess. Action 1 is the release itself, already removed by its caller.
-        if action != 1 { pressedKeys.insert(event.keyCode) }
+        if action != 1 {
+            pressedKeys.insert(event.keyCode)
+            resetBlink()
+        }
         _ = driver.sendKey(
             keyCode: event.keyCode,
             action: action,
             mods: Self.mods(event.modifierFlags),
-            consumedMods: Self.consumedMods(event),
-            text: event.characters ?? "",
+            consumedMods: Self.consumedMods(event.modifierFlags),
+            text: Self.encoderText(event),
+            unshifted: Self.unshifted(event),
             composing: composing,
         )
+    }
+
+    /// The text a press hands the encoder: the layout's translation WITHOUT control, which is
+    /// ghostty's `ghosttyCharacters` and the shape the encoder was built against.
+    ///
+    /// Control is removed before translating because AppKit folds it INTO `characters` — ⌃C arrives
+    /// as U+0003 — and an encoder handed the folded byte cannot tell ⌃C from ⌃⇧C or apply the kitty
+    /// protocol's own control encoding. Command is left in: the layout ignores it and the
+    /// translation is the same either way. What comes back may still be a function key's
+    /// private-use placeholder or a bare `\t`; the door refuses those itself.
+    private static func encoderText(_ event: NSEvent) -> String {
+        let flags = event.modifierFlags
+        guard flags.contains(.control) else { return event.characters ?? "" }
+        return event.characters(byApplyingModifiers: flags.subtracting(.control)) ?? event.characters ?? ""
+    }
+
+    /// The scalar the key produces with no modifier held — the kitty protocol's base-layout key,
+    /// which is what lets a program tell ⌥A from the `å` the layout made of it.
+    private static func unshifted(_ event: NSEvent) -> UInt32 {
+        event.characters(byApplyingModifiers: [])?.unicodeScalars.first?.value ?? 0
+    }
+
+    /// Modifier keys pressed and released on their own, for a program under the kitty protocol's
+    /// `report-all-keys` — the only encoding that produces bytes for a bare modifier. AppKit hands
+    /// these to `flagsChanged`, never to `keyDown`/`keyUp`, and the direction is read off the flag
+    /// the key controls: set means the key went down.
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        guard let mask = Self.modifierMask(for: event.keyCode) else { return }
+        let pressed = event.modifierFlags.rawValue & mask != 0
+        _ = driver.sendKey(
+            keyCode: event.keyCode,
+            action: pressed ? 0 : 1,
+            mods: Self.mods(event.modifierFlags),
+            consumedMods: 0,
+            text: "",
+            composing: false,
+        )
+    }
+
+    /// The device-dependent flag a modifier key's position controls, so left and right are told
+    /// apart the way the engine's SIDE bits want them.
+    private static func modifierMask(for keyCode: UInt16) -> UInt? {
+        switch keyCode {
+        case 56: UInt(NX_DEVICELSHIFTKEYMASK)
+        case 60: UInt(NX_DEVICERSHIFTKEYMASK)
+        case 59: UInt(NX_DEVICELCTLKEYMASK)
+        case 62: UInt(NX_DEVICERCTLKEYMASK)
+        case 58: UInt(NX_DEVICELALTKEYMASK)
+        case 61: UInt(NX_DEVICERALTKEYMASK)
+        case 55: UInt(NX_DEVICELCMDKEYMASK)
+        case 54: UInt(NX_DEVICERCMDKEYMASK)
+        case 57: UInt(NX_ALPHASHIFTMASK)
+        default: nil
+        }
     }
 
     /// The engine's `mods` word for an AppKit flag set.
@@ -1087,11 +1203,6 @@ final class MacTerminalRendererView: NSView {
             return
         }
         let point = convert(event.locationInWindow, from: nil)
-        // A full-screen program that asked for mouse reports gets the wheel as a report; only when
-        // it declines does the viewport move, which is what makes scrolling inside vim work.
-        guard !driver.sendMouse(action: 2, button: 4, mods: Self.mods(event.modifierFlags), at: point) else {
-            return
-        }
         // POINTS, not rows: the block list's chrome is spent before the scrollback, and rounding to
         // rows first would flick past a header instead of through it. `mouse-scroll-multiplier`
         // scales the DELTA rather than the rows, so a 0.4 multiplier stays a 0.4 multiplier instead
@@ -1112,6 +1223,17 @@ final class MacTerminalRendererView: NSView {
         // over carries no travel, and it is the one that owes the row snap under
         // `controls.smooth-scroll`.
         let phase = TerminalScrollPhase(gesture: event.phase, momentum: event.momentumPhase)
+        // A program that owns the wheel — it tracks the mouse, or it is full-screen under alternate
+        // scroll — gets the travel as rows: button 4/5 reports, or the cursor keys that make `less`
+        // and `man` scroll under a wheel. Asked BEFORE the travel is spent, and as ownership rather
+        // than as bytes: a notch too small for a row produces nothing yet and is still the
+        // program's, carried to the next notch, not the viewport's.
+        if driver.programOwnsWheel {
+            if travelled != 0 {
+                driver.sendWheel(deltaY: travelled, mods: Self.mods(event.modifierFlags), at: point)
+            }
+            return
+        }
         guard travelled != 0 || phase == .ended else { return }
         driver.scrollPoints(travelled, phase: phase)
     }

@@ -266,9 +266,17 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         }
     }
 
-    /// Draws one frame. Called from the view's display link.
-    func present() {
-        surface?.draw()
+    /// Draws one frame if anything changed. Called from the view's display link, which reads the
+    /// answer: `.held` means ask again next frame.
+    @discardableResult
+    func present() -> TerminalRendererSurface.DrawOutcome {
+        surface?.draw() ?? .nowhere
+    }
+
+    /// Whether the last drawn frame has anything to blink. The view runs its blink clock on this
+    /// alone, so a pane with a steady cursor and no SGR 5 text costs no ticks.
+    var wantsBlink: Bool {
+        surface?.wantsBlink() ?? false
     }
 
     /// Re-measures after a layout pass and mirrors the settled grid to the host.
@@ -569,6 +577,7 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         mods: UInt16,
         consumedMods: UInt16,
         text: String,
+        unshifted: UInt32 = 0,
         composing: Bool,
     ) -> Bool {
         guard let surface else { return false }
@@ -586,7 +595,7 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         }
         let bytes = surface.encodeKey(
             keyCode: keyCode, action: action, mods: mods,
-            consumedMods: consumedMods, text: text, composing: composing,
+            consumedMods: consumedMods, text: text, unshifted: unshifted, composing: composing,
         )
         guard !bytes.isEmpty else { return false }
         // `selection-clear-on-typing`: a selection is a reading of the screen, and typing moves the
@@ -614,6 +623,25 @@ final class TerminalSurfaceDriver: @MainActor TerminalSurface {
         guard !bytes.isEmpty else { return false }
         onWrite?(bytes)
         return true
+    }
+
+    /// Whether the running program owns the wheel, under the same `mouse-reporting` gate as
+    /// ``sendMouse(action:button:mods:at:)``. A view asks this first: a wheel the program owns is
+    /// ITS wheel even on the notch that does not yet add up to a row, and must not fall through to
+    /// the surface's scroll for want of bytes.
+    var programOwnsWheel: Bool {
+        guard let surface, SettingsKey.allowMouseCaptureEnabled else { return false }
+        return surface.ownsWheel()
+    }
+
+    /// Wheel travel in the view's points, positive towards older output, to the program that owns
+    /// it — one report or cursor key per whole row, the remainder carried. Nothing is sent for a
+    /// notch that does not reach a row, and that is not a refusal.
+    func sendWheel(deltaY: Double, mods: UInt16, at point: CGPoint) {
+        guard let surface else { return }
+        let bytes = surface.encodeWheel(deltaY: deltaY, mods: mods, at: point)
+        guard !bytes.isEmpty else { return }
+        onWrite?(bytes)
     }
 
     /// `controls.click-to-move`: a click on the shell's own prompt line moves its cursor there.

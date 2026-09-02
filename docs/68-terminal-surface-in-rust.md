@@ -1683,6 +1683,82 @@ platform layer above the encoder: a touch gesture resolved into a pointer event,
 composition, both of which are AppKit/UIKit state that no pty can hold. Those stay the surface's own
 tests. Closing them is a client-side harness, not a recorder change.
 
+### 6.6 The ghostty parity pass (2026-09-03)
+
+A read of every frame-affecting path against ghostty `22d13172` — the oracle §6.4 compares pictures
+with — and against the encoder the bindings wrap. What it changed, in the order a keystroke meets it.
+
+**The press now has ghostty's shape, and the filter that was never called is gone.** The Mac view
+handed `slopdesk_term_surface_key` the raw `NSEvent.characters` — with control folded in (⌃C arrived
+as U+0003) and with a function key's private-use placeholder as text — and `consumed_mods` only when
+Option had produced a different character. `KeyEventTextPolicy`, the Swift filter written for exactly
+this, was called by its own test and by nothing else. The press is now built the way
+`SurfaceView_AppKit.keyEvent` builds it: `text` is the layout's translation with control REMOVED
+(`characters(byApplyingModifiers:)`), `consumed_mods` is every modifier held but control and command,
+and a new `unshifted` argument carries `characters(byApplyingModifiers: [])`'s first scalar — the
+kitty protocol's base-layout key, which is what lets a program tell ⌥A from the `å` the layout made
+of it (`0` derives it from the text, which is what the phone has). The two refusals moved INTO the
+door — `forwards_encoder_text` runs on every press, so no caller can forget it — and the
+`slopdesk_term_forwards_encoder_text` door, the Swift filter and its test are deleted.
+`flagsChanged` now reaches the encoder too, press and release read off the device-side flag the key
+controls, which is the only way `report-all-keys` can see a bare modifier.
+`the_doors_press_shapes_encode_like_ghostty` in `session.rs` pins the three shapes — ⌃C, ⇧A, ← —
+under legacy and under `CSI > 1 u`.
+
+**Draw draws only when something changed.** `Surface::draw` laid out, painted and submitted a Metal
+frame on every display-link tick that had a present pending, and the driver requested one after every
+feed — a shell at an idle prompt still cost a full pass per cursor blink, and a program that wrote a
+byte a frame cost 120 passes a second whether or not a pixel moved. The door now answers a status:
+`0` nowhere to draw, `1` drawn, `2` skipped, `3` held. The skip fires when the engine reported the
+grid `Clean`, the graphics generation is the one last drawn, and no door moved the surface's OWN
+state since. That last input is a `repaint` flag set by every door that changes what is drawn — scroll,
+selection, hover, focus and blink phase, theme, font, geometry, block collapse, marked text — and by
+a draw that found no drawable (the frame it consumed lives only in the draw list now, so the next
+draw must submit it). A feed or an input encoder never sets it: their effects the engine reports
+itself. `3` is DEC 2026 (below), and the one answer that owes the caller a re-poll.
+
+**The blink clock runs only when there is something to blink.** The views pushed
+`blink_visible: true` once and never flipped it, so the cursor never blinked at all, and any timer
+that had flipped it would have repainted an idle pane twice a second forever. Both views now run a
+600 ms phase inside their display-link `tick` — ghostty's `cursor-blink` cadence — gated on
+`slopdesk_term_surface_wants_blink`, which answers whether the last drawn frame has a blinking cursor
+(not over a password field) or an SGR 5 cell. The answer is cached per DRAWN frame rather than asked
+per tick, because a frame that did not change cannot change it. A keystroke resets the phase to
+visible, as every terminal does. SGR 5 text keeps blinking — ghostty draws it steady — and that is the
+one deliberate divergence from the oracle here: the conformance sweep compares content and flags, not
+the clock, and the cell that asks to blink gets the rule §5.14 says it must have.
+
+**DEC 2026 holds the frame.** A program that opens a synchronized update (`?2026h`) is told nothing
+will be shown until it closes it; the surface showed every intermediate frame anyway. `render` now
+returns `Clean` while the mode is set, for at most one second — ghostty's timeout — after which the
+mode is cleared and the frame shown. A block opened before the first frame holds nothing (there is
+no frame to hold), and a resize ends the hold (a held frame of the old width would be laid out at the
+new). The dynamic conformance sweep skips a checkpoint that is held and asserts it compared at least
+one.
+
+**The wheel goes to the program that owns it, in rows.** The Mac view sent the wheel as a MOTION event
+with button 4 and let the encoder decide; a tracking program got a motion report where ghostty sends
+one button-4/5 PRESS per row, and a full-screen program under alternate scroll (DEC 1007, on by
+default) got nothing — no cursor keys, so `less` and `man` did not scroll under a wheel at all. Two
+doors replace it: `_owns_wheel` (mouse tracking, or alternate screen with 1007 in force) asked
+BEFORE the travel is spent, and `_wheel`, which turns points into whole rows, one press or cursor key
+each, in whichever form DECCKM asks for, and carries the sub-row remainder to the next event. Asked as
+ownership rather than as bytes, so a trackpad notch too small for a row stays the program's instead
+of falling through to the viewport.
+
+**Cells and cursor, against the oracle.** Bold no longer brightens the palette colour — ghostty's
+`bold-color` default is unset, and §6.4's sweep had been comparing against a brighter picture than
+ghostty draws. SGR 8 (invisible) now clears the underline, strikethrough and overline with the glyph.
+A block or hollow cursor on a wide character covers both cells (`FrameCursor::wide`, ghostty's
+`cursor_wide`); a bar and an underline keep to one. Underlines are drawn UNDER the glyphs, in their own
+instance buffers, where they were painted over them. The Metal pass drew the buffer's CAPACITY of
+instances rather than the count written, which was invisible only because the tail was zeroed;
+`a_fill_answers_the_instances_written_and_not_the_buffers_capacity` pins the count.
+
+**The scale change nobody laid out.** A window dragged between a Retina and a non-Retina display changes
+the backing scale and nothing else — the bounds hold, `layout()` is not called, and the glyphs stayed
+cut for the panel the window left. `viewDidChangeBackingProperties` now re-measures.
+
 ## 7. What this does NOT touch
 
 - **The wire.** Blocks already ship as metadata push plus on-demand output fetch. No new verb, no

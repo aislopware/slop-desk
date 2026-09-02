@@ -249,6 +249,11 @@ impl CellGeometry {
     /// for a shape, and losing key focus is the client's fact, not the shell's. An unfocused
     /// surface draws the outline whatever was asked for, which is the convention every terminal
     /// on this platform uses and the one users read as "typing goes elsewhere".
+    ///
+    /// A block or hollow caret on a double-width glyph covers both cells, the way ghostty's
+    /// `cursor_wide` does: a one-cell block on `日` would erase the glyph's right half, since the
+    /// head glyph is recoloured to the background under it. A bar and an underline stay one cell —
+    /// they sit at the pair's leading edge, not across it.
     #[must_use]
     pub fn cursor(self, row_top: f64, cursor: FrameCursor, focused: bool) -> Cursor {
         // A bar on the trailing half of a wide character belongs at the PAIR's leading edge, not in
@@ -259,12 +264,22 @@ impl CellGeometry {
             cursor.x
         };
         let cell = self.cell(row_top, col);
+        // Two cells for a wide caret, one otherwise. The span is taken through `self.span` so the
+        // cell width it uses is the one the grid was measured with.
+        let block = if cursor.wide {
+            self.span(row_top, ColumnSpan {
+                start: col,
+                end: col.saturating_add(2),
+            })
+        } else {
+            cell
+        };
         let thickness = f64::max(self.font.cursor_thickness, 1.0);
 
         if !focused {
             return Cursor {
                 col,
-                rect: cell,
+                rect: block,
                 style: RectStyle::Hollow,
                 inverts_glyph: false,
             };
@@ -298,7 +313,7 @@ impl CellGeometry {
             CursorShape::Hollow => {
                 Cursor {
                     col,
-                    rect: cell,
+                    rect: block,
                     style: RectStyle::Hollow,
                     inverts_glyph: false,
                 }
@@ -306,7 +321,7 @@ impl CellGeometry {
             CursorShape::Block => {
                 Cursor {
                     col,
-                    rect: cell,
+                    rect: block,
                     style: RectStyle::Solid,
                     inverts_glyph: true,
                 }
@@ -578,6 +593,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         }
     }
@@ -676,6 +692,7 @@ mod tests {
         let geometry = geometry();
         let tail = FrameCursor {
             at_wide_tail: true,
+            wide: true,
             ..cursor(CursorShape::Bar)
         };
         let drawn = geometry.cursor(geometry.row_top(2), tail, true);
@@ -695,6 +712,30 @@ mod tests {
         let drawn = geometry.cursor(geometry.row_top(2), cursor(CursorShape::Underline), true);
         let cell = geometry.cell(geometry.row_top(2), 4);
         assert!((drawn.rect.y + drawn.rect.height - (cell.y + cell.height)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_block_cursor_on_a_wide_glyph_covers_both_cells() {
+        // A one-cell block on `日` leaves the glyph's right half painted background-on-background,
+        // since the head glyph is recoloured under the caret — so a wide block spans both cells.
+        let geometry = geometry();
+        let top = geometry.row_top(2);
+        let wide = |shape| {
+            FrameCursor {
+                wide: true,
+                ..cursor(shape)
+            }
+        };
+        let block = geometry.cursor(top, wide(CursorShape::Block), true);
+        assert!(
+            (block.rect.width - 2.0 * geometry.metrics.cell_width).abs() < f64::EPSILON,
+            "a wide block covers both cells"
+        );
+        assert!(block.inverts_glyph);
+        // A bar stays one cell even on a wide glyph: it sits at the leading edge, not across the
+        // pair.
+        let bar = geometry.cursor(top, wide(CursorShape::Bar), true);
+        assert!((bar.rect.width - geometry.font.cursor_thickness).abs() < f64::EPSILON);
     }
 
     #[test]

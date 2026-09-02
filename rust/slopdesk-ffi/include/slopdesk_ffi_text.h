@@ -81,9 +81,6 @@ uint8_t slopdesk_term_cut_action(bool has_selection, bool alternate_screen, bool
 size_t slopdesk_term_cut_delete_count(const uint8_t *selection, size_t selection_len,
                                       bool selection_ends_at_cursor);
 bool slopdesk_term_focus_follows_mouse(bool setting, bool already_focused);
-// Whether a key event's characters may be handed to the encoder as text. The text itself is
-// never written back: it is the caller's own input, byte for byte.
-bool slopdesk_term_forwards_encoder_text(const uint8_t *characters, size_t characters_len);
 // The byte an undo/redo gesture sends, or -1 for none. A one-byte answer is 0..=255, so the
 // sentinel is outside the range by construction.
 int32_t slopdesk_term_prompt_edit_byte(bool undo, bool redo, bool in_prompt_zone);

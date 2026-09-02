@@ -281,7 +281,7 @@ impl Painter {
 
         let underline = geometry.underline(top, cols, UnderlineStyle::Single);
         for line in [underline.first, underline.second].into_iter().flatten() {
-            out.push_overlay(rect_instance(
+            out.push_underline(rect_instance(
                 line,
                 frame.colors.foreground.into(),
                 underline.style,
@@ -300,6 +300,7 @@ impl Painter {
                 shape: CursorShape::Bar,
                 blinking: false,
                 at_wide_tail: false,
+                wide: false,
                 ..cursor
             },
             true,
@@ -469,18 +470,18 @@ fn decoration_pass(
         }
         let underline = geometry.underline(top, cols, key.underline);
         for line in [underline.first, underline.second].into_iter().flatten() {
-            out.push_overlay(rect_instance(line, key.underline_color.into(), underline.style));
+            out.push_underline(rect_instance(line, key.underline_color.into(), underline.style));
         }
-        if key.strikethrough {
-            out.push_overlay(rect_instance(
-                geometry.strikethrough(top, cols),
+        if key.overline {
+            out.push_underline(rect_instance(
+                geometry.overline(top, cols),
                 key.color.into(),
                 RectStyle::Solid,
             ));
         }
-        if key.overline {
+        if key.strikethrough {
             out.push_overlay(rect_instance(
-                geometry.overline(top, cols),
+                geometry.strikethrough(top, cols),
                 key.color.into(),
                 RectStyle::Solid,
             ));
@@ -724,16 +725,13 @@ fn text_key(
     selected: &impl Fn(u16) -> bool,
     inverting_cursor_col: Option<u16>,
 ) -> TextKey {
-    // Under a filled block cursor the glyph takes the cell's BACKGROUND, which is what makes the
-    // character under the caret readable against the caret.
+    // Under a filled block cursor the glyph takes the DEFAULT background — ghostty's `cursor-text`
+    // unset uses `state.colors.background`, not the cell's own — so the character reads against the
+    // caret drawn in the cell's foreground. A theme that names `cursor_text` overrides it.
     let color = if inverting_cursor_col == Some(col) {
-        style.cursor_text.unwrap_or_else(|| {
-            Rgba::from(if cell.bg == frame.colors.background {
-                frame.colors.background
-            } else {
-                cell.bg
-            })
-        })
+        style
+            .cursor_text
+            .unwrap_or_else(|| frame.colors.background.into())
     } else if selected(col) {
         style.selection.foreground.unwrap_or_else(|| cell.fg.into())
     } else {
@@ -1146,8 +1144,8 @@ mod tests {
         let frame = frame_of("a  b", |cell| cell.underline = UnderlineStyle::Single);
         let (list, shaper) = paint(&frame, &style());
 
-        assert_eq!(list.overlays.len(), 1, "one underline across all four cells");
-        assert!((f64::from(list.overlays[0].width) - 40.0).abs() < 1e-6);
+        assert_eq!(list.underlines.len(), 1, "one underline across all four cells");
+        assert!((f64::from(list.underlines[0].width) - 40.0).abs() < 1e-6);
         assert_eq!(
             shaper.runs,
             vec!["a".to_owned(), "b".to_owned()],
@@ -1165,8 +1163,8 @@ mod tests {
         frame.rows[0].cells[1].flags = CellFlags::WIDE_TAIL;
         let (list, shaper) = paint(&frame, &style());
 
-        assert_eq!(list.overlays.len(), 1, "the tail did not break the underline");
-        assert!((f64::from(list.overlays[0].width) - 30.0).abs() < 1e-6);
+        assert_eq!(list.underlines.len(), 1, "the tail did not break the underline");
+        assert!((f64::from(list.underlines[0].width) - 30.0).abs() < 1e-6);
         assert_eq!(
             shaper.runs,
             vec!["漢".to_owned(), "x".to_owned()],
@@ -1178,23 +1176,26 @@ mod tests {
     fn a_curly_underline_asks_for_the_curly_pipeline() {
         let frame = frame_of("ab", |cell| cell.underline = UnderlineStyle::Curly);
         let (list, _) = paint(&frame, &style());
-        assert_eq!(list.overlays[0].style, RectStyle::Curly);
+        assert_eq!(list.underlines[0].style, RectStyle::Curly);
     }
 
     #[test]
     fn a_double_underline_emits_both_lines() {
         let frame = frame_of("ab", |cell| cell.underline = UnderlineStyle::Double);
         let (list, _) = paint(&frame, &style());
-        assert_eq!(list.overlays.len(), 2);
+        assert_eq!(list.underlines.len(), 2);
     }
 
     #[test]
-    fn a_strikethrough_and_an_overline_are_separate_overlays() {
+    fn a_strikethrough_draws_over_the_text_and_an_overline_under_it() {
+        // ghostty layers the overline with the underlines, beneath the glyph, and only the
+        // strikethrough above it — a strikethrough the glyph painted over is not a strikethrough.
         let frame = frame_of("ab", |cell| {
             cell.flags = CellFlags::STRIKETHROUGH.union(CellFlags::OVERLINE);
         });
         let (list, _) = paint(&frame, &style());
-        assert_eq!(list.overlays.len(), 2);
+        assert_eq!(list.overlays.len(), 1, "the strikethrough");
+        assert_eq!(list.underlines.len(), 1, "the overline");
     }
 
     #[test]
@@ -1250,6 +1251,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
         let (list, shaper) = paint(&frame, &style());
@@ -1273,6 +1275,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
 
@@ -1323,6 +1326,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
         let (list, shaper) = paint(&frame, &style());
@@ -1341,6 +1345,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
         let magenta = Rgba {
@@ -1390,6 +1395,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
         let (list, shaper) = paint(&frame, &PaintStyle {
@@ -1412,6 +1418,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: true,
             at_wide_tail: false,
+            wide: false,
             password_input: true,
         });
         let (dark, _) = paint(&frame, &PaintStyle {
@@ -1433,6 +1440,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: true,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
         let (dark, _) = paint(&frame, &PaintStyle {
@@ -1595,6 +1603,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
         let style = PaintStyle {
@@ -1694,6 +1703,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: false,
+            wide: false,
             password_input: false,
         });
         frame
@@ -1748,9 +1758,10 @@ mod tests {
         );
         assert_eq!(
             composing.overlays.len(),
-            2,
-            "the composition's underline and its bar caret, and nothing else"
+            1,
+            "the composition's bar caret, and nothing else"
         );
+        assert_eq!(composing.underlines.len(), 1, "the composition's underline");
     }
 
     #[test]
@@ -1776,7 +1787,7 @@ mod tests {
             "two double-width clusters is four cells"
         );
         let underline = list
-            .overlays
+            .underlines
             .iter()
             .find(|rect| (f64::from(rect.width) - 40.0).abs() < 1e-6)
             .expect("an underline across the whole composition");
@@ -1820,7 +1831,8 @@ mod tests {
             shaper.runs.contains(&"ế".to_owned()),
             "a composition that blinked out would hide what the user is typing"
         );
-        assert_eq!(list.overlays.len(), 2);
+        assert_eq!(list.overlays.len(), 1, "the bar caret");
+        assert_eq!(list.underlines.len(), 1, "the underline");
     }
 
     #[test]
@@ -1912,6 +1924,35 @@ mod tests {
     }
 
     #[test]
+    fn a_block_cursor_on_a_wide_glyph_covers_both_cells_and_inverts_the_head() {
+        // A one-cell block over `日` would leave the right half painted background-on-background,
+        // since the head glyph under the caret is recoloured to the background.
+        let mut frame = frame_of("日-x", |_| {});
+        frame.rows[0].cells[0].flags = CellFlags::WIDE;
+        frame.rows[0].cells[1].flags = CellFlags::WIDE_TAIL;
+        frame.cursor = Some(FrameCursor {
+            x: 0,
+            y: 0,
+            shape: CursorShape::Block,
+            color: Rgb::WHITE,
+            blinking: false,
+            at_wide_tail: false,
+            wide: true,
+            password_input: false,
+        });
+        let (list, _) = paint(&frame, &style());
+        let caret = list
+            .backgrounds
+            .iter()
+            .find(|rect| rect.color == Rgba::opaque(255, 255, 255))
+            .expect("the filled block is a background");
+        assert!(
+            (f64::from(caret.width) - 20.0).abs() < 1e-6,
+            "the block spans both cells of the wide glyph, not one"
+        );
+    }
+
+    #[test]
     fn a_block_cursor_on_a_wide_tail_inverts_the_heads_glyph() {
         // The engine parks the caret on the tail cell; the rect moves to the head, and so must
         // the glyph it inverts — inverting the tail inverts nothing, since a tail shapes nothing.
@@ -1925,6 +1966,7 @@ mod tests {
             color: Rgb::WHITE,
             blinking: false,
             at_wide_tail: true,
+            wide: true,
             password_input: false,
         });
         let magenta = Rgba {
