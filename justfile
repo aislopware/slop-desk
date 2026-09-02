@@ -268,14 +268,18 @@ lint-swift:
 # a real daemon. Behind its own recipe for the reason it was behind a `--tests` flag: the rules above
 # are what is worth running on every commit.
 
-# the three questions no rule can answer by reading the tree: every workspace crate is reached by a
-# just recipe, the FFI artifact is not older than its sources, and every hook stage the config
-# declares is installed in THIS clone. The third has to be reached by a hand-typed recipe — `check`
-# and `quick` both are — because in the state it detects the hooks are the thing that is missing.
+# the four questions no rule can answer by reading the tree: every workspace crate is reached by a
+# just recipe, the FFI artifact is not older than its sources, every hook stage the config declares
+# is installed in THIS clone, and no COMMITTED terminal recording carries the machine it was made
+# on. The third has to be reached by a hand-typed recipe — `check` and `quick` both are — because in
+# the state it detects the hooks are the thing that is missing. The fourth asks git rather than the
+# working tree, because a recording that was made and then rejected is still on disk and no change
+# to the repository can take it out of someone's checkout.
 lint-reach:
     @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- reach
     @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi --check
     @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- hooks
+    @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- corpus
 
 # the hostd/superd suites that need a live daemon (slow; not in `check`)
 supervisor-tests:
@@ -1203,6 +1207,10 @@ vterm-test:
 termrender-test:
     cd rust/slopdesk-termrender && cargo test
 
+# cargo test for the corpus recorder: the one input order, and the minimal child environment
+ttyrec-test:
+    cd rust/slopdesk-ttyrec && cargo test
+
 # The two conformance sweeps over ghostty's OWN minimised fuzz corpus, alone. They are already
 # inside `vterm-test` and `termrender-test` — this recipe exists to run them without the 600 unit
 # tests around them, which is what you want while chasing one disagreement.
@@ -1556,8 +1564,8 @@ host-status:
 # and `client-test` runs it with the env var unset — a vacuous green by design. This line is what
 # closes that.
 
-# cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + one client pane session's driver + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test zshcomplete-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test devicelink-test videolink-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-nsevent-test apple-cursor-test apple-ax-test apple-text-test vterm-test termrender-test apple-metal-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
+# cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + hostd's PATH-1 listener + hostd's superd client + hostd's screend client + hostd's half of one pane + one pane's session + hostd's composition + the daemon's own composition + one client session's decisions + one client pane session's driver + fuzzy matcher + device console grammars + device panel decisions + the client control vocabulary + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the virtual display + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the GUI video daemon + the AudioToolbox codecs + client audio output + the capture stream + the pasteboard + the repo watch + the host's own name + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + the corpus recorder + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools + the instruments' arithmetic) + swift test with the green-tree cache
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test clipboard-test muxsession-test muxnet-test clientnet-test hostnet-test superclient-test screenclient-test hostpane-test hostsession-test hostserver-test zshcomplete-test hostd-test clientsession-test clientdriver-test client-test fuzzy-test clilink-test devicelog-test devicepanel-test devicelink-test videolink-test clientctl-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-cgvirtualdisplay-test apple-power-test apple-app-test apple-nsapp-test apple-nsevent-test apple-cursor-test apple-ax-test apple-text-test vterm-test termrender-test ttyrec-test apple-metal-test apple-vt-test videohostd-test apple-audio-test audio-out-test apple-sck-test apple-pasteboard-test apple-fsevents-test apple-machine-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test instruments-test client-e2e ctl superd screend dropd androidd inspectord
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # The same six sidecars, for the same reason as `test` above and with more at stake: this is the

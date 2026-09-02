@@ -38,10 +38,14 @@ paste, so a corpus that lost them fails rather than silently narrowing.
 
 `less` is also the only recording whose *content* is a file in this repository, which is the point:
 the earlier holder of this slot was `top`, whose frames were the recording machine's process list
-and user name. **Never record a program that prints machine state.** The recorder hands the child
-its whole environment, so record only under an environment you would publish — the commands below
-do that with `env -i`, plus `LESSHISTFILE=-` and `LESSSECURE=1` so the child writes nothing and
-cannot be driven out of the pager by the unbracketed paste.
+and user name. **Never record a program that prints machine state.** Two things enforce that rule
+now rather than one paragraph asking for it: the recorder gives the child a MINIMAL environment
+(`PATH`, `HOME`, `LANG`, `LC_ALL` and the terminal's own four — `--env NAME=VALUE` adds any other
+by hand, `--inherit-env` opts out and warns), and `just lint-reach`'s corpus gate scans every *committed*
+recording for an absolute home path, a key, a credential-shaped assignment, and this machine's own
+user and host names. The `env -i` in the commands below is belt to that brace, and
+`LESSHISTFILE=-` / `LESSSECURE=1` are still needed so `less` writes nothing and cannot be driven
+out of the pager by the unbracketed paste.
 
 ## Re-recording
 
@@ -94,6 +98,7 @@ rec --out rust/slopdesk-vterm/corpus/lazygit.sdrec --title lazygit \
 
 rec --out rust/slopdesk-vterm/corpus/less.sdrec --title less \
     --cols 100 --rows 30 --startup-ms 800 --settle-ms 200 \
+    --env LESSHISTFILE=- --env LESSSECURE=1 \
     --send-mouse 'left@10,4' --focus on --send 'jjj' \
     $(for i in $(seq 1 24); do printf -- '--send <C-d> '; done) \
     $(for i in $(seq 1 6);  do printf -- '--send <C-u> '; done) \
@@ -102,8 +107,10 @@ rec --out rust/slopdesk-vterm/corpus/less.sdrec --title less \
     -- /usr/bin/less docs/68-terminal-surface-in-rust.md
 ```
 
-`less` needs `LESSHISTFILE=-` and `LESSSECURE=1` added to `rec`'s environment (see above). The
-pasted text is `jjkk` on purpose: with bracketing off it arrives as four live pager commands, which
+`less`'s two variables ride on `--env` rather than on `rec`'s own environment, because the recorder
+passes only `PATH`, `HOME`, `LANG` and `LC_ALL` through — a variable a recording depends on is
+named at the call site, and a
+variable that merely happened to be exported is not. The pasted text is `jjkk` on purpose: with bracketing off it arrives as four live pager commands, which
 is exactly the hazard the mode exists to prevent — so it must stay something harmless. Never paste
 text containing `q` or `s` into it.
 

@@ -52,7 +52,7 @@ use slopdesk_vterm::session::VtSession;
 use slopdesk_vterm::{keyscript, mousescript};
 
 /// One thing the operator asked to send, in the order they asked for it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Action {
     /// A `--send` keystroke run.
     Keys(String),
@@ -65,7 +65,7 @@ enum Action {
 }
 
 /// What the operator asked for.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct Options {
     out: String,
     title: String,
@@ -77,10 +77,17 @@ struct Options {
     settle: Duration,
     actions: Vec<Action>,
     command: Vec<String>,
+    /// Extra `NAME=VALUE` pairs the operator asked for by hand.
+    passed: Vec<String>,
+    /// Whether the child gets this shell's whole environment.
+    ///
+    /// Off by default, and that is a privacy decision rather than a taste — see
+    /// [`child_environment`].
+    inherit: bool,
 }
 
 fn main() {
-    let options = match parse_arguments() {
+    let options = match parse_from(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(message) => {
             eprintln!("slopdesk-ttyrec: {message}");
@@ -109,10 +116,28 @@ The four input flags share ONE order — the order they appear on the command li
   --send SCRIPT       a keyscript run:    'ihello<Escape>', '<C-c>', ':q!<Enter>'
   --send-mouse SCRIPT a mousescript run:  'left@12,5', 'left@2,1 release:left@6,1'
   --paste TEXT        a paste, bracketed if the program asked for bracketing
-  --focus on|off      a focus change, reported if the program asked to hear about it";
+  --focus on|off      a focus change, reported if the program asked to hear about it
+
+The child runs under a MINIMAL environment (PATH, HOME, LANG, LC_ALL plus the terminal's own
+four), because a recording is committed and everything the program prints goes into it:
+
+  --env NAME=VALUE    pass one more variable through, by hand
+  --inherit-env       give the child this shell's whole environment instead (not for a corpus
+                      recording: a developer shell exports credentials)";
+
+/// The variables a child keeps when the environment is not inherited.
+///
+/// Short on purpose. Every program in the corpus runs under exactly these, and anything one of them
+/// turns out to need is added by `--env` at the call site where the reason is visible — which is
+/// the difference between a variable a recording depends on and a variable that happened to be
+/// exported by whoever ran the tool.
+const KEPT: [&str; 4] = ["PATH", "HOME", "LANG", "LC_ALL"];
 
 /// Reads argv, in the tree's own hand-rolled style.
-fn parse_arguments() -> Result<Options, String> {
+///
+/// Split from `main` so the ORDER of the four input flags — the whole content of a recording's
+/// input half — is testable without spawning anything.
+fn parse_from(arguments: impl Iterator<Item = String>) -> Result<Options, String> {
     let mut out = None;
     let mut title = None;
     let mut cols = 100_u16;
@@ -123,8 +148,10 @@ fn parse_arguments() -> Result<Options, String> {
     let mut settle = 400_u64;
     let mut actions: Vec<Action> = Vec::new();
     let mut command = Vec::new();
+    let mut passed: Vec<String> = Vec::new();
+    let mut inherit = false;
 
-    let mut arguments = std::env::args().skip(1);
+    let mut arguments = arguments;
     while let Some(argument) = arguments.next() {
         let mut value = || {
             arguments
@@ -156,6 +183,14 @@ fn parse_arguments() -> Result<Options, String> {
                 };
                 actions.push(Action::Focus(focused));
             },
+            "--env" => {
+                let pair = value()?;
+                if !pair.contains('=') {
+                    return Err(format!("--env wants NAME=VALUE, not `{pair}`"));
+                }
+                passed.push(pair);
+            },
+            "--inherit-env" => inherit = true,
             "--" => {
                 command.extend(arguments.by_ref());
                 break;
@@ -200,6 +235,8 @@ fn parse_arguments() -> Result<Options, String> {
         } else {
             command
         },
+        passed,
+        inherit,
     })
 }
 
@@ -210,7 +247,13 @@ fn record(options: &Options) -> Result<(), String> {
         .split_first()
         .ok_or("a command after `--` is required")?;
 
-    let environment = child_environment(options);
+    if options.inherit {
+        eprintln!(
+            "slopdesk-ttyrec: --inherit-env — the child gets this shell's whole environment. Do not commit \
+             this recording to the corpus."
+        );
+    }
+    let environment = child_environment(options, &std::env::vars().collect::<Vec<_>>());
     let plan = SpawnPlan {
         executable,
         argv0: None,
@@ -389,14 +432,33 @@ fn encode_action(action: &Action, session: &mut VtSession) -> Result<(Event, Vec
 
 /// The environment the child runs under.
 ///
-/// Inherited, with the three variables a terminal owns overwritten. `TERM` is deliberately
-/// `xterm-256color` rather than a ghostty entry: a recording has to be reproducible on a machine
-/// that has never installed ghostty's terminfo, and every program in the corpus speaks this one.
-fn child_environment(options: &Options) -> Vec<String> {
-    let mut environment: Vec<String> = std::env::vars()
-        .filter(|(name, _)| !matches!(name.as_str(), "TERM" | "COLUMNS" | "LINES" | "COLORTERM"))
+/// ## Minimal by default, and that is a privacy decision
+///
+/// Everything the child prints lands in a file that is committed. A child holding the operator's
+/// whole shell holds their credentials, their machine's paths and their user name — and any program
+/// that prints an environment, a path, or a prompt writes some of that into the recording. The
+/// corpus already lost one program to exactly this class (`corpus/README.md`, "never record a
+/// program that prints machine state"), so the tool no longer relies on the operator remembering
+/// `env -i`: [`KEPT`] is the whole default and `--env NAME=VALUE` adds anything a program needs by
+/// hand.
+///
+/// `--inherit-env` gives back the old behaviour for a one-off recording that is not going into the
+/// corpus, and says so on stderr when it is used.
+///
+/// The four a terminal owns are always overwritten. `TERM` is deliberately `xterm-256color` rather
+/// than a ghostty entry: a recording has to be reproducible on a machine that has never installed
+/// ghostty's terminfo, and every program in the corpus speaks this one.
+fn child_environment(options: &Options, inherited: &[(String, String)]) -> Vec<String> {
+    let owned_by_the_terminal = ["TERM", "COLUMNS", "LINES", "COLORTERM"];
+    let mut environment: Vec<String> = inherited
+        .iter()
+        .filter(|(name, _)| !owned_by_the_terminal.contains(&name.as_str()))
+        .filter(|(name, _)| options.inherit || KEPT.contains(&name.as_str()))
         .map(|(name, value)| format!("{name}={value}"))
         .collect();
+    // The operator's own pairs come after the inherited ones, so `--env PATH=…` wins rather than
+    // being shadowed by the shell's.
+    environment.extend(options.passed.iter().cloned());
     environment.push("TERM=xterm-256color".to_owned());
     environment.push("COLORTERM=truecolor".to_owned());
     environment.push(format!("COLUMNS={}", options.cols));
@@ -454,5 +516,136 @@ fn drain(
         // Clipboard writes are dropped rather than recorded: OSC 52 is a decision the surface makes
         // with the user's `clipboard-write` setting, and a recorder has no user.
         drop(session.take_clipboard_writes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, Options, child_environment, parse_from};
+
+    fn words(line: &str) -> impl Iterator<Item = String> {
+        line.split(' ').map(str::to_owned).collect::<Vec<_>>().into_iter()
+    }
+
+    fn parsed(line: &str) -> Options {
+        match parse_from(words(line)) {
+            Ok(options) => options,
+            Err(message) => panic!("{line}: {message}"),
+        }
+    }
+
+    /// The property the whole tool is built around: the four input flags share ONE order, and it is
+    /// the order they were typed in. Four lists would sort a click before mouse tracking into the
+    /// same bucket as a click after it, and those encode to different bytes.
+    #[test]
+    fn the_four_input_flags_keep_the_order_they_were_typed_in() {
+        let options = parsed(
+            "--out o.sdrec --title t --send-mouse left@1,1 --paste hi --focus on --send q -- /bin/cat",
+        );
+        assert_eq!(options.actions, vec![
+            Action::Pointer("left@1,1".to_owned()),
+            Action::Paste("hi".to_owned()),
+            Action::Focus(true),
+            Action::Keys("q".to_owned()),
+        ]);
+    }
+
+    /// Every script is parsed before anything is spawned — a typo in the last `--send` of a long
+    /// command line must not cost a recording that has already run.
+    #[test]
+    fn a_script_that_does_not_parse_is_refused_before_the_spawn() {
+        let bad_key = parse_from(words("--out o --title t --send <Nope> -- /bin/cat"));
+        assert!(bad_key.is_err(), "{bad_key:?}");
+        let bad_pointer = parse_from(words("--out o --title t --send-mouse sideways@1 -- /bin/cat"));
+        assert!(bad_pointer.is_err(), "{bad_pointer:?}");
+    }
+
+    /// Everything after `--` is the command, including words that spell flags of this tool.
+    #[test]
+    fn the_command_after_the_separator_is_taken_whole() {
+        let options = parsed("--out o --title t -- /usr/bin/less --send docs/68.md");
+        assert_eq!(options.command, vec!["/usr/bin/less", "--send", "docs/68.md"]);
+        assert!(options.actions.is_empty());
+    }
+
+    /// The three ways a command line is incomplete, each named rather than defaulted: a recording
+    /// with no destination, no title or no program is not a recording.
+    #[test]
+    fn the_required_arguments_are_required() {
+        assert!(parse_from(words("--title t -- /bin/cat")).is_err());
+        assert!(parse_from(words("--out o -- /bin/cat")).is_err());
+        assert!(parse_from(words("--out o --title t")).is_err());
+        assert!(parse_from(words("--out o --title t --focus sideways -- /bin/cat")).is_err());
+        assert!(parse_from(words("--out o --title t --cols wide -- /bin/cat")).is_err());
+    }
+
+    /// The default environment is the allowlist and nothing else — the tool's own half of "never
+    /// record a program that prints machine state", and the reason it no longer depends on the
+    /// operator remembering `env -i`.
+    #[test]
+    fn a_child_is_given_nothing_the_allowlist_does_not_name() {
+        let options = parsed("--out o --title t --cols 80 --rows 24 -- /bin/cat");
+        let inherited = vec![
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+            ("HOME".to_owned(), "/Users/someone".to_owned()),
+            ("GITLAB_TOKEN".to_owned(), "glpat-secret".to_owned()),
+            ("AWS_SECRET_ACCESS_KEY".to_owned(), "shhh".to_owned()),
+        ];
+        let environment = child_environment(&options, &inherited);
+        assert!(environment.contains(&"PATH=/usr/bin".to_owned()));
+        assert!(environment.contains(&"HOME=/Users/someone".to_owned()));
+        assert!(
+            !environment
+                .iter()
+                .any(|pair| pair.contains("TOKEN") || pair.contains("SECRET")),
+            "{environment:?}"
+        );
+        assert!(environment.contains(&"TERM=xterm-256color".to_owned()));
+        assert!(environment.contains(&"COLUMNS=80".to_owned()));
+        assert!(environment.contains(&"LINES=24".to_owned()));
+    }
+
+    /// `--inherit-env` is the escape hatch, and it really does hand everything over — which is why
+    /// `record` prints a warning when it is used and the README does not use it.
+    #[test]
+    fn inherit_env_hands_the_whole_shell_over() {
+        let options = parsed("--out o --title t --inherit-env -- /bin/cat");
+        let inherited = vec![("GITLAB_TOKEN".to_owned(), "glpat-secret".to_owned())];
+        assert!(child_environment(&options, &inherited).contains(&"GITLAB_TOKEN=glpat-secret".to_owned()));
+    }
+
+    /// A variable a program needs is passed by hand, and it WINS over the inherited spelling —
+    /// otherwise `--env` could not correct one.
+    #[test]
+    fn a_passed_variable_overrides_the_inherited_one() {
+        let options = parsed("--out o --title t --env HOME=/tmp/fresh -- /bin/cat");
+        let inherited = vec![("HOME".to_owned(), "/Users/someone".to_owned())];
+        let environment = child_environment(&options, &inherited);
+        let home: Vec<&String> = environment
+            .iter()
+            .filter(|pair| pair.starts_with("HOME="))
+            .collect();
+        assert_eq!(home.last(), Some(&&"HOME=/tmp/fresh".to_owned()));
+    }
+
+    /// A pair with no `=` is a typo, not a variable to invent a value for.
+    #[test]
+    fn an_env_pair_without_a_value_is_refused() {
+        assert!(parse_from(words("--out o --title t --env HOME -- /bin/cat")).is_err());
+    }
+
+    /// The terminal's own four are the tool's to decide: a `TERM` from the operator's shell would
+    /// make a recording depend on a terminfo entry the next machine may not have.
+    #[test]
+    fn the_terminals_own_variables_are_never_inherited() {
+        let options = parsed("--out o --title t --inherit-env --cols 100 --rows 30 -- /bin/cat");
+        let inherited = vec![
+            ("TERM".to_owned(), "xterm-ghostty".to_owned()),
+            ("COLUMNS".to_owned(), "999".to_owned()),
+        ];
+        let environment = child_environment(&options, &inherited);
+        assert!(!environment.contains(&"TERM=xterm-ghostty".to_owned()));
+        assert!(!environment.contains(&"COLUMNS=999".to_owned()));
+        assert!(environment.contains(&"COLUMNS=100".to_owned()));
     }
 }

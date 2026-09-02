@@ -7,7 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use slopdesk_devtools::gates::{android, ffi, golden, hooks, prepush, reach, supervisor, touched, xcode};
+use slopdesk_devtools::gates::{
+    android, corpus, ffi, golden, hooks, prepush, reach, supervisor, touched, xcode,
+};
 use slopdesk_devtools::repo;
 
 /// What the binary answers to.
@@ -26,6 +28,7 @@ usage: slopdesk-gate [--repo-root DIR] <verb> [options]
   ffi [--check|--force]                 assemble SlopDeskFFI.xcframework (stamped)
   reach                                 every workspace crate is reached by a just recipe
   hooks                                 every declared git hook stage is installed in this clone
+  corpus                                no committed .sdrec carries the machine it was made on
   supervisor-tests                      the hostd/superd suites that need a live daemon
   help                                  this text
 ";
@@ -68,6 +71,7 @@ fn main() -> ExitCode {
         "ffi" => ffi_gate(&root, rest),
         "reach" => finish(reach::run(&root)),
         "hooks" => finish(hooks::run(&root)),
+        "corpus" => finish(corpus::run(&root)),
         "supervisor-tests" => finish(supervisor::run(&root)),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");

@@ -33,6 +33,11 @@
 //! With them the `scripts/` directory holds no code at all: two Swift probes, a set of pins and a
 //! fixture tree.
 //!
+//! [`corpus`] asks the same shape of question of GIT rather than of the working tree: no COMMITTED
+//! terminal recording carries the machine it was made on. A recording that was made and rejected is
+//! still on disk, so the working tree and the repository genuinely disagree, and only the
+//! repository's answer is fixable by a change to the repository.
+//!
 //! [`hooks`] arrived last and is the only one that was never a script. It asks what GIT would run,
 //! which is the same shape as [`reach`]'s question about `just` and unanswerable from the tree for
 //! the same reason: the answer is in `.git/`, which is untracked, per-clone, and movable by
@@ -90,6 +95,11 @@
 //!   `default_install_hook_types:` is not a declaration `prek` would read either, so honouring it
 //!   would have this gate demand files for stages nothing installs. The other half of the claim is
 //!   a directory listing, which no comment can write.
+//! * [`corpus`] — no, and it is the one module where a comment is the SUBJECT rather than a way
+//!   around the question. It reads bytes and asks whether a fingerprint is in them, so a `//` in
+//!   front of one changes nothing: a leaked user name inside a commented-out line is still that
+//!   user name, still committed, still in the history. The other half of the claim is `git
+//!   ls-files`, which no comment can write.
 //! * [`code_text`] — the question inverts, because it is not a gate: it is the READER the two fixed
 //!   entries above go through. Nothing here can be satisfied by a comment in it; what it can do is
 //!   the opposite and worse — mistake CODE for a comment, and hand a gate a haystack with the thing
@@ -111,6 +121,7 @@
 
 pub mod android;
 pub mod code_text;
+pub mod corpus;
 pub mod digest;
 pub mod ffi;
 pub mod golden;
