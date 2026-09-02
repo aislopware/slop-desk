@@ -1,118 +1,75 @@
 # SlopDesk
 
-Remote coding for Apple platforms: a macOS **host** exposes shells and windows; macOS/iOS **clients** show them as a tiling workspace of panes (terminal or live GUI window, mixed freely). Typical use: several shells and Claude Code agents on a workstation, supervised from a laptop or iPad.
+Remote coding for Apple platforms. A macOS **host** exposes shells and windows; macOS and iOS
+**clients** show them as a tiling workspace of panes, terminal or live GUI window, mixed freely.
+The usual setup is several shells and Claude Code agents on a workstation, supervised from a laptop
+or an iPad.
 
-Build floor: macOS 26 / iOS 26. Terminal engine: **libghostty-vt** through `rust/slopdesk-vterm`; the renderer above it is this repo's own ([`docs/68-terminal-surface-in-rust.md`](docs/68-terminal-surface-in-rust.md)).
+Build floor: macOS 26 / iOS 26, Apple silicon.
 
-## Design
+## Architecture
 
-- **Rust owns the wire** (codecs, FEC, reassembly, realtime controllers, terminal/PTY protocol), reached two ways: six sidecar daemons over sockets, and `CSlopDeskFFI` linked in-process as an `.xcframework`. Swift keeps SwiftUI/AppKit. Wire format is frozen by a golden corpus.
-- **No app-layer crypto/auth.** Run on a trusted private network (WireGuard mesh — NetBird, Tailscale, …). The security boundary is the network.
+**Rust owns the wire and the machine.** Codecs, FEC, reassembly, realtime controllers, the
+terminal/PTY protocol, the workspace document, the settings catalogue and agent detection all live
+in Rust (`rust/slopdesk-wire`, `rust/slopdesk-video`, `rust/slopdesk-workspace` and ~50 more
+crates). So do the system calls: capture, encode, decode, input injection, the accessibility tree
+and the PTY. The wire format is frozen by `golden/golden_vectors.json`.
 
-Three independent transports (separate sockets, message sets, version `1` only):
+Rust reaches the apps two ways. Six sidecar daemons run over sockets, and `CSlopDeskFFI` links
+in-process as an `.xcframework` ([`docs/55-ffi-boundary.md`](docs/55-ffi-boundary.md)).
 
-| Path | Transport | Role |
-|------|-----------|------|
-| Terminal | TCP (data + control) | Host PTY → libghostty-vt → this repo's renderer; dual channel + replay buffer for lossless reconnect |
-| GUI window | UDP | ScreenCaptureKit → HEVC → Metal; RS-FEC, ABR, client-side cursor |
-| Inspector | TCP | Read-only Claude Code JSONL/hooks (tool calls, subagents, todos) |
+**Swift is the view layer and nothing else**: AppKit in `Sources/SlopDeskMacUI`, UIKit in
+`Sources/SlopDeskPhoneUI`, over a shared `Sources/SlopDeskClientCore` that draws nothing. No
+SwiftUI anywhere in the tree. The iOS app differs in layout only, and every feature is on both
+halves.
 
-Agent attention (idle/working/blocked/done) drives rings, tab glow, notifications, and jump-to-unread (⌘⇧U). Also: sync-input (⌘⇧I), copy-mode (⌘⇧C), `slopdesk-ctl` for headless supervision.
+**No app-layer crypto or auth.** Run it on a trusted private network, a WireGuard mesh such as
+NetBird or Tailscale. The security boundary is the network.
 
-## Install
+### Three transports
 
-Apple silicon, macOS 26 or newer. Signed and notarized; two packages, installed independently:
+Separate sockets, separate message sets, version `1` only.
 
-```sh
-brew install --cask aislopware/tap/slopdesk  # SlopDesk.app + SlopDeskHost.app
-brew services start slopdesk                 # slopdesk-superd — required, see below
-```
+| Path | Transport | What moves |
+|------|-----------|------------|
+| Terminal | TCP, data + control | Host PTY bytes into `rust/slopdesk-vterm`, drawn by `rust/slopdesk-termrender`. Dual channel plus a replay buffer, so a reconnect is lossless |
+| GUI window | UDP | ScreenCaptureKit into HEVC into Metal, with Reed-Solomon FEC, adaptive bitrate and a client-side cursor |
+| Inspector | TCP | Read-only Claude Code JSONL and hooks: tool calls, subagents, todos |
 
-The cask depends on the formula, so that first command also installs the CLI (`slopdesk`,
-`slopdesk-hostd`, `slopdesk-ctl`) and the sidecar daemons. `brew install aislopware/tap/slopdesk`
-alone gets you those without the apps.
+The terminal engine is `libghostty-vt` as the parse layer; the grid, the blocks and the renderer
+above it are this repo's own ([`docs/68-terminal-surface-in-rust.md`](docs/68-terminal-surface-in-rust.md)).
 
-`brew services start slopdesk` is not optional. `slopdesk-superd` holds every pane's PTY master —
-that is what lets you restart the host without killing the agents under it — and neither the host
-app nor `slopdesk-hostd` forks a shell itself, so without the service running there are no panes.
+## What it does
 
-The app bundles carry no copy of the CLI. Signed artifacts also live on the
-[releases page](https://github.com/aislopware/slop-desk/releases); how they are built and signed is
-[`docs/49-release-pipeline.md`](docs/49-release-pipeline.md).
+- **Workspace** of session, tab, and n-ary split panes. A pane is a terminal or a GUI window, and
+  the transport follows the content.
+- **Agent attention.** Idle, working, blocked and done drive pane rings, tab glow, notifications
+  and jump-to-unread (⌘⇧U). Detection is a hook feed plus a TTY parse
+  ([`docs/50-agent-detection-architecture.md`](docs/50-agent-detection-architecture.md)).
+- **Read-only inspector**, a companion view for what reads badly in scrollback: subagent
+  transcripts, tool I/O, todos, workflow.
+- **Sessions outlive the host.** `slopdesk-superd` holds every PTY master, so restarting the host
+  never kills the agents under it.
+- **Multi-client.** Several clients share one workspace document with PTY fan-out
+  ([`docs/45-multi-client-state-sync.md`](docs/45-multi-client-state-sync.md)).
+- Sync-input across panes (⌘⇧I), copy-mode (⌘⇧C), per-pane read-only lock, file drop, and
+  `slopdesk-ctl` for headless supervision.
+- Side panels for iOS simulators and Android emulators
+  ([`docs/47-simulator-panel.md`](docs/47-simulator-panel.md),
+  [`docs/48-android-panel.md`](docs/48-android-panel.md)).
+- One config file, no settings GUI ([`docs/58-configuration.md`](docs/58-configuration.md)).
 
-## Build & run
+## Install, build, run
 
-Every gate, build and test in this repo is a `just` recipe — `just --list` names all 127 of them.
-`just` is the one thing to install before anything else can run; `just install-tools` brings the
-rest (and `just` itself, so a machine that got it from cargo ends up on the pinned copy).
-
-```sh
-brew install just
-just install-tools
-```
-
-Headless core needs no GUI, no Metal, and no signing:
-
-```sh
-swift build
-swift test
-just check-ios   # iOS slice (#if os(iOS)); needs Xcode
-```
-
-**Host (terminal):**
-
-```sh
-swift build -c release
-.build/release/slopdesk-hostd --port 7420
-.build/release/slopdesk-hostd --port 7420 --inspector   # inspector on port+1
-```
-
-| Flag | Meaning |
-|------|---------|
-| `--port`, `-p` | TCP port (default `7420`; `0` = OS-chosen) |
-| `--shell`, `-s` | Login shell (default: user's) |
-| `--inspector` | Read-only inspector on `port + 1` |
-| `--transcript PATH` | Claude Code JSONL path (implies `--inspector`) |
-
-Sessions survive disconnect; clients resume from the replay buffer. Claude is a normal shell running `claude` (auto-detected).
-
-**Host (GUI window)** — needs Screen Recording + Accessibility, real GUI session:
-
-```sh
-.build/release/slopdesk-videohostd --list
-.build/release/slopdesk-videohostd --window-id <N>   # window panes default 30 fps (desktop panes 60); `--fps N` to override
-```
-
-**CLI client:**
-
-```sh
-.build/release/slopdesk-client --host <host> --port 7420
-# local escape: Ctrl-]  |  scripting: --no-raw
-```
-
-**GUI apps** (the terminal engine's sources are pinned in `ThirdParty/tools/tools.lock`, so provision once):
-
-```sh
-just provision
-
-xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj \
-  -scheme ClientApp-macOS -destination 'generic/platform=macOS' \
-  CODE_SIGNING_ALLOWED=NO build
-
-xcodegen generate --spec Apps/ClientApp-iOS/project.yml
-xcodebuild -project Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj \
-  -scheme ClientApp-iOS -destination 'generic/platform=iOS Simulator' \
-  CODE_SIGNING_ALLOWED=NO build
-```
-
-Details: [`docs/68-terminal-surface-in-rust.md`](docs/68-terminal-surface-in-rust.md), [`docs/21-HANDOFF.md`](docs/21-HANDOFF.md).
+[`BUILDING.md`](BUILDING.md) covers all three, plus the host and client flags.
 
 ## Docs
 
-- [`docs/README.md`](docs/README.md) — index
-- [`docs/00-overview.md`](docs/00-overview.md) — architecture
-- [`docs/DECISIONS.md`](docs/DECISIONS.md) — decision log
-- [`docs/20-wire-protocol.md`](docs/20-wire-protocol.md) — terminal wire protocol
+- [`docs/README.md`](docs/README.md), the index
+- [`docs/00-overview.md`](docs/00-overview.md), architecture and every settled decision
+- [`docs/DECISIONS.md`](docs/DECISIONS.md), the decision log
+- [`docs/20-wire-protocol.md`](docs/20-wire-protocol.md), the terminal wire protocol
+- [`CLAUDE.md`](CLAUDE.md), the repo's rules and invariants
 
 ## License
 

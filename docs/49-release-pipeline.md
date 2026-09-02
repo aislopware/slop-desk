@@ -456,7 +456,7 @@ onward, and each already has a home that stays current on its own:
 
 | Was in the body | Lives in |
 |---|---|
-| Install, Requirements | `README.md` |
+| Install, Requirements | `BUILDING.md` |
 | Signing | this document |
 | Checksums | the `SHA256SUMS` asset attached to the release |
 
