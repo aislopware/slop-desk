@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use crate::report::Report;
 use crate::tree::Tree;
 
-const ROOT_MANIFEST: &str = "rust/Cargo.toml";
+pub(super) const ROOT_MANIFEST: &str = "rust/Cargo.toml";
 
 /// The tree's one Cargo feature, and the three crates the single-writer rule names.
 ///
@@ -209,11 +209,18 @@ struct Wide {
 const WIDE: [Wide; 7] = [
     Wide {
         crate_dir: "rust/slopdesk-apple-vt",
-        cap: 1248,
+        // 1248 → 1253: `pixels::image_size` answers a borrowed buffer's `(width, height)`, which
+        // sits here because the two Core Video getters are this crate's framework area and a
+        // `forbid(unsafe_code)` daemon comparing a delivered buffer against the size its encoder
+        // was opened at cannot reach them any other way.
+        cap: 1253,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-sck",
-        cap: 836,
+        // 836 → 848: `CaptureStream` gained a `Drop` that stops the capture, so a stream nobody
+        // stopped no longer keeps the window server recording. One new `unsafe` site, the same
+        // lifecycle method `stop` already calls, with no handler.
+        cap: 848,
     },
     Wide {
         crate_dir: "rust/slopdesk-apple-audio",
@@ -497,6 +504,8 @@ fn scan_spend(tree: &Tree, src: &str, sample_memory: bool) -> Spend {
     spend
 }
 
+/// Every `slopdesk-apple-*` manifest states `unsafe_op_in_unsafe_fn = "deny"` and depends on an
+/// `objc2` crate, and every booking in [`SAMPLE_MEMORY`] still names a crate that exists.
 #[must_use]
 pub fn apple_family(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -918,7 +927,7 @@ fn states(text: &str, needle: &str) -> bool {
 }
 
 /// `rust/Cargo.toml` and every `rust/*/Cargo.toml`, in sorted order.
-fn manifests(tree: &Tree) -> Vec<String> {
+pub(super) fn manifests(tree: &Tree) -> Vec<String> {
     let mut found: Vec<String> = tree
         .paths()
         .filter_map(|path| {
@@ -953,7 +962,7 @@ fn exempt_manifests(tree: &Tree) -> BTreeSet<String> {
         .collect()
 }
 
-fn crate_name_of(manifest: &str) -> String {
+pub(super) fn crate_name_of(manifest: &str) -> String {
     manifest
         .trim_start_matches("rust/")
         .trim_end_matches("/Cargo.toml")
@@ -961,7 +970,7 @@ fn crate_name_of(manifest: &str) -> String {
 }
 
 /// The root workspace's member list, read out of the root rather than kept beside it.
-fn root_members(tree: &Tree, report: &mut Report) -> BTreeSet<String> {
+pub(super) fn root_members(tree: &Tree, report: &mut Report) -> BTreeSet<String> {
     let Some(source) = tree.get(ROOT_MANIFEST) else {
         report.fail(format!(
             "{ROOT_MANIFEST} is gone — the root workspace defines the inheritance"
@@ -985,6 +994,8 @@ fn root_members(tree: &Tree, report: &mut Report) -> BTreeSet<String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+
     use crate::tests::Fixture;
 
     /// A manifest shaped like the objc2 family's: the `objc2` edge, and the two lint levels the

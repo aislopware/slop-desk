@@ -351,9 +351,12 @@ mod tests {
 
     use super::{NOTIFICATIONS, Observer, SLICE_SECONDS, registered};
 
-    /// The registration table is PROCESS-wide, so the three tests that read its size have to take
-    /// turns. Without this they read each other's rows and the deltas come out as whatever the
-    /// scheduler chose — which is exactly how this suite failed the first time it was run.
+    /// The registration table is PROCESS-wide, so EVERY test that installs an observer takes a
+    /// turn — the three that read the table's size, and the one that does not, because its row
+    /// is still a row the other three count. Without this they read each other's rows and the
+    /// deltas come out as whatever the scheduler chose — which is exactly how this suite failed
+    /// the first time it was run, and again under a loaded build farm once the leak test ran
+    /// outside the lock.
     static ROSTER: Mutex<()> = Mutex::new(());
 
     /// Long enough for the thread to have taken at least two slices, so an install has been
@@ -368,6 +371,7 @@ mod tests {
     /// it.
     #[test]
     fn a_dropped_observer_lets_go_of_everything_it_held() {
+        let _turn = ROSTER.lock().unwrap_or_else(PoisonError::into_inner);
         let seen = Arc::new(AtomicUsize::new(0));
         let held = Arc::clone(&seen);
         let observer = Observer::watching(move || {

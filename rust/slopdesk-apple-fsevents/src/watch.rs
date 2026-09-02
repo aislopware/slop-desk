@@ -174,15 +174,30 @@ impl Drop for Watch {
         unsafe {
             FSEventStreamStop(self.stream);
             FSEventStreamInvalidate(self.stream);
-            FSEventStreamRelease(self.stream);
         }
         // AFTER the invalidate, deliberately. A callback already sitting on the queue when the
         // invalidate ran may still execute; it then finds no row and does nothing, which is the
         // whole of the race. Removing first would only make that window bigger.
+        //
+        // And BEFORE the release, just as deliberately. The table is keyed by the stream's
+        // address, and `FSEventStreamRelease` hands that address back to the allocator: a
+        // `watching` on another thread can be given the same address for its new stream before
+        // this thread reaches `remove`, and the remove would then take the NEW watch's row — its
+        // events silently stop, with nothing anywhere to say why. With the row gone first, an
+        // address the framework reuses is a fresh key.
         live()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&self.stream.addr());
+        #[expect(
+            unsafe_code,
+            reason = "the teardown's release, split from its stop and invalidate"
+        )]
+        // SAFETY: the same handle, still owned, stopped and invalidated above; this is the last
+        // use of the address, and the table no longer holds it.
+        unsafe {
+            FSEventStreamRelease(self.stream);
+        }
     }
 }
 

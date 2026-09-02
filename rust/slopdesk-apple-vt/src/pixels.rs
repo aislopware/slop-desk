@@ -40,8 +40,9 @@ use core::ptr::NonNull;
 use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType};
 use objc2_core_video::{
     CVImageBuffer, CVPixelBuffer, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
-    CVPixelBufferGetHeightOfPlane, CVPixelBufferGetWidthOfPlane, CVPixelBufferLockBaseAddress,
-    CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane, CVPixelBufferGetWidth,
+    CVPixelBufferGetWidthOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
+    CVPixelBufferUnlockBaseAddress,
 };
 
 use crate::keys::DecodeKey;
@@ -52,6 +53,20 @@ const CV_SUCCESS: i32 = 0;
 
 /// The status this module reports when the framework wrote no buffer but claimed success.
 const NO_BUFFER: i32 = -6660;
+
+/// A borrowed buffer's dimensions in pixels, as `(width, height)`.
+///
+/// The whole-buffer pair, not a plane's: chroma is half-sized in NV12, so
+/// [`Locked::plane_view`]'s geometry answers a different question. This one is the size a
+/// resolution-fixed `VTCompressionSession` was opened at, which is what a caller compares against
+/// when it may be holding a buffer from BEFORE a live capture reconfigure.
+///
+/// No lock and no `unsafe`: both getters read the buffer's own descriptor rather than its mapping,
+/// and the bindings publish them as safe calls over a borrow.
+#[must_use]
+pub fn image_size(image: &CVImageBuffer) -> (usize, usize) {
+    (CVPixelBufferGetWidth(image), CVPixelBufferGetHeight(image))
+}
 
 /// One NV12 pixel buffer, owned.
 #[derive(Debug)]

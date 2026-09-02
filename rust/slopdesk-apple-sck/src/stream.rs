@@ -380,6 +380,29 @@ impl CaptureStream {
     }
 }
 
+impl Drop for CaptureStream {
+    /// A stream that is merely let go is stopped, not leaked. The window server keeps a capture
+    /// running for as long as nobody says otherwise, and once the `Retained<SCStream>` is gone
+    /// there is no handle left in this process to say it with — so the type says it, rather than
+    /// trusting every owner to. Fire-and-forget: a drop has nobody to report to, and a stream the
+    /// owner already stopped answers the second stop with an error nobody is reading. The one
+    /// owner today (`slopdesk-videohostd`'s `Capturer`) does stop first, so on the ordinary path
+    /// this is the framework declining a repeat.
+    fn drop(&mut self) {
+        // SAFETY: framework rule — `stopCaptureWithCompletionHandler:` on a live stream this crate
+        // owns, with no handler; the stream is documented as safe to stop from any queue, and a
+        // repeated stop is an error reply, not a fault.
+        #[expect(
+            unsafe_code,
+            reason = "an SCStream lifecycle method; generated unsafe because the header states no \
+                      nullability"
+        )]
+        unsafe {
+            self.stream.stopCaptureWithCompletionHandler(None);
+        }
+    }
+}
+
 /// Builds the stream. Split out so the `unsafe` obligation is stated once, next to the two
 /// arguments it is about.
 fn new_stream(
