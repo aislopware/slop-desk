@@ -1203,6 +1203,28 @@ vterm-test:
 termrender-test:
     cd rust/slopdesk-termrender && cargo test
 
+# The two conformance sweeps over ghostty's OWN minimised fuzz corpus, alone. They are already
+# inside `vterm-test` and `termrender-test` — this recipe exists to run them without the 600 unit
+# tests around them, which is what you want while chasing one disagreement.
+#
+# It also REPORTS the skip the tests cannot. Both sweeps read the corpus out of the provisioned
+# ghostty tree (`GHOSTTY_SOURCE_DIR`) and pass quietly when it is absent, because a bare checkout
+# must not fail a test for a tree it never fetched. Here that is worth saying out loud, because
+# "green" and "green over 3271 inputs" are not the same claim.
+
+# The terminal's agreement with ghostty: the frame read, and the paint over it (docs/68 §6.4)
+terminal-conformance:
+    #!/bin/sh
+    set -e
+    tree="ThirdParty/tools/.prefix/ghostty"
+    if [ ! -d "$tree" ]; then
+      printf 'terminal-conformance: ghostty is not provisioned — run `just provision` first.\n'
+      printf '  Without it the fuzz-corpus sweeps pass on the COMMITTED corpus only.\n'
+      printf '  The recorded sessions in rust/slopdesk-vterm/corpus run either way.\n'
+    fi
+    cd rust/slopdesk-vterm && cargo test conformance -- --nocapture
+    cd ../slopdesk-termrender && cargo test conformance -- --nocapture
+
 # cargo test for the Metal encode (pipeline, texture upload, the device probe)
 apple-metal-test:
     cd rust/slopdesk-apple-metal && cargo test

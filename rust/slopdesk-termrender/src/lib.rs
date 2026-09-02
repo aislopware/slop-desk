@@ -47,6 +47,8 @@ pub mod atlas;
 pub mod block;
 pub mod blockjoin;
 pub mod chrome;
+#[cfg(test)]
+mod conformance;
 pub mod glyph;
 pub mod image;
 pub mod layout;

@@ -18,7 +18,9 @@ bootstrap this tree needs is `brew install just`.
 | an Apple framework from Rust | `docs/57-apple-frameworks-in-rust.md` |
 | `MuxChannelSession` or `HostServer` | `docs/59-hostd-projection.md` |
 | hostd's socket, or Swift you think must stay | `docs/60-hostd-in-rust.md` |
-| the terminal surface | `docs/68-terminal-surface-in-rust.md` |
+| the terminal surface | `docs/68-terminal-surface-in-rust.md` — §6.4–6.5 are the ghostty conformance sweeps |
+| a recorded TUI session | `rust/slopdesk-vterm/corpus/README.md` — frames are inputs not goldens, but the recorded INPUT bytes are pinned; `slopdesk-ttyrec` records all four kinds |
+| bumping ANY dependency or pin | `docs/69-dependency-currency.md` — audited 2026-09-02, all at latest |
 | client UI | `DESIGN.md` |
 | the iOS/iPadOS client | `docs/62-phone-uikit.md` |
 | release, signing, brew | `docs/49-release-pipeline.md` |

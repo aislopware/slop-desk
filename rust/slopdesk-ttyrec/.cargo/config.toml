@@ -1,0 +1,3 @@
+# Build products live OUTSIDE the checkout — see any member crate's config for why.
+[build]
+target-dir = "../../../slopdesk-targets/slopdesk-ttyrec"

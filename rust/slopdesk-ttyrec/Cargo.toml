@@ -1,0 +1,58 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-ttyrec"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Records a real TUI under a pty into the conformance corpus — ships in nothing"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[[bin]]
+name = "slopdesk-ttyrec"
+path = "src/main.rs"
+
+[dependencies]
+# The engine under test, and the reason this tool exists at all: the input bytes in a recording
+# have to come from `VtSession::encode_key`, or the replay would be checking bytes a human typed
+# out by hand against bytes the encoder produces — a comparison that proves nothing about the
+# encoder. The recording FORMAT lives there too, so that the writer and the reader are one
+# declaration.
+slopdesk-vterm = { path = "../slopdesk-vterm" }
+# `openpty` + `fork` + the pre-exec window, already written and already the only place in the tree
+# allowed to hold that `unsafe`. A recorder that opened its own pty would be a sixth unsafe crate
+# for no new capability.
+slopdesk-posix = { path = "../slopdesk-posix" }
+# `waitpid` and `kill`, both safe in nix 0.31. The recorder must reap what it spawned: a TUI left
+# running past the recording would keep the pty master open and the tool would never exit.
+nix = { version = "0.31", features = ["process", "signal"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+unwrap_used = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"

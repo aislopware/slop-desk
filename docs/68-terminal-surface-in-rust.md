@@ -1472,6 +1472,217 @@ download, the `xcrun` SDK shim, an Xcode that has since moved and a cold `.build
 certain. If §5.1 lands and drawing feels worse, the honest move is to measure the NEW renderer's
 cadence on a quiet box against the 60 Hz ceiling directly, not to resurrect the fork.
 
+### 6.4 Conformance — the one question the split made unanswerable, and how it is answered (2026-09-02)
+
+§4's table is the whole reason this document is safe: ghostty still parses every byte, so VT
+conformance is not a thing this repo can regress. That is true and it is also where a gap opened.
+The parser is upstream's; the **read** is ours, and between `RenderState` and a `Frame` there are
+three iterators, a text arena, a wide-cell rule and a grapheme rule that upstream never sees. A
+mistake in any of them produces a frame that is internally consistent, satisfies every hand-built
+test in the crate, and does not say what the terminal says. Nothing in the tree asked whether it
+did.
+
+**The oracle is the engine's own formatter, and that is what makes this cheap.**
+`libghostty_vt::fmt::Formatter` over a terminal with no selection renders the entire active screen,
+and it reaches the grid by a different road than the render path does — ghostty's `Screen` rather
+than its `RenderState`. So one terminal is asked the same question twice, by two independent
+readers, in one process. There is no recorded expectation to go stale, no second parser (§1's
+`docs/17:59` ruling is untouched — this adds a QUESTION, not an engine), no display, no font and no
+GPU. `rust/slopdesk-vterm/src/conformance/mod.rs` is the comparison.
+
+**The corpus is ghostty's own, and it is already on disk.** `test/fuzz-libghostty/corpus/stream-cmin`
+is the minimised input set for upstream's terminal-stream fuzzer — 3271 files reduced from millions
+of executions to the distinct paths through the state machine. It ships inside the source tree
+`GHOSTTY_SOURCE_DIR` already points at, so it costs this repo no bytes, no download and no pin of
+its own: it is by construction whatever the engine at *our* pin was fuzzed against. Nothing is
+committed from it, because nothing needs to be — the oracle is computed beside the answer on every
+run, so a pin bump moves both sides at once and the test still asks the only question it ever asked.
+A committed micro-corpus of ~16 shapes covers the bare checkout.
+
+**Two sweeps, and they are different questions.**
+
+| | asks | catches |
+| --- | --- | --- |
+| `slopdesk-vterm::conformance` | does the frame say what the engine says | a row off by one, a dropped wide-cell tail, a split grapheme, an invented column |
+| `slopdesk-termrender::conformance` | is the paint over a real frame drawable | a NaN coordinate, a quad outside the content box, an unbounded glyph loop, a panic on a grid no hand-built test would write |
+
+Both are break-tested rather than assumed. A one-row shift in the frame fill fails **238** of 3271
+inputs; a 40 px row offset in the paint fails **587**; a NaN in a glyph's x fails **6040**. Serially
+each sweep is ~30 s, which is 30 s on the inner loop; fanned out by file across the machine's cores
+— each worker owning its own engine handles, since every one is thread-confined — both land at
+**~6.5 s**. `just terminal-conformance` runs the pair alone and says so out loud when the ghostty
+tree is not provisioned, which is the one state where passing means less than it looks.
+
+**One concession, bounded and pinned.** The frame may show a blank where the engine's dump shows a
+character, and only there. That is SGR 8: a concealed cell must not draw its glyph, which is what
+the attribute means and what `session.rs`'s fill implements, while the formatter is a COPY and text
+a user copies out of a concealed run is text they asked for. Every other direction stays strict —
+above all the frame showing a character the engine does not have. The concession is pinned by its
+own test in both directions, forbidden to the committed corpus, and capped across the sweep at a
+twentieth of the inputs, so a read that started blanking cells generally fails on the share rather
+than being forgiven input by input.
+
+**What this deliberately is not.** Not a pixel diff against ghostty. §2 deleted ghostty's renderer
+on purpose — blocks, padding and variable row heights are the product — so a screenshot comparison
+would fail by design and would be measuring the decision rather than testing it. The claim is one
+layer up and it is the one that was actually at risk: given the same bytes, the CONTENT of the grid
+this repo draws is the content ghostty would draw.
+
+### 6.5 The frame that keeps changing, and the keystroke that answers it (2026-09-02)
+
+§6.4 feeds a terminal once and draws it once. Every bug that needs a SECOND frame to appear is
+invisible to it — and those are precisely the bugs a modern TUI produces, because `render` is
+incremental: it skips the rows the engine reported clean. A row wrongly believed clean shows the
+previous frame forever and every still-picture test passes.
+
+**The property, and why it needs no oracle.** A terminal fed in pieces and drawn after every piece
+must end up holding exactly the frame a terminal fed the same bytes in one go holds. Incremental
+against fresh. Whatever the dirty tracking skipped shows up as a difference against the session that
+had no history to keep. The comparison is over CONTENT — text, colours, flags, cursor, defaults —
+and deliberately not over `revision`, `Frame::dirty` or the per-row dirty flags, which are
+bookkeeping about how the frame was reached and are supposed to differ.
+
+**Where the pieces come from.** Two sources, and the difference is the point.
+
+*Recordings.* `rust/slopdesk-vterm/corpus/` holds five real programs — an `@opentui/core` demo (the
+framework OpenCode ships on), nvim, fzf, lazygit and `less` — each run once under
+`rust/slopdesk-ttyrec`, with every `read(2)` from the pty kept as its own chunk. That boundary
+schedule is not invented: it is the one the kernel and the program between them produced, which is
+the only schedule the shipped surface will ever see; the five contribute 461 reads between them.
+Recordings are INPUTS, not golden files — every frame is recomputed and checked against the engine,
+so a pin bump has no FRAME to re-bless and the golden-vector rule does not reach them. The recorded
+INPUT bytes are the exception and are pinned deliberately — all four kinds plus the query replies:
+a pin bump that changes a key encoding, a pointer report format, a paste's brackets, a focus report
+or a DA answer fails `a_recorded_session_reproduces_every_byte_of_its_input_path` honestly, and the
+fix is a re-record, not a tolerance. `corpus/README.md` carries the commands, the per-file tallies to
+diff a re-record against, and the rule this corpus learned the hard way: **never record a program
+that prints machine state.** The refusal slot was `top` for one afternoon, and `top`'s frames are the
+recording machine's process list and account name. `less` holds it now, paging a file from this
+repository — it subscribes to even less than `top` did, so the slot got stronger rather than weaker.
+
+*The fuzz corpus, re-cut.* The same 3271 inputs, fed at 1, 3 and 7 bytes at a time. A one-byte cut
+lands inside every escape sequence, every UTF-8 scalar and every grapheme cluster in the corpus at
+once — the state-machine boundary no hand-written test thinks to hit.
+
+**The input path, which only a recording can test.** A recording carries what went UP the pty as well
+as what came down it: the script and the bytes the encoder produced for it *at that point in the
+stream*. The replay re-encodes against the terminal the preceding output built. That is not a test of
+ghostty's encoders — it is a test that the modes the PROGRAM negotiated are the modes the NEXT input
+is encoded under, and the recording is the only place that ordering exists. All four kinds of input
+have such a mode, and each is turned on mid-stream by an escape sequence:
+
+| input | spelling | the mode that decides its bytes | what the corpus proves |
+| --- | --- | --- | --- |
+| keystroke | `slopdesk_vterm::keyscript` | the kitty keyboard protocol | nvim and lazygit turn it on: `<Escape>` is `CSI 27 u`, not `ESC` |
+| pointer | `slopdesk_vterm::mousescript` | mouse tracking + report format | four programs report SGR 1006; `less` refuses |
+| paste | the text itself | bracketed paste, mode 2004 | three programs wrap; `less` never asked, so its paste arrives as live pager commands |
+| focus | on/off | focus reporting, mode 1004 | three answer `CSI I`; `less` refuses |
+
+`slopdesk-ttyrec` grew `--send-mouse`, `--paste` and `--focus` to record these, and all four flags
+share ONE ordered list — the order they appear on the command line — because order is the content: a
+click before a program enables tracking must encode to nothing and the same click after it must
+encode to a report.
+
+**A refusal is a recorded answer, not a gap.** `less` asks for neither pointer nor focus reports, so
+its recorded bytes for both are EMPTY, and a replay that started producing bytes there would be
+writing into a running program's input on an event it never subscribed to. Its paste is the third
+shape of the same negative: bytes DO go out, they just must not be wrapped, because a `CSI 200~` sent
+to a program that never asked for bracketing is printed on the screen. Those are the discriminating
+negatives for the whole path — every positive case in the corpus passes for an encoder that ignored
+the modes entirely — and `dynamic.rs` floors at four refusals and one bare paste so that a re-record
+cannot quietly drop them.
+
+**Where a recording cannot reach, the matrix is pinned by hand.** Every program in the corpus asks
+for the same pair of modes, `?1000h` and `?1006h`, so a recording says nothing about the report
+formats a program could ask for instead. `a_pointer_report_is_spelled_the_way_the_mode_the_program_chose_spells_it`
+walks all of them: X10's `CSI M` with its 32-biased bytes and its button-3 release that cannot say
+which button came up, urxvt 1015, SGR-pixels 1016, and the three tracking levels — 1000 refusing
+motion outright, 1002 reporting it only while a button is held, 1003 reporting a bare hover as button
+3. 1016 earns its row twice over: it is the only case where the report carries a PIXEL rather than a
+cell, so it is the only one that fails when slopdesk's own `to_move` drifts by less than half a cell.
+Every other row divides that drift away. Its pixels are 0-based where xterm documents SGR-Pixels as
+1-based; that is the engine's spelling, measured from it rather than picked here, and pinned as
+measured — the row's job is catching our conversion drifting, and an engine bump that moved the base
+fails it honestly.
+
+The engine's own answers to the program's startup queries — primary DA, DSR, the kitty probe — are
+recorded beside all of it and checked the same way, because a modern TUI blocks on those and a reply
+path that stopped producing one would otherwise show up as a program that hangs.
+
+**The resize is synthetic, and that is a constraint rather than a preference.** `TIOCSWINSZ` belongs
+to hostd alone — `slopdesk-invariants`' `pty_winsize_single_writer` pins the two crates that may even
+compile the setter, and a recorder would be a third — so `slopdesk-ttyrec` cannot deliver a
+`SIGWINCH` and no recording holds a program's reaction to one. It does not need to. The property
+under test is the TERMINAL's: *a session resized mid-stream must land where a session resized at the
+same point in a single pass lands*, which needs no cooperation from a child process. Doing it
+synthetically buys a resize at four points of every recording against three target grids — including
+a resize to the size it already was, the case a dirty-tracking scan is most likely to treat as free —
+rather than one resize per program.
+
+**Two things every other sweep leaves running with the code switched off.** The recordings replay a
+second time with scrollback KEPT rather than at zero, because a scrolling region that pushed a row
+into history and a viewport that then read one row too far is invisible to every sweep that never
+allocated any history. And the OSC path — `title()`, `pwd()`, the OSC 52 clipboard queue — is checked
+directly, because it is the one output that does not end in a cell: a frame with the right pixels and
+no title passes every comparison in the file.
+
+**The one attribute check that has an oracle at all.** The fill resolves colours itself: it
+brightens a bold palette foreground, swaps for SGR 7, dims for SGR 2, and prefers a cell-level
+background out of `content_tag`. A test that re-derived all of that would be a mirror of the code it
+tests. So the check is narrowed to cells with none of bold, inverse or faint, where no resolution
+rule applies and the engine's own `fg_color`/`bg_color` doors — which resolve the palette and flatten
+the three background sources, and are NOT the doors the fill walks — say what the colour is.
+Everything the carve-out excludes is covered by incremental-versus-fresh, which compares every
+attribute of every cell without needing to know what any of them mean.
+
+**Break-tested, and the numbers say what each sweep is for.**
+
+| injected bug | static §6.4 sweep | the sweeps here |
+| --- | --- | --- |
+| one row wrongly kept as clean (`y % 7 == 3`) | **passes** | incremental-vs-fresh and the per-frame oracle both fail |
+| bytes swallowed at a read boundary | **passes** | 3236 of 3271 inputs fail the seam sweep |
+| the key encoder's mode sync dropped | **passes** | lazygit's `<Escape>` fails: `ESC` where `CSI 27 u` was recorded |
+| the pointer encoder's mode sync dropped | **passes** | fzf's `left@5,8` fails: nothing where `CSI <0;6;9M` was recorded |
+| the cell→pixel point moved one cell right | **passes** | the report names column 7 where the script pointed at 6 |
+| bracketed paste read as always-off | **passes** | fzf's paste arrives bare where it was recorded wrapped |
+| the focus report never armed | **passes** | lazygit's `CSI O` becomes nothing |
+| the resize never reaching the engine | **passes** | the frame keeps the old width at the first resize point |
+| the cursor read left below the clean check | **passes** | ⚠️ **this was a real bug — see below** |
+| foreground resolution poisoned by one green | **passes** | the attribute check fails on the first row |
+| a 40 px row offset in the paint | 587 of 3271 fuzz frames | **844 of 922** recorded paints |
+
+Every row but the last is the justification for this section: nothing in §6.4 catches any of them,
+and it cannot — the static oracle compares cells, and never looks at the cursor or at a single byte
+of input. The last row is the density argument: 461 recorded frames painted in both layout modes
+give 922 paints, and 92% of them catch an offset that only 18% of the minimised fuzz corpus does.
+`just terminal-conformance` runs everything. The vterm half is the slow one — a couple of minutes,
+because the seam sweep is three passes over the fuzz corpus and the resize sweep is 120 replays —
+and the termrender half is well under a minute.
+
+**The bug the corpus actually found (2026-09-02).** `VtSession::render` returned early when the
+engine reported the grid clean, and read the cursor and the default colours *after* that return. The
+engine's `dirty` answers about CELLS — `?25l`, `?25h`, `OSC 12` and a cursor moved by `CUP` alone
+write none — so a terminal that only moved its cursor reported clean, and the frame kept a position
+and a visibility from an arbitrarily older frame. The visible symptom is a shell whose full-screen
+program exits and restores the cursor with a bare `?25h`: no cursor at an idle prompt until the user
+happens to type. The recorded lazygit session hides and shows its cursor around a redraw and failed
+on read 51 of 58. The read now happens before the check, and a cursor-only change answers `Partial`
+rather than `Clean` — no row needs rebuilding, but the caller is told the frame it holds is not the
+frame it drew. `session.rs`'s `a_cursor_that_moves_without_writing_a_cell_still_reaches_the_frame`
+pins it directly so it does not depend on the corpus.
+
+**Two redundancies the resize sweep proved are not load-bearing**, recorded so nobody re-derives
+them: `resize()` sets `refill` and calls `frame.reshape`, and removing either leaves every sweep
+green. The engine reports `Full` on a resize and the fill reshapes the frame whenever the dimensions
+disagree, so both are second checks rather than the mechanism. They stay — a cheap belt against a
+future engine that reports differently — but neither is what makes a resize correct.
+
+**The named gap: pointer input is recorded, TOUCH and IME are not.** `--send-mouse` covers press,
+release, motion, drag and the wheel under real mode negotiation. What no recording reaches is the
+platform layer above the encoder: a touch gesture resolved into a pointer event, and a live IME
+composition, both of which are AppKit/UIKit state that no pty can hold. Those stay the surface's own
+tests. Closing them is a client-side harness, not a recorder change.
+
 ## 7. What this does NOT touch
 
 - **The wire.** Blocks already ship as metadata push plus on-demand output fetch. No new verb, no

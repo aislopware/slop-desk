@@ -955,22 +955,22 @@ impl VtSession {
 
         let reported = FrameDirty::from(snapshot.dirty()?);
         let force = *refill || reported == FrameDirty::Full;
-        if !force && reported == FrameDirty::Clean {
-            return Ok(FrameDirty::Clean);
-        }
-        // A refill covers every row whatever the engine reported, so the answer must not be
-        // `Clean`: a caller that keys its draw off the return value would skip the one repaint that
-        // has to happen — the frame it is holding has rows that were never filled, or were filled
-        // against colours that are no longer the ones in force.
-        let dirty = if force { FrameDirty::Full } else { reported };
 
+        // ⚠️ The cursor and the default colours are read BEFORE the clean check, not after it, and
+        // that ordering is the whole of a bug the recorded corpus caught. The engine's `dirty`
+        // answers about the GRID: `?25h`, `?25l`, `OSC 12` and a cursor moved by `CUP` alone all
+        // write no cell, so a terminal that only ever moves its cursor reports Clean for as long as
+        // it does it. Reading these after an early return left `frame.cursor` holding a position
+        // and a visibility from an arbitrarily older frame — a shell whose program exits
+        // and restores the cursor with a bare `?25h` would keep drawing no cursor at an
+        // idle prompt.
         let colors = snapshot.colors()?;
-        frame.colors = FrameColors {
+        let colors = FrameColors {
             background: colors.background.into(),
             foreground: colors.foreground.into(),
             palette: colors.palette.map(Into::into),
         };
-        frame.cursor = if snapshot.cursor_visible()? {
+        let cursor = if snapshot.cursor_visible()? {
             snapshot.cursor_viewport()?.map(|viewport| {
                 FrameCursor {
                     x: viewport.x,
@@ -982,7 +982,7 @@ impl VtSession {
                         .cursor_color()
                         .ok()
                         .flatten()
-                        .map_or(frame.colors.foreground, Into::into),
+                        .map_or(colors.foreground, Into::into),
                     blinking: snapshot.cursor_blinking().unwrap_or(false),
                     at_wide_tail: viewport.at_wide_tail,
                     password_input: snapshot.cursor_password_input().unwrap_or(false),
@@ -991,6 +991,25 @@ impl VtSession {
         } else {
             None
         };
+        let moved = cursor != frame.cursor || colors != frame.colors;
+        frame.colors = colors;
+        frame.cursor = cursor;
+
+        if !force && reported == FrameDirty::Clean {
+            // `Partial` rather than `Clean` when only the cursor moved: no row needs rebuilding, so
+            // every `FrameRow::dirty` is false and a partial painter does no row work, but the
+            // caller is still told that the frame it holds is not the frame it last drew.
+            return Ok(if moved {
+                FrameDirty::Partial
+            } else {
+                FrameDirty::Clean
+            });
+        }
+        // A refill covers every row whatever the engine reported, so the answer must not be
+        // `Clean`: a caller that keys its draw off the return value would skip the one repaint that
+        // has to happen — the frame it is holding has rows that were never filled, or were filled
+        // against colours that are no longer the ones in force.
+        let dirty = if force { FrameDirty::Full } else { reported };
 
         let cols = snapshot.cols()?;
         let row_count = snapshot.rows()?;
@@ -1801,6 +1820,40 @@ mod tests {
         session.set_palette(&[Rgb::new(0xAA, 0xBB, 0xCC); 16]).unwrap();
         assert_eq!(session.render().unwrap(), FrameDirty::Full);
         assert_eq!(session.frame().colors.palette[0], Rgb::new(0xAA, 0xBB, 0xCC));
+    }
+
+    #[test]
+    fn a_cursor_that_moves_without_writing_a_cell_still_reaches_the_frame() {
+        // Found by the recorded lazygit session, which hides and shows its cursor around a redraw.
+        // The engine's `dirty` counts CELLS, and `?25l`, `?25h` and a bare `CUP` write none — so a
+        // read that returned early on a clean grid left the frame holding an arbitrarily old
+        // cursor. A shell whose full-screen program exits and restores the cursor with
+        // `?25h` alone would draw no cursor at an idle prompt for as long as the user did
+        // not type.
+        let mut session = session();
+        session.feed(b"hello");
+        session.render().unwrap();
+        assert_eq!(session.render().unwrap(), FrameDirty::Clean, "quiescent first");
+        assert_eq!(session.frame().cursor.map(|cursor| cursor.x), Some(5));
+
+        session.feed(b"\x1b[?25l");
+        assert_eq!(
+            session.render().unwrap(),
+            FrameDirty::Partial,
+            "hiding the cursor writes no cell, and the caller still has to hear about it"
+        );
+        assert_eq!(session.frame().cursor, None);
+
+        // Moved while hidden, then shown: the frame must hold the NEW position, not the one it had
+        // when the cursor was last visible.
+        session.feed(b"\x1b[3;7H\x1b[?25h");
+        assert_eq!(session.render().unwrap(), FrameDirty::Partial);
+        let cursor = session.frame().cursor.unwrap();
+        assert_eq!((cursor.x, cursor.y), (6, 2));
+
+        // And a render with nothing at all behind it is still Clean, so this does not turn every
+        // idle frame into a repaint.
+        assert_eq!(session.render().unwrap(), FrameDirty::Clean);
     }
 
     #[test]

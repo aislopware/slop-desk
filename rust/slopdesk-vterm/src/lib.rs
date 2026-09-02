@@ -56,13 +56,18 @@
 #![forbid(unsafe_code)]
 
 pub mod compression;
+#[cfg(test)]
+mod conformance;
 pub mod events;
 pub mod find;
 pub mod frame;
 pub mod graphics;
 pub mod input;
 pub mod keycode;
+pub mod keyscript;
+pub mod mousescript;
 pub mod placeholder;
+pub mod recording;
 pub mod screen;
 pub mod search;
 pub mod selection;
