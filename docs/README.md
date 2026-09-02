@@ -60,6 +60,7 @@ Low-latency remote coding for Apple platforms (macOS host; macOS + iOS/iPadOS cl
 | 68 | [68-terminal-surface-in-rust.md](68-terminal-surface-in-rust.md) | The terminal surface becomes ours |
 | 69 | [69-dependency-currency.md](69-dependency-currency.md) | Every pin at upstream latest, audited 2026-09-02 |
 | 70 | [70-codebase-audit-2026-09.md](70-codebase-audit-2026-09.md) | The whole-tree audit of 2026-09-02: fixed, rejected, ratcheted |
+| 72 | [72-terminal-and-remote-desktop-audit-2026-09.md](72-terminal-and-remote-desktop-audit-2026-09.md) | The terminal-vs-ghostty and remote-desktop-vs-Parsec pass of 2026-09-02 |
 
 ### GUI video path (design depth)
 | # | File | |

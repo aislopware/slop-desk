@@ -23,6 +23,7 @@ bootstrap this tree needs is `brew install just`.
 | bumping ANY dependency or pin | `docs/69-dependency-currency.md` — audited 2026-09-02, all at latest |
 | re-auditing the tree, or a finding that looks new | `docs/70-codebase-audit-2026-09.md` — what the 2026-09-02 pass fixed, rejected with evidence, and ratcheted |
 | video smoothness, `--fps`, the encode-load pacer, vsync | `docs/71-video-smoothness-2026-09.md` — the `just gui-smooth` harness and every 2026-09-02 number; the 30 fps default is NOMINAL |
+| terminal parity with ghostty, remote-desktop parity with Parsec, a finding on either | `docs/72-terminal-and-remote-desktop-audit-2026-09.md` — what the 2026-09-02 pass fixed, rejected with numbers, and left measured-but-unfixed |
 | client UI | `DESIGN.md` |
 | the iOS/iPadOS client | `docs/62-phone-uikit.md` |
 | release, signing, brew | `docs/49-release-pipeline.md` |
