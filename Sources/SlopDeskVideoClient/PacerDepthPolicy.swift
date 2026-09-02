@@ -4,8 +4,9 @@
 // Sizing the depth from RFC3550 inter-arrival jitter is avoided: it conflates benign sender-cadence
 // variance (host idle-skip, VideoSendLane chunked pacing, frame-size-dependent encode time) with
 // actual presentation risk — on a jittery-but-fine WAN that approach pins the depth at 2-4
-// (+17-50ms standing latency) with zero late presents ever observed. And under the display-native
-// 120Hz tick the pacer's `underflowRun` oscillates 0↔1 BY DESIGN on a healthy 60fps stream, so
+// (+17-50ms standing latency) with zero late presents ever observed. And at depth 1 under the
+// display-native 120Hz tick the pacer's `underflowRun` oscillates 0↔1 BY DESIGN on a healthy 60fps
+// stream (every tick is a slot there; above depth 1 the queue counts content slots instead), so
 // growing depth on a transient dip in that counter ratchets to maxDepth on a clean link. The model
 // here inverts that: pay latency only AFTER observed late presents (events), refund after a clean
 // dwell — and never reuse `underflowRun` as a signal.

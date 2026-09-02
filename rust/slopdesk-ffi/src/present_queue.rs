@@ -14,6 +14,13 @@
 //! many died and leave the caller inferring WHICH from an ordering it is deliberately not keeping.
 //! The submission answers the same way for the hard cap's own eviction.
 //!
+//! ## The tick ratio crosses with the queue
+//!
+//! The link ticks at the panel's rate and the content arrives at the host's, and every law that
+//! counts refreshes counts content slots, not ticks (`present_queue`'s header says why). The ratio
+//! is the queue's own state so a rebase — a `streamCadence` from the host — is one door, and a
+//! between-slot tick answers `SLOPDESK_PRESENT_HOLD`: the last frame again, and NOT a hitch.
+//!
 //! ## Two depth doors, because there are two controllers
 //!
 //! `set_live_depth` carries the promote rule — a deeper buffer re-primes, or the slack frame it was
@@ -27,7 +34,7 @@ use core::ffi::c_char;
 use slopdesk_video::present_queue::{
     PresentOutcome, PresentQueue, PresentQueueSnapshot, QUEUE_CAPACITY, QueuedFrame, clamped_playout_seconds,
     deadline_due, deadline_for_arrival, playout_recompute_due, resolve_tick_rate, should_present_on_arrival,
-    should_render,
+    should_render, ticks_per_frame,
 };
 
 use crate::{optional, optional_of};
@@ -38,6 +45,8 @@ pub const SLOPDESK_PRESENT_PRIMING: u32 = 0;
 pub const SLOPDESK_PRESENT_PRESENT: u32 = 1;
 /// The producer fell behind: re-show `last_shown`.
 pub const SLOPDESK_PRESENT_RESHOW: u32 = 2;
+/// A tick between two content slots: re-show `last_shown` and keep the slack. Not a hitch.
+pub const SLOPDESK_PRESENT_HOLD: u32 = 3;
 
 // MARK: the values that cross
 
@@ -89,8 +98,12 @@ pub struct SlopDeskPresentQueue {
     pub max_depth: u32,
     /// The depth being served right now.
     pub live_depth: u32,
-    /// Consecutive empty refreshes.
+    /// Consecutive empty content slots.
     pub underflow_run: u32,
+    /// How many display ticks one content frame spans.
+    pub ticks_per_frame: u32,
+    /// Ticks since the last content slot.
+    pub ticks_since_slot: u32,
     /// Whether anything has ever been handed out.
     pub has_last_shown: bool,
     /// Whether the buffer has filled and steady presentation has begun.
@@ -109,6 +122,8 @@ impl SlopDeskPresentQueue {
             max_depth: snapshot.max_depth,
             live_depth: snapshot.live_depth,
             underflow_run: snapshot.underflow_run,
+            ticks_per_frame: snapshot.ticks_per_frame,
+            ticks_since_slot: snapshot.ticks_since_slot,
             has_last_shown,
             primed: snapshot.primed,
         };
@@ -131,6 +146,8 @@ impl SlopDeskPresentQueue {
             live_depth: self.live_depth,
             underflow_run: self.underflow_run,
             primed: self.primed,
+            ticks_per_frame: self.ticks_per_frame,
+            ticks_since_slot: self.ticks_since_slot,
         };
         for (slot, frame) in snapshot.queue.iter_mut().zip(self.queue) {
             *slot = frame.inner();
@@ -203,6 +220,10 @@ impl SlopDeskPresentStep {
             PresentOutcome::Priming { last_shown } => {
                 (crossing.has_last_shown, crossing.last_shown) = optional(last_shown, 0);
             },
+            PresentOutcome::Hold { last_shown } => {
+                crossing.kind = SLOPDESK_PRESENT_HOLD;
+                (crossing.has_last_shown, crossing.last_shown) = optional(last_shown, 0);
+            },
             PresentOutcome::Present { frame, transient_dip } => {
                 crossing.kind = SLOPDESK_PRESENT_PRESENT;
                 crossing.frame = SlopDeskQueuedFrame::of(frame);
@@ -255,14 +276,46 @@ pub struct SlopDeskPlayoutRecompute {
 
 // MARK: the queue
 
-/// An empty queue at the given live depth, under a hard cap bounded by the law's own band.
+/// An empty queue at the given live depth, under a hard cap bounded by the law's own band, ticking
+/// `ticks_per_frame` times per content frame (`slopdesk_present_ticks_per_frame`).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub extern "C" fn slopdesk_present_queue_new(live_depth: u32, max_depth: u32) -> SlopDeskPresentQueue {
-    SlopDeskPresentQueue::of(&PresentQueue::new(live_depth, max_depth))
+pub extern "C" fn slopdesk_present_queue_new(
+    live_depth: u32,
+    max_depth: u32,
+    ticks_per_frame: u32,
+) -> SlopDeskPresentQueue {
+    SlopDeskPresentQueue::of(&PresentQueue::new(live_depth, max_depth, ticks_per_frame))
+}
+
+/// How many display ticks one content frame spans: the floor of the tick rate over the content
+/// rate, never below one. The FLOOR, so the metered present rate is never below the content rate.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_present_ticks_per_frame(tick_hz: f64, content_fps: f64) -> u32 {
+    ticks_per_frame(tick_hz, content_fps)
+}
+
+/// Adopts a new tick-to-content ratio — the host announced a new cadence. The slot in progress is
+/// opened, so a rebase never lengthens a hold.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_present_queue_set_ticks_per_frame(
+    queue: &SlopDeskPresentQueue,
+    ticks_per_frame: u32,
+) -> SlopDeskPresentQueue {
+    let mut inner = queue.inner();
+    inner.set_ticks_per_frame(ticks_per_frame);
+    SlopDeskPresentQueue::of(&inner)
 }
 
 /// Adopts a depth from the depth controller: a PROMOTE re-primes, so the slack it asked for is
@@ -445,13 +498,14 @@ mod tests {
     )]
 
     use super::{
-        SLOPDESK_PRESENT_PRESENT, SLOPDESK_PRESENT_PRIMING, SLOPDESK_PRESENT_RESHOW, SlopDeskPresentQueue,
-        slopdesk_present_clamped_playout_seconds, slopdesk_present_deadline_due,
+        SLOPDESK_PRESENT_HOLD, SLOPDESK_PRESENT_PRESENT, SLOPDESK_PRESENT_PRIMING, SLOPDESK_PRESENT_RESHOW,
+        SlopDeskPresentQueue, slopdesk_present_clamped_playout_seconds, slopdesk_present_deadline_due,
         slopdesk_present_deadline_for_arrival, slopdesk_present_playout_recompute_due,
         slopdesk_present_queue_adopt_live_depth, slopdesk_present_queue_new,
-        slopdesk_present_queue_set_live_depth, slopdesk_present_queue_step, slopdesk_present_queue_submit,
-        slopdesk_present_resolve_tick_rate, slopdesk_present_should_present_on_arrival,
-        slopdesk_present_should_render,
+        slopdesk_present_queue_set_live_depth, slopdesk_present_queue_set_ticks_per_frame,
+        slopdesk_present_queue_step, slopdesk_present_queue_submit, slopdesk_present_resolve_tick_rate,
+        slopdesk_present_should_present_on_arrival, slopdesk_present_should_render,
+        slopdesk_present_ticks_per_frame,
     };
 
     fn submit(queue: &SlopDeskPresentQueue, handle: u64) -> SlopDeskPresentQueue {
@@ -460,7 +514,7 @@ mod tests {
 
     #[test]
     fn a_queue_fills_then_serves_in_order_through_the_door() {
-        let mut queue = slopdesk_present_queue_new(2, 6);
+        let mut queue = slopdesk_present_queue_new(2, 6, 1);
         assert_eq!(slopdesk_present_queue_step(&queue).kind, SLOPDESK_PRESENT_PRIMING);
         queue = submit(&queue, 1);
         queue = submit(&queue, 2);
@@ -472,7 +526,7 @@ mod tests {
 
     #[test]
     fn the_step_names_every_handle_homeostasis_dropped() {
-        let mut queue = slopdesk_present_queue_new(2, 6);
+        let mut queue = slopdesk_present_queue_new(2, 6, 1);
         for handle in 1..=6 {
             queue = submit(&queue, handle);
         }
@@ -484,7 +538,7 @@ mod tests {
 
     #[test]
     fn the_submission_names_the_handle_the_hard_cap_evicted() {
-        let queue = slopdesk_present_queue_new(1, 2);
+        let queue = slopdesk_present_queue_new(1, 2, 1);
         let first = slopdesk_present_queue_submit(&queue, 1, 1.0);
         assert!(first.was_empty);
         assert!(!first.has_evicted);
@@ -496,7 +550,7 @@ mod tests {
 
     #[test]
     fn a_present_carries_the_frontier_forward_so_a_reshow_has_something_to_show() {
-        let mut queue = slopdesk_present_queue_new(1, 6);
+        let mut queue = slopdesk_present_queue_new(1, 6, 1);
         queue = submit(&queue, 7);
         let present = slopdesk_present_queue_step(&queue);
         assert!(present.has_last_shown);
@@ -514,7 +568,7 @@ mod tests {
 
     #[test]
     fn the_transient_dip_survives_the_crossing_and_the_idle_resume_does_not_fake_one() {
-        let mut queue = slopdesk_present_queue_new(1, 6);
+        let mut queue = slopdesk_present_queue_new(1, 6, 1);
         queue = submit(&queue, 1);
         queue = slopdesk_present_queue_step(&queue).queue;
         queue = slopdesk_present_queue_step(&queue).queue; // one empty tick: a real starvation
@@ -524,7 +578,7 @@ mod tests {
 
     #[test]
     fn the_two_depth_doors_differ_on_exactly_one_thing() {
-        let mut queue = slopdesk_present_queue_new(1, 6);
+        let mut queue = slopdesk_present_queue_new(1, 6, 1);
         queue = submit(&queue, 1);
         queue = slopdesk_present_queue_step(&queue).queue;
         assert!(queue.primed);
@@ -541,16 +595,42 @@ mod tests {
     #[test]
     fn the_depth_is_bounded_by_the_band_the_capacity_is_proved_against() {
         use slopdesk_video::present_queue::{MAX_QUEUE_DEPTH, QUEUE_CAPACITY};
-        let queue = slopdesk_present_queue_new(999, 999);
+        let queue = slopdesk_present_queue_new(999, 999, 1);
         assert_eq!(queue.live_depth, MAX_QUEUE_DEPTH);
         assert_eq!(queue.max_depth, MAX_QUEUE_DEPTH);
         assert_eq!(QUEUE_CAPACITY, MAX_QUEUE_DEPTH as usize);
     }
 
     #[test]
+    fn a_between_slot_tick_answers_a_hold_and_the_ratio_crosses_with_the_queue() {
+        assert_eq!(slopdesk_present_ticks_per_frame(120.0, 30.0), 4);
+        let mut queue = slopdesk_present_queue_new(2, 6, 4);
+        assert_eq!(queue.ticks_per_frame, 4);
+        queue = submit(&queue, 1);
+        queue = submit(&queue, 2);
+        let present = slopdesk_present_queue_step(&queue);
+        assert_eq!(present.kind, SLOPDESK_PRESENT_PRESENT);
+        let hold = slopdesk_present_queue_step(&present.queue);
+        assert_eq!(
+            hold.kind, SLOPDESK_PRESENT_HOLD,
+            "the slack frame waits for its slot"
+        );
+        assert_eq!(hold.last_shown, 1);
+        assert!(!hold.transient_dip);
+        assert!(!hold.re_primed);
+        let rebased = slopdesk_present_queue_set_ticks_per_frame(&hold.queue, 1);
+        assert_eq!(rebased.ticks_per_frame, 1);
+        assert_eq!(
+            slopdesk_present_queue_step(&rebased).kind,
+            SLOPDESK_PRESENT_PRESENT,
+            "a rebase opens the slot in progress"
+        );
+    }
+
+    #[test]
     fn a_queue_equals_itself_across_the_array_no_tuple_can_compare() {
-        let left = submit(&slopdesk_present_queue_new(2, 6), 1);
-        let right = submit(&slopdesk_present_queue_new(2, 6), 1);
+        let left = submit(&slopdesk_present_queue_new(2, 6, 1), 1);
+        let right = submit(&slopdesk_present_queue_new(2, 6, 1), 1);
         assert_eq!(left, right);
         assert_ne!(left, submit(&left, 2));
     }

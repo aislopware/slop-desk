@@ -168,21 +168,24 @@ public final class FrameReassembler {
     }
 
     /// Reads the frame the last completing ingest parked. The AVCC is asked for by length and then
-    /// copied once, into storage sized for it — the shape §4 asks for, and the only copy the frame
-    /// makes on this side.
+    /// copied once, straight into the `Data` the decoder is handed — the shape §4 asks for, and the
+    /// only copy the frame makes on this side.
     private func parkedFrame() -> ReassembledFrame {
         let needed = slopdesk_video_reassembler_frame_avcc(handle, nil, 0)
-        var written = 0
-        let avcc = [UInt8](unsafeUninitializedCapacity: needed) { buffer, count in
-            written = slopdesk_video_reassembler_frame_avcc(handle, buffer.baseAddress, buffer.count)
-            count = Swift.min(written, buffer.count)
+        var avcc = Data(count: needed)
+        let written = avcc.withUnsafeMutableBytes { buffer in
+            slopdesk_video_reassembler_frame_avcc(
+                handle,
+                buffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                buffer.count,
+            )
         }
         let flags = slopdesk_video_reassembler_frame_flags(handle)
         return ReassembledFrame(
             frameID: slopdesk_video_reassembler_frame_id(handle),
             keyframe: flags & Self.frameKeyframe != 0,
             crisp: flags & Self.frameCrisp != 0,
-            avcc: written == needed ? Data(avcc) : Data(),
+            avcc: written == needed ? avcc : Data(),
             recoveredViaFEC: flags & Self.frameRecoveredViaFEC != 0,
             isLTR: flags & Self.frameIsLTR != 0,
             ackedAnchored: flags & Self.frameAckedAnchored != 0,

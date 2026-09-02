@@ -47,6 +47,13 @@ import UIKit
 ///   cadence (avg hold ≈ 4.2 ms); `SLOPDESK_TICK_HZ` overrides the resolved rate. Steady 60 fps
 ///   content never reaches the re-prime threshold (underflowRun oscillates 0↔1, occasionally 2 —
 ///   a depth-1 re-prime is satisfied by the very next arrival, no hold).
+/// - CONTENT SLOTS ABOVE DEPTH 1: the queue knows the tick-to-content ratio (`ticks_per_frame`,
+///   the floor of ``maxFrameRate`` over the content fps, rebased by ``setContentFps(_:)``) and at
+///   any depth ≥ 2 hands a frame out once per that many ticks, answering `SLOPDESK_PRESENT_HOLD`
+///   on the ticks between. Without it a 120 Hz tick presents the slack frame on the very next
+///   tick (frames in pairs 8 ms apart, then a 58 ms hole at 30 fps) and the empty ticks between
+///   arrivals read as starvation, so depth 2 was judder rather than slack. The underflow run and
+///   the re-prime floor count empty SLOTS. Depth 1 is untouched: every tick is a slot there.
 ///
 /// The queue policy is pure and unit-testable; the `CADisplayLink` wiring is GUI-only.
 /// Trade-off: ~``targetDepth`` frames of added latency (≈targetDepth/fps s) for smoothness,
@@ -288,6 +295,7 @@ public final class FramePacer: @unchecked Sendable {
         record = slopdesk_present_queue_new(
             UInt32(clamping: targetDepth),
             UInt32(clamping: max(targetDepth, maxDepth)),
+            slopdesk_present_ticks_per_frame(maxFrameRate, contentFps),
         )
         let clampedTarget = Int(record.live_depth)
         let clampedMax = Int(record.max_depth)
@@ -509,13 +517,35 @@ public final class FramePacer: @unchecked Sendable {
     /// throttles and aggregate render rate stays ≤ ``maxFrameRate``. Racing link tick already
     /// drained the queue? `frameForVSync` degrades to a re-show of the last frame — a visual no-op.
     private func presentNow() {
-        lastRenderHostTime = Self.currentHostTimeSeconds()
+        let now = Self.currentHostTimeSeconds()
+        // Under a vsync-LOCKED present the compositor holds a presented drawable until its refresh,
+        // and the layer has two: a third `nextDrawable()` inside one refresh blocks MAIN — the
+        // thread that dispatches every key and pointer event — until the next vsync. A second
+        // arrival inside half an interval is therefore left for the tick, which presents it at the
+        // next refresh, exactly where vsync would have put it. The unlocked default never blocks
+        // here and keeps its present-on-arrival.
+        if Self.presentIsVsyncLocked, now - lastRenderHostTime < 0.5 / maxFrameRate {
+            needsRedisplay = true
+            return
+        }
+        lastRenderHostTime = now
         if let frame = frameForVSync(), frame !== lastRenderedFrame || needsRedisplay {
             lastRenderedFrame = frame
             needsRedisplay = false
             renderCallback(frame)
         }
     }
+
+    /// Whether a present waits for the panel's refresh: always on iOS, and on macOS only under
+    /// `SLOPDESK_VSYNC=1` — the same reading `MetalVideoRenderer` makes when it decides
+    /// `displaySyncEnabled`, resolved once because neither changes while the app runs.
+    private static let presentIsVsyncLocked: Bool = {
+        #if os(macOS)
+        EnvConfig.string("SLOPDESK_VSYNC") == "1"
+        #else
+        true
+        #endif
+    }()
 
     /// Forces the next tick/present to render even if the frame object is unchanged. Call on
     /// layout/scale changes (the layer geometry changed under the same content). ⚠️ Main-confined
@@ -534,6 +564,12 @@ public final class FramePacer: @unchecked Sendable {
     public func setContentFps(_ fps: Double) {
         lock.lock()
         contentIntervalSec = 1.0 / max(1.0, fps)
+        // The queue's own slot ratio follows the announced cadence: a host stepped 60→30 by the
+        // encode-load pacer doubles the ticks a depth-2 slack frame is held for, or it is handed
+        // out on the next tick and the slack is gone.
+        record = withUnsafePointer(to: record) {
+            slopdesk_present_queue_set_ticks_per_frame($0, slopdesk_present_ticks_per_frame(maxFrameRate, fps))
+        }
         if adaptiveJitter, let c = controller {
             controller = AdaptiveJitterController(
                 minDepth: 1,
@@ -659,6 +695,10 @@ public final class FramePacer: @unchecked Sendable {
             // long idle gap becomes a huge inter-arrival → a spurious 2nd-difference spike on resume
             // → the buffer inflates on every stop→scroll, defeating the latency reclaim.
             if step.re_primed, adaptiveJitter { jitter = OWDJitterEstimator() }
+            return lastShownFrame
+        case SLOPDESK_PRESENT_HOLD:
+            // A tick between two content slots on a panel faster than the content: the slack frame
+            // keeps waiting for its slot. Not a re-show for the telemetry — the queue is not empty.
             return lastShownFrame
         default:
             // Priming: hold (re-show last, nil before the first decode) while the slack is built.

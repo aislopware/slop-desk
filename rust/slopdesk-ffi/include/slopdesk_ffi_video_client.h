@@ -495,6 +495,11 @@ void slopdesk_audio_player_stop(SlopDeskAudioPlayer *handle);
  * frame and every underrun, and re-priming that often would hold the picture where the user can see
  * it. The two controllers are mutually exclusive upstream, so the two doors never both apply.
  *
+ * THE TICK RATIO CROSSES WITH THE QUEUE. The link ticks at the panel's rate and the content arrives
+ * at the host's; every law that counts refreshes counts CONTENT SLOTS, one per ticks_per_frame
+ * ticks, at any depth above one. A between-slot tick answers SLOPDESK_PRESENT_HOLD — the last frame
+ * again, the slack kept, and not a hitch for the telemetry. A streamCadence rebase is one door.
+ *
  * There is no equality door here either, for the reason the decode sequencer has none: nothing on
  * the Swift side compares two queues.
  * ---------------------------------------------------------------------------- */
@@ -502,6 +507,7 @@ void slopdesk_audio_player_stop(SlopDeskAudioPlayer *handle);
 #define SLOPDESK_PRESENT_PRIMING 0u  /* still filling — re-show last_shown, if any */
 #define SLOPDESK_PRESENT_PRESENT 1u  /* put `frame` on screen */
 #define SLOPDESK_PRESENT_RESHOW  2u  /* the producer fell behind — re-show last_shown */
+#define SLOPDESK_PRESENT_HOLD    3u  /* between two content slots — re-show last_shown, keep the slack */
 
 /* The deepest queue any configuration may ask for, which the crossing is sized for exactly. */
 #define SLOPDESK_PRESENT_QUEUE_CAPACITY 16
@@ -517,7 +523,9 @@ typedef struct {
   uint64_t last_shown;   /* live only when has_last_shown */
   uint32_t max_depth;
   uint32_t live_depth;
-  uint32_t underflow_run;
+  uint32_t underflow_run;   /* consecutive empty content slots */
+  uint32_t ticks_per_frame; /* display ticks one content frame spans */
+  uint32_t ticks_since_slot;
   bool     has_last_shown;
   bool     primed;
 } SlopDeskPresentQueue;
@@ -754,7 +762,11 @@ bool                    slopdesk_swipe_slow_required_travel(double duration, dou
                                                             double slow_relaxed_travel, double *out);
 
 
-SlopDeskPresentQueue slopdesk_present_queue_new(uint32_t live_depth, uint32_t max_depth);
+SlopDeskPresentQueue slopdesk_present_queue_new(uint32_t live_depth, uint32_t max_depth,
+                                                uint32_t ticks_per_frame);
+uint32_t             slopdesk_present_ticks_per_frame(double tick_hz, double content_fps);
+SlopDeskPresentQueue slopdesk_present_queue_set_ticks_per_frame(const SlopDeskPresentQueue *queue,
+                                                                uint32_t ticks_per_frame);
 SlopDeskPresentQueue slopdesk_present_queue_set_live_depth(const SlopDeskPresentQueue *queue,
                                                            uint32_t depth);
 SlopDeskPresentQueue slopdesk_present_queue_adopt_live_depth(const SlopDeskPresentQueue *queue,
