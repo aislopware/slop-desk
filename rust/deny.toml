@@ -1,0 +1,56 @@
+# cargo-deny policy for EVERY Rust workspace under rust/ — one file, reached with
+# `--config rust/deny.toml` by `just lint-deps` (which is what `just check` runs). Keep it here
+# rather than per workspace: 78 copies would drift the way 78 lint tables did before
+# `lint-floor-agrees` (docs/70 §2.1). What each section ratchets is written next to it;
+# `docs/69-dependency-currency.md` is the audit this policy encodes.
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec: every advisory is a failure, a yanked crate is a failure, and an unmaintained crate is
+# a failure when it is one of OURS to replace — a transitive one is upstream's to move off.
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Permissive only. Anything copyleft or unlisted fails here and is added by hand, with the reason,
+# never by widening this list to make a build green.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # `webpki-roots` (under `ureq`, `slopdesk-provision`): Mozilla's CA bundle as data. A permissive
+    # DATA licence — attribution, no copyleft — and the only non-code licence in the tree.
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+exceptions = []
+# One shared file over 78 workspaces: each sees a subset of the list, so "allowed but never
+# encountered" is the expected shape here, not drift.
+unused-allowed-license = "allow"
+
+[bans]
+# Duplicate versions are `docs/69`'s call, not this file's: the manifests allow
+# `clippy::multiple_crate_versions` and the audit re-derives the graph. Wildcards are a different
+# thing — a `*` requirement is a dependency nobody chose.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = []
+
+[sources]
+# crates.io and the one git pin the tree owns. `required-git-spec = "rev"` is what keeps that pin a
+# pin: a branch or tag would move underneath `docs/69` without a diff.
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/aislopware/libghostty-rs"]

@@ -14,7 +14,7 @@ Read `docs/69-dependency-currency.md` for the pins — nothing here re-derives t
 | --- | --- |
 | Lint policy | every `rust/*/Cargo.toml` diffed against the root's `[workspace.lints]` tables; clippy `all`+`pedantic`+`nursery`+`cargo`+restriction swept per crate with `-D warnings` |
 | Toolchains | rustc 1.98.0 · Swift 6.3.3 (tools 6.3) · swiftformat 0.63.0 · swiftlint 0.65.1 · nightly rustfmt (floating, never dated) |
-| Dependencies | `cargo audit` over all 78 lock files: 0 advisories. `cargo machete` per crate. `cargo-deny` is installed but unconfigured (no `deny.toml`) — out of scope here; the licence/ban policy it would encode is a decision, not a finding |
+| Dependencies | `cargo audit` over all 78 lock files: 0 advisories. `cargo machete` per crate. `cargo-deny` was installed and unconfigured; it is `just lint-deps` now, under `rust/deny.toml`, inside `just check` (§2.1, `docs/46`) |
 | Daemons | superd, hostserver, screend/screenclient, dropd, inspectord, hostsession, ctl, hook — accept loops, thread spawn failure, socket timeouts, unbounded queues, lock ordering |
 | Wire and video | decoders for hostile counts, packetizer/reassembler bounds, per-fragment allocation, FEC ranks, retransmit ring, backpressure |
 | Apple crates | `Drop` completeness, retain/release order, main-thread hops |
@@ -48,6 +48,11 @@ touched was re-gated with `cargo +nightly fmt`, `cargo clippy --all-targets -- -
   `measure-g2g.sh`); they name the `just` recipe that replaced each.
 - `SlopDeskClient` depended on `CSlopDeskFFI` without `linkerSettings: ffiCLibraries` — it linked
   on another target's flags. Fixed, and `ffi-dependents-link-the-frameworks` ratchets it (§4).
+- **`cargo-deny` is a gate.** `rust/deny.toml` — RustSec advisories and yanked crates, a
+  permissive-only licence list (the one addition is `CDLA-Permissive-2.0`, the Mozilla CA bundle
+  under `ureq`), no `*` requirements, crates.io plus the one `rev`-pinned git source — runs over
+  every workspace as `just lint-deps` inside `just check`, 8 s with the advisory fetch hoisted
+  out of the fan-out. `slopdesk-provision` was the one crate with no `license` field.
 
 ### 2.2 Daemons
 

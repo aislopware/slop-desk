@@ -8,6 +8,12 @@ re-derive.
 Read `docs/46-gates-env-paths.md` for the pins' gates, `docs/68` §4 for what the two ghostty pins
 are, and `ThirdParty/tools/tools.lock`'s own header for what the tool lock is for.
 
+Since 2026-09-02 the policy this audit reached is a gate: `just lint-deps` runs `cargo deny` under
+`rust/deny.toml` over every workspace — advisories, yanked crates, the licence allow list, no `*`
+requirements, crates.io plus the one `rev`-pinned git source — inside `just check` (`docs/46`).
+Currency itself is still §4's by-hand comparison: cargo-deny says whether a version is SAFE and
+LICENSED, not whether it is the latest.
+
 ## 1. What was checked, and how
 
 Registry latest came from deps.dev, not from memory — a model's idea of "the latest version" is a

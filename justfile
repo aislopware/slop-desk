@@ -341,6 +341,16 @@ lint-rust: lint-rust-clippy
     @printf '%s\n' {{RUST_WORKSPACES}} | xargs -P 8 -I{} sh -c \
       'cd {} || exit 1; out=$(cargo +nightly fmt --all -- --check 2>&1) || { printf "── {} ──\n%s\n" "$out" >&2; exit 1; }'
 
+# cargo-deny under `rust/deny.toml`, every workspace RUST_WORKSPACES names: RustSec advisories and
+# yanked crates, the permissive-licence allow list, no `*` requirements, and crates.io plus the one
+# `rev`-pinned git source. The advisory database is fetched ONCE, then the sweep runs `--offline`
+# — 78 refreshes in parallel is what made the first run a minute and a half. In `check`, not `quick`:
+# a dependency changes at a `Cargo.toml` edit, not at every one (`docs/69`).
+lint-deps:
+    @cargo deny --manifest-path rust/Cargo.toml fetch
+    @printf '%s\n' {{RUST_WORKSPACES}} | xargs -P 8 -I{} sh -c \
+      'out=$(cargo deny --offline --manifest-path {}/Cargo.toml --config rust/deny.toml check 2>&1) || { printf "── {} ──\n%s\n" "$out" >&2; exit 1; }'
+
 # Split out because the pre-commit hook wants clippy WITHOUT the `fmt --check`: prek runs hooks in
 # parallel, and the `rustfmt (apply)` hook is rewriting the very files a `--check` would be reading.
 
@@ -399,7 +409,7 @@ lint-swift-analyze:
 # Full gate
 
 # lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
-check: lint build test miri golden check-ios check-ios-bundle check-macos-apps
+check: lint lint-deps build test miri golden check-ios check-ios-bundle check-macos-apps
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
 #
