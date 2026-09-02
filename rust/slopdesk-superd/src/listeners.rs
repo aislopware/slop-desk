@@ -236,10 +236,33 @@ fn bind_one(path: &std::path::Path, kind: &'static str) -> Option<UnixListener> 
     Some(listener)
 }
 
+/// How long an accept loop rests after a transient `accept(2)` failure before asking again.
+///
+/// Long enough that a process at its descriptor ceiling is not spinning on `EMFILE`, short enough
+/// that a hook whose connection was aborted under it is not waiting on a human timescale.
+pub(crate) const ACCEPT_RETRY_REST: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Whether an `accept(2)` failure is one the loop should retry rather than end on.
+///
+/// `EMFILE`/`ENFILE` are the process or the system at its descriptor ceiling — on a superd that is
+/// a machine with many panes, each holding a master and its sockets, and the ceiling clears when
+/// any of them closes. `ECONNABORTED` is one peer that went away between `listen` and `accept`, and
+/// `ENOBUFS` is a moment of kernel memory pressure. None of them says anything about the LISTENER,
+/// which is the only thing whose failure should end the loop: a daemon holding every live pane's
+/// master must not exit — and `SIGHUP` every shell on the machine — because one `accept` hit a
+/// ceiling somebody else's descriptors filled.
+pub(crate) fn accept_should_retry(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ECONNABORTED | libc::ENOBUFS)
+    ) || error.kind() == std::io::ErrorKind::ConnectionAborted
+}
+
 /// Accepts forever, handing each connection straight to `deliver`.
 ///
-/// Never returns under normal operation. An `accept` failure that is not `EINTR` ends the thread —
-/// the listener is gone, and the kind stops being served — rather than spinning on the same errno.
+/// Never returns under normal operation. An `accept` failure that is not `EINTR` and not one of
+/// [`accept_should_retry`]'s ends the thread — the listener is gone, and the kind stops being
+/// served — rather than spinning on the same errno.
 fn accept_loop(
     listener: &UnixListener,
     kind: &'static str,
@@ -255,6 +278,10 @@ fn accept_loop(
             },
             // A signal interrupted the wait — go round again rather than treat it as the end.
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
+            Err(error) if accept_should_retry(&error) => {
+                eprintln!("superd: the {kind} accept failed transiently, retrying: {error}");
+                std::thread::sleep(ACCEPT_RETRY_REST);
+            },
             Err(error) => {
                 eprintln!("superd: the {kind} accept loop ended: {error}");
                 return;

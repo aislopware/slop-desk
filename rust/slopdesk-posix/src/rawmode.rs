@@ -309,8 +309,12 @@ fn restore_from_signal_handler() {
 /// pointer.
 fn publish_to_handler(attributes: libc::termios, terminal: RawFd) {
     // Leaked on purpose: the handler may run at any instant until the process ends, so there is no
-    // moment at which freeing this would be safe. One `termios` per entry into raw mode, and a
-    // process enters once.
+    // moment at which freeing this would be safe. One `termios` per entry into raw mode. Nothing
+    // here enforces a single entry, and it does not need to: a second entry leaks a second
+    // 72-byte `termios` rather than reusing the first, because the handler may still be reading
+    // the first — a restore that lost the `ACTIVE` swap to the handler returns while `tcsetattr`
+    // is mid-read — and overwriting it under that read is the race a fresh allocation avoids. The
+    // one caller enters once per process; a caller that enters `n` times pays `n` allocations.
     let published: &'static mut libc::termios = Box::leak(Box::new(attributes));
     SIGNAL_ATTRIBUTES.store(published, Ordering::Release);
     SIGNAL_TERMINAL.store(terminal, Ordering::Release);

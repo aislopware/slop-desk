@@ -298,7 +298,22 @@ impl Server {
     pub fn serve_children(self: &Arc<Self>, listeners: ChildListeners) {
         let server = Arc::clone(self);
         let deliver: ConnectionDeliverer = Arc::new(move |kind, stream: UnixStream| {
-            server.hand_over(kind, &stream);
+            // OFF the accept thread. The hand-over is a `sendmsg` to the claiming hostd's control
+            // socket, and that write blocks for as long as a hostd that has stopped draining keeps
+            // its receive buffer full. The accept thread is shared by every hostd's hooks of this
+            // kind, so a synchronous hand-over would let one wedged hostd stall the hook — and the
+            // agent behind it — of every healthy one. A thread per connection costs a spawn per
+            // hook, which is nothing beside the fork the hook already is. A refused spawn is an
+            // exhausted process, and the connection closes with it: the hook reads that as `EPIPE`
+            // and no-ops, which is the outcome its contract promises for a host it cannot reach.
+            let server = Arc::clone(&server);
+            let spawned = std::thread::Builder::new()
+                .name(format!("superd-handover-{kind}"))
+                .spawn(move || server.hand_over(kind, &stream));
+            match spawned {
+                Ok(handle) => drop(handle),
+                Err(error) => eprintln!("superd: could not spawn a {kind} hand-over thread: {error}"),
+            }
         });
         listeners.serve(&deliver);
     }
@@ -362,7 +377,9 @@ impl Server {
     ///
     /// # Errors
     /// Only a listener-level failure. A single connection failing is logged and dropped — one bad
-    /// client must not take down a daemon holding live panes.
+    /// client must not take down a daemon holding live panes — and so is a transient `accept`
+    /// failure ([`listeners::accept_should_retry`]): a descriptor ceiling is not the listener's
+    /// fault, and returning on it would `SIGHUP` every shell on the machine.
     pub fn serve(self: &Arc<Self>, listener: &UnixListener) -> io::Result<()> {
         eprintln!(
             "superd: listening on {} (protocol {VERSION_MAJOR}.{VERSION_MINOR}, pid {})",
@@ -373,6 +390,11 @@ impl Server {
             let stream = match listener.accept() {
                 Ok((stream, _address)) => stream,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if listeners::accept_should_retry(&error) => {
+                    eprintln!("superd: control accept failed transiently, retrying: {error}");
+                    std::thread::sleep(listeners::ACCEPT_RETRY_REST);
+                    continue;
+                },
                 Err(error) => return Err(error),
             };
             // A hostd's control connection lives as long as that hostd, i.e. across every pane it

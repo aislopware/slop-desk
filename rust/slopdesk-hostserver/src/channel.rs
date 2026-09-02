@@ -59,7 +59,7 @@
 
 use core::fmt;
 use core::time::Duration;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 
 use slopdesk_hostsession::{SessionObserver, StatusObserver};
@@ -141,12 +141,25 @@ pub struct Threads;
 
 impl Offload for Threads {
     fn run(&self, work: Box<dyn FnOnce() + Send>) {
-        match thread::Builder::new()
+        // `spawn` takes the closure by value and keeps it on failure, so the inline fallback the
+        // type promises needs the work to sit somewhere BOTH outcomes can reach: the thread takes
+        // it out of the slot when it starts, and a refused spawn finds it still there.
+        let slot = Arc::new(Mutex::new(Some(work)));
+        let on_thread = Arc::clone(&slot);
+        let spawned = thread::Builder::new()
             .name(String::from("slopdesk-open"))
-            .spawn(work)
-        {
+            .spawn(move || {
+                if let Some(work) = on_thread.lock().ok().and_then(|mut held| held.take()) {
+                    work();
+                }
+            });
+        match spawned {
             Ok(handle) => drop(handle),
-            Err(_refused) => {},
+            Err(_refused) => {
+                if let Some(work) = slot.lock().ok().and_then(|mut held| held.take()) {
+                    work();
+                }
+            },
         }
     }
 

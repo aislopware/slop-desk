@@ -571,8 +571,20 @@ impl ScreenClient {
 /// its to set anyway. `slopdesk-androidd/src/net.rs` records the same disappearance for the same
 /// reason.
 fn dial(path: &Path) -> Option<std::os::unix::net::UnixStream> {
-    std::os::unix::net::UnixStream::connect(path).ok()
+    let stream = std::os::unix::net::UnixStream::connect(path).ok()?;
+    // Bounded, because the caller is a pane's detection thread and the pane's TEARDOWN joins that
+    // thread: the stop flag it parks on cannot reach a `read_exact` blocked inside a screend that
+    // has wedged, so without a bound the pane's descriptors and thread would outlive the tab that
+    // closed it for as long as the daemon runs. A round trip is a socket write and a parse of the
+    // bytes it carried, milliseconds at the largest burst; the bound reads as a transport failure,
+    // which [`ScreenClient::exchange`] already answers with one fresh-connection retry.
+    let _best_effort = stream.set_read_timeout(Some(EXCHANGE_TIMEOUT));
+    let _best_effort = stream.set_write_timeout(Some(EXCHANGE_TIMEOUT));
+    Some(stream)
 }
+
+/// The most one screend round trip may take before it reads as a lost transport.
+const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Where a started screend's stdout and stderr go.
 ///

@@ -180,6 +180,20 @@ impl Timers {
         if held.is_some() {
             return;
         }
+        // Re-read under the handle lock, because `arm` checked `stopped` under the TABLE lock and
+        // released it before arriving here. A `stop` between the two has already taken the handle
+        // slot (`None`) and gone; a thread spawned now would be one nobody joins. Holding the
+        // handle lock across this check and the spawn means `stop` either sees `stopped` set before
+        // this reads it, or finds the handle and joins it.
+        if self
+            .state
+            .table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopped
+        {
+            return;
+        }
         let state = Arc::clone(&self.state);
         // A refused spawn leaves `thread` as `None`, so the next arm tries again — and until one
         // succeeds the pending actions simply do not fire, which for a resize means the pane keeps

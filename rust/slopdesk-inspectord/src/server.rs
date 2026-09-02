@@ -200,6 +200,11 @@ fn serve(stream: &TcpStream, log: &Arc<ReplayLog>, keep_alive: Duration) {
                         let Ok(pump_stream) = stream.try_clone() else {
                             break;
                         };
+                        // A peer that stops READING but never closes leaves `write_all` parked on
+                        // a full send buffer, past the keep-alive that would otherwise notice it
+                        // gone. Bounded, the park reads as a failed write and the pump detaches —
+                        // no keep-alive interval is anywhere near this long.
+                        let _best_effort = pump_stream.set_write_timeout(Some(PUMP_WRITE_TIMEOUT));
                         writer = thread::Builder::new()
                             .name("inspectord-pump".to_owned())
                             .spawn(move || {
@@ -236,6 +241,9 @@ fn serve(stream: &TcpStream, log: &Arc<ReplayLog>, keep_alive: Duration) {
         drop(writer.join());
     }
 }
+
+/// The most one event write may block on a subscriber before that subscriber reads as gone.
+const PUMP_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Pumps replay-then-live events to one client, with a keep-alive on every idle interval.
 fn pump(stream: &TcpStream, subscription: &Subscription, log: &Arc<ReplayLog>, keep_alive: Duration) {

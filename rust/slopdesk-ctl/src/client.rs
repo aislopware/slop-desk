@@ -38,8 +38,17 @@ pub fn connect(socket_path: &str) -> Result<UnixStream, String> {
     if socket_path.len() > MAX_SOCKET_PATH {
         return Err(format!("socket path too long: {socket_path}"));
     }
-    UnixStream::connect(socket_path).map_err(|err| format!("connect '{socket_path}': {err}"))
+    let stream = UnixStream::connect(socket_path).map_err(|err| format!("connect '{socket_path}': {err}"))?;
+    // The WRITE only. A request is one line, and a host that will not take one line in this long
+    // is wedged — better reported to the agent than waited on through its turn. Reads stay
+    // unbounded on purpose: `wait` and `subscribe` are open-ended by contract, and a read deadline
+    // would end them at an arbitrary moment. Same bound the hook relay puts on its record.
+    let _best_effort = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+    Ok(stream)
 }
+
+/// How long the one-line request may take to leave before the host reads as wedged.
+const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Sends `request_line` (an LF is appended when missing) and reads back one response line, with the
 /// trailing LF removed.

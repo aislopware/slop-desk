@@ -78,6 +78,9 @@ pub fn announce_line(port: u16, drop_dir: &Path) -> String {
     )
 }
 
+/// How long one connection may go without a byte in either direction before it is dropped.
+const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Accepts connections until the process is killed.
 ///
 /// # Errors
@@ -111,6 +114,12 @@ fn handle_connection(stream: TcpStream, drop_dir: PathBuf) {
     if let Err(error) = stream.set_nodelay(true) {
         eprintln!("dropd: cannot set TCP_NODELAY: {error}");
     }
+    // A client that offered a file and then went quiet — a phone that locked, a mesh that dropped
+    // without a FIN — would otherwise park this thread in `read_exact` and hold its temp file open
+    // for the daemon's whole life. Chunks are 256 KiB and arrive back to back; a minute of silence
+    // between two of them is a transfer that is not coming back.
+    let _best_effort = stream.set_read_timeout(Some(IDLE_TIMEOUT));
+    let _best_effort = stream.set_write_timeout(Some(IDLE_TIMEOUT));
     let Ok(read_half) = stream.try_clone() else {
         return;
     };

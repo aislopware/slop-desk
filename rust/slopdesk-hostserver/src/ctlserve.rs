@@ -204,15 +204,43 @@ struct SubscribeRequest {
 // The pump's wakeup
 // ---------------------------------------------------------------------------------------------- //
 
+/// The most bytes of not-yet-written lines one subscription holds for a subscriber that has
+/// stopped reading.
+///
+/// The pump writes to the client with a blocking `write_all`, so a client that reads slowly — or
+/// not at all — leaves every chunk the pane produces meanwhile queued here, and a pane running
+/// `cat` over a large file produces them faster than any reader drains. Past this the OLDEST lines
+/// go: the subscriber is an agent reading text, and text it will read a minute late is worth less
+/// than the host's memory. The inbound side of the same socket caps at [`MAX_REQUEST_BYTES`] for
+/// the same reason.
+const MAX_QUEUED_BYTES: usize = 8 * 1024 * 1024;
+
 /// Lines an observer has produced and the pump has not yet written.
 #[derive(Debug, Default)]
 struct Queue {
-    lines: Vec<Vec<u8>>,
+    lines: std::collections::VecDeque<Vec<u8>>,
+    /// The bytes in `lines`, kept beside it so the cap is a comparison rather than a walk.
+    queued_bytes: usize,
     /// Set by the close tap when the pane exits. Distinct from a client disconnect, and the
     /// distinction decides whether a final `closed` event is written at all.
     pane_closed: bool,
     /// `paneId` → the last `(state, presence)` written for it, for the cross-pane mode's dedupe.
     last_by_pane: std::collections::BTreeMap<String, String>,
+}
+
+impl Queue {
+    /// Appends one line, evicting the oldest past [`MAX_QUEUED_BYTES`]. The ONE way a line gets
+    /// in, so the byte count beside the deque cannot drift from it.
+    fn push(&mut self, line: Vec<u8>) {
+        self.queued_bytes = self.queued_bytes.saturating_add(line.len());
+        self.lines.push_back(line);
+        while self.queued_bytes > MAX_QUEUED_BYTES {
+            let Some(oldest) = self.lines.pop_front() else {
+                break;
+            };
+            self.queued_bytes = self.queued_bytes.saturating_sub(oldest.len());
+        }
+    }
 }
 
 /// The pump's wakeup: a pipe whose write end an observer thread pokes and whose read end the pump
@@ -279,7 +307,7 @@ impl Subscription {
         if queue.pane_closed {
             return;
         }
-        queue.lines.push(line);
+        queue.push(line);
         drop(queue);
         self.wakeup.poke();
     }
@@ -295,7 +323,8 @@ impl Subscription {
     /// Takes everything pending, and whether the pane has closed.
     fn drain(&self) -> (Vec<Vec<u8>>, bool) {
         let mut queue = self.queue.lock().unwrap_or_else(PoisonError::into_inner);
-        (std::mem::take(&mut queue.lines), queue.pane_closed)
+        queue.queued_bytes = 0;
+        (std::mem::take(&mut queue.lines).into(), queue.pane_closed)
     }
 }
 
@@ -433,7 +462,7 @@ impl AgentStatusTap for StatusPump {
             return;
         }
         queue.last_by_pane.insert(event.pane_id.clone(), key);
-        queue.lines.push(
+        queue.push(
             encode_line(&json!({
                 "type": "agent_status_changed",
                 "paneId": event.pane_id,
