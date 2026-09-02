@@ -402,6 +402,22 @@ impl Host {
         })
     }
 
+    /// Acks the current open by hand, on the CONTROL lane, with the resume seq a host would name.
+    ///
+    /// For a suite whose whole subject is what lands BEFORE the ack: paired with
+    /// `OpenPolicy::Ignore`, the test decides when the verdict goes out, and `send_output` can
+    /// run ahead of it on the DATA lane the way a host's drain does.
+    pub fn ack(&self, resume_from_seq: i64) {
+        let channel = self.channel_id(self.opens().len().saturating_sub(1));
+        self.locked(|inner| {
+            inner.control.send(&MuxFrame::ChannelOpenAck {
+                channel_id: channel,
+                accepted: true,
+                resume_from_seq,
+            });
+        });
+    }
+
     /// Closes the current channel from the host's side, with the reason it names.
     pub fn close_channel(&self, reason: MuxCloseReason) {
         let channel = self.channel_id(self.opens().len().saturating_sub(1));
@@ -490,7 +506,9 @@ struct Kept {
 /// A pool whose dialler hands the test the far end of everything it builds.
 pub struct Harness {
     pub registry: Arc<ConnectionRegistry>,
-    hosts: Arc<Mutex<Vec<Arc<Host>>>>,
+    /// Every far end the dialler built so far, in dial order. Public so a suite can reach the host
+    /// of a dial that is still inside `connect()`.
+    pub hosts: Arc<Mutex<Vec<Arc<Host>>>>,
     pumps: Arc<Mutex<Vec<JoinHandle<()>>>>,
     stops: Arc<Mutex<Vec<Arc<Host>>>>,
     plan: Arc<Mutex<Plan>>,

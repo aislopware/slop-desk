@@ -131,6 +131,8 @@ pub struct Ghost {
     ended: AtomicBool,
     // ----------------------------------------------------------------------------- the channels
     starts: AtomicUsize,
+    /// Where a start is written when a suite is asserting ORDER against the peer's acks.
+    journal: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
     seeded: Mutex<Vec<String>>,
     next_subscriber: AtomicU64,
     /// Every `join` asked for, and the verdict this pane will give.
@@ -170,6 +172,11 @@ pub struct Ghost {
 }
 
 impl Ghost {
+    /// Writes every later `start` into `journal`, beside whatever else the suite journals there.
+    pub fn journal_to(&self, journal: &Arc<Mutex<Vec<String>>>) {
+        *self.journal.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(journal));
+    }
+
     /// A live pane serving conversation `id`, with a fresh object identity.
     #[must_use]
     pub fn new(id: Uuid) -> Arc<Self> {
@@ -203,6 +210,7 @@ impl Ghost {
             block_taps: Registered::default(),
             ended: AtomicBool::new(false),
             starts: AtomicUsize::new(0),
+            journal: Mutex::new(None),
             seeded: Mutex::new(Vec::new()),
             // 1, so a reservation is never mistaken for the PRIMARY the registry spells `0`.
             next_subscriber: AtomicU64::new(1),
@@ -709,6 +717,17 @@ impl Pane for Ghost {
 
     fn start(&self) {
         self.starts.fetch_add(1, Ordering::SeqCst);
+        if let Some(journal) = self
+            .journal
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            journal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(String::from("start"));
+        }
     }
 
     fn seed_project(&self, cwd: &str) {

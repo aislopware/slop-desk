@@ -132,7 +132,13 @@ impl OutputRing {
     pub fn read_from(&self, offset: u64) -> Resume {
         let start = offset.max(self.base).min(self.head());
         let skip = usize::try_from(start.saturating_sub(self.base)).unwrap_or(usize::MAX);
-        let bytes = self.bytes.iter().skip(skip).copied().collect();
+        // Two memcpys rather than a byte-at-a-time walk: this runs under the ring lock on every
+        // subscribe, and a pump blocked behind a 4 MiB iterator is a pane that stops flowing while
+        // a hostd adopts it.
+        let (front, back) = self.bytes.as_slices();
+        let mut bytes = Vec::with_capacity(self.bytes.len().saturating_sub(skip));
+        bytes.extend_from_slice(front.get(skip..).unwrap_or_default());
+        bytes.extend_from_slice(back.get(skip.saturating_sub(front.len())..).unwrap_or_default());
         Resume {
             start,
             head: self.head(),
@@ -231,6 +237,20 @@ mod tests {
         ring.append(b"abcdef");
         assert_eq!(ring.head(), 6);
         assert!(ring.read_from(0).is_lossy(0));
+    }
+
+    /// The two halves of a wrapped ring come back in order, from any offset, whichever half it
+    /// falls in.
+    #[test]
+    fn a_wrapped_ring_resumes_bit_exactly_from_either_half() {
+        let mut ring = OutputRing::new(8);
+        ring.append(b"01234567");
+        ring.append(b"89ab");
+        assert_eq!(ring.base(), 4);
+        assert_eq!(ring.read_from(4).bytes, b"456789ab");
+        assert_eq!(ring.read_from(6).bytes, b"6789ab");
+        assert_eq!(ring.read_from(9).bytes, b"9ab");
+        assert_eq!(ring.read_from(12).bytes, b"");
     }
 
     #[test]

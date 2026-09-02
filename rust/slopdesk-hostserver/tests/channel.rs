@@ -49,6 +49,8 @@ mod suite {
     struct Wire {
         connection: Uuid,
         acks: Mutex<Vec<(u32, bool, i64)>>,
+        /// Where an ack is written when a suite is asserting ORDER against the pane's starts.
+        journal: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
     }
 
     impl Wire {
@@ -58,11 +60,17 @@ mod suite {
             Arc::new(Self {
                 connection: id,
                 acks: Mutex::new(Vec::new()),
+                journal: Mutex::new(None),
             })
         }
 
         fn acks(&self) -> Vec<(u32, bool, i64)> {
             self.acks.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        }
+
+        /// Writes every later ack into `journal`, beside the starts a journaled fork writes.
+        fn journals(&self, journal: &Arc<Mutex<Vec<String>>>) {
+            *self.journal.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(journal));
         }
     }
 
@@ -76,6 +84,17 @@ mod suite {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push((channel, accepted, resume_from));
+            if let Some(journal) = self
+                .journal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+            {
+                journal
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(String::from("ack"));
+            }
         }
 
         // This suite is the OPEN ladder, which never sends either close verb. `tests/lifecycle.rs`
@@ -280,6 +299,8 @@ mod suite {
         made: Mutex<Vec<Arc<Ghost>>>,
         refuse: Mutex<Option<SpawnRefused>>,
         during: Mutex<Option<Box<dyn Fn() + Send>>>,
+        /// Handed to every pane this fork makes, so their starts land beside the peer's acks.
+        journal: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
     }
 
     // Hand-written because one field is a closure, and `Spawner` needs `Debug`.
@@ -309,6 +330,11 @@ mod suite {
         /// between the route's stopping check and the insert's.
         fn during(&self, act: impl Fn() + Send + 'static) {
             *self.during.lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(act));
+        }
+
+        /// Journals every start of every pane made from now on.
+        fn journals(&self, journal: &Arc<Mutex<Vec<String>>>) {
+            *self.journal.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(journal));
         }
     }
 
@@ -360,6 +386,14 @@ mod suite {
                 act();
             }
             let pane = Ghost::new(request.session);
+            if let Some(journal) = self
+                .journal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+            {
+                pane.journal_to(journal);
+            }
             self.made
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -493,6 +527,27 @@ mod suite {
             "and filed — the FILE is what a first output byte needs to already have happened"
         );
         assert_eq!(wire.acks(), vec![(3, true, 0)]);
+    }
+
+    /// The start runs the drain, and the drain ships a restored transcript on the data link — the
+    /// same link the ack rides. An ack behind the start can only reach the client behind the first
+    /// frames of the restore, which the client then has to hold against a verdict it has not got.
+    #[test]
+    fn a_fresh_spawn_acks_before_it_starts_the_drain() {
+        let bench = bench();
+        let wire = Wire::on(1);
+        let order = Arc::new(Mutex::new(Vec::new()));
+        wire.journals(&order);
+        bench.fork.journals(&order);
+        bench.host.open_channel(open(3, session(7)), &as_peer(&wire));
+
+        assert_eq!(wire.acks(), vec![(3, true, 0)]);
+        assert_eq!(bench.fork.made()[0].starts(), 1);
+        assert_eq!(
+            *order.lock().unwrap_or_else(PoisonError::into_inner),
+            vec![String::from("ack"), String::from("start")],
+            "the verdict is on the wire before a byte of output can be"
+        );
     }
 
     #[test]

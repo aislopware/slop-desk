@@ -14,6 +14,17 @@
 //! forwarders, and one of them would be the caller. So [`ChannelSink::ended`] posts a command and
 //! returns.
 //!
+//! ## Output that beats its own ack is staged, not folded
+//!
+//! The host's first frames ride the DATA link and the open's verdict rides the CONTROL link, so
+//! nothing orders a restored transcript behind the `channelOpenAck` that tells this session where
+//! its marks stand. A chunk folded before [`crate::driver::PaneDriver::connect`] has adopted the
+//! transport would be folded against the PREVIOUS connection's marks and verdict, credited to no
+//! transport at all, and then have its credit zeroed by the reset the ack brings — which is how a
+//! restore the size of one window used to wedge the pane for good. So a chunk that arrives while
+//! [`State::transport`] is still `None` for its epoch waits in [`State::staged`], and adoption
+//! feeds the whole list through the session in arrival order once the marks are the ack's.
+//!
 //! ## The epoch, which is the whole of what `tearingDownDepth` was
 //!
 //! Every adopted transport is stamped with the epoch its adoption bumped, and its sink carries that
@@ -61,6 +72,17 @@ pub(crate) struct Chunk {
     pub(crate) wire_bytes: usize,
 }
 
+/// One output payload that arrived ahead of its connection's adoption.
+///
+/// Carries its seq because the dedup verdict has NOT been given yet: it is given at adoption,
+/// against the marks the ack settled, and only then does the payload become a [`Chunk`].
+#[derive(Debug)]
+pub(crate) struct Staged {
+    pub(crate) seq: i64,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) wire_bytes: usize,
+}
+
 /// The last window size this session asserted, replayed onto every later connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Resize {
@@ -91,6 +113,9 @@ pub(crate) struct State {
     pub(crate) last_resize: Option<Resize>,
     /// Accepted output the near side has not drained.
     pub(crate) inbox: Vec<Chunk>,
+    /// Output the current dial's transport delivered before the dial adopted it. Emptied into the
+    /// session at adoption, and dropped with the dial when the dial is discarded.
+    pub(crate) staged: Vec<Staged>,
     /// The smoothed application-layer round trip, or `None` until the first pong.
     pub(crate) smoothed_rtt_ms: Option<f64>,
     /// Permanently retired by its owner.
@@ -119,6 +144,7 @@ impl State {
             initial_cwd: None,
             last_resize: None,
             inbox: Vec::new(),
+            staged: Vec::new(),
             smoothed_rtt_ms: None,
             closed: false,
             paused: false,
@@ -289,6 +315,18 @@ fn deliver_output(shared: &Shared, epoch: u64, seq: i64, bytes: &[u8], wire_byte
         if state.epoch != epoch {
             return None;
         }
+        let armed_before = state.session.ack_pending;
+        let Some(transport) = state.transport.clone() else {
+            // The dial that minted this epoch has not adopted its transport yet, so the marks and
+            // the verdict this seq would be folded against are still the previous connection's.
+            // Held back — no wake, no credit — until adoption feeds it (module docs).
+            state.staged.push(Staged {
+                seq,
+                bytes: bytes.to_vec(),
+                wire_bytes,
+            });
+            return None;
+        };
         match state.session.deliver(seq) {
             Delivery::Accepted => {
                 // Append THEN wake, so a wake the near side is already parked on always observes a
@@ -297,18 +335,23 @@ fn deliver_output(shared: &Shared, epoch: u64, seq: i64, bytes: &[u8], wire_byte
                     bytes: bytes.to_vec(),
                     wire_bytes,
                 });
-                Some((None, true))
+                Some((None, true, !armed_before && state.session.ack_pending))
             },
             // Dropped, but still credited: the bytes crossed the wire and were fully processed by
             // being discarded. Withholding the credit leaks window capacity on every replay.
-            Delivery::Duplicate => Some((state.transport.clone(), false)),
+            Delivery::Duplicate => Some((Some(transport), false, false)),
         }
     });
-    let Some((credit, wake)) = outcome.flatten() else {
+    let Some((credit, wake, armed)) = outcome.flatten() else {
         return;
     };
     if let Some(transport) = credit {
         transport.note_output_consumed(wire_bytes);
+    }
+    // The transition, not every delivery: the supervisor's deadline is set by the first arming
+    // and answered by one flush, and a busy stream would otherwise post a command per frame.
+    if armed {
+        drop(shared.commands.send(Command::AckArmed));
     }
     if wake {
         shared.observer.output_ready();

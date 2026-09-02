@@ -828,6 +828,31 @@ fn a_gap_is_logged_and_the_chunk_is_delivered_anyway() {
     wired.shut_down();
 }
 
+/// superd's subscribe seam can ship the chunk that straddles the backlog and the live stream twice.
+/// Offsets are absolute, so the overlap is cut off and the mark never rewinds: the session sees
+/// every byte once, and the chunk after the overlap is not reported as a gap.
+#[test]
+fn an_overlapping_chunk_is_trimmed_and_a_repeated_one_is_dropped() {
+    let wired = Wired::up();
+    let (stream, recorder, ticks) = wired.stream("pane-1", running_stream());
+    wired.superd.output("pane-1", 0, b"abcd");
+    wired.superd.output("pane-1", 2, b"cdef");
+    wired
+        .superd
+        .sniff("pane-1", &[SniffEvent::Title("vim".to_owned())]);
+    wired.superd.output("pane-1", 0, b"abcdef");
+    wired.superd.output("pane-1", 6, b"gh");
+    wait_for(&ticks, 3);
+    assert!(!recorder.said("output gap"));
+    assert_eq!(recorder.transcript(), vec![
+        format!("{:?}", Told::Chunk(b"abcd".to_vec(), 4, 0, 0)),
+        format!("{:?}", Told::Chunk(b"ef".to_vec(), 6, 0, 0)),
+        format!("{:?}", Told::Chunk(b"gh".to_vec(), 8, 0, 0)),
+    ]);
+    drop(stream);
+    wired.shut_down();
+}
+
 /// A pane can finish before its subscription exists — spawn an `ls` and it is reaped while the
 /// reply is still travelling — so that `exited` went out to nobody. The subscribe reply is the only
 /// thing left that knows, and the end must land AFTER the backlog it precedes.

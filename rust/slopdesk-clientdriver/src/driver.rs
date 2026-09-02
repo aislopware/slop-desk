@@ -39,7 +39,7 @@ use slopdesk_clientnet::registry::ConnectionRegistry;
 use slopdesk_clientnet::transport::{ChannelTransport, OpenError};
 use slopdesk_clientsession::backoff::{self, Backoff};
 use slopdesk_clientsession::gates::{self, Refusal};
-use slopdesk_clientsession::seq::{Adoption, ResumeOutcome};
+use slopdesk_clientsession::seq::{Adoption, Delivery, ResumeOutcome};
 use slopdesk_muxnet::connection::OpenRequest;
 use slopdesk_muxnet::subchannel::{ChannelEnd, SendError};
 use slopdesk_wire::WireMessage;
@@ -47,7 +47,7 @@ use slopdesk_wire::mux::MuxCloseReason;
 
 use crate::event::{Event, Observer};
 use crate::reply::Reply;
-use crate::state::{ChannelSink, Resize, Shared};
+use crate::state::{ChannelSink, Chunk, Resize, Shared, State};
 
 /// The identity a RESTORED pane presents so the host reattaches its live shell.
 ///
@@ -171,6 +171,10 @@ pub(crate) enum Command {
         epoch: u64,
         end: ChannelEnd,
     },
+    /// A delivery armed the coalescing ack. Posted once per arming, by whichever thread folded
+    /// the seq, so the supervisor sleeps until it has something to say rather than waking every
+    /// interval to find it has nothing.
+    AckArmed,
     /// The driver is being freed. Tear everything down and stop.
     Shutdown {
         reply: Arc<Reply<()>>,
@@ -516,11 +520,14 @@ fn supervise(shared: &Arc<Shared>, inbox: &Receiver<Command>) {
     // observer call it makes — can observe an unpublished id and mistake itself for the near side.
     let _published = shared.supervisor.set(thread::current().id());
     let mut campaign: Option<Campaign> = None;
-    let mut next_ack = Instant::now() + shared.config.ack_interval;
+    // `None` while nothing is pending: an idle pane costs no ack ticks at all, which on the phone
+    // is twenty wakes a second per pane that never had anything to say. Armed by
+    // `Command::AckArmed`, which the fold that arms the session's flag posts.
+    let mut next_ack: Option<Instant> = None;
     let mut next_ping = Instant::now() + shared.config.ping_interval;
     loop {
         let now = Instant::now();
-        let deadline = [Some(next_ack), Some(next_ping), campaign.map(|run| run.at)]
+        let deadline = [next_ack, Some(next_ping), campaign.map(|run| run.at)]
             .into_iter()
             .flatten()
             .min()
@@ -536,13 +543,20 @@ fn supervise(shared: &Arc<Shared>, inbox: &Receiver<Command>) {
                 }
                 return;
             },
+            // Already armed: the flush that is coming answers this arming too, and re-arming
+            // would push the deadline out on every delivery of a busy stream.
+            Ok(Command::AckArmed) => {
+                if next_ack.is_none() {
+                    next_ack = Some(Instant::now() + shared.config.ack_interval);
+                }
+            },
             Ok(command) => {
                 run(shared, command, &mut campaign);
             },
             Err(RecvTimeoutError::Timeout) => {
                 let now = Instant::now();
-                if now >= next_ack {
-                    next_ack = now + shared.config.ack_interval;
+                if next_ack.is_some_and(|at| now >= at) {
+                    next_ack = None;
                     flush_ack(shared);
                 }
                 if now >= next_ping {
@@ -568,7 +582,7 @@ fn abandon(command: Command) {
     match command {
         Command::Connect { reply, .. } | Command::Resume { reply, .. } => reply.abandon(),
         Command::Pause { reply } | Command::Close { reply } | Command::Shutdown { reply } => reply.abandon(),
-        Command::Ended { .. } => {},
+        Command::Ended { .. } | Command::AckArmed => {},
     }
 }
 
@@ -605,8 +619,10 @@ fn run(shared: &Arc<Shared>, command: Command, campaign: &mut Option<Campaign>) 
         Command::Ended { epoch, end } => {
             ended(shared, epoch, &end, campaign);
         },
-        // Handled by the loop, which must tear down before it returns.
+        // Both handled by the loop: the shutdown must tear down before the loop returns, and the
+        // arming sets a deadline only the loop holds.
         Command::Shutdown { reply } => reply.fill(()),
+        Command::AckArmed => {},
     }
 }
 
@@ -637,7 +653,7 @@ fn connect(
     let Some(opening) = opening else {
         return Err(ConnectError::Gone);
     };
-    let opening = opening?;
+    let mut opening = opening?;
 
     // Tear the prior transport down BEFORE dialling, so the two can never both be pumping. The
     // epoch bump inside makes the old sink's end self-inflicted and silent.
@@ -659,7 +675,7 @@ fn connect(
             session_id,
             last_received_seq: opening.last_received_seq,
             channel_class: shared.config.channel_class,
-            initial_cwd: opening.initial_cwd,
+            initial_cwd: opening.initial_cwd.take(),
         },
         sink,
     )
@@ -688,25 +704,12 @@ fn connect(
     }
 
     let transport = Arc::new(transport);
-    let adoption = shared.with_state(|state| {
-        state.transport = Some(Arc::clone(&transport));
-        state.session_id = Some(session_id);
-        // The reset is conditional on the HOST-AUTHORITATIVE `resume_from_seq`, never on the
-        // client's own "returning" flag — which is true on every reconnect, so gating on it would
-        // skip the reset exactly when it is needed.
-        state
-            .session
-            .adopt(opening.last_received_seq, ack.resume_from_seq)
-    });
-    if adoption == Some(Adoption::MarksReset) {
-        // KEEP the un-drained bytes and ZERO their credit. They are the only copy — this open
-        // already presented the mark they advanced, so the host will never re-send them — and the
-        // new channel's peer never sent them, so crediting would be a phantom grant.
-        shared.mutate(|state| {
-            for entry in &mut state.inbox {
-                entry.wire_bytes = 0;
-            }
-        });
+    let adopted = shared
+        .with_state(|state| adopt(state, &transport, session_id, &opening, ack.resume_from_seq))
+        .ok_or(ConnectError::Gone)?;
+    // Outside the lock, for `deliver_output`'s reason: a credit can write a frame.
+    if adopted.duplicate_credit > 0 {
+        transport.note_output_consumed(adopted.duplicate_credit);
     }
     if returning {
         shared.observer.event(&Event::Reconnected {
@@ -724,7 +727,70 @@ fn connect(
             px_height: size.px_height,
         }));
     }
+    // After the reconnect announcement, so the near side that wakes to drain the staged bytes
+    // already knows which connection they belong to. The staged seqs armed the ack too, and the
+    // supervisor is this thread, so the arming is posted for the loop to pick up.
+    if adopted.accepted {
+        drop(shared.commands.send(Command::AckArmed));
+        shared.observer.output_ready();
+    }
     Ok(())
+}
+
+/// Adopts the dial's transport under the state lock: the marks become the ack's, and what the
+/// transport delivered ahead of the ack is folded against them.
+fn adopt(
+    state: &mut State,
+    transport: &Arc<ChannelTransport>,
+    session_id: [u8; 16],
+    opening: &Opening,
+    resume_from_seq: i64,
+) -> Adopted {
+    state.transport = Some(Arc::clone(transport));
+    state.session_id = Some(session_id);
+    // The reset is conditional on the HOST-AUTHORITATIVE `resume_from_seq`, never on the
+    // client's own "returning" flag — which is true on every reconnect, so gating on it would
+    // skip the reset exactly when it is needed.
+    let adoption = state.session.adopt(opening.last_received_seq, resume_from_seq);
+    if adoption == Adoption::MarksReset {
+        // KEEP the un-drained bytes and ZERO their credit. They are the only copy — this open
+        // already presented the mark they advanced, so the host will never re-send them — and
+        // the new channel's peer never sent them, so crediting would be a phantom grant.
+        for entry in &mut state.inbox {
+            entry.wire_bytes = 0;
+        }
+    }
+    // What THIS transport delivered ahead of its ack, folded now that the marks are the ack's
+    // and under the same hold that adopted it, so no forwarder can slip a later seq in between.
+    // These bytes come after the zeroed ones above in the inbox, and they keep their credit:
+    // the new channel's peer did send them.
+    let mut duplicate_credit = 0;
+    let mut accepted = false;
+    for staged in core::mem::take(&mut state.staged) {
+        match state.session.deliver(staged.seq) {
+            Delivery::Accepted => {
+                state.inbox.push(Chunk {
+                    bytes: staged.bytes,
+                    wire_bytes: staged.wire_bytes,
+                });
+                accepted = true;
+            },
+            Delivery::Duplicate => duplicate_credit += staged.wire_bytes,
+        }
+    }
+    Adopted {
+        duplicate_credit,
+        accepted,
+    }
+}
+
+/// What adoption did with the output the dial's transport delivered ahead of its ack.
+#[derive(Debug)]
+struct Adopted {
+    /// Wire bytes of staged seqs the marks already covered — credited, never handed up.
+    duplicate_credit: usize,
+    /// Whether any staged seq reached the inbox, which is what earns the near side a wake.
+    accepted: bool,
 }
 
 /// What a connect reads out of the state before it starts dialling.
@@ -827,6 +893,9 @@ fn close(shared: &Arc<Shared>) {
 fn teardown(shared: &Arc<Shared>) {
     let retired = shared.with_state(|state| {
         state.epoch += 1;
+        // Staged output belongs to the dial being retired; a seq it holds was never folded and
+        // would be folded against a connection that no longer exists.
+        state.staged.clear();
         state.transport.take()
     });
     if let Some(Some(transport)) = retired {
@@ -848,7 +917,10 @@ fn teardown(shared: &Arc<Shared>) {
 /// forever instead of twenty times. The bug the Swift's `connectGeneration` was really guarding was
 /// this one, and one supervisor thread does not dissolve it: the stale epoch is what does.
 fn discard(shared: &Arc<Shared>, transport: ChannelTransport) {
-    let _bumped = shared.with_state(|state| state.epoch += 1);
+    let _bumped = shared.with_state(|state| {
+        state.epoch += 1;
+        state.staged.clear();
+    });
     transport.close();
     // BY VALUE and dropped here rather than borrowed: a discarded transport has no second reader,
     // and taking ownership is what says so at the signature.

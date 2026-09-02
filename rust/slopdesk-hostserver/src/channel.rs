@@ -796,6 +796,12 @@ impl Host {
             sessions.attach_primary(key, &pane);
         }
         self.emit_connection_count();
+        // Ack BEFORE the start: the start runs the drain, and the drain ships the restored
+        // transcript on the data link, so an ack written after it can only reach the client behind
+        // the first frames of a restore. Nothing below can fail — the pane is forked and filed — so
+        // the verdict is truthful here, and the client's own staging covers the order the two
+        // links still leave to the kernel.
+        peer.ack(channel, true, 0);
         pane.start();
         // The RESOLVED cwd, and after the start so the enqueued control rides the live sender. A
         // pane that requested nothing still lands in a real directory, and skipping its seed left
@@ -806,7 +812,6 @@ impl Host {
             pane.seed_project(cwd);
         }
         self.register_hook(&pane);
-        peer.ack(channel, true, 0);
         self.observer().log(&format!(
             "mux channel {channel}: shell (pid {}) attached for pane {}",
             pane.pid(),

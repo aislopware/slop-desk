@@ -31,6 +31,7 @@
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use slopdesk_hostpane::PtyProcess;
 use slopdesk_muxnet::subchannel::SubChannel;
@@ -240,6 +241,12 @@ pub(crate) fn run_data_sender(subscriber: &Arc<Subscriber>, shared: &Arc<Shared>
     shared.clear_sender(subscriber.id);
 }
 
+/// The shortest gap between two termios `ECHO` samples on the input path.
+///
+/// One scheduler quantum: a shell that flips the bit does so from its own read loop, which cannot
+/// turn around between two keystrokes that land closer than this.
+const ECHO_SAMPLE_GAP: Duration = Duration::from_millis(16);
+
 /// Carries this member's inbound DATA — its keystrokes — to the master fd.
 ///
 /// The write is blocking and it is deliberate: credit is granted only AFTER it returns, so a PTY
@@ -253,6 +260,7 @@ pub(crate) fn run_input_relay(
     pty: &Arc<PtyProcess>,
     detect: &Arc<Detect>,
 ) {
+    let mut last_echo_sample: Option<Instant> = None;
     while let Ok(message) = inbound.recv() {
         if let WireMessage::Input(ref bytes) = message {
             // CLAIM the write before making it. The teardown closes this gate and then waits for
@@ -275,7 +283,15 @@ pub(crate) fn run_input_relay(
             // it interrupted is an agent reported busy through its own interruption.
             // Both are cheap enough to sit on this path: one `tcgetattr`, and a fold
             // that bails on its status check before reading a byte.
-            Detect::sample_echo(shared, pty);
+            //
+            // The `tcgetattr` is rate-limited to the shell's own reaction time: the bit cannot
+            // flip between two keystrokes closer than the shell can run its read loop, so a
+            // paste that lands as a run of input messages, or a key repeat, samples once per
+            // gap rather than once per message, and the foreground poll remains the backstop.
+            if last_echo_sample.is_none_or(|sampled| sampled.elapsed() >= ECHO_SAMPLE_GAP) {
+                Detect::sample_echo(shared, pty);
+                last_echo_sample = Some(Instant::now());
+            }
             detect.fold_input(shared, bytes);
         }
         // Consumed: grant the window back ON THE CHANNEL THE BYTES ARRIVED ON. Every sub-channel

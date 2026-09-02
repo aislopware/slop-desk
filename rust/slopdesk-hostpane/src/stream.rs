@@ -182,6 +182,14 @@ impl PaneSink for StreamState {
         let expected = guarded.expected_offset;
         let dropped = guarded.stopped;
         let last_of_a_backlog = guarded.ends_at.is_some_and(|end| next >= end);
+        // A chunk that starts BEHIND the mark overlaps bytes this stream already handed on.
+        // superd's subscribe seam produces exactly one: the pump appends a chunk to the ring, a
+        // subscribe reads the ring head into the backlog, and the pump's own fan-out of that same
+        // chunk then finds the new subscriber and sends it live. Offsets are absolute and exact,
+        // so the overlap is cut off the front and a chunk wholly behind the mark is nothing.
+        let overlap = expected.map_or(0, |expected| expected.saturating_sub(offset));
+        let already = usize::try_from(overlap).unwrap_or(usize::MAX);
+        let fresh = payload.get(already..).unwrap_or_default();
         // The boundary moves inside the SAME hold that read the end against it, so this handler and
         // `open` cannot both conclude that the other one will declare the stream over. Advancing it
         // after the chunk was handed on left a window one instruction wide where a backlog frame
@@ -189,7 +197,11 @@ impl PaneSink for StreamState {
         // then read the not-yet-advanced offset and judged the backlog unfinished, and
         // NEITHER finished. A pane that ran to completion before anyone subscribed hung
         // there for ever.
-        if !dropped {
+        //
+        // And it only ever moves FORWARD: a rewind on an overlapping chunk would make the next
+        // chunk read as a gap the size of the overlap, and the session would be told bytes were
+        // lost that it holds.
+        if !dropped && expected.is_none_or(|expected| next > expected) {
             guarded.expected_offset = Some(next);
         }
         // Taken unconditionally, so a batch can never outlive the chunk it describes and attach
@@ -204,7 +216,7 @@ impl PaneSink for StreamState {
             return;
         }
         if let Some(expected) = expected
-            && offset != expected
+            && offset > expected
         {
             // Not recoverable, only reportable: the bytes are gone from superd's ring. Passing the
             // chunk on anyway is still the best available answer — a terminal missing a region
@@ -216,8 +228,12 @@ impl PaneSink for StreamState {
                 self.name(),
             ));
         }
-        if !payload.is_empty() || !sniffed.is_empty() || !blocks.is_empty() {
-            self.sink.chunk(payload, next, &sniffed, &blocks);
+        // A chunk the stream already holds in full carries nothing for the session: not its bytes,
+        // and not the events superd paired with them, which reached the session with the first
+        // copy.
+        let duplicate = overlap > 0 && fresh.is_empty();
+        if !duplicate && (!fresh.is_empty() || !sniffed.is_empty() || !blocks.is_empty()) {
+            self.sink.chunk(fresh, next, &sniffed, &blocks);
         }
         // The end goes out AFTER the bytes it follows, on this same thread, so a session's exit
         // frame stays behind its last output frame on the wire.
