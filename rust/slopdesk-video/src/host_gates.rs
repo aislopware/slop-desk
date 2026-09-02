@@ -145,10 +145,11 @@ pub struct HostGates {
     /// OFF because the branch it selects has never run on a real host: the reconfigure and the
     /// encoder swap under it are exercised by unit tests over doubles, and a unit test cannot show
     /// that a `ScreenCaptureKit` stream actually applied a new configuration or that the first
-    /// buffer after it arrived at the new size. `synthetic-tests-prove-nothing-fires`. Flip it to
-    /// `1` to take the fast path and save the framework's ~120 ms stream spin-up; every way it
-    /// declines falls back to the restart path, which is what serves every resize while this is
-    /// off.
+    /// buffer after it arrived at the new size. `synthetic-tests-prove-nothing-fires` — so the
+    /// default stayed OFF until `just gui-video` drove a real pane resize through it on
+    /// 2026-09-02 and read the swap, the absence of a restart and the client's adoption of the
+    /// new size off the logs (`docs/70` §2.7). Default ON since; `0` takes the restart path,
+    /// which is what every way the fast path declines still falls back to.
     pub in_place_resize_enabled: bool,
     /// Duplicate-send keyframes. Default ON.
     pub kf_dup: bool,
@@ -262,7 +263,7 @@ impl HostGates {
                 _ => 0.008,
             },
             fps_governor_enabled: default_off(at("SLOPDESK_FPS_GOVERNOR")),
-            in_place_resize_enabled: default_off(at("SLOPDESK_INPLACE_RESIZE")),
+            in_place_resize_enabled: default_on(at("SLOPDESK_INPLACE_RESIZE")),
             kf_dup: default_on(at("SLOPDESK_KF_DUP")),
             kf_dup_loss_threshold: match real(at("SLOPDESK_KF_DUP_LOSS")) {
                 Some(value) if value >= 0.0 => value,
@@ -345,7 +346,7 @@ mod tests {
         );
         assert!((gates.scroll_inject_interval - 0.008).abs() < f64::EPSILON);
         assert!(!gates.fps_governor_enabled);
-        assert!(!gates.in_place_resize_enabled);
+        assert!(gates.in_place_resize_enabled);
         assert!(gates.kf_dup);
         assert!((gates.kf_dup_loss_threshold - 0.005).abs() < f64::EPSILON);
         assert!(!gates.small_dup);
@@ -386,7 +387,7 @@ mod tests {
             ("SLOPDESK_SCROLL_COALESCE", "1"),
             ("SLOPDESK_SCROLL_INJECT_MS", "16"),
             ("SLOPDESK_FPS_GOVERNOR", "1"),
-            ("SLOPDESK_INPLACE_RESIZE", "1"),
+            ("SLOPDESK_INPLACE_RESIZE", "0"),
             ("SLOPDESK_KF_DUP", "0"),
             ("SLOPDESK_KF_DUP_LOSS", "0.02"),
             ("SLOPDESK_SMALL_DUP", "1"),

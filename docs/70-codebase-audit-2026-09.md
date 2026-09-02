@@ -116,7 +116,7 @@ touched was re-gated with `cargo +nightly fmt`, `cargo clippy --all-targets -- -
 - `VideoWindowPipeline.applyCursor` spawned a `Task` per cursor packet at 120 Hz; the update is now
   stored under a `Mutex` and the main-actor hop is taken once per burst (an `Atomic<Bool>` gate).
 
-### 2.7 The in-place resize — implemented, unit-tested, NOT yet live-verified
+### 2.7 The in-place resize — implemented, unit-tested, and live-verified on 2026-09-02
 
 `SLOPDESK_INPLACE_RESIZE` was parsed and documented, and the branch it selected was never wired —
 `session_resize.rs` said so in its header, and `docs/61` recorded the gate as unread. The door is
@@ -130,12 +130,22 @@ buffers still in flight at the old size. Every decline — gate off, ineligible 
 failure, stream refusal — falls through to the unchanged teardown-and-re-dial path.
 
 Eleven tests pin it across `session_resize.rs`, `session_pump.rs` and `session_capture.rs`. The
-gate's DEFAULT was `on` while it was inert; it is `off` now (`host_gates.rs`), because
+gate's DEFAULT was `on` while it was inert, went `off` when the branch was wired — because
 `synthetic-tests-prove-nothing-fires`: a hot-path branch goes live on the real host only after
-someone has watched it. The recipe: `SLOPDESK_INPLACE_RESIZE=1 SLOPDESK_VIDEO_DEBUG=1`,
-`just host-restart`, resize a display-anchored captured window, and expect in hostd's log no second
-`SCStream` bring-up, no `in-place resize declined`, and `keyframe=true` on the first post-swap
-frame. Flip the default once that has been seen.
+someone has watched it — and is `on` again since the same day, because `just gui-video` now
+watches it (`rust/slopdesk-devtools/src/gui/video.rs`). After the decode/present proof the gate
+drags the client's remote window through System Events with host-follow on; the pane turns that
+into a `resizeRequest`, the host AX-resizes the captured window and the fast path runs. Three
+things are then read off the logs, each counted from before the drag: the host said
+`in-place resize: encoder swapped to WxH under the live stream` (a debug line added for this),
+the host never said `restarting the stream` (either way the fast path declines now says so), and
+the client logged `resize: adopted decodedSize=WxH` and its decode counter kept climbing — the
+third is what a host swapping encoders into a client that rejects every post-swap frame would
+fail.
+
+Seen on the 2026-09-02 run (window: Parsec, 1627×943; default gate, nothing forced): two swaps,
+both in place — the connect-time 1:1 negotiation to 1280×800 and the drag to 1100×688 — zero
+restarts, both sizes adopted by the client, decode markers 15 → 21 across the drag.
 
 ### 2.8 Docs
 

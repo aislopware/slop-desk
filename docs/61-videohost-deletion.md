@@ -157,11 +157,12 @@ The modules above are what a session IS. What actually runs them landed in the s
   wanted the window list never starts a capture for the privilege.
 - **`session_resize.rs`** — the resize ladder, both paths. The IN-PLACE one reconfigures the live
   `SCStream` and swaps a new encoder under it, saving the framework's ~120 ms spin-up — the resize
-  freeze — and `HostGates::in_place_resize_enabled` (`SLOPDESK_INPLACE_RESIZE`, default **OFF**)
-  selects it through `takes_in_place`, composed with the capture's own shape by
-  `capture_config::can_resize_in_place`. OFF because no unit test can show that a
+  freeze — and `HostGates::in_place_resize_enabled` (`SLOPDESK_INPLACE_RESIZE`, default **ON**
+  since 2026-09-02) selects it through `takes_in_place`, composed with the capture's own shape by
+  `capture_config::can_resize_in_place`. It shipped OFF because no unit test can show that a
   `ScreenCaptureKit` stream applied a new configuration or that the first buffer after it arrived
-  at the new size — `synthetic-tests-prove-nothing-fires` — so the branch ships implemented and
+  at the new size — `synthetic-tests-prove-nothing-fires` — and flipped the day `just gui-video`
+  grew the drag that shows exactly that (`docs/70` §2.7); so the branch shipped implemented and
   unit-tested but not live-verified, and the restart path serves every resize until an operator
   sets the key or a host run promotes the default. The door it needed is `session_pump`'s `EncoderSlot`: a
   `VTCompressionSession` cannot change dimensions and a `Capturer`'s event sink is fixed at

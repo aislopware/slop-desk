@@ -351,6 +351,15 @@ impl Session {
         pixel_height: i32,
     ) -> Option<Rebuilt> {
         if !takes_in_place(&self.gates, outgoing.capture) {
+            // Said under the debug gate for the same reason the decline below is: `just gui-video`
+            // reads this log to tell the two paths apart, and a restart that nobody named would
+            // pass for a swap that never happened.
+            if self.gates.debug_stderr {
+                diag::say(
+                    "in-place resize not taken (gate off, or the capture is not display-anchored) — \
+                     restarting the stream",
+                );
+            }
             return None;
         }
         let Some((encoder, ceiling)) = self.open_encoder(pixel_width, pixel_height) else {
@@ -422,6 +431,11 @@ impl Session {
         // still holding the governed step it was last given, so writing it again would be writing
         // a value onto itself.
         encoder.set_expected_frame_rate(effective_fps(governed, user_cap));
+        if self.gates.debug_stderr {
+            diag::say(&format!(
+                "in-place resize: encoder swapped to {pixel_width}x{pixel_height} under the live stream"
+            ));
+        }
         Some(Rebuilt::Live)
     }
 

@@ -53,6 +53,15 @@ const MEDIA_PORT: u16 = 9000;
 /// The cursor lane's port.
 const CURSOR_PORT: u16 = 9001;
 
+/// What `slopdesk-videohostd` says (under `SLOPDESK_VIDEO_DEBUG`) when a resize was served by
+/// swapping an encoder under the live capture stream — `session_resize.rs`, the in-place path.
+const IN_PLACE_SWAP: &str = "in-place resize: encoder swapped";
+/// What it says on EITHER way the fast path declines and the restart path serves the resize.
+const STREAM_RESTART: &str = "restarting the stream";
+/// What the client says (under `SLOPDESK_VIDEO_DEBUG`) once a decoded buffer at the new size
+/// arrived and the session adopted it — `SlopDeskVideoClientSession.swift`, `ResizeAdoption`.
+const CLIENT_ADOPTED: &str = "resize: adopted decodedSize=";
+
 /// What the caller asked for.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
@@ -336,6 +345,10 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
             log: client_a_log.path.clone(),
             environment: vec![
                 ("SLOPDESK_VIDEO_DEBUG".to_owned(), "1".to_owned()),
+                // The resize proof below drags the client window; only with host-follow on does
+                // the pane's new size become a `resizeRequest` the host acts on (default-off in
+                // the product, where a pane resize letterboxes instead of moving the window).
+                ("SLOPDESK_GUI_WINDOW_FOLLOWS_PANE".to_owned(), "1".to_owned()),
                 (
                     "SLOPDESK_VIDEO_AUTOCONNECT_HOST".to_owned(),
                     "127.0.0.1".to_owned(),
@@ -461,6 +474,78 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
         ));
     }
     say("video", "exactly one shell attached for one auto-connect ✅");
+
+    // ── the in-place encoder resize, on the path a user's drag takes ────────────────────────
+    // Every unit test of `session_resize.rs` runs over doubles, and none can show that a real
+    // `SCStream` took a new configuration or that the first buffer after it arrived at the new
+    // size. This is the only place that is seen: drag the client's remote window, which the pane
+    // turns into a `resizeRequest`, which the host answers by AX-resizing the captured window and
+    // swapping a new encoder UNDER the live stream — and then read three things off the logs.
+    // The host says it swapped, the host never says it restarted, and the client adopted a new
+    // decoded size and kept decoding after it. A host that swapped encoders into a client that
+    // rejects every frame would pass the first two and fail the third.
+    // Counted from BEFORE the drag, not from zero: with host-follow on, the connect-time 1:1
+    // negotiation is itself a resize the host may have already served in place, and a gate that
+    // asked for "one swap, ever" would pass on that one without the drag having done anything.
+    say(
+        "video",
+        "resizing the client's remote window — waiting for the host's in-place encoder swap…",
+    );
+    let (decoded_before, _) = client_a.frames();
+    let swaps_before = video_host.log.count(IN_PLACE_SWAP);
+    let adopted_before = client_a.log.count(CLIENT_ADOPTED);
+    resize_remote_window(pid_a, &format!("{} (remote)", target.title), 1100, 720)?;
+    if poll("the host's in-place encoder swap", 40, || {
+        video_host.log.count(IN_PLACE_SWAP) > swaps_before
+    })
+    .is_err()
+    {
+        complain("==> FAIL: the host never swapped an encoder in place after the pane resize. Either no");
+        complain("    resizeRequest left the client (host-follow off, or the debounce never settled), the");
+        complain("    AX resize was refused, or the fast path declined and the restart path served it.");
+        video_host.log.dump("video host log", 40);
+        client_a.log.dump("client log", 40);
+        return Err("no in-place encoder swap".to_owned());
+    }
+    let restarts = video_host.log.count(STREAM_RESTART);
+    if restarts > 0 {
+        complain(&format!(
+            "==> FAIL: the host restarted the stream {restarts} time(s) around the resize — the swap was not"
+        ));
+        complain("    the path that served it, or a decline fell through to the restart after it.");
+        video_host.log.dump("video host log", 40);
+        return Err("the resize restarted the stream".to_owned());
+    }
+    if poll("the client adopting the new decoded size", 40, || {
+        client_a.log.count(CLIENT_ADOPTED) > adopted_before
+    })
+    .is_err()
+    {
+        complain("==> FAIL: the host swapped encoders but the client never adopted a new decoded size —");
+        complain("    every post-swap frame is being rejected, or the ack never arrived.");
+        video_host.log.dump("video host log", 40);
+        client_a.log.dump("client log", 60);
+        return Err("the client never adopted the new size".to_owned());
+    }
+    if poll("decoding to continue past the swap", 40, || {
+        client_a.frames().0 >= decoded_before + 5
+    })
+    .is_err()
+    {
+        complain("==> FAIL: the client adopted the new size and then stopped decoding.");
+        client_a.log.dump("client log", 60);
+        return Err("decoding stopped after the swap".to_owned());
+    }
+    say(
+        "video",
+        &format!(
+            "in-place resize: encoder swapped ({} swap(s) in all), no restart, client adopted the new size \
+             and kept decoding ({} → {} decode markers) ✅",
+            video_host.log.count(IN_PLACE_SWAP),
+            decoded_before,
+            client_a.frames().0
+        ),
+    );
 
     let client_b = if options.second_client {
         Some(fan_out(&app, &suite, &work, &hostd, &client_a, decoded)?)
@@ -694,6 +779,32 @@ fn capture_oslog(work: &Path) {
 /// **A GOTCHA, HW-learned 2026-06-09:** running `--list` again while the serving host's `SCStream`
 /// is ACTIVE hangs the enumeration. Never list-while-active — raise the client and take a
 /// full-screen grab instead, which is the window that needs reading anyway.
+/// Drags the client's remote-window pane to `width`×`height` points through System Events, by the
+/// window's title rather than by `window 1` — the video shape is a workspace window plus a DETACHED
+/// remote window, and whichever is frontmost is not the one this wants.
+///
+/// A refusal is an error rather than a warning: the assertions after it are about what the resize
+/// caused, and a window that did not move makes every one of them vacuous.
+fn resize_remote_window(pid: u32, title: &str, width: u32, height: u32) -> Result<(), String> {
+    let script = format!(
+        "tell application \"System Events\" to tell (first process whose unix id is {pid}) to set size of \
+         (first window whose name contains \"{}\") to {{{width}, {height}}}",
+        title.replace('"', "\\\"")
+    );
+    let status = Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|error| format!("osascript: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "System Events could not resize the client's '{title}' window (Accessibility for this terminal?)"
+        ));
+    }
+    Ok(())
+}
+
 fn raise_and_shoot(pid: u32, path: &Path, label: &str) {
     let _ = raise(pid);
     thread::sleep(Duration::from_secs(1));
